@@ -39,23 +39,25 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             {
                 if (targetGo.GetComponent<Rigidbody>() != null || targetGo.GetComponent<Collider>() != null)
                 {
-                    return new ErrorResponse($"Cannot add 2D physics component '{typeName}' because the GameObject '{targetGo.name}' already has a 3D Rigidbody or Collider.");
+                    return new ErrorResponse(
+                        $"Cannot add 2D physics component '{typeName}' because the GameObject '{targetGo.name}' already has a 3D Rigidbody or Collider."
+                    );
                 }
             }
             else if (isAdding3DPhysics)
             {
                 if (targetGo.GetComponent<Rigidbody2D>() != null || targetGo.GetComponent<Collider2D>() != null)
                 {
-                    return new ErrorResponse($"Cannot add 3D physics component '{typeName}' because the GameObject '{targetGo.name}' already has a 2D Rigidbody or Collider.");
+                    return new ErrorResponse(
+                        $"Cannot add 3D physics component '{typeName}' because the GameObject '{targetGo.name}' already has a 2D Rigidbody or Collider."
+                    );
                 }
             }
 
             Component existingComponent = targetGo.GetComponent(componentType);
             if (existingComponent != null && !AllowsMultiple(componentType))
             {
-                return new ErrorResponse(
-                    $"Component '{typeName}' already exists on '{targetGo.name}' and this type does not allow multiple instances."
-                );
+                return new ErrorResponse($"Component '{typeName}' already exists on '{targetGo.name}' and this type does not allow multiple instances.");
             }
 
             try
@@ -199,7 +201,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                             foreach (var item in errorsEnum)
                             {
                                 var s = item?.ToString();
-                                if (!string.IsNullOrEmpty(s)) aggregatedErrors.Add(s);
+                                if (!string.IsNullOrEmpty(s))
+                                    aggregatedErrors.Add(s);
                             }
                         }
                     }
@@ -216,7 +219,12 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             );
         }
 
-        internal static object SetComponentPropertiesInternal(GameObject targetGo, string componentTypeName, JObject properties, Component targetComponentInstance = null)
+        internal static object SetComponentPropertiesInternal(
+            GameObject targetGo,
+            string componentTypeName,
+            JObject properties,
+            Component targetComponentInstance = null
+        )
         {
             Component targetComponent = targetComponentInstance;
             if (targetComponent == null)
@@ -283,9 +291,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             EditorUtility.SetDirty(targetComponent);
-            return failures.Count == 0
-                ? null
-                : new ErrorResponse($"One or more properties failed on '{componentTypeName}'.", new { errors = failures });
+            return failures.Count == 0 ? null : new ErrorResponse($"One or more properties failed on '{componentTypeName}'.", new { errors = failures });
         }
 
         private static JsonSerializer InputSerializer => UnityJsonSerializer.Instance;

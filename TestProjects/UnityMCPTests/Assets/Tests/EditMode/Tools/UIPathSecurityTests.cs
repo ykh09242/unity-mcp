@@ -20,50 +20,76 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 foreach (string action in new[] { "create", "read", "update", "delete" })
                 {
-                    var result = JObject.FromObject(ManageUI.HandleCommand(new JObject
-                    {
-                        ["action"] = action, ["path"] = path,
-                        ["contents"] = ".test { color: red; }"
-                    }));
+                    var result = JObject.FromObject(
+                        ManageUI.HandleCommand(
+                            new JObject
+                            {
+                                ["action"] = action,
+                                ["path"] = path,
+                                ["contents"] = ".test { color: red; }",
+                            }
+                        )
+                    );
                     Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 }
                 Assert.IsFalse(File.Exists(AssetPathUtility.GetFullAssetPath(path)));
             }
-            finally { AssetDatabase.DeleteAsset(folder); }
+            finally
+            {
+                AssetDatabase.DeleteAsset(folder);
+            }
         }
 
         [Test]
         public void RootedRemaindersAreRejectedForEveryFileAction()
         {
             foreach (string action in new[] { "create", "read", "update", "delete", "link_stylesheet" })
-                foreach (string path in new[] { "Assets//tmp/outside.uxml", "Assets/\\tmp/outside.uxml",
-                    "Assets/C:/outside.uxml", "Assets/../outside.uxml", "/tmp/outside.uxml" })
+            foreach (
+                string path in new[]
                 {
-                    var result = JObject.FromObject(ManageUI.HandleCommand(new JObject
-                    {
-                        ["action"] = action, ["path"] = path, ["contents"] = "<UXML/>",
-                        ["stylesheet"] = "Assets/UI/test.uss"
-                    }));
-                    Assert.IsFalse(result.Value<bool>("success"), action + ": " + path);
+                    "Assets//tmp/outside.uxml",
+                    "Assets/\\tmp/outside.uxml",
+                    "Assets/C:/outside.uxml",
+                    "Assets/../outside.uxml",
+                    "/tmp/outside.uxml",
                 }
+            )
+            {
+                var result = JObject.FromObject(
+                    ManageUI.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = action,
+                            ["path"] = path,
+                            ["contents"] = "<UXML/>",
+                            ["stylesheet"] = "Assets/UI/test.uss",
+                        }
+                    )
+                );
+                Assert.IsFalse(result.Value<bool>("success"), action + ": " + path);
+            }
         }
 
         [Test]
         public void CanonicalPathsRemainInsideAssets()
         {
             Assert.AreEqual("Assets/UI/Menu.uxml", AssetPathUtility.GetContainedAssetPath("assets\\UI\\Menu.uxml"));
-            Assert.AreEqual(Path.GetFullPath(Path.Combine(Application.dataPath, "UI/Menu.uxml")),
-                AssetPathUtility.GetFullAssetPath("assets\\UI\\Menu.uxml"));
+            Assert.AreEqual(Path.GetFullPath(Path.Combine(Application.dataPath, "UI/Menu.uxml")), AssetPathUtility.GetFullAssetPath("assets\\UI\\Menu.uxml"));
         }
 
         [Test]
         public void LinkRejectsRootedStylesheetBeforeReadingUxml()
         {
-            var result = JObject.FromObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "link_stylesheet", ["path"] = "Assets/UI/Menu.uxml",
-                ["stylesheet"] = "Assets/C:/outside.uss"
-            }));
+            var result = JObject.FromObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "link_stylesheet",
+                        ["path"] = "Assets/UI/Menu.uxml",
+                        ["stylesheet"] = "Assets/C:/outside.uss",
+                    }
+                )
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             StringAssert.Contains("Rooted", result.ToString());
         }

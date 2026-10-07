@@ -15,14 +15,19 @@ from services.tools import get_unity_instance_from_context
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 from services.state.external_changes_scanner import external_changes_scanner
 import transport.unity_transport as unity_transport
-from transport.legacy.unity_connection import async_send_command_with_retry, get_authenticated_stdio_generation
+from transport.legacy.unity_connection import (
+    async_send_command_with_retry,
+    get_authenticated_stdio_generation,
+)
 from transport.plugin_hub import PluginHub
 
 logger = logging.getLogger("mcp-for-unity-server")
 
 # Ordinary stdio resources may share an authenticated raw snapshot for 1s.
 # Authoritative preflight always bypasses and invalidates this bounded cache.
-_stdio_state_reads: SharedToolReads[Any] = SharedToolReads(freshness_s=1.0, retention_s=1.0, max_entries=128)
+_stdio_state_reads: SharedToolReads[Any] = SharedToolReads(
+    freshness_s=1.0, retention_s=1.0, max_entries=128
+)
 
 
 class EditorStateUnity(BaseModel):
@@ -155,11 +160,9 @@ async def infer_single_instance_id(ctx: Context) -> str | None:
         # HTTP/WebSocket transport: derive from PluginHub sessions.
         try:
             # In remote-hosted mode, filter sessions by user_id
-            user_id = (await ctx.get_state(
-                "user_id")) if config.http_remote_hosted else None
+            user_id = (await ctx.get_state("user_id")) if config.http_remote_hosted else None
             sessions_data = await PluginHub.get_sessions(user_id=user_id)
-            sessions = sessions_data.sessions if hasattr(
-                sessions_data, "sessions") else {}
+            sessions = sessions_data.sessions if hasattr(sessions_data, "sessions") else {}
             if isinstance(sessions, dict) and len(sessions) == 1:
                 session = next(iter(sessions.values()))
                 project = getattr(session, "project", None)
@@ -197,6 +200,7 @@ async def _local_project_root(instance_id: str) -> str | None:
         session = await registry.get_session(session_id) if session_id else None
         return session.project_path if session else None
     from transport.legacy.unity_connection import get_unity_connection_pool
+
     pool = get_unity_connection_pool()
     # Sending the command has already selected and verified this cached instance.
     for instance in pool._known_instances.values():
@@ -266,28 +270,42 @@ async def _read_editor_state(ctx: Context, *, require_fresh: bool) -> MCPRespons
 
     response = None
     stdio_key = None
-    if (config.transport_mode or "stdio").lower() != "http" and not config.http_remote_hosted and unity_instance:
+    if (
+        (config.transport_mode or "stdio").lower() != "http"
+        and not config.http_remote_hosted
+        and unity_instance
+    ):
         generation = await get_authenticated_stdio_generation(unity_instance)
         if generation:
             stdio_key = (unity_instance, generation)
         if require_fresh:
             await _stdio_state_reads.invalidate(stdio_key)
-    if (not require_fresh and (config.transport_mode or "stdio").lower() == "http"
-            and PluginHub.is_configured()):
+    if (
+        not require_fresh
+        and (config.transport_mode or "stdio").lower() == "http"
+        and PluginHub.is_configured()
+    ):
         user_id = await ctx.get_state("user_id") if config.http_remote_hosted else None
         cached = await PluginHub.get_cached_editor_state(unity_instance, user_id=user_id)
         if cached is not None:
             response = {"success": True, "data": cached}
     if response is None:
+
         async def fetch_state() -> Any:
             read_options = {}
             if (config.transport_mode or "stdio").lower() == "http":
-                read_options["editor_state_read_mode"] = "authoritative" if require_fresh else "ordinary"
+                read_options["editor_state_read_mode"] = (
+                    "authoritative" if require_fresh else "ordinary"
+                )
             value = await unity_transport.send_with_unity_instance(
-                async_send_command_with_retry, unity_instance, "get_editor_state", {},
+                async_send_command_with_retry,
+                unity_instance,
+                "get_editor_state",
+                {},
                 **read_options,
             )
             return value.model_dump() if isinstance(value, MCPResponse) else value
+
         if stdio_key is not None and not require_fresh:
             try:
                 async with _stdio_state_reads.session(stdio_key) as shared_read:
@@ -334,13 +352,16 @@ async def _read_editor_state(ctx: Context, *, require_fresh: bool) -> MCPRespons
 
     # Host-local change detection never consumes remote plugin metadata.
     try:
-        if not config.http_remote_hosted and not instance_id and current_instance_id not in (None, ""):
+        if (
+            not config.http_remote_hosted
+            and not instance_id
+            and current_instance_id not in (None, "")
+        ):
             instance_id = await infer_single_instance_id(ctx)
         if not config.http_remote_hosted and isinstance(instance_id, str) and instance_id.strip():
             project_root = await _local_project_root(instance_id)
             if isinstance(project_root, str) and project_root.strip():
-                external_changes_scanner.set_project_root(
-                    instance_id, project_root)
+                external_changes_scanner.set_project_root(instance_id, project_root)
 
             ext = await external_changes_scanner.update_and_get_async(instance_id)
 
@@ -348,14 +369,12 @@ async def _read_editor_state(ctx: Context, *, require_fresh: bool) -> MCPRespons
             if not isinstance(assets, dict):
                 assets = {}
                 state_v2["assets"] = assets
-            assets["external_changes_dirty"] = bool(
-                ext.get("external_changes_dirty", False))
+            assets["external_changes_dirty"] = bool(ext.get("external_changes_dirty", False))
             assets["external_changes_last_seen_unix_ms"] = ext.get(
-                "external_changes_last_seen_unix_ms")
-            assets["external_changes_dirty_since_unix_ms"] = ext.get(
-                "dirty_since_unix_ms")
-            assets["external_changes_last_cleared_unix_ms"] = ext.get(
-                "last_cleared_unix_ms")
+                "external_changes_last_seen_unix_ms"
+            )
+            assets["external_changes_dirty_since_unix_ms"] = ext.get("dirty_since_unix_ms")
+            assets["external_changes_last_cleared_unix_ms"] = ext.get("last_cleared_unix_ms")
     except Exception:
         pass
 
@@ -364,10 +383,8 @@ async def _read_editor_state(ctx: Context, *, require_fresh: bool) -> MCPRespons
         if hasattr(EditorStateData, "model_validate"):
             validated = EditorStateData.model_validate(state_v2)
         else:
-            validated = EditorStateData.parse_obj(
-                state_v2)  # type: ignore[attr-defined]
-        data = validated.model_dump() if hasattr(
-            validated, "model_dump") else validated.dict()
+            validated = EditorStateData.parse_obj(state_v2)  # type: ignore[attr-defined]
+        data = validated.model_dump() if hasattr(validated, "model_dump") else validated.dict()
     except Exception as e:
         return MCPResponse(
             success=False,

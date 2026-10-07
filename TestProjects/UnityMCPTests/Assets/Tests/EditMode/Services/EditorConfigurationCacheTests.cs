@@ -1,6 +1,6 @@
-using NUnit.Framework;
-using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Services;
+using NUnit.Framework;
 using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Services
@@ -283,8 +283,10 @@ namespace MCPForUnityTests.Editor.Services
             try
             {
                 EditorConfigurationCache.Instance.SetUseHttpTransport(true);
-                Assert.IsTrue(EditorConfigurationCache.Instance.UseHttpTransport,
-                    "The HTTP branch must be testable even when the resident harness pinned stdio.");
+                Assert.IsTrue(
+                    EditorConfigurationCache.Instance.UseHttpTransport,
+                    "The HTTP branch must be testable even when the resident harness pinned stdio."
+                );
             }
             finally
             {
@@ -292,10 +294,8 @@ namespace MCPForUnityTests.Editor.Services
             }
 
             Assert.AreEqual(pinState == 2, SessionState.GetBool(key, false));
-            Assert.AreEqual(pinState != 1, SessionState.GetBool(key, true),
-                "A missing pin must remain missing rather than become an explicit false.");
-            Assert.IsFalse(EditorPrefs.GetBool(EditorPrefKeys.UseHttpTransport, true),
-                "Fixture cleanup must also restore the persisted transport preference.");
+            Assert.AreEqual(pinState != 1, SessionState.GetBool(key, true), "A missing pin must remain missing rather than become an explicit false.");
+            Assert.IsFalse(EditorPrefs.GetBool(EditorPrefKeys.UseHttpTransport, true), "Fixture cleanup must also restore the persisted transport preference.");
             Assert.IsFalse(EditorConfigurationCache.Instance.UseHttpTransport);
         }
 
@@ -309,8 +309,10 @@ namespace MCPForUnityTests.Editor.Services
             EditorConfigurationCache.Instance.PinStdioForSession();
 
             Assert.IsFalse(EditorConfigurationCache.Instance.UseHttpTransport);
-            Assert.IsTrue(EditorPrefs.GetBool(EditorPrefKeys.UseHttpTransport, false),
-                "The pin must not rewrite the developer's persisted transport preference");
+            Assert.IsTrue(
+                EditorPrefs.GetBool(EditorPrefKeys.UseHttpTransport, false),
+                "The pin must not rewrite the developer's persisted transport preference"
+            );
         }
 
         [Test]

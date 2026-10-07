@@ -8,7 +8,12 @@ namespace MCPForUnityTests.Editor.Helpers
     public class ParamCoercionTests
     {
         [Flags]
-        private enum SampleFlags : byte { None = 0, First = 1, Second = 2 }
+        private enum SampleFlags : byte
+        {
+            None = 0,
+            First = 1,
+            Second = 2,
+        }
 
         [TestCase(0)]
         [TestCase(1)]
@@ -113,8 +118,7 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.AreEqual(value, new JValue(value).ReadScalar<double>());
             Assert.AreEqual(2.5f, new JValue(2.5f).ReadScalar<float>());
             Assert.AreEqual(0.25, new JValue("0.25").ReadScalar<double>());
-            Assert.AreEqual(1.2345678901234567890123456789m,
-                new JValue("1.2345678901234567890123456789").ReadScalar<decimal>());
+            Assert.AreEqual(1.2345678901234567890123456789m, new JValue("1.2345678901234567890123456789").ReadScalar<decimal>());
             Assert.Throws<ArgumentException>(() => new JValue(double.MaxValue).ReadScalar<float>());
             Assert.Throws<ArgumentException>(() => new JValue(double.NaN).ReadScalar<double>());
             Assert.Throws<ArgumentException>(() => new JValue(double.PositiveInfinity).ReadScalar<double>());

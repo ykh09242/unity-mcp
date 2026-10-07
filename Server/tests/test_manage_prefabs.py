@@ -62,46 +62,65 @@ class TestManagePrefabsComponentProperties:
             (t for t in get_registered_tools() if t["name"] == "manage_prefabs"), None
         )
         assert prefab_tool is not None
-        desc = prefab_tool.get("description") or prefab_tool.get("kwargs", {}).get("description", "")
+        desc = prefab_tool.get("description") or prefab_tool.get("kwargs", {}).get(
+            "description", ""
+        )
         assert "component_properties" in desc
 
     def test_required_params_include_modify_contents(self):
         """modify_contents should be a valid action requiring prefab_path."""
         from services.tools.manage_prefabs import REQUIRED_PARAMS
+
         assert "modify_contents" in REQUIRED_PARAMS
         assert "prefab_path" in REQUIRED_PARAMS["modify_contents"]
 
 
 # ── delete_child ─────────────────────────────────────────────────────
 
+
 class TestManagePrefabsTargets:
-    @pytest.mark.parametrize("target", [-19340, "-19340", "McpProbeCube", "Parent/McpProbeCube", "/Parent/McpProbeCube", 0])
+    @pytest.mark.parametrize(
+        "target",
+        [-19340, "-19340", "McpProbeCube", "Parent/McpProbeCube", "/Parent/McpProbeCube", 0],
+    )
     def test_create_target_forwards_id_name_and_path(self, mock_unity, target):
-        result = asyncio.run(manage_prefabs(
-            SimpleNamespace(), action="create_from_gameobject", target=target,
-            prefab_path="Assets/Prefabs/ProbeCube.prefab",
-        ))
+        result = asyncio.run(
+            manage_prefabs(
+                SimpleNamespace(),
+                action="create_from_gameobject",
+                target=target,
+                prefab_path="Assets/Prefabs/ProbeCube.prefab",
+            )
+        )
         assert result["success"] is True
         assert mock_unity["params"]["target"] == target
 
     def test_create_response_keeps_saved_root_identity(self, monkeypatch, mock_unity):
-        response = {"success": True, "data": {
-            "instanceName": "McpProbeCube", "instanceId": -19340,
-            "prefabPath": "Assets/Prefabs/ProbeCube.prefab",
-            "rootObjectName": "ProbeCube", "rootObjectPath": "ProbeCube",
-        }}
+        response = {
+            "success": True,
+            "data": {
+                "instanceName": "McpProbeCube",
+                "instanceId": -19340,
+                "prefabPath": "Assets/Prefabs/ProbeCube.prefab",
+                "rootObjectName": "ProbeCube",
+                "rootObjectPath": "ProbeCube",
+            },
+        }
 
         async def fake_send(*_args):
             return response
 
         monkeypatch.setattr("services.tools.manage_prefabs.send_with_unity_instance", fake_send)
-        result = asyncio.run(manage_prefabs(
-            SimpleNamespace(), action="create_from_gameobject", target=-19340,
-            prefab_path="Assets/Prefabs/ProbeCube.prefab",
-        ))
+        result = asyncio.run(
+            manage_prefabs(
+                SimpleNamespace(),
+                action="create_from_gameobject",
+                target=-19340,
+                prefab_path="Assets/Prefabs/ProbeCube.prefab",
+            )
+        )
         assert result is response
         assert result["data"]["rootObjectPath"] == "ProbeCube"
-
 
 
 class TestManagePrefabsDeleteChild:
@@ -124,7 +143,9 @@ class TestManagePrefabsDeleteChild:
             (t for t in get_registered_tools() if t["name"] == "manage_prefabs"), None
         )
         assert prefab_tool is not None
-        desc = prefab_tool.get("description") or prefab_tool.get("kwargs", {}).get("description", "")
+        desc = prefab_tool.get("description") or prefab_tool.get("kwargs", {}).get(
+            "description", ""
+        )
         assert "delete_child" in desc
 
     def test_delete_child_string_forwards_to_unity(self, mock_unity):
@@ -178,7 +199,9 @@ class TestManagePrefabsStageActions:
             (t for t in get_registered_tools() if t["name"] == "manage_prefabs"), None
         )
         assert prefab_tool is not None
-        desc = prefab_tool.get("description") or prefab_tool.get("kwargs", {}).get("description", "")
+        desc = prefab_tool.get("description") or prefab_tool.get("kwargs", {}).get(
+            "description", ""
+        )
         assert "open_prefab_stage" in desc
 
     def test_description_mentions_save_prefab_stage(self):
@@ -187,7 +210,9 @@ class TestManagePrefabsStageActions:
             (t for t in get_registered_tools() if t["name"] == "manage_prefabs"), None
         )
         assert prefab_tool is not None
-        desc = prefab_tool.get("description") or prefab_tool.get("kwargs", {}).get("description", "")
+        desc = prefab_tool.get("description") or prefab_tool.get("kwargs", {}).get(
+            "description", ""
+        )
         assert "save_prefab_stage" in desc
 
     def test_open_prefab_stage_forwards_prefab_path(self, mock_unity):

@@ -1,12 +1,12 @@
-using NUnit.Framework;
-using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
-using UnityEngine.Events;
-using UnityEditor;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
 using TestNamespace;
+using UnityEditor;
+using UnityEngine;
+using UnityEngine.Events;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -33,11 +33,14 @@ namespace MCPForUnityTests.Editor.Tools
             var comp = testGo.AddComponent<UnityEventTestComponent>();
             int targetId = testGo.GetInstanceIDCompat();
 
-            var value = JObject.Parse(@"{
+            var value = JObject.Parse(
+                @"{
                 ""m_PersistentCalls"": {
                     ""m_Calls"": [
                         {
-                            ""m_Target"": { ""instanceID"": " + targetId + @" },
+                            ""m_Target"": { ""instanceID"": "
+                    + targetId
+                    + @" },
                             ""m_TargetAssemblyTypeName"": ""UnityEngine.GameObject, UnityEngine"",
                             ""m_MethodName"": ""SetActive"",
                             ""m_Mode"": 6,
@@ -48,7 +51,8 @@ namespace MCPForUnityTests.Editor.Tools
                         }
                     ]
                 }
-            }");
+            }"
+            );
 
             bool ok = ComponentOps.SetProperty(comp, "onSimpleEvent", value, out string error);
 
@@ -73,11 +77,14 @@ namespace MCPForUnityTests.Editor.Tools
             var comp = testGo.AddComponent<UnityEventTestComponent>();
             int targetId = testGo.GetInstanceIDCompat();
 
-            var value = JObject.Parse(@"{
+            var value = JObject.Parse(
+                @"{
                 ""m_PersistentCalls"": {
                     ""m_Calls"": [
                         {
-                            ""m_Target"": { ""instanceID"": " + targetId + @" },
+                            ""m_Target"": { ""instanceID"": "
+                    + targetId
+                    + @" },
                             ""m_TargetAssemblyTypeName"": ""UnityEngine.GameObject, UnityEngine"",
                             ""m_MethodName"": ""SetActive"",
                             ""m_Mode"": 6,
@@ -85,7 +92,9 @@ namespace MCPForUnityTests.Editor.Tools
                             ""m_CallState"": 2
                         },
                         {
-                            ""m_Target"": { ""instanceID"": " + targetId + @" },
+                            ""m_Target"": { ""instanceID"": "
+                    + targetId
+                    + @" },
                             ""m_TargetAssemblyTypeName"": ""UnityEngine.GameObject, UnityEngine"",
                             ""m_MethodName"": ""SetActive"",
                             ""m_Mode"": 6,
@@ -94,7 +103,8 @@ namespace MCPForUnityTests.Editor.Tools
                         }
                     ]
                 }
-            }");
+            }"
+            );
 
             bool ok = ComponentOps.SetProperty(comp, "onSimpleEvent", value, out string error);
 
@@ -115,11 +125,14 @@ namespace MCPForUnityTests.Editor.Tools
 
             // First set a call
             int targetId = testGo.GetInstanceIDCompat();
-            var withCall = JObject.Parse(@"{
+            var withCall = JObject.Parse(
+                @"{
                 ""m_PersistentCalls"": {
                     ""m_Calls"": [
                         {
-                            ""m_Target"": { ""instanceID"": " + targetId + @" },
+                            ""m_Target"": { ""instanceID"": "
+                    + targetId
+                    + @" },
                             ""m_TargetAssemblyTypeName"": ""UnityEngine.GameObject, UnityEngine"",
                             ""m_MethodName"": ""SetActive"",
                             ""m_Mode"": 6,
@@ -128,15 +141,18 @@ namespace MCPForUnityTests.Editor.Tools
                         }
                     ]
                 }
-            }");
+            }"
+            );
             ComponentOps.SetProperty(comp, "onSimpleEvent", withCall, out _);
 
             // Now clear it
-            var empty = JObject.Parse(@"{
+            var empty = JObject.Parse(
+                @"{
                 ""m_PersistentCalls"": {
                     ""m_Calls"": []
                 }
-            }");
+            }"
+            );
 
             bool ok = ComponentOps.SetProperty(comp, "onSimpleEvent", empty, out string error);
 
@@ -153,11 +169,14 @@ namespace MCPForUnityTests.Editor.Tools
             var comp = testGo.AddComponent<UnityEventTestComponent>();
             int targetId = testGo.GetInstanceIDCompat();
 
-            var value = JObject.Parse(@"{
+            var value = JObject.Parse(
+                @"{
                 ""m_PersistentCalls"": {
                     ""m_Calls"": [
                         {
-                            ""m_Target"": { ""instanceID"": " + targetId + @" },
+                            ""m_Target"": { ""instanceID"": "
+                    + targetId
+                    + @" },
                             ""m_TargetAssemblyTypeName"": ""UnityEngine.GameObject, UnityEngine"",
                             ""m_MethodName"": ""SetActive"",
                             ""m_Mode"": 6,
@@ -166,7 +185,8 @@ namespace MCPForUnityTests.Editor.Tools
                         }
                     ]
                 }
-            }");
+            }"
+            );
 
             bool ok = ComponentOps.SetProperty(comp, "_onPrivateEvent", value, out string error);
 
@@ -221,7 +241,7 @@ namespace MCPForUnityTests.Editor.Tools
             var invalid = new JObject
             {
                 ["m_PersistentCalls"] = new JObject { ["m_Calls"] = new JArray() },
-                ["m_UnknownProperty"] = 1
+                ["m_UnknownProperty"] = 1,
             };
 
             bool ok = ComponentOps.SetProperty(comp, "onSimpleEvent", invalid, out string error);
@@ -246,8 +266,12 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(ok);
             StringAssert.Contains("Expected boolean value", error);
             using var so = new SerializedObject(comp);
-            Assert.IsTrue(so.FindProperty("onSimpleEvent.m_PersistentCalls.m_Calls")
-                .GetArrayElementAtIndex(0).FindPropertyRelative("m_Arguments.m_BoolArgument").boolValue);
+            Assert.IsTrue(
+                so.FindProperty("onSimpleEvent.m_PersistentCalls.m_Calls")
+                    .GetArrayElementAtIndex(0)
+                    .FindPropertyRelative("m_Arguments.m_BoolArgument")
+                    .boolValue
+            );
         }
 
         private JObject CreateEventValue(bool argument)
@@ -256,16 +280,18 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["m_PersistentCalls"] = new JObject
                 {
-                    ["m_Calls"] = new JArray(new JObject
-                    {
-                        ["m_Target"] = new JObject { ["instanceID"] = testGo.GetInstanceIDCompat() },
-                        ["m_TargetAssemblyTypeName"] = "UnityEngine.GameObject, UnityEngine",
-                        ["m_MethodName"] = "SetActive",
-                        ["m_Mode"] = 6,
-                        ["m_Arguments"] = new JObject { ["m_BoolArgument"] = argument },
-                        ["m_CallState"] = 2
-                    })
-                }
+                    ["m_Calls"] = new JArray(
+                        new JObject
+                        {
+                            ["m_Target"] = new JObject { ["instanceID"] = testGo.GetInstanceIDCompat() },
+                            ["m_TargetAssemblyTypeName"] = "UnityEngine.GameObject, UnityEngine",
+                            ["m_MethodName"] = "SetActive",
+                            ["m_Mode"] = 6,
+                            ["m_Arguments"] = new JObject { ["m_BoolArgument"] = argument },
+                            ["m_CallState"] = 2,
+                        }
+                    ),
+                },
             };
         }
 
@@ -282,11 +308,14 @@ namespace MCPForUnityTests.Editor.Tools
                 ["search_method"] = "by_name",
                 ["component_type"] = "UnityEventTestComponent",
                 ["property"] = "onSimpleEvent",
-                ["value"] = JObject.Parse(@"{
+                ["value"] = JObject.Parse(
+                    @"{
                     ""m_PersistentCalls"": {
                         ""m_Calls"": [
                             {
-                                ""m_Target"": { ""instanceID"": " + targetId + @" },
+                                ""m_Target"": { ""instanceID"": "
+                        + targetId
+                        + @" },
                                 ""m_TargetAssemblyTypeName"": ""UnityEngine.GameObject, UnityEngine"",
                                 ""m_MethodName"": ""SetActive"",
                                 ""m_Mode"": 6,
@@ -295,7 +324,8 @@ namespace MCPForUnityTests.Editor.Tools
                             }
                         ]
                     }
-                }")
+                }"
+                ),
             };
 
             var result = ManageComponents.HandleCommand(p);

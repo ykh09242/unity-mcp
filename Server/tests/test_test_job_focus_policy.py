@@ -12,8 +12,12 @@ import services.tools.run_tests as mod
 
 
 def snapshot(update=100, completed=0, **progress):
-    return {"job_id": "job", "status": "running", "last_update_unix_ms": update,
-            "progress": {"completed": completed, "editor_is_focused": False, **progress}}
+    return {
+        "job_id": "job",
+        "status": "running",
+        "last_update_unix_ms": update,
+        "progress": {"completed": completed, "editor_is_focused": False, **progress},
+    }
 
 
 @pytest.fixture
@@ -34,9 +38,13 @@ def policy(monkeypatch):
     return nudge
 
 
-async def poll(data=None, instance="Game@hash", user=None, job="job", wait=True, observation_order=None):
+async def poll(
+    data=None, instance="Game@hash", user=None, job="job", wait=True, observation_order=None
+):
     data = snapshot() if data is None else data
-    await mod._update_job_nudge(instance, user, job, data, wait=wait, observation_order=observation_order)
+    await mod._update_job_nudge(
+        instance, user, job, data, wait=wait, observation_order=observation_order
+    )
     return data
 
 
@@ -75,9 +83,14 @@ async def test_stale_alternating_pollers_cannot_renew_spent_budget(policy):
     assert data["progress"]["focus_nudge_attempts"] == 1
 
 
-@pytest.mark.parametrize("progress", [
-    {"completed": 1}, {"current_test_started_unix_ms": 200}, {"last_finished_unix_ms": 200},
-])
+@pytest.mark.parametrize(
+    "progress",
+    [
+        {"completed": 1},
+        {"current_test_started_unix_ms": 200},
+        {"last_finished_unix_ms": 200},
+    ],
+)
 @pytest.mark.asyncio
 async def test_actual_test_progress_renews_only_its_job_budget(policy, progress):
     for _ in range(3):
@@ -235,7 +248,9 @@ async def test_stale_unfocused_reply_cannot_override_safe_fresh_observation(poli
 
 @pytest.mark.parametrize("safe_flags", [{"editor_is_focused": True}, {"run_in_background": True}])
 @pytest.mark.asyncio
-async def test_new_sequential_unfocused_observation_can_nudge_without_test_progress(policy, safe_flags):
+async def test_new_sequential_unfocused_observation_can_nudge_without_test_progress(
+    policy, safe_flags
+):
     await poll(snapshot(200, **safe_flags))
     policy.assert_not_awaited()
     data = await poll(snapshot(200))
@@ -244,7 +259,9 @@ async def test_new_sequential_unfocused_observation_can_nudge_without_test_progr
 
 
 @pytest.mark.asyncio
-async def test_actual_fetch_order_preserves_newer_flags_when_older_request_replies_late(policy, monkeypatch):
+async def test_actual_fetch_order_preserves_newer_flags_when_older_request_replies_late(
+    policy, monkeypatch
+):
     started, release = asyncio.Event(), asyncio.Event()
     fetch_count = 0
 
@@ -375,7 +392,9 @@ async def test_resolution_race_with_terminal_status_does_not_schedule(policy):
 
 
 @pytest.mark.asyncio
-async def test_external_and_wait_timeout_paths_share_policy_and_response_fields(policy, monkeypatch):
+async def test_external_and_wait_timeout_paths_share_policy_and_response_fields(
+    policy, monkeypatch
+):
     context = SimpleNamespace()
     monkeypatch.setattr(mod, "get_unity_instance_from_context", AsyncMock(return_value="Game@hash"))
     send = AsyncMock(side_effect=lambda *args, **kwargs: {"success": True, "data": snapshot()})
@@ -412,21 +431,31 @@ async def test_external_and_wait_timeout_paths_share_policy_and_response_fields(
     assert not mod._nudge_states
 
 
-@pytest.mark.parametrize("path,expected", [
-    (r"C:\Worktrees\Game\Assets", r"C:\Worktrees\Game"),
-    ("/worktrees/Game/Assets/", "/worktrees/Game"),
-    (r"C:\Game\MyAssets", r"C:\Game\MyAssets"),
-    ("Game/Assets", None),
-    (r"\Projects\Game\Assets", None),
-])
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        (r"C:\Worktrees\Game\Assets", r"C:\Worktrees\Game"),
+        ("/worktrees/Game/Assets/", "/worktrees/Game"),
+        (r"C:\Game\MyAssets", r"C:\Game\MyAssets"),
+        ("Game/Assets", None),
+        (r"\Projects\Game\Assets", None),
+    ],
+)
 @pytest.mark.asyncio
-async def test_stdio_path_uses_exact_registry_entry_and_strips_only_assets(monkeypatch, path, expected):
+async def test_stdio_path_uses_exact_registry_entry_and_strips_only_assets(
+    monkeypatch, path, expected
+):
     from transport.legacy.stdio_port_registry import stdio_port_registry
+
     monkeypatch.setattr(mod.config, "transport_mode", "stdio")
-    monkeypatch.setattr(stdio_port_registry, "get_instances", lambda: [
-        SimpleNamespace(id="Game@wrong", hash="wrong", path=r"C:\Wrong\Assets"),
-        SimpleNamespace(id="Game@right", hash="right", path=path),
-    ])
+    monkeypatch.setattr(
+        stdio_port_registry,
+        "get_instances",
+        lambda: [
+            SimpleNamespace(id="Game@wrong", hash="wrong", path=r"C:\Wrong\Assets"),
+            SimpleNamespace(id="Game@right", hash="right", path=path),
+        ],
+    )
     assert await mod._get_unity_project_path("Game@right") == expected
     assert await mod._get_unity_project_path("right") == expected
     assert await mod._get_unity_project_path("Game") is None

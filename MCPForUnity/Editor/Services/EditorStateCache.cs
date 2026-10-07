@@ -7,8 +7,8 @@ using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
-using UnityEditorInternal;
 using UnityEditor.SceneManagement;
+using UnityEditorInternal;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Services
@@ -383,7 +383,8 @@ namespace MCPForUnity.Editor.Services
                 activityPhase = "playmode_transition";
             }
 
-            bool hasChanges = compilationEdge
+            bool hasChanges =
+                compilationEdge
                 || _lastTrackedScenePath != scenePath
                 || _lastTrackedSceneName != sceneName
                 || _lastTrackedIsFocused != isFocused
@@ -439,7 +440,8 @@ namespace MCPForUnity.Editor.Services
         /// </summary>
         internal static IDisposable Subscribe(Action<JObject> observer)
         {
-            if (observer == null) throw new ArgumentNullException(nameof(observer));
+            if (observer == null)
+                throw new ArgumentNullException(nameof(observer));
             if (Thread.CurrentThread.ManagedThreadId != MainThreadId)
                 throw new InvalidOperationException("Editor-state subscription requires the Unity main thread.");
             JObject initial;
@@ -448,10 +450,14 @@ namespace MCPForUnity.Editor.Services
                 Observers.Add(observer);
                 initial = (JObject)_cached.DeepClone();
             }
-            try { observer(initial); }
+            try
+            {
+                observer(initial);
+            }
             catch
             {
-                lock (LockObj) Observers.Remove(observer);
+                lock (LockObj)
+                    Observers.Remove(observer);
                 throw;
             }
             return new ObservationSubscription(observer);
@@ -460,12 +466,17 @@ namespace MCPForUnity.Editor.Services
         private static void NotifyObservers()
         {
             Action<JObject>[] observers;
-            lock (LockObj) observers = Observers.ToArray();
+            lock (LockObj)
+                observers = Observers.ToArray();
             foreach (var observer in observers)
             {
                 JObject snapshot;
-                lock (LockObj) snapshot = (JObject)_cached.DeepClone();
-                try { observer(snapshot); }
+                lock (LockObj)
+                    snapshot = (JObject)_cached.DeepClone();
+                try
+                {
+                    observer(snapshot);
+                }
                 catch (Exception ex)
                 {
                     McpLog.Warn($"[EditorStateCache] Observer failed: {ex.Message}");
@@ -476,12 +487,15 @@ namespace MCPForUnity.Editor.Services
         private sealed class ObservationSubscription : IDisposable
         {
             private Action<JObject> _observer;
+
             internal ObservationSubscription(Action<JObject> observer) => _observer = observer;
+
             public void Dispose()
             {
                 var observer = Interlocked.Exchange(ref _observer, null);
                 if (observer != null)
-                    lock (LockObj) Observers.Remove(observer);
+                    lock (LockObj)
+                        Observers.Remove(observer);
             }
         }
 
@@ -535,7 +549,7 @@ namespace MCPForUnity.Editor.Services
                     UnityVersion = Application.unityVersion,
                     ProjectId = null,
                     Platform = Application.platform.ToString(),
-                    IsBatchMode = Application.isBatchMode
+                    IsBatchMode = Application.isBatchMode,
                 },
                 Editor = new EditorStateEditor
                 {
@@ -544,20 +558,20 @@ namespace MCPForUnity.Editor.Services
                     {
                         IsPlaying = EditorApplication.isPlaying,
                         IsPaused = EditorApplication.isPaused,
-                        IsChanging = EditorApplication.isPlayingOrWillChangePlaymode
+                        IsChanging = EditorApplication.isPlayingOrWillChangePlaymode,
                     },
                     ActiveScene = new EditorStateActiveScene
                     {
                         Path = scenePath,
                         Guid = sceneGuid,
-                        Name = scene.name ?? string.Empty
-                    }
+                        Name = scene.name ?? string.Empty,
+                    },
                 },
                 Activity = new EditorStateActivity
                 {
                     Phase = activityPhase,
                     SinceUnixMs = _observedUnixMs,
-                    Reasons = new[] { reason }
+                    Reasons = new[] { reason },
                 },
                 Compilation = new EditorStateCompilation
                 {
@@ -566,7 +580,7 @@ namespace MCPForUnity.Editor.Services
                     LastCompileStartedUnixMs = GetSessionUnixMs(CompileStartedKey),
                     LastCompileFinishedUnixMs = GetSessionUnixMs(CompileFinishedKey),
                     LastDomainReloadBeforeUnixMs = _domainReloadBeforeUnixMs,
-                    LastDomainReloadAfterUnixMs = _domainReloadAfterUnixMs
+                    LastDomainReloadAfterUnixMs = _domainReloadAfterUnixMs,
                 },
                 Assets = new EditorStateAssets
                 {
@@ -579,8 +593,8 @@ namespace MCPForUnity.Editor.Services
                     {
                         IsRefreshInProgress = false,
                         LastRefreshRequestedUnixMs = null,
-                        LastRefreshFinishedUnixMs = null
-                    }
+                        LastRefreshFinishedUnixMs = null,
+                    },
                 },
                 Tests = new EditorStateTests
                 {
@@ -594,19 +608,12 @@ namespace MCPForUnity.Editor.Services
                         {
                             FinishedUnixMs = TestRunStatus.FinishedUnixMs,
                             Result = "unknown",
-                            Counts = null
+                            Counts = null,
                         }
-                        : null
+                        : null,
                 },
-                Transport = new EditorStateTransport
-                {
-                    UnityBridgeConnected = null,
-                    LastMessageUnixMs = null
-                },
-                Settings = new EditorStateSettings
-                {
-                    BatchExecuteMaxCommands = Tools.BatchExecute.GetMaxCommandsPerBatch()
-                }
+                Transport = new EditorStateTransport { UnityBridgeConnected = null, LastMessageUnixMs = null },
+                Settings = new EditorStateSettings { BatchExecuteMaxCommands = Tools.BatchExecute.GetMaxCommandsPerBatch() },
             };
 
             // Record from the same captured values that produced this snapshot.
@@ -668,15 +675,12 @@ namespace MCPForUnity.Editor.Services
         internal static long? GetSessionUnixMs(string key)
         {
             string raw = SessionState.GetString(key, string.Empty);
-            return long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out long value)
-                ? value
-                : (long?)null;
+            return long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out long value) ? value : (long?)null;
         }
 
         // SessionState has no long overload, so these round-trip through an
         // invariant string rather than losing precision through int or float.
-        internal static void SetSessionUnixMs(string key, long value)
-            => SessionState.SetString(key, value.ToString(CultureInfo.InvariantCulture));
+        internal static void SetSessionUnixMs(string key, long value) => SessionState.SetString(key, value.ToString(CultureInfo.InvariantCulture));
 
         // Set/cleared by the CompilationPipeline.compilationStarted/Finished events
         // subscribed in the static ctor. NOTE: CompilationPipeline.isCompiling does not
@@ -707,5 +711,3 @@ namespace MCPForUnity.Editor.Services
         }
     }
 }
-
-

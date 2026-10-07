@@ -34,10 +34,17 @@ def page_integer(value: Any, default: int, minimum: int, maximum: int, name: str
     return number
 
 
-def validate_page(size: Any, position: Any, *, preview: bool = False, cursor: bool = False) -> tuple[int, int]:
+def validate_page(
+    size: Any, position: Any, *, preview: bool = False, cursor: bool = False
+) -> tuple[int, int]:
     maximum = MAX_PREVIEW_PAGE_SIZE if preview else MAX_PAGE_SIZE
     return (
         page_integer(size, min(50, maximum), 1, maximum, "page_size"),
-        page_integer(position, 0 if cursor else 1, 0 if cursor else 1, MAX_POSITION,
-                     "cursor" if cursor else "page_number"),
+        page_integer(
+            position,
+            0 if cursor else 1,
+            0 if cursor else 1,
+            MAX_POSITION,
+            "cursor" if cursor else "page_number",
+        ),
     )

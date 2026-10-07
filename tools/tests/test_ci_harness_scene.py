@@ -1,4 +1,5 @@
 """Prevent an unnamed dirty smoke scene from silently cancelling UTF in batch mode."""
+
 import sys
 from pathlib import Path
 
@@ -41,14 +42,18 @@ def test_ci_scene_failure_cannot_be_treated_as_ready(raises, capsys):
             raise RuntimeError("sensitive transport output")
         return {"success": False, "message": "save failed"}
 
-    assert not lh.prepare_ci_scene(lh.build_arg_parser().parse_args(["--ci"]), "inst@hash", send=send)
+    assert not lh.prepare_ci_scene(
+        lh.build_arg_parser().parse_args(["--ci"]), "inst@hash", send=send
+    )
     output = capsys.readouterr().out
     assert "tests were not started" in output
     assert "sensitive transport output" not in output
 
 
 @pytest.mark.parametrize("fail_on_relaunch", [False, True])
-def test_setup_failure_preserves_results_before_editor_teardown(tmp_path, monkeypatch, fail_on_relaunch):
+def test_setup_failure_preserves_results_before_editor_teardown(
+    tmp_path, monkeypatch, fail_on_relaunch
+):
     from types import SimpleNamespace
     import xml.etree.ElementTree as ET
 
@@ -62,7 +67,9 @@ def test_setup_failure_preserves_results_before_editor_teardown(tmp_path, monkey
     )
     monkeypatch.setenv("UNITY_IMAGE", "fake-image")
     monkeypatch.setattr(lh, "make_launcher", lambda *_: launcher)
-    monkeypatch.setattr(lh, "wait_for_ready", lambda *_: lh.ReadyInfo(6400, "instance", "status.json"))
+    monkeypatch.setattr(
+        lh, "wait_for_ready", lambda *_: lh.ReadyInfo(6400, "instance", "status.json")
+    )
     monkeypatch.setattr(lh, "compile_probe", lambda *_: True)
     monkeypatch.setattr(lh.time, "sleep", lambda *_: None)
     monkeypatch.setattr(lh.signal, "signal", lambda *_: None)
@@ -73,15 +80,31 @@ def test_setup_failure_preserves_results_before_editor_teardown(tmp_path, monkey
     monkeypatch.setattr(lh, "prepare_ci_scene", lambda *_: next(preparations))
 
     def passed_leg(name):
-        return lh.LegOutcome(name, "pass", True, "passed", 0,
-                             lh.JUnitSuite(name=name, cases=[lh.JUnitCase(name=f"{name}.passed")]))
+        return lh.LegOutcome(
+            name,
+            "pass",
+            True,
+            "passed",
+            0,
+            lh.JUnitSuite(name=name, cases=[lh.JUnitCase(name=f"{name}.passed")]),
+        )
 
     monkeypatch.setattr(lh, "run_smoke_leg", lambda *_a, **_kw: passed_leg("smoke"))
     monkeypatch.setattr(lh, "run_utf_leg", lambda *_a, **_kw: passed_leg("editmode"))
     monkeypatch.setattr(lh, "run_playmode_with_retry", lambda *_a, **kw: kw["relaunch"]())
-    result = lh.main(["--ci", "--project-path", str(tmp_path / "project"),
-                      "--status-dir", str(tmp_path / "status"), "--reports", str(reports),
-                      "--junit", str(reports / "junit-smoke.xml")])
+    result = lh.main(
+        [
+            "--ci",
+            "--project-path",
+            str(tmp_path / "project"),
+            "--status-dir",
+            str(tmp_path / "status"),
+            "--reports",
+            str(reports),
+            "--junit",
+            str(reports / "junit-smoke.xml"),
+        ]
+    )
 
     assert result == 2
     root = ET.parse(reports / "junit-all.xml").getroot()

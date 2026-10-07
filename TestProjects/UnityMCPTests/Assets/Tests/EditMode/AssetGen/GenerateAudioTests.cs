@@ -33,17 +33,28 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             AssetGenJobManager.ResetForTests();
             SecureKeyStore.ResetForTests();
-            try { if (Directory.Exists(_dir)) Directory.Delete(_dir, true); } catch { }
+            try
+            {
+                if (Directory.Exists(_dir))
+                    Directory.Delete(_dir, true);
+            }
+            catch { }
         }
 
-        private static JObject Call(JObject p)
-            => JObject.Parse(JsonConvert.SerializeObject(GenerateAudio.HandleCommand(p)));
+        private static JObject Call(JObject p) => JObject.Parse(JsonConvert.SerializeObject(GenerateAudio.HandleCommand(p)));
 
         [Test]
         public void Generate_WithKey_ReturnsPendingJobId()
         {
             _store.Set("fal", "falkey");
-            JObject gen = Call(new JObject { ["action"] = "generate", ["provider"] = "fal", ["prompt"] = "gentle rain" });
+            JObject gen = Call(
+                new JObject
+                {
+                    ["action"] = "generate",
+                    ["provider"] = "fal",
+                    ["prompt"] = "gentle rain",
+                }
+            );
             Assert.AreEqual("pending", (string)gen["_mcp_status"]);
             Assert.IsFalse(string.IsNullOrEmpty((string)gen["data"]["job_id"]));
         }
@@ -51,7 +62,14 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void Generate_MissingKey_ReturnsError()
         {
-            JObject resp = Call(new JObject { ["action"] = "generate", ["provider"] = "fal", ["prompt"] = "gentle rain" });
+            JObject resp = Call(
+                new JObject
+                {
+                    ["action"] = "generate",
+                    ["provider"] = "fal",
+                    ["prompt"] = "gentle rain",
+                }
+            );
             Assert.AreEqual(false, (bool)resp["success"]);
             StringAssert.Contains("No API key", (string)resp["error"]);
         }
@@ -68,7 +86,14 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void Generate_UnknownProvider_ReturnsError()
         {
-            JObject resp = Call(new JObject { ["action"] = "generate", ["provider"] = "elevenlabs", ["prompt"] = "gentle rain" });
+            JObject resp = Call(
+                new JObject
+                {
+                    ["action"] = "generate",
+                    ["provider"] = "elevenlabs",
+                    ["prompt"] = "gentle rain",
+                }
+            );
             Assert.AreEqual(false, (bool)resp["success"]);
         }
 
@@ -80,7 +105,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             string s = resp.ToString();
             StringAssert.Contains("fal", s);
             StringAssert.Contains("audio", s);
-            StringAssert.DoesNotContain("tripo", s);      // model providers excluded
+            StringAssert.DoesNotContain("tripo", s); // model providers excluded
             StringAssert.DoesNotContain("openrouter", s); // image providers excluded
         }
     }

@@ -1,4 +1,5 @@
 """Real CLI and SDK callers preserve job failures that have no test result."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -7,7 +8,7 @@ import sys
 import pytest
 
 
-SETUP = r'''
+SETUP = r"""
 import copy
 import json
 import os
@@ -33,9 +34,11 @@ def failed_job(error):
     return {"success": True, "message": "Test job status retrieved.", "data": {
         "job_id": "owned-job", "status": "failed", "mode": "EditMode",
         "error": error, "result": None}}
-'''
+"""
 
-CLI_PROGRAM = SETUP + r'''
+CLI_PROGRAM = (
+    SETUP
+    + r"""
 import httpx
 from click.testing import CliRunner
 from cli.main import cli
@@ -94,9 +97,12 @@ for label, reply, expected in cases:
             count += 1
 print(json.dumps({"calls": count, "failures": failures}))
 assert not failures, failures
-'''
+"""
+)
 
-SDK_PROGRAM = SETUP + r'''
+SDK_PROGRAM = (
+    SETUP
+    + r"""
 import anyio
 from fastmcp import Client, FastMCP
 from fastmcp.server.middleware import Middleware
@@ -149,18 +155,33 @@ async def main():
                 count += 1
     print(json.dumps({"protocol": sys.argv[1], "calls": count}))
 anyio.run(main)
-'''
+"""
+)
 
 
 def _run(tmp_path, program, *arguments):
     env = {key: value for key, value in os.environ.items() if not key.startswith("UNITY_MCP_")}
-    for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME", "UNITY_MCP_LOG_DIR", "TEMP", "TMP"):
+    for key in (
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "XDG_DATA_HOME",
+        "UNITY_MCP_LOG_DIR",
+        "TEMP",
+        "TMP",
+    ):
         env[key] = str(tmp_path)
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "true"
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
     env.pop("PYTEST_CURRENT_TEST", None)
-    result = subprocess.run([sys.executable, "-B", "-c", program, *arguments], env=env,
-                            capture_output=True, text=True, timeout=60)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", program, *arguments],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
 
 

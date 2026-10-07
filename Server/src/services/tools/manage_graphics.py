@@ -10,41 +10,70 @@ from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
 VOLUME_ACTIONS = [
-    "volume_create", "volume_add_effect", "volume_set_effect",
-    "volume_remove_effect", "volume_get_info", "volume_set_properties",
-    "volume_list_effects", "volume_create_profile",
+    "volume_create",
+    "volume_add_effect",
+    "volume_set_effect",
+    "volume_remove_effect",
+    "volume_get_info",
+    "volume_set_properties",
+    "volume_list_effects",
+    "volume_create_profile",
 ]
 
 BAKE_ACTIONS = [
-    "bake_start", "bake_cancel", "bake_status", "bake_clear",
-    "bake_reflection_probe", "bake_get_settings", "bake_set_settings",
-    "bake_create_light_probe_group", "bake_create_reflection_probe",
+    "bake_start",
+    "bake_cancel",
+    "bake_status",
+    "bake_clear",
+    "bake_reflection_probe",
+    "bake_get_settings",
+    "bake_set_settings",
+    "bake_create_light_probe_group",
+    "bake_create_reflection_probe",
     "bake_set_probe_positions",
 ]
 
 STATS_ACTIONS = [
-    "stats_get", "stats_list_counters", "stats_set_scene_debug", "stats_get_memory",
+    "stats_get",
+    "stats_list_counters",
+    "stats_set_scene_debug",
+    "stats_get_memory",
 ]
 
 PIPELINE_ACTIONS = [
-    "pipeline_get_info", "pipeline_set_quality",
-    "pipeline_get_settings", "pipeline_set_settings",
+    "pipeline_get_info",
+    "pipeline_set_quality",
+    "pipeline_get_settings",
+    "pipeline_set_settings",
 ]
 
 FEATURE_ACTIONS = [
-    "feature_list", "feature_add", "feature_remove",
-    "feature_configure", "feature_toggle", "feature_reorder",
+    "feature_list",
+    "feature_add",
+    "feature_remove",
+    "feature_configure",
+    "feature_toggle",
+    "feature_reorder",
 ]
 
 SKYBOX_ACTIONS = [
-    "skybox_get", "skybox_set_material", "skybox_set_properties",
-    "skybox_set_ambient", "skybox_set_fog", "skybox_set_reflection",
+    "skybox_get",
+    "skybox_set_material",
+    "skybox_set_properties",
+    "skybox_set_ambient",
+    "skybox_set_fog",
+    "skybox_set_reflection",
     "skybox_set_sun",
 ]
 
 ALL_ACTIONS = (
-    ["ping"] + VOLUME_ACTIONS + BAKE_ACTIONS + STATS_ACTIONS
-    + PIPELINE_ACTIONS + FEATURE_ACTIONS + SKYBOX_ACTIONS
+    ["ping"]
+    + VOLUME_ACTIONS
+    + BAKE_ACTIONS
+    + STATS_ACTIONS
+    + PIPELINE_ACTIONS
+    + FEATURE_ACTIONS
+    + SKYBOX_ACTIONS
 )
 
 
@@ -93,7 +122,9 @@ async def manage_graphics(
     weight: Annotated[Optional[float], "Volume weight (0-1)."] = None,
     priority: Annotated[Optional[float], "Volume priority."] = None,
     profile_path: Annotated[Optional[str], "Asset path for VolumeProfile."] = None,
-    effects: Annotated[Optional[list[dict[str, Any]]], "Effect definitions for volume_create."] = None,
+    effects: Annotated[
+        Optional[list[dict[str, Any]]], "Effect definitions for volume_create."
+    ] = None,
     path: Annotated[Optional[str], "Asset path for volume_create_profile."] = None,
     level: Annotated[Optional[str], "Quality level name or index."] = None,
     position: Annotated[Optional[list[float]], "Position [x,y,z]."] = None,
@@ -120,8 +151,12 @@ async def manage_graphics(
     color: Annotated[Optional[list[float]], "Color [r,g,b,a] for ambient/fog."] = None,
     intensity: Annotated[Optional[float], "Intensity value (ambient/reflection)."] = None,
     ambient_mode: Annotated[Optional[str], "Ambient mode: Skybox, Trilight, Flat, Custom."] = None,
-    equator_color: Annotated[Optional[list[float]], "Equator color [r,g,b,a] (Trilight mode)."] = None,
-    ground_color: Annotated[Optional[list[float]], "Ground color [r,g,b,a] (Trilight mode)."] = None,
+    equator_color: Annotated[
+        Optional[list[float]], "Equator color [r,g,b,a] (Trilight mode)."
+    ] = None,
+    ground_color: Annotated[
+        Optional[list[float]], "Ground color [r,g,b,a] (Trilight mode)."
+    ] = None,
     fog_enabled: Annotated[Optional[bool], "Enable or disable fog."] = None,
     fog_mode: Annotated[Optional[str], "Fog mode: Linear, Exponential, ExponentialSquared."] = None,
     fog_color: Annotated[Optional[list[float]], "Fog color [r,g,b,a]."] = None,
@@ -130,7 +165,9 @@ async def manage_graphics(
     fog_end: Annotated[Optional[float], "Fog end distance (Linear mode)."] = None,
     bounces: Annotated[Optional[int], "Reflection bounces."] = None,
     reflection_mode: Annotated[Optional[str], "Default reflection mode: Skybox, Custom."] = None,
-    category: Annotated[Optional[str], "Profiler counter category for stats_list_counters (default Render)."] = None,
+    category: Annotated[
+        Optional[str], "Profiler counter category for stats_list_counters (default Render)."
+    ] = None,
 ) -> dict[str, Any]:
     action_lower = action.lower()
     if action_lower not in ALL_ACTIONS:
@@ -145,22 +182,48 @@ async def manage_graphics(
 
     # Map all non-None params
     param_map = {
-        "target": target, "effect": effect, "parameters": parameters,
-        "properties": properties, "settings": settings, "name": name,
-        "is_global": is_global, "weight": weight, "priority": priority,
-        "profile_path": profile_path, "effects": effects, "path": path,
-        "level": level, "position": position, "grid_size": grid_size,
-        "spacing": spacing, "size": size, "resolution": resolution,
-        "mode": mode, "hdr": hdr, "box_projection": box_projection,
-        "positions": positions, "index": index, "active": active,
-        "order": order, "async": async_bake, "type": feature_type,
-        "material": material, "color": color, "intensity": intensity,
-        "ambient_mode": ambient_mode, "equator_color": equator_color,
-        "ground_color": ground_color, "fog_enabled": fog_enabled,
-        "fog_mode": fog_mode, "fog_color": fog_color,
-        "fog_density": fog_density, "fog_start": fog_start,
-        "fog_end": fog_end, "bounces": bounces,
-        "reflection_mode": reflection_mode, "category": category,
+        "target": target,
+        "effect": effect,
+        "parameters": parameters,
+        "properties": properties,
+        "settings": settings,
+        "name": name,
+        "is_global": is_global,
+        "weight": weight,
+        "priority": priority,
+        "profile_path": profile_path,
+        "effects": effects,
+        "path": path,
+        "level": level,
+        "position": position,
+        "grid_size": grid_size,
+        "spacing": spacing,
+        "size": size,
+        "resolution": resolution,
+        "mode": mode,
+        "hdr": hdr,
+        "box_projection": box_projection,
+        "positions": positions,
+        "index": index,
+        "active": active,
+        "order": order,
+        "async": async_bake,
+        "type": feature_type,
+        "material": material,
+        "color": color,
+        "intensity": intensity,
+        "ambient_mode": ambient_mode,
+        "equator_color": equator_color,
+        "ground_color": ground_color,
+        "fog_enabled": fog_enabled,
+        "fog_mode": fog_mode,
+        "fog_color": fog_color,
+        "fog_density": fog_density,
+        "fog_start": fog_start,
+        "fog_end": fog_end,
+        "bounces": bounces,
+        "reflection_mode": reflection_mode,
+        "category": category,
     }
     for key, val in param_map.items():
         if val is not None:

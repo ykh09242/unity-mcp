@@ -35,7 +35,11 @@ async def test_auto_selects_single_instance_via_pluginhub(monkeypatch):
     monkeypatch.setitem(sys.modules, "transport.plugin_hub", plugin_hub)
     monkeypatch.delitem(sys.modules, "transport.unity_instance_middleware", raising=False)
 
-    from transport.unity_instance_middleware import UnityInstanceMiddleware, PluginHub as ImportedPluginHub
+    from transport.unity_instance_middleware import (
+        UnityInstanceMiddleware,
+        PluginHub as ImportedPluginHub,
+    )
+
     assert ImportedPluginHub is plugin_hub.PluginHub
 
     monkeypatch.setattr(config, "transport_mode", "http")
@@ -83,7 +87,11 @@ async def test_auto_selects_single_instance_via_stdio(monkeypatch):
     monkeypatch.setitem(sys.modules, "transport.plugin_hub", plugin_hub)
     monkeypatch.delitem(sys.modules, "transport.unity_instance_middleware", raising=False)
 
-    from transport.unity_instance_middleware import UnityInstanceMiddleware, PluginHub as ImportedPluginHub
+    from transport.unity_instance_middleware import (
+        UnityInstanceMiddleware,
+        PluginHub as ImportedPluginHub,
+    )
+
     assert ImportedPluginHub is plugin_hub.PluginHub
 
     monkeypatch.setattr(config, "transport_mode", "stdio")
@@ -126,7 +134,11 @@ async def test_auto_select_handles_stdio_errors(monkeypatch):
     monkeypatch.setitem(sys.modules, "transport.plugin_hub", plugin_hub)
     monkeypatch.delitem(sys.modules, "transport.unity_instance_middleware", raising=False)
 
-    from transport.unity_instance_middleware import UnityInstanceMiddleware, PluginHub as ImportedPluginHub
+    from transport.unity_instance_middleware import (
+        UnityInstanceMiddleware,
+        PluginHub as ImportedPluginHub,
+    )
+
     assert ImportedPluginHub is plugin_hub.PluginHub
 
     middleware = UnityInstanceMiddleware()

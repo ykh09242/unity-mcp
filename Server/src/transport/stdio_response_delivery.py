@@ -1,4 +1,5 @@
 """Response reservations through the SDK's actual stdio write and flush."""
+
 from __future__ import annotations
 
 import inspect
@@ -24,13 +25,13 @@ _INPUT_SLAB_BYTES: Final = 65_536
 
 class _StdioInputTooLarge(ValueError):
     def __init__(self) -> None:
-        super().__init__('MCP stdio request exceeds the size limit')
+        super().__init__("MCP stdio request exceeds the size limit")
 
 
 @dataclass
 class _InputLineOperation:
     read: Callable[[], str]
-    line: str = ''
+    line: str = ""
 
     def run(self) -> None:
         # Do not return the large line: an idle AnyIO worker retains its last
@@ -43,7 +44,7 @@ class _BoundedStdioInput:
 
     def __init__(self, source, max_bytes: int = MAX_STDIO_INPUT_BYTES):
         self.source, self.max_bytes = source, max_bytes
-        self.pending = b''
+        self.pending = b""
         self.skip_lf = False
 
     def __aiter__(self):
@@ -55,7 +56,7 @@ class _BoundedStdioInput:
             await _settled_stdio_operation(operation.run)
             line = operation.line
         finally:
-            operation.line = ''
+            operation.line = ""
         if not line:
             raise StopAsyncIteration
         return line
@@ -66,26 +67,32 @@ class _BoundedStdioInput:
             if not self.pending:
                 # At the ceiling read only one byte to distinguish a legal
                 # delimiter/EOF from an oversized unfinished request.
-                self.pending = self.source.read1(min(_INPUT_SLAB_BYTES, self.max_bytes - len(data) + 1))
+                self.pending = self.source.read1(
+                    min(_INPUT_SLAB_BYTES, self.max_bytes - len(data) + 1)
+                )
                 if not self.pending:
-                    return data.decode('utf-8', errors='replace')
+                    return data.decode("utf-8", errors="replace")
             if self.skip_lf:
                 self.skip_lf = False
-                if self.pending.startswith(b'\n'):
+                if self.pending.startswith(b"\n"):
                     self.pending = self.pending[1:]
                     continue
-            cr, lf = self.pending.find(b'\r'), self.pending.find(b'\n')
-            boundary = min(position for position in (cr, lf) if position >= 0) if cr >= 0 or lf >= 0 else -1
+            cr, lf = self.pending.find(b"\r"), self.pending.find(b"\n")
+            boundary = (
+                min(position for position in (cr, lf) if position >= 0)
+                if cr >= 0 or lf >= 0
+                else -1
+            )
             size = boundary if boundary >= 0 else len(self.pending)
             if size > self.max_bytes - len(data):
                 raise _StdioInputTooLarge()
             data.extend(self.pending[:size])
             if boundary >= 0:
                 self.skip_lf = self.pending[boundary] == 13
-                self.pending = self.pending[boundary + 1:]
+                self.pending = self.pending[boundary + 1 :]
                 data.append(10)
-                return data.decode('utf-8', errors='replace')
-            self.pending = b''
+                return data.decode("utf-8", errors="replace")
+            self.pending = b""
 
 
 class _CheckedTextInput:
@@ -97,14 +104,18 @@ class _CheckedTextInput:
     async def __aiter__(self):
         async for line in self.source:
             end = len(line)
-            if end and line[end - 1] == '\n':
+            if end and line[end - 1] == "\n":
                 end -= 1
-            if end and line[end - 1] == '\r':
+            if end and line[end - 1] == "\r":
                 end -= 1
             total = 0
             for start in range(0, end, _INPUT_SLAB_BYTES):
                 # Bound each temporary encoding rather than copying the line.
-                total += len(line[start:min(start + _INPUT_SLAB_BYTES, end)].encode('utf-8', errors='surrogatepass'))
+                total += len(
+                    line[start : min(start + _INPUT_SLAB_BYTES, end)].encode(
+                        "utf-8", errors="surrogatepass"
+                    )
+                )
                 if total > self.max_bytes:
                     raise _StdioInputTooLarge()
             yield line
@@ -117,7 +128,9 @@ class _PendingDelivery:
     ambiguous: bool = False
 
 
-stdio_delivery: ContextVar[StdioResponseDelivery | None] = ContextVar("unity_stdio_delivery", default=None)
+stdio_delivery: ContextVar[StdioResponseDelivery | None] = ContextVar(
+    "unity_stdio_delivery", default=None
+)
 
 
 class StdioResponseDelivery:
@@ -205,6 +218,7 @@ class DeliveryWriter:
 
     async def write(self, text: str):
         from transport.response_limit_middleware import _frame_id
+
         request_id = _frame_id(text[:65_536].encode("utf-8"))
         self.current = self.delivery.pending.get((type(request_id), request_id))
         try:
@@ -231,8 +245,12 @@ def _claim_sdk_stdout():
     claim = getattr(sdk_stdio, "_claim_fd", None)
     diversion = getattr(sdk_stdio, "_open_stdout_diversion", None)
     wrapper = getattr(sdk_stdio, "_UnownedTextWrapper", None)
-    if (not callable(claim) or not callable(diversion) or not callable(wrapper)
-            or tuple(inspect.signature(claim).parameters) != ("fd", "stream", "mode", "open_diversion")):
+    if (
+        not callable(claim)
+        or not callable(diversion)
+        or not callable(wrapper)
+        or tuple(inspect.signature(claim).parameters) != ("fd", "stream", "mode", "open_diversion")
+    ):
         raise RuntimeError("Installed MCP stdio ownership API is unsupported")
     return claim(1, sys.stdout, "wb", diversion)
 
@@ -242,12 +260,16 @@ def _claim_sdk_stdin(max_bytes: int = MAX_STDIO_INPUT_BYTES):
     claim = getattr(sdk_stdio, "_claim_fd", None)
     diversion = getattr(sdk_stdio, "_open_stdin_diversion", None)
     wrapper = getattr(sdk_stdio, "_UnownedTextWrapper", None)
-    if (not callable(claim) or not callable(diversion) or not callable(wrapper)
-            or tuple(inspect.signature(claim).parameters) != ("fd", "stream", "mode", "open_diversion")):
+    if (
+        not callable(claim)
+        or not callable(diversion)
+        or not callable(wrapper)
+        or tuple(inspect.signature(claim).parameters) != ("fd", "stream", "mode", "open_diversion")
+    ):
         raise RuntimeError("Installed MCP stdio ownership API is unsupported")
     buffer, restore = claim(0, sys.stdin, "rb", diversion)
     try:
-        if not callable(getattr(buffer, 'read1', None)):
+        if not callable(getattr(buffer, "read1", None)):
             raise RuntimeError("Installed MCP stdio binary input API is unsupported")
         return _BoundedStdioInput(buffer, max_bytes), restore
     except BaseException:
@@ -317,21 +339,21 @@ class _TextWriteOperation:
 
     async def run(self) -> None:
         try:
-            await _settled_text_call(self.stdout.write, self.payload + '\n')
+            await _settled_text_call(self.stdout.write, self.payload + "\n")
             await _settled_text_call(self.stdout.flush)
         finally:
-            self.payload = ''
+            self.payload = ""
 
 
 async def _settled_text_write(stdout, payload: str) -> None:
     operation = _TextWriteOperation(stdout, payload)
-    payload = ''
+    payload = ""
     await operation.run()
 
 
 async def _settled_text_call(method, *args) -> None:
     try:
-        if getattr(method, '__func__', None) in (anyio.AsyncFile.write, anyio.AsyncFile.flush):
+        if getattr(method, "__func__", None) in (anyio.AsyncFile.write, anyio.AsyncFile.flush):
             # Native Task.cancel can bypass AsyncFile's internal CancelScope.
             # Protect each inherited file method, including mixed subclasses.
             with anyio.CancelScope(shield=True):
@@ -346,10 +368,14 @@ async def _settled_text_call(method, *args) -> None:
 
 
 @asynccontextmanager
-async def _owned_stdio_server(stdin, stdout, delivery: StdioResponseDelivery, *, text_output: bool = False):
+async def _owned_stdio_server(
+    stdin, stdout, delivery: StdioResponseDelivery, *, text_output: bool = False
+):
     """Pinned SDK stream topology with an owned text or binary consumer."""
     streams = getattr(sdk_stdio, "create_context_streams", None)
-    if not callable(streams) or tuple(inspect.signature(streams).parameters) != ("max_buffer_size",):
+    if not callable(streams) or tuple(inspect.signature(streams).parameters) != (
+        "max_buffer_size",
+    ):
         raise RuntimeError("Installed MCP stdio context stream API is unsupported")
     read_writer, read = streams(0)
     write, write_reader = streams(0)
@@ -382,7 +408,9 @@ async def _owned_stdio_server(stdin, stdout, delivery: StdioResponseDelivery, *,
                             payload = message.model_dump_json(by_alias=True, exclude_unset=True)
                             await _settled_text_write(stdout, payload)
                         else:
-                            payload = jsonrpc_message_adapter.dump_json(message, by_alias=True, exclude_unset=True)
+                            payload = jsonrpc_message_adapter.dump_json(
+                                message, by_alias=True, exclude_unset=True
+                            )
                             await _settled_binary_write(stdout, payload)
                     finally:
                         payload = message = envelope = None
@@ -398,8 +426,13 @@ async def _owned_stdio_server(stdin, stdout, delivery: StdioResponseDelivery, *,
 
 
 @asynccontextmanager
-async def retained_stdio_server(stdin=None, stdout=None, *, binary_stdout: BinaryIO | None = None,
-                                max_input_bytes: int = MAX_STDIO_INPUT_BYTES):
+async def retained_stdio_server(
+    stdin=None,
+    stdout=None,
+    *,
+    binary_stdout: BinaryIO | None = None,
+    max_input_bytes: int = MAX_STDIO_INPUT_BYTES,
+):
     """Use public SDK streams, retaining its default wire diversion/restore."""
     delivery = StdioResponseDelivery()
     token = stdio_delivery.set(delivery)
@@ -407,7 +440,7 @@ async def retained_stdio_server(stdin=None, stdout=None, *, binary_stdout: Binar
     restore_stdin = None
     try:
         if type(max_input_bytes) is not int or max_input_bytes < 1:
-            raise ValueError('MCP stdio input size limit must be a positive integer')
+            raise ValueError("MCP stdio input size limit must be a positive integer")
         if stdin is None:
             stdin, restore_stdin = _claim_sdk_stdin(max_input_bytes)
         else:
@@ -415,7 +448,10 @@ async def retained_stdio_server(stdin=None, stdout=None, *, binary_stdout: Binar
         if stdout is not None:
             if binary_stdout is not None:
                 raise ValueError("Supply either text or binary MCP stdout")
-            async with _owned_stdio_server(stdin, stdout, delivery, text_output=True) as (read, write):
+            async with _owned_stdio_server(stdin, stdout, delivery, text_output=True) as (
+                read,
+                write,
+            ):
                 yield read, DeliverySendStream(write, delivery)
         else:
             if binary_stdout is None:

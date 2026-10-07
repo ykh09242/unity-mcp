@@ -28,29 +28,49 @@ namespace MCPForUnity.Editor.Tools.Blender
     /// Socket and git work runs on the thread pool; Unity API calls happen after the await, back on
     /// the editor thread (the bridge awaits handlers on Unity's synchronization context).
     /// </summary>
-    [McpForUnityTool("blender_bridge", AutoRegister = false, RequiresExplicitConsent = true, Group = "asset_gen",
-        Description = "Bridge to a running Blender with the BlenderMCP addon: status, scene/object info, viewport " +
-                      "screenshot, run Python in Blender, import a model (export → import → place → normalize), " +
-                      "check the blender-mcp checkout for updates, and sync its addon into Blender.")]
+    [McpForUnityTool(
+        "blender_bridge",
+        AutoRegister = false,
+        RequiresExplicitConsent = true,
+        Group = "asset_gen",
+        Description = "Bridge to a running Blender with the BlenderMCP addon: status, scene/object info, viewport "
+            + "screenshot, run Python in Blender, import a model (export → import → place → normalize), "
+            + "check the blender-mcp checkout for updates, and sync its addon into Blender."
+    )]
     public static class BlenderBridgeTool
     {
         private static readonly string[] ValidActions =
-            { "status", "scene_info", "object_info", "screenshot", "run_python", "import_model", "compare_screenshot", "setup_bloom", "check_updates", "sync_addon" };
+        {
+            "status",
+            "scene_info",
+            "object_info",
+            "screenshot",
+            "run_python",
+            "import_model",
+            "compare_screenshot",
+            "setup_bloom",
+            "check_updates",
+            "sync_addon",
+        };
 
         private const string NotConfiguredMessage =
-            "The blender-mcp checkout is not set. Open Window > MCP for Unity > Generative > Blender Bridge " +
-            "and pick the folder that contains addon.py.";
+            "The blender-mcp checkout is not set. Open Window > MCP for Unity > Generative > Blender Bridge " + "and pick the folder that contains addon.py.";
 
         /// <summary>Entry point for the bridge: validates parameters, dispatches by action, and never throws.</summary>
         public static async Task<object> HandleCommand(JObject @params)
         {
-            if (@params == null) return new ErrorResponse("Parameters cannot be null.");
+            if (@params == null)
+                return new ErrorResponse("Parameters cannot be null.");
             // Panel/menu callers and direct registry dispatch must enforce the same grant.
-            if (!EditorPrefs.GetBool(ToolDiscoveryService.GetConsentPreferenceKey("blender_bridge"), false)
-                || !MCPServiceLocator.ToolDiscovery.IsToolEnabled("blender_bridge"))
-                return new ErrorResponse("blender_consent_required",
-                    "Enable blender_bridge explicitly in the Unity Editor before using Blender bridge operations, " +
-                    "including Python execution and addon synchronization.");
+            if (
+                !EditorPrefs.GetBool(ToolDiscoveryService.GetConsentPreferenceKey("blender_bridge"), false)
+                || !MCPServiceLocator.ToolDiscovery.IsToolEnabled("blender_bridge")
+            )
+                return new ErrorResponse(
+                    "blender_consent_required",
+                    "Enable blender_bridge explicitly in the Unity Editor before using Blender bridge operations, "
+                        + "including Python execution and addon synchronization."
+                );
 
             var p = new ToolParams(@params);
             string action = (p.Get("action") ?? "status").Trim().ToLowerInvariant();
@@ -60,32 +80,46 @@ namespace MCPForUnity.Editor.Tools.Blender
             {
                 switch (action)
                 {
-                    case "status": return await StatusAsync();
+                    case "status":
+                        return await StatusAsync();
                     case "scene_info":
-                        return new SuccessResponse("Retrieved Blender scene info.",
-                            await BlenderSocketClient.SendAsync(BlenderBridgePrefs.Endpoint, "get_scene_info", null, timeout));
+                        return new SuccessResponse(
+                            "Retrieved Blender scene info.",
+                            await BlenderSocketClient.SendAsync(BlenderBridgePrefs.Endpoint, "get_scene_info", null, timeout)
+                        );
                     case "object_info":
                     {
                         string objectName = p.Get("object_name");
                         if (string.IsNullOrWhiteSpace(objectName))
                             return new ErrorResponse("'object_name' is required for object_info.");
-                        JToken info = await BlenderSocketClient.SendAsync(BlenderBridgePrefs.Endpoint, "get_object_info",
-                            new JObject { ["object_name"] = objectName }, timeout);
+                        JToken info = await BlenderSocketClient.SendAsync(
+                            BlenderBridgePrefs.Endpoint,
+                            "get_object_info",
+                            new JObject { ["object_name"] = objectName },
+                            timeout
+                        );
                         return new SuccessResponse($"Retrieved info for '{objectName}'.", info);
                     }
-                    case "screenshot": return await ScreenshotAsync(p, timeout);
+                    case "screenshot":
+                        return await ScreenshotAsync(p, timeout);
                     case "run_python":
                     {
                         string code = p.Get("code");
-                        if (string.IsNullOrWhiteSpace(code)) return new ErrorResponse("'code' is required for run_python.");
+                        if (string.IsNullOrWhiteSpace(code))
+                            return new ErrorResponse("'code' is required for run_python.");
                         string stdout = await BlenderSocketClient.RunPythonAsync(BlenderBridgePrefs.Endpoint, code, timeout);
                         return new SuccessResponse("Executed Python in Blender.", new { stdout });
                     }
-                    case "import_model": return await ImportModelAsync(p, timeout);
-                    case "compare_screenshot": return await CompareScreenshotAsync(p, timeout);
-                    case "setup_bloom": return ToBloomResponse(await SetupBloomAsync());
-                    case "check_updates": return await CheckUpdatesAsync();
-                    case "sync_addon": return SyncAddon(p.GetBool("force", false));
+                    case "import_model":
+                        return await ImportModelAsync(p, timeout);
+                    case "compare_screenshot":
+                        return await CompareScreenshotAsync(p, timeout);
+                    case "setup_bloom":
+                        return ToBloomResponse(await SetupBloomAsync());
+                    case "check_updates":
+                        return await CheckUpdatesAsync();
+                    case "sync_addon":
+                        return SyncAddon(p.GetBool("force", false));
                     default:
                         return new ErrorResponse($"Unknown action '{action}'. Valid: {string.Join(", ", ValidActions)}.");
                 }
@@ -120,7 +154,10 @@ namespace MCPForUnity.Editor.Tools.Blender
                 scene = await BlenderSocketClient.SendAsync(endpoint, "get_scene_info", null, 10);
                 reachable = true;
             }
-            catch (Exception e) { error = SecretRedactor.Scrub(e.Message); }
+            catch (Exception e)
+            {
+                error = SecretRedactor.Scrub(e.Message);
+            }
 
             string forkMd5 = forkAddon != null && File.Exists(forkAddon) ? FileMd5(forkAddon) : null;
             string installedMd5 = installedAddon != null && File.Exists(installedAddon) ? FileMd5(installedAddon) : null;
@@ -140,9 +177,7 @@ namespace MCPForUnity.Editor.Tools.Blender
                 ["installed_addon_found"] = installedMd5 != null,
                 ["addon_in_sync"] = forkMd5 != null && installedMd5 != null && forkMd5 == installedMd5,
             };
-            string msg = reachable
-                ? $"Blender reachable. Scene '{scene?["name"]}' with {scene?["object_count"]} objects."
-                : "Blender not reachable.";
+            string msg = reachable ? $"Blender reachable. Scene '{scene?["name"]}' with {scene?["object_count"]} objects." : "Blender not reachable.";
             return new SuccessResponse(msg, data);
         }
 
@@ -166,8 +201,17 @@ namespace MCPForUnity.Editor.Tools.Blender
             Directory.CreateDirectory(dir);
             string file = Path.Combine(dir, $"blender_viewport_{UniqueSuffix()}.png").Replace('\\', '/');
 
-            JToken result = await BlenderSocketClient.SendAsync(BlenderBridgePrefs.Endpoint, "get_viewport_screenshot",
-                new JObject { ["max_size"] = maxSize, ["filepath"] = file, ["format"] = "png" }, timeout);
+            JToken result = await BlenderSocketClient.SendAsync(
+                BlenderBridgePrefs.Endpoint,
+                "get_viewport_screenshot",
+                new JObject
+                {
+                    ["max_size"] = maxSize,
+                    ["filepath"] = file,
+                    ["format"] = "png",
+                },
+                timeout
+            );
 
             if (!File.Exists(file))
                 return new ErrorResponse($"Blender did not write a screenshot to {file}. Response: {result}");
@@ -182,14 +226,17 @@ namespace MCPForUnity.Editor.Tools.Blender
                 AssetDatabase.ImportAsset(assetPath);
             }
 
-            return new SuccessResponse("Captured Blender viewport.", new JObject
-            {
-                ["path"] = file,
-                ["asset_path"] = assetPath,
-                ["width"] = result?["width"],
-                ["height"] = result?["height"],
-                ["method"] = result?["method"],
-            });
+            return new SuccessResponse(
+                "Captured Blender viewport.",
+                new JObject
+                {
+                    ["path"] = file,
+                    ["asset_path"] = assetPath,
+                    ["width"] = result?["width"],
+                    ["height"] = result?["height"],
+                    ["method"] = result?["method"],
+                }
+            );
         }
 
         // ------------------------------------------------------------ import_model
@@ -198,7 +245,8 @@ namespace MCPForUnity.Editor.Tools.Blender
         private static async Task<object> ImportModelAsync(ToolParams p, int timeout)
         {
             string fmt = (p.Get("format") ?? "glb").Trim().ToLowerInvariant();
-            if (fmt != "glb" && fmt != "fbx") return new ErrorResponse("'format' must be glb or fbx.");
+            if (fmt != "glb" && fmt != "fbx")
+                return new ErrorResponse("'format' must be glb or fbx.");
 
             string[] names = p.GetStringArray("object_names")?.Where(n => !string.IsNullOrWhiteSpace(n)).ToArray();
             bool selectionOnly = p.GetBool("selection_only", false);
@@ -236,8 +284,10 @@ namespace MCPForUnity.Editor.Tools.Blender
                 ["name"] = name,
                 ["targetSize"] = target,
             };
-            if (!string.IsNullOrWhiteSpace(outputFolder)) importParams["outputFolder"] = outputFolder;
-            if (!string.IsNullOrWhiteSpace(animationType)) importParams["animationType"] = animationType;
+            if (!string.IsNullOrWhiteSpace(outputFolder))
+                importParams["outputFolder"] = outputFolder;
+            if (!string.IsNullOrWhiteSpace(animationType))
+                importParams["animationType"] = animationType;
 
             // The public importer only accepts Assets-contained sources. Stage this bridge's
             // own export there without broadening that boundary to arbitrary local files.
@@ -270,7 +320,8 @@ namespace MCPForUnity.Editor.Tools.Blender
             if (!place || string.IsNullOrEmpty(assetPath))
                 return new SuccessResponse($"Imported {assetPath} (not placed).", data);
 
-            if (fmt == "fbx" && autoAnimate) ConfigureFbxClipLooping(assetPath);
+            if (fmt == "fbx" && autoAnimate)
+                ConfigureFbxClipLooping(assetPath);
 
             // 3. Place in the open scene and normalize size from measured bounds. Blender exports
             // commonly land far off scale, so measuring the placed instance beats trusting the importer.
@@ -312,9 +363,12 @@ namespace MCPForUnity.Editor.Tools.Blender
 
             // 4. Optional finishing touches: play imported clips, keep a prefab, make emission glow.
             JObject animation = SetupAnimation(go, assetPath, name, autoAnimate);
-            if (animation != null) data["animation"] = animation;
-            if (savePrefab) data["prefab_path"] = SavePrefab(go, assetPath, name);
-            if (ensureBloom && HasEmissiveMaterial(go)) data["bloom"] = await SetupBloomAsync();
+            if (animation != null)
+                data["animation"] = animation;
+            if (savePrefab)
+                data["prefab_path"] = SavePrefab(go, assetPath, name);
+            if (ensureBloom && HasEmissiveMaterial(go))
+                data["bloom"] = await SetupBloomAsync();
 
             return new SuccessResponse($"Imported {assetPath} and placed '{go.name}' in the scene.", data);
         }
@@ -324,8 +378,15 @@ namespace MCPForUnity.Editor.Tools.Blender
         /// parameters, no code execution); addons that predate it answer "Unknown command type", in
         /// which case the equivalent Python is sent through <c>execute_code</c>.
         /// </summary>
-        private static async Task<string> ExportFromBlenderAsync(BlenderEndpoint endpoint, string exportPath, string[] names,
-            bool selectionOnly, bool applyModifiers, string fmt, int timeout)
+        private static async Task<string> ExportFromBlenderAsync(
+            BlenderEndpoint endpoint,
+            string exportPath,
+            string[] names,
+            bool selectionOnly,
+            bool applyModifiers,
+            string fmt,
+            int timeout
+        )
         {
             var args = new JObject
             {
@@ -338,7 +399,8 @@ namespace MCPForUnity.Editor.Tools.Blender
             try
             {
                 JToken result = await BlenderSocketClient.SendAsync(endpoint, "export_scene", args, timeout);
-                if (result?["error"] != null) throw new BlenderCommandException($"Blender export_scene failed: {result["error"]}");
+                if (result?["error"] != null)
+                    throw new BlenderCommandException($"Blender export_scene failed: {result["error"]}");
                 return result?.ToString(Formatting.None) ?? string.Empty;
             }
             catch (BlenderCommandException e) when (e.Message.Contains("Unknown command type"))
@@ -367,7 +429,8 @@ namespace MCPForUnity.Editor.Tools.Blender
             // document is a valid double-quoted Python literal.
             string configLiteral = JsonConvert.ToString(config.ToString(Formatting.None));
 
-            const string template = @"
+            const string template =
+                @"
 import bpy, os, json
 cfg = json.loads(__CFG__)
 out = cfg['out']
@@ -422,13 +485,16 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         /// <summary>Marks every clip in an FBX as looping so the imported animation cycles once a controller drives it.</summary>
         private static void ConfigureFbxClipLooping(string assetPath)
         {
-            if (!(AssetImporter.GetAtPath(assetPath) is ModelImporter importer)) return;
+            if (!(AssetImporter.GetAtPath(assetPath) is ModelImporter importer))
+                return;
             ModelImporterClipAnimation[] clips = importer.clipAnimations.Length > 0 ? importer.clipAnimations : importer.defaultClipAnimations;
-            if (clips.Length == 0) return;
+            if (clips.Length == 0)
+                return;
             foreach (ModelImporterClipAnimation clip in clips)
             {
                 clip.loopTime = true;
-                if (importer.animationType == ModelImporterAnimationType.Legacy) clip.wrapMode = WrapMode.Loop;
+                if (importer.animationType == ModelImporterAnimationType.Legacy)
+                    clip.wrapMode = WrapMode.Loop;
             }
             importer.clipAnimations = clips;
             importer.SaveAndReimport();
@@ -437,23 +503,22 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         /// <summary>
         /// Configures looping playback with the animation system used by the imported clips.
         /// </summary>
-        internal static JObject SetupAnimation(GameObject go, string assetPath, string name, bool autoAnimate,
-            AnimationClip[] clips = null)
+        internal static JObject SetupAnimation(GameObject go, string assetPath, string name, bool autoAnimate, AnimationClip[] clips = null)
         {
-            if (!autoAnimate) return null;
-            clips = (clips ?? AssetDatabase.LoadAllAssetRepresentationsAtPath(assetPath)
-                .OfType<AnimationClip>().ToArray())
+            if (!autoAnimate)
+                return null;
+            clips = (clips ?? AssetDatabase.LoadAllAssetRepresentationsAtPath(assetPath).OfType<AnimationClip>().ToArray())
                 .Where(c => c != null && !c.name.StartsWith("__preview__", StringComparison.Ordinal))
                 .ToArray();
-            if (clips.Length == 0) return null;
+            if (clips.Length == 0)
+                return null;
             bool legacy = clips[0].legacy;
             if (clips.Any(c => c.legacy != legacy))
                 throw new InvalidOperationException("Imported clips mix Legacy and Mecanim animation types.");
 
             if (legacy)
             {
-                UnityEngine.Animation animation = go.GetComponentInChildren<UnityEngine.Animation>(true)
-                    ?? go.AddComponent<UnityEngine.Animation>();
+                UnityEngine.Animation animation = go.GetComponentInChildren<UnityEngine.Animation>(true) ?? go.AddComponent<UnityEngine.Animation>();
                 AnimationClip defaultClip = clips.Contains(animation.clip) ? animation.clip : clips[0];
                 foreach (AnimationClip clip in clips)
                 {
@@ -479,7 +544,8 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
 
             Animator animator = go.GetComponentInChildren<Animator>(true) ?? go.AddComponent<Animator>();
             string controllerPath = AssetDatabase.GenerateUniqueAssetPath(
-                Path.Combine(Path.GetDirectoryName(assetPath) ?? "Assets", $"{name}_Controller.controller").Replace('\\', '/'));
+                Path.Combine(Path.GetDirectoryName(assetPath) ?? "Assets", $"{name}_Controller.controller").Replace('\\', '/')
+            );
             var controller = UnityEditor.Animations.AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
             var stateMachine = controller.layers[0].stateMachine;
             foreach (AnimationClip clip in clips)
@@ -492,7 +558,8 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 }
                 var state = stateMachine.AddState(clip.name);
                 state.motion = clip;
-                if (stateMachine.defaultState == null) stateMachine.defaultState = state;
+                if (stateMachine.defaultState == null)
+                    stateMachine.defaultState = state;
             }
             animator.runtimeAnimatorController = controller;
             EditorUtility.SetDirty(controller);
@@ -530,9 +597,12 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             {
                 foreach (Material m in r.sharedMaterials)
                 {
-                    if (m == null) continue;
-                    if (m.HasProperty("emissiveFactor") && m.GetColor("emissiveFactor").maxColorComponent > 0.01f) return true;
-                    if (m.HasProperty("_EmissionColor") && m.IsKeywordEnabled("_EMISSION") && m.GetColor("_EmissionColor").maxColorComponent > 0.01f) return true;
+                    if (m == null)
+                        continue;
+                    if (m.HasProperty("emissiveFactor") && m.GetColor("emissiveFactor").maxColorComponent > 0.01f)
+                        return true;
+                    if (m.HasProperty("_EmissionColor") && m.IsKeywordEnabled("_EMISSION") && m.GetColor("_EmissionColor").maxColorComponent > 0.01f)
+                        return true;
                 }
             }
             return false;
@@ -573,7 +643,8 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             foreach (UnityEngine.Object v in UnityFindObjectsCompat.FindAll(volumeType))
             {
                 var comp = v as Component;
-                if (comp == null || (isGlobal != null && !(bool)isGlobal.GetValue(comp))) continue;
+                if (comp == null || (isGlobal != null && !(bool)isGlobal.GetValue(comp)))
+                    continue;
                 globalVolume ??= comp;
                 object profile = sharedProfile?.GetValue(comp);
                 var components = profile?.GetType().GetField("components")?.GetValue(profile) as System.Collections.IEnumerable;
@@ -588,27 +659,53 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             JObject graphics;
             if (globalVolume != null)
             {
-                graphics = JObject.FromObject(await CommandRegistry.InvokeCommandAsync("manage_graphics", new JObject
-                {
-                    ["action"] = "volume_add_effect", ["target"] = globalVolume.gameObject.name, ["effect"] = "Bloom",
-                }));
+                graphics = JObject.FromObject(
+                    await CommandRegistry.InvokeCommandAsync(
+                        "manage_graphics",
+                        new JObject
+                        {
+                            ["action"] = "volume_add_effect",
+                            ["target"] = globalVolume.gameObject.name,
+                            ["effect"] = "Bloom",
+                        }
+                    )
+                );
                 if (graphics.Value<bool?>("success") ?? false)
                 {
-                    await CommandRegistry.InvokeCommandAsync("manage_graphics", new JObject
-                    {
-                        ["action"] = "volume_set_effect", ["target"] = globalVolume.gameObject.name, ["effect"] = "Bloom",
-                        ["parameters"] = new JObject { ["intensity"] = 1.0f, ["threshold"] = 0.9f },
-                    });
+                    await CommandRegistry.InvokeCommandAsync(
+                        "manage_graphics",
+                        new JObject
+                        {
+                            ["action"] = "volume_set_effect",
+                            ["target"] = globalVolume.gameObject.name,
+                            ["effect"] = "Bloom",
+                            ["parameters"] = new JObject { ["intensity"] = 1.0f, ["threshold"] = 0.9f },
+                        }
+                    );
                 }
                 result["volume"] = globalVolume.gameObject.name;
             }
             else
             {
-                graphics = JObject.FromObject(await CommandRegistry.InvokeCommandAsync("manage_graphics", new JObject
-                {
-                    ["action"] = "volume_create", ["name"] = "Global Volume (Blender Bridge)", ["is_global"] = true,
-                    ["effects"] = new JArray(new JObject { ["type"] = "Bloom", ["intensity"] = 1.0f, ["threshold"] = 0.9f }),
-                }));
+                graphics = JObject.FromObject(
+                    await CommandRegistry.InvokeCommandAsync(
+                        "manage_graphics",
+                        new JObject
+                        {
+                            ["action"] = "volume_create",
+                            ["name"] = "Global Volume (Blender Bridge)",
+                            ["is_global"] = true,
+                            ["effects"] = new JArray(
+                                new JObject
+                                {
+                                    ["type"] = "Bloom",
+                                    ["intensity"] = 1.0f,
+                                    ["threshold"] = 0.9f,
+                                }
+                            ),
+                        }
+                    )
+                );
                 result["volume"] = "Global Volume (Blender Bridge)";
             }
             bool ok = graphics.Value<bool?>("success") ?? false;
@@ -631,27 +728,47 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         private static async Task<object> CompareScreenshotAsync(ToolParams p, int timeout)
         {
             string target = p.Get("game_object");
-            if (string.IsNullOrWhiteSpace(target)) return new ErrorResponse("'game_object' is required for compare_screenshot.");
-            if (GameObject.Find(target) == null) return new ErrorResponse($"GameObject '{target}' not found in the open scene.");
+            if (string.IsNullOrWhiteSpace(target))
+                return new ErrorResponse("'game_object' is required for compare_screenshot.");
+            if (GameObject.Find(target) == null)
+                return new ErrorResponse($"GameObject '{target}' not found in the open scene.");
             int maxSize = Math.Max(128, p.GetInt("max_size", 800) ?? 800);
             string outputFolder = p.Get("output_folder");
             string assetsRelativeFolder = null;
-            if (!string.IsNullOrWhiteSpace(outputFolder)
-                && !AssetGenPaths.NormalizeOutputFolder(outputFolder, out assetsRelativeFolder, out string folderError))
+            if (
+                !string.IsNullOrWhiteSpace(outputFolder) && !AssetGenPaths.NormalizeOutputFolder(outputFolder, out assetsRelativeFolder, out string folderError)
+            )
                 return new ErrorResponse(folderError);
 
             string dir = Path.Combine(ProjectRoot(), "Library", "BlenderBridge");
             Directory.CreateDirectory(dir);
             string blenderPng = Path.Combine(dir, $"compare_blender_{UniqueSuffix()}.png").Replace('\\', '/');
-            await BlenderSocketClient.SendAsync(BlenderBridgePrefs.Endpoint, "get_viewport_screenshot",
-                new JObject { ["max_size"] = maxSize, ["filepath"] = blenderPng, ["format"] = "png" }, timeout);
-            if (!File.Exists(blenderPng)) return new ErrorResponse("Blender did not write a viewport screenshot.");
+            await BlenderSocketClient.SendAsync(
+                BlenderBridgePrefs.Endpoint,
+                "get_viewport_screenshot",
+                new JObject
+                {
+                    ["max_size"] = maxSize,
+                    ["filepath"] = blenderPng,
+                    ["format"] = "png",
+                },
+                timeout
+            );
+            if (!File.Exists(blenderPng))
+                return new ErrorResponse("Blender did not write a viewport screenshot.");
 
-            JObject shot = JObject.FromObject(await CommandRegistry.InvokeCommandAsync("manage_scene", new JObject
-            {
-                ["action"] = "screenshot", ["view_target"] = target, ["max_resolution"] = maxSize,
-                ["screenshot_file_name"] = $"blender_bridge_compare_{UniqueSuffix()}",
-            }));
+            JObject shot = JObject.FromObject(
+                await CommandRegistry.InvokeCommandAsync(
+                    "manage_scene",
+                    new JObject
+                    {
+                        ["action"] = "screenshot",
+                        ["view_target"] = target,
+                        ["max_resolution"] = maxSize,
+                        ["screenshot_file_name"] = $"blender_bridge_compare_{UniqueSuffix()}",
+                    }
+                )
+            );
             string unityPng = shot["data"]?["fullPath"]?.ToString();
             if (!(shot.Value<bool?>("success") ?? false) || string.IsNullOrEmpty(unityPng) || !File.Exists(unityPng))
                 return new ErrorResponse($"Unity screenshot failed: {shot["error"] ?? shot["message"]}");
@@ -674,18 +791,28 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 AssetDatabase.ImportAsset(assetPath);
             }
 
-            return new SuccessResponse("Composited Blender (left) and Unity (right).", new JObject
-            {
-                ["path"] = outPath, ["asset_path"] = assetPath, ["width"] = width, ["height"] = height,
-                ["blender_path"] = blenderPng, ["game_object"] = target,
-            });
+            return new SuccessResponse(
+                "Composited Blender (left) and Unity (right).",
+                new JObject
+                {
+                    ["path"] = outPath,
+                    ["asset_path"] = assetPath,
+                    ["width"] = width,
+                    ["height"] = height,
+                    ["blender_path"] = blenderPng,
+                    ["game_object"] = target,
+                }
+            );
         }
 
         /// <summary>Scales both images to the smaller height and writes them side by side. Returns the output size.</summary>
         internal static (int Width, int Height) CompositeSideBySide(string leftPng, string rightPng, string outPath)
         {
-            Texture2D left = null, right = null;
-            Texture2D l = null, r = null, outTex = null;
+            Texture2D left = null,
+                right = null;
+            Texture2D l = null,
+                r = null,
+                outTex = null;
             try
             {
                 left = LoadPng(leftPng);
@@ -703,7 +830,8 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             finally
             {
                 foreach (Texture2D t in new[] { outTex, l == left ? null : l, r == right ? null : r, left, right })
-                    if (t != null) UnityEngine.Object.DestroyImmediate(t);
+                    if (t != null)
+                        UnityEngine.Object.DestroyImmediate(t);
             }
         }
 
@@ -727,13 +855,14 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         /// <summary>Bilinear resample to a target height, keeping the aspect ratio. Returns the source when already right.</summary>
         private static Texture2D ScaleToHeight(Texture2D src, int height)
         {
-            if (src.height == height) return src;
+            if (src.height == height)
+                return src;
             int width = Mathf.Max(1, Mathf.RoundToInt(src.width * (float)height / src.height));
             var dst = new Texture2D(width, height, TextureFormat.RGBA32, false);
             var pixels = new Color[width * height];
             for (int y = 0; y < height; y++)
-                for (int x = 0; x < width; x++)
-                    pixels[y * width + x] = src.GetPixelBilinear((x + 0.5f) / width, (y + 0.5f) / height);
+            for (int x = 0; x < width; x++)
+                pixels[y * width + x] = src.GetPixelBilinear((x + 0.5f) / width, (y + 0.5f) / height);
             dst.SetPixels(pixels);
             dst.Apply();
             return dst;
@@ -744,7 +873,8 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         /// <summary>Fetches the checkout's remotes on the thread pool and reports how far behind it is.</summary>
         private static async Task<object> CheckUpdatesAsync()
         {
-            if (!BlenderBridgePrefs.IsForkConfigured) return new ErrorResponse(NotConfiguredMessage);
+            if (!BlenderBridgePrefs.IsForkConfigured)
+                return new ErrorResponse(NotConfiguredMessage);
             string fork = BlenderBridgePrefs.ForkPath;
             string forkAddon = BlenderBridgePrefs.ForkAddonPath;
             string installedAddon = BlenderBridgePrefs.InstalledAddonPath;
@@ -764,12 +894,17 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             TryGit(fork, "log -1 --format=%h%x09%ad%x09%s --date=short", out string head, out _);
             TryGit(fork, "status --porcelain", out string porcelain, out _);
             TryGit(fork, "remote", out string remotesRaw, out _);
-            var remotes = remotesRaw.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(r => r.Trim()).Where(r => r.Length > 0).ToList();
+            var remotes = remotesRaw.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Select(r => r.Trim()).Where(r => r.Length > 0).ToList();
 
             var perRemote = new JArray();
             int totalBehind = 0;
-            foreach (string remote in remotes.OrderBy(r => r == "upstream" ? 0 : r == "origin" ? 1 : 2))
+            foreach (
+                string remote in remotes.OrderBy(r =>
+                    r == "upstream" ? 0
+                    : r == "origin" ? 1
+                    : 2
+                )
+            )
             {
                 var entry = new JObject { ["remote"] = remote };
                 TryGit(fork, $"remote get-url -- {QuoteGitArgument(remote)}", out string url, out _);
@@ -777,27 +912,45 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
 
                 bool fetched = TryGit(fork, $"fetch --quiet -- {QuoteGitArgument(remote)}", out _, out string fetchErr, 90000);
                 entry["fetched"] = fetched;
-                if (!fetched) entry["fetch_error"] = Truncate(fetchErr, 300);
+                if (!fetched)
+                    entry["fetch_error"] = Truncate(fetchErr, 300);
 
                 string branch = "main";
-                if (TryGit(fork, $"symbolic-ref --short {QuoteGitArgument("refs/remotes/" + remote + "/HEAD")}", out string sym, out _)
-                    && sym.Trim().StartsWith(remote + "/", StringComparison.Ordinal))
+                if (
+                    TryGit(fork, $"symbolic-ref --short {QuoteGitArgument("refs/remotes/" + remote + "/HEAD")}", out string sym, out _)
+                    && sym.Trim().StartsWith(remote + "/", StringComparison.Ordinal)
+                )
                     branch = sym.Trim().Substring(remote.Length + 1);
-                else if (!TryGit(fork, $"rev-parse --verify --quiet {QuoteGitArgument("refs/remotes/" + remote + "/main")}", out _, out _)
-                         && TryGit(fork, $"rev-parse --verify --quiet {QuoteGitArgument("refs/remotes/" + remote + "/master")}", out _, out _))
+                else if (
+                    !TryGit(fork, $"rev-parse --verify --quiet {QuoteGitArgument("refs/remotes/" + remote + "/main")}", out _, out _)
+                    && TryGit(fork, $"rev-parse --verify --quiet {QuoteGitArgument("refs/remotes/" + remote + "/master")}", out _, out _)
+                )
                     branch = "master";
                 entry["branch"] = branch;
 
-                if (TryGit(fork, $"rev-list --left-right --count {QuoteGitArgument("HEAD...refs/remotes/" + remote + "/" + branch)}", out string counts, out string cErr))
+                if (
+                    TryGit(
+                        fork,
+                        $"rev-list --left-right --count {QuoteGitArgument("HEAD...refs/remotes/" + remote + "/" + branch)}",
+                        out string counts,
+                        out string cErr
+                    )
+                )
                 {
                     var parts = counts.Trim().Split('\t', ' ');
                     int ahead = parts.Length > 0 && int.TryParse(parts[0], out int a) ? a : 0;
                     int behind = parts.Length > 1 && int.TryParse(parts[1], out int bb) ? bb : 0;
                     entry["local_ahead"] = ahead;
                     entry["behind"] = behind;
-                    if (remote == "upstream" || remotes.Count == 1) totalBehind += behind;
+                    if (remote == "upstream" || remotes.Count == 1)
+                        totalBehind += behind;
 
-                    TryGit(fork, $"log --format=%h%x20%ad%x20%s --date=short -n 20 {QuoteGitArgument("HEAD..refs/remotes/" + remote + "/" + branch)}", out string log, out _);
+                    TryGit(
+                        fork,
+                        $"log --format=%h%x20%ad%x20%s --date=short -n 20 {QuoteGitArgument("HEAD..refs/remotes/" + remote + "/" + branch)}",
+                        out string log,
+                        out _
+                    );
                     entry["new_commits"] = new JArray(log.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries));
                 }
                 else
@@ -813,10 +966,14 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
 
             int dirty = porcelain.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Length;
             var recommendations = new List<string>();
-            if (totalBehind > 0) recommendations.Add($"Checkout is {totalBehind} commit(s) behind upstream: merge upstream into it.");
-            if (!addonInSync) recommendations.Add("Installed Blender addon differs from the checkout's addon.py: run sync_addon, then restart Blender.");
-            if (dirty > 0) recommendations.Add($"Checkout has {dirty} uncommitted change(s).");
-            if (recommendations.Count == 0) recommendations.Add("Everything is up to date.");
+            if (totalBehind > 0)
+                recommendations.Add($"Checkout is {totalBehind} commit(s) behind upstream: merge upstream into it.");
+            if (!addonInSync)
+                recommendations.Add("Installed Blender addon differs from the checkout's addon.py: run sync_addon, then restart Blender.");
+            if (dirty > 0)
+                recommendations.Add($"Checkout has {dirty} uncommitted change(s).");
+            if (recommendations.Count == 0)
+                recommendations.Add("Everything is up to date.");
 
             var data = new JObject
             {
@@ -838,18 +995,28 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         /// <summary>Copies the checkout's addon.py over Blender's installed copy, keeping a .bak of the old file.</summary>
         private static object SyncAddon(bool force)
         {
-            if (!BlenderBridgePrefs.IsForkConfigured) return new ErrorResponse(NotConfiguredMessage);
+            if (!BlenderBridgePrefs.IsForkConfigured)
+                return new ErrorResponse(NotConfiguredMessage);
             string src = BlenderBridgePrefs.ForkAddonPath;
             string dst = BlenderBridgePrefs.InstalledAddonPath;
-            if (!File.Exists(src)) return new ErrorResponse($"addon.py not found in the checkout at {src}.");
+            if (!File.Exists(src))
+                return new ErrorResponse($"addon.py not found in the checkout at {src}.");
             if (dst == null)
                 return new ErrorResponse("Could not locate Blender's user addons directory. Set it in Window > MCP for Unity > Generative > Blender Bridge.");
 
             string srcMd5 = FileMd5(src);
             string dstMd5 = File.Exists(dst) ? FileMd5(dst) : null;
             if (!force && srcMd5 == dstMd5)
-                return new SuccessResponse("Installed addon already matches the checkout; nothing copied.",
-                    new { source = src, destination = dst, md5 = srcMd5, copied = false });
+                return new SuccessResponse(
+                    "Installed addon already matches the checkout; nothing copied.",
+                    new
+                    {
+                        source = src,
+                        destination = dst,
+                        md5 = srcMd5,
+                        copied = false,
+                    }
+                );
 
             Directory.CreateDirectory(Path.GetDirectoryName(dst));
             string backup = null;
@@ -862,7 +1029,16 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
 
             return new SuccessResponse(
                 "Copied addon.py into Blender. Restart Blender (or Reload Scripts) and press 'Connect to MCP server' again.",
-                new { source = src, destination = dst, backup, previous_md5 = dstMd5, new_md5 = srcMd5, copied = true });
+                new
+                {
+                    source = src,
+                    destination = dst,
+                    backup,
+                    previous_md5 = dstMd5,
+                    new_md5 = srcMd5,
+                    copied = true,
+                }
+            );
         }
 
         // ------------------------------------------------------------------ helpers
@@ -900,7 +1076,8 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                         File.Delete(staged);
                         Directory.Delete(stagingDirectory);
                     }
-                    if (ownsRoot) Directory.Delete(stagingRoot);
+                    if (ownsRoot)
+                        Directory.Delete(stagingRoot);
                 }
                 catch (Exception ex)
                 {
@@ -916,7 +1093,11 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             int slashes = 0;
             foreach (char c in value)
             {
-                if (c == '\\') { slashes++; continue; }
+                if (c == '\\')
+                {
+                    slashes++;
+                    continue;
+                }
                 quoted.Append('\\', c == '"' ? slashes * 2 + 1 : slashes);
                 quoted.Append(c);
                 slashes = 0;
@@ -945,12 +1126,20 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 };
                 psi.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
                 using var proc = Process.Start(psi);
-                if (proc == null) { stderr = "failed to start git"; return false; }
+                if (proc == null)
+                {
+                    stderr = "failed to start git";
+                    return false;
+                }
                 var outTask = proc.StandardOutput.ReadToEndAsync();
                 var errTask = proc.StandardError.ReadToEndAsync();
                 if (!proc.WaitForExit(timeoutMs))
                 {
-                    try { proc.Kill(); } catch { /* already gone */ }
+                    try
+                    {
+                        proc.Kill();
+                    }
+                    catch { /* already gone */ }
                     stderr = $"git timed out after {timeoutMs} ms";
                     return false;
                 }
@@ -984,8 +1173,7 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         /// Timestamp plus a random tail for temp file names, so concurrent commands (menu + MCP) started
         /// in the same second never share a screenshot or export path.
         /// </summary>
-        private static string UniqueSuffix()
-            => $"{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N").Substring(0, 8)}";
+        private static string UniqueSuffix() => $"{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N").Substring(0, 8)}";
 
         /// <summary>
         /// Strips user info, query and fragment from a remote URL so credentials embedded as
@@ -994,17 +1182,25 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         /// </summary>
         internal static string RedactRemoteUrl(string url)
         {
-            if (string.IsNullOrEmpty(url)) return url ?? string.Empty;
+            if (string.IsNullOrEmpty(url))
+                return url ?? string.Empty;
             if (Uri.TryCreate(url, UriKind.Absolute, out Uri uri) && !string.IsNullOrEmpty(uri.Host))
             {
                 bool clean = string.IsNullOrEmpty(uri.UserInfo) && string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.Fragment);
-                if (clean) return url;
-                return new UriBuilder(uri) { UserName = string.Empty, Password = string.Empty, Query = string.Empty, Fragment = string.Empty }
-                    .Uri.ToString();
+                if (clean)
+                    return url;
+                return new UriBuilder(uri)
+                {
+                    UserName = string.Empty,
+                    Password = string.Empty,
+                    Query = string.Empty,
+                    Fragment = string.Empty,
+                }.Uri.ToString();
             }
             // Not a parseable absolute URI: drop anything after ? or # and mask a user:secret@ prefix.
             int cut = url.IndexOfAny(new[] { '?', '#' });
-            if (cut >= 0) url = url.Substring(0, cut);
+            if (cut >= 0)
+                url = url.Substring(0, cut);
             int scheme = url.IndexOf("://", StringComparison.Ordinal);
             int at = url.IndexOf('@');
             if (scheme >= 0 && at > scheme)
@@ -1037,11 +1233,15 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         /// <summary>Reads a [x, y, z] position from a JSON array or a stringified array; origin when absent.</summary>
         private static Vector3 ParsePosition(JToken token)
         {
-            if (token == null || token.Type == JTokenType.Null) return Vector3.zero;
+            if (token == null || token.Type == JTokenType.Null)
+                return Vector3.zero;
             JArray arr = token as JArray;
             if (arr == null && token.Type == JTokenType.String)
             {
-                try { arr = JArray.Parse(token.ToString()); }
+                try
+                {
+                    arr = JArray.Parse(token.ToString());
+                }
                 catch (Newtonsoft.Json.JsonException ex)
                 {
                     throw new ArgumentException("Position must contain three finite numeric components.", ex);
@@ -1062,14 +1262,16 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 return false;
             }
             bounds = renderers[0].bounds;
-            for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
+            for (int i = 1; i < renderers.Length; i++)
+                bounds.Encapsulate(renderers[i].bounds);
             return true;
         }
 
         /// <summary>Trims and caps a string for inclusion in messages.</summary>
         private static string Truncate(string s, int max)
         {
-            if (string.IsNullOrEmpty(s)) return s ?? string.Empty;
+            if (string.IsNullOrEmpty(s))
+                return s ?? string.Empty;
             s = s.Trim();
             return s.Length <= max ? s : s.Substring(0, max) + "…";
         }

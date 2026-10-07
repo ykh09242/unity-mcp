@@ -1,4 +1,5 @@
 """Cross-language result framing and bounded transfer ownership regressions."""
+
 import base64
 import asyncio
 import json
@@ -10,8 +11,13 @@ from uuid import uuid4
 import pytest
 
 from transport.large_result_assembler import (
-    CHUNK_PAYLOAD_BYTES, MAGIC, MAX_FRAME_BYTES,
-    MAX_RESULT_BYTES, THRESHOLD_BYTES, LargeResultAssembler, LargeResultProtocolError,
+    CHUNK_PAYLOAD_BYTES,
+    MAGIC,
+    MAX_FRAME_BYTES,
+    MAX_RESULT_BYTES,
+    THRESHOLD_BYTES,
+    LargeResultAssembler,
+    LargeResultProtocolError,
 )
 
 COMMAND_ID = "01234567-89ab-cdef-0123-456789abcdef"
@@ -37,20 +43,30 @@ class Budget:
         self.reservations.pop((owner, command_id))
 
     def assembler(self):
-        return LargeResultAssembler(lambda owner, cid: (owner, cid) in self.pending,
-                                    self.reserve, self.release, clock=lambda: self.now)
+        return LargeResultAssembler(
+            lambda owner, cid: (owner, cid) in self.pending,
+            self.reserve,
+            self.release,
+            clock=lambda: self.now,
+        )
 
 
 def frames(payload, command_id=COMMAND_ID):
-    return [MAGIC + command_id.encode("ascii") + offset.to_bytes(4, "big")
-            + payload[offset:offset + CHUNK_PAYLOAD_BYTES]
-            for offset in range(0, len(payload), CHUNK_PAYLOAD_BYTES)]
+    return [
+        MAGIC
+        + command_id.encode("ascii")
+        + offset.to_bytes(4, "big")
+        + payload[offset : offset + CHUNK_PAYLOAD_BYTES]
+        for offset in range(0, len(payload), CHUNK_PAYLOAD_BYTES)
+    ]
 
 
 def started(size=THRESHOLD_BYTES):
     budget = Budget()
     assembler = budget.assembler()
-    assembler.begin(OWNER, COMMAND_ID, size, (size + CHUNK_PAYLOAD_BYTES - 1) // CHUNK_PAYLOAD_BYTES)
+    assembler.begin(
+        OWNER, COMMAND_ID, size, (size + CHUNK_PAYLOAD_BYTES - 1) // CHUNK_PAYLOAD_BYTES
+    )
     return budget, assembler
 
 
@@ -60,42 +76,85 @@ def csharp_harness(tmp_path_factory):
     if dotnet is None:
         pytest.skip("dotnet required for actual C# writer framing roundtrip")
     root = Path(__file__).resolve().parents[2]
-    sdk_listing = subprocess.run([dotnet, "--list-sdks"], check=True, capture_output=True, text=True).stdout.splitlines()
+    sdk_listing = subprocess.run(
+        [dotnet, "--list-sdks"], check=True, capture_output=True, text=True
+    ).stdout.splitlines()
     if not sdk_listing:
         pytest.skip("dotnet SDK required to compile actual C# writer")
     sdk_version, sdk_parent = sdk_listing[-1].split(" [", 1)
     compiler = Path(sdk_parent.rstrip("]")) / sdk_version / "Roslyn/bincore/csc.dll"
     framework_root = Path(dotnet).resolve().parent
     ref_root = framework_root / "packs/Microsoft.NETCore.App.Ref"
-    ref_version = sorted(ref_root.iterdir(), key=lambda item: tuple(map(int, item.name.split("."))))[-1]
+    ref_version = sorted(
+        ref_root.iterdir(), key=lambda item: tuple(map(int, item.name.split(".")))
+    )[-1]
     target_framework = next((ref_version / "ref").iterdir())
     runtime_version = ref_version.name
     work = tmp_path_factory.mktemp("large-result-csharp")
     dll = work / "LargeResultHarness.dll"
-    arguments = [dotnet, str(compiler), "/nologo", "/noconfig", "/nostdlib+", "/target:exe", "/langversion:latest", f"/out:{dll}"]
+    arguments = [
+        dotnet,
+        str(compiler),
+        "/nologo",
+        "/noconfig",
+        "/nostdlib+",
+        "/target:exe",
+        "/langversion:latest",
+        f"/out:{dll}",
+    ]
     arguments.extend(f"/reference:{reference}" for reference in target_framework.glob("*.dll"))
-    arguments.extend([str(root / "MCPForUnity/Editor/Services/Transport/LargeResultWriter.cs"),
-                      str(root / "tools/tests/fixtures/large_result/LargeResultHarness.cs")])
+    arguments.extend(
+        [
+            str(root / "MCPForUnity/Editor/Services/Transport/LargeResultWriter.cs"),
+            str(root / "tools/tests/fixtures/large_result/LargeResultHarness.cs"),
+        ]
+    )
     built = subprocess.run(arguments, capture_output=True, text=True, timeout=30)
     assert built.returncode == 0, built.stdout + built.stderr
-    dll.with_suffix(".runtimeconfig.json").write_text(json.dumps({"runtimeOptions": {
-        "tfm": target_framework.name, "framework": {"name": "Microsoft.NETCore.App", "version": runtime_version}}}), encoding="utf-8")
+    dll.with_suffix(".runtimeconfig.json").write_text(
+        json.dumps(
+            {
+                "runtimeOptions": {
+                    "tfm": target_framework.name,
+                    "framework": {"name": "Microsoft.NETCore.App", "version": runtime_version},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     return dotnet, dll
 
 
 def run_writer(harness, tmp_path, payload, mode):
     path = tmp_path / "synthetic-result.bin"
     path.write_bytes(payload)
-    execution = subprocess.run([harness[0], str(harness[1]), str(path), mode, COMMAND_ID],
-                               capture_output=True, text=True, timeout=30, check=True)
-    return [(kind, base64.b64decode(encoded)) for line in execution.stdout.splitlines()
-            if "|" in line for kind, encoded in [line.split("|", 1)]]
+    execution = subprocess.run(
+        [harness[0], str(harness[1]), str(path), mode, COMMAND_ID],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    return [
+        (kind, base64.b64decode(encoded))
+        for line in execution.stdout.splitlines()
+        if "|" in line
+        for kind, encoded in [line.split("|", 1)]
+    ]
 
 
-def test_csharp_large_result_reconstructs_identical_json_with_control_interleaving(csharp_harness, tmp_path):
+def test_csharp_large_result_reconstructs_identical_json_with_control_interleaving(
+    csharp_harness, tmp_path
+):
     # Given: synthetic UTF-8 JSON produced by the same C# writer used in transport.
-    payload = json.dumps({"type": "command_result", "id": COMMAND_ID,
-                          "result": {"status": "success", "text": "성공" * 100000}}, ensure_ascii=False).encode()
+    payload = json.dumps(
+        {
+            "type": "command_result",
+            "id": COMMAND_ID,
+            "result": {"status": "success", "text": "성공" * 100000},
+        },
+        ensure_ascii=False,
+    ).encode()
     budget = Budget()
     assembler = budget.assembler()
     # When: complete individually locked messages include a queued control send.
@@ -117,8 +176,12 @@ def test_csharp_large_result_reconstructs_identical_json_with_control_interleavi
     assert budget.reservations == {}
 
 
-@pytest.mark.parametrize("mode,size", [("legacy", THRESHOLD_BYTES + 1), ("normal", THRESHOLD_BYTES - 1)])
-def test_csharp_old_peer_or_small_result_preserves_single_text_envelope(csharp_harness, tmp_path, mode, size):
+@pytest.mark.parametrize(
+    "mode,size", [("legacy", THRESHOLD_BYTES + 1), ("normal", THRESHOLD_BYTES - 1)]
+)
+def test_csharp_old_peer_or_small_result_preserves_single_text_envelope(
+    csharp_harness, tmp_path, mode, size
+):
     # Given / When: negotiation absent or payload small.
     payload = b"x" * size
     records = run_writer(csharp_harness, tmp_path, payload, mode)
@@ -133,7 +196,10 @@ def test_csharp_cancellation_stops_after_first_chunk(csharp_harness, tmp_path):
     assert [kind for kind, _ in records] == ["T", "B"]
 
 
-@pytest.mark.parametrize("size,count", [(True, 1), (THRESHOLD_BYTES - 1, 4), (MAX_RESULT_BYTES + 1, 513), (THRESHOLD_BYTES, 99)])
+@pytest.mark.parametrize(
+    "size,count",
+    [(True, 1), (THRESHOLD_BYTES - 1, 4), (MAX_RESULT_BYTES + 1, 513), (THRESHOLD_BYTES, 99)],
+)
 def test_malformed_metadata_does_not_reserve_bytes(size, count):
     # Given / When: invalid advertised allocation/count crosses the boundary.
     budget = Budget()
@@ -219,7 +285,7 @@ def test_replay_is_rejected_and_releases_completed_reservation():
 def test_exact_chunk_boundary_and_short_final_chunk_reconstruct_payload(tail):
     # Given: lengths just around a complete-frame boundary.
     payload = bytes(range(256)) * (CHUNK_PAYLOAD_BYTES * 5 // 256 + 1)
-    payload = (payload * 2)[:CHUNK_PAYLOAD_BYTES * 5 + tail]
+    payload = (payload * 2)[: CHUNK_PAYLOAD_BYTES * 5 + tail]
     _, assembler = started(len(payload))
     # When: all full/final chunks arrive in order.
     completed = None
@@ -271,11 +337,19 @@ def test_two_results_can_interleave_without_payload_mixing():
 
 
 @pytest.mark.asyncio
-async def test_real_csharp_websocket_messages_reconstruct_with_control_between_chunks(csharp_harness, tmp_path):
+async def test_real_csharp_websocket_messages_reconstruct_with_control_between_chunks(
+    csharp_harness, tmp_path
+):
     """Only an ephemeral loopback socket carries owned synthetic bytes."""
     server_api = pytest.importorskip("websockets.asyncio.server")
-    payload = json.dumps({"type": "command_result", "id": COMMAND_ID,
-                          "result": {"status": "success", "text": "가" * 100000}}, ensure_ascii=False).encode()
+    payload = json.dumps(
+        {
+            "type": "command_result",
+            "id": COMMAND_ID,
+            "result": {"status": "success", "text": "가" * 100000},
+        },
+        ensure_ascii=False,
+    ).encode()
     path = tmp_path / "synthetic-websocket-result.bin"
     path.write_bytes(payload)
     budget = Budget()
@@ -297,12 +371,20 @@ async def test_real_csharp_websocket_messages_reconstruct_with_control_between_c
                 if data["type"] == "result_start":
                     assembler.begin(OWNER, data["id"], data["total_bytes"], data["chunk_count"])
 
-    async with server_api.serve(handler, "127.0.0.1", 0, compression=None,
-                                max_size=MAX_FRAME_BYTES, close_timeout=2) as server:
+    async with server_api.serve(
+        handler, "127.0.0.1", 0, compression=None, max_size=MAX_FRAME_BYTES, close_timeout=2
+    ) as server:
         port = server.sockets[0].getsockname()[1]
         process = await asyncio.create_subprocess_exec(
-            csharp_harness[0], str(csharp_harness[1]), str(path), "interleave", COMMAND_ID,
-            f"ws://127.0.0.1:{port}", stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            csharp_harness[0],
+            str(csharp_harness[1]),
+            str(path),
+            "interleave",
+            COMMAND_ID,
+            f"ws://127.0.0.1:{port}",
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
         try:
             complete = await asyncio.wait_for(received, 15)
             _, stderr = await asyncio.wait_for(process.communicate(), 15)

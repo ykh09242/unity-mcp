@@ -1,4 +1,5 @@
 """A Codecov outage must not fail the Python test job, which gates both release pipelines."""
+
 from pathlib import Path
 import re
 

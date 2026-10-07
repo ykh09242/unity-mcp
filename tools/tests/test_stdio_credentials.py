@@ -1,4 +1,5 @@
 """Actual production libc writer -> Python reader; synthetic private paths only."""
+
 import hashlib
 import json
 import os
@@ -28,10 +29,15 @@ def compile_writer(work: Path) -> tuple[str, Path, dict]:
     dotnet = shutil.which("dotnet")
     if not dotnet:
         pytest.skip("Installed dotnet SDK unavailable")
-    env = dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT="1", DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1",
-               DOTNET_CLI_HOME=str(work / "dotnet-home"))
-    inventory = subprocess.run([dotnet, "--list-sdks"], capture_output=True, text=True,
-                               check=True, env=env, timeout=30)
+    env = dict(
+        os.environ,
+        DOTNET_CLI_TELEMETRY_OPTOUT="1",
+        DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1",
+        DOTNET_CLI_HOME=str(work / "dotnet-home"),
+    )
+    inventory = subprocess.run(
+        [dotnet, "--list-sdks"], capture_output=True, text=True, check=True, env=env, timeout=30
+    )
     choices = []
     for line in inventory.stdout.splitlines():
         match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+) \[(.+)\]", line)
@@ -43,8 +49,10 @@ def compile_writer(work: Path) -> tuple[str, Path, dict]:
     major = version[0]
     sdk = sdk_parent / ".".join(map(str, version))
     packs = sdk_parent.parent / "packs/Microsoft.NETCore.App.Ref"
-    installed = sorted((path for path in packs.glob(f"{major}.*") if path.is_dir()),
-                       key=lambda path: tuple(map(int, path.name.split("."))))
+    installed = sorted(
+        (path for path in packs.glob(f"{major}.*") if path.is_dir()),
+        key=lambda path: tuple(map(int, path.name.split("."))),
+    )
     if not installed:
         pytest.skip("Installed matching .NET reference pack unavailable")
     references = sorted((installed[-1] / "ref" / f"net{major}.0").glob("*.dll"))
@@ -54,17 +62,40 @@ def compile_writer(work: Path) -> tuple[str, Path, dict]:
     platform_define = "UNITY_EDITOR_OSX" if sys.platform == "darwin" else "UNITY_EDITOR_LINUX"
     sources = (*PRODUCTION, FIXTURE / "PosixCredentialRoundTripHarness.cs")
     response = work / "compile.rsp"
-    response.write_text("\n".join([
-        "/nologo", "/nostdlib+", "/target:exe", "/langversion:latest",
-        f"/define:{platform_define}", f'/out:"{assembly}"',
-        *(f'/reference:"{path}"' for path in references), *(f'"{path}"' for path in sources),
-    ]), encoding="utf-8")
-    compiled = subprocess.run([dotnet, str(sdk / "Roslyn/bincore/csc.dll"), "/noconfig", f"@{response}"],
-                              capture_output=True, text=True, env=env, timeout=60)
+    response.write_text(
+        "\n".join(
+            [
+                "/nologo",
+                "/nostdlib+",
+                "/target:exe",
+                "/langversion:latest",
+                f"/define:{platform_define}",
+                f'/out:"{assembly}"',
+                *(f'/reference:"{path}"' for path in references),
+                *(f'"{path}"' for path in sources),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    compiled = subprocess.run(
+        [dotnet, str(sdk / "Roslyn/bincore/csc.dll"), "/noconfig", f"@{response}"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
     assert compiled.returncode == 0, compiled.stdout + compiled.stderr
-    assembly.with_suffix(".runtimeconfig.json").write_text(json.dumps({"runtimeOptions": {
-        "tfm": f"net{major}.0", "framework": {"name": "Microsoft.NETCore.App", "version": f"{major}.0.0"},
-    }}), encoding="utf-8")
+    assembly.with_suffix(".runtimeconfig.json").write_text(
+        json.dumps(
+            {
+                "runtimeOptions": {
+                    "tfm": f"net{major}.0",
+                    "framework": {"name": "Microsoft.NETCore.App", "version": f"{major}.0.0"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     return dotnet, assembly, env
 
 
@@ -73,8 +104,12 @@ def writer(tmp_path_factory):
     if os.name != "posix":
         pytest.skip("Actual libc integration requires POSIX")
     work = tmp_path_factory.mktemp("owned-stdio-compile")
-    tracked = (*PRODUCTION, READER, FIXTURE / "PosixCredentialRoundTripHarness.cs",
-               FIXTURE / "check_owned_posix_credential.py")
+    tracked = (
+        *PRODUCTION,
+        READER,
+        FIXTURE / "PosixCredentialRoundTripHarness.cs",
+        FIXTURE / "check_owned_posix_credential.py",
+    )
     before = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in tracked}
     yield compile_writer(work)
     assert before == {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in tracked}
@@ -82,8 +117,14 @@ def writer(tmp_path_factory):
 
 def start_writer(writer, home: Path, generation: str, token: str):
     dotnet, assembly, env = writer
-    process = subprocess.Popen([dotnet, str(assembly), str(home)], env=env, stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    process = subprocess.Popen(
+        [dotnet, str(assembly), str(home)],
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     process.stdin.write(generation + "\n" + token + "\n")
     process.stdin.flush()
     return process
@@ -119,14 +160,27 @@ def test_actual_posix_writer_reader_private_modes_and_exact_cleanup(writer, tmp_
     process = start_writer(writer, home, generation, token)
     try:
         assert ready_line(process) == "READY"
-        reader = subprocess.run([sys.executable, "-B", str(FIXTURE / "check_owned_posix_credential.py"), str(READER)],
-                                input=generation + "\n" + token + "\n", env=dict(os.environ, HOME=str(home)),
-                                capture_output=True, text=True, timeout=15)
+        reader = subprocess.run(
+            [sys.executable, "-B", str(FIXTURE / "check_owned_posix_credential.py"), str(READER)],
+            input=generation + "\n" + token + "\n",
+            env=dict(os.environ, HOME=str(home)),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
         token = None
-        assert reader.returncode == 0, "Owned production reader failed (credential content suppressed)"
+        assert reader.returncode == 0, (
+            "Owned production reader failed (credential content suppressed)"
+        )
         result = json.loads(reader.stdout)
-        assert result == {"matched": True, "private_modes": True, "owners": True,
-                          "malformed_rejected": True, "malformed_count": 8, "unsafe_file_mode_rejected": True}
+        assert result == {
+            "matched": True,
+            "private_modes": True,
+            "owners": True,
+            "malformed_rejected": True,
+            "malformed_count": 8,
+            "unsafe_file_mode_rejected": True,
+        }
     finally:
         token = None
         output, error, code = finish_writer(process)
@@ -158,13 +212,19 @@ def test_actual_posix_writer_refuses_ancestor_symlink(writer, tmp_path, ancestor
             process.kill()
             process.communicate(timeout=15)
     assert process.returncode == 2 and output.strip() == "REJECTED" and not error
-    assert list(destination.iterdir()) == [], "Rejected writer changed the owned symlink destination"
+    assert list(destination.iterdir()) == [], (
+        "Rejected writer changed the owned symlink destination"
+    )
     assert link.is_symlink()
 
 
-@pytest.mark.parametrize("generation", ["", "a" * 31, "a" * 33, "A" * 32, "G" * 32,
-                                        "../" + "a" * 32, "MCPForUnity.Stdio:" + "a" * 32])
-def test_actual_posix_writer_rejects_malformed_generation_before_path_creation(writer, tmp_path, generation):
+@pytest.mark.parametrize(
+    "generation",
+    ["", "a" * 31, "a" * 33, "A" * 32, "G" * 32, "../" + "a" * 32, "MCPForUnity.Stdio:" + "a" * 32],
+)
+def test_actual_posix_writer_rejects_malformed_generation_before_path_creation(
+    writer, tmp_path, generation
+):
     home = tmp_path / "owned-home"
     home.mkdir(mode=0o700)
     process = start_writer(writer, home, generation, secrets.token_hex(32))

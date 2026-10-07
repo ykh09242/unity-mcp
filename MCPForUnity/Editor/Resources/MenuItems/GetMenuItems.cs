@@ -28,9 +28,7 @@ namespace MCPForUnity.Editor.Resources.MenuItems
 
             if (!string.IsNullOrEmpty(search))
             {
-                items = items
-                    .Where(item => item.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0)
-                    .ToList();
+                items = items.Where(item => item.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
             }
 
             string message = $"Retrieved {items.Count} menu items";
@@ -69,10 +67,7 @@ namespace MCPForUnity.Editor.Resources.MenuItems
             {
                 var methods = TypeCache.GetMethodsWithAttribute<MenuItem>();
                 _cached = methods
-                    .SelectMany(m => m
-                        .GetCustomAttributes(typeof(MenuItem), false)
-                        .OfType<MenuItem>()
-                        .Select(attr => attr.menuItem))
+                    .SelectMany(m => m.GetCustomAttributes(typeof(MenuItem), false).OfType<MenuItem>().Select(attr => attr.menuItem))
                     .Where(s => !string.IsNullOrEmpty(s))
                     .Distinct(StringComparer.Ordinal)
                     .OrderBy(s => s, StringComparer.Ordinal)

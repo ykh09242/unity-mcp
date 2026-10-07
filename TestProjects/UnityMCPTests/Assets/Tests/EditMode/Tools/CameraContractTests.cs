@@ -45,10 +45,7 @@ namespace MCPForUnityTests.Editor.Tools
             GameObject[] created = null;
             try
             {
-                var response = JObject.FromObject(ManageCamera.HandleCommand(new JObject
-                {
-                    ["action"] = "create_camera", ["properties"] = properties
-                }));
+                var response = JObject.FromObject(ManageCamera.HandleCommand(new JObject { ["action"] = "create_camera", ["properties"] = properties }));
                 created = UnityEngine.Resources.FindObjectsOfTypeAll<GameObject>().Except(before).ToArray();
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 StringAssert.Contains("properties", response.ToString());
@@ -57,7 +54,9 @@ namespace MCPForUnityTests.Editor.Tools
             finally
             {
                 if (created != null)
-                    foreach (var go in created) if (go != null) Object.DestroyImmediate(go);
+                    foreach (var go in created)
+                        if (go != null)
+                            Object.DestroyImmediate(go);
             }
         }
 
@@ -66,12 +65,10 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var properties = new JObject { ["priority"] = 0, ["enabled"] = false };
             Assert.AreSame(properties, CameraHelpers.ExtractProperties(new JObject { ["properties"] = properties }));
-            Assert.AreEqual(properties.ToString(), CameraHelpers.ExtractProperties(
-                new JObject { ["properties"] = properties.ToString() }).ToString());
+            Assert.AreEqual(properties.ToString(), CameraHelpers.ExtractProperties(new JObject { ["properties"] = properties.ToString() }).ToString());
             Assert.IsNull(CameraHelpers.ExtractProperties(new JObject()));
             Assert.IsNull(CameraHelpers.ExtractProperties(new JObject { ["properties"] = JValue.CreateNull() }));
-            Assert.Throws<ArgumentException>(() => CameraHelpers.ExtractProperties(
-                new JObject { ["properties"] = new JArray(1, 2) }));
+            Assert.Throws<ArgumentException>(() => CameraHelpers.ExtractProperties(new JObject { ["properties"] = new JArray(1, 2) }));
         }
 
         [Test]
@@ -81,36 +78,35 @@ namespace MCPForUnityTests.Editor.Tools
             namedGo.transform.SetParent(_rig.transform);
             var namedCamera = namedGo.AddComponent<Camera>();
             _camera.fieldOfView = 60;
-            var response = JObject.FromObject(CameraConfigure.SetBasicCameraLens(new JObject
-            {
-                ["target"] = namedGo.name, ["searchMethod"] = "by_name",
-                ["properties"] = new JObject { ["fieldOfView"] = 35 }
-            }));
+            var response = JObject.FromObject(
+                CameraConfigure.SetBasicCameraLens(
+                    new JObject
+                    {
+                        ["target"] = namedGo.name,
+                        ["searchMethod"] = "by_name",
+                        ["properties"] = new JObject { ["fieldOfView"] = 35 },
+                    }
+                )
+            );
 
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(35, namedCamera.fieldOfView);
             Assert.AreEqual(60, _camera.fieldOfView);
-            Assert.AreSame(namedGo, CameraHelpers.FindTargetGameObject(new JObject
-            {
-                ["target"] = _rig.name + "/" + namedGo.name, ["searchMethod"] = "by_path"
-            }));
+            Assert.AreSame(
+                namedGo,
+                CameraHelpers.FindTargetGameObject(new JObject { ["target"] = _rig.name + "/" + namedGo.name, ["searchMethod"] = "by_path" })
+            );
         }
 
         [Test]
         public void ImplicitIdAndHierarchyPathFindTheCamera()
         {
-            Assert.AreSame(_cameraGo, CameraHelpers.FindTargetGameObject(new JObject
-            {
-                ["target"] = _cameraGo.GetInstanceIDCompat().ToString()
-            }));
-            Assert.AreSame(_cameraGo, CameraHelpers.FindTargetGameObject(new JObject
-            {
-                ["target"] = _cameraGo.GetInstanceIDCompat(), ["searchMethod"] = "by_id"
-            }));
-            Assert.AreSame(_cameraGo, CameraHelpers.FindTargetGameObject(new JObject
-            {
-                ["target"] = _rig.name + "/Cam"
-            }));
+            Assert.AreSame(_cameraGo, CameraHelpers.FindTargetGameObject(new JObject { ["target"] = _cameraGo.GetInstanceIDCompat().ToString() }));
+            Assert.AreSame(
+                _cameraGo,
+                CameraHelpers.FindTargetGameObject(new JObject { ["target"] = _cameraGo.GetInstanceIDCompat(), ["searchMethod"] = "by_id" })
+            );
+            Assert.AreSame(_cameraGo, CameraHelpers.FindTargetGameObject(new JObject { ["target"] = _rig.name + "/Cam" }));
         }
 
         [Test]

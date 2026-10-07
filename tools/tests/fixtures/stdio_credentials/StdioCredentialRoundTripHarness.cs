@@ -10,8 +10,10 @@ internal static class StdioCredentialRoundTripHarness
 {
     private const string TargetNamespace = "MCPForUnity.Stdio";
     private const int ErrorNotFound = 1168;
+
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CredReadW")]
     private static extern bool CredRead(string target, int type, int flags, out IntPtr value);
+
     [DllImport("advapi32.dll", EntryPoint = "CredFree")]
     private static extern void CredFree(IntPtr value);
 
@@ -19,10 +21,13 @@ internal static class StdioCredentialRoundTripHarness
     {
         bool found = CredRead(ownedTarget, 1, 0, out IntPtr pointer);
         error = found ? 0 : Marshal.GetLastWin32Error();
-        if (found) CredFree(pointer); // Existence check only: never inspect the blob here.
+        if (found)
+            CredFree(pointer); // Existence check only: never inspect the blob here.
         return found;
     }
+
     private static string Quote(string path) => "\"" + path.Replace("\"", "\\\"") + "\"";
+
     public static int Main(string[] args)
     {
         if (Environment.OSVersion.Platform != PlatformID.Win32NT || args.Length != 3)
@@ -44,7 +49,8 @@ internal static class StdioCredentialRoundTripHarness
         Array.Clear(tokenBytes, 0, tokenBytes.Length);
         StdioLaunchCredential published = null;
         Process child = null;
-        bool matched = false, cleanup = false;
+        bool matched = false,
+            cleanup = false;
         string stage = "production_writer";
         try
         {
@@ -55,13 +61,18 @@ internal static class StdioCredentialRoundTripHarness
                 throw new InvalidOperationException("Owned fixed-namespace credential missing; Win32 " + presenceError);
             Console.WriteLine("PASS: production writer published one owned fixed-namespace entry");
             stage = "production_python_reader";
-            child = Process.Start(new ProcessStartInfo
-            {
-                FileName = args[0],
-                Arguments = "-B " + Quote(args[1]) + " " + Quote(args[2]),
-                UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
-            });
+            child = Process.Start(
+                new ProcessStartInfo
+                {
+                    FileName = args[0],
+                    Arguments = "-B " + Quote(args[1]) + " " + Quote(args[2]),
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                }
+            );
             var stdout = child.StandardOutput.ReadToEndAsync();
             var stderr = child.StandardError.ReadToEndAsync();
             // The expected token travels exclusively through this owned anonymous stdin pipe.
@@ -70,39 +81,60 @@ internal static class StdioCredentialRoundTripHarness
             child.StandardInput.WriteLine(token);
             child.StandardInput.Close();
             token = null;
-            if (!child.WaitForExit(15000)) throw new TimeoutException("Owned Python reader timed out");
-            matched = child.ExitCode == 0 && stdout.Result.Trim() == "PASS: production Python reader matched; malformed generations rejected before native access";
+            if (!child.WaitForExit(15000))
+                throw new TimeoutException("Owned Python reader timed out");
+            matched =
+                child.ExitCode == 0 && stdout.Result.Trim() == "PASS: production Python reader matched; malformed generations rejected before native access";
             string readerStatus = stdout.Result.Trim();
-            if (readerStatus == "FAIL: owned channel framing" || readerStatus == "FAIL: malformed generation rejection" ||
-                readerStatus == "FAIL: production native credential match")
+            if (
+                readerStatus == "FAIL: owned channel framing"
+                || readerStatus == "FAIL: malformed generation rejection"
+                || readerStatus == "FAIL: production native credential match"
+            )
                 Console.WriteLine(readerStatus);
-            if (child.ExitCode != 0) Console.WriteLine("FAIL: Python child exit=" + child.ExitCode);
+            if (child.ExitCode != 0)
+                Console.WriteLine("FAIL: Python child exit=" + child.ExitCode);
             // Do not forward arbitrary child error/output: credential-bearing locals stay private.
-            if (!matched || stderr.Result.Length != 0) throw new InvalidOperationException("Owned Python reader check failed");
+            if (!matched || stderr.Result.Length != 0)
+                throw new InvalidOperationException("Owned Python reader check failed");
             Console.WriteLine("PASS: production Python reader matched; malformed generations rejected before native access");
         }
         catch (Exception error)
         {
             matched = false;
             // Stage, exception type and native status are non-secret diagnostics.
-            Console.WriteLine("FAIL: owned credential roundtrip stage=" + stage + " exception=" +
-                error.GetType().Name + " win32=" + Marshal.GetLastWin32Error());
+            Console.WriteLine(
+                "FAIL: owned credential roundtrip stage=" + stage + " exception=" + error.GetType().Name + " win32=" + Marshal.GetLastWin32Error()
+            );
         }
         finally
         {
             token = null;
-            try { if (child != null && !child.HasExited) child.Kill(); } catch { }
+            try
+            {
+                if (child != null && !child.HasExited)
+                    child.Kill();
+            }
+            catch { }
             child?.Dispose();
-            try { published?.Dispose(); } catch { }
+            try
+            {
+                published?.Dispose();
+            }
+            catch { }
             try
             {
                 // Unconditionally attempt exact-owned-entry removal, including constructor failure.
                 new WindowsCredentialKeyStore(TargetNamespace).Delete(generation);
                 cleanup = !Exists(ownedTarget, out int cleanupError) && cleanupError == ErrorNotFound;
             }
-            catch { cleanup = false; }
-            Console.WriteLine(cleanup ? "PASS: exact owned credential cleanup confirmed (ERROR_NOT_FOUND)" :
-                "FAIL: cleanup not confirmed for owned target " + ownedTarget);
+            catch
+            {
+                cleanup = false;
+            }
+            Console.WriteLine(
+                cleanup ? "PASS: exact owned credential cleanup confirmed (ERROR_NOT_FOUND)" : "FAIL: cleanup not confirmed for owned target " + ownedTarget
+            );
         }
         return matched && cleanup ? 0 : 1;
     }

@@ -71,7 +71,9 @@ def test_foreign_result_does_not_complete_owner_command(wire_client: TestClient)
             foreign.send_json({"type": "register", "project_hash": "foreign"})
             foreign.receive_json()
             # When a foreign socket submits the owner's command UUID.
-            foreign.send_json({"type": "command_result", "id": "known-command", "result": {"success": True}})
+            foreign.send_json(
+                {"type": "command_result", "id": "known-command", "result": {"success": True}}
+            )
             foreign.send_json({"type": "register", "project_hash": "duplicate"})
             with pytest.raises(WebSocketDisconnect):
                 foreign.receive_json()  # Processing barrier for command_result.
@@ -129,7 +131,9 @@ async def test_cancelled_send_releases_pending_future(isolated_hub: PluginRegist
 
 
 @pytest.mark.asyncio
-async def test_command_timeout_includes_blocked_send(isolated_hub: PluginRegistry, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_command_timeout_includes_blocked_send(
+    isolated_hub: PluginRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Given a socket whose send cannot finish and a short command timeout.
     PluginHub.configure(isolated_hub)
     entered = asyncio.Event()
@@ -224,7 +228,8 @@ async def test_disconnect_interrupts_blocked_command_write(isolated_hub: PluginR
 
 @pytest.mark.asyncio
 async def test_disconnect_before_pending_registration_does_not_send(
-    isolated_hub: PluginRegistry, monkeypatch: pytest.MonkeyPatch,
+    isolated_hub: PluginRegistry,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     PluginHub.configure(isolated_hub)
     ws = AsyncMock()

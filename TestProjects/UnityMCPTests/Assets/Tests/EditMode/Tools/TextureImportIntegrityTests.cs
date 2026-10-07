@@ -37,8 +37,10 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsNotEmpty(_guid);
             Assert.AreEqual(_root, AssetDatabase.GUIDToAssetPath(_guid));
             _path = _root + "/Fixture.png";
-            File.WriteAllBytes(Absolute(_path), Convert.FromBase64String(
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQkdP4DwAB/gFaQ7UOogAAAABJRU5ErkJggg=="));
+            File.WriteAllBytes(
+                Absolute(_path),
+                Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQkdP4DwAB/gFaQ7UOogAAAABJRU5ErkJggg==")
+            );
             AssetDatabase.ImportAsset(_path, ImportAssetOptions.ForceSynchronousImport);
             Assert.IsNotNull(AssetImporter.GetAtPath(_path) as TextureImporter);
             LogAssert.NoUnexpectedReceived();
@@ -47,7 +49,8 @@ namespace MCPForUnityTests.EditMode.Tools
         [TearDown]
         public void TearDown()
         {
-            if (string.IsNullOrEmpty(_guid)) return;
+            if (string.IsNullOrEmpty(_guid))
+                return;
             Assert.AreEqual(_root, AssetDatabase.GUIDToAssetPath(_guid));
             Assert.AreEqual(_guid, AssetDatabase.AssetPathToGUID(_root, AssetPathToGUIDOptions.OnlyExistingAssets));
             Assert.IsTrue(AssetDatabase.DeleteAsset(_root));
@@ -77,7 +80,15 @@ namespace MCPForUnityTests.EditMode.Tools
         public void OverBudgetGenerationDoesNotReplaceExistingTexture(string action, int width, int height, int octaves)
         {
             byte[] before = File.ReadAllBytes(Absolute(_path));
-            var response = Send(action, new JObject { ["width"] = width, ["height"] = height, ["octaves"] = octaves });
+            var response = Send(
+                action,
+                new JObject
+                {
+                    ["width"] = width,
+                    ["height"] = height,
+                    ["octaves"] = octaves,
+                }
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             CollectionAssert.AreEqual(before, File.ReadAllBytes(Absolute(_path)));
             LogAssert.NoUnexpectedReceived();
@@ -87,9 +98,18 @@ namespace MCPForUnityTests.EditMode.Tools
         public void OverBudgetPixelRegionDoesNotReplaceExistingTexture()
         {
             byte[] before = File.ReadAllBytes(Absolute(_path));
-            var response = Send("modify", new JObject { ["setPixels"] = new JObject {
-                ["width"] = int.MaxValue, ["height"] = int.MaxValue,
-                ["color"] = new JArray(255, 0, 0, 255) } });
+            var response = Send(
+                "modify",
+                new JObject
+                {
+                    ["setPixels"] = new JObject
+                    {
+                        ["width"] = int.MaxValue,
+                        ["height"] = int.MaxValue,
+                        ["color"] = new JArray(255, 0, 0, 255),
+                    },
+                }
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             CollectionAssert.AreEqual(before, File.ReadAllBytes(Absolute(_path)));
             LogAssert.NoUnexpectedReceived();
@@ -102,7 +122,10 @@ namespace MCPForUnityTests.EditMode.Tools
             byte[] before = File.ReadAllBytes(Absolute(_path));
             byte[] image = (byte[])before.Clone();
             // Change PNG IHDR width to 4097 and repair its CRC so size is the rejection reason.
-            image[16] = 0; image[17] = 0; image[18] = 16; image[19] = 1;
+            image[16] = 0;
+            image[17] = 0;
+            image[18] = 16;
+            image[19] = 1;
             uint crc = 0xffffffff;
             for (int i = 12; i < 29; i++)
             {
@@ -111,7 +134,8 @@ namespace MCPForUnityTests.EditMode.Tools
                     crc = (crc >> 1) ^ ((crc & 1) != 0 ? 0xedb88320u : 0u);
             }
             crc ^= 0xffffffff;
-            for (int i = 0; i < 4; i++) image[29 + i] = (byte)(crc >> (24 - 8 * i));
+            for (int i = 0; i < 4; i++)
+                image[29 + i] = (byte)(crc >> (24 - 8 * i));
             string source = _root + "/OverBudget.png";
             File.WriteAllBytes(Absolute(source), image);
             var response = Send(action, new JObject { ["imagePath"] = source });
@@ -145,16 +169,14 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("{isReadable:true,crunchedCompression:'bad'}")]
         public void LateImporterConversionsPreserveStateAndFiles(string json)
         {
-            AssertRejectedWithoutChanges("set_import_settings",
-                new JObject { ["import_settings"] = JObject.Parse(json) });
+            AssertRejectedWithoutChanges("set_import_settings", new JObject { ["import_settings"] = JObject.Parse(json) });
         }
 
         [TestCase("{pivot:[0,0],pixelsPerUnit:'bad'}")]
         [TestCase("{pivot:[0,'bad']}")]
         public void SpriteConversionsPreserveTypeAndPivot(string json)
         {
-            AssertRejectedWithoutChanges("set_import_settings",
-                new JObject { ["as_sprite"] = JObject.Parse(json) });
+            AssertRejectedWithoutChanges("set_import_settings", new JObject { ["as_sprite"] = JObject.Parse(json) });
         }
 
         [TestCase(false)]
@@ -163,11 +185,9 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             var importer = AssetImporter.GetAtPath(_path) as TextureImporter;
             Assert.IsFalse(importer.isReadable, "The fixture starts with an unreadable imported texture.");
-            var options = new JObject
-            {
-                ["importSettings"] = JObject.Parse("{isReadable:true,anisoLevel:'bad'}")
-            };
-            if (pixels) options["setPixels"] = JObject.Parse("{color:[255,0,0,255]}");
+            var options = new JObject { ["importSettings"] = JObject.Parse("{isReadable:true,anisoLevel:'bad'}") };
+            if (pixels)
+                options["setPixels"] = JObject.Parse("{color:[255,0,0,255]}");
             AssertRejectedWithoutChanges("modify", options);
         }
 
@@ -180,12 +200,16 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             string parent = _root + "/Unprepared";
             string path = parent + "/New.png";
-            var response = Send(action, new JObject
-            {
-                ["width"] = 1,
-                ["height"] = 1,
-                ["spriteSettings"] = JObject.Parse("{pivot:[0,0],pixelsPerUnit:'bad'}")
-            }, path);
+            var response = Send(
+                action,
+                new JObject
+                {
+                    ["width"] = 1,
+                    ["height"] = 1,
+                    ["spriteSettings"] = JObject.Parse("{pivot:[0,0],pixelsPerUnit:'bad'}"),
+                },
+                path
+            );
             Assert.IsFalse((bool)response["success"], response.ToString());
             Assert.IsFalse(Directory.Exists(Absolute(parent)));
             Assert.IsFalse(File.Exists(Absolute(path)));
@@ -198,15 +222,16 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("apply_pattern")]
         public void RejectedImportSettingsPreserveExistingDestination(string action)
         {
-            AssertRejectedWithoutChanges(action, JObject.Parse(
-                "{width:1,height:1,importSettings:{textureType:'Sprite',anisoLevel:'bad'}}"));
+            AssertRejectedWithoutChanges(action, JObject.Parse("{width:1,height:1,importSettings:{textureType:'Sprite',anisoLevel:'bad'}}"));
         }
 
         [Test]
         public void ValidFalseAndZeroImportSettingsRemainSupported()
         {
-            var response = Send("set_import_settings", JObject.Parse(
-                "{import_settings:{sRGBTexture:false,isReadable:false,mipmapEnabled:false,anisoLevel:0,compressionQuality:0}}"));
+            var response = Send(
+                "set_import_settings",
+                JObject.Parse("{import_settings:{sRGBTexture:false,isReadable:false,mipmapEnabled:false,anisoLevel:0,compressionQuality:0}}")
+            );
             Assert.IsTrue((bool)response["success"], response.ToString());
             var importer = AssetImporter.GetAtPath(_path) as TextureImporter;
             Assert.IsFalse(importer.sRGBTexture);
@@ -258,12 +283,8 @@ namespace MCPForUnityTests.EditMode.Tools
             importer.spritePivot = new Vector2(.25f, .75f);
             importer.SaveAndReimport();
             importer = AssetImporter.GetAtPath(_path) as TextureImporter;
-            Assert.AreEqual(new Vector2(.25f, .75f), importer.spritePivot,
-                "The owned importer must retain the seeded pivot before dispatch.");
-            var response = Send("set_import_settings", new JObject
-            {
-                [container] = new JObject { [property] = new JArray(0) }
-            });
+            Assert.AreEqual(new Vector2(.25f, .75f), importer.spritePivot, "The owned importer must retain the seeded pivot before dispatch.");
+            var response = Send("set_import_settings", new JObject { [container] = new JObject { [property] = new JArray(0) } });
             Assert.IsTrue((bool)response["success"], response.ToString());
             importer = AssetImporter.GetAtPath(_path) as TextureImporter;
             Assert.AreEqual(new Vector2(.25f, .75f), importer.spritePivot);
@@ -275,8 +296,7 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             var importer = AssetImporter.GetAtPath(_path) as TextureImporter;
             var type = importer.textureType;
-            var response = Send("set_import_settings", JObject.Parse(
-                "{import_settings:{textureType:'future-enum',isReadable:true}}"));
+            var response = Send("set_import_settings", JObject.Parse("{import_settings:{textureType:'future-enum',isReadable:true}}"));
             Assert.IsTrue((bool)response["success"], response.ToString());
             importer = AssetImporter.GetAtPath(_path) as TextureImporter;
             Assert.AreEqual(type, importer.textureType);

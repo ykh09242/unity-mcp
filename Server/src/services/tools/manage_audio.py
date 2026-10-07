@@ -27,8 +27,13 @@ from transport.unity_transport import send_with_unity_instance
 async def manage_audio(
     ctx: Context,
     action: Annotated[Literal["play", "stop"], "Playback action to perform."],
-    target: Annotated[StrictStr | StrictInt, "Scene GameObject name, hierarchy path or integer instance ID."],
-    clip: Annotated[str | None, "Optional AudioClip asset path for play only; omit to use the source's current clip."] = None,
+    target: Annotated[
+        StrictStr | StrictInt, "Scene GameObject name, hierarchy path or integer instance ID."
+    ],
+    clip: Annotated[
+        str | None,
+        "Optional AudioClip asset path for play only; omit to use the source's current clip.",
+    ] = None,
     search_method: Annotated[
         Literal["by_id", "by_name", "by_path", "by_id_or_name_or_path"] | None,
         "Target selector. Omitted or null uses automatic ID, path or name resolution.",
@@ -42,6 +47,9 @@ async def manage_audio(
         params["searchMethod"] = search_method
 
     result = await send_with_unity_instance(
-        async_send_command_with_retry, unity_instance, "manage_audio", params,
+        async_send_command_with_retry,
+        unity_instance,
+        "manage_audio",
+        params,
     )
     return result if isinstance(result, dict) else {"success": False, "message": str(result)}

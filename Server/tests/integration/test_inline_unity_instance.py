@@ -6,6 +6,7 @@ When a tool call includes unity_instance in its arguments, the middleware:
   2. Resolves it to a validated instance identifier
   3. Sets it in request-scoped state for that call only (does NOT persist to session)
 """
+
 import sys
 import types
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ from core.config import config
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class DummyMiddlewareContext:
     """Minimal MiddlewareContext stand-in with a mutable arguments dict."""
 
@@ -33,7 +35,14 @@ class DummyMiddlewareContext:
         self.message = SimpleNamespace(arguments=arguments if arguments is not None else {})
 
 
-def _make_middleware(monkeypatch, *, transport="stdio", plugin_hub_configured=False, sessions=None, pool_instances=None):
+def _make_middleware(
+    monkeypatch,
+    *,
+    transport="stdio",
+    plugin_hub_configured=False,
+    sessions=None,
+    pool_instances=None,
+):
     """
     Build a UnityInstanceMiddleware with patched transport dependencies.
 
@@ -70,8 +79,10 @@ def _make_middleware(monkeypatch, *, transport="stdio", plugin_hub_configured=Fa
     monkeypatch.setattr(config, "http_remote_hosted", False)
 
     if pool_instances is not None:
+
         async def fake_discover(ctx):
             return pool_instances
+
         monkeypatch.setattr(middleware, "_discover_instances", fake_discover)
 
     return middleware
@@ -80,6 +91,7 @@ def _make_middleware(monkeypatch, *, transport="stdio", plugin_hub_configured=Fa
 # ---------------------------------------------------------------------------
 # Pop behaviour
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_unity_instance_is_popped_from_arguments(monkeypatch):
@@ -101,7 +113,9 @@ async def test_unity_instance_is_popped_from_arguments(monkeypatch):
 @pytest.mark.asyncio
 async def test_arguments_without_unity_instance_untouched(monkeypatch):
     """When unity_instance is absent, arguments dict is left completely untouched."""
-    mw = _make_middleware(monkeypatch, pool_instances=[SimpleNamespace(id="Proj@abc123", hash="abc123")])
+    mw = _make_middleware(
+        monkeypatch, pool_instances=[SimpleNamespace(id="Proj@abc123", hash="abc123")]
+    )
 
     ctx = DummyContext()
     ctx.client_id = "client-1"
@@ -119,6 +133,7 @@ async def test_arguments_without_unity_instance_untouched(monkeypatch):
 # ---------------------------------------------------------------------------
 # Per-call routing (no persistence)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_inline_routes_to_specified_instance(monkeypatch):
@@ -184,6 +199,7 @@ async def test_inline_overrides_session_persisted_instance(monkeypatch):
 # Port number resolution (stdio)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_port_number_resolves_to_name_hash_stdio(monkeypatch):
     """Bare port number resolves to the matching Name@hash in stdio mode."""
@@ -232,6 +248,7 @@ async def test_port_number_errors_in_http_mode(monkeypatch):
 # ---------------------------------------------------------------------------
 # Name@hash and hash prefix resolution
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_name_at_hash_resolves_exactly(monkeypatch):
@@ -312,6 +329,7 @@ async def test_no_match_raises(monkeypatch):
 # Edge cases
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_none_unity_instance_falls_through_to_session(monkeypatch):
     """None value for unity_instance falls through to session-persisted instance."""
@@ -365,13 +383,18 @@ async def test_resource_read_unaffected(monkeypatch):
 # set_active_instance tool: port number support
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_set_active_instance_port_stdio(monkeypatch):
     """set_active_instance accepts a port number in stdio mode and resolves to Name@hash."""
     monkeypatch.setattr(config, "transport_mode", "stdio")
     monkeypatch.setattr(config, "http_remote_hosted", False)
 
-    from transport.unity_instance_middleware import UnityInstanceMiddleware, set_unity_instance_middleware
+    from transport.unity_instance_middleware import (
+        UnityInstanceMiddleware,
+        set_unity_instance_middleware,
+    )
+
     mw = UnityInstanceMiddleware()
     set_unity_instance_middleware(mw)
 
@@ -382,6 +405,7 @@ async def test_set_active_instance_port_stdio(monkeypatch):
             return [pool_instance]
 
     import services.tools.set_active_instance as sat
+
     monkeypatch.setattr(sat, "get_unity_connection_pool", lambda: FakePool())
 
     from services.tools.set_active_instance import set_active_instance
@@ -417,6 +441,7 @@ async def test_set_active_instance_port_http_errors(monkeypatch):
 # batch_execute rejects inner unity_instance
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_batch_execute_rejects_inner_unity_instance():
     """batch_execute raises ValueError when an inner command contains unity_instance."""
@@ -430,5 +455,7 @@ async def test_batch_execute_rejects_inner_unity_instance():
         {"tool": "manage_scene", "params": {"action": "get_active", "unity_instance": "6402"}},
     ]
 
-    with pytest.raises(ValueError, match="Per-command instance routing is not supported inside batch_execute"):
+    with pytest.raises(
+        ValueError, match="Per-command instance routing is not supported inside batch_execute"
+    ):
         await batch_execute(ctx, commands=commands)

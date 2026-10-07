@@ -28,7 +28,9 @@ class RequestBodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        lengths = [value for name, value in scope.get("headers", []) if name.lower() == b"content-length"]
+        lengths = [
+            value for name, value in scope.get("headers", []) if name.lower() == b"content-length"
+        ]
         ceiling = str(self.max_body_size).encode("ascii")
         invalid_length = False
         for value in lengths:
@@ -39,10 +41,14 @@ class RequestBodyLimitMiddleware:
             # Compare decimal strings to avoid integer parsing/allocation on huge headers.
             value = value.lstrip(b"0") or b"0"
             if len(value) > len(ceiling) or (len(value) == len(ceiling) and value > ceiling):
-                await JSONResponse({"error": "HTTP request body exceeds the size limit"}, status_code=413)(scope, receive, send)
+                await JSONResponse(
+                    {"error": "HTTP request body exceeds the size limit"}, status_code=413
+                )(scope, receive, send)
                 return
         if invalid_length or len(lengths) > 1:
-            await JSONResponse({"error": "Invalid Content-Length header"}, status_code=400)(scope, receive, send)
+            await JSONResponse({"error": "Invalid Content-Length header"}, status_code=400)(
+                scope, receive, send
+            )
             return
 
         total_size = 0
@@ -59,7 +65,9 @@ class RequestBodyLimitMiddleware:
                 if size > self.max_body_size - total_size:
                     rejected = True
                     if not response_started:
-                        await JSONResponse({"error": "HTTP request body exceeds the size limit"}, status_code=413)(scope, receive, send)
+                        await JSONResponse(
+                            {"error": "HTTP request body exceeds the size limit"}, status_code=413
+                        )(scope, receive, send)
                     raise _RequestBodyTooLarge()
                 total_size += size
             return message

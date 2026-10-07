@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Graphics
 {
@@ -21,15 +21,15 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
         private static void EnsureTypes()
         {
-            if (_typesResolved) return;
+            if (_typesResolved)
+                return;
             _typesResolved = true;
 
-            _scriptableRendererDataType = Type.GetType(
-                "UnityEngine.Rendering.Universal.ScriptableRendererData, Unity.RenderPipelines.Universal.Runtime");
-            _scriptableRendererFeatureType = Type.GetType(
-                "UnityEngine.Rendering.Universal.ScriptableRendererFeature, Unity.RenderPipelines.Universal.Runtime");
+            _scriptableRendererDataType = Type.GetType("UnityEngine.Rendering.Universal.ScriptableRendererData, Unity.RenderPipelines.Universal.Runtime");
+            _scriptableRendererFeatureType = Type.GetType("UnityEngine.Rendering.Universal.ScriptableRendererFeature, Unity.RenderPipelines.Universal.Runtime");
             _universalRenderPipelineAssetType = Type.GetType(
-                "UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset, Unity.RenderPipelines.Universal.Runtime");
+                "UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset, Unity.RenderPipelines.Universal.Runtime"
+            );
         }
 
         // === feature_list ===
@@ -39,43 +39,45 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (rendererData == null)
                 return new ErrorResponse("Could not find URP ScriptableRendererData. Ensure URP is active.");
 
-            var featuresProp = rendererData.GetType().GetProperty("rendererFeatures",
-                BindingFlags.Public | BindingFlags.Instance);
+            var featuresProp = rendererData.GetType().GetProperty("rendererFeatures", BindingFlags.Public | BindingFlags.Instance);
             if (featuresProp == null)
                 return new ErrorResponse("rendererFeatures property not found on renderer data.");
 
             var featuresList = featuresProp.GetValue(rendererData) as System.Collections.IList;
             if (featuresList == null)
-                return new { success = true, message = "No renderer features.", data = new { features = new object[0] } };
+                return new
+                {
+                    success = true,
+                    message = "No renderer features.",
+                    data = new { features = new object[0] },
+                };
 
             var features = new List<object>();
             for (int i = 0; i < featuresList.Count; i++)
             {
                 var feature = featuresList[i] as ScriptableObject;
-                if (feature == null) continue;
+                if (feature == null)
+                    continue;
 
-                var isActiveProp = feature.GetType().GetProperty("isActive",
-                    BindingFlags.Public | BindingFlags.Instance);
+                var isActiveProp = feature.GetType().GetProperty("isActive", BindingFlags.Public | BindingFlags.Instance);
 
-                features.Add(new
-                {
-                    index = i,
-                    name = feature.name,
-                    type = feature.GetType().Name,
-                    isActive = isActiveProp != null ? (bool)isActiveProp.GetValue(feature) : true,
-                    properties = GetFeatureProperties(feature)
-                });
+                features.Add(
+                    new
+                    {
+                        index = i,
+                        name = feature.name,
+                        type = feature.GetType().Name,
+                        isActive = isActiveProp != null ? (bool)isActiveProp.GetValue(feature) : true,
+                        properties = GetFeatureProperties(feature),
+                    }
+                );
             }
 
             return new
             {
                 success = true,
                 message = $"Found {features.Count} renderer feature(s).",
-                data = new
-                {
-                    rendererDataName = (rendererData as ScriptableObject)?.name,
-                    features
-                }
+                data = new { rendererDataName = (rendererData as ScriptableObject)?.name, features },
             };
         }
 
@@ -100,8 +102,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (featureType == null)
             {
                 var available = GetAvailableFeatureTypes();
-                return new ErrorResponse(
-                    $"Feature type '{typeName}' not found. Available: {string.Join(", ", available.Select(t => t.Name))}");
+                return new ErrorResponse($"Feature type '{typeName}' not found. Available: {string.Join(", ", available.Select(t => t.Name))}");
             }
 
             using (var preflight = new SerializedObject(rendererData as UnityEngine.Object))
@@ -139,8 +140,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 // Map stores persistent local file IDs, not transient instance IDs
                 var mapProp = so.FindProperty("m_RendererFeatureMap");
                 long localId = 0;
-                if (mapProp != null &&
-                    !AssetDatabase.TryGetGUIDAndLocalFileIdentifier(feature, out _, out localId))
+                if (mapProp != null && !AssetDatabase.TryGetGUIDAndLocalFileIdentifier(feature, out _, out localId))
                     return new ErrorResponse("Could not obtain the renderer feature's persistent local file ID.");
 
                 rendererFeaturesProp.arraySize++;
@@ -174,8 +174,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     {
                         name = displayName,
                         type = featureType.Name,
-                        instanceId = feature.GetInstanceIDCompat()
-                    }
+                        instanceId = feature.GetInstanceIDCompat(),
+                    },
                 };
             }
             finally
@@ -197,8 +197,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (rendererData == null)
                 return new ErrorResponse("Could not find URP ScriptableRendererData.");
 
-            var featuresProp = rendererData.GetType().GetProperty("rendererFeatures",
-                BindingFlags.Public | BindingFlags.Instance);
+            var featuresProp = rendererData.GetType().GetProperty("rendererFeatures", BindingFlags.Public | BindingFlags.Instance);
             if (featuresProp == null)
                 return new ErrorResponse("rendererFeatures property not found.");
 
@@ -240,11 +239,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             EditorUtility.SetDirty(rendererData as UnityEngine.Object);
             AssetDatabase.SaveAssets();
 
-            return new
-            {
-                success = true,
-                message = $"Removed renderer feature '{featureName}' at index {targetIndex}."
-            };
+            return new { success = true, message = $"Removed renderer feature '{featureName}' at index {targetIndex}." };
         }
 
         // === feature_configure ===
@@ -262,8 +257,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (rendererData == null)
                 return new ErrorResponse("Could not find URP ScriptableRendererData.");
 
-            var featuresProp = rendererData.GetType().GetProperty("rendererFeatures",
-                BindingFlags.Public | BindingFlags.Instance);
+            var featuresProp = rendererData.GetType().GetProperty("rendererFeatures", BindingFlags.Public | BindingFlags.Instance);
             var featuresList = featuresProp?.GetValue(rendererData) as System.Collections.IList;
             if (featuresList == null || featuresList.Count == 0)
                 return new ErrorResponse("No renderer features to configure.");
@@ -286,7 +280,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Configured '{feature.name}': {result.changed.Count} set, {result.failed.Count} failed.",
-                data = new { result.changed, result.failed }
+                data = new { result.changed, result.failed },
             };
         }
 
@@ -297,15 +291,13 @@ namespace MCPForUnity.Editor.Tools.Graphics
             int? index = p.GetInt("index");
             string name = p.Get("name");
             var activeToken = p.GetRaw("active");
-            bool active = activeToken == null || activeToken.Type == JTokenType.Null
-                ? true : p.GetBool("active");
+            bool active = activeToken == null || activeToken.Type == JTokenType.Null ? true : p.GetBool("active");
 
             var rendererData = GetRendererData(@params);
             if (rendererData == null)
                 return new ErrorResponse("Could not find URP ScriptableRendererData.");
 
-            var featuresProp = rendererData.GetType().GetProperty("rendererFeatures",
-                BindingFlags.Public | BindingFlags.Instance);
+            var featuresProp = rendererData.GetType().GetProperty("rendererFeatures", BindingFlags.Public | BindingFlags.Instance);
             var featuresList = featuresProp?.GetValue(rendererData) as System.Collections.IList;
             if (featuresList == null || featuresList.Count == 0)
                 return new ErrorResponse("No renderer features.");
@@ -319,8 +311,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 return new ErrorResponse($"Feature at index {targetIndex} is null.");
 
             // ScriptableRendererFeature.SetActive(bool) is public
-            var setActiveMethod = feature.GetType().GetMethod("SetActive",
-                BindingFlags.Public | BindingFlags.Instance);
+            var setActiveMethod = feature.GetType().GetMethod("SetActive", BindingFlags.Public | BindingFlags.Instance);
             if (setActiveMethod == null)
                 return new ErrorResponse("SetActive method not found on feature.");
 
@@ -331,11 +322,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             EditorUtility.SetDirty(rendererData as UnityEngine.Object);
             AssetDatabase.SaveAssets();
 
-            return new
-            {
-                success = true,
-                message = $"Feature '{feature.name}' {(newState ? "enabled" : "disabled")}."
-            };
+            return new { success = true, message = $"Feature '{feature.name}' {(newState ? "enabled" : "disabled")}." };
         }
 
         // === feature_reorder ===
@@ -350,16 +337,14 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (rendererData == null)
                 return new ErrorResponse("Could not find URP ScriptableRendererData.");
 
-            var featuresProp = rendererData.GetType().GetProperty("rendererFeatures",
-                BindingFlags.Public | BindingFlags.Instance);
+            var featuresProp = rendererData.GetType().GetProperty("rendererFeatures", BindingFlags.Public | BindingFlags.Instance);
             var featuresList = featuresProp?.GetValue(rendererData) as System.Collections.IList;
             if (featuresList == null || featuresList.Count == 0)
                 return new ErrorResponse("No renderer features to reorder.");
 
             var newOrder = orderToken.Select(t => t.ReadScalar<int>()).ToList();
             if (newOrder.Count != featuresList.Count)
-                return new ErrorResponse(
-                    $"Order array length ({newOrder.Count}) must match feature count ({featuresList.Count}).");
+                return new ErrorResponse($"Order array length ({newOrder.Count}) must match feature count ({featuresList.Count}).");
 
             // Validate all indices are present
             var sorted = newOrder.OrderBy(x => x).ToList();
@@ -403,11 +388,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             EditorUtility.SetDirty(rendererData as UnityEngine.Object);
             AssetDatabase.SaveAssets();
 
-            return new
-            {
-                success = true,
-                message = $"Reordered {featuresList.Count} renderer features."
-            };
+            return new { success = true, message = $"Reordered {featuresList.Count} renderer features." };
         }
 
         // ==================== Helpers ====================
@@ -470,12 +451,14 @@ namespace MCPForUnity.Editor.Tools.Graphics
         private static Type ResolveFeatureType(string typeName)
         {
             EnsureTypes();
-            if (_scriptableRendererFeatureType == null) return null;
+            if (_scriptableRendererFeatureType == null)
+                return null;
 
             var derivedTypes = TypeCache.GetTypesDerivedFrom(_scriptableRendererFeatureType);
             foreach (var t in derivedTypes)
             {
-                if (t.IsAbstract) continue;
+                if (t.IsAbstract)
+                    continue;
                 if (string.Equals(t.Name, typeName, StringComparison.OrdinalIgnoreCase))
                     return t;
             }
@@ -483,7 +466,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
             // Try partial match (e.g., "FullScreenPass" matches "FullScreenPassRendererFeature")
             foreach (var t in derivedTypes)
             {
-                if (t.IsAbstract) continue;
+                if (t.IsAbstract)
+                    continue;
                 if (t.Name.StartsWith(typeName, StringComparison.OrdinalIgnoreCase))
                     return t;
             }
@@ -494,12 +478,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
         private static List<Type> GetAvailableFeatureTypes()
         {
             EnsureTypes();
-            if (_scriptableRendererFeatureType == null) return new List<Type>();
+            if (_scriptableRendererFeatureType == null)
+                return new List<Type>();
 
-            return TypeCache.GetTypesDerivedFrom(_scriptableRendererFeatureType)
-                .Where(t => !t.IsAbstract && !t.IsGenericType)
-                .OrderBy(t => t.Name)
-                .ToList();
+            return TypeCache.GetTypesDerivedFrom(_scriptableRendererFeatureType).Where(t => !t.IsAbstract && !t.IsGenericType).OrderBy(t => t.Name).ToList();
         }
 
         private static int ResolveFeatureIndex(System.Collections.IList featuresList, int? index, string name)
@@ -512,9 +494,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 for (int i = 0; i < featuresList.Count; i++)
                 {
                     var feature = featuresList[i] as ScriptableObject;
-                    if (feature == null) continue;
-                    if (string.Equals(feature.name, name, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(feature.GetType().Name, name, StringComparison.OrdinalIgnoreCase))
+                    if (feature == null)
+                        continue;
+                    if (
+                        string.Equals(feature.name, name, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(feature.GetType().Name, name, StringComparison.OrdinalIgnoreCase)
+                    )
                         return i;
                 }
             }
@@ -543,8 +528,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             return props;
         }
 
-        private static (List<string> changed, List<string> failed) ApplyFeatureProperties(
-            ScriptableObject feature, JObject propertiesToken)
+        private static (List<string> changed, List<string> failed) ApplyFeatureProperties(ScriptableObject feature, JObject propertiesToken)
         {
             var changed = new List<string>();
             var failed = new List<string>();
@@ -581,7 +565,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
         private static void TrySetMaterial(ScriptableObject feature, string materialPath)
         {
             var mat = AssetDatabase.LoadAssetAtPath<Material>(AssetPathUtility.GetAssetReferencePath(materialPath, allowPackages: true, allowBuiltIn: true));
-            if (mat == null) return;
+            if (mat == null)
+                return;
 
             using (var so = new SerializedObject(feature))
             {

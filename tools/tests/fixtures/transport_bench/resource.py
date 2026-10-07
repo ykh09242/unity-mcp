@@ -1,4 +1,5 @@
 """Real HTTP resource/source-copy contract, separate from latency workloads."""
+
 from __future__ import annotations
 
 import importlib
@@ -18,6 +19,7 @@ from tools.tests.fixtures.transport_bench.workload import INSTANCE
 @dataclass(slots=True)
 class ResourceContract:
     """Own rendezvous and actual response-send holds for one two-reader cohort."""
+
     peer: PeerState
     accounting: Accounting
     directory: Path

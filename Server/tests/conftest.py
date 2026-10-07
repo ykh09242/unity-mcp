@@ -1,4 +1,5 @@
 """Pytest configuration for unity-mcp tests."""
+
 import logging
 import os
 import sys

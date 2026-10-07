@@ -6,6 +6,7 @@ These resources provide read-only access to:
 - Prefab hierarchy by asset path (mcpforunity://prefab/{path}/hierarchy)
 - Currently open prefab stage (mcpforunity://editor/prefab-stage - see prefab_stage.py)
 """
+
 from typing import Any
 from pydantic import BaseModel
 from fastmcp import Context
@@ -31,10 +32,11 @@ def _normalize_response(response: dict | MCPResponse | Any) -> MCPResponse:
 # Static Helper Resource (shows in UI)
 # =============================================================================
 
+
 @mcp_for_unity_resource(
     uri="mcpforunity://prefab-api",
     name="prefab_api",
-    description="Documentation for Prefab resources. Use manage_asset action=search filterType=Prefab to find prefabs, then access resources below.\n\nURI: mcpforunity://prefab-api"
+    description="Documentation for Prefab resources. Use manage_asset action=search filterType=Prefab to find prefabs, then access resources below.\n\nURI: mcpforunity://prefab-api",
 )
 async def get_prefab_api_docs(_ctx: Context) -> MCPResponse:
     """
@@ -48,35 +50,48 @@ async def get_prefab_api_docs(_ctx: Context) -> MCPResponse:
         "workflow": [
             "1. Use manage_asset action=search filterType=Prefab to find prefabs",
             "2. Use the asset path to access detailed data via resources below",
-            "3. Use manage_prefabs action=open_prefab_stage / save_prefab_stage / close_prefab_stage for prefab editing UI transitions"
+            "3. Use manage_prefabs action=open_prefab_stage / save_prefab_stage / close_prefab_stage for prefab editing UI transitions",
         ],
         "path_encoding": {
             "note": "Prefab paths must be URL-encoded when used in resource URIs",
-            "example": "Assets/Prefabs/MyPrefab.prefab -> Assets%2FPrefabs%2FMyPrefab.prefab"
+            "example": "Assets/Prefabs/MyPrefab.prefab -> Assets%2FPrefabs%2FMyPrefab.prefab",
         },
         "resources": {
             "mcpforunity://prefab/{encoded_path}": {
                 "description": "Get prefab asset info (type, root name, components, variant info)",
                 "example": "mcpforunity://prefab/Assets%2FPrefabs%2FPlayer.prefab",
-                "returns": ["assetPath", "guid", "prefabType", "rootObjectName", "rootComponentTypes", "childCount", "isVariant", "parentPrefab"]
+                "returns": [
+                    "assetPath",
+                    "guid",
+                    "prefabType",
+                    "rootObjectName",
+                    "rootComponentTypes",
+                    "childCount",
+                    "isVariant",
+                    "parentPrefab",
+                ],
             },
             "mcpforunity://prefab/{encoded_path}/hierarchy": {
                 "description": "Get full prefab hierarchy with nested prefab information",
                 "example": "mcpforunity://prefab/Assets%2FPrefabs%2FPlayer.prefab/hierarchy",
-                "returns": ["prefabPath", "total", "items (with name, instanceId, path, componentTypes, prefab nesting info)"]
+                "returns": [
+                    "prefabPath",
+                    "total",
+                    "items (with name, instanceId, path, componentTypes, prefab nesting info)",
+                ],
             },
             "mcpforunity://editor/prefab-stage": {
                 "description": "Get info about the currently open prefab stage (if any)",
-                "returns": ["isOpen", "assetPath", "prefabRootName", "mode", "isDirty"]
-            }
+                "returns": ["isOpen", "assetPath", "prefabRootName", "mode", "isDirty"],
+            },
         },
         "related_tools": {
             "manage_editor": "Editor controls (play/pause/stop, active tool, tags/layers, package deploy/restore)",
             "manage_prefabs": "Prefab stage lifecycle (open/save/close) and headless prefab inspection/modification",
             "manage_asset": "Search for prefab assets, get asset info",
             "manage_gameobject": "Modify GameObjects in open prefab stage",
-            "manage_components": "Add/remove/modify components on prefab GameObjects"
-        }
+            "manage_components": "Add/remove/modify components on prefab GameObjects",
+        },
     }
     return MCPResponse(success=True, data=docs)
 
@@ -91,6 +106,7 @@ async def get_prefab_api_docs(_ctx: Context) -> MCPResponse:
 
 class PrefabInfoData(BaseModel):
     """Data for a prefab asset."""
+
     assetPath: str
     guid: str = ""
     prefabType: str = "Regular"
@@ -103,13 +119,14 @@ class PrefabInfoData(BaseModel):
 
 class PrefabInfoResponse(MCPResponse):
     """Response containing prefab info data."""
+
     data: PrefabInfoData | None = None
 
 
 @mcp_for_unity_resource(
     uri="mcpforunity://prefab/{encoded_path}",
     name="prefab_info",
-    description="Get detailed information about a prefab asset by URL-encoded path. Returns prefab type, root object name, component types, child count, and variant info.\n\nURI: mcpforunity://prefab/{encoded_path}"
+    description="Get detailed information about a prefab asset by URL-encoded path. Returns prefab type, root object name, component types, child count, and variant info.\n\nURI: mcpforunity://prefab/{encoded_path}",
 )
 async def get_prefab_info(ctx: Context, encoded_path: str) -> MCPResponse:
     """Get prefab asset info using the path already decoded by FastMCP."""
@@ -119,10 +136,7 @@ async def get_prefab_info(ctx: Context, encoded_path: str) -> MCPResponse:
         async_send_command_with_retry,
         unity_instance,
         "manage_prefabs",
-        {
-            "action": "get_info",
-            "prefabPath": encoded_path
-        }
+        {"action": "get_info", "prefabPath": encoded_path},
     )
 
     return _normalize_response(response)
@@ -132,8 +146,10 @@ async def get_prefab_info(ctx: Context, encoded_path: str) -> MCPResponse:
 # Prefab Hierarchy Resource
 # =============================================================================
 
+
 class PrefabHierarchyItem(BaseModel):
     """Single item in prefab hierarchy."""
+
     name: str
     instanceId: int
     path: str
@@ -145,6 +161,7 @@ class PrefabHierarchyItem(BaseModel):
 
 class PrefabHierarchyData(BaseModel):
     """Data for prefab hierarchy."""
+
     prefabPath: str
     total: int = 0
     items: list[PrefabHierarchyItem] = []
@@ -152,13 +169,14 @@ class PrefabHierarchyData(BaseModel):
 
 class PrefabHierarchyResponse(MCPResponse):
     """Response containing prefab hierarchy data."""
+
     data: PrefabHierarchyData | None = None
 
 
 @mcp_for_unity_resource(
     uri="mcpforunity://prefab/{encoded_path}/hierarchy",
     name="prefab_hierarchy",
-    description="Get the full hierarchy of a prefab with nested prefab information. Returns all GameObjects with their components and nesting depth.\n\nURI: mcpforunity://prefab/{encoded_path}/hierarchy"
+    description="Get the full hierarchy of a prefab with nested prefab information. Returns all GameObjects with their components and nesting depth.\n\nURI: mcpforunity://prefab/{encoded_path}/hierarchy",
 )
 async def get_prefab_hierarchy(ctx: Context, encoded_path: str) -> MCPResponse:
     """Get prefab hierarchy using the path already decoded by FastMCP."""
@@ -168,10 +186,7 @@ async def get_prefab_hierarchy(ctx: Context, encoded_path: str) -> MCPResponse:
         async_send_command_with_retry,
         unity_instance,
         "manage_prefabs",
-        {
-            "action": "get_hierarchy",
-            "prefabPath": encoded_path
-        }
+        {"action": "get_hierarchy", "prefabPath": encoded_path},
     )
 
     return _normalize_response(response)

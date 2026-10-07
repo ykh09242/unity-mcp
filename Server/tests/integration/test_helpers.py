@@ -18,6 +18,7 @@ class DummyContext:
 
     def __init__(self, **meta):
         import uuid
+
         self.log_info = []
         self.log_warning = []
         self.log_error = []
@@ -74,6 +75,7 @@ class DummyMCP:
         def deco(fn):
             self.tools[fn.__name__] = fn
             return fn
+
         return deco
 
 
@@ -90,8 +92,17 @@ def setup_script_tools():
     from services.registry import get_registered_tools
 
     for tool_info in get_registered_tools():
-        name = tool_info['name']
-        if any(k in name for k in ['script', 'apply_text', 'create_script',
-                                    'delete_script', 'validate_script', 'get_sha']):
-            mcp.tools[name] = tool_info['func']
+        name = tool_info["name"]
+        if any(
+            k in name
+            for k in [
+                "script",
+                "apply_text",
+                "create_script",
+                "delete_script",
+                "validate_script",
+                "get_sha",
+            ]
+        ):
+            mcp.tools[name] = tool_info["func"]
     return mcp.tools

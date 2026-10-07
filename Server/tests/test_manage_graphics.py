@@ -22,6 +22,7 @@ from services.tools.manage_graphics import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_unity(monkeypatch):
     """Patch Unity transport layer and return captured call dict."""
@@ -48,10 +49,16 @@ def mock_unity(monkeypatch):
 # Action list completeness
 # ---------------------------------------------------------------------------
 
+
 def test_all_actions_is_union_of_sub_lists():
     expected = set(
-        ["ping"] + VOLUME_ACTIONS + BAKE_ACTIONS + STATS_ACTIONS
-        + PIPELINE_ACTIONS + FEATURE_ACTIONS + SKYBOX_ACTIONS
+        ["ping"]
+        + VOLUME_ACTIONS
+        + BAKE_ACTIONS
+        + STATS_ACTIONS
+        + PIPELINE_ACTIONS
+        + FEATURE_ACTIONS
+        + SKYBOX_ACTIONS
     )
     assert set(ALL_ACTIONS) == expected
 
@@ -88,19 +95,16 @@ def test_feature_actions_count():
 # Invalid / missing action
 # ---------------------------------------------------------------------------
 
+
 def test_unknown_action_returns_error(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="nonexistent_action")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="nonexistent_action"))
     assert result["success"] is False
     assert "Unknown action" in result["message"]
     assert "tool_name" not in mock_unity
 
 
 def test_empty_action_returns_error(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action=""))
     assert result["success"] is False
 
 
@@ -108,10 +112,9 @@ def test_empty_action_returns_error(mock_unity):
 # Ping
 # ---------------------------------------------------------------------------
 
+
 def test_ping_sends_correct_params(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="ping")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="ping"))
     assert result["success"] is True
     assert mock_unity["tool_name"] == "manage_graphics"
     assert mock_unity["params"]["action"] == "ping"
@@ -120,6 +123,7 @@ def test_ping_sends_correct_params(mock_unity):
 # ---------------------------------------------------------------------------
 # Volume actions
 # ---------------------------------------------------------------------------
+
 
 def test_volume_create_with_all_params(mock_unity):
     result = asyncio.run(
@@ -148,9 +152,7 @@ def test_volume_create_with_all_params(mock_unity):
 
 
 def test_volume_create_minimal(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="volume_create")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="volume_create"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "volume_create"
     assert "name" not in mock_unity["params"]
@@ -262,6 +264,7 @@ def test_volume_create_profile_sends_path(mock_unity):
 # Bake actions
 # ---------------------------------------------------------------------------
 
+
 def test_bake_start_sends_async_flag(mock_unity):
     result = asyncio.run(
         manage_graphics(
@@ -288,26 +291,20 @@ def test_bake_start_sync(mock_unity):
 
 
 def test_bake_cancel_sends_no_extra_params(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="bake_cancel")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="bake_cancel"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "bake_cancel"
     assert "target" not in mock_unity["params"]
 
 
 def test_bake_status_sends_action(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="bake_status")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="bake_status"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "bake_status"
 
 
 def test_bake_clear_sends_action(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="bake_clear")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="bake_clear"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "bake_clear"
 
@@ -326,9 +323,7 @@ def test_bake_reflection_probe_sends_target(mock_unity):
 
 
 def test_bake_get_settings_sends_action(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="bake_get_settings")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="bake_get_settings"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "bake_get_settings"
 
@@ -411,18 +406,15 @@ def test_bake_set_probe_positions_sends_positions(mock_unity):
 # Stats actions
 # ---------------------------------------------------------------------------
 
+
 def test_stats_get_sends_action(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="stats_get")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="stats_get"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "stats_get"
 
 
 def test_stats_list_counters_sends_action(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="stats_list_counters")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="stats_list_counters"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "stats_list_counters"
 
@@ -441,9 +433,7 @@ def test_stats_set_scene_debug_sends_mode(mock_unity):
 
 
 def test_stats_get_memory_sends_action(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="stats_get_memory")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="stats_get_memory"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "stats_get_memory"
 
@@ -452,10 +442,9 @@ def test_stats_get_memory_sends_action(mock_unity):
 # Pipeline actions
 # ---------------------------------------------------------------------------
 
+
 def test_pipeline_get_info_sends_action(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="pipeline_get_info")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="pipeline_get_info"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "pipeline_get_info"
 
@@ -474,9 +463,7 @@ def test_pipeline_set_quality_sends_level(mock_unity):
 
 
 def test_pipeline_get_settings_sends_action(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="pipeline_get_settings")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="pipeline_get_settings"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "pipeline_get_settings"
 
@@ -499,10 +486,9 @@ def test_pipeline_set_settings_sends_settings(mock_unity):
 # Feature actions
 # ---------------------------------------------------------------------------
 
+
 def test_feature_list_sends_action(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="feature_list")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="feature_list"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "feature_list"
 
@@ -583,6 +569,7 @@ def test_feature_reorder_sends_order(mock_unity):
 # ---------------------------------------------------------------------------
 # Parameter handling
 # ---------------------------------------------------------------------------
+
 
 def test_none_params_omitted(mock_unity):
     result = asyncio.run(
@@ -689,9 +676,7 @@ def test_non_dict_response_wrapped(monkeypatch):
         fake_send,
     )
 
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="ping")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="ping"))
     assert result["success"] is False
     assert "unexpected string response" in result["message"]
 
@@ -700,26 +685,21 @@ def test_non_dict_response_wrapped(monkeypatch):
 # Case insensitivity
 # ---------------------------------------------------------------------------
 
+
 def test_action_case_insensitive(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="Volume_Create")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="Volume_Create"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "volume_create"
 
 
 def test_action_uppercase(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="PING")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="PING"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "ping"
 
 
 def test_action_mixed_case_bake(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="Bake_Start")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="Bake_Start"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "bake_start"
 
@@ -728,12 +708,11 @@ def test_action_mixed_case_bake(mock_unity):
 # All actions forward correctly
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("action_name", ALL_ACTIONS)
 def test_every_action_forwards_to_unity(mock_unity, action_name):
     """Every valid action should be forwarded to Unity without error."""
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action=action_name)
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action=action_name))
     assert result["success"] is True
     assert mock_unity["tool_name"] == "manage_graphics"
     assert mock_unity["params"]["action"] == action_name
@@ -747,14 +726,13 @@ def test_every_action_forwards_to_unity(mock_unity, action_name):
 # Skybox actions
 # ---------------------------------------------------------------------------
 
+
 def test_skybox_actions_count():
     assert len(SKYBOX_ACTIONS) == 7
 
 
 def test_skybox_get_sends_action(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="skybox_get")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="skybox_get"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "skybox_get"
 
@@ -808,9 +786,7 @@ def test_skybox_set_ambient_with_mode_and_colors(mock_unity):
 
 
 def test_skybox_set_ambient_minimal(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="skybox_set_ambient")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="skybox_set_ambient"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "skybox_set_ambient"
     assert "ambient_mode" not in mock_unity["params"]
@@ -874,9 +850,7 @@ def test_skybox_set_reflection_all_params(mock_unity):
 
 
 def test_skybox_set_reflection_minimal(mock_unity):
-    result = asyncio.run(
-        manage_graphics(SimpleNamespace(), action="skybox_set_reflection")
-    )
+    result = asyncio.run(manage_graphics(SimpleNamespace(), action="skybox_set_reflection"))
     assert result["success"] is True
     assert mock_unity["params"] == {"action": "skybox_set_reflection"}
 
@@ -950,11 +924,10 @@ def test_skybox_bounces_maps_correctly(mock_unity):
 # Tool registration
 # ---------------------------------------------------------------------------
 
+
 def test_tool_registered_with_core_group():
     from services.registry.tool_registry import _tool_registry
 
-    graphics_tools = [
-        t for t in _tool_registry if t.get("name") == "manage_graphics"
-    ]
+    graphics_tools = [t for t in _tool_registry if t.get("name") == "manage_graphics"]
     assert len(graphics_tools) == 1
     assert graphics_tools[0]["group"] == "core"

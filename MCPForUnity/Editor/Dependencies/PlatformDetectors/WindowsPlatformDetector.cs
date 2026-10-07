@@ -22,10 +22,7 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
 
         public override DependencyStatus DetectPython()
         {
-            var status = new DependencyStatus("Python", isRequired: true)
-            {
-                InstallationHint = GetPythonInstallUrl()
-            };
+            var status = new DependencyStatus("Python", isRequired: true) { InstallationHint = GetPythonInstallUrl() };
 
             try
             {
@@ -143,7 +140,6 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
             return status;
         }
 
-
         /// <summary>
         /// Every python-like executable reachable from PATH, in priority order and de-duplicated.
         /// The extension-less names matter: they let 'where' expand through PATHEXT, which is what
@@ -158,7 +154,8 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
             {
                 foreach (string match in ExecPath.FindAllInPath(name, augmentedPath))
                 {
-                    if (seen.Add(match)) yield return match;
+                    if (seen.Add(match))
+                        yield return match;
                 }
             }
 
@@ -166,7 +163,8 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
             // Alias that 'where' failed to report still gets a chance to answer --version.
             foreach (string name in new[] { "python3.exe", "python.exe" })
             {
-                if (seen.Add(name)) yield return name;
+                if (seen.Add(name))
+                    yield return name;
             }
         }
 
@@ -178,9 +176,11 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
         internal static bool IsPythonExecutable(string path)
         {
             string extension = Path.GetExtension(path);
-            if (!extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) &&
-                !extension.Equals(".bat", StringComparison.OrdinalIgnoreCase) &&
-                !extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase))
+            if (
+                !extension.Equals(".exe", StringComparison.OrdinalIgnoreCase)
+                && !extension.Equals(".bat", StringComparison.OrdinalIgnoreCase)
+                && !extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase)
+            )
             {
                 return false;
             }
@@ -188,8 +188,7 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
             string name = Path.GetFileNameWithoutExtension(path);
 
             // pythonw is the console-less variant and never writes a version to stdout/stderr
-            return name.StartsWith("python", StringComparison.OrdinalIgnoreCase) &&
-                   !name.StartsWith("pythonw", StringComparison.OrdinalIgnoreCase);
+            return name.StartsWith("python", StringComparison.OrdinalIgnoreCase) && !name.StartsWith("pythonw", StringComparison.OrdinalIgnoreCase);
         }
 
         private bool TryFindPythonViaUv(out string version, out string fullPath)
@@ -207,7 +206,8 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
                 var lines = stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                 foreach (var line in lines)
                 {
-                    if (line.Contains("<download available>")) continue;
+                    if (line.Contains("<download available>"))
+                        continue;
 
                     var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length >= 2)
@@ -279,7 +279,8 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
         protected string BuildAugmentedPath()
         {
             var additions = GetPathAdditions();
-            if (additions.Length == 0) return null;
+            if (additions.Length == 0)
+                return null;
 
             // Only return the additions - ExecPath.TryRun will prepend to existing PATH
             return string.Join(Path.PathSeparator, additions);
@@ -314,8 +315,7 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
             {
                 try
                 {
-                    var pythonDirs = Directory.GetDirectories(programFiles, "Python3*")
-                        .OrderByDescending(d => d); // Newest first
+                    var pythonDirs = Directory.GetDirectories(programFiles, "Python3*").OrderByDescending(d => d); // Newest first
                     foreach (var dir in pythonDirs)
                     {
                         additions.Add(dir);

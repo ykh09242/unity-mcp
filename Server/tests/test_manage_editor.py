@@ -1,4 +1,5 @@
 """Tests for manage_editor tool."""
+
 import asyncio
 import inspect
 from types import SimpleNamespace
@@ -53,10 +54,18 @@ def test_redo_forwards_to_unity(mock_unity):
 # ── All Unity-forwarded actions ──────────────────────────────────────
 
 UNITY_FORWARDED_ACTIONS = [
-    "play", "pause", "stop", "set_active_tool",
-    "add_tag", "remove_tag", "add_layer", "remove_layer",
-    "deploy_package", "restore_package",
-    "undo", "redo",
+    "play",
+    "pause",
+    "stop",
+    "set_active_tool",
+    "add_tag",
+    "remove_tag",
+    "add_layer",
+    "remove_layer",
+    "deploy_package",
+    "restore_package",
+    "undo",
+    "redo",
 ]
 
 
@@ -93,5 +102,3 @@ def test_undo_omits_none_params(mock_unity):
     assert "toolName" not in params
     assert "tagName" not in params
     assert "layerName" not in params
-
-

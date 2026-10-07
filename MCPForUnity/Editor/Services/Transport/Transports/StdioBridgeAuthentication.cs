@@ -24,13 +24,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             this.token = token ?? RandomHex(32);
             if (this.token.Length < 32 || this.token.Length > 256)
                 throw new ArgumentException("Stdio launch token must contain 32 to 256 characters");
-            if (publish) credential = new StdioLaunchCredential(Generation, this.token);
+            if (publish)
+                credential = new StdioLaunchCredential(Generation, this.token);
         }
 
         private static string RandomHex(int length)
         {
             byte[] bytes = new byte[length];
-            using (var random = RandomNumberGenerator.Create()) random.GetBytes(bytes);
+            using (var random = RandomNumberGenerator.Create())
+                random.GetBytes(bytes);
             return BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();
         }
 
@@ -38,15 +40,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             string transcript = "unity-mcp-stdio-v2\n" + string.Join("\n", fields);
             using var mac = new HMACSHA256(Encoding.UTF8.GetBytes(token));
-            return BitConverter.ToString(mac.ComputeHash(Encoding.ASCII.GetBytes(transcript)))
-                .Replace("-", "").ToLowerInvariant();
+            return BitConverter.ToString(mac.ComputeHash(Encoding.ASCII.GetBytes(transcript))).Replace("-", "").ToLowerInvariant();
         }
 
         private static bool EqualProof(string actual, string expected)
         {
-            if (actual == null || actual.Length != expected.Length) return false;
+            if (actual == null || actual.Length != expected.Length)
+                return false;
             int difference = 0;
-            for (int i = 0; i < expected.Length; i++) difference |= actual[i] ^ expected[i];
+            for (int i = 0; i < expected.Length; i++)
+                difference |= actual[i] ^ expected[i];
             return difference == 0;
         }
 
@@ -57,7 +60,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             while (offset < count)
             {
                 int read = await stream.ReadAsync(bytes, offset, count - offset, cancel).ConfigureAwait(false);
-                if (read == 0) throw new IOException("Stdio authentication peer closed");
+                if (read == 0)
+                    throw new IOException("Stdio authentication peer closed");
                 offset += read;
             }
             return bytes;
@@ -75,29 +79,59 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             await stream.WriteAsync(greeting, 0, greeting.Length, deadline.Token).ConfigureAwait(false);
             byte[] header = await ReadExactAsync(stream, 8, deadline.Token).ConfigureAwait(false);
             ulong length = 0;
-            foreach (byte part in header) length = (length << 8) | part;
-            if (length == 0 || length > MaxAuthFrame) return null;
+            foreach (byte part in header)
+                length = (length << 8) | part;
+            if (length == 0 || length > MaxAuthFrame)
+                return null;
             byte[] payload = await ReadExactAsync(stream, (int)length, deadline.Token).ConfigureAwait(false);
             JObject request;
-            try { request = JObject.Parse(new UTF8Encoding(false, true).GetString(payload)); }
-            catch (JsonException) { return null; }
-            catch (DecoderFallbackException) { return null; }
-            if (request["type"]?.Type != JTokenType.String || (string)request["type"] != "authenticate"
+            try
+            {
+                request = JObject.Parse(new UTF8Encoding(false, true).GetString(payload));
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+            catch (DecoderFallbackException)
+            {
+                return null;
+            }
+            if (
+                request["type"]?.Type != JTokenType.String
+                || (string)request["type"] != "authenticate"
                 || request["version"]?.Type != JTokenType.Integer
-                || request["version"].ToString(Formatting.None) != "2" || request["client_nonce"]?.Type != JTokenType.String
-                || request["proof"]?.Type != JTokenType.String) return null;
+                || request["version"].ToString(Formatting.None) != "2"
+                || request["client_nonce"]?.Type != JTokenType.String
+                || request["proof"]?.Type != JTokenType.String
+            )
+                return null;
             string nonce = (string)request["client_nonce"];
             string proof = (string)request["proof"];
-            if (!Regex.IsMatch(nonce, "\\A[0-9a-f]{64}\\z") || !Regex.IsMatch(proof, "\\A[0-9a-f]{64}\\z")
-                || !EqualProof(proof, Proof(token, "client", Generation, challenge, nonce))) return null;
+            if (
+                !Regex.IsMatch(nonce, "\\A[0-9a-f]{64}\\z")
+                || !Regex.IsMatch(proof, "\\A[0-9a-f]{64}\\z")
+                || !EqualProof(proof, Proof(token, "client", Generation, challenge, nonce))
+            )
+                return null;
             string session = Guid.NewGuid().ToString("N");
-            byte[] reply = Encoding.ASCII.GetBytes(JsonConvert.SerializeObject(new
-            {
-                type = "authenticated", version = 2, session_id = session,
-                proof = Proof(token, "server", Generation, challenge, nonce, session)
-            }));
+            byte[] reply = Encoding.ASCII.GetBytes(
+                JsonConvert.SerializeObject(
+                    new
+                    {
+                        type = "authenticated",
+                        version = 2,
+                        session_id = session,
+                        proof = Proof(token, "server", Generation, challenge, nonce, session),
+                    }
+                )
+            );
             ulong remaining = (ulong)reply.Length;
-            for (int i = 7; i >= 0; i--) { header[i] = (byte)(remaining & 255); remaining >>= 8; }
+            for (int i = 7; i >= 0; i--)
+            {
+                header[i] = (byte)(remaining & 255);
+                remaining >>= 8;
+            }
             await stream.WriteAsync(header, 0, header.Length, deadline.Token).ConfigureAwait(false);
             await stream.WriteAsync(reply, 0, reply.Length, deadline.Token).ConfigureAwait(false);
             return session;

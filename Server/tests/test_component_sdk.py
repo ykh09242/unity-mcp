@@ -1,4 +1,5 @@
 """Exercise nullable component edits through the actual SDK in a fresh process."""
+
 import os
 import subprocess
 import sys
@@ -6,7 +7,7 @@ import textwrap
 
 
 def test_component_value_omission_and_null_survive_sdk():
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import asyncio
         import importlib
         import json
@@ -78,9 +79,12 @@ def test_component_value_omission_and_null_survive_sdk():
                 assert "value" not in sent[-1]
                 print("real SDK component omission/null/schema passed")
         asyncio.run(main())
-    ''')
+    """)
     result = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, timeout=30,
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
         env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
     )
     assert result.returncode == 0, result.stdout + result.stderr

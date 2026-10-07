@@ -1,10 +1,10 @@
 using System;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Editor.Tools;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -19,9 +19,7 @@ namespace MCPForUnityTests.Editor.Tools
         // to the pipeline-appropriate lit shader, so the color property name must match.
         private static string MainColorProperty()
         {
-            return RenderPipelineUtility.GetActivePipeline() == RenderPipelineUtility.PipelineKind.BuiltIn
-                ? "_Color"
-                : "_BaseColor";
+            return RenderPipelineUtility.GetActivePipeline() == RenderPipelineUtility.PipelineKind.BuiltIn ? "_Color" : "_BaseColor";
         }
 
         [SetUp]
@@ -60,7 +58,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "create",
                 ["materialPath"] = _matPath,
                 ["shader"] = "Standard",
-                ["properties"] = jsonProps
+                ["properties"] = jsonProps,
             };
 
             var result = ToJObject(ManageMaterial.HandleCommand(paramsObj));
@@ -82,7 +80,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "create",
                 ["materialPath"] = _matPath,
                 ["shader"] = "Standard",
-                ["properties"] = props
+                ["properties"] = props,
             };
 
             var result = ToJObject(ManageMaterial.HandleCommand(paramsObj));
@@ -100,7 +98,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "create",
                 ["materialPath"] = _matPath,
                 ["shader"] = "Standard",
-                ["properties"] = new JObject()
+                ["properties"] = new JObject(),
             };
 
             var result = ToJObject(ManageMaterial.HandleCommand(paramsObj));
@@ -112,32 +110,31 @@ namespace MCPForUnityTests.Editor.Tools
         public void CreateMaterial_WithInvalidJsonSyntax_ReturnsDetailedError()
         {
             // Missing closing brace
-            string invalidJson = "{\"_Color\": [1,0,0,1]"; 
-            
+            string invalidJson = "{\"_Color\": [1,0,0,1]";
+
             var paramsObj = new JObject
             {
                 ["action"] = "create",
                 ["materialPath"] = _matPath,
                 ["shader"] = "Standard",
-                ["properties"] = invalidJson
+                ["properties"] = invalidJson,
             };
 
             var result = ToJObject(ManageMaterial.HandleCommand(paramsObj));
 
             Assert.IsFalse(result.Value<bool>("success"));
             string msg = result.Value<string>("error");
-            
+
             // Verify we get exception details
             Assert.IsTrue(msg.Contains("Invalid JSON"), "Should mention Invalid JSON");
             // Verify the message contains more than just the prefix (has exception details)
-            Assert.IsTrue(msg.Length > "Invalid JSON".Length, 
-                $"Message should contain exception details. Got: {msg}");
+            Assert.IsTrue(msg.Length > "Invalid JSON".Length, $"Message should contain exception details. Got: {msg}");
         }
 
         [Test]
         public void CreateMaterial_WithNullProperty_HandlesGracefully()
         {
-             var props = new JObject();
+            var props = new JObject();
             props["_Color"] = null;
 
             var paramsObj = new JObject
@@ -145,18 +142,16 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "create",
                 ["materialPath"] = _matPath,
                 ["shader"] = "Standard",
-                ["properties"] = props
+                ["properties"] = props,
             };
 
             // Should probably succeed but warn or ignore, or fail gracefully
             var result = ToJObject(ManageMaterial.HandleCommand(paramsObj));
-            
+
             // We accept either success (ignored) or specific error, but not crash
             // The new response format uses a bool "success" field
             var success = result.Value<bool?>("success");
-            Assert.IsNotNull(success, "Response should have success field"); 
+            Assert.IsNotNull(success, "Response should have success field");
         }
     }
 }
-
-

@@ -24,14 +24,35 @@ internal static class CancellationSocketHarness
         object oldHandler = handlers[name];
         object oldMutation = handlers[mutation];
         var cleanup = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        int starts = 0, settles = 0, mutations = 0;
-        handlers[name] = HandlerInfo.Cooperative(name, async (_, token) =>
-        {
-            Interlocked.Increment(ref starts);
-            try { await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true); return null; }
-            finally { await cleanup.Task.ConfigureAwait(true); Interlocked.Increment(ref settles); }
-        });
-        handlers[mutation] = new HandlerInfo(mutation, _ => { Interlocked.Increment(ref mutations); return new { done = true }; }, null);
+        int starts = 0,
+            settles = 0,
+            mutations = 0;
+        handlers[name] = HandlerInfo.Cooperative(
+            name,
+            async (_, token) =>
+            {
+                Interlocked.Increment(ref starts);
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true);
+                    return null;
+                }
+                finally
+                {
+                    await cleanup.Task.ConfigureAwait(true);
+                    Interlocked.Increment(ref settles);
+                }
+            }
+        );
+        handlers[mutation] = new HandlerInfo(
+            mutation,
+            _ =>
+            {
+                Interlocked.Increment(ref mutations);
+                return new { done = true };
+            },
+            null
+        );
         try
         {
             using var peer = new LocalWebSocketPeer();
@@ -55,8 +76,10 @@ internal static class CancellationSocketHarness
             var messages = new List<JObject>();
             Func<string, JObject> result = id =>
             {
-                if (peer.Reader?.IsFaulted == true) peer.Reader.GetAwaiter().GetResult();
-                while (peer.Received.TryDequeue(out var message)) messages.Add(message);
+                if (peer.Reader?.IsFaulted == true)
+                    peer.Reader.GetAwaiter().GetResult();
+                while (peer.Received.TryDequeue(out var message))
+                    messages.Add(message);
                 return messages.FirstOrDefault(m => m.Value<string>("type") == "command_result" && m.Value<string>("id") == id);
             };
             peer.Send(Ack(true));
@@ -65,8 +88,10 @@ internal static class CancellationSocketHarness
             pump(() => Volatile.Read(ref starts) == 1, "cooperative handler starts", 5000);
 
             // An old receiver token cannot control the current connection's request.
-            var stale = (Task)typeof(WebSocketTransportClient).GetMethod("HandleMessageAsync", Private)
-                .Invoke(client, new object[] { Cancel("active-cancel").ToString(), obsoleteConnection.Token });
+            var stale = (Task)
+                typeof(WebSocketTransportClient)
+                    .GetMethod("HandleMessageAsync", Private)
+                    .Invoke(client, new object[] { Cancel("active-cancel").ToString(), obsoleteConnection.Token });
             pump(() => stale.IsCompleted, "stale control settles", 5000);
             stale.GetAwaiter().GetResult();
             Assert.IsNull(result("active-cancel"));
@@ -84,7 +109,11 @@ internal static class CancellationSocketHarness
             peer.Send(Cancel("active-cancel"));
             peer.Send(Cancel("active-cancel"));
             peer.Send(new JObject { ["type"] = "ping" });
-            pump(() => result("active-cancel") != null && messages.Any(m => m.Value<string>("type") == "pong"), "active cancellation and duplicate control pong", 5000);
+            pump(
+                () => result("active-cancel") != null && messages.Any(m => m.Value<string>("type") == "pong"),
+                "active cancellation and duplicate control pong",
+                5000
+            );
             Assert.That(result("active-cancel").SelectToken("result.error").Value<string>(), Does.Contain("canceled"));
             Assert.AreEqual(0, settles);
             Assert.AreEqual(0, mutations);
@@ -102,7 +131,15 @@ internal static class CancellationSocketHarness
             peer.Send(Cancel("capability-off"));
             peer.Send(new JObject { ["type"] = "ping" });
             int pongs = messages.Count(m => m.Value<string>("type") == "pong");
-            pump(() => { result("capability-off"); return messages.Count(m => m.Value<string>("type") == "pong") > pongs; }, "legacy control processing barrier", 5000);
+            pump(
+                () =>
+                {
+                    result("capability-off");
+                    return messages.Count(m => m.Value<string>("type") == "pong") > pongs;
+                },
+                "legacy control processing barrier",
+                5000
+            );
             Assert.IsNull(result("capability-off"));
             Assert.AreEqual(1, settles);
             pump(() => result("capability-off") != null && Volatile.Read(ref settles) == 2, "legacy local deadline cooperative stop", 2500);
@@ -112,7 +149,8 @@ internal static class CancellationSocketHarness
             peer.Send(Execute("disconnect-cooperative", name));
             pump(() => Volatile.Read(ref starts) == 3, "cooperative disconnect handler starts", 5000);
             object loops = typeof(WebSocketTransportClient).GetMethod("CaptureConnectionLoops", Private).Invoke(client, null);
-            var stop = (Task)typeof(WebSocketTransportClient).GetMethod("StopCapturedConnectionLoopsAsync", Private).Invoke(client, new[] { loops, (object)true });
+            var stop = (Task)
+                typeof(WebSocketTransportClient).GetMethod("StopCapturedConnectionLoopsAsync", Private).Invoke(client, new[] { loops, (object)true });
             pump(() => stop.IsCompleted && Volatile.Read(ref settles) == 3, "cooperative disconnect settlement", 5000);
             stop.GetAwaiter().GetResult();
             Assert.IsTrue(work.DrainAsync().IsCompleted);
@@ -121,14 +159,38 @@ internal static class CancellationSocketHarness
         }
         finally
         {
-            if (oldHandler == null) handlers.Remove(name); else handlers[name] = oldHandler;
-            if (oldMutation == null) handlers.Remove(mutation); else handlers[mutation] = oldMutation;
+            if (oldHandler == null)
+                handlers.Remove(name);
+            else
+                handlers[name] = oldHandler;
+            if (oldMutation == null)
+                handlers.Remove(mutation);
+            else
+                handlers[mutation] = oldMutation;
         }
     }
 
-    private static void Set(WebSocketTransportClient client, string name, object value) => typeof(WebSocketTransportClient).GetField(name, Private).SetValue(client, value);
+    private static void Set(WebSocketTransportClient client, string name, object value) =>
+        typeof(WebSocketTransportClient).GetField(name, Private).SetValue(client, value);
+
     private static object Get(WebSocketTransportClient client, string name) => typeof(WebSocketTransportClient).GetField(name, Private).GetValue(client);
-    private static JObject Ack(bool capability) => new JObject { ["type"] = "registered", ["session_id"] = "cancel-fixture", ["capabilities"] = capability ? new JArray(ConnectionCommandWork.CancellationCapability) : new JArray() };
+
+    private static JObject Ack(bool capability) =>
+        new JObject
+        {
+            ["type"] = "registered",
+            ["session_id"] = "cancel-fixture",
+            ["capabilities"] = capability ? new JArray(ConnectionCommandWork.CancellationCapability) : new JArray(),
+        };
+
     private static JObject Cancel(string id) => new JObject { ["type"] = "cancel", ["id"] = id };
-    private static JObject Execute(string id, string name, int timeout = 30) => new JObject { ["type"] = "execute", ["id"] = id, ["name"] = name, ["timeout"] = timeout };
+
+    private static JObject Execute(string id, string name, int timeout = 30) =>
+        new JObject
+        {
+            ["type"] = "execute",
+            ["id"] = id,
+            ["name"] = name,
+            ["timeout"] = timeout,
+        };
 }

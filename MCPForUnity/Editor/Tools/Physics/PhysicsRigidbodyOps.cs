@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Physics
 {
@@ -12,14 +12,30 @@ namespace MCPForUnity.Editor.Tools.Physics
     {
         private static readonly HashSet<string> Valid3DKeys = new HashSet<string>
         {
-            "mass", "drag", "lineardamping", "angulardrag", "angulardamping",
-            "usegravity", "iskinematic", "interpolation", "collisiondetectionmode", "constraints"
+            "mass",
+            "drag",
+            "lineardamping",
+            "angulardrag",
+            "angulardamping",
+            "usegravity",
+            "iskinematic",
+            "interpolation",
+            "collisiondetectionmode",
+            "constraints",
         };
 
         private static readonly HashSet<string> Valid2DKeys = new HashSet<string>
         {
-            "mass", "gravityscale", "drag", "lineardamping", "angulardrag", "angulardamping",
-            "bodytype", "simulated", "collisiondetectionmode", "constraints"
+            "mass",
+            "gravityscale",
+            "drag",
+            "lineardamping",
+            "angulardrag",
+            "angulardamping",
+            "bodytype",
+            "simulated",
+            "collisiondetectionmode",
+            "constraints",
         };
 
         public static object GetRigidbody(JObject @params)
@@ -103,7 +119,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Retrieved Rigidbody state for '{go.name}'.",
-                data
+                data,
             };
         }
 
@@ -148,7 +164,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Retrieved Rigidbody2D state for '{go.name}'.",
-                data
+                data,
             };
         }
 
@@ -198,7 +214,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (int.TryParse(target.ToString(), out int instanceId))
             {
                 var byId = GameObjectLookup.FindById(instanceId);
-                if (byId != null) return byId.activeInHierarchy ? byId : null;
+                if (byId != null)
+                    return byId.activeInHierarchy ? byId : null;
             }
 
             return GameObjectLookup.FindByTarget(target, "by_name");
@@ -219,8 +236,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     unknown.Add(prop.Name);
             }
             if (unknown.Count > 0)
-                return new ErrorResponse(
-                    $"Unknown Rigidbody property(ies): {string.Join(", ", unknown)}.");
+                return new ErrorResponse($"Unknown Rigidbody property(ies): {string.Join(", ", unknown)}.");
 
             var changes = new List<Action>();
 
@@ -278,8 +294,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         }
                         else
                         {
-                            return new ErrorResponse(
-                                $"Invalid interpolation value: '{val}'. Valid: None, Interpolate, Extrapolate.");
+                            return new ErrorResponse($"Invalid interpolation value: '{val}'. Valid: None, Interpolate, Extrapolate.");
                         }
                         break;
                     }
@@ -294,7 +309,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                         else
                         {
                             return new ErrorResponse(
-                                $"Invalid collisionDetectionMode: '{val}'. Valid: Discrete, Continuous, ContinuousDynamic, ContinuousSpeculative.");
+                                $"Invalid collisionDetectionMode: '{val}'. Valid: Discrete, Continuous, ContinuousDynamic, ContinuousSpeculative."
+                            );
                         }
                         break;
                     }
@@ -318,7 +334,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                             else
                             {
                                 return new ErrorResponse(
-                                    $"Invalid constraints value: '{val}'. Use enum name (e.g. 'FreezePositionX, FreezeRotationY') or int flags.");
+                                    $"Invalid constraints value: '{val}'. Use enum name (e.g. 'FreezePositionX, FreezeRotationY') or int flags."
+                                );
                             }
                         }
                         break;
@@ -327,14 +344,20 @@ namespace MCPForUnity.Editor.Tools.Physics
             }
 
             Undo.RecordObject(rb, "Configure Rigidbody");
-            foreach (var change in changes) change();
+            foreach (var change in changes)
+                change();
             EditorUtility.SetDirty(rb);
 
             return new
             {
                 success = true,
                 message = $"Configured Rigidbody on '{go.name}': {string.Join(", ", changed)}.",
-                data = new { target = go.name, dimension = "3d", changed }
+                data = new
+                {
+                    target = go.name,
+                    dimension = "3d",
+                    changed,
+                },
             };
         }
 
@@ -353,8 +376,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     unknown.Add(prop.Name);
             }
             if (unknown.Count > 0)
-                return new ErrorResponse(
-                    $"Unknown Rigidbody2D property(ies): {string.Join(", ", unknown)}.");
+                return new ErrorResponse($"Unknown Rigidbody2D property(ies): {string.Join(", ", unknown)}.");
 
             var changes = new List<Action>();
 
@@ -407,8 +429,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         }
                         else
                         {
-                            return new ErrorResponse(
-                                $"Invalid bodyType: '{val}'. Valid: Dynamic, Kinematic, Static.");
+                            return new ErrorResponse($"Invalid bodyType: '{val}'. Valid: Dynamic, Kinematic, Static.");
                         }
                         break;
                     }
@@ -427,8 +448,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         }
                         else
                         {
-                            return new ErrorResponse(
-                                $"Invalid collisionDetectionMode: '{val}'. Valid: Discrete, Continuous.");
+                            return new ErrorResponse($"Invalid collisionDetectionMode: '{val}'. Valid: Discrete, Continuous.");
                         }
                         break;
                     }
@@ -452,7 +472,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                             else
                             {
                                 return new ErrorResponse(
-                                    $"Invalid constraints value: '{val}'. Use enum name (e.g. 'FreezePositionX, FreezeRotation') or int flags.");
+                                    $"Invalid constraints value: '{val}'. Use enum name (e.g. 'FreezePositionX, FreezeRotation') or int flags."
+                                );
                             }
                         }
                         break;
@@ -461,14 +482,20 @@ namespace MCPForUnity.Editor.Tools.Physics
             }
 
             Undo.RecordObject(rb2d, "Configure Rigidbody2D");
-            foreach (var change in changes) change();
+            foreach (var change in changes)
+                change();
             EditorUtility.SetDirty(rb2d);
 
             return new
             {
                 success = true,
                 message = $"Configured Rigidbody2D on '{go.name}': {string.Join(", ", changed)}.",
-                data = new { target = go.name, dimension = "2d", changed }
+                data = new
+                {
+                    target = go.name,
+                    dimension = "2d",
+                    changed,
+                },
             };
         }
     }

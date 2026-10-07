@@ -3,6 +3,7 @@ Tests for the manage_components tool.
 
 This tool handles component lifecycle operations (add, remove, set_property).
 """
+
 import pytest
 from unittest.mock import AsyncMock
 
@@ -15,8 +16,12 @@ async def test_single_property_explicit_null_is_forwarded(monkeypatch):
     send = AsyncMock(return_value={"success": True, "data": {}})
     monkeypatch.setattr(manage_comp_mod, "send_with_unity_instance", send)
     response = await manage_comp_mod.manage_components(
-        DummyContext(), "set_property", "Player", "Renderer",
-        property="sharedMaterial", value=None,
+        DummyContext(),
+        "set_property",
+        "Player",
+        "Renderer",
+        property="sharedMaterial",
+        value=None,
     )
     assert response["success"] is True
     assert send.call_args.args[3]["property"] == "sharedMaterial"
@@ -25,13 +30,16 @@ async def test_single_property_explicit_null_is_forwarded(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("arguments", [
-    {"property": "sharedMaterial"},
-    {"properties": "[object Object]"},
-    {"property": "mass", "value": "undefined"},
-    {"target": ""},
-    {"component_type": ""},
-])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"property": "sharedMaterial"},
+        {"properties": "[object Object]"},
+        {"property": "mass", "value": "undefined"},
+        {"target": ""},
+        {"component_type": ""},
+    ],
+)
 async def test_invalid_component_inputs_do_not_preflight_or_dispatch(monkeypatch, arguments):
     preflight = AsyncMock(return_value=None)
     send = AsyncMock(return_value={"success": True})
@@ -46,14 +54,26 @@ async def test_invalid_component_inputs_do_not_preflight_or_dispatch(monkeypatch
 
 @pytest.mark.asyncio
 async def test_partial_component_add_failure_retains_created_component_details(monkeypatch):
-    failure = {"success": False, "error": "Property initialization failed", "data": {
-        "instanceID": 123, "componentType": "Rigidbody", "componentInstanceID": 456,
-        "componentAdded": True,
-        "errors": ["mass: invalid value"],
-    }}
-    monkeypatch.setattr(manage_comp_mod, "send_with_unity_instance", AsyncMock(return_value=failure))
+    failure = {
+        "success": False,
+        "error": "Property initialization failed",
+        "data": {
+            "instanceID": 123,
+            "componentType": "Rigidbody",
+            "componentInstanceID": 456,
+            "componentAdded": True,
+            "errors": ["mass: invalid value"],
+        },
+    }
+    monkeypatch.setattr(
+        manage_comp_mod, "send_with_unity_instance", AsyncMock(return_value=failure)
+    )
     response = await manage_comp_mod.manage_components(
-        DummyContext(), "add", "Player", "Rigidbody", properties={"mass": "invalid"},
+        DummyContext(),
+        "add",
+        "Player",
+        "Rigidbody",
+        properties={"mass": "invalid"},
     )
     assert response == failure
 
@@ -288,4 +308,3 @@ async def test_manage_components_target_by_id(monkeypatch):
     assert resp.get("success") is True
     assert captured["params"]["target"] == 12345
     assert captured["params"]["searchMethod"] == "by_id"
-

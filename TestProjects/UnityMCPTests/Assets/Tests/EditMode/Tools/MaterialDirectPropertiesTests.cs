@@ -1,10 +1,10 @@
 using System;
 using System.IO;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Tools;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -51,22 +51,23 @@ namespace MCPForUnityTests.Editor.Tools
             TryDeleteAsset(_baseMapPath);
             TryDeleteAsset(_normalMapPath);
             TryDeleteAsset(_occlusionMapPath);
-            
+
             // Clean up temp directory after each test
             if (AssetDatabase.IsValidFolder(TempRoot))
             {
                 AssetDatabase.DeleteAsset(TempRoot);
             }
-            
+
             // Clean up empty parent folders to avoid debris
             CleanupEmptyParentFolders(TempRoot);
-            
+
             AssetDatabase.Refresh();
         }
 
         private static void TryDeleteAsset(string path)
         {
-            if (string.IsNullOrEmpty(path)) return;
+            if (string.IsNullOrEmpty(path))
+                return;
             if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null)
             {
                 AssetDatabase.DeleteAsset(path);
@@ -74,8 +75,10 @@ namespace MCPForUnityTests.Editor.Tools
             var abs = Path.Combine(Directory.GetCurrentDirectory(), path);
             try
             {
-                if (File.Exists(abs)) File.Delete(abs);
-                if (File.Exists(abs + ".meta")) File.Delete(abs + ".meta");
+                if (File.Exists(abs))
+                    File.Delete(abs);
+                if (File.Exists(abs + ".meta"))
+                    File.Delete(abs + ".meta");
             }
             catch { }
         }
@@ -84,7 +87,8 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var tex = new Texture2D(4, 4, TextureFormat.RGBA32, false);
             var pixels = new Color[16];
-            for (int i = 0; i < pixels.Length; i++) pixels[i] = color;
+            for (int i = 0; i < pixels.Length; i++)
+                pixels[i] = color;
             tex.SetPixels(pixels);
             tex.Apply();
             AssetDatabase.CreateAsset(tex, path);
@@ -110,8 +114,8 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["shader"] = "Universal Render Pipeline/Lit",
                     ["_Color"] = new JArray(0f, 1f, 0f, 1f),
-                    ["_Glossiness"] = 0.25f
-                }
+                    ["_Glossiness"] = 0.25f,
+                },
             };
             var createRes = ToJObject(ManageAsset.HandleCommand(createParams));
             Assert.IsTrue(createRes.Value<bool>("success"), createRes.ToString());
@@ -127,8 +131,8 @@ namespace MCPForUnityTests.Editor.Tools
                     ["_Smoothness"] = 0.5f,
                     ["_BaseMap"] = _baseMapPath,
                     ["_BumpMap"] = _normalMapPath,
-                    ["_OcclusionMap"] = _occlusionMapPath
-                }
+                    ["_OcclusionMap"] = _occlusionMapPath,
+                },
             };
             var modifyRes = ToJObject(ManageAsset.HandleCommand(modifyParams));
             Assert.IsTrue(modifyRes.Value<bool>("success"), modifyRes.ToString());
@@ -155,10 +159,10 @@ namespace MCPForUnityTests.Editor.Tools
             string baseMapProp = mat.HasProperty("_BaseMap") ? "_BaseMap" : (mat.HasProperty("_MainTex") ? "_MainTex" : null);
             Assert.IsNotNull(baseMapProp, "Material should expose BaseMap/MainTex.");
             Assert.IsNotNull(mat.GetTexture(baseMapProp), "BaseMap/MainTex should be assigned.");
-            if (mat.HasProperty("_BumpMap")) Assert.IsNotNull(mat.GetTexture("_BumpMap"));
-            if (mat.HasProperty("_OcclusionMap")) Assert.IsNotNull(mat.GetTexture("_OcclusionMap"));
+            if (mat.HasProperty("_BumpMap"))
+                Assert.IsNotNull(mat.GetTexture("_BumpMap"));
+            if (mat.HasProperty("_OcclusionMap"))
+                Assert.IsNotNull(mat.GetTexture("_OcclusionMap"));
         }
     }
 }
-
-

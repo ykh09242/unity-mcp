@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Physics
 {
@@ -14,7 +14,8 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             var targetResult = p.GetRequired("target");
             var errorObj = targetResult.GetOrError(out string targetStr);
-            if (errorObj != null) return errorObj;
+            if (errorObj != null)
+                return errorObj;
 
             string searchMethod = p.Get("search_method");
 
@@ -71,7 +72,8 @@ namespace MCPForUnity.Editor.Tools.Physics
         private static object ApplyNormalForce(ToolParams p, GameObject go, bool is2D)
         {
             var forceToken = p.GetRaw("force");
-            if (forceToken?.Type == JTokenType.Null) forceToken = null;
+            if (forceToken?.Type == JTokenType.Null)
+                forceToken = null;
             var torqueToken = p.GetRaw("torque");
 
             if (forceToken == null && torqueToken == null)
@@ -79,7 +81,8 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             string modeStr = p.Get("force_mode");
             var positionToken = p.GetRaw("position");
-            if (positionToken?.Type == JTokenType.Null) positionToken = null;
+            if (positionToken?.Type == JTokenType.Null)
+                positionToken = null;
 
             // Parse the whole request before any AddForce/AddTorque call. A bad
             // torque must not leave a force queued on a rejected request.
@@ -112,7 +115,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 ["target"] = go.name,
                 ["dimension"] = is2D ? "2d" : "3d",
-                ["force_type"] = "normal"
+                ["force_type"] = "normal",
             };
 
             if (is2D)
@@ -170,13 +173,11 @@ namespace MCPForUnity.Editor.Tools.Physics
 
                 if (force != null)
                 {
-                    var forceVec = new Vector3(
-                        force[0], force[1], force[2]);
+                    var forceVec = new Vector3(force[0], force[1], force[2]);
 
                     if (position != null)
                     {
-                        var posVec = new Vector3(
-                            position[0], position[1], position[2]);
+                        var posVec = new Vector3(position[0], position[1], position[2]);
                         rb.AddForceAtPosition(forceVec, posVec, mode);
                     }
                     else
@@ -190,8 +191,7 @@ namespace MCPForUnity.Editor.Tools.Physics
 
                 if (torque != null)
                 {
-                    var torqueVec = new Vector3(
-                        torque[0], torque[1], torque[2]);
+                    var torqueVec = new Vector3(torque[0], torque[1], torque[2]);
                     rb.AddTorque(torqueVec, mode);
                     responseData["torque"] = new[] { torqueVec.x, torqueVec.y, torqueVec.z };
                     applied.Add("torque");
@@ -203,7 +203,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Applied {appliedStr} to '{go.name}'.",
-                data = responseData
+                data = responseData,
             };
         }
 
@@ -268,8 +268,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     return new ErrorResponse($"Invalid ForceMode: '{modeStr}'. Valid values: Force, Impulse, Acceleration, VelocityChange.");
             }
 
-            var explosionPos = new Vector3(
-                explosionPosition[0], explosionPosition[1], explosionPosition[2]);
+            var explosionPos = new Vector3(explosionPosition[0], explosionPosition[1], explosionPosition[2]);
 
             var rb = go.GetComponent<Rigidbody>();
             rb.AddExplosionForce(explosionForce.Value, explosionPos, explosionRadius.Value, upwardsModifier, mode);
@@ -287,8 +286,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                     explosion_position = new[] { explosionPos.x, explosionPos.y, explosionPos.z },
                     explosion_force = explosionForce.Value,
                     explosion_radius = explosionRadius.Value,
-                    upwards_modifier = upwardsModifier
-                }
+                    upwards_modifier = upwardsModifier,
+                },
             };
         }
 

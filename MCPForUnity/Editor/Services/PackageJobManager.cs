@@ -10,7 +10,12 @@ using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 
 namespace MCPForUnity.Editor.Services
 {
-    internal enum PackageJobStatus { Running, Succeeded, Failed }
+    internal enum PackageJobStatus
+    {
+        Running,
+        Succeeded,
+        Failed,
+    }
 
     internal sealed class PackageJob
     {
@@ -31,11 +36,13 @@ namespace MCPForUnity.Editor.Services
         internal static bool IsSourceIdentifier(string identifier)
         {
             return !string.IsNullOrEmpty(identifier)
-                && (identifier.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                && (
+                    identifier.StartsWith("http", StringComparison.OrdinalIgnoreCase)
                     || identifier.StartsWith("git", StringComparison.OrdinalIgnoreCase)
                     || identifier.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase)
                     || identifier.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
-                    || identifier.EndsWith(".git", StringComparison.OrdinalIgnoreCase));
+                    || identifier.EndsWith(".git", StringComparison.OrdinalIgnoreCase)
+                );
         }
 
         internal static bool MatchesVersion(PackageInfo info, string identifier)
@@ -44,15 +51,17 @@ namespace MCPForUnity.Editor.Services
                 return true;
 
             int atIndex = identifier?.IndexOf('@') ?? -1;
-            return atIndex < 0 || atIndex == identifier.Length - 1
-                || string.Equals(info.version, identifier.Substring(atIndex + 1), StringComparison.Ordinal);
+            return atIndex < 0 || atIndex == identifier.Length - 1 || string.Equals(info.version, identifier.Substring(atIndex + 1), StringComparison.Ordinal);
         }
 
         internal static bool MatchesSource(PackageInfo info, string identifier, string packagesDirectory)
         {
             bool isFile = identifier.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
-            if (isFile ? info.source != PackageSource.Local && info.source != PackageSource.LocalTarball && info.source != PackageSource.Git
-                       : info.source != PackageSource.Git)
+            if (
+                isFile
+                    ? info.source != PackageSource.Local && info.source != PackageSource.LocalTarball && info.source != PackageSource.Git
+                    : info.source != PackageSource.Git
+            )
                 return false;
 
             // file: can identify a local package or a Git FILE URL. Registered source is authoritative.
@@ -77,8 +86,7 @@ namespace MCPForUnity.Editor.Services
             string path = requested.Substring("file:".Length);
             string fullPath = Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(packagesDirectory, path))
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            string resolvedPath = Path.GetFullPath(info.resolvedPath.Replace('\\', '/'))
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string resolvedPath = Path.GetFullPath(info.resolvedPath.Replace('\\', '/')).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
             return string.Equals(fullPath, resolvedPath, comparison);
         }
@@ -137,7 +145,7 @@ namespace MCPForUnity.Editor.Services
             {
                 "succeeded" => PackageJobStatus.Succeeded,
                 "failed" => PackageJobStatus.Failed,
-                _ => PackageJobStatus.Running
+                _ => PackageJobStatus.Running,
             };
         }
 
@@ -174,7 +182,7 @@ namespace MCPForUnity.Editor.Services
                             LastUpdateUnixMs = pj.last_update_unix_ms,
                             Error = pj.error,
                             ResultVersion = pj.result_version,
-                            ResultName = pj.result_name
+                            ResultName = pj.result_name,
                         };
 
                         // Domain reload recovery for running jobs
@@ -203,9 +211,10 @@ namespace MCPForUnity.Editor.Services
 
                 if (job.Operation == "add" || job.Operation == "embed")
                 {
-                    if (info != null && (job.Operation == "embed"
-                        ? info.source == PackageSource.Embedded
-                        : PackageRecoveryIdentity.MatchesVersion(info, job.Package)))
+                    if (
+                        info != null
+                        && (job.Operation == "embed" ? info.source == PackageSource.Embedded : PackageRecoveryIdentity.MatchesVersion(info, job.Package))
+                    )
                     {
                         job.Status = PackageJobStatus.Succeeded;
                         job.FinishedUnixMs = nowMs;
@@ -254,14 +263,12 @@ namespace MCPForUnity.Editor.Services
         private static PackageInfo FindPackageInfo(PackageInfo[] allPackages, string packageName, string originalIdentifier)
         {
             if (!PackageRecoveryIdentity.IsSourceIdentifier(originalIdentifier))
-                return allPackages.FirstOrDefault(p =>
-                    string.Equals(p.name, packageName, StringComparison.OrdinalIgnoreCase));
+                return allPackages.FirstOrDefault(p => string.Equals(p.name, packageName, StringComparison.OrdinalIgnoreCase));
 
             string packagesDirectory = originalIdentifier.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
                 ? Path.GetFullPath(Path.Combine(UnityEngine.Application.dataPath, "..", "Packages"))
                 : null;
-            return allPackages.FirstOrDefault(p =>
-                PackageRecoveryIdentity.MatchesSource(p, originalIdentifier, packagesDirectory));
+            return allPackages.FirstOrDefault(p => PackageRecoveryIdentity.MatchesSource(p, originalIdentifier, packagesDirectory));
         }
 
         internal static string ExtractPackageName(string packageIdentifier)
@@ -292,16 +299,17 @@ namespace MCPForUnity.Editor.Services
                     // bounds the managed dictionary between domain reloads.
                     if (Jobs.Count > MaxJobsToKeep)
                     {
-                        var expiredIds = Jobs.Values
-                            .Where(j => j.Status != PackageJobStatus.Running)
+                        var expiredIds = Jobs
+                            .Values.Where(j => j.Status != PackageJobStatus.Running)
                             .OrderBy(j => j.LastUpdateUnixMs)
                             .Take(Jobs.Count - MaxJobsToKeep)
                             .Select(j => j.JobId)
                             .ToList();
-                        foreach (string id in expiredIds) Jobs.Remove(id);
+                        foreach (string id in expiredIds)
+                            Jobs.Remove(id);
                     }
-                    var jobs = Jobs.Values
-                        .OrderByDescending(j => j.LastUpdateUnixMs)
+                    var jobs = Jobs
+                        .Values.OrderByDescending(j => j.LastUpdateUnixMs)
                         .Select(j => new PersistedJob
                         {
                             job_id = j.JobId,
@@ -313,7 +321,7 @@ namespace MCPForUnity.Editor.Services
                             last_update_unix_ms = j.LastUpdateUnixMs,
                             error = j.Error,
                             result_version = j.ResultVersion,
-                            result_name = j.ResultName
+                            result_name = j.ResultName,
                         })
                         .ToList();
 
@@ -344,7 +352,7 @@ namespace MCPForUnity.Editor.Services
                 LastUpdateUnixMs = started,
                 Error = null,
                 ResultVersion = null,
-                ResultName = null
+                ResultName = null,
             };
 
             lock (LockObj)
@@ -355,8 +363,7 @@ namespace MCPForUnity.Editor.Services
             return jobId;
         }
 
-        public static void CompleteJob(string jobId, bool success, string error = null,
-            string version = null, string name = null)
+        public static void CompleteJob(string jobId, bool success, string error = null, string version = null, string name = null)
         {
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             lock (LockObj)
@@ -390,9 +397,7 @@ namespace MCPForUnity.Editor.Services
         {
             lock (LockObj)
             {
-                return Jobs.Values
-                    .OrderByDescending(j => j.StartedUnixMs)
-                    .FirstOrDefault();
+                return Jobs.Values.OrderByDescending(j => j.StartedUnixMs).FirstOrDefault();
             }
         }
 
@@ -412,7 +417,7 @@ namespace MCPForUnity.Editor.Services
                 last_update_unix_ms = job.LastUpdateUnixMs,
                 error = job.Error,
                 result_version = job.ResultVersion,
-                result_name = job.ResultName
+                result_name = job.ResultName,
             };
         }
     }

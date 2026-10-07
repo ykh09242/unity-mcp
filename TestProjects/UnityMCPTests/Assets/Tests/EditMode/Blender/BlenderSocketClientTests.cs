@@ -102,7 +102,9 @@ namespace MCPForUnityTests.Editor.Blender
         {
             using var cancellation = new CancellationTokenSource();
             cancellation.Cancel();
-            Assert.Throws<OperationCanceledException>(() => BlenderSocketClient.Send(new BlenderEndpoint("invalid", 0), "get_scene_info", cancellationToken: cancellation.Token));
+            Assert.Throws<OperationCanceledException>(() =>
+                BlenderSocketClient.Send(new BlenderEndpoint("invalid", 0), "get_scene_info", cancellationToken: cancellation.Token)
+            );
         }
 
         private sealed class TestStream : MemoryStream
@@ -114,9 +116,20 @@ namespace MCPForUnityTests.Editor.Blender
             public override int ReadTimeout
             {
                 get => LastTimeout;
-                set { if (FirstTimeout == 0) FirstTimeout = value; LastTimeout = value; }
+                set
+                {
+                    if (FirstTimeout == 0)
+                        FirstTimeout = value;
+                    LastTimeout = value;
+                }
             }
-            public TestStream(byte[] bytes, bool split = false) : base(bytes) { this.split = split; }
+
+            public TestStream(byte[] bytes, bool split = false)
+                : base(bytes)
+            {
+                this.split = split;
+            }
+
             public override int Read(byte[] buffer, int offset, int count)
             {
                 if (split && reads++ == 0)

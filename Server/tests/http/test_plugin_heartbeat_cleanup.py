@@ -1,4 +1,5 @@
 """Heartbeat failure owns cleanup before asynchronous ASGI close completes."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -7,7 +8,7 @@ import sys
 import pytest
 
 
-PROGRAM = r'''
+PROGRAM = r"""
 import asyncio
 import json
 import os
@@ -194,17 +195,43 @@ async def main():
             await channel.stop()
         await Hub.shutdown()
 asyncio.run(main())
-'''
+"""
 
 
-@pytest.mark.parametrize("case", ["stale_close", "failed_ping", "blocked_ping", "cancelled_close", "replacement", "healthy", "disconnect_during_ping"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "stale_close",
+        "failed_ping",
+        "blocked_ping",
+        "cancelled_close",
+        "replacement",
+        "healthy",
+        "disconnect_during_ping",
+    ],
+)
 def test_heartbeat_owns_session_and_command_cleanup(tmp_path, case):
     env = {key: value for key, value in os.environ.items() if not key.startswith("UNITY_MCP_")}
-    for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME", "UNITY_MCP_LOG_DIR", "UNITY_MCP_STATUS_DIR", "TEMP", "TMP"):
+    for key in (
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "XDG_DATA_HOME",
+        "UNITY_MCP_LOG_DIR",
+        "UNITY_MCP_STATUS_DIR",
+        "TEMP",
+        "TMP",
+    ):
         env[key] = str(tmp_path)
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "true"
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "src")
     env.pop("PYTEST_CURRENT_TEST", None)
-    result = subprocess.run([sys.executable, "-B", "-c", PROGRAM, case], env=env,
-                            capture_output=True, text=True, timeout=20)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", PROGRAM, case],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
     assert result.returncode == 0, result.stdout + result.stderr

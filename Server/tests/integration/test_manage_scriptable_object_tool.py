@@ -4,45 +4,57 @@ from .test_helpers import DummyContext
 import services.tools.manage_scriptable_object as mod
 
 
-@pytest.mark.parametrize("patch", [
-    {"path": "items", "op": "array_resize", "value": 2_147_483_648},
-    {"path": "items", "op": "array_resize", "value": "9223372036854775808"},
-    {"path": "items.Array.size", "value": -1},
-    {"path": "items", "op": "array_resize", "value": True},
-    {"path": "items", "op": "array_resize", "value": 1e100},
-    {"path": "items", "op": "array_resize", "value": 4.0},
-    {"path": "items", "op": "array_resize", "value": 4.75},
-    {"path": "items", "op": "array_resize", "value": "4.0"},
-    {"path": "items", "op": "array_resize", "value": "4.75"},
-    {"path": "items", "op": "array_resize", "value": "4e0"},
-    {"path": "items[2147483647]", "value": 0},
-    {"path": "items[-1]", "value": 0},
-    {"path": "outer[1].inner[9999999999999999999999]", "value": 0},
-])
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"path": "items", "op": "array_resize", "value": 2_147_483_648},
+        {"path": "items", "op": "array_resize", "value": "9223372036854775808"},
+        {"path": "items.Array.size", "value": -1},
+        {"path": "items", "op": "array_resize", "value": True},
+        {"path": "items", "op": "array_resize", "value": 1e100},
+        {"path": "items", "op": "array_resize", "value": 4.0},
+        {"path": "items", "op": "array_resize", "value": 4.75},
+        {"path": "items", "op": "array_resize", "value": "4.0"},
+        {"path": "items", "op": "array_resize", "value": "4.75"},
+        {"path": "items", "op": "array_resize", "value": "4e0"},
+        {"path": "items[2147483647]", "value": 0},
+        {"path": "items[-1]", "value": 0},
+        {"path": "outer[1].inner[9999999999999999999999]", "value": 0},
+    ],
+)
 @pytest.mark.parametrize("dry_run", [False, True])
 @pytest.mark.asyncio
-async def test_impossible_array_numbers_fail_before_instance_or_transport(monkeypatch, patch, dry_run):
+async def test_impossible_array_numbers_fail_before_instance_or_transport(
+    monkeypatch, patch, dry_run
+):
     async def forbidden(*args):
         pytest.fail("Invalid numeric array request reached routing")
 
     monkeypatch.setattr(mod, "get_unity_instance_from_context", forbidden)
     monkeypatch.setattr(mod, "send_with_unity_instance", forbidden)
-    result = await mod.manage_scriptable_object(ctx=DummyContext(), action="modify", patches=[patch], dry_run=dry_run)
+    result = await mod.manage_scriptable_object(
+        ctx=DummyContext(), action="modify", patches=[patch], dry_run=dry_run
+    )
     assert result["success"] is False
     assert "Int32" in result["message"]
 
 
-@pytest.mark.parametrize("patch", [
-    {"path": "items", "op": "array_resize", "value": 1_500_000},
-    {"path": "items[1499999]", "value": 0},
-    {"path": "items", "op": "array_resize", "value": "4"},
-    {"path": "items", "op": "array_resize", "value": 0},
-    {"path": "items", "op": "array_resize", "value": 2_147_483_647},
-    {"path": "items[2147483646]", "value": 0},
-    {"path": "nested", "value": {"numbers": [3, 4]}},
-])
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"path": "items", "op": "array_resize", "value": 1_500_000},
+        {"path": "items[1499999]", "value": 0},
+        {"path": "items", "op": "array_resize", "value": "4"},
+        {"path": "items", "op": "array_resize", "value": 0},
+        {"path": "items", "op": "array_resize", "value": 2_147_483_647},
+        {"path": "items[2147483646]", "value": 0},
+        {"path": "nested", "value": {"numbers": [3, 4]}},
+    ],
+)
 @pytest.mark.asyncio
-async def test_state_dependent_growth_is_forwarded_to_authoritative_unity_budget(monkeypatch, patch):
+async def test_state_dependent_growth_is_forwarded_to_authoritative_unity_budget(
+    monkeypatch, patch
+):
     captured = {}
 
     async def instance(ctx):
@@ -54,7 +66,9 @@ async def test_state_dependent_growth_is_forwarded_to_authoritative_unity_budget
 
     monkeypatch.setattr(mod, "get_unity_instance_from_context", instance)
     monkeypatch.setattr(mod, "send_with_unity_instance", send)
-    result = await mod.manage_scriptable_object(ctx=DummyContext(), action="modify", patches=[patch])
+    result = await mod.manage_scriptable_object(
+        ctx=DummyContext(), action="modify", patches=[patch]
+    )
     assert result["message"] == "controlled Unity response"
     assert captured["patches"] == [patch]
 
@@ -75,15 +89,27 @@ async def test_invalid_boolean_flag_fails_before_routing(monkeypatch, flag, valu
 
     monkeypatch.setattr(mod, "get_unity_instance_from_context", fake_instance)
     monkeypatch.setattr(mod, "send_with_unity_instance", fake_send)
-    result = await mod.manage_scriptable_object(ctx=DummyContext(), action="modify", **{flag: value})
+    result = await mod.manage_scriptable_object(
+        ctx=DummyContext(), action="modify", **{flag: value}
+    )
     assert result["success"] is False
     assert flag in result["message"]
     assert calls == []
 
 
 @pytest.mark.parametrize("flag,wire", [("dry_run", "dryRun"), ("overwrite", "overwrite")])
-@pytest.mark.parametrize("value,expected", [(None, None), (True, True), (False, False),
-                                           ("true", True), ("false", False), (" TRUE ", True), ("False", False)])
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, None),
+        (True, True),
+        (False, False),
+        ("true", True),
+        ("false", False),
+        (" TRUE ", True),
+        ("False", False),
+    ],
+)
 @pytest.mark.asyncio
 async def test_supported_boolean_flags_preserve_defaults(monkeypatch, flag, wire, value, expected):
     captured = {}
@@ -97,7 +123,9 @@ async def test_supported_boolean_flags_preserve_defaults(monkeypatch, flag, wire
 
     monkeypatch.setattr(mod, "get_unity_instance_from_context", fake_instance)
     monkeypatch.setattr(mod, "send_with_unity_instance", fake_send)
-    result = await mod.manage_scriptable_object(ctx=DummyContext(), action="modify", **{flag: value})
+    result = await mod.manage_scriptable_object(
+        ctx=DummyContext(), action="modify", **{flag: value}
+    )
     assert result == {"success": False, "message": "controlled Unity failure"}
     if expected is None:
         assert wire not in captured
@@ -119,16 +147,14 @@ async def test_manage_scriptable_object_forwards_create_params(monkeypatch):
     ctx = DummyContext()
     await ctx.set_state("unity_instance", "UnityMCPTests@dummy")
 
-    result = await (
-        mod.manage_scriptable_object(
-            ctx=ctx,
-            action="create",
-            type_name="My.Namespace.TestDefinition",
-            folder_path="Assets/Temp/Foo",
-            asset_name="Bar",
-            overwrite="true",
-            patches='[{"propertyPath":"displayName","op":"set","value":"Hello"}]',
-        )
+    result = await mod.manage_scriptable_object(
+        ctx=ctx,
+        action="create",
+        type_name="My.Namespace.TestDefinition",
+        folder_path="Assets/Temp/Foo",
+        asset_name="Bar",
+        overwrite="true",
+        patches='[{"propertyPath":"displayName","op":"set","value":"Hello"}]',
     )
 
     assert result["success"] is True
@@ -156,13 +182,11 @@ async def test_manage_scriptable_object_forwards_modify_params(monkeypatch):
     ctx = DummyContext()
     await ctx.set_state("unity_instance", "UnityMCPTests@dummy")
 
-    result = await (
-        mod.manage_scriptable_object(
-            ctx=ctx,
-            action="modify",
-            target='{"guid":"abc"}',
-            patches=[{"propertyPath": "materials.Array.size", "op": "array_resize", "value": 2}],
-        )
+    result = await mod.manage_scriptable_object(
+        ctx=ctx,
+        action="modify",
+        target='{"guid":"abc"}',
+        patches=[{"propertyPath": "materials.Array.size", "op": "array_resize", "value": 2}],
     )
 
     assert result["success"] is True
@@ -186,14 +210,12 @@ async def test_manage_scriptable_object_forwards_dry_run_param(monkeypatch):
     ctx = DummyContext()
     await ctx.set_state("unity_instance", "UnityMCPTests@dummy")
 
-    result = await (
-        mod.manage_scriptable_object(
-            ctx=ctx,
-            action="modify",
-            target='{"guid":"abc123"}',
-            patches=[{"propertyPath": "intValue", "op": "set", "value": 42}],
-            dry_run=True,
-        )
+    result = await mod.manage_scriptable_object(
+        ctx=ctx,
+        action="modify",
+        target='{"guid":"abc123"}',
+        patches=[{"propertyPath": "intValue", "op": "set", "value": 42}],
+        dry_run=True,
     )
 
     assert result["success"] is True
@@ -218,18 +240,13 @@ async def test_manage_scriptable_object_dry_run_string_coercion(monkeypatch):
     ctx = DummyContext()
     await ctx.set_state("unity_instance", "UnityMCPTests@dummy")
 
-    result = await (
-        mod.manage_scriptable_object(
-            ctx=ctx,
-            action="modify",
-            target={"guid": "xyz"},
-            patches=[],
-            dry_run="true",  # String instead of bool
-        )
+    result = await mod.manage_scriptable_object(
+        ctx=ctx,
+        action="modify",
+        target={"guid": "xyz"},
+        patches=[],
+        dry_run="true",  # String instead of bool
     )
 
     assert result["success"] is True
     assert captured["params"]["dryRun"] is True
-
-
-

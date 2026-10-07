@@ -54,7 +54,8 @@ namespace MCPForUnity.Editor.Tools
             if (commandsToken.Count > maxCommands)
             {
                 return new ErrorResponse(
-                    $"A maximum of {maxCommands} commands are allowed per batch (configurable in MCP Tools window, hard max {AbsoluteMaxCommandsPerBatch}).");
+                    $"A maximum of {maxCommands} commands are allowed per batch (configurable in MCP Tools window, hard max {AbsoluteMaxCommandsPerBatch})."
+                );
             }
 
             // Preflight the entire batch before any command can have side effects.
@@ -83,12 +84,14 @@ namespace MCPForUnity.Editor.Tools
                 {
                     invocationFailureCount++;
                     anyCommandFailed = true;
-                    commandResults.Add(new
-                    {
-                        tool = (string)null,
-                        callSucceeded = false,
-                        error = "Command entries must be JSON objects."
-                    });
+                    commandResults.Add(
+                        new
+                        {
+                            tool = (string)null,
+                            callSucceeded = false,
+                            error = "Command entries must be JSON objects.",
+                        }
+                    );
                     if (failFast)
                     {
                         break;
@@ -102,12 +105,14 @@ namespace MCPForUnity.Editor.Tools
                 {
                     invocationFailureCount++;
                     anyCommandFailed = true;
-                    commandResults.Add(new
-                    {
-                        tool = toolName,
-                        callSucceeded = false,
-                        error = "Each command must include a non-empty 'tool' field."
-                    });
+                    commandResults.Add(
+                        new
+                        {
+                            tool = toolName,
+                            callSucceeded = false,
+                            error = "Each command must include a non-empty 'tool' field.",
+                        }
+                    );
                     if (failFast)
                     {
                         break;
@@ -121,13 +126,16 @@ namespace MCPForUnity.Editor.Tools
                 {
                     invocationFailureCount++;
                     anyCommandFailed = true;
-                    commandResults.Add(new
-                    {
-                        tool = toolName,
-                        callSucceeded = false,
-                        result = new ErrorResponse($"Resource '{toolName}' is disabled in the Unity Editor.")
-                    });
-                    if (failFast) break;
+                    commandResults.Add(
+                        new
+                        {
+                            tool = toolName,
+                            callSucceeded = false,
+                            result = new ErrorResponse($"Resource '{toolName}' is disabled in the Unity Editor."),
+                        }
+                    );
+                    if (failFast)
+                        break;
                     continue;
                 }
 
@@ -137,13 +145,16 @@ namespace MCPForUnity.Editor.Tools
                 {
                     invocationFailureCount++;
                     anyCommandFailed = true;
-                    commandResults.Add(new
-                    {
-                        tool = toolName,
-                        callSucceeded = false,
-                        result = new ErrorResponse($"Tool '{toolName}' is disabled in the Unity Editor.")
-                    });
-                    if (failFast) break;
+                    commandResults.Add(
+                        new
+                        {
+                            tool = toolName,
+                            callSucceeded = false,
+                            result = new ErrorResponse($"Tool '{toolName}' is disabled in the Unity Editor."),
+                        }
+                    );
+                    if (failFast)
+                        break;
                     continue;
                 }
 
@@ -164,29 +175,36 @@ namespace MCPForUnity.Editor.Tools
                         anyCommandFailed = true;
                     }
 
-                    commandResults.Add(new
-                    {
-                        tool = toolName,
-                        callSucceeded,
-                        result
-                    });
+                    commandResults.Add(
+                        new
+                        {
+                            tool = toolName,
+                            callSucceeded,
+                            result,
+                        }
+                    );
 
                     if (!callSucceeded && failFast)
                     {
                         break;
                     }
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     invocationFailureCount++;
                     anyCommandFailed = true;
-                    commandResults.Add(new
-                    {
-                        tool = toolName,
-                        callSucceeded = false,
-                        error = ex.Message
-                    });
+                    commandResults.Add(
+                        new
+                        {
+                            tool = toolName,
+                            callSucceeded = false,
+                            error = ex.Message,
+                        }
+                    );
 
                     if (failFast)
                     {
@@ -203,12 +221,10 @@ namespace MCPForUnity.Editor.Tools
                 callFailureCount = invocationFailureCount,
                 parallelRequested,
                 parallelApplied = false,
-                maxParallelism = maxParallel
+                maxParallelism = maxParallel,
             };
 
-            return overallSuccess
-                ? new SuccessResponse("Batch execution completed.", data)
-                : new ErrorResponse("One or more commands failed.", data);
+            return overallSuccess ? new SuccessResponse("Batch execution completed.", data) : new ErrorResponse("One or more commands failed.", data);
         }
 
         private static bool DetermineCallSucceeded(object result)

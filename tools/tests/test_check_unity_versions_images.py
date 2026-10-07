@@ -49,7 +49,7 @@ def test_local_docker_runner_resolves_default_images(tmp_path, shell, scenario):
     log.write_text("")
     if shell == "bash":
         text = (ROOT / "tools/check-unity-versions.sh").read_text(encoding="utf-8")
-        function = text[text.index("run_docker() {"):text.index("# ---- main loop")]
+        function = text[text.index("run_docker() {") : text.index("# ---- main loop")]
         program = f"""
 REPO_ROOT='{tmp_path.as_posix()}'
 PROJECT_PATH='{tmp_path.as_posix()}'
@@ -71,7 +71,7 @@ exit $?
         command = [executable, "-c", program]
     else:
         text = (ROOT / "tools/check-unity-versions.ps1").read_text(encoding="utf-8")
-        function = text[text.index("function Invoke-DockerUnity("):text.index("$pass = 0;")]
+        function = text[text.index("function Invoke-DockerUnity(") : text.index("$pass = 0;")]
         quote = lambda value: "'" + str(value).replace("'", "''") + "'"
         program = f"""
 $ErrorActionPreference = 'Stop'
@@ -94,12 +94,37 @@ exit $result
 """
         script = tmp_path / "runner.ps1"
         script.write_text(program, encoding="utf-8")
-        command = [executable, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script)]
-    env = {name: os.environ[name] for name in (
-        "PATH", "SystemRoot", "TEMP", "TMP", "HOME", "USERPROFILE", "APPDATA",
-        "LOCALAPPDATA", "COMSPEC", "PATHEXT", "SYSTEMDRIVE", "PROGRAMDATA", "ALLUSERSPROFILE",
-    ) if name in os.environ}
-    result = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
+        command = [
+            executable,
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+        ]
+    env = {
+        name: os.environ[name]
+        for name in (
+            "PATH",
+            "SystemRoot",
+            "TEMP",
+            "TMP",
+            "HOME",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "COMSPEC",
+            "PATHEXT",
+            "SYSTEMDRIVE",
+            "PROGRAMDATA",
+            "ALLUSERSPROFILE",
+        )
+        if name in os.environ
+    }
+    result = subprocess.run(
+        command, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30
+    )
     expected_image = f"unityci/editor:ubuntu-{version}-{tag}" if scenario == "override" else image
     calls = docker_trace.read_text().splitlines() if docker_trace.exists() else []
     if scenario == "prepare_failure":

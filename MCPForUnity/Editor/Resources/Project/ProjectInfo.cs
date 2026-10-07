@@ -39,7 +39,7 @@ namespace MCPForUnity.Editor.Resources.Project
                         inputsystem = IsPackageInstalled("com.unity.inputsystem"),
                         uiToolkit = true,
                         screenCapture = true,
-                    }
+                    },
                 };
 
                 return new SuccessResponse("Retrieved project info.", info);
@@ -59,9 +59,7 @@ namespace MCPForUnity.Editor.Resources.Project
         {
             try
             {
-                var prop = typeof(PlayerSettings).GetProperty(
-                    "activeInputHandler",
-                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                var prop = typeof(PlayerSettings).GetProperty("activeInputHandler", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
 
                 if (prop == null)
                     return "Old";
@@ -72,7 +70,7 @@ namespace MCPForUnity.Editor.Resources.Project
                     0 => "Old",
                     1 => "New",
                     2 => "Both",
-                    _ => "Old"
+                    _ => "Old",
                 };
             }
             catch

@@ -10,5 +10,3 @@ def test_refresh_unity_tool_is_registered():
 
     names = {t.get("name") for t in get_registered_tools()}
     assert "refresh_unity" in names
-
-

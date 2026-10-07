@@ -39,16 +39,26 @@ namespace MCPForUnityTests.Editor.AssetGen
             AssetGenJobManager.ResetForTests();
             SecureKeyStore.ResetForTests();
             ImportModel.TransportOverrideForTests = null;
-            try { if (Directory.Exists(_dir)) Directory.Delete(_dir, true); } catch { /* ignore */ }
+            try
+            {
+                if (Directory.Exists(_dir))
+                    Directory.Delete(_dir, true);
+            }
+            catch { /* ignore */ }
         }
 
-        private static HttpResult Json(string body)
-            => new HttpResult { Status = 200, IsSuccess = true, Text = body, Body = Encoding.UTF8.GetBytes(body) };
+        private static HttpResult Json(string body) =>
+            new HttpResult
+            {
+                Status = 200,
+                IsSuccess = true,
+                Text = body,
+                Body = Encoding.UTF8.GetBytes(body),
+            };
 
         // HandleCommand is async; the fake transport completes synchronously so awaiting here
         // never blocks on the editor loop (unlike the live UnityWebRequest path).
-        private static JObject Call(JObject p)
-            => JObject.Parse(JsonConvert.SerializeObject(ImportModel.HandleCommand(p).GetAwaiter().GetResult()));
+        private static JObject Call(JObject p) => JObject.Parse(JsonConvert.SerializeObject(ImportModel.HandleCommand(p).GetAwaiter().GetResult()));
 
         [Test]
         public void HandleCommand_IsAsync()
@@ -57,21 +67,15 @@ namespace MCPForUnityTests.Editor.AssetGen
             // editor loop. A synchronous handler that blocks on .GetResult() deadlocks the main
             // thread and freezes the editor. The handler must be async so the request can finish
             // on a later tick. See the import_model editor-freeze investigation.
-            var ret = typeof(ImportModel)
-                .GetMethod(nameof(ImportModel.HandleCommand))
-                .ReturnType;
-            Assert.IsTrue(typeof(Task).IsAssignableFrom(ret),
-                "ImportModel.HandleCommand must return Task (async) to avoid blocking the Unity main thread.");
+            var ret = typeof(ImportModel).GetMethod(nameof(ImportModel.HandleCommand)).ReturnType;
+            Assert.IsTrue(typeof(Task).IsAssignableFrom(ret), "ImportModel.HandleCommand must return Task (async) to avoid blocking the Unity main thread.");
         }
 
         [Test]
         public void Search_WithKey_ReturnsResults()
         {
             _store.Set("sketchfab", "sfkey123");
-            ImportModel.TransportOverrideForTests = new FakeHttpTransport
-            {
-                Handler = _ => Json("{\"results\":[{\"uid\":\"u1\",\"name\":\"Castle\"}]}")
-            };
+            ImportModel.TransportOverrideForTests = new FakeHttpTransport { Handler = _ => Json("{\"results\":[{\"uid\":\"u1\",\"name\":\"Castle\"}]}") };
 
             JObject resp = Call(new JObject { ["action"] = "search", ["query"] = "castle" });
 
@@ -94,10 +98,17 @@ namespace MCPForUnityTests.Editor.AssetGen
             // The job manager resolves the download URL through its own transport seam.
             AssetGenJobManager.TransportOverrideForTests = new FakeHttpTransport
             {
-                Handler = _ => Json("{\"gltf\":{\"url\":\"https://dl.sketchfab.com/u1/file.zip\"}}")
+                Handler = _ => Json("{\"gltf\":{\"url\":\"https://dl.sketchfab.com/u1/file.zip\"}}"),
             };
 
-            JObject resp = Call(new JObject { ["action"] = "import", ["uid"] = "u1", ["name"] = "castle" });
+            JObject resp = Call(
+                new JObject
+                {
+                    ["action"] = "import",
+                    ["uid"] = "u1",
+                    ["name"] = "castle",
+                }
+            );
 
             Assert.AreEqual("pending", (string)resp["_mcp_status"]);
             string jobId = (string)resp["data"]["job_id"];

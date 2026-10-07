@@ -1,4 +1,5 @@
 """Concurrent long waits share Unity reads without sharing caller lifetimes."""
+
 import asyncio
 import importlib
 import time
@@ -25,9 +26,13 @@ def transport(monkeypatch):
 
 
 def context():
-    return SimpleNamespace(get_state=AsyncMock(side_effect=lambda key: {
-        "unity_session_id": "owned-session",
-    }.get(key)))
+    return SimpleNamespace(
+        get_state=AsyncMock(
+            side_effect=lambda key: {
+                "unity_session_id": "owned-session",
+            }.get(key)
+        )
+    )
 
 
 @pytest.mark.asyncio
@@ -40,9 +45,9 @@ async def test_twenty_concurrent_waiters_share_two_polling_rounds(transport):
         return deepcopy(RUNNING if first_round else DONE)
 
     transport.side_effect = fetch
-    replies = await asyncio.gather(*(
-        jobs.get_test_job(context(), "job", wait_timeout=5) for _ in range(20)
-    ))
+    replies = await asyncio.gather(
+        *(jobs.get_test_job(context(), "job", wait_timeout=5) for _ in range(20))
+    )
     assert all(reply.data.status == "succeeded" for reply in replies)
     assert transport.await_count == 2
 
@@ -93,7 +98,9 @@ async def test_short_wait_timeout_does_not_cancel_long_waiter(transport):
 @pytest.mark.asyncio
 async def test_user_instance_job_and_detail_flags_are_isolated(transport, monkeypatch):
     monkeypatch.setattr(jobs.config, "http_remote_hosted", True)
-    monkeypatch.setattr(jobs, "get_unity_instance_from_context", AsyncMock(side_effect=lambda ctx: ctx.instance))
+    monkeypatch.setattr(
+        jobs, "get_unity_instance_from_context", AsyncMock(side_effect=lambda ctx: ctx.instance)
+    )
 
     async def fetch(*args, **kwargs):
         await asyncio.sleep(0.02)
@@ -135,14 +142,14 @@ async def test_shared_response_mutations_are_private_to_each_caller(transport, m
 
     transport.side_effect = fetch
     monkeypatch.setattr(jobs, "_update_job_nudge", observe)
-    await asyncio.gather(*(
-        jobs.get_test_job(context(), "job", wait_timeout=1) for _ in range(5)
-    ))
+    await asyncio.gather(*(jobs.get_test_job(context(), "job", wait_timeout=1) for _ in range(5)))
     assert transport.await_count == 1
 
 
 @pytest.mark.asyncio
-async def test_staggered_waiter_reuses_running_snapshot_with_same_observation_order(transport, monkeypatch):
+async def test_staggered_waiter_reuses_running_snapshot_with_same_observation_order(
+    transport, monkeypatch
+):
     # Given: polling deadlines and snapshot freshness use one controlled clock.
     received = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -187,13 +194,17 @@ async def test_staggered_waiter_reuses_running_snapshot_with_same_observation_or
         await asyncio.gather(*callers, return_exceptions=True)
     # Then: each waiter observes once, with exactly one backend observation.
     assert transport.await_count == 1
-    observations = [call.kwargs["observation_order"] for call in jobs._update_job_nudge.call_args_list]
+    observations = [
+        call.kwargs["observation_order"] for call in jobs._update_job_nudge.call_args_list
+    ]
     assert len(observations) == 2 and len(set(observations)) == 1
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("missing_identity", ["instance", "owner"])
-async def test_unknown_selection_or_remote_owner_keeps_reads_private(transport, monkeypatch, missing_identity):
+async def test_unknown_selection_or_remote_owner_keeps_reads_private(
+    transport, monkeypatch, missing_identity
+):
     if missing_identity == "instance":
         monkeypatch.setattr(jobs, "get_unity_instance_from_context", AsyncMock(return_value=None))
     else:
@@ -224,9 +235,14 @@ async def test_replacement_http_session_does_not_join_previous_job_snapshot(tran
         return {"success": False, "error": "Job not found in replacement editor"}
 
     def context(session):
-        return SimpleNamespace(get_state=AsyncMock(side_effect=lambda key: {
-            "user_id": "owned-user", "unity_session_id": session,
-        }.get(key)))
+        return SimpleNamespace(
+            get_state=AsyncMock(
+                side_effect=lambda key: {
+                    "user_id": "owned-user",
+                    "unity_session_id": session,
+                }.get(key)
+            )
+        )
 
     transport.side_effect = fetch
     old = asyncio.create_task(jobs.get_test_job(context("old-session"), "job", wait_timeout=0.2))
@@ -254,6 +270,7 @@ async def test_unknown_http_session_keeps_waits_private(transport, monkeypatch):
 @pytest.mark.asyncio
 async def test_copy_capacity_returns_bounded_error_without_transport_retry(transport, monkeypatch):
     from services.tools.shared_tool_reads import SharedRead, SharedReadCapacityError
+
     monkeypatch.setattr(SharedRead, "fetch", AsyncMock(side_effect=SharedReadCapacityError()))
     reply = await jobs.get_test_job(context(), "job", wait_timeout=1)
     assert reply.success is False and reply.data == {"reason": "result_capacity"}

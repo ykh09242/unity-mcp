@@ -2,6 +2,7 @@
 Tool for searching GameObjects in Unity scenes.
 Returns only instance IDs with pagination support for efficient searches.
 """
+
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -37,35 +38,24 @@ async def find_gameobjects(
     ctx: Context,
     search_term: Annotated[
         str,
-        Field(description="The value to search for (name, tag, layer name, component type, or path)")
+        Field(
+            description="The value to search for (name, tag, layer name, component type, or path)"
+        ),
     ],
     search_method: Annotated[
         Literal["by_name", "by_tag", "by_layer", "by_component", "by_path", "by_id"],
-        Field(
-            default="by_name",
-            description="How to search for GameObjects"
-        )
+        Field(default="by_name", description="How to search for GameObjects"),
     ] = "by_name",
     include_inactive: Annotated[
-        bool | str | None,
-        Field(
-            default=None,
-            description="Include inactive GameObjects in search"
-        )
+        bool | str | None, Field(default=None, description="Include inactive GameObjects in search")
     ] = None,
     page_size: Annotated[
         int | str | None,
-        Field(
-            default=None,
-            description="Number of results per page (default: 50, max: 500)"
-        )
+        Field(default=None, description="Number of results per page (default: 50, max: 500)"),
     ] = None,
     cursor: Annotated[
         int | str | None,
-        Field(
-            default=None,
-            description="Pagination cursor (offset for next page)"
-        )
+        Field(default=None, description="Pagination cursor (offset for next page)"),
     ] = None,
 ) -> dict[str, Any]:
     """
@@ -83,7 +73,7 @@ async def find_gameobjects(
     if not search_term:
         return {
             "success": False,
-            "message": "Missing required parameter 'search_term'. Specify what to search for."
+            "message": "Missing required parameter 'search_term'. Specify what to search for.",
         }
 
     try:
@@ -125,9 +115,11 @@ async def find_gameobjects(
             return {
                 "success": True,
                 "message": response.get("message", "Search completed."),
-                "data": response.get("data")
+                "data": response.get("data"),
             }
-        return response if isinstance(response, dict) else {"success": False, "message": str(response)}
+        return (
+            response if isinstance(response, dict) else {"success": False, "message": str(response)}
+        )
 
     except Exception as e:
         return {"success": False, "message": f"Error searching GameObjects: {e!s}"}

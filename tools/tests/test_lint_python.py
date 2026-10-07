@@ -61,14 +61,17 @@ def test_lint_accepts_independent_tests_packages_from_another_directory(lint_pro
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("relative", [
-    "Server/src/broken.py",
-    "Server/tests/test_broken.py",
-    "tools/broken.py",
-    "tools/tests/test_broken.py",
-    ".github/scripts/broken.py",
-    "mcp_source.py",
-])
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "Server/src/broken.py",
+        "Server/tests/test_broken.py",
+        "tools/broken.py",
+        "tools/tests/test_broken.py",
+        ".github/scripts/broken.py",
+        "mcp_source.py",
+    ],
+)
 def test_lint_fails_on_undefined_names_in_each_source_scope(lint_project, relative):
     # Given: a new file containing a real error in one of the covered source trees.
     (lint_project / relative).write_text("RESULT = missing_name\n", encoding="utf-8")

@@ -1,11 +1,10 @@
-using MCPForUnity.Editor.Helpers;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-
 #if UNITY_VFX_GRAPH
 using UnityEngine.VFX;
 #endif
@@ -104,8 +103,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 {
                     assetPath = assetPath,
                     assetName = newAsset.name,
-                    template = template
-                }
+                    template = template,
+                },
             };
         }
 
@@ -129,13 +128,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             // Also search project-local paths
             searchPaths.Add("Assets/VFX/Templates");
 
-            string[] templatePatterns = new[]
-            {
-                $"{templateName}.vfx",
-                $"VFX{templateName}.vfx",
-                $"Simple{templateName}.vfx",
-                $"{templateName}VFX.vfx"
-            };
+            string[] templatePatterns = new[] { $"{templateName}.vfx", $"VFX{templateName}.vfx", $"Simple{templateName}.vfx", $"{templateName}VFX.vfx" };
 
             foreach (string basePath in searchPaths)
             {
@@ -244,8 +237,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             string fullPath = System.IO.Path.Combine(UnityEngine.Application.dataPath, assetPath.Substring("Assets/".Length));
             string canonicalProjectRoot = System.IO.Path.GetFullPath(UnityEngine.Application.dataPath);
             string canonicalAssetPath = System.IO.Path.GetFullPath(fullPath);
-            if (!canonicalAssetPath.StartsWith(canonicalProjectRoot + System.IO.Path.DirectorySeparatorChar) &&
-                canonicalAssetPath != canonicalProjectRoot)
+            if (!canonicalAssetPath.StartsWith(canonicalProjectRoot + System.IO.Path.DirectorySeparatorChar) && canonicalAssetPath != canonicalProjectRoot)
             {
                 return new { success = false, message = "Invalid assetPath: would escape project directory" };
             }
@@ -281,8 +273,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 {
                     gameObject = vfx.gameObject.name,
                     assetName = asset.name,
-                    assetPath = assetPath
-                }
+                    assetPath = assetPath,
+                },
             };
         }
 
@@ -357,7 +349,14 @@ namespace MCPForUnity.Editor.Tools.Vfx
                         string normalizedPath = projectRelativePath.Replace("\\", "/");
                         if (seenPaths.Add(normalizedPath))
                         {
-                            templates.Add(new { name = name, path = projectRelativePath, source = isPackage ? "package" : "project" });
+                            templates.Add(
+                                new
+                                {
+                                    name = name,
+                                    path = projectRelativePath,
+                                    source = isPackage ? "package" : "project",
+                                }
+                            );
                         }
                     }
                 }
@@ -376,19 +375,18 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 if (seenPaths.Add(normalizedPath))
                 {
                     string name = System.IO.Path.GetFileNameWithoutExtension(path);
-                    templates.Add(new { name = name, path = path, source = "project" });
+                    templates.Add(
+                        new
+                        {
+                            name = name,
+                            path = path,
+                            source = "project",
+                        }
+                    );
                 }
             }
 
-            return new
-            {
-                success = true,
-                data = new
-                {
-                    count = templates.Count,
-                    templates = templates
-                }
-            };
+            return new { success = true, data = new { count = templates.Count, templates = templates } };
         }
 
         /// <summary>
@@ -426,8 +424,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 string fullPath = System.IO.Path.Combine(UnityEngine.Application.dataPath, searchFolder.Substring("Assets/".Length));
                 string canonicalProjectRoot = System.IO.Path.GetFullPath(UnityEngine.Application.dataPath);
                 string canonicalSearchFolder = System.IO.Path.GetFullPath(fullPath);
-                if (!canonicalSearchFolder.StartsWith(canonicalProjectRoot + System.IO.Path.DirectorySeparatorChar) &&
-                    canonicalSearchFolder != canonicalProjectRoot)
+                if (
+                    !canonicalSearchFolder.StartsWith(canonicalProjectRoot + System.IO.Path.DirectorySeparatorChar)
+                    && canonicalSearchFolder != canonicalProjectRoot
+                )
                 {
                     return new { success = false, message = "Invalid folder: would escape project directory" };
                 }
@@ -446,24 +446,18 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 var asset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(path);
                 if (asset != null)
                 {
-                    assets.Add(new
-                    {
-                        name = asset.name,
-                        path = path,
-                        guid = guid
-                    });
+                    assets.Add(
+                        new
+                        {
+                            name = asset.name,
+                            path = path,
+                            guid = guid,
+                        }
+                    );
                 }
             }
 
-            return new
-            {
-                success = true,
-                data = new
-                {
-                    count = assets.Count,
-                    assets = assets
-                }
-            };
+            return new { success = true, data = new { count = assets.Count, assets = assets } };
         }
 
         private static string ValidateVfxGraphVersion()
@@ -502,7 +496,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 string packageRoot = packageInfo.resolvedPath.Replace("\\", "/");
                 if (normalized.StartsWith(packageRoot + "/"))
                 {
-                    return AssetPathUtility.GetAssetReferencePath("Packages/" + packageInfo.name + "/" + normalized.Substring(packageRoot.Length + 1), allowPackages: true);
+                    return AssetPathUtility.GetAssetReferencePath(
+                        "Packages/" + packageInfo.name + "/" + normalized.Substring(packageRoot.Length + 1),
+                        allowPackages: true
+                    );
                 }
             }
 

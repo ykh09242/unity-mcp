@@ -2,19 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using MCPForUnity.Runtime.Helpers;
 using MCPForUnity.Runtime.Serialization; // For Converters
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Helpers
 {
     /// <summary>
     /// Handles serialization of GameObjects and Components for MCP responses.
     /// Includes reflection helpers and caching for performance.
-    /// </summary> 
+    /// </summary>
     public static class GameObjectSerializer
     {
         // --- Data Serialization ---
@@ -93,10 +93,7 @@ namespace MCPForUnity.Editor.Helpers
                 // Optionally include components, but can be large
                 // components = go.GetComponents<Component>().Select(c => GetComponentData(c)).ToList()
                 // Or just component names:
-                componentNames = go.GetComponents<Component>()
-                    .Where(c => c != null)
-                    .Select(c => c.GetType().FullName)
-                    .ToList(),
+                componentNames = go.GetComponents<Component>().Where(c => c != null).Select(c => c.GetType().FullName).ToList(),
             };
         }
 
@@ -112,8 +109,10 @@ namespace MCPForUnity.Editor.Helpers
                 SerializableFields = fields;
             }
         }
+
         // Key becomes Tuple<Type, bool>
         private static readonly Dictionary<Tuple<Type, bool>, CachedMetadata> _metadataCache = new Dictionary<Tuple<Type, bool>, CachedMetadata>();
+
         // --- End Metadata Caching ---
 
         /// <summary>
@@ -156,8 +155,10 @@ namespace MCPForUnity.Editor.Helpers
 
         private static bool IsUnsafeType(Type type, HashSet<Type> visitedTypes)
         {
-            if (type == null) return false;
-            if (!visitedTypes.Add(type)) return false;
+            if (type == null)
+                return false;
+            if (!visitedTypes.Add(type))
+                return false;
 
             // Pointer and by-ref types cannot be serialized
             if (type.IsPointer || type.IsByRef)
@@ -208,20 +209,17 @@ namespace MCPForUnity.Editor.Helpers
         /// <returns>A dictionary with the object's reference info, or null if obj is null</returns>
         private static Dictionary<string, object> SerializeAssetReference(UnityEngine.Object obj, bool includeAssetPath = true)
         {
-            if (obj == null) return null;
-            
-            var result = new Dictionary<string, object>
-            {
-                { "name", obj.name },
-                { "instanceID", obj.GetInstanceIDCompat() }
-            };
-            
+            if (obj == null)
+                return null;
+
+            var result = new Dictionary<string, object> { { "name", obj.name }, { "instanceID", obj.GetInstanceIDCompat() } };
+
             if (includeAssetPath)
             {
                 var assetPath = AssetDatabase.GetAssetPath(obj);
                 result["assetPath"] = string.IsNullOrEmpty(assetPath) ? null : assetPath;
             }
-            
+
             return result;
         }
 
@@ -232,14 +230,15 @@ namespace MCPForUnity.Editor.Helpers
         // Add the flag parameter here
         public static object GetComponentData(Component c, bool includeNonPublicSerializedFields = true)
         {
-            // --- Add Early Logging --- 
+            // --- Add Early Logging ---
             // McpLog.Info($"[GetComponentData] Starting for component: {c?.GetType()?.FullName ?? "null"} (ID: {c?.GetInstanceIDCompat() ?? 0})");
             // --- End Early Logging ---
 
-            if (c == null) return null;
+            if (c == null)
+                return null;
             Type componentType = c.GetType();
 
-            // --- Special handling for Transform to avoid reflection crashes and problematic properties --- 
+            // --- Special handling for Transform to avoid reflection crashes and problematic properties ---
             if (componentType == typeof(Transform))
             {
                 Transform tr = c as Transform;
@@ -263,10 +262,10 @@ namespace MCPForUnity.Editor.Helpers
                     // Include standard Object/Component properties
                     { "name", tr.name },
                     { "tag", tr.tag },
-                    { "gameObjectInstanceID", tr.gameObject?.GetInstanceIDCompat() ?? 0 }
+                    { "gameObjectInstanceID", tr.gameObject?.GetInstanceIDCompat() ?? 0 },
                 };
             }
-            // --- End Special handling for Transform --- 
+            // --- End Special handling for Transform ---
 
             // --- Special handling for Camera to avoid matrix-related crashes ---
             if (componentType == typeof(Camera))
@@ -302,7 +301,7 @@ namespace MCPForUnity.Editor.Helpers
                     { "enabled", () => cam.enabled },
                     { "name", () => cam.name },
                     { "tag", () => cam.tag },
-                    { "gameObject", () => new { name = cam.gameObject.name, instanceID = cam.gameObject.GetInstanceIDCompat() } }
+                    { "gameObject", () => new { name = cam.gameObject.name, instanceID = cam.gameObject.GetInstanceIDCompat() } },
                 };
 
                 foreach (var prop in safeProperties)
@@ -326,7 +325,7 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     { "typeName", componentType.FullName },
                     { "instanceID", cam.GetInstanceIDCompat() },
-                    { "properties", cameraProperties }
+                    { "properties", cameraProperties },
                 };
             }
             // --- End Special handling for Camera ---
@@ -392,16 +391,12 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     { "typeName", componentType.FullName },
                     { "instanceID", c.GetInstanceIDCompat() },
-                    { "properties", uiDocProperties }
+                    { "properties", uiDocProperties },
                 };
             }
             // --- End Special handling for UIDocument ---
 
-            var data = new Dictionary<string, object>
-            {
-                { "typeName", componentType.FullName },
-                { "instanceID", c.GetInstanceIDCompat() }
-            };
+            var data = new Dictionary<string, object> { { "typeName", componentType.FullName }, { "instanceID", c.GetInstanceIDCompat() } };
 
             // --- Get Cached or Generate Metadata (using new cache key) ---
             Tuple<Type, bool> cacheKey = new Tuple<Type, bool>(componentType, includeNonPublicSerializedFields);
@@ -419,10 +414,12 @@ namespace MCPForUnity.Editor.Helpers
                     foreach (var propInfo in currentType.GetProperties(propFlags))
                     {
                         // Basic filtering (readable, not indexer, not transform which is handled elsewhere)
-                        if (!propInfo.CanRead || propInfo.GetIndexParameters().Length > 0 || propInfo.Name == "transform") continue;
+                        if (!propInfo.CanRead || propInfo.GetIndexParameters().Length > 0 || propInfo.Name == "transform")
+                            continue;
                         // Skip properties whose return type would crash when accessed via reflection
                         // (e.g. Fusion IL-weaved types, Span<>, ReadOnlySpan<>, pointers)
-                        if (IsUnsafeType(propInfo.PropertyType)) continue;
+                        if (IsUnsafeType(propInfo.PropertyType))
+                            continue;
                         // Add if not already added (handles overrides - keep the most derived version)
                         if (!propertiesToCache.Any(p => p.Name == propInfo.Name))
                         {
@@ -437,13 +434,16 @@ namespace MCPForUnity.Editor.Helpers
                     // Process the declared Fields for caching
                     foreach (var fieldInfo in declaredFields)
                     {
-                        if (fieldInfo.Name.EndsWith("k__BackingField")) continue; // Skip backing fields
+                        if (fieldInfo.Name.EndsWith("k__BackingField"))
+                            continue; // Skip backing fields
                         // Skip fields whose type would crash when accessed via reflection
                         // (e.g. Fusion IL-weaved types, Span<>, ReadOnlySpan<>, pointers)
-                        if (IsUnsafeType(fieldInfo.FieldType)) continue;
+                        if (IsUnsafeType(fieldInfo.FieldType))
+                            continue;
 
                         // Add if not already added (handles hiding - keep the most derived version)
-                        if (fieldsToCache.Any(f => f.Name == fieldInfo.Name)) continue;
+                        if (fieldsToCache.Any(f => f.Name == fieldInfo.Name))
+                            continue;
 
                         bool shouldInclude = false;
                         if (includeNonPublicSerializedFields)
@@ -488,13 +488,25 @@ namespace MCPForUnity.Editor.Helpers
 
                 // --- Skip known obsolete/problematic Component shortcut properties ---
                 bool skipProperty = false;
-                if (propName == "rigidbody" || propName == "rigidbody2D" || propName == "camera" ||
-                    propName == "light" || propName == "animation" || propName == "constantForce" ||
-                    propName == "renderer" || propName == "audio" || propName == "networkView" ||
-                    propName == "collider" || propName == "collider2D" || propName == "hingeJoint" ||
-                    propName == "particleSystem" ||
+                if (
+                    propName == "rigidbody"
+                    || propName == "rigidbody2D"
+                    || propName == "camera"
+                    || propName == "light"
+                    || propName == "animation"
+                    || propName == "constantForce"
+                    || propName == "renderer"
+                    || propName == "audio"
+                    || propName == "networkView"
+                    || propName == "collider"
+                    || propName == "collider2D"
+                    || propName == "hingeJoint"
+                    || propName == "particleSystem"
+                    ||
                     // Also skip potentially problematic Matrix properties prone to cycles/errors
-                    propName == "worldToLocalMatrix" || propName == "localToWorldMatrix")
+                    propName == "worldToLocalMatrix"
+                    || propName == "localToWorldMatrix"
+                )
                 {
                     // McpLog.Info($"[GetComponentData] Explicitly skipping generic property: {propName}"); // Optional log
                     skipProperty = true;
@@ -502,16 +514,20 @@ namespace MCPForUnity.Editor.Helpers
                 // --- End Skip Generic Properties ---
 
                 // --- Skip specific potentially problematic Camera properties ---
-                if (componentType == typeof(Camera) &&
-                    (propName == "pixelRect" ||
-                     propName == "rect" ||
-                     propName == "cullingMatrix" ||
-                     propName == "useOcclusionCulling" ||
-                     propName == "worldToCameraMatrix" ||
-                     propName == "projectionMatrix" ||
-                     propName == "nonJitteredProjectionMatrix" ||
-                     propName == "previousViewProjectionMatrix" ||
-                     propName == "cameraToWorldMatrix"))
+                if (
+                    componentType == typeof(Camera)
+                    && (
+                        propName == "pixelRect"
+                        || propName == "rect"
+                        || propName == "cullingMatrix"
+                        || propName == "useOcclusionCulling"
+                        || propName == "worldToCameraMatrix"
+                        || propName == "projectionMatrix"
+                        || propName == "nonJitteredProjectionMatrix"
+                        || propName == "previousViewProjectionMatrix"
+                        || propName == "cameraToWorldMatrix"
+                    )
+                )
                 {
                     // McpLog.Info($"[GetComponentData] Explicitly skipping Camera property: {propName}");
                     skipProperty = true;
@@ -519,19 +535,17 @@ namespace MCPForUnity.Editor.Helpers
                 // --- End Skip Camera Properties ---
 
                 // --- Skip specific potentially problematic Transform properties ---
-                if (componentType == typeof(Transform) &&
-                    (propName == "lossyScale" ||
-                     propName == "rotation" ||
-                     propName == "worldToLocalMatrix" ||
-                     propName == "localToWorldMatrix"))
+                if (
+                    componentType == typeof(Transform)
+                    && (propName == "lossyScale" || propName == "rotation" || propName == "worldToLocalMatrix" || propName == "localToWorldMatrix")
+                )
                 {
                     skipProperty = true;
                 }
                 // --- End Skip Transform Properties ---
 
                 // --- Skip Collider properties that cause native crashes via PhysX ---
-                if (typeof(Collider).IsAssignableFrom(componentType) &&
-                    propName == "GeometryHolder")
+                if (typeof(Collider).IsAssignableFrom(componentType) && propName == "GeometryHolder")
                 {
                     skipProperty = true;
                 }
@@ -545,7 +559,7 @@ namespace MCPForUnity.Editor.Helpers
 
                 try
                 {
-                    // --- Add detailed logging --- 
+                    // --- Add detailed logging ---
                     // McpLog.Info($"[GetComponentData] Accessing: {componentType.Name}.{propName}");
                     // --- End detailed logging ---
 
@@ -594,7 +608,7 @@ namespace MCPForUnity.Editor.Helpers
             {
                 try
                 {
-                    // --- Add detailed logging for fields --- 
+                    // --- Add detailed logging for fields ---
                     // McpLog.Info($"[GetComponentData] Accessing Field: {componentType.Name}.{fieldInfo.Name}");
                     // --- End detailed logging for fields ---
                     object value = fieldInfo.GetValue(c);
@@ -648,7 +662,8 @@ namespace MCPForUnity.Editor.Helpers
         // Helper to convert JToken back to basic object structure
         private static object ConvertJTokenToPlainObject(JToken token)
         {
-            if (token == null) return null;
+            if (token == null)
+                return null;
 
             switch (token.Type)
             {
@@ -718,18 +733,20 @@ namespace MCPForUnity.Editor.Helpers
                 new BoundsConverter(),
                 new Matrix4x4Converter(), // Fix #478: Safe Matrix4x4 serialization for Cinemachine
                 new UnityMathematicsConverter(), // Fix #1415: float3/quaternion swizzle properties made the default walk never finish
-                new UnityEngineObjectConverter() // Handles serialization of references
+                new UnityEngineObjectConverter(), // Handles serialization of references
             },
             ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
             // ContractResolver = new DefaultContractResolver { NamingStrategy = new CamelCaseNamingStrategy() } // Example if needed
         };
         private static readonly JsonSerializer _outputSerializer = JsonSerializer.Create(_outputSerializerSettings);
+
         // --- End Define custom JsonSerializerSettings ---
 
         // Helper to create JToken using the output serializer
         private static JToken CreateTokenFromValue(object value, Type type)
         {
-            if (value == null) return JValue.CreateNull();
+            if (value == null)
+                return JValue.CreateNull();
 
             try
             {

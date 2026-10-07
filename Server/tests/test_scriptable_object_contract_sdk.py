@@ -1,4 +1,5 @@
 """Boolean controls through real FastMCP registration, isolated from test SDK stubs."""
+
 import os
 import subprocess
 import sys
@@ -6,7 +7,7 @@ import textwrap
 
 
 def test_scriptable_object_boolean_controls_at_actual_sdk_boundary():
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import asyncio, importlib
         from fastmcp import FastMCP, Client
         from services.tools import register_all_tools
@@ -63,9 +64,12 @@ def test_scriptable_object_boolean_controls_at_actual_sdk_boundary():
                         assert calls[-1]["patches"] == [{"path": "items", "op": "array_resize", "value": value}]
             print("real SDK ScriptableObject boolean controls passed")
         asyncio.run(main())
-    ''')
+    """)
     result = subprocess.run(
-        [sys.executable, "-B", "-c", code], capture_output=True, text=True, timeout=30,
+        [sys.executable, "-B", "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
         env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
     )
     assert result.returncode == 0, result.stdout + result.stderr

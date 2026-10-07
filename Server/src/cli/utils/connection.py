@@ -16,6 +16,7 @@ from models.unity_response import normalize_unity_response
 
 class UnityConnectionError(Exception):
     """Raised when connection to Unity fails."""
+
     pass
 
 
@@ -79,7 +80,7 @@ def warn_if_remote_host(config: CLIConfig) -> None:
             "   HTTP does not encrypt the launch token or Unity commands.\n"
             "   Use a trusted tunnel when connecting across machines.\n"
             "   Only proceed if you trust this network.\n",
-            err=True
+            err=True,
         )
 
 
@@ -265,7 +266,8 @@ async def list_custom_tools(config: Optional[CLIConfig] = None) -> Dict[str, Any
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                url, params=params, headers=_auth_headers(cfg), timeout=cfg.timeout)
+                url, params=params, headers=_auth_headers(cfg), timeout=cfg.timeout
+            )
             response.raise_for_status()
             return response.json()
     except httpx.ConnectError as e:

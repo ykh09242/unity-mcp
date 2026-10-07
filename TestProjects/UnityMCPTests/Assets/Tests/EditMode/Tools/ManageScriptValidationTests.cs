@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using NUnit.Framework;
-using UnityEngine;
-using Newtonsoft.Json.Linq;
-using MCPForUnity.Editor.Tools;
 using System.Reflection;
+using MCPForUnity.Editor.Tools;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
 using UnityEditor;
+using UnityEngine;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -16,7 +16,8 @@ namespace MCPForUnityTests.Editor.Tools
     /// </summary>
     public class ManageScriptValidationTests
     {
-        private bool? _savedEnabled, _savedConsent;
+        private bool? _savedEnabled,
+            _savedConsent;
         private const string EnabledKey = "MCPForUnity.ToolEnabled.manage_script";
         private const string ConsentKey = "MCPForUnity.ToolEnabled.ExplicitConsent.manage_script";
 
@@ -32,10 +33,14 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (_savedEnabled.HasValue) EditorPrefs.SetBool(EnabledKey, _savedEnabled.Value);
-            else EditorPrefs.DeleteKey(EnabledKey);
-            if (_savedConsent.HasValue) EditorPrefs.SetBool(ConsentKey, _savedConsent.Value);
-            else EditorPrefs.DeleteKey(ConsentKey);
+            if (_savedEnabled.HasValue)
+                EditorPrefs.SetBool(EnabledKey, _savedEnabled.Value);
+            else
+                EditorPrefs.DeleteKey(EnabledKey);
+            if (_savedConsent.HasValue)
+                EditorPrefs.SetBool(ConsentKey, _savedConsent.Value);
+            else
+                EditorPrefs.DeleteKey(ConsentKey);
         }
 
         [Test]
@@ -52,7 +57,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "invalid_action",
                 ["name"] = "TestScript",
-                ["path"] = "Assets/Scripts"
+                ["path"] = "Assets/Scripts",
             };
 
             var result = ManageScript.HandleCommand(paramsObj);
@@ -62,7 +67,8 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void CheckBalancedDelimiters_ValidCode_ReturnsTrue()
         {
-            string validCode = "using UnityEngine;\n\npublic class TestClass : MonoBehaviour\n{\n    void Start()\n    {\n        Debug.Log(\"test\");\n    }\n}";
+            string validCode =
+                "using UnityEngine;\n\npublic class TestClass : MonoBehaviour\n{\n    void Start()\n    {\n        Debug.Log(\"test\");\n    }\n}";
 
             bool result = CallCheckBalancedDelimiters(validCode, out int line, out char expected);
             Assert.IsTrue(result, "Valid C# code should pass balance check");
@@ -71,7 +77,8 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void CheckBalancedDelimiters_UnbalancedBraces_ReturnsFalse()
         {
-            string unbalancedCode = "using UnityEngine;\n\npublic class TestClass : MonoBehaviour\n{\n    void Start()\n    {\n        Debug.Log(\"test\");\n    // Missing closing brace";
+            string unbalancedCode =
+                "using UnityEngine;\n\npublic class TestClass : MonoBehaviour\n{\n    void Start()\n    {\n        Debug.Log(\"test\");\n    // Missing closing brace";
 
             bool result = CallCheckBalancedDelimiters(unbalancedCode, out int line, out char expected);
             Assert.IsFalse(result, "Unbalanced code should fail balance check");
@@ -80,7 +87,8 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void CheckBalancedDelimiters_StringWithBraces_ReturnsTrue()
         {
-            string codeWithStringBraces = "using UnityEngine;\n\npublic class TestClass : MonoBehaviour\n{\n    public string json = \"{key: value}\";\n    void Start() { Debug.Log(json); }\n}";
+            string codeWithStringBraces =
+                "using UnityEngine;\n\npublic class TestClass : MonoBehaviour\n{\n    public string json = \"{key: value}\";\n    void Start() { Debug.Log(json); }\n}";
 
             bool result = CallCheckBalancedDelimiters(codeWithStringBraces, out int line, out char expected);
             Assert.IsTrue(result, "Code with braces in strings should pass balance check");
@@ -90,7 +98,8 @@ namespace MCPForUnityTests.Editor.Tools
         public void TicTacToe3D_ValidationScenario_DoesNotCrash()
         {
             // Test the scenario that was causing issues without file I/O
-            string ticTacToeCode = "using UnityEngine;\n\npublic class TicTacToe3D : MonoBehaviour\n{\n    public string gameState = \"active\";\n    void Start() { Debug.Log(\"Game started\"); }\n    public void MakeMove(int position) { if (gameState == \"active\") Debug.Log($\"Move {position}\"); }\n}";
+            string ticTacToeCode =
+                "using UnityEngine;\n\npublic class TicTacToe3D : MonoBehaviour\n{\n    public string gameState = \"active\";\n    void Start() { Debug.Log(\"Game started\"); }\n    public void MakeMove(int position) { if (gameState == \"active\") Debug.Log($\"Move {position}\"); }\n}";
 
             // Test that the validation methods don't crash on this code
             bool balanceResult = CallCheckBalancedDelimiters(ticTacToeCode, out int line, out char expected);
@@ -106,8 +115,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var method = typeof(ManageScript).GetMethod("CheckBalancedDelimiters",
-                    BindingFlags.NonPublic | BindingFlags.Static);
+                var method = typeof(ManageScript).GetMethod("CheckBalancedDelimiters", BindingFlags.NonPublic | BindingFlags.Static);
 
                 if (method != null)
                 {
@@ -146,16 +154,22 @@ namespace MCPForUnityTests.Editor.Tools
 
                 if (inString)
                 {
-                    if (c == '\\') escaped = true;
-                    else if (c == '"') inString = false;
+                    if (c == '\\')
+                        escaped = true;
+                    else if (c == '"')
+                        inString = false;
                     continue;
                 }
 
-                if (c == '"') inString = true;
-                else if (c == '{') braceCount++;
-                else if (c == '}') braceCount--;
+                if (c == '"')
+                    inString = true;
+                else if (c == '{')
+                    braceCount++;
+                else if (c == '}')
+                    braceCount--;
 
-                if (braceCount < 0) return false;
+                if (braceCount < 0)
+                    return false;
             }
 
             return braceCount == 0;
@@ -167,14 +181,17 @@ namespace MCPForUnityTests.Editor.Tools
         /// </summary>
         private List<string> CallValidateScriptSyntaxUnity(string contents)
         {
-            var validationLevelType = typeof(ManageScript).GetNestedType("ValidationLevel",
-                BindingFlags.NonPublic);
+            var validationLevelType = typeof(ManageScript).GetNestedType("ValidationLevel", BindingFlags.NonPublic);
             Assert.IsNotNull(validationLevelType, "ValidationLevel enum must exist");
             var basicLevel = Enum.ToObject(validationLevelType, 0); // ValidationLevel.Basic
 
-            var method = typeof(ManageScript).GetMethod("ValidateScriptSyntax",
-                BindingFlags.NonPublic | BindingFlags.Static, null,
-                new[] { typeof(string), validationLevelType, typeof(string[]).MakeByRefType() }, null);
+            var method = typeof(ManageScript).GetMethod(
+                "ValidateScriptSyntax",
+                BindingFlags.NonPublic | BindingFlags.Static,
+                null,
+                new[] { typeof(string), validationLevelType, typeof(string[]).MakeByRefType() },
+                null
+            );
             Assert.IsNotNull(method, "ValidateScriptSyntax method must exist");
 
             var args = new object[] { contents, basicLevel, null };
@@ -193,35 +210,36 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void DuplicateDetection_LineCommentedMethod_NotFlagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Foo : MonoBehaviour
 {
     public void DoStuff(int x) { }
     // public void DoStuff(int x) { }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsFalse(HasDuplicateMethodError(errors),
-                "A method in a line comment should not be flagged as duplicate");
+            Assert.IsFalse(HasDuplicateMethodError(errors), "A method in a line comment should not be flagged as duplicate");
         }
 
         [Test]
         public void DuplicateDetection_BlockCommentedMethod_NotFlagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Foo : MonoBehaviour
 {
     public void DoStuff(int x) { }
     /* public void DoStuff(int x) { } */
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsFalse(HasDuplicateMethodError(errors),
-                "A method in a block comment should not be flagged as duplicate");
+            Assert.IsFalse(HasDuplicateMethodError(errors), "A method in a block comment should not be flagged as duplicate");
         }
 
         [Test]
         public void DuplicateDetection_InnerClassSameMethod_NotFlagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Outer : MonoBehaviour
 {
     public void Init(int x) { }
@@ -232,28 +250,28 @@ public class Outer : MonoBehaviour
     }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsFalse(HasDuplicateMethodError(errors),
-                "Same method name in outer and inner class should not be flagged");
+            Assert.IsFalse(HasDuplicateMethodError(errors), "Same method name in outer and inner class should not be flagged");
         }
 
         [Test]
         public void DuplicateDetection_DifferentTypeOverloads_NotFlagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Foo : MonoBehaviour
 {
     public void Process(int x) { }
     public void Process(string x) { }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsFalse(HasDuplicateMethodError(errors),
-                "Overloads with different param types but same count should not be flagged");
+            Assert.IsFalse(HasDuplicateMethodError(errors), "Overloads with different param types but same count should not be flagged");
         }
 
         [Test]
         public void DuplicateDetection_ExplicitInterfaceImplementation_NotFlagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public interface IThing { void Notify(); }
 public class Foo : MonoBehaviour, IThing
 {
@@ -265,14 +283,14 @@ public class Foo : MonoBehaviour, IThing
     private void Ping() { }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsFalse(HasDuplicateMethodError(errors),
-                "A call as the first statement of an explicit interface implementation is not a declaration");
+            Assert.IsFalse(HasDuplicateMethodError(errors), "A call as the first statement of an explicit interface implementation is not a declaration");
         }
 
         [Test]
         public void DuplicateDetection_ExpressionBodiedCall_NotFlagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Foo : MonoBehaviour
 {
     public int Total => Count();
@@ -280,14 +298,14 @@ public class Foo : MonoBehaviour
     private int Count() => 0;
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsFalse(HasDuplicateMethodError(errors),
-                "A call inside an expression-bodied member is not a declaration");
+            Assert.IsFalse(HasDuplicateMethodError(errors), "A call inside an expression-bodied member is not a declaration");
         }
 
         [Test]
         public void DuplicateDetection_FieldInitializerCall_NotFlagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Foo : MonoBehaviour
 {
     private static bool _enabled = ReadPref();
@@ -295,8 +313,7 @@ public class Foo : MonoBehaviour
     private static bool ReadPref() { return false; }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsFalse(HasDuplicateMethodError(errors),
-                "A call in a field initializer is not a declaration");
+            Assert.IsFalse(HasDuplicateMethodError(errors), "A call in a field initializer is not a declaration");
         }
 
         // --- Duplicate method detection: true positive tests ---
@@ -304,50 +321,51 @@ public class Foo : MonoBehaviour
         [Test]
         public void DuplicateDetection_ExpressionBodiedDuplicate_Flagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Foo : MonoBehaviour
 {
     public int GetValue(int x) => x * 2;
     public int GetValue(int x) => x * 3;
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsTrue(HasDuplicateMethodError(errors),
-                "Expression-bodied duplicate methods should be flagged");
+            Assert.IsTrue(HasDuplicateMethodError(errors), "Expression-bodied duplicate methods should be flagged");
         }
 
         [Test]
         public void DuplicateDetection_ExactDuplicate_Flagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Foo : MonoBehaviour
 {
     public void DoStuff(int x) { }
     public void DoStuff(int x) { }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsTrue(HasDuplicateMethodError(errors),
-                "Exact duplicate methods should be flagged");
+            Assert.IsTrue(HasDuplicateMethodError(errors), "Exact duplicate methods should be flagged");
         }
 
         [Test]
         public void DuplicateDetection_SameTypeDifferentParamName_Flagged()
         {
             // This is the real anchor_replace corruption pattern
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Foo : MonoBehaviour
 {
     public void Initialize(string name) { }
     public void Initialize(string label) { }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsTrue(HasDuplicateMethodError(errors),
-                "Same-type different-name duplicates (corruption pattern) should be flagged");
+            Assert.IsTrue(HasDuplicateMethodError(errors), "Same-type different-name duplicates (corruption pattern) should be flagged");
         }
 
         [Test]
         public void DuplicateDetection_GenericParamDuplicate_Flagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 using System.Collections.Generic;
 public class Foo : MonoBehaviour
 {
@@ -355,8 +373,7 @@ public class Foo : MonoBehaviour
     public void Process(Dictionary<string, int> other) { }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsTrue(HasDuplicateMethodError(errors),
-                "Generic param duplicates with different names should be flagged");
+            Assert.IsTrue(HasDuplicateMethodError(errors), "Generic param duplicates with different names should be flagged");
         }
 
         // --- Keyword false positive tests ---
@@ -364,7 +381,8 @@ public class Foo : MonoBehaviour
         [Test]
         public void DuplicateDetection_CSharpKeywords_NotMatchedAsMethods()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Foo : MonoBehaviour
 {
     public void Update()
@@ -388,14 +406,14 @@ public class Foo : MonoBehaviour
     }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsFalse(HasDuplicateMethodError(errors),
-                "C# keywords (if, for, while, etc.) should not be matched as duplicate methods");
+            Assert.IsFalse(HasDuplicateMethodError(errors), "C# keywords (if, for, while, etc.) should not be matched as duplicate methods");
         }
 
         [Test]
         public void DuplicateMethodCheck_ConstructorInvocations_NotFlagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Test : MonoBehaviour
 {
     void Start()
@@ -405,14 +423,14 @@ public class Test : MonoBehaviour
     }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsFalse(HasDuplicateMethodError(errors),
-                "Constructor invocations (new Type(...)) should not be flagged as duplicate methods");
+            Assert.IsFalse(HasDuplicateMethodError(errors), "Constructor invocations (new Type(...)) should not be flagged as duplicate methods");
         }
 
         [Test]
         public void DuplicateMethodCheck_MultipleDistinctConstructors_NotFlagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Test : MonoBehaviour
 {
     void Start()
@@ -424,14 +442,14 @@ public class Test : MonoBehaviour
     }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsFalse(HasDuplicateMethodError(errors),
-                "Multiple constructor invocations of different types should not be flagged");
+            Assert.IsFalse(HasDuplicateMethodError(errors), "Multiple constructor invocations of different types should not be flagged");
         }
 
         [Test]
         public void DuplicateMethodCheck_NewModifierWithConstructors_CorrectBehavior()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Base : MonoBehaviour
 {
     public virtual void Init() { }
@@ -446,14 +464,14 @@ public class Derived : Base
     }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsFalse(HasDuplicateMethodError(errors),
-                "new modifier on method should not interfere with constructor invocation filtering");
+            Assert.IsFalse(HasDuplicateMethodError(errors), "new modifier on method should not interfere with constructor invocation filtering");
         }
 
         [Test]
         public void DuplicateMethodCheck_LocalFunctionsInDifferentMethods_NotFlagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Test : MonoBehaviour
 {
     void Start()
@@ -469,14 +487,17 @@ public class Test : MonoBehaviour
     }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsFalse(HasDuplicateMethodError(errors),
-                "Same-signature local functions in different methods are valid C# and should not be flagged as duplicate class methods");
+            Assert.IsFalse(
+                HasDuplicateMethodError(errors),
+                "Same-signature local functions in different methods are valid C# and should not be flagged as duplicate class methods"
+            );
         }
 
         [Test]
         public void DuplicateMethodCheck_RepeatedMethodInvocations_NotFlagged()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 public class Test : MonoBehaviour
 {
     int First()
@@ -492,8 +513,10 @@ public class Test : MonoBehaviour
     int Compute() { return 1; }
 }";
             var errors = CallValidateScriptSyntaxUnity(code);
-            Assert.IsFalse(HasDuplicateMethodError(errors),
-                "Repeated method invocations inside method bodies should not be treated as duplicate method declarations");
+            Assert.IsFalse(
+                HasDuplicateMethodError(errors),
+                "Repeated method invocations inside method bodies should not be treated as duplicate method declarations"
+            );
         }
 
         [Test]
@@ -506,14 +529,13 @@ public class Test : MonoBehaviour
             {
                 ["action"] = "read",
                 ["name"] = "TestScript",
-                ["path"] = "Assets/Scripts/TestScript.cs"
+                ["path"] = "Assets/Scripts/TestScript.cs",
             };
 
             var result = ManageScript.HandleCommand(paramsObj);
             // The script won't exist, but the error path should NOT contain doubled filename
             string json = Newtonsoft.Json.JsonConvert.SerializeObject(result);
-            Assert.IsFalse(json.Contains("TestScript.cs/TestScript.cs"),
-                "Path ending in .cs should be treated as directory, not produce doubled filename");
+            Assert.IsFalse(json.Contains("TestScript.cs/TestScript.cs"), "Path ending in .cs should be treated as directory, not produce doubled filename");
         }
     }
 }

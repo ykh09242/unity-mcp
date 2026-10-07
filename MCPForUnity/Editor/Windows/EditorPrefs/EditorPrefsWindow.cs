@@ -68,7 +68,6 @@ namespace MCPForUnity.Editor.Windows
             { EditorPrefKeys.HttpServerLaunchConfirmed, EditorPrefType.Bool },
             { EditorPrefKeys.LogRecordEnabled, EditorPrefType.Bool },
             { EditorPrefKeys.AssetGenAutoNormalize, EditorPrefType.Bool },
-            
             // Integer prefs
             { EditorPrefKeys.UnitySocketPort, EditorPrefType.Int },
             { EditorPrefKeys.ValidationLevel, EditorPrefType.Int },
@@ -78,7 +77,6 @@ namespace MCPForUnity.Editor.Windows
             { EditorPrefKeys.LastLocalHttpServerPort, EditorPrefType.Int },
             { EditorPrefKeys.BatchExecuteMaxCommands, EditorPrefType.Int },
             { EditorPrefKeys.BlenderPort, EditorPrefType.Int },
-            
             // String prefs
             { EditorPrefKeys.EditorWindowActivePanel, EditorPrefType.String },
             { EditorPrefKeys.ClaudeCliPathOverride, EditorPrefType.String },
@@ -125,9 +123,7 @@ namespace MCPForUnity.Editor.Windows
             string basePath = AssetPathUtility.GetMcpPackageRootPath();
 
             // Load UXML
-            var visualTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
-                $"{basePath}/Editor/Windows/EditorPrefs/EditorPrefsWindow.uxml"
-            );
+            var visualTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>($"{basePath}/Editor/Windows/EditorPrefs/EditorPrefsWindow.uxml");
 
             if (visualTree == null)
             {
@@ -136,9 +132,7 @@ namespace MCPForUnity.Editor.Windows
             }
 
             // Load item template
-            itemTemplate = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
-                $"{basePath}/Editor/Windows/EditorPrefs/EditorPrefItem.uxml"
-            );
+            itemTemplate = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>($"{basePath}/Editor/Windows/EditorPrefs/EditorPrefItem.uxml");
 
             if (itemTemplate == null)
             {
@@ -239,8 +233,7 @@ namespace MCPForUnity.Editor.Windows
             // Keep the same fields alive so filtering preserves pending value and type edits.
             foreach (var item in currentPrefs)
             {
-                bool visible = filter.Length == 0 ||
-                    item.Key.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
+                bool visible = filter.Length == 0 || item.Key.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
                 prefRows[item.Key].EnableInClassList("pref-hidden", !visible);
                 if (visible)
                 {
@@ -437,6 +430,6 @@ namespace MCPForUnity.Editor.Windows
         String,
         Int,
         Float,
-        Bool
+        Bool,
     }
 }

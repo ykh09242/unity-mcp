@@ -74,7 +74,9 @@ def github(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
 @pytest.mark.parametrize("metadata_exists", [True, False])
 def test_main_syncs_official_latest_stable_instead_of_highest_history_version(
-    outputs: tuple[Path, Path, Path], github: list[list[str]], metadata_exists: bool,
+    outputs: tuple[Path, Path, Path],
+    github: list[list[str]],
+    metadata_exists: bool,
 ) -> None:
     # Given: higher stable/beta history entries and a stale website version.
     metadata = outputs[2]
@@ -92,7 +94,9 @@ def test_main_syncs_official_latest_stable_instead_of_highest_history_version(
 
 
 def test_check_detects_only_metadata_drift_without_writing_any_output(
-    outputs: tuple[Path, Path, Path], github: list[list[str]], capsys: pytest.CaptureFixture[str],
+    outputs: tuple[Path, Path, Path],
+    github: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Given: matching release notes and README, but stale metadata.
     outputs[2].write_text('{"tag_name": "v10.0.0"}\n', encoding="utf-8")
@@ -106,7 +110,8 @@ def test_check_detects_only_metadata_drift_without_writing_any_output(
 
 
 def test_check_passes_when_all_three_outputs_match(
-    outputs: tuple[Path, Path, Path], github: list[list[str]],
+    outputs: tuple[Path, Path, Path],
+    github: list[list[str]],
 ) -> None:
     # Given: all outputs match the fixture API snapshot.
     before = [path.read_bytes() for path in outputs]
@@ -118,18 +123,26 @@ def test_check_passes_when_all_three_outputs_match(
 
 
 @pytest.mark.parametrize("args", [[], ["--check"]])
-@pytest.mark.parametrize("latest", [
-    {}, [], None,
-    {**LATEST, "draft": True},
-    {**LATEST, "prerelease": True},
-    {**LATEST, "prerelease": "false"},
-    {**LATEST, "tag_name": ""},
-    {**LATEST, "published_at": None},
-    {**LATEST, "html_url": " "},
-])
+@pytest.mark.parametrize(
+    "latest",
+    [
+        {},
+        [],
+        None,
+        {**LATEST, "draft": True},
+        {**LATEST, "prerelease": True},
+        {**LATEST, "prerelease": "false"},
+        {**LATEST, "tag_name": ""},
+        {**LATEST, "published_at": None},
+        {**LATEST, "html_url": " "},
+    ],
+)
 def test_invalid_latest_aborts_before_any_output_changes(
-    outputs: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch,
-    github: list[list[str]], args: list[str], latest,
+    outputs: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    github: list[list[str]],
+    args: list[str],
+    latest,
 ) -> None:
     # Given: valid history, an invalid latest response, and existing good files.
     outputs[0].write_text("Protected existing release notes.\n", encoding="utf-8")
@@ -151,7 +164,8 @@ def test_invalid_latest_aborts_before_any_output_changes(
 
 
 def test_empty_history_aborts_before_any_output_changes(
-    outputs: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch,
+    outputs: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given: no history, and existing good files.
     outputs[0].write_text("Protected existing release notes.\n", encoding="utf-8")
@@ -165,13 +179,18 @@ def test_empty_history_aborts_before_any_output_changes(
     assert [path.read_bytes() for path in outputs] == before
 
 
-@pytest.mark.parametrize("error", [
-    urllib.error.HTTPError(sync.API + "/latest", 404, "Not Found", None, None),
-    urllib.error.URLError("connection unavailable"),
-    json.JSONDecodeError("Invalid JSON", "{", 1),
-])
+@pytest.mark.parametrize(
+    "error",
+    [
+        urllib.error.HTTPError(sync.API + "/latest", 404, "Not Found", None, None),
+        urllib.error.URLError("connection unavailable"),
+        json.JSONDecodeError("Invalid JSON", "{", 1),
+    ],
+)
 def test_latest_fetch_error_aborts_before_any_output_changes(
-    outputs: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch, error: Exception,
+    outputs: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
 ) -> None:
     # Given: the urllib fallback succeeds for history but fails for latest.
     outputs[0].write_text("Protected existing release notes.\n", encoding="utf-8")
@@ -193,7 +212,8 @@ def test_latest_fetch_error_aborts_before_any_output_changes(
 
 
 def test_urllib_fallback_uses_official_latest_endpoint(
-    outputs: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch,
+    outputs: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given: gh is unavailable and both API endpoints have fixture responses.
     urls: list[str] = []
@@ -213,13 +233,19 @@ def test_urllib_fallback_uses_official_latest_endpoint(
     assert json.loads(outputs[2].read_text(encoding="utf-8")) == METADATA
 
 
-@pytest.mark.parametrize("body", [
-    "Normal notes.", "Keep literal ][ inside release notes.",
-    "See [the guide][1] and [notes][2].",
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Normal notes.",
+        "Keep literal ][ inside release notes.",
+        "See [the guide][1] and [notes][2].",
+    ],
+)
 @pytest.mark.parametrize("page_count", [1, 2])
 def test_gh_pagination_parses_structured_pages_without_mutating_release_body(
-    monkeypatch: pytest.MonkeyPatch, body: str, page_count: int,
+    monkeypatch: pytest.MonkeyPatch,
+    body: str,
+    page_count: int,
 ) -> None:
     # Given: two pages as gh emits them, with newline-separated legacy output.
     expected = [_release("v10.3.0", body=body), _release("v10.2.0")][:page_count]
@@ -229,7 +255,11 @@ def test_gh_pagination_parses_structured_pages_without_mutating_release_body(
 
     def run(command: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
         commands.append(command)
-        output = json.dumps(pages) if "--slurp" in command else "\n".join(json.dumps(page) for page in pages)
+        output = (
+            json.dumps(pages)
+            if "--slurp" in command
+            else "\n".join(json.dumps(page) for page in pages)
+        )
         return subprocess.CompletedProcess(command, 0, output, "")
 
     monkeypatch.setattr(sync.subprocess, "run", run)
@@ -240,10 +270,13 @@ def test_gh_pagination_parses_structured_pages_without_mutating_release_body(
     assert "--paginate" in commands[0] and "--slurp" in commands[0]
 
 
-@pytest.mark.parametrize("existing", [
-    sync.README_MARKER_OPEN + "\nold\n" + sync.README_MARKER_CLOSE,
-    "<details><summary><strong>Recent Updates</strong></summary>old</details>",
-])
+@pytest.mark.parametrize(
+    "existing",
+    [
+        sync.README_MARKER_OPEN + "\nold\n" + sync.README_MARKER_CLOSE,
+        "<details><summary><strong>Recent Updates</strong></summary>old</details>",
+    ],
+)
 def test_readme_replacement_preserves_literal_backslashes_in_release_body(existing: str) -> None:
     # Given: release text containing Windows paths and regex-like escapes.
     body = r"Use C:\tools\bin; preserve \1 and \g<0> literally."

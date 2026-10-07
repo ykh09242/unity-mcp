@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using NUnit.Framework;
 using MCPForUnity.Editor.Services;
+using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -93,8 +93,7 @@ namespace MCPForUnityTests.Editor.Services
 
             // Assert: job should still be running
             var status = (TestJobStatus)_testJobType.GetProperty("Status").GetValue(result);
-            Assert.AreEqual(TestJobStatus.Running, status,
-                "Job with 120s custom timeout should not auto-fail after 30s");
+            Assert.AreEqual(TestJobStatus.Running, status, "Job with 120s custom timeout should not auto-fail after 30s");
         }
 
         [Test]
@@ -122,8 +121,7 @@ namespace MCPForUnityTests.Editor.Services
 
             // Assert: job should be failed
             var status = (TestJobStatus)_testJobType.GetProperty("Status").GetValue(result);
-            Assert.AreEqual(TestJobStatus.Failed, status,
-                "Job with default timeout should auto-fail after 20s");
+            Assert.AreEqual(TestJobStatus.Failed, status, "Job with default timeout should auto-fail after 20s");
         }
 
         [Test]
@@ -156,13 +154,11 @@ namespace MCPForUnityTests.Editor.Services
 
             // Assert: restored job should have the same InitTimeoutMs
             var restoredJobs = _jobsField.GetValue(null) as System.Collections.IDictionary;
-            Assert.IsTrue(restoredJobs.Contains("test-init-timeout-persist"),
-                "Job should be restored from SessionState");
+            Assert.IsTrue(restoredJobs.Contains("test-init-timeout-persist"), "Job should be restored from SessionState");
 
             var restoredJob = restoredJobs["test-init-timeout-persist"];
             var restoredTimeout = (long)_testJobType.GetProperty("InitTimeoutMs").GetValue(restoredJob);
-            Assert.AreEqual(90_000L, restoredTimeout,
-                "InitTimeoutMs should survive persist/restore cycle");
+            Assert.AreEqual(90_000L, restoredTimeout, "InitTimeoutMs should survive persist/restore cycle");
         }
     }
 }

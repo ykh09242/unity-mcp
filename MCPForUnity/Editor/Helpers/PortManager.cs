@@ -19,8 +19,14 @@ namespace MCPForUnity.Editor.Helpers
     {
         private static bool IsDebugEnabled()
         {
-            try { return EditorPrefs.GetBool(EditorPrefKeys.DebugLogs, false); }
-            catch { return false; }
+            try
+            {
+                return EditorPrefs.GetBool(EditorPrefKeys.DebugLogs, false);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private const int DefaultPort = 6400;
@@ -42,9 +48,11 @@ namespace MCPForUnity.Editor.Helpers
         public static int GetPortWithFallback()
         {
             var storedConfig = GetStoredPortConfig();
-            if (storedConfig != null &&
-                storedConfig.unity_port > 0 &&
-                string.Equals(storedConfig.project_path ?? string.Empty, Application.dataPath ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+            if (
+                storedConfig != null
+                && storedConfig.unity_port > 0
+                && string.Equals(storedConfig.project_path ?? string.Empty, Application.dataPath ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+            )
             {
                 return storedConfig.unity_port;
             }
@@ -60,7 +68,8 @@ namespace MCPForUnity.Editor.Helpers
         {
             int newPort = FindAvailablePort();
             SavePort(newPort);
-            if (IsDebugEnabled()) McpLog.Info($"Discovered and saved new port: {newPort}");
+            if (IsDebugEnabled())
+                McpLog.Info($"Discovered and saved new port: {newPort}");
             return newPort;
         }
 
@@ -80,8 +89,7 @@ namespace MCPForUnity.Editor.Helpers
         /// until it has been continuously busy for <see cref="BusyPortFallbackWindowSeconds"/>,
         /// which distinguishes a domain-reload socket-release race from a foreign occupant (#1173).
         /// </summary>
-        public static bool ShouldAbandonBusyPort(double busyForSeconds)
-            => busyForSeconds >= BusyPortFallbackWindowSeconds;
+        public static bool ShouldAbandonBusyPort(double busyForSeconds) => busyForSeconds >= BusyPortFallbackWindowSeconds;
 
         /// <summary>
         /// Persist a user-selected port and return the value actually stored.
@@ -112,18 +120,21 @@ namespace MCPForUnity.Editor.Helpers
             // Always try default port first
             if (IsPortAvailable(DefaultPort))
             {
-                if (IsDebugEnabled()) McpLog.Info($"Using default port {DefaultPort}");
+                if (IsDebugEnabled())
+                    McpLog.Info($"Using default port {DefaultPort}");
                 return DefaultPort;
             }
 
-            if (IsDebugEnabled()) McpLog.Info($"Default port {DefaultPort} is in use, searching for alternative...");
+            if (IsDebugEnabled())
+                McpLog.Info($"Default port {DefaultPort} is in use, searching for alternative...");
 
             // Search for alternatives
             for (int port = DefaultPort + 1; port < DefaultPort + MaxPortAttempts; port++)
             {
                 if (IsPortAvailable(port))
                 {
-                    if (IsDebugEnabled()) McpLog.Info($"Found available port {port}");
+                    if (IsDebugEnabled())
+                        McpLog.Info($"Found available port {port}");
                     return port;
                 }
             }
@@ -145,7 +156,11 @@ namespace MCPForUnity.Editor.Helpers
                 // On macOS, SO_REUSEADDR (the default) lets multiple processes bind the same
                 // port — including AssetImportWorkers. ExclusiveAddressUse prevents this so
                 // the test bind fails when another process already holds the port.
-                try { testListener.Server.ExclusiveAddressUse = true; } catch { }
+                try
+                {
+                    testListener.Server.ExclusiveAddressUse = true;
+                }
+                catch { }
 #endif
                 testListener.Start();
                 testListener.Stop();
@@ -225,7 +240,7 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     unity_port = port,
                     created_date = DateTime.UtcNow.ToString("O"),
-                    project_path = Application.dataPath
+                    project_path = Application.dataPath,
                 };
 
                 string registryDir = GetRegistryDirectory();
@@ -239,7 +254,8 @@ namespace MCPForUnity.Editor.Helpers
                 string legacy = Path.Combine(GetRegistryDirectory(), RegistryFileName);
                 File.WriteAllText(legacy, json, new System.Text.UTF8Encoding(false));
 
-                if (IsDebugEnabled()) McpLog.Info($"Saved port {port} to storage");
+                if (IsDebugEnabled())
+                    McpLog.Info($"Saved port {port} to storage");
             }
             catch (Exception ex)
             {

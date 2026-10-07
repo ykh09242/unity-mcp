@@ -49,6 +49,7 @@ def animation():
 # Animator Commands
 # =============================================================================
 
+
 @animation.group()
 def animator():
     """Animator component operations."""
@@ -116,7 +117,9 @@ def animator_play(target: str, state_name: str, layer: int, search_method: Optio
 @click.option("--layer", "-l", default=-1, type=int, help="Animator layer index (-1 for default).")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_BASIC, default=None)
 @handle_unity_errors
-def animator_crossfade(target: str, state_name: str, duration: float, layer: int, search_method: Optional[str]):
+def animator_crossfade(
+    target: str, state_name: str, duration: float, layer: int, search_method: Optional[str]
+):
     """Crossfade to an animation state.
 
     \b
@@ -143,14 +146,22 @@ def animator_crossfade(target: str, state_name: str, duration: float, layer: int
 @click.argument("param_name")
 @click.argument("value")
 @click.option(
-    "--type", "-t", "param_type",
+    "--type",
+    "-t",
+    "param_type",
     type=click.Choice(["float", "int", "bool", "trigger"]),
     default=None,
-    help="Parameter type (auto-detected if omitted)."
+    help="Parameter type (auto-detected if omitted).",
 )
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_BASIC, default=None)
 @handle_unity_errors
-def animator_set_parameter(target: str, param_name: str, value: str, param_type: Optional[str], search_method: Optional[str]):
+def animator_set_parameter(
+    target: str,
+    param_name: str,
+    value: str,
+    param_type: Optional[str],
+    search_method: Optional[str],
+):
     """Set an Animator parameter.
 
     \b
@@ -256,6 +267,7 @@ def animator_set_enabled(target: str, enabled: bool, search_method: Optional[str
 # AnimationClip Commands
 # =============================================================================
 
+
 @animation.group()
 def clip():
     """AnimationClip operations."""
@@ -316,9 +328,20 @@ def clip_info(clip_path: str):
 
 @clip.command("add-curve")
 @click.argument("clip_path")
-@click.option("--property", "-p", "property_path", required=True, help="Property path (e.g. 'localPosition.x').")
+@click.option(
+    "--property",
+    "-p",
+    "property_path",
+    required=True,
+    help="Property path (e.g. 'localPosition.x').",
+)
 @click.option("--type", "-t", "component_type", default="Transform", help="Component type name.")
-@click.option("--keys", "-k", required=True, help='Keyframes as JSON: [[0,0],[0.5,1],[1,0]] or [{"time":0,"value":0},...]')
+@click.option(
+    "--keys",
+    "-k",
+    required=True,
+    help='Keyframes as JSON: [[0,0],[0.5,1],[1,0]] or [{"time":0,"value":0},...]',
+)
 @handle_unity_errors
 def clip_add_curve(clip_path: str, property_path: str, component_type: str, keys: str):
     """Add a keyframe curve to an AnimationClip.
@@ -346,9 +369,15 @@ def clip_add_curve(clip_path: str, property_path: str, component_type: str, keys
 
 @clip.command("set-curve")
 @click.argument("clip_path")
-@click.option("--property", "-p", "property_path", required=True, help="Property path (e.g. 'localPosition.x').")
+@click.option(
+    "--property",
+    "-p",
+    "property_path",
+    required=True,
+    help="Property path (e.g. 'localPosition.x').",
+)
 @click.option("--type", "-t", "component_type", default="Transform", help="Component type name.")
-@click.option("--keys", "-k", required=True, help='Keyframes as JSON: [[0,0],[0.5,1],[1,0]]')
+@click.option("--keys", "-k", required=True, help="Keyframes as JSON: [[0,0],[0.5,1],[1,0]]")
 @handle_unity_errors
 def clip_set_curve(clip_path: str, property_path: str, component_type: str, keys: str):
     """Replace all keyframes on a curve in an AnimationClip.
@@ -376,9 +405,20 @@ def clip_set_curve(clip_path: str, property_path: str, component_type: str, keys
 
 @clip.command("set-vector-curve")
 @click.argument("clip_path")
-@click.option("--property", "-p", "vector_property", required=True, help="Property group (e.g. 'localPosition', 'localEulerAngles', 'localScale').")
+@click.option(
+    "--property",
+    "-p",
+    "vector_property",
+    required=True,
+    help="Property group (e.g. 'localPosition', 'localEulerAngles', 'localScale').",
+)
 @click.option("--type", "-t", "component_type", default="Transform", help="Component type name.")
-@click.option("--keys", "-k", required=True, help='Vector3 keyframes as JSON: [{"time":0,"value":[0,1,0]},...]')
+@click.option(
+    "--keys",
+    "-k",
+    required=True,
+    help='Vector3 keyframes as JSON: [{"time":0,"value":[0,1,0]},...]',
+)
 @handle_unity_errors
 def clip_set_vector_curve(clip_path: str, vector_property: str, component_type: str, keys: str):
     """Set 3 curves (x/y/z) from Vector3 keyframes in one call.
@@ -406,7 +446,26 @@ def clip_set_vector_curve(clip_path: str, vector_property: str, component_type: 
 
 @clip.command("create-preset")
 @click.argument("clip_path")
-@click.argument("preset", type=click.Choice(["bounce", "rotate", "pulse", "fade", "shake", "hover", "spin", "sway", "bob", "wiggle", "blink", "slide_in", "elastic"]))
+@click.argument(
+    "preset",
+    type=click.Choice(
+        [
+            "bounce",
+            "rotate",
+            "pulse",
+            "fade",
+            "shake",
+            "hover",
+            "spin",
+            "sway",
+            "bob",
+            "wiggle",
+            "blink",
+            "slide_in",
+            "elastic",
+        ]
+    ),
+)
 @click.option("--duration", "-d", default=1.0, type=float, help="Duration in seconds.")
 @click.option("--amplitude", "-a", default=1.0, type=float, help="Amplitude/intensity multiplier.")
 @click.option("--loop/--no-loop", default=True, help="Whether clip loops.")
@@ -473,7 +532,14 @@ def clip_assign(target: str, clip_path: str, search_method: Optional[str]):
 @click.option("--float-param", type=float, default=0.0, help="Float parameter to pass.")
 @click.option("--int-param", type=int, default=0, help="Int parameter to pass.")
 @handle_unity_errors
-def clip_add_event(clip_path: str, function_name: str, time: float, string_param: str, float_param: float, int_param: int):
+def clip_add_event(
+    clip_path: str,
+    function_name: str,
+    time: float,
+    string_param: str,
+    float_param: float,
+    int_param: int,
+):
     """Add an animation event to a clip.
 
     \b
@@ -504,9 +570,13 @@ def clip_add_event(clip_path: str, function_name: str, time: float, string_param
 @click.argument("clip_path")
 @click.option("--event-index", type=int, default=None, help="Index of event to remove.")
 @click.option("--function", "function_name", default=None, help="Remove events by function name.")
-@click.option("--time", type=float, default=None, help="Filter by time when removing by function name.")
+@click.option(
+    "--time", type=float, default=None, help="Filter by time when removing by function name."
+)
 @handle_unity_errors
-def clip_remove_event(clip_path: str, event_index: Optional[int], function_name: Optional[str], time: Optional[float]):
+def clip_remove_event(
+    clip_path: str, event_index: Optional[int], function_name: Optional[str], time: Optional[float]
+):
     """Remove animation event(s) from a clip.
 
     \b
@@ -536,6 +606,7 @@ def clip_remove_event(clip_path: str, event_index: Optional[int], function_name:
 # =============================================================================
 # AnimatorController Commands
 # =============================================================================
+
 
 @animation.group()
 def controller():
@@ -573,7 +644,14 @@ def controller_create(controller_path: str):
 @click.option("--is-default/--no-default", default=False, help="Set as default state.")
 @click.option("--layer-index", default=0, type=int, help="Layer index.")
 @handle_unity_errors
-def controller_add_state(controller_path: str, state_name: str, clip_path: Optional[str], speed: float, is_default: bool, layer_index: int):
+def controller_add_state(
+    controller_path: str,
+    state_name: str,
+    clip_path: Optional[str],
+    speed: float,
+    is_default: bool,
+    layer_index: int,
+):
     """Add a state to an AnimatorController.
 
     \b
@@ -602,12 +680,27 @@ def controller_add_state(controller_path: str, state_name: str, clip_path: Optio
 @click.argument("controller_path")
 @click.argument("from_state")
 @click.argument("to_state")
-@click.option("--has-exit-time/--no-exit-time", default=True, help="Whether transition uses exit time.")
+@click.option(
+    "--has-exit-time/--no-exit-time", default=True, help="Whether transition uses exit time."
+)
 @click.option("--duration", "-d", default=0.25, type=float, help="Transition duration.")
-@click.option("--conditions", "-c", default=None, help='Conditions as JSON: [{"parameter":"Speed","mode":"greater","threshold":0.1}]')
+@click.option(
+    "--conditions",
+    "-c",
+    default=None,
+    help='Conditions as JSON: [{"parameter":"Speed","mode":"greater","threshold":0.1}]',
+)
 @click.option("--layer-index", default=0, type=int, help="Layer index.")
 @handle_unity_errors
-def controller_add_transition(controller_path: str, from_state: str, to_state: str, has_exit_time: bool, duration: float, conditions: Optional[str], layer_index: int):
+def controller_add_transition(
+    controller_path: str,
+    from_state: str,
+    to_state: str,
+    has_exit_time: bool,
+    duration: float,
+    conditions: Optional[str],
+    layer_index: int,
+):
     """Add a transition between states in an AnimatorController.
 
     \b
@@ -637,14 +730,18 @@ def controller_add_transition(controller_path: str, from_state: str, to_state: s
 @click.argument("controller_path")
 @click.argument("param_name")
 @click.option(
-    "--type", "-t", "param_type",
+    "--type",
+    "-t",
+    "param_type",
     type=click.Choice(["float", "int", "bool", "trigger"]),
     default="float",
     help="Parameter type.",
 )
 @click.option("--default-value", default=None, help="Default value for the parameter.")
 @handle_unity_errors
-def controller_add_parameter(controller_path: str, param_name: str, param_type: str, default_value: Optional[str]):
+def controller_add_parameter(
+    controller_path: str, param_name: str, param_type: str, default_value: Optional[str]
+):
     """Add a parameter to an AnimatorController.
 
     \b
@@ -719,7 +816,12 @@ def controller_assign(controller_path: str, target: str, search_method: Optional
 @click.argument("controller_path")
 @click.argument("layer_name")
 @click.option("--weight", type=float, default=1.0, help="Layer weight (default: 1.0).")
-@click.option("--blending-mode", type=click.Choice(["override", "additive"]), default="override", help="Blending mode.")
+@click.option(
+    "--blending-mode",
+    type=click.Choice(["override", "additive"]),
+    default="override",
+    help="Blending mode.",
+)
 @handle_unity_errors
 def controller_add_layer(controller_path: str, layer_name: str, weight: float, blending_mode: str):
     """Add a layer to an AnimatorController.
@@ -749,7 +851,9 @@ def controller_add_layer(controller_path: str, layer_name: str, weight: float, b
 @click.option("--layer-index", type=int, default=None, help="Layer index to remove.")
 @click.option("--layer-name", default=None, help="Layer name to remove.")
 @handle_unity_errors
-def controller_remove_layer(controller_path: str, layer_index: Optional[int], layer_name: Optional[str]):
+def controller_remove_layer(
+    controller_path: str, layer_index: Optional[int], layer_name: Optional[str]
+):
     """Remove a layer from an AnimatorController.
 
     \b
@@ -779,7 +883,9 @@ def controller_remove_layer(controller_path: str, layer_index: Optional[int], la
 @click.option("--layer-index", type=int, default=None, help="Layer index.")
 @click.option("--layer-name", default=None, help="Layer name.")
 @handle_unity_errors
-def controller_set_layer_weight(controller_path: str, weight: float, layer_index: Optional[int], layer_name: Optional[str]):
+def controller_set_layer_weight(
+    controller_path: str, weight: float, layer_index: Optional[int], layer_name: Optional[str]
+):
     """Set the weight of a layer in an AnimatorController.
 
     \b
@@ -810,7 +916,9 @@ def controller_set_layer_weight(controller_path: str, weight: float, layer_index
 @click.option("--blend-param", required=True, help="Blend parameter name.")
 @click.option("--layer-index", type=int, default=0, help="Layer index.")
 @handle_unity_errors
-def controller_create_blend_tree_1d(controller_path: str, state_name: str, blend_param: str, layer_index: int):
+def controller_create_blend_tree_1d(
+    controller_path: str, state_name: str, blend_param: str, layer_index: int
+):
     """Create a 1D blend tree state in an AnimatorController.
 
     \b
@@ -837,10 +945,22 @@ def controller_create_blend_tree_1d(controller_path: str, state_name: str, blend
 @click.argument("state_name")
 @click.option("--blend-param-x", required=True, help="X-axis blend parameter name.")
 @click.option("--blend-param-y", required=True, help="Y-axis blend parameter name.")
-@click.option("--blend-type", type=click.Choice(["simpledirectional2d", "freeformdirectional2d", "freeformcartesian2d"]), default="simpledirectional2d", help="Blend tree type.")
+@click.option(
+    "--blend-type",
+    type=click.Choice(["simpledirectional2d", "freeformdirectional2d", "freeformcartesian2d"]),
+    default="simpledirectional2d",
+    help="Blend tree type.",
+)
 @click.option("--layer-index", type=int, default=0, help="Layer index.")
 @handle_unity_errors
-def controller_create_blend_tree_2d(controller_path: str, state_name: str, blend_param_x: str, blend_param_y: str, blend_type: str, layer_index: int):
+def controller_create_blend_tree_2d(
+    controller_path: str,
+    state_name: str,
+    blend_param_x: str,
+    blend_param_y: str,
+    blend_type: str,
+    layer_index: int,
+):
     """Create a 2D blend tree state in an AnimatorController.
 
     \b
@@ -870,10 +990,19 @@ def controller_create_blend_tree_2d(controller_path: str, state_name: str, blend
 @click.argument("state_name")
 @click.option("--clip-path", required=True, help="AnimationClip path.")
 @click.option("--threshold", type=float, default=None, help="Threshold for 1D blend tree.")
-@click.option("--position", type=(float, float), default=None, help="Position (x, y) for 2D blend tree.")
+@click.option(
+    "--position", type=(float, float), default=None, help="Position (x, y) for 2D blend tree."
+)
 @click.option("--layer-index", type=int, default=0, help="Layer index.")
 @handle_unity_errors
-def controller_add_blend_tree_child(controller_path: str, state_name: str, clip_path: str, threshold: Optional[float], position: Optional[tuple], layer_index: int):
+def controller_add_blend_tree_child(
+    controller_path: str,
+    state_name: str,
+    clip_path: str,
+    threshold: Optional[float],
+    position: Optional[tuple],
+    layer_index: int,
+):
     """Add a child motion to a blend tree.
 
     \b
@@ -906,6 +1035,7 @@ def controller_add_blend_tree_child(controller_path: str, state_name: str, clip_
 # Raw Command (escape hatch for all animation actions)
 # =============================================================================
 
+
 @animation.command("raw")
 @click.argument("action")
 @click.argument("target", required=False)
@@ -913,7 +1043,13 @@ def controller_add_blend_tree_child(controller_path: str, state_name: str, clip_
 @click.option("--params", "-p", "extra_params", default="{}", help="Additional parameters as JSON.")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_BASIC, default=None)
 @handle_unity_errors
-def animation_raw(action: str, target: Optional[str], clip_path: Optional[str], extra_params: str, search_method: Optional[str]):
+def animation_raw(
+    action: str,
+    target: Optional[str],
+    clip_path: Optional[str],
+    extra_params: str,
+    search_method: Optional[str],
+):
     """Execute any animation action directly.
 
     \b

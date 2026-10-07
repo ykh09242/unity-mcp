@@ -42,7 +42,11 @@ internal static class TransportArchitectureHarness
             Console.WriteLine("PASS_TOTAL: " + _passes);
             return 0;
         }
-        catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex);
+            return 1;
+        }
     }
 
     private static void RunNUnit(Type type)
@@ -51,28 +55,38 @@ internal static class TransportArchitectureHarness
         {
             var cases = method.GetCustomAttributes<TestCaseAttribute>().ToArray();
             bool test = method.GetCustomAttribute<TestAttribute>() != null;
-            if (!test && cases.Length == 0) continue;
+            if (!test && cases.Length == 0)
+                continue;
             var arguments = cases.Length == 0 ? new[] { Array.Empty<object>() } : cases.Select(c => c.Arguments).ToArray();
             foreach (var args in arguments)
             {
                 object fixture = Activator.CreateInstance(type);
                 try
                 {
-                    foreach (var setup in type.GetMethods().Where(m => m.GetCustomAttribute<SetUpAttribute>() != null)) setup.Invoke(fixture, null);
+                    foreach (var setup in type.GetMethods().Where(m => m.GetCustomAttribute<SetUpAttribute>() != null))
+                        setup.Invoke(fixture, null);
                     var returned = method.Invoke(fixture, args);
-                    if (returned is Task task) { PumpUntil(() => task.IsCompleted, "NUnit task"); task.GetAwaiter().GetResult(); }
+                    if (returned is Task task)
+                    {
+                        PumpUntil(() => task.IsCompleted, "NUnit task");
+                        task.GetAwaiter().GetResult();
+                    }
                     Pass(type.Name + "." + method.Name + "(" + string.Join(",", args) + ")");
                 }
-                finally { foreach (var teardown in type.GetMethods().Where(m => m.GetCustomAttribute<TearDownAttribute>() != null)) teardown.Invoke(fixture, null); }
+                finally
+                {
+                    foreach (var teardown in type.GetMethods().Where(m => m.GetCustomAttribute<TearDownAttribute>() != null))
+                        teardown.Invoke(fixture, null);
+                }
             }
         }
     }
 
-    private static void Set(WebSocketTransportClient client, string name, object value)
-        => typeof(WebSocketTransportClient).GetField(name, PrivateInstance).SetValue(client, value);
+    private static void Set(WebSocketTransportClient client, string name, object value) =>
+        typeof(WebSocketTransportClient).GetField(name, PrivateInstance).SetValue(client, value);
 
-    private static Task Invoke(WebSocketTransportClient client, string name, params object[] args)
-        => (Task)typeof(WebSocketTransportClient).GetMethod(name, PrivateInstance).Invoke(client, args);
+    private static Task Invoke(WebSocketTransportClient client, string name, params object[] args) =>
+        (Task)typeof(WebSocketTransportClient).GetMethod(name, PrivateInstance).Invoke(client, args);
 
     private static void PumpUntil(Func<bool> done, string label, int milliseconds = 5000)
     {
@@ -81,7 +95,8 @@ internal static class TransportArchitectureHarness
         {
             Context.Drain();
             UnityEditor.EditorApplication.Pump();
-            if (clock.ElapsedMilliseconds > milliseconds) throw new Exception("Timeout: " + label);
+            if (clock.ElapsedMilliseconds > milliseconds)
+                throw new Exception("Timeout: " + label);
             Thread.Sleep(2);
         }
         Context.Drain();
@@ -89,7 +104,8 @@ internal static class TransportArchitectureHarness
 
     private static void Collect(LocalWebSocketPeer peer)
     {
-        while (peer.Received.TryDequeue(out var message)) Messages.Add(message);
+        while (peer.Received.TryDequeue(out var message))
+            Messages.Add(message);
     }
 
     private static JObject Result(LocalWebSocketPeer peer, string id)
@@ -98,8 +114,14 @@ internal static class TransportArchitectureHarness
         return Messages.FirstOrDefault(m => m.Value<string>("id") == id && m.Value<string>("type") == "command_result");
     }
 
-    private static JObject Execute(string id, string name, int timeout = 30)
-        => new JObject { ["type"] = "execute", ["id"] = id, ["name"] = name, ["timeout"] = timeout };
+    private static JObject Execute(string id, string name, int timeout = 30) =>
+        new JObject
+        {
+            ["type"] = "execute",
+            ["id"] = id,
+            ["name"] = name,
+            ["timeout"] = timeout,
+        };
 
     private static void ExerciseRealSocket()
     {
@@ -107,26 +129,43 @@ internal static class TransportArchitectureHarness
         var slow = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
         var invoked = new List<string>();
         int mainThread = Thread.CurrentThread.ManagedThreadId;
-        handlers["fixture_slow"] = new HandlerInfo("fixture_slow", null, _ =>
-        {
-            Assert.AreEqual(mainThread, Thread.CurrentThread.ManagedThreadId);
-            invoked.Add("slow");
-            return slow.Task;
-        });
-        handlers["fixture_next"] = new HandlerInfo("fixture_next", _ =>
-        {
-            Assert.AreEqual(mainThread, Thread.CurrentThread.ManagedThreadId);
-            invoked.Add("next");
-            return new { completed = true };
-        }, null);
-        handlers["fixture_expired"] = new HandlerInfo("fixture_expired", _ => { invoked.Add("expired"); return new { completed = true }; }, null);
+        handlers["fixture_slow"] = new HandlerInfo(
+            "fixture_slow",
+            null,
+            _ =>
+            {
+                Assert.AreEqual(mainThread, Thread.CurrentThread.ManagedThreadId);
+                invoked.Add("slow");
+                return slow.Task;
+            }
+        );
+        handlers["fixture_next"] = new HandlerInfo(
+            "fixture_next",
+            _ =>
+            {
+                Assert.AreEqual(mainThread, Thread.CurrentThread.ManagedThreadId);
+                invoked.Add("next");
+                return new { completed = true };
+            },
+            null
+        );
+        handlers["fixture_expired"] = new HandlerInfo(
+            "fixture_expired",
+            _ =>
+            {
+                invoked.Add("expired");
+                return new { completed = true };
+            },
+            null
+        );
         using var peer = new LocalWebSocketPeer();
         using var socket = new ClientWebSocket();
         using var lifecycle = new CancellationTokenSource();
         using var connection = CancellationTokenSource.CreateLinkedTokenSource(lifecycle.Token);
         using var client = new WebSocketTransportClient();
         var connect = socket.ConnectAsync(peer.Uri, connection.Token);
-        PumpUntil(() => connect.IsCompleted, "socket handshake"); connect.GetAwaiter().GetResult();
+        PumpUntil(() => connect.IsCompleted, "socket handshake");
+        connect.GetAwaiter().GetResult();
         peer.Ready.GetAwaiter().GetResult();
         Set(client, "_socket", socket);
         Set(client, "_lifecycleCts", lifecycle);
@@ -136,7 +175,14 @@ internal static class TransportArchitectureHarness
         Set(client, "_endpointUri", peer.Uri);
         Set(client, "_keepAliveInterval", TimeSpan.FromMinutes(1));
         typeof(WebSocketTransportClient).GetMethod("StartBackgroundLoops", PrivateInstance).Invoke(client, new object[] { connection.Token });
-        peer.Send(new JObject { ["type"] = "registered", ["session_id"] = "fixture", ["capabilities"] = new JArray("editor_state_v1", "large_result_v1") });
+        peer.Send(
+            new JObject
+            {
+                ["type"] = "registered",
+                ["session_id"] = "fixture",
+                ["capabilities"] = new JArray("editor_state_v1", "large_result_v1"),
+            }
+        );
         PumpUntil(() => EditorStatePublisher.Starts == 1, "state publisher negotiated");
         Pass("Registered ACK activates negotiated state publisher");
         peer.Send(Execute("active", "fixture_slow", 1));
@@ -145,22 +191,45 @@ internal static class TransportArchitectureHarness
         peer.Send(Execute("expired", "fixture_expired", 1));
         var pingClock = Stopwatch.StartNew();
         peer.Send(new JObject { ["type"] = "ping" });
-        PumpUntil(() => { Collect(peer); return Messages.Any(m => m.Value<string>("type") == "pong"); }, "early pong", 1000);
+        PumpUntil(
+            () =>
+            {
+                Collect(peer);
+                return Messages.Any(m => m.Value<string>("type") == "pong");
+            },
+            "early pong",
+            1000
+        );
         Console.WriteLine("RECEIVE_CONTROL_PONG_MS: " + pingClock.ElapsedMilliseconds);
         Assert.IsFalse(slow.Task.IsCompleted);
         Pass("Real receive loop accepts ping during active async command");
         peer.Send(Execute("active", "fixture_next"));
         PumpUntil(() => Result(peer, "active")?.SelectToken("result.error")?.Value<string>() == "Duplicate command id", "duplicate error");
         Pass("Duplicate active ID rejected without a second execution");
-        for (int i = 0; i < 31; i++) peer.Send(Execute("queued-" + i, "fixture_next"));
-        PumpUntil(() => { Collect(peer); return Messages.Any(m => m.SelectToken("result.error")?.Value<string>() == "Command queue is full"); }, "overload");
+        for (int i = 0; i < 31; i++)
+            peer.Send(Execute("queued-" + i, "fixture_next"));
+        PumpUntil(
+            () =>
+            {
+                Collect(peer);
+                return Messages.Any(m => m.SelectToken("result.error")?.Value<string>() == "Command queue is full");
+            },
+            "overload"
+        );
         Pass("Real receive path rejects work above capacity32");
         PumpUntil(() => Result(peer, "expired") != null, "queued receipt deadline", 2500);
         Assert.IsTrue(Result(peer, "expired").SelectToken("result.error").Value<string>().Contains("timed out"));
         Assert.IsFalse(invoked.Contains("expired"));
         Assert.IsFalse(invoked.Contains("next"));
         Pass("Queued deadline responds before predecessor completes; expired handler unexecuted");
-        PumpUntil(() => { Collect(peer); return Messages.Any(m => m.Value<string>("id") == "active" && (m.SelectToken("result.error")?.Value<string>() ?? "").Contains("timed out")); }, "active receipt deadline");
+        PumpUntil(
+            () =>
+            {
+                Collect(peer);
+                return Messages.Any(m => m.Value<string>("id") == "active" && (m.SelectToken("result.error")?.Value<string>() ?? "").Contains("timed out"));
+            },
+            "active receipt deadline"
+        );
         Assert.IsFalse(invoked.Contains("next"));
         slow.SetResult(new { completed = true });
         PumpUntil(() => Result(peer, "next") != null, "FIFO resumes after actual completion");
@@ -180,12 +249,15 @@ internal static class TransportArchitectureHarness
         peer.OnStart = _ => peer.Send(new JObject { ["type"] = "ping" });
         peer.Send(Execute(transferId, "fixture_large"));
         JObject start = null;
-        PumpUntil(() =>
-        {
-            Collect(peer);
-            start = Messages.FirstOrDefault(m => m.Value<string>("id") == transferId && m.Value<string>("type") == "result_start");
-            return start != null && peer.Binary.Count == start.Value<int>("chunk_count");
-        }, "negotiated binary result transfer");
+        PumpUntil(
+            () =>
+            {
+                Collect(peer);
+                start = Messages.FirstOrDefault(m => m.Value<string>("id") == transferId && m.Value<string>("type") == "result_start");
+                return start != null && peer.Binary.Count == start.Value<int>("chunk_count");
+            },
+            "negotiated binary result transfer"
+        );
         var chunks = peer.Binary.ToArray();
         byte[] reassembled = new byte[start.Value<int>("total_bytes")];
         foreach (var chunk in chunks)
@@ -206,11 +278,23 @@ internal static class TransportArchitectureHarness
         Pass("Production frame sender reassembles negotiated result and interleaves pong between <=64KiB messages");
         var disconnectActive = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
         bool disconnectStarted = false;
-        handlers["fixture_disconnect"] = new HandlerInfo("fixture_disconnect", null, _ => { disconnectStarted = true; return disconnectActive.Task; });
+        handlers["fixture_disconnect"] = new HandlerInfo(
+            "fixture_disconnect",
+            null,
+            _ =>
+            {
+                disconnectStarted = true;
+                return disconnectActive.Task;
+            }
+        );
         peer.Send(Execute("disconnect-active", "fixture_disconnect"));
         PumpUntil(() => disconnectStarted, "active operation before disconnect");
-        var shutdown = Invoke(client, "StopCapturedConnectionLoopsAsync",
-            typeof(WebSocketTransportClient).GetMethod("CaptureConnectionLoops", PrivateInstance).Invoke(client, null), true);
+        var shutdown = Invoke(
+            client,
+            "StopCapturedConnectionLoopsAsync",
+            typeof(WebSocketTransportClient).GetMethod("CaptureConnectionLoops", PrivateInstance).Invoke(client, null),
+            true
+        );
         try
         {
             PumpUntil(() => EditorStatePublisher.Disposals == 1, "publisher disposed before handler settlement");
@@ -218,7 +302,10 @@ internal static class TransportArchitectureHarness
             Assert.IsFalse(commands.DrainAsync().IsCompleted, "Disconnect cannot report a drain while legacy work can still mutate.");
             Assert.IsFalse(disconnectActive.Task.IsCompleted);
         }
-        finally { disconnectActive.TrySetResult(new { completed = true }); }
+        finally
+        {
+            disconnectActive.TrySetResult(new { completed = true });
+        }
         PumpUntil(() => shutdown.IsCompleted, "deterministic teardown after handler settlement");
         shutdown.GetAwaiter().GetResult();
         Assert.IsTrue(commands.DrainAsync().IsCompleted);
@@ -229,8 +316,24 @@ internal static class TransportArchitectureHarness
     private static void BenchmarkProjection()
     {
         var payload = new { status = "success", result = new { data = new string('x', 256 * 1024) + "한글😀" } };
-        Func<string> before = () => JsonConvert.SerializeObject(new { type = "command_result", id = "bench", result = JToken.Parse(JsonConvert.SerializeObject(payload)) });
-        Func<string> after = () => JsonConvert.SerializeObject(new { type = "command_result", id = "bench", result = TransportCommandResponse.FromObject(payload).Payload });
+        Func<string> before = () =>
+            JsonConvert.SerializeObject(
+                new
+                {
+                    type = "command_result",
+                    id = "bench",
+                    result = JToken.Parse(JsonConvert.SerializeObject(payload)),
+                }
+            );
+        Func<string> after = () =>
+            JsonConvert.SerializeObject(
+                new
+                {
+                    type = "command_result",
+                    id = "bench",
+                    result = TransportCommandResponse.FromObject(payload).Payload,
+                }
+            );
         Assert.AreEqual(before(), after());
         Measure("BEFORE_SYNC_ROUNDTRIP", before);
         Measure("AFTER_SYNC_STRUCTURED", after);
@@ -239,27 +342,46 @@ internal static class TransportArchitectureHarness
 
     private static void Measure(string label, Func<string> action)
     {
-        for (int i = 0; i < 3; i++) action();
-        GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+        for (int i = 0; i < 3; i++)
+            action();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
         long allocated = GC.GetAllocatedBytesForCurrentThread();
         var watch = Stopwatch.StartNew();
-        for (int i = 0; i < 30; i++) action();
+        for (int i = 0; i < 30; i++)
+            action();
         watch.Stop();
         Console.WriteLine(label + "_30_RUNS_MS: " + watch.ElapsedMilliseconds + " ALLOCATED_BYTES: " + (GC.GetAllocatedBytesForCurrentThread() - allocated));
     }
 
-    private static void Pass(string label) { _passes++; Console.WriteLine("PASS: " + label); }
+    private static void Pass(string label)
+    {
+        _passes++;
+        Console.WriteLine("PASS: " + label);
+    }
 
     private sealed class PumpContext : SynchronizationContext
     {
         private readonly Queue<Action> _queue = new Queue<Action>();
-        public override void Post(SendOrPostCallback callback, object state) { lock (_queue) _queue.Enqueue(() => callback(state)); }
+
+        public override void Post(SendOrPostCallback callback, object state)
+        {
+            lock (_queue)
+                _queue.Enqueue(() => callback(state));
+        }
+
         public void Drain()
         {
             while (true)
             {
                 Action action;
-                lock (_queue) { if (_queue.Count == 0) return; action = _queue.Dequeue(); }
+                lock (_queue)
+                {
+                    if (_queue.Count == 0)
+                        return;
+                    action = _queue.Dequeue();
+                }
                 action();
             }
         }

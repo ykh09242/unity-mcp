@@ -1,4 +1,5 @@
 """Profiler wire compatibility and failures through production-wrapped SDK registration."""
+
 import os
 import subprocess
 import sys
@@ -6,7 +7,7 @@ import textwrap
 
 
 def test_profiler_defaults_and_failure_at_actual_sdk_boundary():
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import asyncio, importlib
         from fastmcp import FastMCP, Client
         from core.logging_decorator import log_execution
@@ -35,8 +36,13 @@ def test_profiler_defaults_and_failure_at_actual_sdk_boundary():
                         assert result.structured_content=={"success":False,"error":"fixture profiler failure","data":{"reason":"preserved"}}
             print("real SDK profiler optional/null/false/paging/failure controls passed")
         asyncio.run(main())
-    ''')
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30,
-                            env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"})
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "real SDK profiler optional/null/false/paging/failure controls passed" in result.stdout

@@ -12,8 +12,7 @@ namespace MCPForUnityTests.Editor.Services
     {
         private static PackageInfo Info(PackageSource source, string identifier, string version = "1.0.0", string path = null)
         {
-            var constructor = typeof(PackageInfo).GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic,
-                null, Type.EmptyTypes, null);
+            var constructor = typeof(PackageInfo).GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
             Assert.NotNull(constructor, "PackageInfo's managed constructor must be available.");
             var info = (PackageInfo)constructor.Invoke(null);
             Set(info, "m_Name", "com.fixture.tool");
@@ -80,8 +79,7 @@ namespace MCPForUnityTests.Editor.Services
         [TestCase("file:../Other.tgz", false)]
         public void TarballRecoveryMatchesArchiveIdentifier(string installed, bool expected)
         {
-            var info = Info(PackageSource.LocalTarball, "com.fixture.tool@" + installed,
-                path: Path.Combine(Path.GetTempPath(), "Fixture.tgz"));
+            var info = Info(PackageSource.LocalTarball, "com.fixture.tool@" + installed, path: Path.Combine(Path.GetTempPath(), "Fixture.tgz"));
             Assert.AreEqual(expected, PackageRecoveryIdentity.MatchesSource(info, "file:../Fixture.tgz", null));
         }
 

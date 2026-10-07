@@ -30,11 +30,21 @@ def test_cli_test_job_details_use_unity_parameter_names(editor_module, monkeypat
 @pytest.mark.parametrize("command", [["tests"], ["poll-test", "job-1"]])
 def test_cli_wait_polls_until_job_finishes(editor_module, monkeypatch, command):
     now = [0.0]
-    monkeypatch.setattr(editor_module, "time", Mock(
-        monotonic=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay),
-    ), raising=False)
-    statuses = ["running", "running", "succeeded"] if command == ["tests"] else ["running", "succeeded"]
-    send = Mock(side_effect=[{"success": True, "data": {"job_id": "job-1", "status": s}} for s in statuses])
+    monkeypatch.setattr(
+        editor_module,
+        "time",
+        Mock(
+            monotonic=lambda: now[0],
+            sleep=lambda delay: now.__setitem__(0, now[0] + delay),
+        ),
+        raising=False,
+    )
+    statuses = (
+        ["running", "running", "succeeded"] if command == ["tests"] else ["running", "succeeded"]
+    )
+    send = Mock(
+        side_effect=[{"success": True, "data": {"job_id": "job-1", "status": s}} for s in statuses]
+    )
     monkeypatch.setattr(editor_module, "run_command", send)
 
     result = CliRunner().invoke(editor_module.editor, command + ["--wait", "5"])
@@ -53,7 +63,9 @@ def test_cli_wait_stops_without_polling_after_deadline(editor_module, monkeypatc
         sleeps.append(delay)
         now[0] += delay
 
-    monkeypatch.setattr(editor_module, "time", Mock(monotonic=lambda: now[0], sleep=sleep), raising=False)
+    monkeypatch.setattr(
+        editor_module, "time", Mock(monotonic=lambda: now[0], sleep=sleep), raising=False
+    )
     send = Mock(return_value={"success": True, "data": {"job_id": "job-1", "status": "running"}})
     monkeypatch.setattr(editor_module, "run_command", send)
 
@@ -74,13 +86,20 @@ def test_cli_wait_returns_unity_errors_immediately(editor_module, monkeypatch):
 
 def test_cli_wait_passes_remaining_budget_to_each_request(editor_module, monkeypatch):
     now = [0.0]
-    monkeypatch.setattr(editor_module, "time", Mock(
-        monotonic=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay),
-    ))
-    send = Mock(side_effect=[
-        {"success": True, "data": {"job_id": "job-1", "status": "running"}},
-        {"success": True, "data": {"job_id": "job-1", "status": "succeeded"}},
-    ])
+    monkeypatch.setattr(
+        editor_module,
+        "time",
+        Mock(
+            monotonic=lambda: now[0],
+            sleep=lambda delay: now.__setitem__(0, now[0] + delay),
+        ),
+    )
+    send = Mock(
+        side_effect=[
+            {"success": True, "data": {"job_id": "job-1", "status": "running"}},
+            {"success": True, "data": {"job_id": "job-1", "status": "succeeded"}},
+        ]
+    )
     monkeypatch.setattr(editor_module, "run_command", send)
 
     result = CliRunner().invoke(editor_module.editor, ["poll-test", "job-1", "--wait", "3"])
@@ -91,9 +110,14 @@ def test_cli_wait_passes_remaining_budget_to_each_request(editor_module, monkeyp
 
 def test_cli_wait_does_not_accept_a_terminal_result_after_deadline(editor_module, monkeypatch):
     now = [0.0]
-    monkeypatch.setattr(editor_module, "time", Mock(
-        monotonic=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay),
-    ))
+    monkeypatch.setattr(
+        editor_module,
+        "time",
+        Mock(
+            monotonic=lambda: now[0],
+            sleep=lambda delay: now.__setitem__(0, now[0] + delay),
+        ),
+    )
     responses = iter(["running", "succeeded"])
 
     def send(*args, **kwargs):

@@ -104,8 +104,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static MethodInfo FindMethod(string typeName, string methodName)
         {
-            return typeof(ManageShader).Assembly.GetType(typeName, true)
-                .GetMethod(methodName, BindingFlags.Static | BindingFlags.NonPublic);
+            return typeof(ManageShader).Assembly.GetType(typeName, true).GetMethod(methodName, BindingFlags.Static | BindingFlags.NonPublic);
         }
     }
 }

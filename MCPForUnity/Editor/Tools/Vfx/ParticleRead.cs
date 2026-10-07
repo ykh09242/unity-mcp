@@ -1,5 +1,5 @@
-using Newtonsoft.Json.Linq;
 using System.Linq;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools.Vfx
@@ -15,13 +15,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             return new
             {
-                keys = curve.keys.Select(k => new
-                {
-                    time = k.time,
-                    value = k.value,
-                    inTangent = k.inTangent,
-                    outTangent = k.outTangent
-                }).ToArray()
+                keys = curve
+                    .keys.Select(k => new
+                    {
+                        time = k.time,
+                        value = k.value,
+                        inTangent = k.inTangent,
+                        outTangent = k.outTangent,
+                    })
+                    .ToArray(),
             };
         }
 
@@ -30,18 +32,14 @@ namespace MCPForUnity.Editor.Tools.Vfx
             switch (curve.mode)
             {
                 case ParticleSystemCurveMode.Constant:
-                    return new
-                    {
-                        mode = "constant",
-                        value = curve.constant
-                    };
+                    return new { mode = "constant", value = curve.constant };
 
                 case ParticleSystemCurveMode.TwoConstants:
                     return new
                     {
                         mode = "two_constants",
                         min = curve.constantMin,
-                        max = curve.constantMax
+                        max = curve.constantMax,
                     };
 
                 case ParticleSystemCurveMode.Curve:
@@ -49,13 +47,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     {
                         mode = "curve",
                         multiplier = curve.curveMultiplier,
-                        keys = curve.curve.keys.Select(k => new
-                        {
-                            time = k.time,
-                            value = k.value,
-                            inTangent = k.inTangent,
-                            outTangent = k.outTangent
-                        }).ToArray()
+                        keys = curve
+                            .curve.keys.Select(k => new
+                            {
+                                time = k.time,
+                                value = k.value,
+                                inTangent = k.inTangent,
+                                outTangent = k.outTangent,
+                            })
+                            .ToArray(),
                     };
 
                 case ParticleSystemCurveMode.TwoCurves:
@@ -63,24 +63,22 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     {
                         mode = "curve",
                         multiplier = curve.curveMultiplier,
-                        keys = curve.curveMax.keys.Select(k => new
-                        {
-                            time = k.time,
-                            value = k.value,
-                            inTangent = k.inTangent,
-                            outTangent = k.outTangent
-                        }).ToArray(),
+                        keys = curve
+                            .curveMax.keys.Select(k => new
+                            {
+                                time = k.time,
+                                value = k.value,
+                                inTangent = k.inTangent,
+                                outTangent = k.outTangent,
+                            })
+                            .ToArray(),
                         originalMode = "two_curves",
                         curveMin = SerializeAnimationCurve(curve.curveMin),
-                        curveMax = SerializeAnimationCurve(curve.curveMax)
+                        curveMax = SerializeAnimationCurve(curve.curveMax),
                     };
 
                 default:
-                    return new
-                    {
-                        mode = "constant",
-                        value = curve.constant
-                    };
+                    return new { mode = "constant", value = curve.constant };
             }
         }
 
@@ -115,38 +113,40 @@ namespace MCPForUnity.Editor.Tools.Vfx
                         startSize = SerializeMinMaxCurve(main.startSize),
                         gravityModifier = SerializeMinMaxCurve(main.gravityModifier),
                         simulationSpace = main.simulationSpace.ToString(),
-                        maxParticles = main.maxParticles
+                        maxParticles = main.maxParticles,
                     },
                     emission = new
                     {
                         enabled = emission.enabled,
                         rateOverTime = SerializeMinMaxCurve(emission.rateOverTime),
-                        burstCount = emission.burstCount
+                        burstCount = emission.burstCount,
                     },
                     shape = new
                     {
                         enabled = shape.enabled,
                         shapeType = shape.shapeType.ToString(),
                         radius = shape.radius,
-                        angle = shape.angle
+                        angle = shape.angle,
                     },
-                    renderer = renderer != null ? new
-                    {
-                        renderMode = renderer.renderMode.ToString(),
-                        sortMode = renderer.sortMode.ToString(),
-                        material = renderer.sharedMaterial?.name,
-                        trailMaterial = renderer.trailMaterial?.name,
-                        minParticleSize = renderer.minParticleSize,
-                        maxParticleSize = renderer.maxParticleSize,
-                        shadowCastingMode = renderer.shadowCastingMode.ToString(),
-                        receiveShadows = renderer.receiveShadows,
-                        lightProbeUsage = renderer.lightProbeUsage.ToString(),
-                        reflectionProbeUsage = renderer.reflectionProbeUsage.ToString(),
-                        sortingOrder = renderer.sortingOrder,
-                        sortingLayerName = renderer.sortingLayerName,
-                        renderingLayerMask = renderer.renderingLayerMask
-                    } : null
-                }
+                    renderer = renderer != null
+                        ? new
+                        {
+                            renderMode = renderer.renderMode.ToString(),
+                            sortMode = renderer.sortMode.ToString(),
+                            material = renderer.sharedMaterial?.name,
+                            trailMaterial = renderer.trailMaterial?.name,
+                            minParticleSize = renderer.minParticleSize,
+                            maxParticleSize = renderer.maxParticleSize,
+                            shadowCastingMode = renderer.shadowCastingMode.ToString(),
+                            receiveShadows = renderer.receiveShadows,
+                            lightProbeUsage = renderer.lightProbeUsage.ToString(),
+                            reflectionProbeUsage = renderer.reflectionProbeUsage.ToString(),
+                            sortingOrder = renderer.sortingOrder,
+                            sortingLayerName = renderer.sortingLayerName,
+                            renderingLayerMask = renderer.renderingLayerMask,
+                        }
+                        : null,
+                },
             };
         }
     }

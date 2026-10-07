@@ -56,12 +56,11 @@ namespace MCPForUnityTests.EditMode.Windows
                 Name = "default_tag_probe",
                 IsBuiltIn = builtIn,
                 AutoRegister = autoRegister,
-                RequiresExplicitConsent = requiresConsent
+                RequiresExplicitConsent = requiresConsent,
             };
             var section = new McpToolsSection(CreateRoot(true));
-            var row = (VisualElement)typeof(McpToolsSection)
-                .GetMethod("CreateToolRow", BindingFlags.NonPublic | BindingFlags.Instance)
-                .Invoke(section, new object[] { tool });
+            var row = (VisualElement)
+                typeof(McpToolsSection).GetMethod("CreateToolRow", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(section, new object[] { tool });
 
             Assert.That(row.Query<Label>(className: "tool-tag").ToList()[0].text, Is.EqualTo(expected));
             Assert.That(tools.WriteCalls, Is.Zero);
@@ -75,7 +74,13 @@ namespace MCPForUnityTests.EditMode.Windows
         [TestCase("missing", false)]
         public void ToolSearch_MatchesTrimmedNameDescriptionAndGroup(string query, bool expected)
         {
-            var tool = new ToolMetadata { Name = "manage_camera", Description = "Render a scene", Group = "vfx", IsBuiltIn = true };
+            var tool = new ToolMetadata
+            {
+                Name = "manage_camera",
+                Description = "Render a scene",
+                Group = "vfx",
+                IsBuiltIn = true,
+            };
             Assert.That(Matches(typeof(McpToolsSection), tool, query), Is.EqualTo(expected));
         }
 
@@ -94,7 +99,12 @@ namespace MCPForUnityTests.EditMode.Windows
         [TestCase("missing", false)]
         public void ResourceSearch_MatchesTrimmedNameDescriptionAndCategory(string query, bool expected)
         {
-            var resource = new ResourceMetadata { Name = "project_info", Description = "Read loaded assemblies", IsBuiltIn = true };
+            var resource = new ResourceMetadata
+            {
+                Name = "project_info",
+                Description = "Read loaded assemblies",
+                IsBuiltIn = true,
+            };
             Assert.That(Matches(typeof(McpResourcesSection), resource, query), Is.EqualTo(expected));
         }
 
@@ -216,14 +226,24 @@ namespace MCPForUnityTests.EditMode.Windows
         [Test]
         public void GroupAction_IncludesHiddenTools()
         {
-            tools.Items.Add(new ToolMetadata { Name = "alpha_hidden", Group = "core", IsBuiltIn = true });
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "alpha_hidden",
+                    Group = "core",
+                    IsBuiltIn = true,
+                }
+            );
             var (section, root) = CreateCatalog(true);
             Search(root, "tools", "First item");
             var groupTools = tools.Items.Where(tool => tool.IsBuiltIn).ToList();
             var foldout = root.Query<Foldout>().ToList()[0];
             Invoke(section, "SetGroupToolsState", groupTools, true, foldout, "Core Tools");
             Assert.That(tools.IsToolEnabled("alpha_hidden"), Is.True);
-            Assert.That(root.Query<VisualElement>(className: "tool-item").ToList().Single(row => row.Q<Toggle>().label == "alpha_hidden").Q<Toggle>().value, Is.True);
+            Assert.That(
+                root.Query<VisualElement>(className: "tool-item").ToList().Single(row => row.Q<Toggle>().label == "alpha_hidden").Q<Toggle>().value,
+                Is.True
+            );
         }
 
         [TestCase(true)]
@@ -244,9 +264,7 @@ namespace MCPForUnityTests.EditMode.Windows
         [TestCase(false, false)]
         public void SearchFoldoutChanges_AreTemporaryAcrossClearAndRefresh(bool toolCatalog, bool initialExpanded)
         {
-            string key = toolCatalog
-                ? EditorPrefKeys.ToolFoldoutStatePrefix + "group-core"
-                : EditorPrefKeys.ResourceFoldoutStatePrefix + "built-in";
+            string key = toolCatalog ? EditorPrefKeys.ToolFoldoutStatePrefix + "group-core" : EditorPrefKeys.ResourceFoldoutStatePrefix + "built-in";
             bool hadKey = EditorPrefs.HasKey(key);
             bool previous = EditorPrefs.GetBool(key);
             try
@@ -275,8 +293,10 @@ namespace MCPForUnityTests.EditMode.Windows
             }
             finally
             {
-                if (hadKey) EditorPrefs.SetBool(key, previous);
-                else EditorPrefs.DeleteKey(key);
+                if (hadKey)
+                    EditorPrefs.SetBool(key, previous);
+                else
+                    EditorPrefs.DeleteKey(key);
             }
         }
 
@@ -315,17 +335,48 @@ namespace MCPForUnityTests.EditMode.Windows
             }
             finally
             {
-                if (hadKey) EditorPrefs.SetBool(key, previous);
-                else EditorPrefs.DeleteKey(key);
+                if (hadKey)
+                    EditorPrefs.SetBool(key, previous);
+                else
+                    EditorPrefs.DeleteKey(key);
             }
         }
 
         private (object section, VisualElement root) CreateCatalog(bool toolCatalog)
         {
-            tools.Items.Add(new ToolMetadata { Name = "alpha", Description = "First item", Group = "core", IsBuiltIn = true });
-            tools.Items.Add(new ToolMetadata { Name = "beta", Description = "Second item", IsBuiltIn = false });
-            resources.Items.Add(new ResourceMetadata { Name = "alpha", Description = "First item", IsBuiltIn = true });
-            resources.Items.Add(new ResourceMetadata { Name = "beta", Description = "Second item", IsBuiltIn = false });
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "alpha",
+                    Description = "First item",
+                    Group = "core",
+                    IsBuiltIn = true,
+                }
+            );
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "beta",
+                    Description = "Second item",
+                    IsBuiltIn = false,
+                }
+            );
+            resources.Items.Add(
+                new ResourceMetadata
+                {
+                    Name = "alpha",
+                    Description = "First item",
+                    IsBuiltIn = true,
+                }
+            );
+            resources.Items.Add(
+                new ResourceMetadata
+                {
+                    Name = "beta",
+                    Description = "Second item",
+                    IsBuiltIn = false,
+                }
+            );
             VisualElement root = CreateRoot(toolCatalog);
             object section = toolCatalog ? (object)new McpToolsSection(root) : new McpResourcesSection(root);
             Invoke(section, "Refresh");
@@ -358,7 +409,8 @@ namespace MCPForUnityTests.EditMode.Windows
         private static void ChangeFoldout(Foldout foldout, bool expanded)
         {
             bool previous = foldout.value;
-            if (previous == expanded) return;
+            if (previous == expanded)
+                return;
             foldout.SetValueWithoutNotify(expanded);
             using (var evt = ChangeEvent<bool>.GetPooled(previous, expanded))
             {
@@ -368,8 +420,12 @@ namespace MCPForUnityTests.EditMode.Windows
         }
 
         private static FieldInfo ServiceField(string name) => typeof(MCPServiceLocator).GetField(name, BindingFlags.Static | BindingFlags.NonPublic);
-        private static bool Matches(Type type, object item, string query) => (bool)type.GetMethod("MatchesSearch", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new[] { item, query });
-        private static void Invoke(object target, string method, params object[] args) => target.GetType().GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).Invoke(target, args);
+
+        private static bool Matches(Type type, object item, string query) =>
+            (bool)type.GetMethod("MatchesSearch", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new[] { item, query });
+
+        private static void Invoke(object target, string method, params object[] args) =>
+            target.GetType().GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).Invoke(target, args);
 
         private sealed class FakeToolDiscovery : IToolDiscoveryService
         {
@@ -378,11 +434,25 @@ namespace MCPForUnityTests.EditMode.Windows
             public int DiscoverCalls { get; private set; }
             public int WriteCalls { get; private set; }
             public int InvalidateCalls { get; private set; }
-            public List<ToolMetadata> DiscoverAllTools() { DiscoverCalls++; return Items.ToList(); }
+
+            public List<ToolMetadata> DiscoverAllTools()
+            {
+                DiscoverCalls++;
+                return Items.ToList();
+            }
+
             public ToolMetadata GetToolMetadata(string name) => Items.FirstOrDefault(item => item.Name == name);
+
             public List<ToolMetadata> GetEnabledTools() => Items.Where(item => IsToolEnabled(item.Name)).ToList();
+
             public bool IsToolEnabled(string name) => enabled.TryGetValue(name, out bool value) && value;
-            public void SetToolEnabled(string name, bool value) { WriteCalls++; enabled[name] = value; }
+
+            public void SetToolEnabled(string name, bool value)
+            {
+                WriteCalls++;
+                enabled[name] = value;
+            }
+
             public void InvalidateCache() => InvalidateCalls++;
         }
 
@@ -393,11 +463,25 @@ namespace MCPForUnityTests.EditMode.Windows
             public int DiscoverCalls { get; private set; }
             public int WriteCalls { get; private set; }
             public int InvalidateCalls { get; private set; }
-            public List<ResourceMetadata> DiscoverAllResources() { DiscoverCalls++; return Items.ToList(); }
+
+            public List<ResourceMetadata> DiscoverAllResources()
+            {
+                DiscoverCalls++;
+                return Items.ToList();
+            }
+
             public ResourceMetadata GetResourceMetadata(string name) => Items.FirstOrDefault(item => item.Name == name);
+
             public List<ResourceMetadata> GetEnabledResources() => Items.Where(item => IsResourceEnabled(item.Name)).ToList();
+
             public bool IsResourceEnabled(string name) => enabled.TryGetValue(name, out bool value) && value;
-            public void SetResourceEnabled(string name, bool value) { WriteCalls++; enabled[name] = value; }
+
+            public void SetResourceEnabled(string name, bool value)
+            {
+                WriteCalls++;
+                enabled[name] = value;
+            }
+
             public void InvalidateCache() => InvalidateCalls++;
         }
     }

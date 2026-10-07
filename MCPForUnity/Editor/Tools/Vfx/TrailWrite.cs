@@ -12,7 +12,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object SetTime(JObject @params)
         {
             TrailRenderer tr = TrailRead.FindTrailRenderer(@params);
-            if (tr == null) return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
+            if (tr == null)
+                return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
 
             float time = @params["time"]?.ReadScalar<float?>() ?? 5f;
             RequireFinite(time, "time");
@@ -34,21 +35,38 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object SetWidth(JObject @params)
         {
             TrailRenderer tr = TrailRead.FindTrailRenderer(@params);
-            if (tr == null) return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
+            if (tr == null)
+                return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
 
             var changes = new List<string>();
             var apply = new List<Action>();
 
-            RendererHelpers.ApplyWidthProperties(@params, changes,
-                v => { RequireFinite(v, "startWidth"); apply.Add(() => tr.startWidth = v); },
-                v => { RequireFinite(v, "endWidth"); apply.Add(() => tr.endWidth = v); },
+            RendererHelpers.ApplyWidthProperties(
+                @params,
+                changes,
+                v =>
+                {
+                    RequireFinite(v, "startWidth");
+                    apply.Add(() => tr.startWidth = v);
+                },
+                v =>
+                {
+                    RequireFinite(v, "endWidth");
+                    apply.Add(() => tr.endWidth = v);
+                },
                 v => apply.Add(() => tr.widthCurve = v),
-                v => { RequireFinite(v, "widthMultiplier"); apply.Add(() => tr.widthMultiplier = v); },
-                ManageVfxCommon.ParseAnimationCurve);
+                v =>
+                {
+                    RequireFinite(v, "widthMultiplier");
+                    apply.Add(() => tr.widthMultiplier = v);
+                },
+                ManageVfxCommon.ParseAnimationCurve
+            );
 
             RendererHelpers.EnsureMaterial(tr);
             Undo.RecordObject(tr, "Set Trail Width");
-            foreach (var update in apply) update();
+            foreach (var update in apply)
+                update();
             EditorUtility.SetDirty(tr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
         }
@@ -56,17 +74,24 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object SetColor(JObject @params)
         {
             TrailRenderer tr = TrailRead.FindTrailRenderer(@params);
-            if (tr == null) return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
+            if (tr == null)
+                return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
 
             RendererHelpers.EnsureMaterial(tr);
 
             Undo.RecordObject(tr, "Set Trail Color");
             var changes = new List<string>();
 
-            RendererHelpers.ApplyColorProperties(@params, changes,
-                v => tr.startColor = v, v => tr.endColor = v,
+            RendererHelpers.ApplyColorProperties(
+                @params,
+                changes,
+                v => tr.startColor = v,
+                v => tr.endColor = v,
                 v => tr.colorGradient = v,
-                ManageVfxCommon.ParseColor, ManageVfxCommon.ParseGradient, fadeEndAlpha: true);
+                ManageVfxCommon.ParseColor,
+                ManageVfxCommon.ParseGradient,
+                fadeEndAlpha: true
+            );
 
             EditorUtility.SetDirty(tr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
@@ -81,7 +106,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object SetProperties(JObject @params)
         {
             TrailRenderer tr = TrailRead.FindTrailRenderer(@params);
-            if (tr == null) return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
+            if (tr == null)
+                return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
 
             var changes = new List<string>();
             var apply = new List<Action>();
@@ -104,7 +130,13 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
 
             // Handle time if provided
-            if (@params["time"] != null) { float value = @params["time"].ReadScalar<float>(); RequireFinite(value, "time"); apply.Add(() => tr.time = value); changes.Add("time"); }
+            if (@params["time"] != null)
+            {
+                float value = @params["time"].ReadScalar<float>();
+                RequireFinite(value, "time");
+                apply.Add(() => tr.time = value);
+                changes.Add("time");
+            }
 
             // Handle width properties if provided
             if (@params["width"] != null || @params["startWidth"] != null || @params["endWidth"] != null)
@@ -113,28 +145,68 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 {
                     float w = @params["width"].ReadScalar<float>();
                     RequireFinite(w, "width");
-                    apply.Add(() => { tr.startWidth = w; tr.endWidth = w; });
+                    apply.Add(() =>
+                    {
+                        tr.startWidth = w;
+                        tr.endWidth = w;
+                    });
                     changes.Add("width");
                 }
-                if (@params["startWidth"] != null) { float value = @params["startWidth"].ReadScalar<float>(); RequireFinite(value, "startWidth"); apply.Add(() => tr.startWidth = value); changes.Add("startWidth"); }
-                if (@params["endWidth"] != null) { float value = @params["endWidth"].ReadScalar<float>(); RequireFinite(value, "endWidth"); apply.Add(() => tr.endWidth = value); changes.Add("endWidth"); }
+                if (@params["startWidth"] != null)
+                {
+                    float value = @params["startWidth"].ReadScalar<float>();
+                    RequireFinite(value, "startWidth");
+                    apply.Add(() => tr.startWidth = value);
+                    changes.Add("startWidth");
+                }
+                if (@params["endWidth"] != null)
+                {
+                    float value = @params["endWidth"].ReadScalar<float>();
+                    RequireFinite(value, "endWidth");
+                    apply.Add(() => tr.endWidth = value);
+                    changes.Add("endWidth");
+                }
             }
 
-            if (@params["minVertexDistance"] != null) { float value = @params["minVertexDistance"].ReadScalar<float>(); RequireFinite(value, "minVertexDistance"); apply.Add(() => tr.minVertexDistance = value); changes.Add("minVertexDistance"); }
-            if (@params["autodestruct"] != null) { bool value = @params["autodestruct"].ReadScalar<bool>(); apply.Add(() => tr.autodestruct = value); changes.Add("autodestruct"); }
-            if (@params["emitting"] != null) { bool value = @params["emitting"].ReadScalar<bool>(); apply.Add(() => tr.emitting = value); changes.Add("emitting"); }
+            if (@params["minVertexDistance"] != null)
+            {
+                float value = @params["minVertexDistance"].ReadScalar<float>();
+                RequireFinite(value, "minVertexDistance");
+                apply.Add(() => tr.minVertexDistance = value);
+                changes.Add("minVertexDistance");
+            }
+            if (@params["autodestruct"] != null)
+            {
+                bool value = @params["autodestruct"].ReadScalar<bool>();
+                apply.Add(() => tr.autodestruct = value);
+                changes.Add("autodestruct");
+            }
+            if (@params["emitting"] != null)
+            {
+                bool value = @params["emitting"].ReadScalar<bool>();
+                apply.Add(() => tr.emitting = value);
+                changes.Add("emitting");
+            }
 
-            RendererHelpers.ApplyLineTrailProperties(@params, changes,
-                null, null,
-                v => apply.Add(() => tr.numCornerVertices = v), v => apply.Add(() => tr.numCapVertices = v),
-                v => apply.Add(() => tr.alignment = v), v => apply.Add(() => tr.textureMode = v),
-                v => apply.Add(() => tr.generateLightingData = v));
+            RendererHelpers.ApplyLineTrailProperties(
+                @params,
+                changes,
+                null,
+                null,
+                v => apply.Add(() => tr.numCornerVertices = v),
+                v => apply.Add(() => tr.numCapVertices = v),
+                v => apply.Add(() => tr.alignment = v),
+                v => apply.Add(() => tr.textureMode = v),
+                v => apply.Add(() => tr.generateLightingData = v)
+            );
 
             apply.Add(RendererHelpers.PrepareCommonRendererProperties(tr, @params, changes));
 
-            if (!hasSuppliedMaterial) RendererHelpers.EnsureMaterial(tr);
+            if (!hasSuppliedMaterial)
+                RendererHelpers.EnsureMaterial(tr);
             Undo.RecordObject(tr, "Set Trail Properties");
-            foreach (var update in apply) update();
+            foreach (var update in apply)
+                update();
             EditorUtility.SetDirty(tr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
         }

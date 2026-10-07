@@ -16,7 +16,12 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from core.config import config
-from models.models import MCPResponse, ToolDefinitionModel, ToolParameterModel, parse_tool_parameter_default
+from models.models import (
+    MCPResponse,
+    ToolDefinitionModel,
+    ToolParameterModel,
+    parse_tool_parameter_default,
+)
 from core.logging_decorator import log_execution
 from core.telemetry_decorator import telemetry_tool
 from transport.unity_transport import send_with_unity_instance
@@ -110,14 +115,21 @@ class CustomToolService:
             try:
                 payload = RegisterToolsPayload.model_validate(await request.json())
             except (json.JSONDecodeError, UnicodeDecodeError):
-                return JSONResponse({"success": False, "error": "Request body must be valid JSON"}, status_code=400)
+                return JSONResponse(
+                    {"success": False, "error": "Request body must be valid JSON"}, status_code=400
+                )
             except ValidationError as exc:
                 return JSONResponse(
-                    {"success": False, "error": exc.errors(include_input=False, include_context=False)}, status_code=400,
+                    {
+                        "success": False,
+                        "error": exc.errors(include_input=False, include_context=False),
+                    },
+                    status_code=400,
                 )
 
             registered, replaced = self._register_project_tools(
-                payload.project_id, payload.tools, project_hash=payload.project_hash)
+                payload.project_id, payload.tools, project_hash=payload.project_hash
+            )
 
             message = f"Registered {len(registered)} tool(s)"
             if replaced:
@@ -176,7 +188,9 @@ class CustomToolService:
         params = params or {}
         logger.info("Executing custom tool")
         if config.http_remote_hosted and not user_id:
-            return MCPResponse(success=False, message="Authenticated user required for custom tools")
+            return MCPResponse(
+                success=False, message="Authenticated user required for custom tools"
+            )
 
         definition = await self.get_tool_definition(project_id, tool_name, user_id=user_id)
         if definition is None:
@@ -190,22 +204,31 @@ class CustomToolService:
             supplied_names = set(params)
             validated = inputs.model_validate(params)
             params = {
-                name: value for name, value in validated.model_dump(by_alias=True).items()
+                name: value
+                for name, value in validated.model_dump(by_alias=True).items()
                 if value is not None or (not omit_nulls and name in supplied_names)
             }
         except (ValidationError, ValueError):
-            return MCPResponse(success=False, message=f"Invalid parameters for custom tool '{tool_name}'")
+            return MCPResponse(
+                success=False, message=f"Invalid parameters for custom tool '{tool_name}'"
+            )
 
         if not definition.requires_polling:
             response = await send_with_unity_instance(
-                async_send_command_with_retry, unity_instance, tool_name, params, user_id=user_id,
+                async_send_command_with_retry,
+                unity_instance,
+                tool_name,
+                params,
+                user_id=user_id,
             )
             result = self._normalize_response(response)
             logger.info("Custom tool completed (success=%s, polled=False)", result.success)
             return result
 
         if not unity_instance:
-            return MCPResponse(success=False, message="Explicit Unity instance required for custom tool polling")
+            return MCPResponse(
+                success=False, message="Explicit Unity instance required for custom tool polling"
+            )
         target = unity_instance.rsplit("@", 1)[-1].lower()
         session_key = (user_id, target)
         if not self._reserve_polling(session_key):
@@ -221,15 +244,25 @@ class CustomToolService:
             try:
                 response = await asyncio.wait_for(
                     send_with_unity_instance(
-                        async_send_command_with_retry, unity_instance, tool_name, params, user_id=user_id,
+                        async_send_command_with_retry,
+                        unity_instance,
+                        tool_name,
+                        params,
+                        user_id=user_id,
                     ),
                     timeout=timeout,
                 )
             except asyncio.TimeoutError:
                 return self._poll_timeout(tool_name, None)
             result = await self._poll_until_complete(
-                tool_name, unity_instance, params, response, definition.poll_action or "status",
-                user_id=user_id, max_poll_seconds=timeout, deadline=deadline,
+                tool_name,
+                unity_instance,
+                params,
+                response,
+                definition.poll_action or "status",
+                user_id=user_id,
+                max_poll_seconds=timeout,
+                deadline=deadline,
             )
             logger.info("Custom tool completed (success=%s, polled=True)", result.success)
             return result
@@ -251,12 +284,20 @@ class CustomToolService:
         fields = {
             f"parameter_{index}": (
                 parameter.annotation,
-                Field(default=... if parameter.default is inspect.Parameter.empty else parameter.default, alias=name),
+                Field(
+                    default=...
+                    if parameter.default is inspect.Parameter.empty
+                    else parameter.default,
+                    alias=name,
+                ),
             )
-            for index, (name, parameter) in enumerate(signature.parameters.items()) if name != "ctx"
+            for index, (name, parameter) in enumerate(signature.parameters.items())
+            if name != "ctx"
         }
         model = create_model(
-            "CustomToolInputs", __config__=ConfigDict(extra="allow", validate_default=True), **fields,
+            "CustomToolInputs",
+            __config__=ConfigDict(extra="allow", validate_default=True),
+            **fields,
         )
         self._input_models[contract] = model
         if len(self._input_models) > _MAX_INPUT_MODELS:
@@ -274,9 +315,11 @@ class CustomToolService:
         with self._polling_lock:
             session_count = self._polls_by_session.get(session_key, 0)
             user_count = self._polls_by_user.get(user_id, 0)
-            if (self._active_polls >= _MAX_ACTIVE_POLLS_GLOBAL
-                    or session_count >= _MAX_ACTIVE_POLLS_PER_SESSION
-                    or user_count >= _MAX_ACTIVE_POLLS_PER_USER):
+            if (
+                self._active_polls >= _MAX_ACTIVE_POLLS_GLOBAL
+                or session_count >= _MAX_ACTIVE_POLLS_PER_SESSION
+                or user_count >= _MAX_ACTIVE_POLLS_PER_USER
+            ):
                 return False
             self._active_polls += 1
             self._polls_by_session[session_key] = session_count + 1
@@ -297,7 +340,8 @@ class CustomToolService:
 
     def _poll_timeout(self, tool_name: str, response) -> MCPResponse:
         return MCPResponse(
-            success=False, message=f"Timeout waiting for {tool_name} to complete",
+            success=False,
+            message=f"Timeout waiting for {tool_name} to complete",
             data=self._safe_response(response),
         )
 
@@ -305,8 +349,7 @@ class CustomToolService:
         return tool_name in self._project_tools.get(project_id, {})
 
     def _register_tool(self, project_id: str, definition: ToolDefinitionModel) -> None:
-        self._project_tools.setdefault(project_id, {})[
-            definition.name] = definition
+        self._project_tools.setdefault(project_id, {})[definition.name] = definition
 
     def get_project_id_for_hash(self, project_hash: str | None) -> str | None:
         if config.http_remote_hosted:
@@ -335,7 +378,11 @@ class CustomToolService:
                 poll_params["job_id"] = job_id
 
         timeout = self._bounded_poll_seconds(max_poll_seconds)
-        deadline = min(deadline, time.monotonic() + timeout) if deadline is not None else time.monotonic() + timeout
+        deadline = (
+            min(deadline, time.monotonic() + timeout)
+            if deadline is not None
+            else time.monotonic() + timeout
+        )
         response = initial_response
         poll_response = False
 
@@ -395,15 +442,18 @@ class CustomToolService:
         status = response.get("_mcp_status")
         if status is None:
             # A transient status-poll failure does not terminate a job already started.
-            if poll_response and response.get("success") is False and response.get("hint") == "retry":
+            if (
+                poll_response
+                and response.get("success") is False
+                and response.get("hint") == "retry"
+            ):
                 return "pending", _DEFAULT_POLL_INTERVAL
             if len(response.keys()) == 0:
                 return "pending", _DEFAULT_POLL_INTERVAL
             return "final", _DEFAULT_POLL_INTERVAL
 
         if status == "pending":
-            interval_raw = response.get(
-                "_mcp_poll_interval", _DEFAULT_POLL_INTERVAL)
+            interval_raw = response.get("_mcp_poll_interval", _DEFAULT_POLL_INTERVAL)
             try:
                 interval = float(interval_raw)
             except (TypeError, ValueError):
@@ -425,7 +475,9 @@ class CustomToolService:
             return response
         if isinstance(response, dict):
             return MCPResponse(
-                success=False if response.get("_mcp_status") == "error" else response.get("success", True),
+                success=False
+                if response.get("_mcp_status") == "error"
+                else response.get("success", True),
                 message=response.get("message"),
                 error=response.get("error"),
                 hint=response.get("hint"),
@@ -501,7 +553,9 @@ class CustomToolService:
                 @functools.wraps(handler)
                 async def content_only_handler(*args, **kwargs):
                     response = await handler(*args, **kwargs)
-                    return ToolResult(content=[TextContent(type="text", text=response.model_dump_json())])
+                    return ToolResult(
+                        content=[TextContent(type="text", text=response.model_dump_json())]
+                    )
 
                 tool_handler = content_only_handler
             wrapped = log_execution(definition.name, "Tool")(tool_handler)
@@ -569,13 +623,20 @@ class CustomToolService:
         # Context injection and middleware routing consume these argument names.
         parameter_names = {"ctx", "unity_instance"}
         for param in definition.parameters:
-            if not param.name.isidentifier() or keyword.iskeyword(param.name) or param.name in parameter_names:
+            if (
+                not param.name.isidentifier()
+                or keyword.iskeyword(param.name)
+                or param.name in parameter_names
+            ):
                 raise ValueError(
                     f"Custom tool '{definition.name}' has an invalid or duplicate parameter name '{param.name}'"
                 )
             parameter_names.add(param.name)
-            default = inspect._empty if param.required else self._coerce_default(
-                param.default_value, param.type)
+            default = (
+                inspect._empty
+                if param.required
+                else self._coerce_default(param.default_value, param.type)
+            )
             params.append(
                 inspect.Parameter(
                     param.name,
@@ -597,11 +658,17 @@ class CustomToolService:
     def _map_param_type(self, param: ToolParameterModel):
         ptype = (param.type or "string").lower()
         mapped_type = {
-            "integer": int, "int": int,
-            "number": float, "float": float, "double": float,
-            "bool": bool, "boolean": bool,
-            "array": list, "list": list,
-            "object": dict, "dict": dict,
+            "integer": int,
+            "int": int,
+            "number": float,
+            "float": float,
+            "double": float,
+            "bool": bool,
+            "boolean": bool,
+            "array": list,
+            "list": list,
+            "object": dict,
+            "dict": dict,
         }.get(ptype, str)
         if not param.required:
             mapped_type = Optional[mapped_type]
@@ -638,7 +705,8 @@ def resolve_project_id_for_unity_instance(unity_instance: str | None) -> str | N
             name_part, _, hash_hint = unity_instance.rpartition("@")
             target = next(
                 (
-                    inst for inst in instances
+                    inst
+                    for inst in instances
                     if inst.name == name_part and inst.hash.startswith(hash_hint)
                 ),
                 None,
@@ -646,7 +714,8 @@ def resolve_project_id_for_unity_instance(unity_instance: str | None) -> str | N
         else:
             target = next(
                 (
-                    inst for inst in instances
+                    inst
+                    for inst in instances
                     if inst.id == unity_instance or inst.hash.startswith(unity_instance)
                 ),
                 None,
@@ -657,12 +726,10 @@ def resolve_project_id_for_unity_instance(unity_instance: str | None) -> str | N
             # This matches the hash Unity uses when registering tools via WebSocket.
             if target.hash:
                 return target.hash
-            logger.warning(
-                f"Unity instance {target.id} has empty hash; cannot resolve project ID")
+            logger.warning(f"Unity instance {target.id} has empty hash; cannot resolve project ID")
             return None
     except Exception:
-        logger.debug(
-            f"Failed to resolve project id via connection pool for {unity_instance}")
+        logger.debug(f"Failed to resolve project id via connection pool for {unity_instance}")
 
     # HTTP/WebSocket transport: resolve via PluginHub using project_hash
     try:
@@ -685,7 +752,6 @@ def resolve_project_id_for_unity_instance(unity_instance: str | None) -> str | N
                 return mapped
             return lowered
     except Exception:
-        logger.debug(
-            f"Failed to resolve project id via plugin hub for {unity_instance}")
+        logger.debug(f"Failed to resolve project id via plugin hub for {unity_instance}")
 
     return None

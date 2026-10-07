@@ -1,0 +1,32 @@
+required-version = "==0.16.10"
+target-version = "py311"
+line-length = 100
+indent-width = 4
+force-exclude = true
+extend-exclude = [
+  ".tmp",
+  ".omo",
+  ".codex",
+  ".codegraph",
+  ".unity-ci",
+  ".unity-ci-sdk",
+  ".compile-refs",
+  ".env*",
+  "**/Assets/Resources/GameData/**",
+  "**/Library/**",
+  "**/Temp/**",
+  "**/Packages/**",
+  "**/vendor/**",
+  "**/external/**",
+  "**/generated/**",
+  "**/*_pb2.py",
+  "**/*_pb2_grpc.py",
+  "TestProjects/AssetStoreUploads/**",
+  "website/docs/reference/**",
+]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = false

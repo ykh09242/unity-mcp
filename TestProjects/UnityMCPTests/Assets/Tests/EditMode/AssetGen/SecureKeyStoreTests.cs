@@ -25,7 +25,12 @@ namespace MCPForUnityTests.Editor.AssetGen
         [TearDown]
         public void TearDown()
         {
-            try { if (Directory.Exists(_dir)) Directory.Delete(_dir, true); } catch { /* ignore */ }
+            try
+            {
+                if (Directory.Exists(_dir))
+                    Directory.Delete(_dir, true);
+            }
+            catch { /* ignore */ }
         }
 
         [Test]

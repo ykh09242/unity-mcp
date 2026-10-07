@@ -7,8 +7,12 @@ using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools
 {
-    [McpForUnityTool("manage_audio", AutoRegister = false, Group = "core",
-        Description = "Issue play or stop requests to an existing scene AudioSource in Play mode. Play optionally assigns an AudioClip asset path after validation; success does not guarantee audible output.")]
+    [McpForUnityTool(
+        "manage_audio",
+        AutoRegister = false,
+        Group = "core",
+        Description = "Issue play or stop requests to an existing scene AudioSource in Play mode. Play optionally assigns an AudioClip asset path after validation; success does not guarantee audible output."
+    )]
     public static class ManageAudio
     {
         public static object HandleCommand(JObject parameters)
@@ -24,8 +28,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("'action' must be play or stop.");
 
             JToken target = parameters["target"];
-            if (target == null || (target.Type != JTokenType.String && target.Type != JTokenType.Integer)
-                || string.IsNullOrWhiteSpace(target.ToString()))
+            if (target == null || (target.Type != JTokenType.String && target.Type != JTokenType.Integer) || string.IsNullOrWhiteSpace(target.ToString()))
                 return new ErrorResponse("'target' must be a GameObject name, hierarchy path or integer instance ID.");
             if (target.Type == JTokenType.Integer && !int.TryParse(target.ToString(), out _))
                 return new ErrorResponse("'target' instance ID is outside the supported integer range.");
@@ -35,7 +38,10 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("'search_method' must be by_id, by_name, by_path or by_id_or_name_or_path.");
             string searchMethod = searchToken?.Type == JTokenType.String ? searchToken.ToString().ToLowerInvariant() : null;
             if (string.IsNullOrEmpty(searchMethod) || searchMethod == "by_id_or_name_or_path")
-                searchMethod = int.TryParse(target.ToString(), out _) ? "by_id" : target.ToString().Contains("/") ? "by_path" : "by_name";
+                searchMethod =
+                    int.TryParse(target.ToString(), out _) ? "by_id"
+                    : target.ToString().Contains("/") ? "by_path"
+                    : "by_name";
             if (searchMethod != "by_id" && searchMethod != "by_name" && searchMethod != "by_path")
                 return new ErrorResponse("'search_method' must be by_id, by_name, by_path or by_id_or_name_or_path.");
 
@@ -52,8 +58,12 @@ namespace MCPForUnity.Editor.Tools
                 if (!clipPath.StartsWith("Assets/", StringComparison.Ordinal) && !clipPath.StartsWith("Packages/", StringComparison.Ordinal))
                     return new ErrorResponse("'clip' must be an Assets/ or Packages/ asset path.");
                 foreach (string segment in clipPath.Split('/'))
-                    if (segment.Length == 0 || segment == "." || segment == ".."
-                        || segment.IndexOfAny(new[] { ':', '\0', '*', '?', '"', '<', '>', '|', '\r', '\n' }) >= 0)
+                    if (
+                        segment.Length == 0
+                        || segment == "."
+                        || segment == ".."
+                        || segment.IndexOfAny(new[] { ':', '\0', '*', '?', '"', '<', '>', '|', '\r', '\n' }) >= 0
+                    )
                         return new ErrorResponse("'clip' contains an invalid asset path segment.");
             }
 
@@ -76,7 +86,9 @@ namespace MCPForUnity.Editor.Tools
                 {
                     if (!source.isActiveAndEnabled)
                         return new ErrorResponse("AudioSource must be enabled on an active GameObject to play.");
-                    AudioClip clip = hasClip ? AssetDatabase.LoadAssetAtPath<AudioClip>(AssetPathUtility.GetAssetReferencePath(clipPath, allowPackages: true)) : source.clip;
+                    AudioClip clip = hasClip
+                        ? AssetDatabase.LoadAssetAtPath<AudioClip>(AssetPathUtility.GetAssetReferencePath(clipPath, allowPackages: true))
+                        : source.clip;
                     if (clip == null)
                         return new ErrorResponse(hasClip ? $"AudioClip was not found at '{clipPath}'." : "AudioSource has no assigned AudioClip.");
                     if (clip.loadState == AudioDataLoadState.Failed)
@@ -92,12 +104,15 @@ namespace MCPForUnity.Editor.Tools
                     source.Stop();
                 }
 
-                return new SuccessResponse($"Audio {action} request issued.", new
-                {
-                    action,
-                    target = gameObject.name,
-                    instanceID = gameObject.GetInstanceIDCompat()
-                });
+                return new SuccessResponse(
+                    $"Audio {action} request issued.",
+                    new
+                    {
+                        action,
+                        target = gameObject.name,
+                        instanceID = gameObject.GetInstanceIDCompat(),
+                    }
+                );
             }
             catch (Exception exception)
             {

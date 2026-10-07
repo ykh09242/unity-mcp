@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Physics
 {
@@ -17,7 +17,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             { "hinge", typeof(HingeJoint) },
             { "spring", typeof(SpringJoint) },
             { "character", typeof(CharacterJoint) },
-            { "configurable", typeof(ConfigurableJoint) }
+            { "configurable", typeof(ConfigurableJoint) },
         };
 
         private static readonly Dictionary<string, Type> JointTypes2D = new Dictionary<string, Type>
@@ -30,7 +30,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             { "slider", typeof(SliderJoint2D) },
             { "spring", typeof(SpringJoint2D) },
             { "target", typeof(TargetJoint2D) },
-            { "wheel", typeof(WheelJoint2D) }
+            { "wheel", typeof(WheelJoint2D) },
         };
 
         public static object AddJoint(JObject @params)
@@ -39,11 +39,13 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             var targetResult = p.GetRequired("target");
             var errorObj = targetResult.GetOrError(out string targetStr);
-            if (errorObj != null) return errorObj;
+            if (errorObj != null)
+                return errorObj;
 
             var jointTypeResult = p.GetRequired("joint_type");
             errorObj = jointTypeResult.GetOrError(out string jointTypeStr);
-            if (errorObj != null) return errorObj;
+            if (errorObj != null)
+                return errorObj;
 
             string searchMethod = p.Get("search_method");
 
@@ -129,7 +131,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             }
 
             // Set properties via reflection if provided
-            foreach (var change in propertyChanges) change(joint);
+            foreach (var change in propertyChanges)
+                change(joint);
 
             EditorUtility.SetDirty(go);
 
@@ -141,8 +144,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     jointType = jointComponentType.Name,
                     instanceID = joint.GetInstanceIDCompat(),
-                    gameObjectInstanceID = go.GetInstanceIDCompat()
-                }
+                    gameObjectInstanceID = go.GetInstanceIDCompat(),
+                },
             };
         }
 
@@ -152,7 +155,8 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             var targetResult = p.GetRequired("target");
             var errorObj = targetResult.GetOrError(out string targetStr);
-            if (errorObj != null) return errorObj;
+            if (errorObj != null)
+                return errorObj;
 
             string searchMethod = p.Get("search_method");
 
@@ -313,7 +317,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             }
 
             Undo.RecordObject(joint, $"Configure {joint.GetType().Name}");
-            foreach (var change in changes) change();
+            foreach (var change in changes)
+                change();
             EditorUtility.SetDirty(joint);
 
             return new
@@ -324,8 +329,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     jointType = joint.GetType().Name,
                     configured,
-                    instanceID = joint.GetInstanceIDCompat()
-                }
+                    instanceID = joint.GetInstanceIDCompat(),
+                },
             };
         }
 
@@ -335,7 +340,8 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             var targetResult = p.GetRequired("target");
             var errorObj = targetResult.GetOrError(out string targetStr);
-            if (errorObj != null) return errorObj;
+            if (errorObj != null)
+                return errorObj;
 
             string searchMethod = p.Get("search_method");
 
@@ -370,7 +376,9 @@ namespace MCPForUnity.Editor.Tools.Physics
                 if (componentIndex.HasValue)
                 {
                     if (componentIndex.Value < 0 || componentIndex.Value >= components.Length)
-                        return new ErrorResponse($"component_index {componentIndex.Value} out of range. Found {components.Length} '{jointComponentType.Name}' joint(s) on '{go.name}'.");
+                        return new ErrorResponse(
+                            $"component_index {componentIndex.Value} out of range. Found {components.Length} '{jointComponentType.Name}' joint(s) on '{go.name}'."
+                        );
                     jointsToRemove.Add(components[componentIndex.Value]);
                 }
                 else
@@ -406,11 +414,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Removed {removedCount} joint(s) from '{go.name}'.",
-                data = new
-                {
-                    removedCount,
-                    gameObjectInstanceID = go.GetInstanceIDCompat()
-                }
+                data = new { removedCount, gameObjectInstanceID = go.GetInstanceIDCompat() },
             };
         }
 
@@ -479,7 +483,8 @@ namespace MCPForUnity.Editor.Tools.Physics
         private static List<Action<Component>> PrepareProperties(Type type, JObject properties)
         {
             var changes = new List<Action<Component>>();
-            if (properties == null) return changes;
+            if (properties == null)
+                return changes;
 
             foreach (var prop in properties.Properties())
             {
@@ -489,7 +494,10 @@ namespace MCPForUnity.Editor.Tools.Physics
                     object value = ConvertValue(prop.Value, propInfo.PropertyType);
                     changes.Add(component =>
                     {
-                        try { propInfo.SetValue(component, value); }
+                        try
+                        {
+                            propInfo.SetValue(component, value);
+                        }
                         catch (Exception ex)
                         {
                             McpLog.Warn($"[JointOps] Failed to set property '{prop.Name}': {ex.Message}");
@@ -504,7 +512,10 @@ namespace MCPForUnity.Editor.Tools.Physics
                     object value = ConvertValue(prop.Value, fieldInfo.FieldType);
                     changes.Add(component =>
                     {
-                        try { fieldInfo.SetValue(component, value); }
+                        try
+                        {
+                            fieldInfo.SetValue(component, value);
+                        }
                         catch (Exception ex)
                         {
                             McpLog.Warn($"[JointOps] Failed to set field '{prop.Name}': {ex.Message}");

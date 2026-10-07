@@ -11,6 +11,7 @@ Examples:
     python3 tools/generate_mcpb.py 9.0.8 --icon /path/to/your-icon.png
     python3 tools/generate_mcpb.py 9.0.8 --icon /path/to/your-icon.png --output unity-mcp-9.0.8.mcpb
 """
+
 from __future__ import annotations
 
 import argparse

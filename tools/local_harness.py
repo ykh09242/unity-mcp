@@ -197,7 +197,9 @@ def read_default_version(versions_json: str | Path | None = None) -> str | None:
     return val if isinstance(val, str) and val else None
 
 
-def resolve_version(project_path: str | Path, versions_json: str | Path | None = None) -> str | None:
+def resolve_version(
+    project_path: str | Path, versions_json: str | Path | None = None
+) -> str | None:
     """Version precedence: ProjectVersion.txt, else unity-versions.json defaultVersion."""
     return read_project_version(project_path) or read_default_version(versions_json)
 
@@ -266,9 +268,11 @@ def hub_roots(platform: str | None = None, environ: dict[str, str] | None = None
     return [str(P(home) / "Unity" / "Hub" / "Editor")]
 
 
-def read_secondary_install_path(platform: str | None = None,
-                                environ: dict[str, str] | None = None,
-                                read_text: Callable[[str], str] | None = None) -> str | None:
+def read_secondary_install_path(
+    platform: str | None = None,
+    environ: dict[str, str] | None = None,
+    read_text: Callable[[str], str] | None = None,
+) -> str | None:
     """Read Hub's secondaryInstallPath JSON-encoded string.
 
     macOS: ~/Library/Application Support/UnityHub/secondaryInstallPath.json
@@ -305,11 +309,13 @@ def read_secondary_install_path(platform: str | None = None,
     return None
 
 
-def candidate_editor_paths(version: str,
-                           explicit_editor: str | None = None,
-                           platform: str | None = None,
-                           environ: dict[str, str] | None = None,
-                           read_text: Callable[[str], str] | None = None) -> list[str]:
+def candidate_editor_paths(
+    version: str,
+    explicit_editor: str | None = None,
+    platform: str | None = None,
+    environ: dict[str, str] | None = None,
+    read_text: Callable[[str], str] | None = None,
+) -> list[str]:
     """Ordered candidate editor binary paths for a resolved version.
 
     Precedence:
@@ -354,14 +360,16 @@ def _default_is_exec(path: str) -> bool:
     return os.path.isfile(path) and os.access(path, os.X_OK)
 
 
-def discover_editor(version: str,
-                    explicit_editor: str | None = None,
-                    platform: str | None = None,
-                    environ: dict[str, str] | None = None,
-                    exists: Callable[[str], bool] | None = None,
-                    is_exec: Callable[[str], bool] | None = None,
-                    list_dir: Callable[[str], list[str]] | None = None,
-                    read_text: Callable[[str], str] | None = None) -> EditorSpec:
+def discover_editor(
+    version: str,
+    explicit_editor: str | None = None,
+    platform: str | None = None,
+    environ: dict[str, str] | None = None,
+    exists: Callable[[str], bool] | None = None,
+    is_exec: Callable[[str], bool] | None = None,
+    list_dir: Callable[[str], list[str]] | None = None,
+    read_text: Callable[[str], str] | None = None,
+) -> EditorSpec:
     """Resolve a Unity editor binary for the requested version.
 
     First existing + executable candidate wins (precedence 1-4 from
@@ -424,9 +432,11 @@ def discover_editor(version: str,
 # ===========================================================================
 # Pure helpers: status-file discovery
 # ===========================================================================
-def newest_status_file(status_dir: str | Path,
-                       glob_fn: Callable[[str], list[str]] | None = None,
-                       mtime_fn: Callable[[str], float] | None = None) -> str | None:
+def newest_status_file(
+    status_dir: str | Path,
+    glob_fn: Callable[[str], list[str]] | None = None,
+    mtime_fn: Callable[[str], float] | None = None,
+) -> str | None:
     """Return the path to the newest unity-mcp-status-*.json under status_dir, or None."""
     pattern = str(Path(status_dir) / "unity-mcp-status-*.json")
     g = glob_fn or glob.glob
@@ -454,7 +464,7 @@ def instance_id_from_status(status_file: str | Path, data: dict[str, Any] | None
     fname = os.path.basename(str(status_file))
     h = fname
     if h.startswith("unity-mcp-status-"):
-        h = h[len("unity-mcp-status-"):]
+        h = h[len("unity-mcp-status-") :]
     if h.endswith(".json"):
         h = h[: -len(".json")]
 
@@ -683,20 +693,48 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--editor", default=None, help="Explicit Unity binary (discovery precedence 1).")
     p.add_argument("--unity-version", default=None, help="Override the resolved Unity version.")
-    p.add_argument("--ci", action="store_true", help="Use DockerLauncher + repo .unity-mcp status dir; implies --no-warmup semantics.")
-    p.add_argument("--status-dir", default=None, help="Status-file directory. Default: fresh tmp dir (local) / <workspace>/.unity-mcp (--ci).")
-    p.add_argument("--reuse", action="store_true", help="Attach to an already-resident bridge via ~/.unity-mcp; owns_editor=False.")
-    p.add_argument("--keep-alive", action="store_true", help="Leave the editor running after legs (no teardown of an owned editor).")
+    p.add_argument(
+        "--ci",
+        action="store_true",
+        help="Use DockerLauncher + repo .unity-mcp status dir; implies --no-warmup semantics.",
+    )
+    p.add_argument(
+        "--status-dir",
+        default=None,
+        help="Status-file directory. Default: fresh tmp dir (local) / <workspace>/.unity-mcp (--ci).",
+    )
+    p.add_argument(
+        "--reuse",
+        action="store_true",
+        help="Attach to an already-resident bridge via ~/.unity-mcp; owns_editor=False.",
+    )
+    p.add_argument(
+        "--keep-alive",
+        action="store_true",
+        help="Leave the editor running after legs (no teardown of an owned editor).",
+    )
     p.add_argument("--no-warmup", action="store_true", help="Skip the warm-up phase.")
-    p.add_argument("--strict-playmode", action="store_true", help="Promote a PlayMode failure to a blocking failure (exit 1).")
-    p.add_argument("--native-editmode", action="store_true", help="Optional CI-parity native -runTests EditMode leg, serialized after resident teardown.")
+    p.add_argument(
+        "--strict-playmode",
+        action="store_true",
+        help="Promote a PlayMode failure to a blocking failure (exit 1).",
+    )
+    p.add_argument(
+        "--native-editmode",
+        action="store_true",
+        help="Optional CI-parity native -runTests EditMode leg, serialized after resident teardown.",
+    )
     p.add_argument(
         "--junit",
         default="reports/junit-e2e-bridge.xml",
         help="Smoke JUnit path. EditMode/PlayMode write reports/junit-editmode.xml / reports/junit-playmode.xml alongside.",
     )
-    p.add_argument("--reports", default=None, help="Reports directory. Default: dirname(--junit) or reports/.")
-    p.add_argument("--boot-timeout", type=int, default=900, help="Warm-up + resident-boot budget (s).")
+    p.add_argument(
+        "--reports", default=None, help="Reports directory. Default: dirname(--junit) or reports/."
+    )
+    p.add_argument(
+        "--boot-timeout", type=int, default=900, help="Warm-up + resident-boot budget (s)."
+    )
     p.add_argument("--bridge-wait", type=int, default=600, help="Bridge-ready budget (s).")
     p.add_argument(
         "--playmode-init-timeout",
@@ -704,10 +742,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_PLAYMODE_INIT_TIMEOUT_MS,
         help="initTimeout (ms) passed verbatim to PlayMode run_tests.",
     )
-    p.add_argument("--overall-timeout", type=int, default=2400, help="Wall-clock watchdog (s); on expiry kill owned PID, exit 2.")
+    p.add_argument(
+        "--overall-timeout",
+        type=int,
+        default=2400,
+        help="Wall-clock watchdog (s); on expiry kill owned PID, exit 2.",
+    )
     p.add_argument("--max-retries", type=int, default=8, help="Reload retries per wire command.")
     p.add_argument("--retry-ms", type=int, default=250, help="Reload retry delay (ms).")
-    p.add_argument("--editor-arg", action="append", default=[], dest="editor_args", help="Opaque extra editor arg appended to the resident argv (repeatable).")
+    p.add_argument(
+        "--editor-arg",
+        action="append",
+        default=[],
+        dest="editor_args",
+        help="Opaque extra editor arg appended to the resident argv (repeatable).",
+    )
     return p
 
 
@@ -769,20 +818,31 @@ class LocalLauncher:
     @staticmethod
     def warmup_argv(editor: str, project_path: Path, log_path: Path) -> list[str]:
         return [
-            editor, "-batchmode", "-nographics", "-quit",
-            "-projectPath", str(project_path),
-            "-logFile", str(log_path),
+            editor,
+            "-batchmode",
+            "-nographics",
+            "-quit",
+            "-projectPath",
+            str(project_path),
+            "-logFile",
+            str(log_path),
         ]
 
     @staticmethod
-    def resident_argv(editor: str, project_path: Path, log_path: Path,
-                      extra_editor_args: list[str]) -> list[str]:
+    def resident_argv(
+        editor: str, project_path: Path, log_path: Path, extra_editor_args: list[str]
+    ) -> list[str]:
         return [
-            editor, "-batchmode", "-nographics",
-            "-projectPath", str(project_path),
-            "-logFile", str(log_path),
+            editor,
+            "-batchmode",
+            "-nographics",
+            "-projectPath",
+            str(project_path),
+            "-logFile",
+            str(log_path),
             *list(extra_editor_args or []),
-            "-executeMethod", BOOT_METHOD,
+            "-executeMethod",
+            BOOT_METHOD,
         ]
 
     @staticmethod
@@ -802,8 +862,14 @@ class LocalLauncher:
             proc.wait()
             return -1
 
-    def launch(self, editor: str, project_path: Path, status_dir: Path, log_path: Path,
-               extra_editor_args: list[str]) -> Handle:
+    def launch(
+        self,
+        editor: str,
+        project_path: Path,
+        status_dir: Path,
+        log_path: Path,
+        extra_editor_args: list[str],
+    ) -> Handle:
         argv = self.resident_argv(editor, project_path, log_path, extra_editor_args)
         env = self.resident_env(os.environ, status_dir)
         kwargs: dict[str, Any] = {"env": env}
@@ -877,13 +943,21 @@ class DockerLauncher:
 
     def resolve_editor(self, project_path: Path) -> EditorSpec:
         # CI short-circuits to the fixed image entrypoint; never touches Hub.
-        return EditorSpec(binary="/opt/unity/Editor/Unity", version=self.args.unity_version or "docker")
+        return EditorSpec(
+            binary="/opt/unity/Editor/Unity", version=self.args.unity_version or "docker"
+        )
 
     @staticmethod
-    def docker_run_argv(image: str, workspace: Path, project_path: Path, status_dir: Path,
-                        log_path: str, extra_editor_args: list[str],
-                        container: str = "unity-mcp",
-                        runner_temp: str | None = None) -> list[str]:
+    def docker_run_argv(
+        image: str,
+        workspace: Path,
+        project_path: Path,
+        status_dir: Path,
+        log_path: str,
+        extra_editor_args: list[str],
+        container: str = "unity-mcp",
+        runner_temp: str | None = None,
+    ) -> list[str]:
         # When RUNNER_TEMP is present (GitHub Actions), mount the same license /
         # config / cache volumes the warm-up + activation steps populated so the
         # resident bridge container sees the staged ULF/EBL seat. Locally these
@@ -892,41 +966,80 @@ class DockerLauncher:
         if runner_temp:
             rt = str(runner_temp)
             license_mounts = [
-                "-v", f"{rt}/unity-config:/root/.config/unity3d",
-                "-v", f"{rt}/unity-local:/root/.local/share/unity3d",
-                "-v", f"{rt}/unity-cache:/root/.cache/unity3d",
-                "-v", f"{rt}/unity-machine-id:/etc/machine-id:ro",
+                "-v",
+                f"{rt}/unity-config:/root/.config/unity3d",
+                "-v",
+                f"{rt}/unity-local:/root/.local/share/unity3d",
+                "-v",
+                f"{rt}/unity-cache:/root/.cache/unity3d",
+                "-v",
+                f"{rt}/unity-machine-id:/etc/machine-id:ro",
             ]
         return [
-            "docker", "run", "-d", "--name", container, "--network", "host",
-            "-e", "HOME=/root",
-            "-e", "UNITY_MCP_ALLOW_BATCH=1",
-            "-e", f"UNITY_MCP_STATUS_DIR={status_dir}",
-            "-e", "UNITY_MCP_BIND_HOST=127.0.0.1",
-            "-v", f"{workspace}:{workspace}", "-w", str(workspace),
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container,
+            "--network",
+            "host",
+            "-e",
+            "HOME=/root",
+            "-e",
+            "UNITY_MCP_ALLOW_BATCH=1",
+            "-e",
+            f"UNITY_MCP_STATUS_DIR={status_dir}",
+            "-e",
+            "UNITY_MCP_BIND_HOST=127.0.0.1",
+            "-v",
+            f"{workspace}:{workspace}",
+            "-w",
+            str(workspace),
             *license_mounts,
             image,
-            "/opt/unity/Editor/Unity", "-batchmode", "-nographics",
-            "-logFile", log_path,
-            "-projectPath", str(project_path),
+            "/opt/unity/Editor/Unity",
+            "-batchmode",
+            "-nographics",
+            "-logFile",
+            log_path,
+            "-projectPath",
+            str(project_path),
             *list(extra_editor_args or []),
-            "-executeMethod", BOOT_METHOD,
+            "-executeMethod",
+            BOOT_METHOD,
         ]
 
     def warmup(self, editor: str, project_path: Path, log_path: Path, timeout_s: int) -> int:
         return 0  # no-op in CI (YAML already warmed up)
 
-    def launch(self, editor: str, project_path: Path, status_dir: Path, log_path: Path,
-               extra_editor_args: list[str]) -> Handle:
+    def launch(
+        self,
+        editor: str,
+        project_path: Path,
+        status_dir: Path,
+        log_path: Path,
+        extra_editor_args: list[str],
+    ) -> Handle:
         image = os.environ.get("UNITY_IMAGE", "")
         workspace = Path(os.environ.get("GITHUB_WORKSPACE", str(REPO_ROOT)))
         runner_temp = os.environ.get("RUNNER_TEMP")
         container_log = "/root/.config/unity3d/Editor.log"
-        subprocess.run(["docker", "rm", "-f", self.CONTAINER],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        argv = self.docker_run_argv(image, workspace, project_path, status_dir,
-                                     container_log, extra_editor_args, self.CONTAINER,
-                                     runner_temp)
+        subprocess.run(
+            ["docker", "rm", "-f", self.CONTAINER],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        argv = self.docker_run_argv(
+            image,
+            workspace,
+            project_path,
+            status_dir,
+            container_log,
+            extra_editor_args,
+            self.CONTAINER,
+            runner_temp,
+        )
         subprocess.run(argv, check=True)
         return Handle(container=self.CONTAINER, log_path=container_log)
 
@@ -934,7 +1047,9 @@ class DockerLauncher:
         try:
             out = subprocess.run(
                 ["docker", "inspect", "-f", "{{.State.Status}}", self.CONTAINER],
-                capture_output=True, text=True, check=False,
+                capture_output=True,
+                text=True,
+                check=False,
             )
             return out.stdout.strip() == "running"
         except OSError:
@@ -947,27 +1062,43 @@ class DockerLauncher:
             if handle.log_path:
                 file_log = subprocess.run(
                     ["docker", "exec", container, "tail", "-n", str(n), handle.log_path],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace",
-                    check=False, timeout=10,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                    timeout=10,
                 )
                 if file_log.returncode == 0:
                     return file_log.stdout or ""
             out = subprocess.run(
                 ["docker", "logs", "--tail", str(n), container],
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                check=False, timeout=10,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=10,
             )
             return (out.stdout or "") + (out.stderr or "")
         except (OSError, subprocess.TimeoutExpired):
             return ""
 
     def fixup_permissions(self, status_dir: Path) -> None:
-        subprocess.run(["docker", "exec", self.CONTAINER, "chmod", "-R", "a+rwx", str(status_dir)],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        subprocess.run(
+            ["docker", "exec", self.CONTAINER, "chmod", "-R", "a+rwx", str(status_dir)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
 
     def teardown(self, handle: Handle, grace_s: float = 10.0) -> None:
-        subprocess.run(["docker", "rm", "-f", self.CONTAINER],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        subprocess.run(
+            ["docker", "rm", "-f", self.CONTAINER],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
 
 
 def make_launcher(args: argparse.Namespace):
@@ -1000,8 +1131,14 @@ def _tcp_probe(port: int, timeout: float = 0.5) -> bool:
         return False
 
 
-def wait_for_ready(launcher, handle: Handle, status_dir: Path, bridge_wait_s: int,
-                   boot_start: float, deadline: float) -> ReadyInfo:
+def wait_for_ready(
+    launcher,
+    handle: Handle,
+    status_dir: Path,
+    bridge_wait_s: int,
+    boot_start: float,
+    deadline: float,
+) -> ReadyInfo:
     """Poll status-file discovery + TCP probe up to bridge_wait_s.
 
     Liveness (launcher.is_alive) is the authoritative death signal: a slow-but-
@@ -1128,8 +1265,14 @@ def compile_probe(instance_id: str, max_retries: int, retry_ms: int, send=None) 
     return True
 
 
-def run_smoke_leg(instance_id: str, junit_path: Path, max_retries: int, retry_ms: int,
-                  deadline: float | None = None, python_exe: str | None = None) -> LegOutcome:
+def run_smoke_leg(
+    instance_id: str,
+    junit_path: Path,
+    max_retries: int,
+    retry_ms: int,
+    deadline: float | None = None,
+    python_exe: str | None = None,
+) -> LegOutcome:
     """Run bridge_smoke.py as a subprocess; honor its 0/1/2 exit contract.
 
     Bounded by the overall deadline so a wedged smoke run cannot outlive the
@@ -1139,18 +1282,35 @@ def run_smoke_leg(instance_id: str, junit_path: Path, max_retries: int, retry_ms
     """
     smoke = REPO_ROOT / "Server" / "tests" / "e2e" / "bridge_smoke.py"
     py = python_exe or sys.executable
-    argv = [py, str(smoke), "--instance", instance_id, "--junit", str(junit_path),
-            "--max-retries", str(max_retries), "--retry-ms", str(retry_ms)]
+    argv = [
+        py,
+        str(smoke),
+        "--instance",
+        instance_id,
+        "--junit",
+        str(junit_path),
+        "--max-retries",
+        str(max_retries),
+        "--retry-ms",
+        str(retry_ms),
+    ]
     timeout = max(1.0, deadline - time.time()) if deadline is not None else None
     try:
         rc = subprocess.run(argv, check=False, timeout=timeout).returncode
     except subprocess.TimeoutExpired:
-        return LegOutcome("smoke", "error", blocking=True,
-                          detail="bridge smoke timed out (overall budget)", exit_code=2)
+        return LegOutcome(
+            "smoke",
+            "error",
+            blocking=True,
+            detail="bridge smoke timed out (overall budget)",
+            exit_code=2,
+        )
     if rc == 0:
         return LegOutcome("smoke", "pass", blocking=True, detail="bridge smoke passed", exit_code=0)
     if rc == 1:
-        return LegOutcome("smoke", "fail", blocking=True, detail="bridge smoke assertion regression", exit_code=1)
+        return LegOutcome(
+            "smoke", "fail", blocking=True, detail="bridge smoke assertion regression", exit_code=1
+        )
     # rc == 2 (or anything else) -> bridge unreachable / setup failure.
     return LegOutcome("smoke", "error", blocking=True, detail="no bridge reachable", exit_code=2)
 
@@ -1166,8 +1326,10 @@ def prepare_ci_scene(args: argparse.Namespace, instance_id: str, *, send=None) -
         response = send(
             "manage_scene",
             {"action": "save", "path": "Assets/__MCPHarness", "name": f"Scene_{uuid.uuid4().hex}"},
-            instance_id=instance_id, max_retries=args.max_retries,
-            retry_ms=args.retry_ms, retry_on_reload=True,
+            instance_id=instance_id,
+            max_retries=args.max_retries,
+            retry_ms=args.retry_ms,
+            retry_on_reload=True,
         )
         if _ok(response):
             return True
@@ -1177,8 +1339,9 @@ def prepare_ci_scene(args: argparse.Namespace, instance_id: str, *, send=None) -
     return False
 
 
-def _start_utf(send, mode: str, instance_id: str, init_timeout_ms: int | None,
-               max_retries: int, retry_ms: int) -> tuple[str | None, dict[str, Any] | Any]:
+def _start_utf(
+    send, mode: str, instance_id: str, init_timeout_ms: int | None, max_retries: int, retry_ms: int
+) -> tuple[str | None, dict[str, Any] | Any]:
     """Issue run_tests; return (job_id, raw_start_response). Gates on result.success."""
     params: dict[str, Any] = {"mode": mode, "includeFailedTests": True}
     if init_timeout_ms is not None:
@@ -1187,8 +1350,14 @@ def _start_utf(send, mode: str, instance_id: str, init_timeout_ms: int | None,
     # (success:false), so it must be detected BEFORE the _ok() gate, not after.
     for _ in range(5):
         try:
-            start = send("run_tests", params, instance_id=instance_id,
-                         max_retries=max_retries, retry_ms=retry_ms, retry_on_reload=True)
+            start = send(
+                "run_tests",
+                params,
+                instance_id=instance_id,
+                max_retries=max_retries,
+                retry_ms=retry_ms,
+                retry_on_reload=True,
+            )
         except Exception:
             # Transport hiccup starting the job (editor briefly busy / reloading);
             # back off and retry rather than crashing.
@@ -1210,8 +1379,9 @@ def _start_utf(send, mode: str, instance_id: str, init_timeout_ms: int | None,
     return None, {"error": "tests_running (exhausted)"}
 
 
-def _poll_utf(send, job_id: str, instance_id: str, deadline: float,
-              max_retries: int, retry_ms: int) -> dict[str, Any] | Any:
+def _poll_utf(
+    send, job_id: str, instance_id: str, deadline: float, max_retries: int, retry_ms: int
+) -> dict[str, Any] | Any:
     """Poll get_test_job until terminal {succeeded, failed} or deadline.
 
     A returned MCPResponse / reason=="reloading" / hint=="retry" is treated as
@@ -1222,9 +1392,14 @@ def _poll_utf(send, job_id: str, instance_id: str, deadline: float,
         try:
             # Running jobs have no result payload. Request complete rows for the terminal
             # response so JUnit represents passes as well as failures and ignored tests.
-            poll = send("get_test_job", {"job_id": job_id, "includeDetails": True},
-                        instance_id=instance_id, max_retries=max_retries, retry_ms=retry_ms,
-                        retry_on_reload=True)
+            poll = send(
+                "get_test_job",
+                {"job_id": job_id, "includeDetails": True},
+                instance_id=instance_id,
+                max_retries=max_retries,
+                retry_ms=retry_ms,
+                retry_on_reload=True,
+            )
         except Exception:
             # Unity blocks its main thread while running tests, so get_test_job can
             # time out mid-run. That is NOT terminal -- keep polling until the editor
@@ -1246,16 +1421,25 @@ def _poll_utf(send, job_id: str, instance_id: str, deadline: float,
     return {"_wedge": True}
 
 
-def _outcome_from_terminal(name: str, mode: str, terminal: dict[str, Any] | Any,
-                           blocking: bool) -> LegOutcome:
+def _outcome_from_terminal(
+    name: str, mode: str, terminal: dict[str, Any] | Any, blocking: bool
+) -> LegOutcome:
     """Map a terminal get_test_job response into a LegOutcome + JUnit suite."""
     status = _dig(terminal, "status")
     suite = JUnitSuite(name=name)
 
     if isinstance(terminal, dict) and terminal.get("_wedge"):
-        suite.cases.append(JUnitCase(name=f"{mode}.wedge", failure="no terminal status within budget"))
-        return LegOutcome(name, "fail", blocking=blocking, detail="wedge (no terminal status)",
-                          exit_code=1, junit_suite=suite)
+        suite.cases.append(
+            JUnitCase(name=f"{mode}.wedge", failure="no terminal status within budget")
+        )
+        return LegOutcome(
+            name,
+            "fail",
+            blocking=blocking,
+            detail="wedge (no terminal status)",
+            exit_code=1,
+            junit_suite=suite,
+        )
 
     result = _dig(terminal, "result")
     if status == "succeeded" or (status == "failed" and isinstance(result, dict)):
@@ -1263,8 +1447,9 @@ def _outcome_from_terminal(name: str, mode: str, terminal: dict[str, Any] | Any,
 
         def invalid_results(detail: str) -> LegOutcome:
             suite.cases.append(JUnitCase(name=f"{mode}.results", failure=detail))
-            return LegOutcome(name, "fail", blocking=blocking, detail=detail,
-                              exit_code=1, junit_suite=suite)
+            return LegOutcome(
+                name, "fail", blocking=blocking, detail=detail, exit_code=1, junit_suite=suite
+            )
 
         try:
             total, passed, failed, skipped = (
@@ -1286,7 +1471,9 @@ def _outcome_from_terminal(name: str, mode: str, terminal: dict[str, Any] | Any,
                 if state in ("failed", "error"):
                     recorded["failed"] += 1
                     fmsg = str(r.get("message") or "") + "\n" + str(r.get("stackTrace") or "")
-                    suite.cases.append(JUnitCase(name=rname, time_s=rtime, failure=fmsg.strip() or "test failed"))
+                    suite.cases.append(
+                        JUnitCase(name=rname, time_s=rtime, failure=fmsg.strip() or "test failed")
+                    )
                 elif state in ("skipped", "ignored"):
                     recorded["skipped"] += 1
                     suite.cases.append(JUnitCase(name=rname, time_s=rtime, skipped=True))
@@ -1294,23 +1481,35 @@ def _outcome_from_terminal(name: str, mode: str, terminal: dict[str, Any] | Any,
                     recorded["passed"] += 1
                     suite.cases.append(JUnitCase(name=rname, time_s=rtime))
                 else:
-                    return invalid_results(f"unsupported Unity test state for {rname}: {state or '<missing>'}")
+                    return invalid_results(
+                        f"unsupported Unity test state for {rname}: {state or '<missing>'}"
+                    )
         except (AttributeError, TypeError, ValueError, OverflowError):
             return invalid_results("invalid Unity test summary or duration")
 
         if recorded != {"passed": passed, "failed": failed, "skipped": skipped}:
             return invalid_results("Unity test result states disagree with the summary counts")
         if failed > 0:
-            return LegOutcome(name, "fail", blocking=blocking,
-                              detail=f"{failed}/{total} {mode} tests failed", exit_code=1,
-                              junit_suite=suite)
+            return LegOutcome(
+                name,
+                "fail",
+                blocking=blocking,
+                detail=f"{failed}/{total} {mode} tests failed",
+                exit_code=1,
+                junit_suite=suite,
+            )
         if status == "failed":
             return invalid_results(str(_dig(terminal, "error") or "test job failed"))
         if passed == 0:
             return invalid_results("Unity did not execute any passing tests")
-        return LegOutcome(name, "pass", blocking=blocking,
-                          detail=f"{passed}/{total} {mode} tests passed", exit_code=0,
-                          junit_suite=suite)
+        return LegOutcome(
+            name,
+            "pass",
+            blocking=blocking,
+            detail=f"{passed}/{total} {mode} tests passed",
+            exit_code=0,
+            junit_suite=suite,
+        )
 
     # Initialization/runtime failures may have no result: surface error + capped failures.
     error = _dig(terminal, "error") or "test job failed"
@@ -1320,13 +1519,24 @@ def _outcome_from_terminal(name: str, mode: str, terminal: dict[str, Any] | Any,
     if isinstance(failures, list) and failures:
         for fr in failures:
             if isinstance(fr, dict):
-                fail_text += "\n  - " + str(fr.get("full_name") or "") + ": " + str(fr.get("message") or "")
+                fail_text += (
+                    "\n  - " + str(fr.get("full_name") or "") + ": " + str(fr.get("message") or "")
+                )
     suite.cases.append(JUnitCase(name=f"{mode}.job", failure=fail_text))
-    return LegOutcome(name, "fail", blocking=blocking, detail=detail, exit_code=1, junit_suite=suite)
+    return LegOutcome(
+        name, "fail", blocking=blocking, detail=detail, exit_code=1, junit_suite=suite
+    )
 
 
-def run_utf_leg(mode: str, instance_id: str, blocking: bool, deadline: float,
-                max_retries: int, retry_ms: int, init_timeout_ms: int | None = None) -> LegOutcome:
+def run_utf_leg(
+    mode: str,
+    instance_id: str,
+    blocking: bool,
+    deadline: float,
+    max_retries: int,
+    retry_ms: int,
+    init_timeout_ms: int | None = None,
+) -> LegOutcome:
     """Drive one EditMode/PlayMode leg over the raw run_tests/get_test_job wire."""
     _ensure_src_on_path()
     from transport.legacy.unity_connection import send_command_with_retry as send
@@ -1334,20 +1544,39 @@ def run_utf_leg(mode: str, instance_id: str, blocking: bool, deadline: float,
     name = "editmode" if mode == "EditMode" else "playmode"
     job_id, start = _start_utf(send, mode, instance_id, init_timeout_ms, max_retries, retry_ms)
     if job_id is None:
-        suite = JUnitSuite(name=name, cases=[JUnitCase(name=f"{name}.start", failure=_message(start) or "run_tests start failed")])
-        return LegOutcome(name, "fail", blocking=blocking, detail="run_tests start failed", exit_code=1, junit_suite=suite)
+        suite = JUnitSuite(
+            name=name,
+            cases=[
+                JUnitCase(name=f"{name}.start", failure=_message(start) or "run_tests start failed")
+            ],
+        )
+        return LegOutcome(
+            name,
+            "fail",
+            blocking=blocking,
+            detail="run_tests start failed",
+            exit_code=1,
+            junit_suite=suite,
+        )
     terminal = _poll_utf(send, job_id, instance_id, deadline, max_retries, retry_ms)
     return _outcome_from_terminal(name, mode, terminal, blocking)
 
 
-def _ensure_clean_editmode(send, instance_id: str, max_retries: int, retry_ms: int,
-                           deadline: float) -> None:
+def _ensure_clean_editmode(
+    send, instance_id: str, max_retries: int, retry_ms: int, deadline: float
+) -> None:
     """Best-effort: wait until no PlayMode/test job is running (S0)."""
     end = min(time.time() + 30, deadline)
     while time.time() < end:
         try:
-            resp = send("get_test_job", {"job_id": ""}, instance_id=instance_id,
-                        max_retries=max_retries, retry_ms=retry_ms, retry_on_reload=True)
+            resp = send(
+                "get_test_job",
+                {"job_id": ""},
+                instance_id=instance_id,
+                max_retries=max_retries,
+                retry_ms=retry_ms,
+                retry_on_reload=True,
+            )
         except Exception:
             # Editor busy/unresponsive; best-effort wait, treat as still settling.
             time.sleep(2)
@@ -1358,10 +1587,16 @@ def _ensure_clean_editmode(send, instance_id: str, max_retries: int, retry_ms: i
         time.sleep(2)
 
 
-def run_playmode_with_retry(instance_id: str, deadline: float, max_retries: int, retry_ms: int,
-                            init_timeout_ms: int, strict: bool,
-                            relaunch: Callable[[], str] | None = None,
-                            before_retry: Callable[[], None] | None = None) -> LegOutcome:
+def run_playmode_with_retry(
+    instance_id: str,
+    deadline: float,
+    max_retries: int,
+    retry_ms: int,
+    init_timeout_ms: int,
+    strict: bool,
+    relaunch: Callable[[], str] | None = None,
+    before_retry: Callable[[], None] | None = None,
+) -> LegOutcome:
     """PlayMode state machine: start, poll, classify-can-rerun, retry ONCE.
 
     Non-blocking by default; --strict-playmode promotes failure to blocking.
@@ -1378,8 +1613,22 @@ def run_playmode_with_retry(instance_id: str, deadline: float, max_retries: int,
         _ensure_clean_editmode(send, inst, max_retries, retry_ms, deadline)
         job_id, start = _start_utf(send, "PlayMode", inst, init_timeout_ms, max_retries, retry_ms)
         if job_id is None:
-            suite = JUnitSuite(name="playmode", cases=[JUnitCase(name="playmode.start", failure=_message(start) or "run_tests start failed")])
-            return LegOutcome("playmode", "fail", blocking=blocking, detail="run_tests start failed", exit_code=1, junit_suite=suite)
+            suite = JUnitSuite(
+                name="playmode",
+                cases=[
+                    JUnitCase(
+                        name="playmode.start", failure=_message(start) or "run_tests start failed"
+                    )
+                ],
+            )
+            return LegOutcome(
+                "playmode",
+                "fail",
+                blocking=blocking,
+                detail="run_tests start failed",
+                exit_code=1,
+                junit_suite=suite,
+            )
         terminal = _poll_utf(send, job_id, inst, deadline, max_retries, retry_ms)
         return _outcome_from_terminal("playmode", "PlayMode", terminal, blocking)
 
@@ -1422,13 +1671,17 @@ def write_reports(junit_path: Path, reports_dir: Path, outcomes: list[LegOutcome
     # Also write a combined report.
     suites = [o.junit_suite for o in outcomes if o.junit_suite is not None]
     if suites:
-        merge_junit(suites).write(str(reports_dir / "junit-all.xml"), encoding="utf-8", xml_declaration=True)
+        merge_junit(suites).write(
+            str(reports_dir / "junit-all.xml"), encoding="utf-8", xml_declaration=True
+        )
 
 
 def _print_summary(outcomes: list[LegOutcome], exit_code: int) -> None:
     print("== local harness summary ==")
     for o in outcomes:
-        tag = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP", "error": "ERROR"}.get(o.status, o.status.upper())
+        tag = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP", "error": "ERROR"}.get(
+            o.status, o.status.upper()
+        )
         block = "blocking" if o.blocking else "non-blocking"
         print(f"  [{tag}] {o.name} ({block}) -- {o.detail}")
     print(f"== exit {exit_code} ==")
@@ -1440,18 +1693,24 @@ def main(argv: list[str] | None = None) -> int:
     requested_legs = [p.strip().lower() for p in (args.legs or "").split(",") if p.strip()]
     invalid_legs = [leg for leg in requested_legs if leg not in ALLOWED_LEGS]
     if invalid_legs:
-        print(f"::error:: --legs included invalid value(s): {', '.join(invalid_legs)} "
-              f"(allowed: {', '.join(ALLOWED_LEGS)})")
+        print(
+            f"::error:: --legs included invalid value(s): {', '.join(invalid_legs)} "
+            f"(allowed: {', '.join(ALLOWED_LEGS)})"
+        )
         return 2
     legs = parse_legs(args.legs)
     if not legs:
-        print(f"::error:: --legs did not include any valid values (allowed: {', '.join(ALLOWED_LEGS)})")
+        print(
+            f"::error:: --legs did not include any valid values (allowed: {', '.join(ALLOWED_LEGS)})"
+        )
         return 2
     if args.ci:
         args.no_warmup = True
         if not os.environ.get("UNITY_IMAGE"):
-            print("::error:: --ci requires the UNITY_IMAGE environment variable "
-                  "(the unityci/editor image to run the headless Editor in)")
+            print(
+                "::error:: --ci requires the UNITY_IMAGE environment variable "
+                "(the unityci/editor image to run the headless Editor in)"
+            )
             return 2
 
     # Resolve project path (repo-relative or absolute).
@@ -1499,10 +1758,18 @@ def main(argv: list[str] | None = None) -> int:
 
     def record_scene_setup_failure() -> None:
         detail = "could not prepare CI scene"
-        record_outcome(LegOutcome(
-            "setup", "error", blocking=True, detail=detail, exit_code=2,
-            junit_suite=JUnitSuite(name="setup", cases=[JUnitCase(name="setup.scene", failure=detail)]),
-        ))
+        record_outcome(
+            LegOutcome(
+                "setup",
+                "error",
+                blocking=True,
+                detail=detail,
+                exit_code=2,
+                junit_suite=JUnitSuite(
+                    name="setup", cases=[JUnitCase(name="setup.scene", failure=detail)]
+                ),
+            )
+        )
         write_reports(junit_path, reports_dir, outcomes)
 
     def do_teardown() -> None:
@@ -1544,7 +1811,10 @@ def main(argv: list[str] | None = None) -> int:
             _watchdog_stop.wait(remaining)
         if _watchdog_stop.is_set():
             return
-        print(f"::error:: overall watchdog timed out after {args.overall_timeout}s -- killing editor", flush=True)
+        print(
+            f"::error:: overall watchdog timed out after {args.overall_timeout}s -- killing editor",
+            flush=True,
+        )
         try:
             do_teardown()
         finally:
@@ -1563,7 +1833,9 @@ def main(argv: list[str] | None = None) -> int:
                 if prev is not None:
                     os.environ["UNITY_MCP_STATUS_DIR"] = prev
             if not status_file:
-                print(f"::error:: --reuse: no resident bridge found for {project_path} under {status_dir}")
+                print(
+                    f"::error:: --reuse: no resident bridge found for {project_path} under {status_dir}"
+                )
                 return 2
             data = _read_status(status_file)
             port = port_from_status(data)
@@ -1595,7 +1867,9 @@ def main(argv: list[str] | None = None) -> int:
                 rc = launcher.warmup(spec.binary, project_path, warmup_log, args.boot_timeout)
                 if rc not in (0,):
                     tail = launcher.tail_log(Handle(log_path=str(warmup_log)), 200)
-                    kind = classify_log(tail, license_grace_elapsed=(time.time() - boot_start) >= LICENSE_GRACE_S)
+                    kind = classify_log(
+                        tail, license_grace_elapsed=(time.time() - boot_start) >= LICENSE_GRACE_S
+                    )
                     if kind == "license_fatal":
                         print(redact(tail))
                         return 4
@@ -1606,8 +1880,12 @@ def main(argv: list[str] | None = None) -> int:
 
             # Phase 2 -- resident (NO -quit).
             editor_log = status_dir / "editor.log"
-            handle = launcher.launch(spec.binary, project_path, status_dir, editor_log, args.editor_args)
-            ready = wait_for_ready(launcher, handle, status_dir, args.bridge_wait, boot_start, deadline)
+            handle = launcher.launch(
+                spec.binary, project_path, status_dir, editor_log, args.editor_args
+            )
+            ready = wait_for_ready(
+                launcher, handle, status_dir, args.bridge_wait, boot_start, deadline
+            )
             instance_id = ready.instance_id
 
         # Pin the instance so smoke + UTF target our own editor.
@@ -1630,33 +1908,62 @@ def main(argv: list[str] | None = None) -> int:
 
         # --- Smoke leg ---
         if "smoke" in legs:
-            record_outcome(run_smoke_leg(instance_id, junit_path, args.max_retries,
-                                          args.retry_ms, deadline=deadline))
+            record_outcome(
+                run_smoke_leg(
+                    instance_id, junit_path, args.max_retries, args.retry_ms, deadline=deadline
+                )
+            )
 
         # --- EditMode leg ---
         if "editmode" in legs:
             if not compile_ok:
-                outcomes.append(LegOutcome("editmode", "fail", blocking=True,
-                                           detail="project does not compile", exit_code=3))
+                outcomes.append(
+                    LegOutcome(
+                        "editmode",
+                        "fail",
+                        blocking=True,
+                        detail="project does not compile",
+                        exit_code=3,
+                    )
+                )
             else:
-                record_outcome(run_utf_leg("EditMode", instance_id, blocking=True,
-                                            deadline=deadline, max_retries=args.max_retries,
-                                            retry_ms=args.retry_ms))
+                record_outcome(
+                    run_utf_leg(
+                        "EditMode",
+                        instance_id,
+                        blocking=True,
+                        deadline=deadline,
+                        max_retries=args.max_retries,
+                        retry_ms=args.retry_ms,
+                    )
+                )
 
         # --- PlayMode leg (default-ON, NON-BLOCKING unless --strict-playmode) ---
         if "playmode" in legs:
             if not compile_ok:
-                outcomes.append(LegOutcome("playmode", "fail", blocking=bool(args.strict_playmode),
-                                           detail="project does not compile", exit_code=3))
+                outcomes.append(
+                    LegOutcome(
+                        "playmode",
+                        "fail",
+                        blocking=bool(args.strict_playmode),
+                        detail="project does not compile",
+                        exit_code=3,
+                    )
+                )
             else:
+
                 def _relaunch() -> str:
                     nonlocal handle, ready, instance_id
                     if handle is not None and owns_editor:
                         launcher.teardown(handle)
                     time.sleep(SOCKET_RELEASE_MS / 1000.0)
                     editor_log = status_dir / "editor.log"
-                    handle = launcher.launch(spec.binary, project_path, status_dir, editor_log, args.editor_args)
-                    ready = wait_for_ready(launcher, handle, status_dir, args.bridge_wait, time.time(), deadline)
+                    handle = launcher.launch(
+                        spec.binary, project_path, status_dir, editor_log, args.editor_args
+                    )
+                    ready = wait_for_ready(
+                        launcher, handle, status_dir, args.bridge_wait, time.time(), deadline
+                    )
                     instance_id = ready.instance_id
                     os.environ["UNITY_MCP_DEFAULT_INSTANCE"] = instance_id
                     if not prepare_ci_scene(args, instance_id):
@@ -1665,10 +1972,18 @@ def main(argv: list[str] | None = None) -> int:
                     return instance_id
 
                 relaunch = _relaunch if (owns_editor and not args.reuse) else None
-                record_outcome(run_playmode_with_retry(
-                    instance_id, deadline, args.max_retries, args.retry_ms,
-                    args.playmode_init_timeout, bool(args.strict_playmode), relaunch=relaunch,
-                    before_retry=lambda: capture_diagnostics("playmode-before-retry")))
+                record_outcome(
+                    run_playmode_with_retry(
+                        instance_id,
+                        deadline,
+                        args.max_retries,
+                        args.retry_ms,
+                        args.playmode_init_timeout,
+                        bool(args.strict_playmode),
+                        relaunch=relaunch,
+                        before_retry=lambda: capture_diagnostics("playmode-before-retry"),
+                    )
+                )
 
         # Aggregate + write reports.
         write_reports(junit_path, reports_dir, outcomes)

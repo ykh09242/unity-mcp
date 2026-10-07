@@ -15,7 +15,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
     {
         public static AssetGenJob ImportInto(AssetGenJob job, string localFilePath, bool asSprite, bool transparent, bool isColor)
         {
-            if (job == null) return null;
+            if (job == null)
+                return null;
             try
             {
                 if (string.IsNullOrEmpty(localFilePath))

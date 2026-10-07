@@ -7,19 +7,24 @@ import sys
 
 def _run(program, tmp_path):
     env = {
-        **os.environ, "APPDATA": str(tmp_path), "XDG_DATA_HOME": str(tmp_path),
+        **os.environ,
+        "APPDATA": str(tmp_path),
+        "XDG_DATA_HOME": str(tmp_path),
         "UNITY_MCP_DISABLE_TELEMETRY": "true",
     }
     env.pop("PYTEST_CURRENT_TEST", None)
     result = subprocess.run(
-        [sys.executable, "-B", "-c", program], env=env,
-        capture_output=True, text=True, timeout=90,
+        [sys.executable, "-B", "-c", program],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
 
-CLI_PROGRAM = r'''
+CLI_PROGRAM = r"""
 import copy
 import json
 import httpx
@@ -117,10 +122,10 @@ for command in (None, *build.commands):
     print('FULL_HELP', json.dumps({'command': command, 'text': result.output}))
 print('CLI_SUMMARY', json.dumps({'checks': checks, 'failures': failures, 'requests': len(requests)}))
 assert not failures, failures
-'''
+"""
 
 
-SDK_PROGRAM = r'''
+SDK_PROGRAM = r"""
 import copy
 import json
 from types import SimpleNamespace
@@ -266,7 +271,7 @@ async def main():
     assert not failures, failures
 
 anyio.run(main)
-'''
+"""
 
 
 def test_build_top_level_cli_contracts(tmp_path):

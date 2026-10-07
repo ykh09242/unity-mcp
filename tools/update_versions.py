@@ -21,13 +21,13 @@ Options:
 Examples:
     # Update Unity bundle metadata to match package.json without changing the server
     python3 tools/update_versions.py
-    
+
     # Update the server independently; its source pin is changed only after a commit
     python3 tools/update_versions.py --component server --version 1.0.1
 
     # Explicitly retain the upstream synchronized release behavior
     python3 tools/update_versions.py --component all --version 9.2.0
-    
+
     # Dry run to see what would be updated
     python3 tools/update_versions.py --dry-run
 """
@@ -75,8 +75,7 @@ def update_package_json(new_version: str, dry_run: bool = False) -> bool:
         print(f"✓ {PACKAGE_JSON.relative_to(REPO_ROOT)} already at v{new_version}")
         return False
 
-    print(
-        f"Updating {PACKAGE_JSON.relative_to(REPO_ROOT)}: {current_version} → {new_version}")
+    print(f"Updating {PACKAGE_JSON.relative_to(REPO_ROOT)}: {current_version} → {new_version}")
 
     if not dry_run:
         package_data["version"] = new_version
@@ -101,8 +100,7 @@ def update_manifest_json(new_version: str, dry_run: bool = False) -> bool:
         print(f"✓ {MANIFEST_JSON.relative_to(REPO_ROOT)} already at v{new_version}")
         return False
 
-    print(
-        f"Updating {MANIFEST_JSON.relative_to(REPO_ROOT)}: {current_version} → {new_version}")
+    print(f"Updating {MANIFEST_JSON.relative_to(REPO_ROOT)}: {current_version} → {new_version}")
 
     if not dry_run:
         manifest["version"] = new_version
@@ -125,8 +123,7 @@ def update_pyproject_toml(new_version: str, dry_run: bool = False) -> bool:
     # Find current version
     version_match = re.search(r'^version = "([^"]+)"', content, re.MULTILINE)
     if not version_match:
-        print(
-            f"Warning: Could not find version in {PYPROJECT_TOML.relative_to(REPO_ROOT)}")
+        print(f"Warning: Could not find version in {PYPROJECT_TOML.relative_to(REPO_ROOT)}")
         return False
 
     current_version = version_match.group(1)
@@ -135,13 +132,13 @@ def update_pyproject_toml(new_version: str, dry_run: bool = False) -> bool:
         print(f"✓ {PYPROJECT_TOML.relative_to(REPO_ROOT)} already at v{new_version}")
         return False
 
-    print(
-        f"Updating {PYPROJECT_TOML.relative_to(REPO_ROOT)}: {current_version} → {new_version}")
+    print(f"Updating {PYPROJECT_TOML.relative_to(REPO_ROOT)}: {current_version} → {new_version}")
 
     if not dry_run:
         # Replace only the first occurrence (the version field)
         content = re.sub(
-            r'^version = ".*"', f'version = "{new_version}"', content, count=1, flags=re.MULTILINE)
+            r'^version = ".*"', f'version = "{new_version}"', content, count=1, flags=re.MULTILINE
+        )
         PYPROJECT_TOML.write_text(content, encoding="utf-8")
 
     return True
@@ -188,7 +185,8 @@ def update_uv_lock(new_version: str, dry_run: bool = False) -> bool:
 
     if not dry_run:
         content = _UV_LOCK_SELF_VERSION.sub(
-            lambda m: f"{m.group(1)}{new_version}{m.group(3)}", content, count=1)
+            lambda m: f"{m.group(1)}{new_version}{m.group(3)}", content, count=1
+        )
         UV_LOCK.write_bytes(content.encode("utf-8"))
 
     return True
@@ -203,16 +201,16 @@ def update_server_readme(new_version: str, dry_run: bool = False) -> bool:
     content = SERVER_README.read_text(encoding="utf-8")
 
     # Pattern to match git+https URLs with version tags
-    pattern = r'git\+https://github\.com/CoplayDev/unity-mcp@v[0-9]+\.[0-9]+\.[0-9]+#subdirectory=Server'
-    replacement = f'git+https://github.com/CoplayDev/unity-mcp@v{new_version}#subdirectory=Server'
+    pattern = (
+        r"git\+https://github\.com/CoplayDev/unity-mcp@v[0-9]+\.[0-9]+\.[0-9]+#subdirectory=Server"
+    )
+    replacement = f"git+https://github.com/CoplayDev/unity-mcp@v{new_version}#subdirectory=Server"
 
     if not re.search(pattern, content):
-        print(
-            f"✓ {SERVER_README.relative_to(REPO_ROOT)} has no version references to update")
+        print(f"✓ {SERVER_README.relative_to(REPO_ROOT)} has no version references to update")
         return False
 
-    print(
-        f"Updating version references in {SERVER_README.relative_to(REPO_ROOT)}")
+    print(f"Updating version references in {SERVER_README.relative_to(REPO_ROOT)}")
 
     if not dry_run:
         content = re.sub(pattern, replacement, content)
@@ -230,16 +228,16 @@ def update_root_readme(new_version: str, dry_run: bool = False) -> bool:
     content = ROOT_README.read_text(encoding="utf-8")
 
     # Pattern to match git URLs with fixed version tags
-    pattern = r'https://github\.com/CoplayDev/unity-mcp\.git\?path=/MCPForUnity#v[0-9]+\.[0-9]+\.[0-9]+'
-    replacement = f'https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#v{new_version}'
+    pattern = (
+        r"https://github\.com/CoplayDev/unity-mcp\.git\?path=/MCPForUnity#v[0-9]+\.[0-9]+\.[0-9]+"
+    )
+    replacement = f"https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#v{new_version}"
 
     if not re.search(pattern, content):
-        print(
-            f"✓ {ROOT_README.relative_to(REPO_ROOT)} has no version references to update")
+        print(f"✓ {ROOT_README.relative_to(REPO_ROOT)} has no version references to update")
         return False
 
-    print(
-        f"Updating version references in {ROOT_README.relative_to(REPO_ROOT)}")
+    print(f"Updating version references in {ROOT_README.relative_to(REPO_ROOT)}")
 
     if not dry_run:
         content = re.sub(pattern, replacement, content)
@@ -257,12 +255,13 @@ def update_zh_readme(new_version: str, dry_run: bool = False) -> bool:
     content = ZH_README.read_text(encoding="utf-8")
 
     # Pattern to match git URLs with fixed version tags
-    pattern = r'https://github\.com/CoplayDev/unity-mcp\.git\?path=/MCPForUnity#v[0-9]+\.[0-9]+\.[0-9]+'
-    replacement = f'https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#v{new_version}'
+    pattern = (
+        r"https://github\.com/CoplayDev/unity-mcp\.git\?path=/MCPForUnity#v[0-9]+\.[0-9]+\.[0-9]+"
+    )
+    replacement = f"https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#v{new_version}"
 
     if not re.search(pattern, content):
-        print(
-            f"✓ {ZH_README.relative_to(REPO_ROOT)} has no version references to update")
+        print(f"✓ {ZH_README.relative_to(REPO_ROOT)} has no version references to update")
         return False
 
     print(f"Updating version references in {ZH_README.relative_to(REPO_ROOT)}")
@@ -332,8 +331,7 @@ def main() -> int:
             print("\nDry run complete. No files were modified.")
         else:
             if updates_made:
-                print(
-                    f"\nUpdated {len(updates_made)} files: {', '.join(updates_made)}")
+                print(f"\nUpdated {len(updates_made)} files: {', '.join(updates_made)}")
             else:
                 print("\nAll files already at the correct version.")
 

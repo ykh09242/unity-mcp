@@ -1,9 +1,9 @@
 using System;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Vfx
 {
@@ -82,8 +82,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             EditorUtility.SetDirty(go);
             if (!EditorApplication.isPlaying)
             {
-                UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(
-                    UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
+                UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
             }
 
             return new
@@ -94,34 +93,64 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 targetId = go.GetInstanceIDCompat(),
                 createdGameObject,
                 addedParticleSystem,
-                assignedMaterial = renderer?.sharedMaterial?.name
+                assignedMaterial = renderer?.sharedMaterial?.name,
             };
         }
 
         public static object EnableModule(JObject @params)
         {
             ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
-            if (ps == null) return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+            if (ps == null)
+                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
 
             string moduleName = @params["module"]?.ToString()?.ToLowerInvariant();
             bool enabled = @params["enabled"]?.ReadScalar<bool?>() ?? true;
 
-            if (string.IsNullOrEmpty(moduleName)) return new { success = false, message = "Module name required" };
+            if (string.IsNullOrEmpty(moduleName))
+                return new { success = false, message = "Module name required" };
 
             Undo.RecordObject(ps, $"Toggle {moduleName}");
 
             switch (moduleName.Replace("_", ""))
             {
-                case "emission": var em = ps.emission; em.enabled = enabled; break;
-                case "shape": var sh = ps.shape; sh.enabled = enabled; break;
-                case "coloroverlifetime": var col = ps.colorOverLifetime; col.enabled = enabled; break;
-                case "sizeoverlifetime": var sol = ps.sizeOverLifetime; sol.enabled = enabled; break;
-                case "velocityoverlifetime": var vol = ps.velocityOverLifetime; vol.enabled = enabled; break;
-                case "noise": var n = ps.noise; n.enabled = enabled; break;
-                case "collision": var coll = ps.collision; coll.enabled = enabled; break;
-                case "trails": var tr = ps.trails; tr.enabled = enabled; break;
-                case "lights": var li = ps.lights; li.enabled = enabled; break;
-                default: return new { success = false, message = $"Unknown module: {moduleName}" };
+                case "emission":
+                    var em = ps.emission;
+                    em.enabled = enabled;
+                    break;
+                case "shape":
+                    var sh = ps.shape;
+                    sh.enabled = enabled;
+                    break;
+                case "coloroverlifetime":
+                    var col = ps.colorOverLifetime;
+                    col.enabled = enabled;
+                    break;
+                case "sizeoverlifetime":
+                    var sol = ps.sizeOverLifetime;
+                    sol.enabled = enabled;
+                    break;
+                case "velocityoverlifetime":
+                    var vol = ps.velocityOverLifetime;
+                    vol.enabled = enabled;
+                    break;
+                case "noise":
+                    var n = ps.noise;
+                    n.enabled = enabled;
+                    break;
+                case "collision":
+                    var coll = ps.collision;
+                    coll.enabled = enabled;
+                    break;
+                case "trails":
+                    var tr = ps.trails;
+                    tr.enabled = enabled;
+                    break;
+                case "lights":
+                    var li = ps.lights;
+                    li.enabled = enabled;
+                    break;
+                default:
+                    return new { success = false, message = $"Unknown module: {moduleName}" };
             }
 
             EditorUtility.SetDirty(ps);
@@ -131,7 +160,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object Control(JObject @params, string action)
         {
             ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
-            if (ps == null) return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+            if (ps == null)
+                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
 
             RendererHelpers.EnsureMaterialResult ensureResult = default;
             bool materialChecked = false;
@@ -151,12 +181,24 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             switch (action)
             {
-                case "play": ps.Play(withChildren); break;
-                case "stop": ps.Stop(withChildren, ParticleSystemStopBehavior.StopEmitting); break;
-                case "pause": ps.Pause(withChildren); break;
-                case "restart": ps.Stop(withChildren, ParticleSystemStopBehavior.StopEmittingAndClear); ps.Play(withChildren); break;
-                case "clear": ps.Clear(withChildren); break;
-                default: return new { success = false, message = $"Unknown action: {action}" };
+                case "play":
+                    ps.Play(withChildren);
+                    break;
+                case "stop":
+                    ps.Stop(withChildren, ParticleSystemStopBehavior.StopEmitting);
+                    break;
+                case "pause":
+                    ps.Pause(withChildren);
+                    break;
+                case "restart":
+                    ps.Stop(withChildren, ParticleSystemStopBehavior.StopEmittingAndClear);
+                    ps.Play(withChildren);
+                    break;
+                case "clear":
+                    ps.Clear(withChildren);
+                    break;
+                default:
+                    return new { success = false, message = $"Unknown action: {action}" };
             }
 
             return new
@@ -171,7 +213,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object AddBurst(JObject @params)
         {
             ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
-            if (ps == null) return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+            if (ps == null)
+                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
 
             // Ensure material is assigned
             var renderer = ParticleCommon.FindParticleSystemRenderer(ps);
@@ -217,7 +260,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object ClearBursts(JObject @params)
         {
             ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
-            if (ps == null) return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+            if (ps == null)
+                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
 
             Undo.RecordObject(ps, "Clear Bursts");
             var emission = ps.emission;

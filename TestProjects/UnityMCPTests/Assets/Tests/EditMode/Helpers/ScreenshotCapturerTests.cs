@@ -1,11 +1,11 @@
 using System.Collections;
 using System.IO;
 using System.Reflection;
+using MCPForUnity.Runtime.Helpers;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.TestTools;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.Editor.Helpers
 {
@@ -61,8 +61,7 @@ namespace MCPForUnityTests.Editor.Helpers
                 byte[] winner = { 1, 2, 3 };
                 Directory.CreateDirectory(Path.GetDirectoryName(prepared.FullPath));
                 File.WriteAllBytes(prepared.FullPath, winner);
-                var encode = typeof(ScreenshotUtility).GetMethod(
-                    "EncodeAndSaveComposited", BindingFlags.Static | BindingFlags.NonPublic);
+                var encode = typeof(ScreenshotUtility).GetMethod("EncodeAndSaveComposited", BindingFlags.Static | BindingFlags.NonPublic);
                 Assert.IsNotNull(encode);
                 object[] args = { texture, prepared, false, 0, unique, null };
                 if (unique)
@@ -112,11 +111,15 @@ namespace MCPForUnityTests.Editor.Helpers
             bool called = false;
             Texture2D received = null;
 
-            var capturer = ScreenshotCapturer.Begin(1, tex =>
-            {
-                received = tex;
-                called = true;
-            }, timeoutSeconds: 0.15f);
+            var capturer = ScreenshotCapturer.Begin(
+                1,
+                tex =>
+                {
+                    received = tex;
+                    called = true;
+                },
+                timeoutSeconds: 0.15f
+            );
 
             Assert.IsNotNull(capturer);
             Object.DestroyImmediate(capturer.gameObject);
@@ -143,8 +146,7 @@ namespace MCPForUnityTests.Editor.Helpers
             string folder = "Temp/ScreenshotCapturerTests-" + System.Guid.NewGuid().ToString("N");
             try
             {
-                var task = ScreenshotUtility.CaptureCompositedAsync(
-                    "batch_mode", includeImage: true, maxResolution: 64, folderOverride: folder);
+                var task = ScreenshotUtility.CaptureCompositedAsync("batch_mode", includeImage: true, maxResolution: 64, folderOverride: folder);
 
                 // Batch mode renders no frames, so waiting for one would only sit out the timeout.
                 Assert.IsTrue(task.IsCompleted, "the call must not wait for an end of frame in batch mode");
@@ -154,8 +156,7 @@ namespace MCPForUnityTests.Editor.Helpers
                 Assert.IsNotNull(result.FallbackCameraName);
                 StringAssert.Contains($"render of camera '{result.FallbackCameraName}'", result.FallbackReason);
                 Assert.IsNotNull(result.ImageBase64, "the caller still gets an image");
-                Assert.AreEqual(0, UnityEngine.Resources.FindObjectsOfTypeAll<ScreenshotCapturer>().Length,
-                    "no capturer may start when no frame can come");
+                Assert.AreEqual(0, UnityEngine.Resources.FindObjectsOfTypeAll<ScreenshotCapturer>().Length, "no capturer may start when no frame can come");
             }
             finally
             {

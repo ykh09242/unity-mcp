@@ -42,40 +42,27 @@ namespace MCPForUnity.Editor.Tools
         private const int ConsoleFlagLogLevelLog = 1 << 7;
         private const int ConsoleFlagLogLevelWarning = 1 << 8;
         private const int ConsoleFlagLogLevelError = 1 << 9;
-        private const int ConsoleFlagLogLevelMask =
-            ConsoleFlagLogLevelLog | ConsoleFlagLogLevelWarning | ConsoleFlagLogLevelError;
-    
+        private const int ConsoleFlagLogLevelMask = ConsoleFlagLogLevelLog | ConsoleFlagLogLevelWarning | ConsoleFlagLogLevelError;
+
         // Static constructor for reflection setup
         static ReadConsole()
         {
             try
             {
-                Type logEntriesType = typeof(EditorApplication).Assembly.GetType(
-                    "UnityEditor.LogEntries"
-                );
+                Type logEntriesType = typeof(EditorApplication).Assembly.GetType("UnityEditor.LogEntries");
                 if (logEntriesType == null)
                     throw new Exception("Could not find internal type UnityEditor.LogEntries");
 
-
-
                 // Include NonPublic binding flags as internal APIs might change accessibility
-                BindingFlags staticFlags =
-                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
-                BindingFlags instanceFlags =
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                BindingFlags staticFlags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+                BindingFlags instanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
-                _startGettingEntriesMethod = logEntriesType.GetMethod(
-                    "StartGettingEntries",
-                    staticFlags
-                );
+                _startGettingEntriesMethod = logEntriesType.GetMethod("StartGettingEntries", staticFlags);
                 if (_startGettingEntriesMethod == null)
                     throw new Exception("Failed to reflect LogEntries.StartGettingEntries");
 
                 // Try reflecting EndGettingEntries based on warning message
-                _endGettingEntriesMethod = logEntriesType.GetMethod(
-                    "EndGettingEntries",
-                    staticFlags
-                );
+                _endGettingEntriesMethod = logEntriesType.GetMethod("EndGettingEntries", staticFlags);
                 if (_endGettingEntriesMethod == null)
                     throw new Exception("Failed to reflect LogEntries.EndGettingEntries");
 
@@ -91,9 +78,7 @@ namespace MCPForUnity.Editor.Tools
                 if (_getEntryMethod == null)
                     throw new Exception("Failed to reflect LogEntries.GetEntryInternal");
 
-                Type logEntryType = typeof(EditorApplication).Assembly.GetType(
-                    "UnityEditor.LogEntry"
-                );
+                Type logEntryType = typeof(EditorApplication).Assembly.GetType("UnityEditor.LogEntry");
                 if (logEntryType == null)
                     throw new Exception("Could not find internal type UnityEditor.LogEntry");
 
@@ -125,7 +110,6 @@ namespace MCPForUnity.Editor.Tools
                 _getFilteringTextMethod = logEntriesType.GetMethod("GetFilteringText", staticFlags);
 
                 // (Calibration removed)
-
             }
             catch (Exception e)
             {
@@ -133,12 +117,7 @@ namespace MCPForUnity.Editor.Tools
                     $"[ReadConsole] Static Initialization Failed: Could not setup reflection for LogEntries/LogEntry. Console reading/clearing will likely fail. Specific Error: {e.Message}"
                 );
                 // Set members to null to prevent NullReferenceExceptions later, HandleCommand should check this.
-                _startGettingEntriesMethod =
-                    _endGettingEntriesMethod =
-                    _clearMethod =
-                    _getCountMethod =
-                    _getEntryMethod =
-                        null;
+                _startGettingEntriesMethod = _endGettingEntriesMethod = _clearMethod = _getCountMethod = _getEntryMethod = null;
                 _modeField = _messageField = _fileField = _lineField = _callstackTextStartField = null;
                 _consoleFlagsProperty = null;
                 _setFilteringTextMethod = _getFilteringTextMethod = null;
@@ -166,9 +145,7 @@ namespace MCPForUnity.Editor.Tools
                 McpLog.Error(
                     "[ReadConsole] HandleCommand called but reflection members are not initialized. Static constructor might have failed silently or there's an issue."
                 );
-                return new ErrorResponse(
-                    "ReadConsole handler failed to initialize due to reflection errors. Cannot access console logs."
-                );
+                return new ErrorResponse("ReadConsole handler failed to initialize due to reflection errors. Cannot access console logs.");
             }
 
             if (@params == null)
@@ -190,9 +167,7 @@ namespace MCPForUnity.Editor.Tools
                 else if (action == "get")
                 {
                     // Extract parameters for 'get'
-                    var types =
-                        (p.GetRaw("types") as JArray)?.Select(t => t.ToString().ToLower()).ToList()
-                        ?? new List<string> { "error", "warning" };
+                    var types = (p.GetRaw("types") as JArray)?.Select(t => t.ToString().ToLower()).ToList() ?? new List<string> { "error", "warning" };
                     int? count = p.GetInt("count");
                     int? pageSize = p.GetInt("pageSize");
                     int? cursor = p.GetInt("cursor");
@@ -207,7 +182,10 @@ namespace MCPForUnity.Editor.Tools
                             return new ErrorResponse("'fields' is supported only for get with json or detailed format.");
                         if (fieldsToken.Type == JTokenType.String)
                         {
-                            try { fieldsToken = JArray.Parse(fieldsToken.Value<string>()); }
+                            try
+                            {
+                                fieldsToken = JArray.Parse(fieldsToken.Value<string>());
+                            }
                             catch (Newtonsoft.Json.JsonException)
                             {
                                 return new ErrorResponse("'fields' must be a list of type, message, file, line, or stackTrace.");
@@ -237,22 +215,11 @@ namespace MCPForUnity.Editor.Tools
                         types = new List<string> { "error", "warning", "log" }; // Expand 'all'
                     }
 
-                    return GetConsoleEntries(
-                        types,
-                        count,
-                        pageSize,
-                        cursor,
-                        filterText,
-                        format,
-                        includeStacktrace,
-                        fields
-                    );
+                    return GetConsoleEntries(types, count, pageSize, cursor, filterText, format, includeStacktrace, fields);
                 }
                 else
                 {
-                    return new ErrorResponse(
-                        $"Unknown action: '{action}'. Valid actions are 'get' or 'clear'."
-                    );
+                    return new ErrorResponse($"Unknown action: '{action}'. Valid actions are 'get' or 'clear'.");
                 }
             }
             catch (Exception e)
@@ -292,9 +259,7 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception e)
             {
-                McpLog.Warn(
-                    $"[ReadConsole] Could not override console severity flags; entries hidden by the Console window may be missing: {e.Message}"
-                );
+                McpLog.Warn($"[ReadConsole] Could not override console severity flags; entries hidden by the Console window may be missing: {e.Message}");
                 return false;
             }
         }
@@ -338,9 +303,7 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception e)
             {
-                McpLog.Warn(
-                    $"[ReadConsole] Could not clear the console search filter; entries hidden by it may be missing: {e.Message}"
-                );
+                McpLog.Warn($"[ReadConsole] Could not clear the console search filter; entries hidden by it may be missing: {e.Message}");
                 return false;
             }
         }
@@ -424,17 +387,11 @@ namespace MCPForUnity.Editor.Tools
                 // which may return stale values within an active iteration session.
                 object startResult = _startGettingEntriesMethod.Invoke(null, null);
                 entriesStarted = true;
-                int totalEntries = startResult is int startCount
-                    ? startCount
-                    : (int)_getCountMethod.Invoke(null, null);
+                int totalEntries = startResult is int startCount ? startCount : (int)_getCountMethod.Invoke(null, null);
                 // Create instance to pass to GetEntryInternal - Ensure the type is correct
-                Type logEntryType = typeof(EditorApplication).Assembly.GetType(
-                    "UnityEditor.LogEntry"
-                );
+                Type logEntryType = typeof(EditorApplication).Assembly.GetType("UnityEditor.LogEntry");
                 if (logEntryType == null)
-                    throw new Exception(
-                        "Could not find internal type UnityEditor.LogEntry during GetConsoleEntries."
-                    );
+                    throw new Exception("Could not find internal type UnityEditor.LogEntry during GetConsoleEntries.");
                 object logEntryInstance = Activator.CreateInstance(logEntryType);
 
                 for (int i = 0; i < totalEntries; i++)
@@ -473,13 +430,11 @@ namespace MCPForUnity.Editor.Tools
                         want = types.Contains(unityType.ToString().ToLowerInvariant());
                     }
 
-                    if (!want) continue;
+                    if (!want)
+                        continue;
 
                     // Filter by text (case-insensitive)
-                    if (
-                        !string.IsNullOrEmpty(filterText)
-                        && message.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) < 0
-                    )
+                    if (!string.IsNullOrEmpty(filterText) && message.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) < 0)
                     {
                         continue;
                     }
@@ -490,8 +445,10 @@ namespace MCPForUnity.Editor.Tools
                     // determines truncated/nextCursor exactly as before.
                     if (usePaging)
                     {
-                        if (totalMatches <= resolvedCursor) continue;
-                        if (totalMatches > pageEndExclusive) break;
+                        if (totalMatches <= resolvedCursor)
+                            continue;
+                        if (totalMatches > pageEndExclusive)
+                            break;
                     }
 
                     int? callstackStart = _callstackTextStartField?.GetValue(logEntryInstance) as int?;
@@ -501,7 +458,8 @@ namespace MCPForUnity.Editor.Tools
                     {
                         (messageOnly, stackTrace) = SplitMessageAndStackTrace(message, callstackStart);
                     }
-                    else messageOnly = GetMessageBody(message, callstackStart);
+                    else
+                        messageOnly = GetMessageBody(message, callstackStart);
 
                     object formattedEntry = null;
                     switch (format)
@@ -514,14 +472,13 @@ namespace MCPForUnity.Editor.Tools
                         default:
                             if (fields != null)
                             {
-                                var projected = new Dictionary<string, object>
-                                {
-                                    ["type"] = unityType.ToString(),
-                                    ["message"] = messageOnly,
-                                };
-                                if (fields.Contains("file")) projected["file"] = (string)_fileField.GetValue(logEntryInstance);
-                                if (fields.Contains("line")) projected["line"] = (int)_lineField.GetValue(logEntryInstance);
-                                if (fields.Contains("stackTrace")) projected["stackTrace"] = stackTrace;
+                                var projected = new Dictionary<string, object> { ["type"] = unityType.ToString(), ["message"] = messageOnly };
+                                if (fields.Contains("file"))
+                                    projected["file"] = (string)_fileField.GetValue(logEntryInstance);
+                                if (fields.Contains("line"))
+                                    projected["line"] = (int)_lineField.GetValue(logEntryInstance);
+                                if (fields.Contains("stackTrace"))
+                                    projected["stackTrace"] = stackTrace;
                                 formattedEntry = projected;
                             }
                             else
@@ -603,17 +560,11 @@ namespace MCPForUnity.Editor.Tools
                     items = formattedEntries,
                 };
 
-                return new SuccessResponse(
-                    $"Retrieved {formattedEntries.Count} log entries.",
-                    payload
-                );
+                return new SuccessResponse($"Retrieved {formattedEntries.Count} log entries.", payload);
             }
 
             // Return the filtered and formatted list (might be empty)
-            return new SuccessResponse(
-                $"Retrieved {formattedEntries.Count} log entries.",
-                formattedEntries
-            );
+            return new SuccessResponse($"Retrieved {formattedEntries.Count} log entries.", formattedEntries);
         }
 
         // --- Internal Helpers ---
@@ -636,7 +587,8 @@ namespace MCPForUnity.Editor.Tools
         private const int ModeBitScriptingAssertion = 1 << 21;
         private const int ModeBitVisualScriptingError = 1 << 22;
 
-        private const int ModeMaskError = ModeBitError
+        private const int ModeMaskError =
+            ModeBitError
             | ModeBitFatal
             | ModeBitAssetImportError
             | ModeBitScriptingError
@@ -644,18 +596,20 @@ namespace MCPForUnity.Editor.Tools
             | ModeBitStickyError
             | ModeBitVisualScriptingError;
 
-        private const int ModeMaskWarning = ModeBitAssetImportWarning
-            | ModeBitScriptingWarning
-            | ModeBitScriptCompileWarning;
+        private const int ModeMaskWarning = ModeBitAssetImportWarning | ModeBitScriptingWarning | ModeBitScriptCompileWarning;
 
         internal static LogType GetLogTypeFromMode(int mode)
         {
             // Preserve Unity's real type (no remapping). Order matters: an exception
             // also carries the Error bit, and an assertion also carries Assert.
-            if ((mode & ModeBitScriptingException) != 0) return LogType.Exception;
-            if ((mode & (ModeBitAssert | ModeBitScriptingAssertion)) != 0) return LogType.Assert;
-            if ((mode & ModeMaskError) != 0) return LogType.Error;
-            if ((mode & ModeMaskWarning) != 0) return LogType.Warning;
+            if ((mode & ModeBitScriptingException) != 0)
+                return LogType.Exception;
+            if ((mode & (ModeBitAssert | ModeBitScriptingAssertion)) != 0)
+                return LogType.Assert;
+            if ((mode & ModeMaskError) != 0)
+                return LogType.Error;
+            if ((mode & ModeMaskWarning) != 0)
+                return LogType.Warning;
             return LogType.Log;
         }
 
@@ -681,8 +635,10 @@ namespace MCPForUnity.Editor.Tools
 
                 string body = fullMessage.Substring(0, start);
                 // The newline separating the body and stack is not part of either value.
-                if (body.EndsWith("\r\n", StringComparison.Ordinal)) body = body.Substring(0, body.Length - 2);
-                else if (body.EndsWith("\n", StringComparison.Ordinal) || body.EndsWith("\r", StringComparison.Ordinal)) body = body.Substring(0, body.Length - 1);
+                if (body.EndsWith("\r\n", StringComparison.Ordinal))
+                    body = body.Substring(0, body.Length - 2);
+                else if (body.EndsWith("\n", StringComparison.Ordinal) || body.EndsWith("\r", StringComparison.Ordinal))
+                    body = body.Substring(0, body.Length - 1);
                 string stack = fullMessage.Substring(start);
                 return (body.Replace("\r\n", "\n").Replace('\r', '\n'), stack.Replace("\r\n", "\n").Replace('\r', '\n'));
             }
@@ -697,10 +653,7 @@ namespace MCPForUnity.Editor.Tools
             if (stackStartIndex <= 0)
                 return (string.Join("\n", lines), null);
 
-            return (
-                string.Join("\n", lines.Take(stackStartIndex)),
-                string.Join("\n", lines.Skip(stackStartIndex))
-            );
+            return (string.Join("\n", lines.Take(stackStartIndex)), string.Join("\n", lines.Skip(stackStartIndex)));
         }
 
         // Native boundaries let summary/projection reads avoid allocating the
@@ -713,8 +666,10 @@ namespace MCPForUnity.Editor.Tools
             if (start == 0 || start == fullMessage.Length)
                 return fullMessage.Replace("\r\n", "\n").Replace('\r', '\n');
             string body = fullMessage.Substring(0, start);
-            if (body.EndsWith("\r\n", StringComparison.Ordinal)) body = body.Substring(0, body.Length - 2);
-            else if (body.EndsWith("\n", StringComparison.Ordinal) || body.EndsWith("\r", StringComparison.Ordinal)) body = body.Substring(0, body.Length - 1);
+            if (body.EndsWith("\r\n", StringComparison.Ordinal))
+                body = body.Substring(0, body.Length - 2);
+            else if (body.EndsWith("\n", StringComparison.Ordinal) || body.EndsWith("\r", StringComparison.Ordinal))
+                body = body.Substring(0, body.Length - 1);
             return body.Replace("\r\n", "\n").Replace('\r', '\n');
         }
 
@@ -734,12 +689,8 @@ namespace MCPForUnity.Editor.Tools
                     || trimmedLine.StartsWith("UnityEditor.")
                     || trimmedLine.Contains("(at ")
                     || // Covers "(at Assets/..." pattern
-                       // Heuristic: Check if line starts with likely namespace/class pattern (Uppercase.Something)
-                    (
-                        trimmedLine.Length > 0
-                        && char.IsUpper(trimmedLine[0])
-                        && trimmedLine.Contains('.')
-                    )
+                    // Heuristic: Check if line starts with likely namespace/class pattern (Uppercase.Something)
+                    (trimmedLine.Length > 0 && char.IsUpper(trimmedLine[0]) && trimmedLine.Contains('.'))
                 )
                 {
                     return i; // Found the likely start of the stack trace

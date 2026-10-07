@@ -59,7 +59,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Pipeline: {GraphicsHelpers.GetPipelineName()}, Quality: {(currentQuality < qualityNames.Length ? qualityNames[currentQuality] : "?")}",
-                data
+                data,
             };
         }
 
@@ -99,8 +99,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             }
 
             if (targetIndex < 0 || targetIndex >= names.Length)
-                return new ErrorResponse(
-                    $"Invalid quality level. Available: {string.Join(", ", names)} (0-{names.Length - 1})");
+                return new ErrorResponse($"Invalid quality level. Available: {string.Join(", ", names)} (0-{names.Length - 1})");
 
             QualitySettings.SetQualityLevel(targetIndex, true);
 
@@ -112,8 +111,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     level = targetIndex,
                     name = names[targetIndex],
-                    allLevels = names
-                }
+                    allLevels = names,
+                },
             };
         }
 
@@ -128,21 +127,32 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var settings = new Dictionary<string, object>();
 
             // Public properties (URP)
-            string[] publicProps = {
-                "renderScale", "supportsHDR", "msaaSampleCount", "shadowDistance",
-                "shadowCascadeCount", "mainLightShadowmapResolution",
-                "additionalLightsShadowmapResolution", "maxAdditionalLightsCount",
-                "supportsSoftShadows", "colorGradingMode", "colorGradingLutSize"
+            string[] publicProps =
+            {
+                "renderScale",
+                "supportsHDR",
+                "msaaSampleCount",
+                "shadowDistance",
+                "shadowCascadeCount",
+                "mainLightShadowmapResolution",
+                "additionalLightsShadowmapResolution",
+                "maxAdditionalLightsCount",
+                "supportsSoftShadows",
+                "colorGradingMode",
+                "colorGradingLutSize",
             };
             foreach (var propName in publicProps)
                 TryReadProperty(pipelineAsset, propName, settings);
 
             // SerializedObject for non-public settings
             var serializedSettings = new Dictionary<string, object>();
-            string[] serializedPaths = {
-                "m_DefaultRendererIndex", "m_MainLightRenderingMode",
-                "m_AdditionalLightsRenderingMode", "m_SupportsOpaqueTexture",
-                "m_SupportsDepthTexture"
+            string[] serializedPaths =
+            {
+                "m_DefaultRendererIndex",
+                "m_MainLightRenderingMode",
+                "m_AdditionalLightsRenderingMode",
+                "m_SupportsOpaqueTexture",
+                "m_SupportsDepthTexture",
             };
 
             using (var so = new SerializedObject(pipelineAsset))
@@ -167,8 +177,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     assetName = pipelineAsset.name,
                     assetPath = AssetDatabase.GetAssetPath(pipelineAsset),
                     assetType = pipelineAsset.GetType().Name,
-                    settings
-                }
+                    settings,
+                },
             };
         }
 
@@ -196,8 +206,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     JToken value = prop.Value;
 
                     // Try public property first
-                    var publicProp = pipelineAsset.GetType().GetProperty(propName,
-                        BindingFlags.Public | BindingFlags.Instance);
+                    var publicProp = pipelineAsset.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
                     if (publicProp != null && publicProp.CanWrite)
                     {
                         try
@@ -244,17 +253,21 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = msg,
-                data = new { changed, failed }
+                data = new { changed, failed },
             };
         }
 
         // --- Helper: Convert JToken to target property type ---
         private static object ConvertPropertyValue(JToken value, Type targetType)
         {
-            if (targetType == typeof(bool)) return ParamCoercion.CoerceBool(value, false);
-            if (targetType == typeof(int)) return ParamCoercion.CoerceInt(value, 0);
-            if (targetType == typeof(float)) return ParamCoercion.CoerceFloat(value, 0f);
-            if (targetType == typeof(string)) return value.ToString();
+            if (targetType == typeof(bool))
+                return ParamCoercion.CoerceBool(value, false);
+            if (targetType == typeof(int))
+                return ParamCoercion.CoerceInt(value, 0);
+            if (targetType == typeof(float))
+                return ParamCoercion.CoerceFloat(value, 0f);
+            if (targetType == typeof(string))
+                return value.ToString();
             if (targetType.IsEnum)
             {
                 string str = value.ToString();
@@ -269,9 +282,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
         // --- Helper: Try to read a property value via reflection ---
         private static void TryReadProperty(object obj, string propertyName, Dictionary<string, object> target)
         {
-            if (obj == null) return;
-            var prop = obj.GetType().GetProperty(propertyName,
-                BindingFlags.Public | BindingFlags.Instance);
+            if (obj == null)
+                return;
+            var prop = obj.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
             if (prop != null)
             {
                 try

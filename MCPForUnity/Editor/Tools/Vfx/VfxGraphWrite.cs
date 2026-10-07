@@ -4,7 +4,6 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-
 #if UNITY_VFX_GRAPH
 using UnityEngine.VFX;
 #endif
@@ -93,7 +92,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = $"Invalid value type for {param}: {ex.Message}" };
             }
 
-            bool hasParameter = typeof(T) == typeof(float) ? vfx.HasFloat(param)
+            bool hasParameter =
+                typeof(T) == typeof(float) ? vfx.HasFloat(param)
                 : typeof(T) == typeof(int) ? vfx.HasInt(param)
                 : typeof(T) == typeof(bool) && vfx.HasBool(param);
             if (!hasParameter)
@@ -125,8 +125,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = $"Unsupported vector dimension: {dims}. Expected 2, 3, or 4." };
             }
 
-            bool hasParameter = dims == 2 ? vfx.HasVector2(param)
-                : dims == 3 ? vfx.HasVector3(param) : vfx.HasVector4(param);
+            bool hasParameter =
+                dims == 2 ? vfx.HasVector2(param)
+                : dims == 3 ? vfx.HasVector3(param)
+                : vfx.HasVector4(param);
             if (!hasParameter)
                 return new { success = false, message = $"Parameter '{param}' not found or is not a Vector{dims}" };
 
@@ -134,8 +136,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Vector4 vec;
             if (dims == 2)
             {
-                Vector2 value = VectorParsing.ParseVector2(token)
-                    ?? throw new ArgumentException("'value' must contain two finite numeric components.");
+                Vector2 value = VectorParsing.ParseVector2(token) ?? throw new ArgumentException("'value' must contain two finite numeric components.");
                 vec = new Vector4(value.x, value.y, 0, 0);
             }
             else if (dims == 3)
@@ -143,14 +144,21 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 Vector3 value = ManageVfxCommon.ParseVector3(token);
                 vec = new Vector4(value.x, value.y, value.z, 0);
             }
-            else vec = ManageVfxCommon.ParseVector4(token);
+            else
+                vec = ManageVfxCommon.ParseVector4(token);
             Undo.RecordObject(vfx, $"Set VFX {param}");
 
             switch (dims)
             {
-                case 2: vfx.SetVector2(param, new Vector2(vec.x, vec.y)); break;
-                case 3: vfx.SetVector3(param, new Vector3(vec.x, vec.y, vec.z)); break;
-                case 4: vfx.SetVector4(param, vec); break;
+                case 2:
+                    vfx.SetVector2(param, new Vector2(vec.x, vec.y));
+                    break;
+                case 3:
+                    vfx.SetVector3(param, new Vector3(vec.x, vec.y, vec.z));
+                    break;
+                case 4:
+                    vfx.SetVector4(param, vec);
+                    break;
             }
 
             EditorUtility.SetDirty(vfx);

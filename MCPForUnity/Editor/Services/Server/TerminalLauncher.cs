@@ -55,7 +55,7 @@ namespace MCPForUnity.Editor.Services.Server
                 Arguments = $"/c \"{winRedirect}\"",
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
             };
 #else
             // macOS/Linux: /bin/bash -c "<command> >> '<log>' 2>&1"
@@ -63,16 +63,14 @@ namespace MCPForUnity.Editor.Services.Server
             // double quotes for the .NET argument tokenizer (escape backslashes and double quotes).
             string singleQuotedLog = "'" + logFilePath.Replace("'", "'\\''") + "'";
             string bashPayload = $"{command} >> {singleQuotedLog} 2>&1";
-            string escapedPayload = bashPayload
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"");
+            string escapedPayload = bashPayload.Replace("\\", "\\\\").Replace("\"", "\\\"");
             return new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "/bin/bash",
                 Arguments = $"-c \"{escapedPayload}\"",
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
             };
 #endif
         }
@@ -90,45 +88,34 @@ namespace MCPForUnity.Editor.Services.Server
             string scriptsDir = Path.Combine(GetProjectRootPath(), "Library", "MCPForUnity", "TerminalScripts");
             Directory.CreateDirectory(scriptsDir);
             string scriptPath = Path.Combine(scriptsDir, "mcp-terminal.command");
-            File.WriteAllText(
-                scriptPath,
-                "#!/bin/bash\n" +
-                "set -e\n" +
-                "clear\n" +
-                $"{command}\n");
+            File.WriteAllText(scriptPath, "#!/bin/bash\n" + "set -e\n" + "clear\n" + $"{command}\n");
             ExecPath.TryRun("/bin/chmod", $"+x \"{scriptPath}\"", Application.dataPath, out _, out _, 3000);
             return new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "/usr/bin/open",
                 Arguments = $"-a Terminal \"{scriptPath}\"",
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
             };
 #elif UNITY_EDITOR_WIN
             // Windows: Avoid brittle nested-quote escaping by writing a .cmd script and starting it in a new window.
             string scriptsDir = Path.Combine(GetProjectRootPath(), "Library", "MCPForUnity", "TerminalScripts");
             Directory.CreateDirectory(scriptsDir);
             string scriptPath = Path.Combine(scriptsDir, "mcp-terminal.cmd");
-            File.WriteAllText(
-                scriptPath,
-                "@echo off\r\n" +
-                "cls\r\n" +
-                command + "\r\n");
+            File.WriteAllText(scriptPath, "@echo off\r\n" + "cls\r\n" + command + "\r\n");
             return new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "cmd.exe",
                 Arguments = $"/c start \"MCP Server\" cmd.exe /k \"{scriptPath}\"",
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
             };
 #else
             // Linux: Try common terminal emulators.
             // ProcessStartInfo passes the argument string directly to the terminal, so we only
             // need to escape for the double-quoted bash -c payload — no inner single quotes.
             string script = $"{command}; exec bash";
-            string escapedScriptForArg = script
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"");
+            string escapedScriptForArg = script.Replace("\\", "\\\\").Replace("\"", "\\\"");
             string bashCmdArgs = $"bash -c \"{escapedScriptForArg}\"";
 
             string[] terminals = { "gnome-terminal", "xterm", "konsole", "xfce4-terminal" };
@@ -138,14 +125,16 @@ namespace MCPForUnity.Editor.Services.Server
             {
                 try
                 {
-                    var which = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = "which",
-                        Arguments = term,
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        CreateNoWindow = true
-                    });
+                    var which = System.Diagnostics.Process.Start(
+                        new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = "which",
+                            Arguments = term,
+                            UseShellExecute = false,
+                            RedirectStandardOutput = true,
+                            CreateNoWindow = true,
+                        }
+                    );
                     which.WaitForExit(5000); // Wait for up to 5 seconds, the command is typically instantaneous
                     if (which.ExitCode == 0)
                     {
@@ -186,7 +175,7 @@ namespace MCPForUnity.Editor.Services.Server
                 FileName = terminalCmd,
                 Arguments = args,
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
             };
 #endif
         }

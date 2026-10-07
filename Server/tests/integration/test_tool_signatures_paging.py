@@ -37,5 +37,3 @@ def test_manage_gameobject_signature_excludes_vestigial_params():
     assert "search_inactive" not in names
     assert "component_name" not in names
     assert "includeNonPublicSerialized" not in names
-
-

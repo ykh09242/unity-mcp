@@ -1,7 +1,7 @@
 using System.IO;
-using NUnit.Framework;
-using MCPForUnity.Editor.Services.Server;
 using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Services.Server;
+using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 
@@ -30,7 +30,11 @@ namespace MCPForUnityTests.Editor.Services.Server
             // Clean up test files
             if (!string.IsNullOrEmpty(_testPidFilePath) && File.Exists(_testPidFilePath))
             {
-                try { File.Delete(_testPidFilePath); } catch { }
+                try
+                {
+                    File.Delete(_testPidFilePath);
+                }
+                catch { }
             }
             // Clear test state
             ClearTestEditorPrefs();
@@ -38,12 +42,36 @@ namespace MCPForUnityTests.Editor.Services.Server
 
         private void ClearTestEditorPrefs()
         {
-            try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPid); } catch { }
-            try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPort); } catch { }
-            try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerStartedUtc); } catch { }
-            try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPidArgsHash); } catch { }
-            try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPidFilePath); } catch { }
-            try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerInstanceToken); } catch { }
+            try
+            {
+                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPid);
+            }
+            catch { }
+            try
+            {
+                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPort);
+            }
+            catch { }
+            try
+            {
+                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerStartedUtc);
+            }
+            catch { }
+            try
+            {
+                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPidArgsHash);
+            }
+            catch { }
+            try
+            {
+                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPidFilePath);
+            }
+            catch { }
+            try
+            {
+                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerInstanceToken);
+            }
+            catch { }
         }
 
         #region GetPidFilePath Tests

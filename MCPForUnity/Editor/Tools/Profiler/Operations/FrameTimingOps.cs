@@ -13,8 +13,9 @@ namespace MCPForUnity.Editor.Tools.Profiler
             {
                 return new ErrorResponse(
                     "Frame Timing Stats is not enabled. "
-                    + "Enable it in Project Settings > Player > Other Settings > 'Frame Timing Stats', "
-                    + "or use a Development Build (always enabled).");
+                        + "Enable it in Project Settings > Player > Other Settings > 'Frame Timing Stats', "
+                        + "or use a Development Build (always enabled)."
+                );
             }
 #endif
 
@@ -24,33 +25,33 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
             if (count == 0)
             {
-                return new SuccessResponse("No frame timing data available yet (need a few frames).", new
-                {
-                    available = false,
-                });
+                return new SuccessResponse("No frame timing data available yet (need a few frames).", new { available = false });
             }
 
             var t = timings[0];
-            return new SuccessResponse("Frame timing captured.", new
-            {
-                available = true,
-                cpu_frame_time_ms = t.cpuFrameTime,
+            return new SuccessResponse(
+                "Frame timing captured.",
+                new
+                {
+                    available = true,
+                    cpu_frame_time_ms = t.cpuFrameTime,
 #if UNITY_2022_2_OR_NEWER
-                cpu_main_thread_frame_time_ms = t.cpuMainThreadFrameTime,
-                cpu_main_thread_present_wait_time_ms = t.cpuMainThreadPresentWaitTime,
-                cpu_render_thread_frame_time_ms = t.cpuRenderThreadFrameTime,
+                    cpu_main_thread_frame_time_ms = t.cpuMainThreadFrameTime,
+                    cpu_main_thread_present_wait_time_ms = t.cpuMainThreadPresentWaitTime,
+                    cpu_render_thread_frame_time_ms = t.cpuRenderThreadFrameTime,
 #endif
-                gpu_frame_time_ms = t.gpuFrameTime,
+                    gpu_frame_time_ms = t.gpuFrameTime,
 #if UNITY_2022_2_OR_NEWER
-                frame_start_timestamp = t.frameStartTimestamp,
-                first_submit_timestamp = t.firstSubmitTimestamp,
+                    frame_start_timestamp = t.frameStartTimestamp,
+                    first_submit_timestamp = t.firstSubmitTimestamp,
 #endif
-                cpu_time_present_called = t.cpuTimePresentCalled,
-                cpu_time_frame_complete = t.cpuTimeFrameComplete,
-                height_scale = t.heightScale,
-                width_scale = t.widthScale,
-                sync_interval = t.syncInterval,
-            });
+                    cpu_time_present_called = t.cpuTimePresentCalled,
+                    cpu_time_frame_complete = t.cpuTimeFrameComplete,
+                    height_scale = t.heightScale,
+                    width_scale = t.widthScale,
+                    sync_interval = t.syncInterval,
+                }
+            );
         }
     }
 }

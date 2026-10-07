@@ -44,7 +44,9 @@ def _array_numeric_error(patches: list[Any]) -> str | None:
         op = patch.get("op") or "set"
         if not isinstance(op, str):
             continue
-        if op.strip().lower() != "array_resize" and not (op.strip().lower() == "set" and path.endswith(".Array.size")):
+        if op.strip().lower() != "array_resize" and not (
+            op.strip().lower() == "set" and path.endswith(".Array.size")
+        ):
             continue
         value = patch.get("value")
         try:
@@ -68,28 +70,32 @@ async def manage_scriptable_object(
     ctx: Context,
     action: Annotated[Literal["create", "modify"], "Action to perform: create or modify."],
     # --- create params ---
-    type_name: Annotated[str | None,
-                         "Namespace-qualified ScriptableObject type name (for create)."] = None,
-    folder_path: Annotated[str | None,
-                           "Target folder under Assets/... (for create)."] = None,
-    asset_name: Annotated[str | None,
-                          "Asset file name without extension (for create)."] = None,
-    overwrite: Annotated[bool | str | None,
-                         "If true, overwrite existing asset at same path (for create)."] = None,
+    type_name: Annotated[
+        str | None, "Namespace-qualified ScriptableObject type name (for create)."
+    ] = None,
+    folder_path: Annotated[str | None, "Target folder under Assets/... (for create)."] = None,
+    asset_name: Annotated[str | None, "Asset file name without extension (for create)."] = None,
+    overwrite: Annotated[
+        bool | str | None, "If true, overwrite existing asset at same path (for create)."
+    ] = None,
     # --- modify params ---
-    target: Annotated[dict[str, Any] | str | None,
-                      "Target asset reference {guid|path} (for modify)."] = None,
+    target: Annotated[
+        dict[str, Any] | str | None, "Target asset reference {guid|path} (for modify)."
+    ] = None,
     # --- shared ---
-    patches: Annotated[list[dict[str, Any]] | str | None,
-                       "Patch list (or JSON string) to apply. "
-                       "For object references: use {\"ref\": {\"guid\": \"...\"}} or {\"value\": {\"guid\": \"...\"}}. "
-                       "For Sprite sub-assets: include \"spriteName\" in the ref/value object. "
-                       "Single-sprite textures auto-resolve from guid/path alone. "
-                       "Unity preflights growth: 1,048,576 elements per growing array and "
-                       "2,097,152 added serialized elements/fields per request, including nested copies."] = None,
+    patches: Annotated[
+        list[dict[str, Any]] | str | None,
+        "Patch list (or JSON string) to apply. "
+        'For object references: use {"ref": {"guid": "..."}} or {"value": {"guid": "..."}}. '
+        'For Sprite sub-assets: include "spriteName" in the ref/value object. '
+        "Single-sprite textures auto-resolve from guid/path alone. "
+        "Unity preflights growth: 1,048,576 elements per growing array and "
+        "2,097,152 added serialized elements/fields per request, including nested copies.",
+    ] = None,
     # --- validation ---
-    dry_run: Annotated[bool | str | None,
-                       "If true, validate patches without applying (modify only)."] = None,
+    dry_run: Annotated[
+        bool | str | None, "If true, validate patches without applying (modify only)."
+    ] = None,
 ) -> dict[str, Any]:
     flags = {}
     for field, value in (("overwrite", overwrite), ("dry_run", dry_run)):
@@ -102,10 +108,16 @@ async def manage_scriptable_object(
     parsed_patches = parse_json_payload(patches)
 
     if parsed_target is not None and not isinstance(parsed_target, dict):
-        return {"success": False, "message": "manage_scriptable_object: 'target' must be an object {guid|path} (or JSON string of such)."}
+        return {
+            "success": False,
+            "message": "manage_scriptable_object: 'target' must be an object {guid|path} (or JSON string of such).",
+        }
 
     if parsed_patches is not None and not isinstance(parsed_patches, list):
-        return {"success": False, "message": "manage_scriptable_object: 'patches' must be a list (or JSON string of a list)."}
+        return {
+            "success": False,
+            "message": "manage_scriptable_object: 'patches' must be a list (or JSON string of a list).",
+        }
 
     if parsed_patches is not None:
         numeric_error = _array_numeric_error(parsed_patches)
@@ -135,4 +147,8 @@ async def manage_scriptable_object(
         params,
     )
     logger.info("manage_scriptable_object response received")
-    return response if isinstance(response, dict) else {"success": False, "message": "Unexpected response from Unity."}
+    return (
+        response
+        if isinstance(response, dict)
+        else {"success": False, "message": "Unexpected response from Unity."}
+    )

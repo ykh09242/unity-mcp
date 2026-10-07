@@ -1,4 +1,5 @@
 """Actual public GameObject reads; only outbound Unity/HTTP is controlled."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -6,17 +7,22 @@ import sys
 
 
 def _run(program, tmp_path):
-    env = {**os.environ, 'APPDATA': str(tmp_path), 'XDG_DATA_HOME': str(tmp_path),
-           'UNITY_MCP_DISABLE_TELEMETRY': 'true',
-           'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')}
-    env.pop('PYTEST_CURRENT_TEST', None)
-    result = subprocess.run([sys.executable, '-B', '-c', program], env=env,
-                            capture_output=True, text=True, timeout=90)
+    env = {
+        **os.environ,
+        "APPDATA": str(tmp_path),
+        "XDG_DATA_HOME": str(tmp_path),
+        "UNITY_MCP_DISABLE_TELEMETRY": "true",
+        "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+    }
+    env.pop("PYTEST_CURRENT_TEST", None)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", program], env=env, capture_output=True, text=True, timeout=90
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
 
-SDK_PROGRAM = r'''
+SDK_PROGRAM = r"""
 import copy
 import json
 import anyio
@@ -114,10 +120,10 @@ async def main():
     print('SDK_SUMMARY', json.dumps({'checks': checks, 'failures': failures, 'requests': len(requests)}))
     assert not failures, failures
 anyio.run(main)
-'''
+"""
 
 
-CLI_PROGRAM = r'''
+CLI_PROGRAM = r"""
 import copy
 import json
 import httpx
@@ -163,12 +169,12 @@ check(help_result.exit_code == 0, 'existing raw read surface')
 print('FULL_HELP', json.dumps(help_result.output))
 print('CLI_SUMMARY', json.dumps({'checks': checks, 'failures': failures, 'requests': len(requests)}))
 assert not failures, failures
-'''
+"""
 
 
 def test_gameobject_resources_registered_sdk_contracts(tmp_path):
-    assert 'SDK_SUMMARY' in _run(SDK_PROGRAM, tmp_path)
+    assert "SDK_SUMMARY" in _run(SDK_PROGRAM, tmp_path)
 
 
 def test_gameobject_reads_top_level_raw_cli_contracts(tmp_path):
-    assert 'CLI_SUMMARY' in _run(CLI_PROGRAM, tmp_path)
+    assert "CLI_SUMMARY" in _run(CLI_PROGRAM, tmp_path)

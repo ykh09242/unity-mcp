@@ -15,13 +15,16 @@ def _run(program, tmp_path):
     env.pop("PYTEST_CURRENT_TEST", None)
     result = subprocess.run(
         [sys.executable, "-B", "-c", program],
-        env=env, capture_output=True, text=True, timeout=90,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
 
-CLI_PROGRAM = r'''
+CLI_PROGRAM = r"""
 import copy
 import json
 import httpx
@@ -135,10 +138,10 @@ for command in ([], *[[args[0]] for args, wire in cases[:18]]):
     print('FULL_HELP', json.dumps({'command': command, 'text': result.output}))
 print('CLI_SUMMARY', json.dumps({'checks': checks, 'failures': failures, 'requests': len(requests)}))
 assert not failures, failures
-'''
+"""
 
 
-SDK_PROGRAM = r'''
+SDK_PROGRAM = r"""
 import copy
 import json
 import anyio
@@ -281,7 +284,7 @@ async def main():
     assert not failures, failures
 
 anyio.run(main)
-'''
+"""
 
 
 def test_camera_actual_cli_contracts(tmp_path):
@@ -293,7 +296,8 @@ def test_camera_registered_sdk_contracts(tmp_path):
 
 
 def test_camera_image_metadata_remains_structured_at_real_sdk_boundary(tmp_path):
-    _run(r'''
+    _run(
+        r"""
 import copy
 import json
 import anyio
@@ -357,4 +361,6 @@ async def main():
                 assert result.structured_content == response
                 assert all(block.type == 'text' for block in result.content)
 anyio.run(main)
-''', tmp_path)
+""",
+        tmp_path,
+    )

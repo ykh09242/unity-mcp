@@ -1,4 +1,5 @@
 """Async commands wait without occupying workers needed by other Editors."""
+
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import gc
@@ -18,6 +19,7 @@ import transport.legacy.unity_connection as uc
 
 class ResponseSocket:
     """Only socket I/O is fake; real framing, locks and deadlines execute."""
+
     def __init__(self):
         self.timeout = 30.0
         self.buffer = b""
@@ -45,7 +47,9 @@ class ResponseSocket:
         self.header_pending = True
         tag = json.loads(payload)["params"]["tag"]
         self.tags.append(tag)
-        response = json.dumps({"status": "success", "result": {"success": True, "tag": tag}}).encode()
+        response = json.dumps(
+            {"status": "success", "result": {"success": True, "tag": tag}}
+        ).encode()
         self.buffer = struct.pack(">Q", len(response)) + response
         self.delay_pending = True
         self.sent.set()
@@ -76,19 +80,30 @@ def environment(monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "command_total_timeout", 90.0)
     monkeypatch.setattr(uc, "read_status_file", lambda *_: None)
-    monkeypatch.setattr(uc.UnityConnection, "connect", lambda *args, **kwargs: pytest.fail("unexpected reconnect in fake socket fixture"))
+    monkeypatch.setattr(
+        uc.UnityConnection,
+        "connect",
+        lambda *args, **kwargs: pytest.fail("unexpected reconnect in fake socket fixture"),
+    )
     pool = uc.UnityConnectionPool()
     pool._default_instance_id = "Main@deadbeef"
     sockets = {}
     for index, identity in enumerate(("Main@deadbeef", "Other@cafebabe")):
         name, hash_value = identity.split("@")
-        info = UnityInstanceInfo(id=identity, name=name, hash=hash_value,
-                                 path=f"/Owned/{name}/Assets", port=6400 + index, status="running")
+        info = UnityInstanceInfo(
+            id=identity,
+            name=name,
+            hash=hash_value,
+            path=f"/Owned/{name}/Assets",
+            port=6400 + index,
+            status="running",
+        )
         sock = ResponseSocket()
         sockets[identity] = sock
         pool._known_instances[identity] = info
-        pool._connections[identity] = uc.UnityConnection(port=info.port, instance_id=identity,
-                                                       sock=sock, use_framing=True)
+        pool._connections[identity] = uc.UnityConnection(
+            port=info.port, instance_id=identity, sock=sock, use_framing=True
+        )
     pool._last_full_scan = time.time()
     sockets["Other@cafebabe"].release.set()
     monkeypatch.setattr(uc, "get_unity_connection_pool", lambda: pool)
@@ -100,12 +115,15 @@ def environment(monkeypatch):
 
 
 async def request(tag, selector="Main@deadbeef"):
-    return await uc.async_send_command_with_retry("manage_scene", {"action": "get_active", "tag": tag},
-                                                instance_id=selector)
+    return await uc.async_send_command_with_retry(
+        "manage_scene", {"action": "get_active", "tag": tag}, instance_id=selector
+    )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("selector", [None, "Main", "dead", "6400", "/Owned/Main/Assets", "Main@deadbeef"])
+@pytest.mark.parametrize(
+    "selector", [None, "Main", "dead", "6400", "/Owned/Main/Assets", "Main@deadbeef"]
+)
 async def test_alias_waiters_share_actual_connection_admission(environment, selector):
     _, sockets = environment
     loop = asyncio.get_running_loop()
@@ -118,7 +136,9 @@ async def test_alias_waiters_share_actual_connection_admission(environment, sele
         # The short task is queued after the same-Editor request. It must run
         # before the held Main response is released, even with only two workers.
         other = asyncio.create_task(request("other", "Other@cafebabe"))
-        response, marker = await asyncio.wait_for(asyncio.gather(other, asyncio.to_thread(lambda: "free")), 0.5)
+        response, marker = await asyncio.wait_for(
+            asyncio.gather(other, asyncio.to_thread(lambda: "free")), 0.5
+        )
         assert response == {"success": True, "tag": "other"}
         assert marker == "free"
         assert main.tags == ["first"]
@@ -138,10 +158,12 @@ async def test_cancelled_admission_waiter_never_dispatches(environment, monkeypa
     await wait_event(main.sent)
     lookup_finished = threading.Event()
     original_lookup = uc.get_unity_connection
+
     def lookup(*args):
         conn = original_lookup(*args)
         lookup_finished.set()
         return conn
+
     monkeypatch.setattr(uc, "get_unity_connection", lookup)
     second = asyncio.create_task(request("cancelled"))
     await wait_event(lookup_finished)
@@ -155,16 +177,20 @@ async def test_cancelled_admission_waiter_never_dispatches(environment, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_cancelled_inflight_call_holds_admission_until_worker_finishes(environment, monkeypatch):
+async def test_cancelled_inflight_call_holds_admission_until_worker_finishes(
+    environment, monkeypatch
+):
     pool, sockets = environment
     main = sockets["Main@deadbeef"]
     conn = pool._connections["Main@deadbeef"]
     conn._needs_tool_resync = True
     calls = []
     original = uc._send_command_with_retry
+
     def traced(*args, **kwargs):
         calls.append(args[1]["tag"])
         return original(*args, **kwargs)
+
     monkeypatch.setattr(uc, "_send_command_with_retry", traced)
     first = asyncio.create_task(request("cancelled-inflight"))
     await wait_event(main.sent)
@@ -173,10 +199,12 @@ async def test_cancelled_inflight_call_holds_admission_until_worker_finishes(env
         await first
     lookup_finished = threading.Event()
     original_lookup = uc.get_unity_connection
+
     def lookup(*args):
         result = original_lookup(*args)
         lookup_finished.set()
         return result
+
     monkeypatch.setattr(uc, "get_unity_connection", lookup)
     second = asyncio.create_task(request("following"))
     try:
@@ -216,10 +244,12 @@ async def test_selection_consumes_request_deadline(environment, monkeypatch):
     main.release.set()
     conn = pool._connections["Main@deadbeef"]
     lookup_finished = threading.Event()
+
     def slow_lookup(*args):
         time.sleep(0.1)
         lookup_finished.set()
         return conn
+
     monkeypatch.setattr(uc, "get_unity_connection", slow_lookup)
     monkeypatch.setattr(config, "command_total_timeout", 0.03)
     result = await request("expired-selection")
@@ -244,14 +274,17 @@ async def test_executor_queued_command_aborts_before_dispatch(environment, monke
     loop.set_exception_handler(lambda _loop, context: diagnostics.append(context))
     release_blocker = threading.Event()
     blocker_started = threading.Event()
+
     def blocker():
         blocker_started.set()
         assert release_blocker.wait(2)
+
     def lookup(*args):
         # Selection worker queues unrelated work before returning. Consequently
         # the admitted command worker is pending behind it in the executor.
         executor.submit(blocker)
         return conn
+
     monkeypatch.setattr(uc, "get_unity_connection", lookup)
     monkeypatch.setattr(config, "command_total_timeout", 0.1)
     task = asyncio.create_task(request("queued"))
@@ -278,7 +311,9 @@ async def test_executor_queued_command_aborts_before_dispatch(environment, monke
 
 
 @pytest.mark.asyncio
-async def test_inflight_deadline_preserves_unknown_outcome_and_does_not_replay(environment, monkeypatch):
+async def test_inflight_deadline_preserves_unknown_outcome_and_does_not_replay(
+    environment, monkeypatch
+):
     _, sockets = environment
     monkeypatch.setattr(config, "command_total_timeout", 0.03)
     result = await request("unknown")
@@ -293,6 +328,7 @@ def test_connection_reused_across_loops_does_not_retain_closed_loops(environment
     _, sockets = environment
     main = sockets["Main@deadbeef"]
     references = []
+
     async def call(index):
         references.append(weakref.ref(asyncio.get_running_loop()))
         main.sent.clear()
@@ -310,11 +346,14 @@ def test_connection_reused_across_loops_does_not_retain_closed_loops(environment
         finally:
             main.release.set()
             timer.join(2)
+
     for index in range(3):
         asyncio.run(call(index))
     gc.collect()
     assert all(reference() is None for reference in references)
-    assert main.tags == [f"{index}-{position}" for index in range(3) for position in ("first", "second")]
+    assert main.tags == [
+        f"{index}-{position}" for index in range(3) for position in ("first", "second")
+    ]
 
 
 @pytest.mark.asyncio
@@ -335,11 +374,13 @@ async def test_cancelled_selection_never_dispatches_or_claims_resync(environment
     started = threading.Event()
     release = threading.Event()
     finished = threading.Event()
+
     def lookup(*args):
         started.set()
         assert release.wait(2)
         finished.set()
         return conn
+
     monkeypatch.setattr(uc, "get_unity_connection", lookup)
     task = asyncio.create_task(request("cancelled-selection"))
     try:
@@ -363,14 +404,17 @@ async def test_async_admission_preserves_public_sync_socket_serialization(enviro
     await wait_event(main.sent)
     lookup_finished = threading.Event()
     original_lookup = uc.get_unity_connection
+
     def lookup(*args):
         conn = original_lookup(*args)
         lookup_finished.set()
         return conn
+
     monkeypatch.setattr(uc, "get_unity_connection", lookup)
     with ThreadPoolExecutor(max_workers=1) as executor:
-        synchronous = executor.submit(uc.send_command_with_retry, "manage_scene", {"tag": "sync"},
-                                      instance_id="Main@deadbeef")
+        synchronous = executor.submit(
+            uc.send_command_with_retry, "manage_scene", {"tag": "sync"}, instance_id="Main@deadbeef"
+        )
         try:
             await wait_event(lookup_finished)
             assert main.tags == ["async"]

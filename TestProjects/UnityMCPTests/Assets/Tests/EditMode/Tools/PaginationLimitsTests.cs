@@ -16,8 +16,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(int.MaxValue, false)]
         public void AuthoritativePageBounds(int size, bool allowed)
         {
-            Assert.AreEqual(allowed, PaginationBounds.TryRead(new JValue(size), 50, 1,
-                PaginationBounds.MaxPageSize, "page_size", out _, out _));
+            Assert.AreEqual(allowed, PaginationBounds.TryRead(new JValue(size), 50, 1, PaginationBounds.MaxPageSize, "page_size", out _, out _));
         }
 
         [TestCase("search")]
@@ -25,9 +24,16 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("validate")]
         public void DirectHandlersRejectOversizedPageBeforeDiscovery(string action)
         {
-            var args = new JObject { ["action"] = action, ["pageSize"] = 1001, ["path"] = "Assets" };
-            object response = action == "search" ? ManageAsset.HandleCommand(args)
-                : action == "list" ? ManageUI.HandleCommand(args) : ManagePhysics.HandleCommand(args);
+            var args = new JObject
+            {
+                ["action"] = action,
+                ["pageSize"] = 1001,
+                ["path"] = "Assets",
+            };
+            object response =
+                action == "search" ? ManageAsset.HandleCommand(args)
+                : action == "list" ? ManageUI.HandleCommand(args)
+                : ManagePhysics.HandleCommand(args);
             Assert.IsFalse(JObject.FromObject(response).Value<bool>("success"));
         }
 
@@ -38,8 +44,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(int.MaxValue, false)]
         public void PreviewSearchHasLowerAuthoritativePageBound(int size, bool allowed)
         {
-            Assert.AreEqual(allowed, PaginationBounds.TryRead(new JValue(size), 32, 1,
-                PaginationBounds.MaxPreviewPageSize, "page_size", out _, out _));
+            Assert.AreEqual(allowed, PaginationBounds.TryRead(new JValue(size), 32, 1, PaginationBounds.MaxPreviewPageSize, "page_size", out _, out _));
         }
 
         [Test]
@@ -55,7 +60,8 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(budget.TryReserve(0));
             Assert.IsFalse(budget.TryReserve(PaginationBounds.MaxPreviewPngBytes + 1));
             int accepted = 0;
-            while (budget.TryReserve(PaginationBounds.MaxPreviewPngBytes)) accepted++;
+            while (budget.TryReserve(PaginationBounds.MaxPreviewPngBytes))
+                accepted++;
             Assert.AreEqual(11, accepted);
             Assert.LessOrEqual(budget.Base64Bytes, PaginationBounds.MaxPreviewBase64Bytes);
         }
@@ -67,8 +73,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("2147483648")]
         public void SuppliedInvalidPageIsNotReplacedByDefault(object value)
         {
-            Assert.IsFalse(PaginationBounds.TryRead(JToken.FromObject(value), 50, 1,
-                PaginationBounds.MaxPageSize, "page_size", out _, out _));
+            Assert.IsFalse(PaginationBounds.TryRead(JToken.FromObject(value), 50, 1, PaginationBounds.MaxPageSize, "page_size", out _, out _));
         }
     }
 }

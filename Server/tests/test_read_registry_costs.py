@@ -1,4 +1,5 @@
 """Read lookup costs stay bounded without changing selection or weak ownership."""
+
 import asyncio
 import gc
 import weakref
@@ -104,22 +105,29 @@ async def test_explicit_success_resolves_hash_without_listing(monkeypatch, remot
     registry = PluginRegistry()
     for owner in ("owned-a", "owned-b", "owned-c") if remote else (None,):
         for index in range(16):
-            await registry.register(f"{owner}-{index}", "Synthetic", f"hash-{index}", "test", user_id=owner)
+            await registry.register(
+                f"{owner}-{index}", "Synthetic", f"hash-{index}", "test", user_id=owner
+            )
     monkeypatch.setattr(PluginHub, "_registry", registry)
     lookup = AsyncMock(wraps=registry.get_session_id_by_hash)
     listing = AsyncMock(wraps=registry.list_sessions)
     monkeypatch.setattr(registry, "get_session_id_by_hash", lookup)
     monkeypatch.setattr(registry, "list_sessions", listing)
     owner = "owned-a" if remote else None
-    replies = await asyncio.gather(*(
-        PluginHub._resolve_session_id("Synthetic@hash-0", user_id=owner, retry_on_reload=False)
-        for _ in range(20)
-    ))
+    replies = await asyncio.gather(
+        *(
+            PluginHub._resolve_session_id("Synthetic@hash-0", user_id=owner, retry_on_reload=False)
+            for _ in range(20)
+        )
+    )
     assert replies == [f"{owner}-0"] * 20
     assert lookup.await_count == 20
     listing.assert_not_awaited()
     await registry.register("owned-replacement", "Synthetic", "hash-0", "test", user_id=owner)
-    assert await PluginHub._resolve_session_id("hash-0", user_id=owner, retry_on_reload=False) == "owned-replacement"
+    assert (
+        await PluginHub._resolve_session_id("hash-0", user_id=owner, retry_on_reload=False)
+        == "owned-replacement"
+    )
     assert lookup.await_count == 21
     listing.assert_not_awaited()
 
@@ -160,7 +168,9 @@ async def test_omitted_selector_preserves_count_based_selection(monkeypatch, rem
     registry = PluginRegistry()
     owner = "owned-user" if remote else None
     for index in range(count):
-        await registry.register(f"owned-{index}", "Synthetic", f"hash-{index}", "test", user_id=owner)
+        await registry.register(
+            f"owned-{index}", "Synthetic", f"hash-{index}", "test", user_id=owner
+        )
     monkeypatch.setattr(PluginHub, "_registry", registry)
     lookup = AsyncMock(wraps=registry.get_session_id_by_hash)
     listing = AsyncMock(wraps=registry.list_sessions)

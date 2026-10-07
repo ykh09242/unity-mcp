@@ -1,4 +1,5 @@
 """Private owned files only; never read a real user's launch credentials."""
+
 import os
 from pathlib import Path
 
@@ -6,7 +7,9 @@ import pytest
 
 from transport.legacy.stdio_credentials import read_stdio_token
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX ownership and no-follow filesystem contract")
+pytestmark = pytest.mark.skipif(
+    os.name == "nt", reason="POSIX ownership and no-follow filesystem contract"
+)
 GENERATION = "a" * 32
 TOKEN = "synthetic-owned-token-" * 3
 

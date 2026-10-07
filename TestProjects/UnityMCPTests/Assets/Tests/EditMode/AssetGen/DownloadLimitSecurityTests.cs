@@ -15,8 +15,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void ArtifactBodiesCannotExceedLimitEvenWithMissingOrFalseLength(long declaredLength)
         {
             using var stream = new MemoryStream(new byte[100]);
-            Assert.ThrowsAsync<IOException>(async () =>
-                await AssetDownloadTransport.ReadLimitedAsync(stream, declaredLength, 50, CancellationToken.None));
+            Assert.ThrowsAsync<IOException>(async () => await AssetDownloadTransport.ReadLimitedAsync(stream, declaredLength, 50, CancellationToken.None));
         }
 
         [Test]
@@ -40,7 +39,8 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void OversizedContentLengthPreventsApiBodyConsumption()
         {
             using var handler = new BoundedDownloadHandler(10);
-            typeof(BoundedDownloadHandler).GetMethod("ReceiveContentLengthHeader", BindingFlags.NonPublic | BindingFlags.Instance)
+            typeof(BoundedDownloadHandler)
+                .GetMethod("ReceiveContentLengthHeader", BindingFlags.NonPublic | BindingFlags.Instance)
                 .Invoke(handler, new object[] { 11UL });
             Assert.Throws<IOException>(() => handler.GetBody());
         }

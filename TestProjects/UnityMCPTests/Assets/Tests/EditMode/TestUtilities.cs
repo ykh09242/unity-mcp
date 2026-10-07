@@ -22,7 +22,8 @@ namespace MCPForUnityTests.Editor
         /// </summary>
         public static JObject ToJObject(object result)
         {
-            if (result == null) return new JObject();
+            if (result == null)
+                return new JObject();
             return result as JObject ?? JObject.FromObject(result);
         }
 
@@ -55,7 +56,7 @@ namespace MCPForUnityTests.Editor
 
         /// <summary>
         /// Waits for Unity to finish compiling and updating, with a configurable timeout.
-        /// Some EditMode tests trigger script compilation/domain reload. 
+        /// Some EditMode tests trigger script compilation/domain reload.
         /// Tools intentionally return "compiling_or_reloading" during these windows.
         /// </summary>
         /// <param name="timeoutSeconds">Maximum time to wait before failing the test.</param>
@@ -79,10 +80,7 @@ namespace MCPForUnityTests.Editor
         /// <returns>A shader suitable for test materials, or null if none found.</returns>
         public static Shader FindFallbackShader()
         {
-            return Shader.Find("Universal Render Pipeline/Lit")
-                ?? Shader.Find("HDRP/Lit")
-                ?? Shader.Find("Standard")
-                ?? Shader.Find("Unlit/Color");
+            return Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("HDRP/Lit") ?? Shader.Find("Standard") ?? Shader.Find("Unlit/Color");
         }
 
         /// <summary>
@@ -152,17 +150,14 @@ namespace MCPForUnityTests.Editor
 
         public bool IsConnected { get; private set; }
         public string TransportName => "http";
-        public TransportState State { get; private set; }
-            = TransportState.Disconnected("http");
+        public TransportState State { get; private set; } = TransportState.Disconnected("http");
 
         public Task<bool> StartAsync()
         {
             StartCalls++;
             OnStart?.Invoke();
             IsConnected = StartResult;
-            State = StartResult
-                ? TransportState.Connected("http")
-                : TransportState.Disconnected("http", "fake start failure");
+            State = StartResult ? TransportState.Connected("http") : TransportState.Disconnected("http", "fake start failure");
             return Task.FromResult(StartResult);
         }
 
@@ -173,10 +168,8 @@ namespace MCPForUnityTests.Editor
             return Task.CompletedTask;
         }
 
-        public Task<bool> VerifyAsync()
-            => Task.FromResult(IsConnected);
+        public Task<bool> VerifyAsync() => Task.FromResult(IsConnected);
 
-        public Task ReregisterToolsAsync()
-            => Task.CompletedTask;
+        public Task ReregisterToolsAsync() => Task.CompletedTask;
     }
 }

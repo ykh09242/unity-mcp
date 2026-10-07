@@ -111,9 +111,7 @@ namespace MCPForUnity.Editor.Setup
             if (GUILayout.Button("Clear Log", GUILayout.Width(100f), GUILayout.Height(32f)))
             {
                 _logBuilder.Clear();
-                while (_pendingLogs.TryDequeue(out _))
-                {
-                }
+                while (_pendingLogs.TryDequeue(out _)) { }
             }
             EditorGUILayout.EndHorizontal();
 
@@ -141,7 +139,10 @@ namespace MCPForUnity.Editor.Setup
             }
 
             _isRunning = true;
-            SkillSyncService.SyncAsync(_repoUrl, _installDir, _targetBranch,
+            SkillSyncService.SyncAsync(
+                _repoUrl,
+                _installDir,
+                _targetBranch,
                 line => _pendingLogs.Enqueue($"[{DateTime.Now:HH:mm:ss}] {SanitizeLogLine(line)}"),
                 result =>
                 {
@@ -154,7 +155,8 @@ namespace MCPForUnity.Editor.Setup
                     {
                         _pendingLogs.Enqueue($"[{DateTime.Now:HH:mm:ss}] [ERROR] {result.Error}");
                     }
-                });
+                }
+            );
         }
 
         private void TryApplyCliDefaultInstallPath(string previousCli, string currentCli)
@@ -189,10 +191,7 @@ namespace MCPForUnity.Editor.Setup
 
             try
             {
-                return string.Equals(
-                    SkillSyncService.ExpandPath(left),
-                    SkillSyncService.ExpandPath(right),
-                    StringComparison.Ordinal);
+                return string.Equals(SkillSyncService.ExpandPath(left), SkillSyncService.ExpandPath(right), StringComparison.Ordinal);
             }
             catch
             {

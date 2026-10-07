@@ -18,22 +18,38 @@ namespace MCPForUnity.Editor.Services
 
         public static bool IsRunning
         {
-            get { lock (LockObj) return _isRunning; }
+            get
+            {
+                lock (LockObj)
+                    return _isRunning;
+            }
         }
 
         public static TestMode? Mode
         {
-            get { lock (LockObj) return _mode; }
+            get
+            {
+                lock (LockObj)
+                    return _mode;
+            }
         }
 
         public static long? StartedUnixMs
         {
-            get { lock (LockObj) return _startedUnixMs; }
+            get
+            {
+                lock (LockObj)
+                    return _startedUnixMs;
+            }
         }
 
         public static long? FinishedUnixMs
         {
-            get { lock (LockObj) return _finishedUnixMs; }
+            get
+            {
+                lock (LockObj)
+                    return _finishedUnixMs;
+            }
         }
 
         public static void MarkStarted(TestMode mode)
@@ -58,5 +74,3 @@ namespace MCPForUnity.Editor.Services
         }
     }
 }
-
-

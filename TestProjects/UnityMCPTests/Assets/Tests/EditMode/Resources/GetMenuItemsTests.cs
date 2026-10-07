@@ -1,8 +1,8 @@
-using NUnit.Framework;
-using Newtonsoft.Json.Linq;
-using MCPForUnity.Editor.Resources.MenuItems;
 using System;
 using System.Linq;
+using MCPForUnity.Editor.Resources.MenuItems;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Resources.MenuItems
 {

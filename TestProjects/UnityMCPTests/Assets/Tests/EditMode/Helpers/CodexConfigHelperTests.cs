@@ -1,11 +1,11 @@
 using System.Collections.Generic;
-using System.Linq;
-using NUnit.Framework;
-using MCPForUnity.Editor.Helpers;
-using MCPForUnity.External.Tommy;
-using MCPForUnity.Editor.Services;
 using System.IO;
+using System.Linq;
 using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
+using MCPForUnity.External.Tommy;
+using NUnit.Framework;
 using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Helpers
@@ -44,6 +44,7 @@ namespace MCPForUnityTests.Editor.Helpers
             }
 
             public bool IsWindows() => _isWindows;
+
             public string GetSystemRoot() => _isWindows ? _systemRoot : null;
         }
 
@@ -141,9 +142,11 @@ namespace MCPForUnityTests.Editor.Helpers
         {
             string result = CodexConfigHelper.UpsertCodexServerBlock(
                 "model = \"synthetic-model\"\n[mcp_servers.other]\ncommand = \"other\"\n"
-                + "[mcp_servers.unityMCP]\ncommand = \"old\"\nargs = []\n"
-                + "enabled = false\nstartup_timeout_sec = 0\n"
-                + "env = { CUSTOM = \"retained\" }\n", null);
+                    + "[mcp_servers.unityMCP]\ncommand = \"old\"\nargs = []\n"
+                    + "enabled = false\nstartup_timeout_sec = 0\n"
+                    + "env = { CUSTOM = \"retained\" }\n",
+                null
+            );
             using var reader = new StringReader(result);
             var root = TOML.Parse(reader);
             var servers = (TomlTable)root["mcp_servers"];
@@ -158,9 +161,12 @@ namespace MCPForUnityTests.Editor.Helpers
         [Test]
         public void UpsertCodexServerBlock_StdioRefusesCustomHttpHeaders()
         {
-            var error = Assert.Throws<System.FormatException>(() => CodexConfigHelper.UpsertCodexServerBlock(
-                "[mcp_servers.unityMCP]\nurl = \"https://synthetic.invalid/mcp\"\n"
-                + "http_headers = { Custom = \"synthetic-private-value\" }", null));
+            var error = Assert.Throws<System.FormatException>(() =>
+                CodexConfigHelper.UpsertCodexServerBlock(
+                    "[mcp_servers.unityMCP]\nurl = \"https://synthetic.invalid/mcp\"\n" + "http_headers = { Custom = \"synthetic-private-value\" }",
+                    null
+                )
+            );
             StringAssert.Contains("http_headers", error.Message);
             StringAssert.Contains("stdio", error.Message);
             StringAssert.DoesNotContain("synthetic-private-value", error.Message);
@@ -173,8 +179,9 @@ namespace MCPForUnityTests.Editor.Helpers
             EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
             EditorConfigurationCache.Instance.Refresh();
             string result = CodexConfigHelper.UpsertCodexServerBlock(
-                "[features]\nrmcp_client = " + enabled.ToString().ToLowerInvariant()
-                + "\ncustom_feature = true\n[mcp_servers.other]\ncommand = \"other\"", null);
+                "[features]\nrmcp_client = " + enabled.ToString().ToLowerInvariant() + "\ncustom_feature = true\n[mcp_servers.other]\ncommand = \"other\"",
+                null
+            );
             using var reader = new StringReader(result);
             var root = TOML.Parse(reader);
             Assert.AreEqual(enabled, ((TomlBoolean)root["features"]["rmcp_client"]).Value);
@@ -186,8 +193,7 @@ namespace MCPForUnityTests.Editor.Helpers
         public void TransportRoundTripRemovesOnlyManagedTransportFields()
         {
             MCPServiceLocator.Register<IPlatformService>(new MockPlatformService(isWindows: true));
-            string stdio = CodexConfigHelper.UpsertCodexServerBlock(
-                "[mcp_servers.unityMCP]\ntool_timeout_sec = 17\n", null);
+            string stdio = CodexConfigHelper.UpsertCodexServerBlock("[mcp_servers.unityMCP]\ntool_timeout_sec = 17\n", null);
             EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
             EditorConfigurationCache.Instance.Refresh();
             string http = CodexConfigHelper.UpsertCodexServerBlock(stdio, null);
@@ -226,9 +232,12 @@ namespace MCPForUnityTests.Editor.Helpers
         public void HttpValidationChecksManagedCredentialsWithoutLeakingValues(string settings, bool expected)
         {
             var headers = new Dictionary<string, string> { ["X-Unity-MCP-Token"] = "synthetic-current" };
-            Assert.AreEqual(expected, CodexConfigHelper.TryValidateHttpServer(
-                "[mcp_servers.unityMCP]\nurl = 'http://127.0.0.1:8080/mcp'\n" + settings, headers, out var reason));
-            if (expected) Assert.IsNull(reason);
+            Assert.AreEqual(
+                expected,
+                CodexConfigHelper.TryValidateHttpServer("[mcp_servers.unityMCP]\nurl = 'http://127.0.0.1:8080/mcp'\n" + settings, headers, out var reason)
+            );
+            if (expected)
+                Assert.IsNull(reason);
             else
             {
                 Assert.IsNotEmpty(reason);
@@ -242,8 +251,9 @@ namespace MCPForUnityTests.Editor.Helpers
         {
             EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
             EditorConfigurationCache.Instance.Refresh();
-            var error = Assert.Throws<System.FormatException>(() => CodexConfigHelper.UpsertCodexServerBlock(
-                "[mcp_servers.unityMCP]\nurl = 'http://127.0.0.1:8080/mcp'\n" + settings, null));
+            var error = Assert.Throws<System.FormatException>(() =>
+                CodexConfigHelper.UpsertCodexServerBlock("[mcp_servers.unityMCP]\nurl = 'http://127.0.0.1:8080/mcp'\n" + settings, null)
+            );
             StringAssert.Contains("preserved", error.Message);
             StringAssert.DoesNotContain("synthetic-", error.Message);
         }
@@ -253,8 +263,8 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("{\"transport\":{\"type\":\"streamable_http\"}}", false)]
         [TestCase("{\"transport\":{\"type\":\"streamable_http\",\"http_headers_helper\":null}}", false)]
         [TestCase("{\"transport\":{\"type\":\"streamable_http\",\"http_headers_helper\":\"<redacted>\"}}", true)]
-        public void HelperCapabilityRequiresRecognizedField(string output, bool supported)
-            => Assert.AreEqual(supported, CodexHttpAuth.RecognizesHeadersHelper(output));
+        public void HelperCapabilityRequiresRecognizedField(string output, bool supported) =>
+            Assert.AreEqual(supported, CodexHttpAuth.RecognizesHeadersHelper(output));
 
         [Test]
         public void LocalHttpWithoutHelperSupportRefusesToWriteStaticToken()
@@ -273,8 +283,10 @@ namespace MCPForUnityTests.Editor.Helpers
             finally
             {
                 CodexHttpAuth.SupportsHeadersHelper = () => true;
-                if (hadScope) EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, scope);
-                else EditorPrefs.DeleteKey(EditorPrefKeys.HttpTransportScope);
+                if (hadScope)
+                    EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, scope);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.HttpTransportScope);
                 EditorConfigurationCache.Instance.Refresh();
             }
         }
@@ -284,8 +296,7 @@ namespace MCPForUnityTests.Editor.Helpers
         {
             string path = "C:\\synthetic dir\\O'Brien\\token-8080";
             string command = LocalHttpAuth.BuildCommand(path, true);
-            string script = System.Text.Encoding.Unicode.GetString(System.Convert.FromBase64String(
-                command.Substring(command.LastIndexOf(' ') + 1)));
+            string script = System.Text.Encoding.Unicode.GetString(System.Convert.FromBase64String(command.Substring(command.LastIndexOf(' ') + 1)));
             StringAssert.Contains("O''Brien", script);
             StringAssert.Contains("ReadAllText", script);
             StringAssert.Contains("ConvertTo-Json", script);
@@ -294,18 +305,21 @@ namespace MCPForUnityTests.Editor.Helpers
 
         [TestCase("https://synthetic.example.test/mcp")]
         [TestCase("file:///synthetic/path")]
-        public void TokenHelperNeverTargetsArbitraryRemoteEndpoints(string url)
-            => Assert.Throws<System.InvalidOperationException>(() => LocalHttpAuth.CommandForEndpoint(url));
+        public void TokenHelperNeverTargetsArbitraryRemoteEndpoints(string url) =>
+            Assert.Throws<System.InvalidOperationException>(() => LocalHttpAuth.CommandForEndpoint(url));
 
         [Test]
         public void TryParseCodexServer_SingleLineArgs_ParsesSuccessfully()
         {
-            string toml = string.Join("\n", new[]
-            {
-                "[mcp_servers.unityMCP]",
-                "command = \"uvx --from git+https://github.com/CoplayDev/unity-mcp@v6.3.0#subdirectory=Server\"",
-                "args = [\"mcp-for-unity\"]"
-            });
+            string toml = string.Join(
+                "\n",
+                new[]
+                {
+                    "[mcp_servers.unityMCP]",
+                    "command = \"uvx --from git+https://github.com/CoplayDev/unity-mcp@v6.3.0#subdirectory=Server\"",
+                    "args = [\"mcp-for-unity\"]",
+                }
+            );
 
             bool result = CodexConfigHelper.TryParseCodexServer(toml, out string command, out string[] args);
 
@@ -317,14 +331,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [Test]
         public void TryParseCodexServer_MultiLineArgsWithTrailingComma_ParsesSuccessfully()
         {
-            string toml = string.Join("\n", new[]
-            {
-                "[mcp_servers.unityMCP]",
-                "command = \"uvx\"",
-                "args = [",
-                "  \"mcp-for-unity\",",
-                "]"
-            });
+            string toml = string.Join("\n", new[] { "[mcp_servers.unityMCP]", "command = \"uvx\"", "args = [", "  \"mcp-for-unity\",", "]" });
 
             bool result = CodexConfigHelper.TryParseCodexServer(toml, out string command, out string[] args);
 
@@ -336,14 +343,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [Test]
         public void TryParseCodexServer_MultiLineArgsWithComments_IgnoresComments()
         {
-            string toml = string.Join("\n", new[]
-            {
-                "[mcp_servers.unityMCP]",
-                "command = \"uvx\"",
-                "args = [",
-                "  \"mcp-for-unity\", # package name",
-                "]"
-            });
+            string toml = string.Join("\n", new[] { "[mcp_servers.unityMCP]", "command = \"uvx\"", "args = [", "  \"mcp-for-unity\", # package name", "]" });
 
             bool result = CodexConfigHelper.TryParseCodexServer(toml, out string command, out string[] args);
 
@@ -355,12 +355,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [Test]
         public void TryParseCodexServer_HeaderWithComment_StillDetected()
         {
-            string toml = string.Join("\n", new[]
-            {
-                "[mcp_servers.unityMCP] # annotated header",
-                "command = \"uvx\"",
-                "args = [\"mcp-for-unity\"]"
-            });
+            string toml = string.Join("\n", new[] { "[mcp_servers.unityMCP] # annotated header", "command = \"uvx\"", "args = [\"mcp-for-unity\"]" });
 
             bool result = CodexConfigHelper.TryParseCodexServer(toml, out string command, out string[] args);
 
@@ -372,12 +367,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [Test]
         public void TryParseCodexServer_SingleQuotedArgsWithApostrophes_ParsesSuccessfully()
         {
-            string toml = string.Join("\n", new[]
-            {
-                "[mcp_servers.unityMCP]",
-                "command = 'uvx'",
-                "args = ['mcp-for-unity']"
-            });
+            string toml = string.Join("\n", new[] { "[mcp_servers.unityMCP]", "command = 'uvx'", "args = ['mcp-for-unity']" });
 
             bool result = CodexConfigHelper.TryParseCodexServer(toml, out string command, out string[] args);
 
@@ -504,11 +494,7 @@ namespace MCPForUnityTests.Editor.Helpers
             // Mock Windows platform
             MCPServiceLocator.Register<IPlatformService>(new MockPlatformService(isWindows: true, systemRoot: "C:\\Windows"));
 
-            string existingToml = string.Join("\n", new[]
-            {
-                "[other_section]",
-                "key = \"value\""
-            });
+            string existingToml = string.Join("\n", new[] { "[other_section]", "key = \"value\"" });
 
             string uvPath = "C:\\path\\to\\uv.exe";
 
@@ -570,11 +556,7 @@ namespace MCPForUnityTests.Editor.Helpers
             // Mock non-Windows platform (e.g., macOS/Linux)
             MCPServiceLocator.Register<IPlatformService>(new MockPlatformService(isWindows: false));
 
-            string existingToml = string.Join("\n", new[]
-            {
-                "[other_section]",
-                "key = \"value\""
-            });
+            string existingToml = string.Join("\n", new[] { "[other_section]", "key = \"value\"" });
 
             string uvPath = "/usr/local/bin/uv";
 
@@ -670,11 +652,7 @@ namespace MCPForUnityTests.Editor.Helpers
         {
             // This test verifies HTTP mode parsing with url field
 
-            string toml = string.Join("\n", new[]
-            {
-                "[mcp_servers.unityMCP]",
-                "url = \"http://localhost:8080/mcp/v1/rpc\""
-            });
+            string toml = string.Join("\n", new[] { "[mcp_servers.unityMCP]", "url = \"http://localhost:8080/mcp/v1/rpc\"" });
 
             bool result = CodexConfigHelper.TryParseCodexServer(toml, out string command, out string[] args, out string url);
 
@@ -693,11 +671,7 @@ namespace MCPForUnityTests.Editor.Helpers
             EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
             EditorConfigurationCache.Instance.Refresh();
 
-            string existingToml = string.Join("\n", new[]
-            {
-                "[other_section]",
-                "key = \"value\""
-            });
+            string existingToml = string.Join("\n", new[] { "[other_section]", "key = \"value\"" });
 
             string uvPath = "C:\\path\\to\\uv.exe";
 

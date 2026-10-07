@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using MCPForUnity.Editor.Setup;
 using NUnit.Framework;
 using UnityEditor.Compilation;
-using MCPForUnity.Editor.Setup;
 
 namespace MCPForUnityTests.Editor.Setup
 {
@@ -37,10 +37,12 @@ namespace MCPForUnityTests.Editor.Setup
                 }
             }
 
-            CollectionAssert.IsEmpty(missing,
+            CollectionAssert.IsEmpty(
+                missing,
                 "MCPForUnity.Editor.asmdef must list every DLL RoslynInstaller installs in "
-                + "precompiledReferences, otherwise USE_ROSLYN cannot compile against them. Missing: "
-                + string.Join(", ", missing));
+                    + "precompiledReferences, otherwise USE_ROSLYN cannot compile against them. Missing: "
+                    + string.Join(", ", missing)
+            );
         }
 
         /// <summary>
@@ -53,12 +55,7 @@ namespace MCPForUnityTests.Editor.Setup
         [Test]
         public void EditorSources_DoNotUseRoslynWorkspacesLayer()
         {
-            string[] workspacesApis =
-            {
-                "Microsoft.CodeAnalysis.Formatting",
-                "Microsoft.CodeAnalysis.Workspaces",
-                "AdhocWorkspace",
-            };
+            string[] workspacesApis = { "Microsoft.CodeAnalysis.Formatting", "Microsoft.CodeAnalysis.Workspaces", "AdhocWorkspace" };
 
             string editorRoot = Path.GetDirectoryName(ReadEditorAsmdefPath());
             List<string> offenders = new List<string>();
@@ -74,10 +71,12 @@ namespace MCPForUnityTests.Editor.Setup
                 }
             }
 
-            CollectionAssert.IsEmpty(offenders,
+            CollectionAssert.IsEmpty(
+                offenders,
                 "MCPForUnity.Editor must only use the Roslyn compiler layer that RoslynInstaller installs; "
-                + "the Workspaces layer is not shipped or referenced, so USE_ROSLYN would fail to compile. Found: "
-                + string.Join(", ", offenders));
+                    + "the Workspaces layer is not shipped or referenced, so USE_ROSLYN would fail to compile. Found: "
+                    + string.Join(", ", offenders)
+            );
         }
 
         /// <summary>
@@ -86,8 +85,7 @@ namespace MCPForUnityTests.Editor.Setup
         /// </summary>
         private static List<string> GetInstallerDllNames()
         {
-            FieldInfo field = typeof(RoslynInstaller).GetField(
-                "NuGetEntries", BindingFlags.NonPublic | BindingFlags.Static);
+            FieldInfo field = typeof(RoslynInstaller).GetField("NuGetEntries", BindingFlags.NonPublic | BindingFlags.Static);
             Assert.IsNotNull(field, "RoslynInstaller.NuGetEntries not found — was it renamed?");
 
             List<string> names = new List<string>();

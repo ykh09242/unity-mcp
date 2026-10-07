@@ -24,6 +24,7 @@ from services.tools.manage_probuilder import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_unity(monkeypatch):
     """Patch Unity transport layer and return captured call dict."""
@@ -50,10 +51,18 @@ def mock_unity(monkeypatch):
 # Action list completeness
 # ---------------------------------------------------------------------------
 
+
 def test_all_actions_is_union_of_sub_lists():
     expected = set(
-        ["ping"] + SHAPE_ACTIONS + MESH_ACTIONS + VERTEX_ACTIONS + SELECTION_ACTIONS
-        + UV_MATERIAL_ACTIONS + QUERY_ACTIONS + SMOOTHING_ACTIONS + UTILITY_ACTIONS
+        ["ping"]
+        + SHAPE_ACTIONS
+        + MESH_ACTIONS
+        + VERTEX_ACTIONS
+        + SELECTION_ACTIONS
+        + UV_MATERIAL_ACTIONS
+        + QUERY_ACTIONS
+        + SMOOTHING_ACTIONS
+        + UTILITY_ACTIONS
     )
     assert set(ALL_ACTIONS) == expected
 
@@ -66,25 +75,23 @@ def test_no_duplicate_actions():
 # Invalid / missing action
 # ---------------------------------------------------------------------------
 
+
 def test_unknown_action_returns_error(mock_unity):
-    result = asyncio.run(
-        manage_probuilder(SimpleNamespace(), action="nonexistent_action")
-    )
+    result = asyncio.run(manage_probuilder(SimpleNamespace(), action="nonexistent_action"))
     assert result["success"] is False
     assert "Unknown action" in result["message"]
     assert "tool_name" not in mock_unity  # Should NOT call Unity
 
 
 def test_empty_action_returns_error(mock_unity):
-    result = asyncio.run(
-        manage_probuilder(SimpleNamespace(), action="")
-    )
+    result = asyncio.run(manage_probuilder(SimpleNamespace(), action=""))
     assert result["success"] is False
 
 
 # ---------------------------------------------------------------------------
 # Shape creation
 # ---------------------------------------------------------------------------
+
 
 def test_create_shape_sends_correct_params(mock_unity):
     result = asyncio.run(
@@ -132,6 +139,7 @@ def test_create_poly_shape_sends_correct_params(mock_unity):
 # ---------------------------------------------------------------------------
 # Mesh editing
 # ---------------------------------------------------------------------------
+
 
 def test_extrude_faces_sends_correct_params(mock_unity):
     result = asyncio.run(
@@ -204,6 +212,7 @@ def test_combine_meshes_sends_correct_params(mock_unity):
 # Vertex operations
 # ---------------------------------------------------------------------------
 
+
 def test_move_vertices_sends_correct_params(mock_unity):
     result = asyncio.run(
         manage_probuilder(
@@ -221,6 +230,7 @@ def test_move_vertices_sends_correct_params(mock_unity):
 # ---------------------------------------------------------------------------
 # UV & materials
 # ---------------------------------------------------------------------------
+
 
 def test_set_face_material_sends_correct_params(mock_unity):
     result = asyncio.run(
@@ -253,6 +263,7 @@ def test_set_face_uvs_sends_correct_params(mock_unity):
 # Query
 # ---------------------------------------------------------------------------
 
+
 def test_get_mesh_info_sends_correct_params(mock_unity):
     result = asyncio.run(
         manage_probuilder(
@@ -282,6 +293,7 @@ def test_convert_to_probuilder_sends_correct_params(mock_unity):
 # Search method passthrough
 # ---------------------------------------------------------------------------
 
+
 def test_search_method_passed_through(mock_unity):
     result = asyncio.run(
         manage_probuilder(
@@ -299,10 +311,9 @@ def test_search_method_passed_through(mock_unity):
 # Ping
 # ---------------------------------------------------------------------------
 
+
 def test_ping_sends_to_unity(mock_unity):
-    result = asyncio.run(
-        manage_probuilder(SimpleNamespace(), action="ping")
-    )
+    result = asyncio.run(manage_probuilder(SimpleNamespace(), action="ping"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "ping"
 
@@ -310,6 +321,7 @@ def test_ping_sends_to_unity(mock_unity):
 # ---------------------------------------------------------------------------
 # All actions are lowercase-normalized
 # ---------------------------------------------------------------------------
+
 
 def test_action_case_insensitive(mock_unity):
     result = asyncio.run(
@@ -327,6 +339,7 @@ def test_action_case_insensitive(mock_unity):
 # Non-dict result from Unity
 # ---------------------------------------------------------------------------
 
+
 def test_non_dict_result_wrapped(monkeypatch):
     async def fake_send(send_fn, unity_instance, tool_name, params):
         return "unexpected string result"
@@ -340,9 +353,7 @@ def test_non_dict_result_wrapped(monkeypatch):
         fake_send,
     )
 
-    result = asyncio.run(
-        manage_probuilder(SimpleNamespace(), action="ping")
-    )
+    result = asyncio.run(manage_probuilder(SimpleNamespace(), action="ping"))
     assert result["success"] is False
     assert "unexpected string result" in result["message"]
 
@@ -350,6 +361,7 @@ def test_non_dict_result_wrapped(monkeypatch):
 # ---------------------------------------------------------------------------
 # New action categories
 # ---------------------------------------------------------------------------
+
 
 def test_smoothing_actions_in_all():
     for action in SMOOTHING_ACTIONS:
@@ -364,6 +376,7 @@ def test_utility_actions_in_all():
 # ---------------------------------------------------------------------------
 # Smoothing actions
 # ---------------------------------------------------------------------------
+
 
 def test_auto_smooth_sends_correct_params(mock_unity):
     result = asyncio.run(
@@ -398,6 +411,7 @@ def test_set_smoothing_sends_correct_params(mock_unity):
 # ---------------------------------------------------------------------------
 # Mesh utility actions
 # ---------------------------------------------------------------------------
+
 
 def test_center_pivot_sends_correct_params(mock_unity):
     result = asyncio.run(
@@ -452,6 +466,7 @@ def test_repair_mesh_sends_correct_params(mock_unity):
 # get_mesh_info include parameter passthrough
 # ---------------------------------------------------------------------------
 
+
 def test_get_mesh_info_include_param_passthrough(mock_unity):
     result = asyncio.run(
         manage_probuilder(
@@ -469,6 +484,7 @@ def test_get_mesh_info_include_param_passthrough(mock_unity):
 # ---------------------------------------------------------------------------
 # New actions: mesh editing additions
 # ---------------------------------------------------------------------------
+
 
 def test_duplicate_and_flip_sends_correct_params(mock_unity):
     result = asyncio.run(
@@ -501,6 +517,7 @@ def test_create_polygon_sends_correct_params(mock_unity):
 # ---------------------------------------------------------------------------
 # New actions: vertex operations
 # ---------------------------------------------------------------------------
+
 
 def test_weld_vertices_sends_correct_params(mock_unity):
     result = asyncio.run(
@@ -548,6 +565,7 @@ def test_append_vertices_to_edge_sends_correct_params(mock_unity):
 # New actions: selection
 # ---------------------------------------------------------------------------
 
+
 def test_select_faces_sends_correct_params(mock_unity):
     result = asyncio.run(
         manage_probuilder(
@@ -572,6 +590,7 @@ def test_selection_actions_in_all():
 # New actions: utility
 # ---------------------------------------------------------------------------
 
+
 def test_set_pivot_sends_correct_params(mock_unity):
     result = asyncio.run(
         manage_probuilder(
@@ -589,6 +608,7 @@ def test_set_pivot_sends_correct_params(mock_unity):
 # ---------------------------------------------------------------------------
 # Edge specification by vertex pairs
 # ---------------------------------------------------------------------------
+
 
 def test_bevel_edges_with_vertex_pairs(mock_unity):
     result = asyncio.run(
@@ -621,6 +641,7 @@ def test_extrude_edges_with_vertex_pairs(mock_unity):
 # Detach faces with deleteSourceFaces
 # ---------------------------------------------------------------------------
 
+
 def test_detach_faces_with_delete_source(mock_unity):
     result = asyncio.run(
         manage_probuilder(
@@ -637,6 +658,7 @@ def test_detach_faces_with_delete_source(mock_unity):
 # ---------------------------------------------------------------------------
 # Bridge edges with allowNonManifold
 # ---------------------------------------------------------------------------
+
 
 def test_bridge_edges_with_allow_non_manifold(mock_unity):
     result = asyncio.run(
@@ -658,6 +680,7 @@ def test_bridge_edges_with_allow_non_manifold(mock_unity):
 # ---------------------------------------------------------------------------
 # Merge vertices with collapseToFirst
 # ---------------------------------------------------------------------------
+
 
 def test_merge_vertices_with_collapse_to_first(mock_unity):
     result = asyncio.run(

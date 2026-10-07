@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Physics
 {
@@ -30,8 +30,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                     bounceThreshold = UnityEngine.Physics.bounceThreshold,
                     sleepThreshold = UnityEngine.Physics.sleepThreshold,
                     defaultContactOffset = UnityEngine.Physics.defaultContactOffset,
-                    queriesHitTriggers = UnityEngine.Physics.queriesHitTriggers
-                }
+                    queriesHitTriggers = UnityEngine.Physics.queriesHitTriggers,
+                },
             };
         }
 
@@ -56,8 +56,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                         queriesHitTriggers = Physics2D.queriesHitTriggers,
                         queriesStartInColliders = Physics2D.queriesStartInColliders,
                         callbacksOnDisable = Physics2D.callbacksOnDisable,
-                        autoSyncTransforms = UnityPhysicsCompat.GetPhysics2DAutoSyncTransforms()
-                    }
+                        autoSyncTransforms = UnityPhysicsCompat.GetPhysics2DAutoSyncTransforms(),
+                    },
                 };
             }
 
@@ -84,8 +84,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                     queriesHitTriggers = UnityEngine.Physics.queriesHitTriggers,
                     queriesHitBackfaces = UnityEngine.Physics.queriesHitBackfaces,
                     simulationMode = simMode,
-                    autoSyncTransforms = UnityPhysicsCompat.GetPhysicsAutoSyncTransforms()
-                }
+                    autoSyncTransforms = UnityPhysicsCompat.GetPhysicsAutoSyncTransforms(),
+                },
             };
         }
 
@@ -109,11 +109,17 @@ namespace MCPForUnity.Editor.Tools.Physics
 
         private static readonly HashSet<string> Valid3DKeys = new HashSet<string>
         {
-            "gravity", "defaultcontactoffset", "sleepthreshold",
-            "defaultsolveriterations", "defaultsolvervelocityiterations",
-            "bouncethreshold", "defaultmaxangularspeed",
-            "querieshittriggers", "querieshitbackfaces", "simulationmode",
-            "autosynctransforms"
+            "gravity",
+            "defaultcontactoffset",
+            "sleepthreshold",
+            "defaultsolveriterations",
+            "defaultsolvervelocityiterations",
+            "bouncethreshold",
+            "defaultmaxangularspeed",
+            "querieshittriggers",
+            "querieshitbackfaces",
+            "simulationmode",
+            "autosynctransforms",
         };
 
         private static object SetSettings3D(JObject settings)
@@ -126,8 +132,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     unknown.Add(prop.Name);
             }
             if (unknown.Count > 0)
-                return new ErrorResponse(
-                    $"Unknown 3D physics setting(s): {string.Join(", ", unknown)}.");
+                return new ErrorResponse($"Unknown 3D physics setting(s): {string.Join(", ", unknown)}.");
 
             var changed = new List<string>();
             var changes = new List<Action>();
@@ -142,8 +147,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         var arr = prop.Value as JArray;
                         if (arr == null || arr.Count < 3)
                             return new ErrorResponse("3D gravity requires [x, y, z] array.");
-                        var newGravity = new Vector3(
-                            arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(), arr[2].ReadScalar<float>());
+                        var newGravity = new Vector3(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(), arr[2].ReadScalar<float>());
                         changes.Add(() =>
                         {
                             UnityEngine.Physics.gravity = newGravity;
@@ -218,15 +222,15 @@ namespace MCPForUnity.Editor.Tools.Physics
                     case "simulationmode":
                     {
                         string modeStr = prop.Value.ToString();
-                        if (!System.Enum.TryParse<UnityPhysicsCompat.SimulationMode>(modeStr, true, out var mode)
-                            || mode == UnityPhysicsCompat.SimulationMode.Unknown)
+                        if (
+                            !System.Enum.TryParse<UnityPhysicsCompat.SimulationMode>(modeStr, true, out var mode)
+                            || mode == UnityPhysicsCompat.SimulationMode.Unknown
+                        )
                         {
-                            return new ErrorResponse(
-                                $"Invalid simulationMode: '{modeStr}'. Valid: FixedUpdate, Update, Script.");
+                            return new ErrorResponse($"Invalid simulationMode: '{modeStr}'. Valid: FixedUpdate, Update, Script.");
                         }
                         if (!UnityPhysicsCompat.CanSetPhysicsSimulationMode(mode))
-                            return new ErrorResponse(
-                                $"simulationMode '{modeStr}' is not supported on this Unity version.");
+                            return new ErrorResponse($"simulationMode '{modeStr}' is not supported on this Unity version.");
                         changes.Add(() =>
                         {
                             if (!UnityPhysicsCompat.TrySetPhysicsSimulationMode(mode))
@@ -248,22 +252,27 @@ namespace MCPForUnity.Editor.Tools.Physics
                 }
             }
 
-            foreach (var change in changes) change();
+            foreach (var change in changes)
+                change();
             MarkDynamicsManagerDirty();
 
             return new
             {
                 success = true,
                 message = $"Updated {changed.Count} physics 3D setting(s).",
-                data = new { changed }
+                data = new { changed },
             };
         }
 
         private static readonly HashSet<string> Valid2DKeys = new HashSet<string>
         {
-            "gravity", "velocityiterations", "positioniterations",
-            "querieshittriggers", "queriesstartincolliders",
-            "callbacksondisable", "autosynctransforms"
+            "gravity",
+            "velocityiterations",
+            "positioniterations",
+            "querieshittriggers",
+            "queriesstartincolliders",
+            "callbacksondisable",
+            "autosynctransforms",
         };
 
         private static object SetSettings2D(JObject settings)
@@ -276,8 +285,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     unknown.Add(prop.Name);
             }
             if (unknown.Count > 0)
-                return new ErrorResponse(
-                    $"Unknown 2D physics setting(s): {string.Join(", ", unknown)}.");
+                return new ErrorResponse($"Unknown 2D physics setting(s): {string.Join(", ", unknown)}.");
 
             var changed = new List<string>();
             var changes = new List<Action>();
@@ -292,8 +300,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         var arr = prop.Value as JArray;
                         if (arr == null || arr.Count < 2)
                             return new ErrorResponse("2D gravity requires [x, y] array.");
-                        var newGravity = new Vector2(
-                            arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>());
+                        var newGravity = new Vector2(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>());
                         changes.Add(() =>
                         {
                             Physics2D.gravity = newGravity;
@@ -354,14 +361,15 @@ namespace MCPForUnity.Editor.Tools.Physics
                 }
             }
 
-            foreach (var change in changes) change();
+            foreach (var change in changes)
+                change();
             MarkPhysics2DSettingsDirty();
 
             return new
             {
                 success = true,
                 message = $"Updated {changed.Count} physics 2D setting(s).",
-                data = new { changed }
+                data = new { changed },
             };
         }
 

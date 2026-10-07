@@ -115,9 +115,12 @@ namespace MCPForUnityTests.Editor.Services
             string temp = Path.GetFullPath(_tempRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             Assert.That(root.StartsWith(temp + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase), Is.True);
             Assert.That(Path.GetFileName(root).StartsWith("UnityMCPPackageRecovery_", StringComparison.Ordinal), Is.True);
-            Assert.That(resolved.Equals(root, StringComparison.OrdinalIgnoreCase)
-                || resolved.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase), Is.True,
-                "All native fixture filesystem effects must stay under the unique owned root.");
+            Assert.That(
+                resolved.Equals(root, StringComparison.OrdinalIgnoreCase)
+                    || resolved.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase),
+                Is.True,
+                "All native fixture filesystem effects must stay under the unique owned root."
+            );
         }
     }
 }

@@ -31,11 +31,9 @@ namespace MCPForUnity.Editor.Helpers
                 return new PaginationRequest { PageSize = defaultPageSize };
 
             // Accept both page_size and pageSize
-            int pageSize = ParamCoercion.CoerceInt(
-                @params["page_size"] ?? @params["pageSize"], 
-                defaultPageSize
-            );
-            if (pageSize <= 0) pageSize = defaultPageSize;
+            int pageSize = ParamCoercion.CoerceInt(@params["page_size"] ?? @params["pageSize"], defaultPageSize);
+            if (pageSize <= 0)
+                pageSize = defaultPageSize;
 
             // Accept both cursor (0-based) and page_number (convert 1-based to 0-based)
             var cursorToken = @params["cursor"];
@@ -58,11 +56,7 @@ namespace MCPForUnity.Editor.Helpers
                 cursor = 0;
             }
 
-            return new PaginationRequest
-            {
-                PageSize = pageSize > 0 ? pageSize : defaultPageSize,
-                Cursor = cursor
-            };
+            return new PaginationRequest { PageSize = pageSize > 0 ? pageSize : defaultPageSize, Cursor = cursor };
         }
     }
 
@@ -122,8 +116,10 @@ namespace MCPForUnity.Editor.Helpers
             int pageSize = request.PageSize;
 
             // Clamp cursor to valid range
-            if (cursor < 0) cursor = 0;
-            if (cursor > totalCount) cursor = totalCount;
+            if (cursor < 0)
+                cursor = 0;
+            if (cursor > totalCount)
+                cursor = totalCount;
 
             // Get the page of items
             var items = new List<T>();
@@ -142,9 +138,8 @@ namespace MCPForUnity.Editor.Helpers
                 Cursor = cursor,
                 NextCursor = nextCursor,
                 TotalCount = totalCount,
-                PageSize = pageSize
+                PageSize = pageSize,
             };
         }
     }
 }
-

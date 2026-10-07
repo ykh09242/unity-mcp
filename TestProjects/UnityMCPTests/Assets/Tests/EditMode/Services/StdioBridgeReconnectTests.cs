@@ -4,10 +4,10 @@ using System.IO;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using MCPForUnity.Editor.Services.Transport.Transports;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
-using MCPForUnity.Editor.Services.Transport.Transports;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -36,8 +36,7 @@ namespace MCPForUnityTests.Editor.Services
             // --- First client: connect, verify ping/pong, then abruptly close ---
             using (var client1 = new TcpClient())
             {
-                Assert.IsTrue(client1.ConnectAsync("127.0.0.1", port).Wait(ConnectTimeoutMs),
-                    "First client connect timed out");
+                Assert.IsTrue(client1.ConnectAsync("127.0.0.1", port).Wait(ConnectTimeoutMs), "First client connect timed out");
                 client1.ReceiveTimeout = ReadTimeoutMs;
                 var stream1 = client1.GetStream();
 
@@ -62,8 +61,7 @@ namespace MCPForUnityTests.Editor.Services
             // --- Second client: connect and verify commands still work ---
             using (var client2 = new TcpClient())
             {
-                Assert.IsTrue(client2.ConnectAsync("127.0.0.1", port).Wait(ConnectTimeoutMs),
-                    "Second client connect timed out");
+                Assert.IsTrue(client2.ConnectAsync("127.0.0.1", port).Wait(ConnectTimeoutMs), "Second client connect timed out");
                 client2.ReceiveTimeout = ReadTimeoutMs;
                 var stream2 = client2.GetStream();
 
@@ -96,8 +94,7 @@ namespace MCPForUnityTests.Editor.Services
             var client1 = new TcpClient();
             try
             {
-                Assert.IsTrue(client1.ConnectAsync("127.0.0.1", port).Wait(ConnectTimeoutMs),
-                    "First client connect timed out");
+                Assert.IsTrue(client1.ConnectAsync("127.0.0.1", port).Wait(ConnectTimeoutMs), "First client connect timed out");
                 client1.ReceiveTimeout = ReadTimeoutMs;
                 var stream1 = client1.GetStream();
 
@@ -112,8 +109,7 @@ namespace MCPForUnityTests.Editor.Services
                 // --- Second client: connect while first is still open ---
                 using (var client2 = new TcpClient())
                 {
-                    Assert.IsTrue(client2.ConnectAsync("127.0.0.1", port).Wait(ConnectTimeoutMs),
-                        "Second client connect timed out");
+                    Assert.IsTrue(client2.ConnectAsync("127.0.0.1", port).Wait(ConnectTimeoutMs), "Second client connect timed out");
                     client2.ReceiveTimeout = ReadTimeoutMs;
                     var stream2 = client2.GetStream();
 
@@ -126,8 +122,7 @@ namespace MCPForUnityTests.Editor.Services
                     // server to reconnect and close our test client as stale.
                     SendFrame(stream2, Encoding.UTF8.GetBytes("ping"));
                     byte[] pong2Bytes = ReadFrame(stream2, ReadTimeoutMs);
-                    Assert.That(Encoding.UTF8.GetString(pong2Bytes), Does.Contain("pong"),
-                        "Second client should get pong after stale client cleanup");
+                    Assert.That(Encoding.UTF8.GetString(pong2Bytes), Does.Contain("pong"), "Second client should get pong after stale client cleanup");
 
                     client2.Close();
                 }
@@ -150,7 +145,11 @@ namespace MCPForUnityTests.Editor.Services
             }
             finally
             {
-                try { client1.Close(); } catch { }
+                try
+                {
+                    client1.Close();
+                }
+                catch { }
             }
         }
 
@@ -197,10 +196,14 @@ namespace MCPForUnityTests.Editor.Services
 
             byte[] header = ReadExact(stream, 8, timeoutMs);
             ulong payloadLen =
-                ((ulong)header[0] << 56) | ((ulong)header[1] << 48) |
-                ((ulong)header[2] << 40) | ((ulong)header[3] << 32) |
-                ((ulong)header[4] << 24) | ((ulong)header[5] << 16) |
-                ((ulong)header[6] << 8)  | header[7];
+                ((ulong)header[0] << 56)
+                | ((ulong)header[1] << 48)
+                | ((ulong)header[2] << 40)
+                | ((ulong)header[3] << 32)
+                | ((ulong)header[4] << 24)
+                | ((ulong)header[5] << 16)
+                | ((ulong)header[6] << 8)
+                | header[7];
 
             if (payloadLen == 0 || payloadLen > 16 * 1024 * 1024)
                 throw new IOException($"Invalid frame length: {payloadLen}");

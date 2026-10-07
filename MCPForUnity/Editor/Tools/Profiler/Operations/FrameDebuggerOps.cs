@@ -27,27 +27,35 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 // Unity 2021–2022: original location
                 UtilType ??= Type.GetType("UnityEditorInternal.FrameDebuggerUtility, UnityEditor");
 
-                if (UtilType == null) return;
+                if (UtilType == null)
+                    return;
 
-                EventCountProp = UtilType.GetProperty("count", BindingFlags.Public | BindingFlags.Static)
-                              ?? UtilType.GetProperty("eventsCount", BindingFlags.Public | BindingFlags.Static);
+                EventCountProp =
+                    UtilType.GetProperty("count", BindingFlags.Public | BindingFlags.Static)
+                    ?? UtilType.GetProperty("eventsCount", BindingFlags.Public | BindingFlags.Static);
 
-                EnableMethod = UtilType.GetMethod("SetEnabled", BindingFlags.Public | BindingFlags.Static,
-                                   null, new[] { typeof(bool), typeof(int) }, null)
-                            ?? UtilType.GetMethod("SetEnabled", BindingFlags.Public | BindingFlags.Static);
+                EnableMethod =
+                    UtilType.GetMethod("SetEnabled", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(bool), typeof(int) }, null)
+                    ?? UtilType.GetMethod("SetEnabled", BindingFlags.Public | BindingFlags.Static);
 
                 GetFrameEventsMethod = UtilType.GetMethod("GetFrameEvents", BindingFlags.Public | BindingFlags.Static);
                 GetEventInfoNameMethod = UtilType.GetMethod("GetFrameEventInfoName", BindingFlags.Public | BindingFlags.Static);
 
                 // Unity 6: GetFrameEventData(int, FrameDebuggerEventData) — 2 params, returns bool
                 // Older: GetFrameEventData(int) — 1 param, returns event data object
-                EventDataType = Type.GetType("UnityEditorInternal.FrameDebuggerInternal.FrameDebuggerEventData, UnityEditor")
-                             ?? Type.GetType("UnityEditorInternal.FrameDebuggerEventData, UnityEditor");
+                EventDataType =
+                    Type.GetType("UnityEditorInternal.FrameDebuggerInternal.FrameDebuggerEventData, UnityEditor")
+                    ?? Type.GetType("UnityEditorInternal.FrameDebuggerEventData, UnityEditor");
 
                 if (EventDataType != null)
                 {
-                    GetEventDataMethod = UtilType.GetMethod("GetFrameEventData", BindingFlags.Public | BindingFlags.Static,
-                                             null, new[] { typeof(int), EventDataType }, null);
+                    GetEventDataMethod = UtilType.GetMethod(
+                        "GetFrameEventData",
+                        BindingFlags.Public | BindingFlags.Static,
+                        null,
+                        new[] { typeof(int), EventDataType },
+                        null
+                    );
                 }
                 GetEventDataMethod ??= UtilType.GetMethod("GetFrameEventData", BindingFlags.Public | BindingFlags.Static);
 
@@ -68,8 +76,8 @@ namespace MCPForUnity.Editor.Tools.Profiler
             if (EditorApplication.isPlaying && !EditorApplication.isPaused)
             {
                 return new ErrorResponse(
-                    "Game must be paused before enabling Frame Debugger. "
-                    + "Call manage_editor action=pause first, then retry frame_debugger_enable.");
+                    "Game must be paused before enabling Frame Debugger. " + "Call manage_editor action=pause first, then retry frame_debugger_enable."
+                );
             }
 
             // Open the Frame Debugger window only after the request passes preflight.
@@ -85,11 +93,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
             }
 
             int eventCount = GetEventCount();
-            return new SuccessResponse("Frame Debugger enabled.", new
-            {
-                enabled = true,
-                event_count = eventCount,
-            });
+            return new SuccessResponse("Frame Debugger enabled.", new { enabled = true, event_count = eventCount });
         }
 
         internal static object Disable(JObject @params)
@@ -121,11 +125,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
             int totalEvents = GetEventCount();
             if (totalEvents == 0)
             {
-                return new SuccessResponse("Frame Debugger has no events. Is it enabled?", new
-                {
-                    events = new List<object>(),
-                    total_events = 0,
-                });
+                return new SuccessResponse("Frame Debugger has no events. Is it enabled?", new { events = new List<object>(), total_events = 0 });
             }
 
             // Try GetFrameEvents() for the event descriptor array (has type/name info)
@@ -149,7 +149,10 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 // Get event name
                 if (GetEventInfoNameMethod != null)
                 {
-                    try { entry["name"] = (string)GetEventInfoNameMethod.Invoke(null, new object[] { i }); }
+                    try
+                    {
+                        entry["name"] = (string)GetEventInfoNameMethod.Invoke(null, new object[] { i });
+                    }
                     catch { /* skip */ }
                 }
 
@@ -196,8 +199,11 @@ namespace MCPForUnity.Editor.Tools.Profiler
                             TryAddField(edType, eventData, "indexCount", entry, null, "m_IndexCount");
                             TryAddField(edType, eventData, "instanceCount", entry, null, "m_InstanceCount");
                             TryAddField(edType, eventData, "meshName", entry);
-                            if (!entry.ContainsKey("meshName") &&
-                                ReadFieldOrProperty(edType, eventData, "mesh", "m_Mesh") is UnityEngine.Mesh mesh && mesh != null)
+                            if (
+                                !entry.ContainsKey("meshName")
+                                && ReadFieldOrProperty(edType, eventData, "mesh", "m_Mesh") is UnityEngine.Mesh mesh
+                                && mesh != null
+                            )
                                 entry["meshName"] = mesh.name;
                         }
                     }
@@ -233,12 +239,17 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
         private static int GetEventCount()
         {
-            try { return (int)EventCountProp.GetValue(null); }
-            catch { return 0; }
+            try
+            {
+                return (int)EventCountProp.GetValue(null);
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
-        private static void TryAddField(Type type, object obj, string fieldName, Dictionary<string, object> dict,
-            string outputKey = null, string alias = null)
+        private static void TryAddField(Type type, object obj, string fieldName, Dictionary<string, object> dict, string outputKey = null, string alias = null)
         {
             object val = ReadFieldOrProperty(type, obj, fieldName, alias);
             if (val != null)
@@ -252,13 +263,15 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 try
                 {
                     string name = i == 0 ? fieldName : alias;
-                    var field = type.GetField(name, BindingFlags.Public | BindingFlags.Instance)
-                             ?? type.GetField(name, BindingFlags.NonPublic | BindingFlags.Instance);
-                    var prop = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)
-                            ?? type.GetProperty(name, BindingFlags.NonPublic | BindingFlags.Instance);
-                    object val = field != null ? field.GetValue(obj)
-                               : prop != null ? prop.GetValue(obj)
-                               : null;
+                    var field =
+                        type.GetField(name, BindingFlags.Public | BindingFlags.Instance) ?? type.GetField(name, BindingFlags.NonPublic | BindingFlags.Instance);
+                    var prop =
+                        type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)
+                        ?? type.GetProperty(name, BindingFlags.NonPublic | BindingFlags.Instance);
+                    object val =
+                        field != null ? field.GetValue(obj)
+                        : prop != null ? prop.GetValue(obj)
+                        : null;
                     if (val != null)
                         return val;
                 }
@@ -266,6 +279,5 @@ namespace MCPForUnity.Editor.Tools.Profiler
             }
             return null;
         }
-
     }
 }

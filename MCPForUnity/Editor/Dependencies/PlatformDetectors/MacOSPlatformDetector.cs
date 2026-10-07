@@ -20,16 +20,12 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
 
         public override DependencyStatus DetectPython()
         {
-            var status = new DependencyStatus("Python", isRequired: true)
-            {
-                InstallationHint = GetPythonInstallUrl()
-            };
+            var status = new DependencyStatus("Python", isRequired: true) { InstallationHint = GetPythonInstallUrl() };
 
             try
             {
                 // 1. Try 'which' command with augmented PATH (prioritizing Homebrew)
-                if (TryFindInPath("python3", out string pathResult) ||
-                    TryFindInPath("python", out pathResult))
+                if (TryFindInPath("python3", out string pathResult) || TryFindInPath("python", out pathResult))
                 {
                     if (TryValidatePython(pathResult, out string version, out string fullPath))
                     {
@@ -42,8 +38,7 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
                 }
 
                 // 2. Fallback: Try running python directly from PATH
-                if (TryValidatePython("python3", out string v, out string p) ||
-                    TryValidatePython("python", out v, out p))
+                if (TryValidatePython("python3", out string v, out string p) || TryValidatePython("python", out v, out p))
                 {
                     status.IsAvailable = true;
                     status.Version = v;
@@ -111,8 +106,10 @@ Note: If using Homebrew, make sure /opt/homebrew/bin is in your PATH.";
                 string augmentedPath = BuildAugmentedPath();
 
                 // Try uv first, then uvx, using ExecPath.TryRun for proper timeout handling
-                if (TryValidateUvWithPath("uv", augmentedPath, out string version, out string fullPath) ||
-                    TryValidateUvWithPath("uvx", augmentedPath, out version, out fullPath))
+                if (
+                    TryValidateUvWithPath("uv", augmentedPath, out string version, out string fullPath)
+                    || TryValidateUvWithPath("uvx", augmentedPath, out version, out fullPath)
+                )
                 {
                     status.IsAvailable = true;
                     status.Version = version;
@@ -149,8 +146,7 @@ Note: If using Homebrew, make sure /opt/homebrew/bin is in your PATH.";
                     commandToRun = resolvedPath;
                 }
 
-                if (!ExecPath.TryRun(commandToRun, "--version", null, out string stdout, out string stderr,
-                    5000, augmentedPath))
+                if (!ExecPath.TryRun(commandToRun, "--version", null, out string stdout, out string stderr, 5000, augmentedPath))
                     return false;
 
                 // Check stdout first, then stderr (some Python distributions output to stderr)
@@ -174,7 +170,8 @@ Note: If using Homebrew, make sure /opt/homebrew/bin is in your PATH.";
         protected string BuildAugmentedPath()
         {
             var additions = GetPathAdditions();
-            if (additions.Length == 0) return null;
+            if (additions.Length == 0)
+                return null;
 
             // Only return the additions - ExecPath.TryRun will prepend to existing PATH
             return string.Join(Path.PathSeparator, additions);
@@ -190,7 +187,7 @@ Note: If using Homebrew, make sure /opt/homebrew/bin is in your PATH.";
                 "/usr/local/bin",
                 "/usr/bin",
                 "/bin",
-                Path.Combine(homeDir, ".local", "bin")
+                Path.Combine(homeDir, ".local", "bin"),
             };
         }
 

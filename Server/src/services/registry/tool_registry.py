@@ -9,6 +9,7 @@ The special group value ``None`` means the tool is *always visible* and
 cannot be disabled by the group system (used for server meta-tools like
 ``set_active_instance`` and ``manage_tools``).
 """
+
 from typing import Callable, Any
 
 from services.registry.scalar_validation import enforce_strict_tool_inputs
@@ -38,7 +39,7 @@ def mcp_for_unity_tool(
     description: str | None = None,
     unity_target: str | None = "self",
     group: str | None = "core",
-    **kwargs
+    **kwargs,
 ) -> Callable:
     """
     Decorator for registering MCP tools in the server's tools directory.
@@ -63,6 +64,7 @@ def mcp_for_unity_tool(
         async def my_custom_tool(ctx: Context, ...):
             pass
     """
+
     def decorator(func: Callable) -> Callable:
         tool_name = name if name is not None else func.__name__
         # Safety guard: unity_target is internal metadata and must never leak into mcp.tool kwargs.
@@ -89,9 +91,7 @@ def mcp_for_unity_tool(
         if unity_target is None:
             normalized_unity_target: str | None = None
         elif isinstance(unity_target, str) and unity_target.strip():
-            normalized_unity_target = (
-                tool_name if unity_target == "self" else unity_target.strip()
-            )
+            normalized_unity_target = tool_name if unity_target == "self" else unity_target.strip()
         else:
             raise ValueError(
                 f"Invalid unity_target for tool '{tool_name}': {unity_target!r}. "
@@ -99,14 +99,16 @@ def mcp_for_unity_tool(
             )
 
         enforce_strict_tool_inputs(func)
-        _tool_registry.append({
-            'func': func,
-            'name': tool_name,
-            'description': description,
-            'unity_target': normalized_unity_target,
-            'group': resolved_group,
-            'kwargs': tool_kwargs,
-        })
+        _tool_registry.append(
+            {
+                "func": func,
+                "name": tool_name,
+                "description": description,
+                "unity_target": normalized_unity_target,
+                "group": resolved_group,
+                "kwargs": tool_kwargs,
+            }
+        )
 
         return func
 

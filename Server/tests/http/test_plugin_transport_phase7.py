@@ -14,7 +14,12 @@ from transport.large_result_assembler import CHUNK_PAYLOAD_BYTES, MAGIC
 from transport.plugin_hub import PluginHub
 from transport.result_gzip import GZIP_WORKING_BYTES
 from test_plugin_transport_architecture import (
-    barrier, begin, client, payload_and_frames, register, start_command,
+    barrier,
+    begin,
+    client,
+    payload_and_frames,
+    register,
+    start_command,
 )
 
 CANCEL = "command_cancel_v1"
@@ -37,21 +42,31 @@ def receive(client, wire):
 
 def compressed(command_id):
     result = {"success": True, "data": {"owned": "multiline\n" + "성공" * 200000}}
-    decoded = json.dumps({"type": "command_result", "id": command_id, "result": result},
-                         ensure_ascii=False).encode()
+    decoded = json.dumps(
+        {"type": "command_result", "id": command_id, "result": result}, ensure_ascii=False
+    ).encode()
     return result, decoded, gzip.compress(decoded, mtime=0)
 
 
 def frames(command_id, payload):
-    return [MAGIC + command_id.encode("ascii") + offset.to_bytes(4, "big")
-            + payload[offset:offset + CHUNK_PAYLOAD_BYTES]
-            for offset in range(0, len(payload), CHUNK_PAYLOAD_BYTES)]
+    return [
+        MAGIC
+        + command_id.encode("ascii")
+        + offset.to_bytes(4, "big")
+        + payload[offset : offset + CHUNK_PAYLOAD_BYTES]
+        for offset in range(0, len(payload), CHUNK_PAYLOAD_BYTES)
+    ]
 
 
 def gzip_start(wire, command_id, payload, decoded, **overrides):
-    message = {"type": "result_start", "id": command_id, "total_bytes": len(payload),
-               "chunk_count": len(frames(command_id, payload)), "encoding": "gzip",
-               "decoded_bytes": len(decoded)}
+    message = {
+        "type": "result_start",
+        "id": command_id,
+        "total_bytes": len(payload),
+        "chunk_count": len(frames(command_id, payload)),
+        "encoding": "gzip",
+        "decoded_bytes": len(decoded),
+    }
     message.update(overrides)
     wire.send_json(message)
 
@@ -64,7 +79,9 @@ def assert_released():
 
 
 @pytest.mark.parametrize("reason", ["cancel", "timeout"])
-def test_negotiated_cancel_uses_original_id_and_releases_partial_transfer(client, monkeypatch, reason):
+def test_negotiated_cancel_uses_original_id_and_releases_partial_transfer(
+    client, monkeypatch, reason
+):
     # Given a negotiated command with a partially received owned result.
     if reason == "timeout":
         monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 0.5)
@@ -126,14 +143,24 @@ def test_old_generation_cleanup_and_late_result_cannot_affect_replacement(client
             gzip_start(replacement, old_id, payload, decoded)
             for frame in frames(old_id, payload):
                 replacement.send_bytes(frame)
-            replacement.send_json({"type": "command_result", "id": old_id,
-                                   "result": {"success": True, "data": "stale"}})
+            replacement.send_json(
+                {
+                    "type": "command_result",
+                    "id": old_id,
+                    "result": {"success": True, "data": "stale"},
+                }
+            )
             barrier(client, replacement, sid)
             # Then the current command remains pending and its result is authoritative.
             assert not active.done()
             assert PluginHub._raw_results == {}
-            replacement.send_json({"type": "command_result", "id": active_id,
-                                   "result": {"success": True, "data": "current"}})
+            replacement.send_json(
+                {
+                    "type": "command_result",
+                    "id": active_id,
+                    "result": {"success": True, "data": "current"},
+                }
+            )
             assert active.result(timeout=2) == {"success": True, "data": "current"}
             assert_released()
 
@@ -175,7 +202,9 @@ def test_blocked_cancel_send_has_bounded_cleanup_and_frees_capacity(client, monk
         barrier(client, wire, sid)
 
 
-def test_changed_generation_before_cleanup_suppresses_stale_cancel_and_releases_original(client, monkeypatch):
+def test_changed_generation_before_cleanup_suppresses_stale_cancel_and_releases_original(
+    client, monkeypatch
+):
     # Given a command admitted under one authenticated socket generation.
     with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as wire:
         sid, _, ack = register(wire, capabilities=[LARGE, CANCEL])
@@ -220,7 +249,10 @@ def test_negotiated_gzip_decodes_complete_unicode_envelope_and_releases(client):
         gzip_start(wire, cid, payload, decoded)
         barrier(client, wire, sid)
         generation = PluginHub._connections[sid].state.plugin_generation
-        assert PluginHub._raw_results[generation, cid]["bytes"] == 5 * len(decoded) + 4096 + GZIP_WORKING_BYTES
+        assert (
+            PluginHub._raw_results[generation, cid]["bytes"]
+            == 5 * len(decoded) + 4096 + GZIP_WORKING_BYTES
+        )
         for frame in frames(cid, payload):
             wire.send_bytes(frame)
         # Then the decoded envelope, including complete Unicode data, is unchanged.
@@ -246,12 +278,19 @@ def test_gzip_stream_without_compression_negotiation_is_rejected(client, feature
         assert_released()
 
 
-@pytest.mark.parametrize("metadata", [
-    {"encoding": "brotli"}, {"encoding": 7}, {"decoded_bytes": True},
-    {"decoded_bytes": "1200000"}, {"decoded_bytes": 1200000.5},
-    {"decoded_bytes": None}, {"decoded_bytes": 100},
-    {"encoding": "identity", "decoded_bytes": 1200000},
-])
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"encoding": "brotli"},
+        {"encoding": 7},
+        {"decoded_bytes": True},
+        {"decoded_bytes": "1200000"},
+        {"decoded_bytes": 1200000.5},
+        {"decoded_bytes": None},
+        {"decoded_bytes": 100},
+        {"encoding": "identity", "decoded_bytes": 1200000},
+    ],
+)
 def test_invalid_compression_start_is_closed_without_allocation(client, metadata):
     # Given malformed compression metadata on an active owned command.
     with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as wire:
@@ -278,7 +317,9 @@ def test_invalid_gzip_stream_closes_only_owner_and_releases(client, kind):
         with client.websocket_connect("/plugin", headers={"x-api-key": "bob"}) as healthy:
             healthy_sid, _, _ = register(healthy, "healthy")
             task, cid = start_command(client, wire, sid)
-            _, decoded, payload = compressed("00000000-0000-0000-0000-000000000000" if kind == "envelope_id" else cid)
+            _, decoded, payload = compressed(
+                "00000000-0000-0000-0000-000000000000" if kind == "envelope_id" else cid
+            )
             if kind == "crc":
                 payload = payload[:-8] + bytes([payload[-8] ^ 1]) + payload[-7:]
             elif kind == "trailing":
@@ -298,10 +339,17 @@ def test_invalid_gzip_stream_closes_only_owner_and_releases(client, kind):
             barrier(client, healthy, healthy_sid)
 
 
-@pytest.mark.parametrize("ceiling", ["MAX_RETAINED_RESULT_BYTES_PER_SESSION",
-                                    "MAX_RETAINED_RESULT_BYTES_PER_USER",
-                                    "MAX_RETAINED_RESULT_BYTES"])
-def test_compressed_capacity_includes_decoded_working_bytes_before_allocation(client, monkeypatch, ceiling):
+@pytest.mark.parametrize(
+    "ceiling",
+    [
+        "MAX_RETAINED_RESULT_BYTES_PER_SESSION",
+        "MAX_RETAINED_RESULT_BYTES_PER_USER",
+        "MAX_RETAINED_RESULT_BYTES",
+    ],
+)
+def test_compressed_capacity_includes_decoded_working_bytes_before_allocation(
+    client, monkeypatch, ceiling
+):
     # Given a compressed result whose decoded buffer fits but working space does not.
     with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as wire:
         sid, _, ack = register(wire, capabilities=[LARGE, GZIP])
@@ -309,13 +357,14 @@ def test_compressed_capacity_includes_decoded_working_bytes_before_allocation(cl
         task, cid = start_command(client, wire, sid)
         _, decoded, payload = compressed(cid)
         assert GZIP_WORKING_BYTES == 512 * 1024
-        monkeypatch.setattr(PluginHub, ceiling,
-                            5 * len(decoded) + 4096 + GZIP_WORKING_BYTES - 1)
+        monkeypatch.setattr(PluginHub, ceiling, 5 * len(decoded) + 4096 + GZIP_WORKING_BYTES - 1)
         allocations = []
 
         def reject_allocation(size):
             allocations.append(size)
-            raise AssertionError("Capacity must be rejected before the decoded bytearray allocation")
+            raise AssertionError(
+                "Capacity must be rejected before the decoded bytearray allocation"
+            )
 
         assembler = importlib.import_module("transport.large_result_assembler")
         monkeypatch.setattr(assembler, "bytearray", reject_allocation, raising=False)

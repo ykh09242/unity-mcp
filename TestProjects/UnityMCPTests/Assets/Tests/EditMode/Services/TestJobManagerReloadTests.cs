@@ -45,9 +45,10 @@ namespace MCPForUnityTests.Editor.Services
         private byte[] _marker;
 
         private static FieldInfo ManagerField(string name) => typeof(TestJobManager).GetField(name, PrivateStatic);
+
         private static FieldInfo ServiceField => typeof(MCPServiceLocator).GetField("_testRunnerService", PrivateStatic);
-        private static void InvokeManager(string name, params object[] args) =>
-            typeof(TestJobManager).GetMethod(name, PrivateStatic).Invoke(null, args);
+
+        private static void InvokeManager(string name, params object[] args) => typeof(TestJobManager).GetMethod(name, PrivateStatic).Invoke(null, args);
 
         [SetUp]
         public void SetUp()
@@ -59,8 +60,7 @@ namespace MCPForUnityTests.Editor.Services
             _originalSessionCurrent = SessionState.GetString(CurrentKey, string.Empty);
             _originalLastPersist = ManagerField("_lastPersistUnixMs").GetValue(null);
             _originalService = ServiceField.GetValue(null);
-            _originalStatus = typeof(TestRunStatus).GetFields(PrivateStatic)
-                .Where(f => !f.IsInitOnly).ToDictionary(f => f, f => f.GetValue(null));
+            _originalStatus = typeof(TestRunStatus).GetFields(PrivateStatic).Where(f => !f.IsInitOnly).ToDictionary(f => f, f => f.GetValue(null));
             _originalOptionsEnabled = EditorSettings.enterPlayModeOptionsEnabled;
             _originalOptions = EditorSettings.enterPlayModeOptions;
             _guardPending = SessionState.GetBool(GuardPrefix + "PendingRestore", false);
@@ -81,12 +81,14 @@ namespace MCPForUnityTests.Editor.Services
             (ServiceField.GetValue(null) as IDisposable)?.Dispose();
             ServiceField.SetValue(null, _originalService);
             _jobs.Clear();
-            foreach (var entry in _originalJobs) _jobs.Add(entry.Key, entry.Value);
+            foreach (var entry in _originalJobs)
+                _jobs.Add(entry.Key, entry.Value);
             ManagerField("_currentJobId").SetValue(null, _originalCurrent);
             ManagerField("_lastPersistUnixMs").SetValue(null, _originalLastPersist);
             SessionState.SetString(JobsKey, _originalSessionJobs);
             SessionState.SetString(CurrentKey, _originalSessionCurrent);
-            foreach (var entry in _originalStatus) entry.Key.SetValue(null, entry.Value);
+            foreach (var entry in _originalStatus)
+                entry.Key.SetValue(null, entry.Value);
             EditorSettings.enterPlayModeOptions = _originalOptions;
             EditorSettings.enterPlayModeOptionsEnabled = _originalOptionsEnabled;
             SessionState.SetBool(GuardPrefix + "PendingRestore", _guardPending);
@@ -94,9 +96,11 @@ namespace MCPForUnityTests.Editor.Services
             SessionState.SetInt(GuardPrefix + "OriginalOptions", _guardOptions);
             if (_marker == null)
             {
-                if (File.Exists(MarkerPath)) File.Delete(MarkerPath);
+                if (File.Exists(MarkerPath))
+                    File.Delete(MarkerPath);
             }
-            else File.WriteAllBytes(MarkerPath, _marker);
+            else
+                File.WriteAllBytes(MarkerPath, _marker);
         }
 
         private TestJob AddJob(string id = "lifecycle-job")
@@ -104,9 +108,12 @@ namespace MCPForUnityTests.Editor.Services
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var job = new TestJob
             {
-                JobId = id, Mode = "EditMode", Status = TestJobStatus.Running,
-                StartedUnixMs = now, LastUpdateUnixMs = now,
-                FailuresSoFar = new List<TestJobFailure>()
+                JobId = id,
+                Mode = "EditMode",
+                Status = TestJobStatus.Running,
+                StartedUnixMs = now,
+                LastUpdateUnixMs = now,
+                FailuresSoFar = new List<TestJobFailure>(),
             };
             _jobs[id] = job;
             ManagerField("_currentJobId").SetValue(null, id);
@@ -202,13 +209,15 @@ namespace MCPForUnityTests.Editor.Services
             TestJob job = recoveredRun ? AddJob() : null;
             var service = recoveredRun ? RestoreCallbacks() : new TestRunnerService();
             ServiceField.SetValue(null, service);
-            var leaves = Enumerable.Range(0, 1000)
-                .Select(index => new ResultStub("Fixture.Test" + index, "Passed")).ToArray();
+            var leaves = Enumerable.Range(0, 1000).Select(index => new ResultStub("Fixture.Test" + index, "Passed")).ToArray();
 
             service.RunFinished(ResultStub.Suite(leaves));
 
-            Assert.AreEqual(expectedReads, leaves.Sum(leaf => leaf.NameReads),
-                "Global callbacks for an idle service must not materialize an unrelated result tree.");
+            Assert.AreEqual(
+                expectedReads,
+                leaves.Sum(leaf => leaf.NameReads),
+                "Global callbacks for an idle service must not materialize an unrelated result tree."
+            );
             if (recoveredRun)
             {
                 Assert.AreEqual(TestJobStatus.Succeeded, job.Status);
@@ -236,11 +245,14 @@ namespace MCPForUnityTests.Editor.Services
             var api = typeof(TestRunnerService).GetField("_testRunnerApi", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(service);
             var scheduler = typeof(TestRunnerApi).GetField("ScheduleJob", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.NotNull(scheduler);
-            scheduler.SetValue(api, new Func<ExecutionSettings, string>(_ =>
-            {
-                service.TestFinished(new ResultStub("Fixture.BeforeStartupFailure", "Passed"));
-                throw new InvalidOperationException("schedule-failure");
-            }));
+            scheduler.SetValue(
+                api,
+                new Func<ExecutionSettings, string>(_ =>
+                {
+                    service.TestFinished(new ResultStub("Fixture.BeforeStartupFailure", "Passed"));
+                    throw new InvalidOperationException("schedule-failure");
+                })
+            );
             var run = service.RunTestsAsync(TestMode.EditMode);
             Assert.IsTrue(run.IsCompleted);
             Assert.Throws<InvalidOperationException>(() => run.GetAwaiter().GetResult());
@@ -315,8 +327,10 @@ namespace MCPForUnityTests.Editor.Services
             AddJob("old-job");
             var service = RestoreCallbacks();
             TestJobManager.ClearStuckJob();
-            if (error) service.OnError("Old initialization failed");
-            else service.RunFinished(ResultStub.Suite(new ResultStub("Old.Pass", "Passed")));
+            if (error)
+                service.OnError("Old initialization failed");
+            else
+                service.RunFinished(ResultStub.Suite(new ResultStub("Old.Pass", "Passed")));
 
             // Replace only this API instance's scheduler so this does not execute a nested
             // test run. The project pins Test Framework 1.1.33, which exposes this test seam.
@@ -324,13 +338,21 @@ namespace MCPForUnityTests.Editor.Services
             var scheduler = typeof(TestRunnerApi).GetField("ScheduleJob", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.NotNull(scheduler);
             bool scheduled = false;
-            scheduler.SetValue(api, new Func<ExecutionSettings, string>(_ => { scheduled = true; return "synthetic-run"; }));
+            scheduler.SetValue(
+                api,
+                new Func<ExecutionSettings, string>(_ =>
+                {
+                    scheduled = true;
+                    return "synthetic-run";
+                })
+            );
             var nextJob = AddJob("next-job");
             var pending = service.RunTestsAsync(TestMode.EditMode);
             Assert.IsTrue(scheduled, "Terminal callbacks must release recovered ownership.");
             service.RunFinished(ResultStub.Suite(new ResultStub("Next.Pass", "Passed")));
             double deadline = EditorApplication.timeSinceStartup + 5;
-            while (!pending.IsCompleted && EditorApplication.timeSinceStartup < deadline) yield return null;
+            while (!pending.IsCompleted && EditorApplication.timeSinceStartup < deadline)
+                yield return null;
             Assert.IsTrue(pending.IsCompleted, "Completion must release the original async waiter.");
             var result = pending.GetAwaiter().GetResult();
             Assert.AreEqual(1, result.Passed);
@@ -424,10 +446,14 @@ namespace MCPForUnityTests.Editor.Services
                 SessionState.SetBool(capturedKey, captured);
                 SessionState.SetInt(idleKey, previousIdle);
                 SessionState.SetInt(modeKey, previousMode);
-                if (hadIdle) EditorPrefs.SetInt("ApplicationIdleTime", idle);
-                else EditorPrefs.DeleteKey("ApplicationIdleTime");
-                if (hadMode) EditorPrefs.SetInt("InteractionMode", mode);
-                else EditorPrefs.DeleteKey("InteractionMode");
+                if (hadIdle)
+                    EditorPrefs.SetInt("ApplicationIdleTime", idle);
+                else
+                    EditorPrefs.DeleteKey("ApplicationIdleTime");
+                if (hadMode)
+                    EditorPrefs.SetInt("InteractionMode", mode);
+                else
+                    EditorPrefs.DeleteKey("InteractionMode");
                 typeof(TestRunnerNoThrottle).GetMethod("ForceEditorToApplyInteractionPrefs", PrivateStatic).Invoke(null, null);
             }
         }
@@ -436,6 +462,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             private readonly ITestResultAdaptor[] _children;
             private readonly string _name;
+
             public ResultStub(string name, string state, string message = null, params ITestResultAdaptor[] children)
             {
                 _name = FullName = name;
@@ -443,11 +470,20 @@ namespace MCPForUnityTests.Editor.Services
                 Message = message;
                 _children = children;
             }
+
             public static ResultStub Suite(params ITestResultAdaptor[] children) => new ResultStub("Suite", "Failed", null, children);
+
             public bool IsSuite { get; set; }
             public ITestAdaptor Test => new TestStub(FullName, IsSuite || HasChildren);
             public int NameReads { get; private set; }
-            public string Name { get { NameReads++; return _name; } }
+            public string Name
+            {
+                get
+                {
+                    NameReads++;
+                    return _name;
+                }
+            }
             public string FullName { get; }
             public string ResultState { get; }
             public TestStatus TestStatus => ResultState == "Passed" ? TestStatus.Passed : TestStatus.Failed;
@@ -457,19 +493,31 @@ namespace MCPForUnityTests.Editor.Services
             public string Message { get; }
             public string StackTrace => "Fixture.cs:12";
             public int AssertCount => 1;
-            public int FailCount => HasChildren ? _children.Sum(c => c.FailCount) : ResultState == "Failed" ? 1 : 0;
-            public int PassCount => HasChildren ? _children.Sum(c => c.PassCount) : ResultState == "Passed" ? 1 : 0;
+            public int FailCount =>
+                HasChildren ? _children.Sum(c => c.FailCount)
+                : ResultState == "Failed" ? 1
+                : 0;
+            public int PassCount =>
+                HasChildren ? _children.Sum(c => c.PassCount)
+                : ResultState == "Passed" ? 1
+                : 0;
             public int SkipCount => 0;
             public int InconclusiveCount => 0;
             public bool HasChildren => _children.Length > 0;
             public IEnumerable<ITestResultAdaptor> Children => _children;
             public string Output => "test output";
+
             public TNode ToXml() => new TNode("test-case");
         }
 
         private sealed class TestStub : ITestAdaptor
         {
-            public TestStub(string name, bool isSuite) { Name = name; IsSuite = isSuite; }
+            public TestStub(string name, bool isSuite)
+            {
+                Name = name;
+                IsSuite = isSuite;
+            }
+
             public string Id => Name;
             public string Name { get; }
             public string FullName => Name;

@@ -4,12 +4,12 @@ using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.EditMode.Tools
@@ -46,14 +46,18 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(_ownsRoot, Is.True);
             string shaderName = "Hidden/McpMaterialCommandIntegrity_" + Guid.NewGuid().ToString("N");
             string shaderPath = _root + "/Fixture.shader";
-            string absoluteShaderPath = Path.Combine(Path.GetDirectoryName(Application.dataPath),
-                shaderPath.Replace('/', Path.DirectorySeparatorChar));
-            File.WriteAllText(absoluteShaderPath, "Shader \"" + shaderName + "\" { Properties { " +
-                "_Color (\"Color\", Color) = (0.5,0.5,0.5,1) " +
-                "_Vector (\"Vector\", Vector) = (0,0,0,0) " +
-                "_Float (\"Float\", Float) = 0 " +
-                "_Integer (\"Integer\", Integer) = 17 " +
-                "_MainTex (\"Texture\", 2D) = \"white\" {} } SubShader { Pass {} } }");
+            string absoluteShaderPath = Path.Combine(Path.GetDirectoryName(Application.dataPath), shaderPath.Replace('/', Path.DirectorySeparatorChar));
+            File.WriteAllText(
+                absoluteShaderPath,
+                "Shader \""
+                    + shaderName
+                    + "\" { Properties { "
+                    + "_Color (\"Color\", Color) = (0.5,0.5,0.5,1) "
+                    + "_Vector (\"Vector\", Vector) = (0,0,0,0) "
+                    + "_Float (\"Float\", Float) = 0 "
+                    + "_Integer (\"Integer\", Integer) = 17 "
+                    + "_MainTex (\"Texture\", 2D) = \"white\" {} } SubShader { Pass {} } }"
+            );
             AssetDatabase.ImportAsset(shaderPath, ImportAssetOptions.ForceSynchronousImport);
             _shader = AssetDatabase.LoadAssetAtPath<Shader>(shaderPath);
             Assert.That(_shader, Is.Not.Null);
@@ -78,10 +82,13 @@ namespace MCPForUnityTests.EditMode.Tools
                     foreach (var material in _renderer.sharedMaterials)
                         if (material != null && !EditorUtility.IsPersistent(material) && !_transient.Contains(material))
                             _transient.Add(material);
-                if (_target != null) UnityEngine.Object.DestroyImmediate(_target);
+                if (_target != null)
+                    UnityEngine.Object.DestroyImmediate(_target);
                 foreach (var item in _transient)
-                    if (item != null && !EditorUtility.IsPersistent(item)) UnityEngine.Object.DestroyImmediate(item);
-                if (_scene.IsValid() && _scene.isLoaded) EditorSceneManager.CloseScene(_scene, true);
+                    if (item != null && !EditorUtility.IsPersistent(item))
+                        UnityEngine.Object.DestroyImmediate(item);
+                if (_scene.IsValid() && _scene.isLoaded)
+                    EditorSceneManager.CloseScene(_scene, true);
                 if (_ownsRoot)
                 {
                     Assert.That(_root.StartsWith("Assets/__McpMaterialCommandIntegrity_", StringComparison.Ordinal), Is.True);
@@ -90,7 +97,8 @@ namespace MCPForUnityTests.EditMode.Tools
             }
             finally
             {
-                if (_previousScene.IsValid() && _previousScene.isLoaded) SceneManager.SetActiveScene(_previousScene);
+                if (_previousScene.IsValid() && _previousScene.isLoaded)
+                    SceneManager.SetActiveScene(_previousScene);
                 Selection.objects = _selection;
                 Selection.activeObject = _activeSelection;
                 _ownsRoot = false;
@@ -99,19 +107,33 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         private JObject Call(JObject request) => JObject.FromObject(ManageMaterial.HandleCommand(request));
+
         private void Succeeds(JObject request) => Assert.That(Call(request).Value<bool>("success"), Is.True);
+
         private void Fails(JObject request) => Assert.That(Call(request).Value<bool>("success"), Is.False);
-        private JObject Create(string path = null) => new JObject
-        {
-            ["action"] = "create", ["materialPath"] = path ?? _root + "/Created.mat", ["shader"] = _shader.name
-        };
-        private JObject ColorRequest(string mode, int slot) => new JObject
-        {
-            ["action"] = "set_renderer_color", ["target"] = _target.GetInstanceIDCompat().ToString(),
-            ["searchMethod"] = "by_id", ["mode"] = mode, ["slot"] = slot, ["color"] = new JArray(0, 0, 0, 0)
-        };
-        private string UniquePath(int slot = 0) => _root + "/Materials/Fixture_" + _target.GetInstanceIDCompat() +
-            (slot == 0 ? "" : "_slot" + slot) + "_mat.mat";
+
+        private JObject Create(string path = null) =>
+            new JObject
+            {
+                ["action"] = "create",
+                ["materialPath"] = path ?? _root + "/Created.mat",
+                ["shader"] = _shader.name,
+            };
+
+        private JObject ColorRequest(string mode, int slot) =>
+            new JObject
+            {
+                ["action"] = "set_renderer_color",
+                ["target"] = _target.GetInstanceIDCompat().ToString(),
+                ["searchMethod"] = "by_id",
+                ["mode"] = mode,
+                ["slot"] = slot,
+                ["color"] = new JArray(0, 0, 0, 0),
+            };
+
+        private string UniquePath(int slot = 0) =>
+            _root + "/Materials/Fixture_" + _target.GetInstanceIDCompat() + (slot == 0 ? "" : "_slot" + slot) + "_mat.mat";
+
         private Material Persist(string path)
         {
             if (!AssetDatabase.IsValidFolder(_root + "/Materials"))
@@ -193,7 +215,10 @@ namespace MCPForUnityTests.EditMode.Tools
                 Assert.That(File.ReadAllText(blocking), Is.EqualTo("Existing file at the requested folder."));
                 Assert.That(_renderer.sharedMaterials, Is.EqualTo(new[] { _material, _material }));
             }
-            finally { AssetDatabase.AllowAutoRefresh(); }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+            }
         }
 
         [TestCase(0, 1)]
@@ -257,8 +282,16 @@ namespace MCPForUnityTests.EditMode.Tools
         public void InvalidAssignmentLeavesSlotsAndDirtyCountUnchanged(int slot)
         {
             int dirty = EditorUtility.GetDirtyCount(_renderer);
-            Fails(new JObject { ["action"] = "assign_material_to_renderer", ["target"] = _target.GetInstanceIDCompat().ToString(),
-                ["searchMethod"] = "by_id", ["materialPath"] = _root + "/Fixture.mat", ["slot"] = slot });
+            Fails(
+                new JObject
+                {
+                    ["action"] = "assign_material_to_renderer",
+                    ["target"] = _target.GetInstanceIDCompat().ToString(),
+                    ["searchMethod"] = "by_id",
+                    ["materialPath"] = _root + "/Fixture.mat",
+                    ["slot"] = slot,
+                }
+            );
             Assert.That(_renderer.sharedMaterials, Is.EqualTo(new[] { _material, _material }));
             Assert.That(EditorUtility.GetDirtyCount(_renderer), Is.EqualTo(dirty));
         }
@@ -271,10 +304,7 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             string before = EditorJsonUtility.ToJson(_material);
             int dirty = EditorUtility.GetDirtyCount(_material);
-            var request = create ? Create() : new JObject
-            {
-                ["action"] = "set_material_color", ["materialPath"] = _root + "/Fixture.mat"
-            };
+            var request = create ? Create() : new JObject { ["action"] = "set_material_color", ["materialPath"] = _root + "/Fixture.mat" };
             request["property"] = property;
             request["color"] = new JArray(1, 0, 0);
             Fails(request);
@@ -287,10 +317,7 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase(true)]
         public void DeclaredVectorRetainsAcceptedColorAlpha(bool create)
         {
-            var request = create ? Create() : new JObject
-            {
-                ["action"] = "set_material_color", ["materialPath"] = _root + "/Fixture.mat"
-            };
+            var request = create ? Create() : new JObject { ["action"] = "set_material_color", ["materialPath"] = _root + "/Fixture.mat" };
             request["property"] = "_Vector";
             request["color"] = new JArray(1, 0, -2);
             Succeeds(request);
@@ -302,25 +329,44 @@ namespace MCPForUnityTests.EditMode.Tools
         public void MissingPropertyDoesNotDirtyMaterial()
         {
             int dirty = EditorUtility.GetDirtyCount(_material);
-            Fails(new JObject { ["action"] = "set_material_shader_property", ["materialPath"] = _root + "/Fixture.mat",
-                ["property"] = "_Missing", ["value"] = 1 });
-            Fails(new JObject { ["action"] = "set_material_color", ["materialPath"] = _root + "/Fixture.mat",
-                ["property"] = "_Missing", ["color"] = new JArray(0, 0, 0) });
+            Fails(
+                new JObject
+                {
+                    ["action"] = "set_material_shader_property",
+                    ["materialPath"] = _root + "/Fixture.mat",
+                    ["property"] = "_Missing",
+                    ["value"] = 1,
+                }
+            );
+            Fails(
+                new JObject
+                {
+                    ["action"] = "set_material_color",
+                    ["materialPath"] = _root + "/Fixture.mat",
+                    ["property"] = "_Missing",
+                    ["color"] = new JArray(0, 0, 0),
+                }
+            );
             Assert.That(EditorUtility.GetDirtyCount(_material), Is.EqualTo(dirty));
         }
 
         [Test]
         public void TrueIntegerSetAndInfoPreserveExactValue()
         {
-            Assert.That(_shader.GetPropertyType(_shader.FindPropertyIndex("_Integer")),
-                Is.EqualTo(UnityEngine.Rendering.ShaderPropertyType.Int));
-            Succeeds(new JObject { ["action"] = "set_material_shader_property", ["materialPath"] = _root + "/Fixture.mat",
-                ["property"] = "_Integer", ["value"] = 16777217 });
+            Assert.That(_shader.GetPropertyType(_shader.FindPropertyIndex("_Integer")), Is.EqualTo(UnityEngine.Rendering.ShaderPropertyType.Int));
+            Succeeds(
+                new JObject
+                {
+                    ["action"] = "set_material_shader_property",
+                    ["materialPath"] = _root + "/Fixture.mat",
+                    ["property"] = "_Integer",
+                    ["value"] = 16777217,
+                }
+            );
             var response = Call(new JObject { ["action"] = "get_material_info", ["materialPath"] = _root + "/Fixture.mat" });
             Assert.That(response.Value<bool>("success"), Is.True);
             Assert.That(_material.GetInteger("_Integer"), Is.EqualTo(16777217));
-            Assert.That(response["data"]["properties"].First(p => p.Value<string>("name") == "_Integer").Value<int>("value"),
-                Is.EqualTo(16777217));
+            Assert.That(response["data"]["properties"].First(p => p.Value<string>("name") == "_Integer").Value<int>("value"), Is.EqualTo(16777217));
         }
 
         [Test]
@@ -329,7 +375,7 @@ namespace MCPForUnityTests.EditMode.Tools
             var request = Create();
             request["properties"] = new JObject
             {
-                ["texture"] = new JObject { ["name"] = "_MainTex", ["path"] = _root + "/Missing.png" }
+                ["texture"] = new JObject { ["name"] = "_MainTex", ["path"] = _root + "/Missing.png" },
             };
             Fails(request);
             Assert.That(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(_root + "/Created.mat"), Is.Null);
@@ -342,16 +388,14 @@ namespace MCPForUnityTests.EditMode.Tools
             request["color"] = new JArray(1, 0, 0);
             request["properties"] = new JObject { ["_Color"] = new JArray(0, 0, 0, 0) };
             Succeeds(request);
-            Assert.That(AssetDatabase.LoadAssetAtPath<Material>(_root + "/Created.mat").GetColor("_Color"),
-                Is.EqualTo(new Color(0, 0, 0, 0)));
+            Assert.That(AssetDatabase.LoadAssetAtPath<Material>(_root + "/Created.mat").GetColor("_Color"), Is.EqualTo(new Color(0, 0, 0, 0)));
         }
 
         [TestCase(true, 0)]
         [TestCase(1, 1)]
         public void NativeSlotTokenPreservesBooleanFallbackAndIntegerIdentity(object token, int expected)
         {
-            if (expected == 0 && (!_shader.isSupported ||
-                RenderPipelineUtility.IsMaterialInvalidForActivePipeline(_material, out _)))
+            if (expected == 0 && (!_shader.isSupported || RenderPipelineUtility.IsMaterialInvalidForActivePipeline(_material, out _)))
                 Assert.Ignore("The owned shader is not compatible with the active pipeline; do not create a cached fallback.");
             var request = ColorRequest("property_block", 0);
             request["slot"] = JToken.FromObject(token);

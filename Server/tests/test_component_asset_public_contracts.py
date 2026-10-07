@@ -24,7 +24,7 @@ def _run(program, tmp_path):
     return result.stdout
 
 
-CLI_PROGRAM = r'''
+CLI_PROGRAM = r"""
 import copy
 import json
 import httpx
@@ -172,10 +172,10 @@ for group, commands in (
         print('FULL_HELP', group + '.' + command, json.dumps(result.stdout))
 print(f'fresh component/asset CLI checks={checks} failures={len(failures)} requests={len(requests)}')
 assert not failures, failures
-'''
+"""
 
 
-SDK_PROGRAM = r'''
+SDK_PROGRAM = r"""
 import copy
 import json
 import anyio
@@ -411,7 +411,7 @@ async def main():
     assert not failures, failures
 
 anyio.run(main)
-'''
+"""
 
 
 def test_component_asset_cli_requests_json_and_failures(tmp_path):

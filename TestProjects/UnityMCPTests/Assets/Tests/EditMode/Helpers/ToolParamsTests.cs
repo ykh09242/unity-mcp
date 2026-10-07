@@ -1,6 +1,6 @@
-using NUnit.Framework;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Helpers
 {
@@ -146,11 +146,7 @@ namespace MCPForUnityTests.Editor.Helpers
         public void Get_ExactMatchTakesPrecedence()
         {
             // If both snake_case and camelCase exist, exact match wins
-            var json = new JObject
-            {
-                ["search_method"] = "snake",
-                ["searchMethod"] = "camel"
-            };
+            var json = new JObject { ["search_method"] = "snake", ["searchMethod"] = "camel" };
             var p = new ToolParams(json);
 
             Assert.AreEqual("snake", p.Get("search_method"));
@@ -219,9 +215,7 @@ namespace MCPForUnityTests.Editor.Helpers
             try
             {
                 System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo(culture);
-                var json = numericToken
-                    ? JObject.Parse("{\"step_size\":2.5}")
-                    : JObject.Parse("{\"step_size\":\"2.5\"}");
+                var json = numericToken ? JObject.Parse("{\"step_size\":2.5}") : JObject.Parse("{\"step_size\":\"2.5\"}");
 
                 Assert.AreEqual(2.5f, new ToolParams(json).GetFloat("stepSize", 7f));
             }
@@ -234,8 +228,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [Test]
         public void GetFloat_InvalidValues_ThrowAndPreserveExactAliasPrecedence()
         {
-            foreach (var token in new JToken[] { new JValue(""), new JValue("invalid"),
-                new JValue(true), new JObject(), new JArray(2.5) })
+            foreach (var token in new JToken[] { new JValue(""), new JValue("invalid"), new JValue(true), new JObject(), new JArray(2.5) })
             {
                 var p = new ToolParams(new JObject { ["step_size"] = token, ["stepSize"] = 2.5 });
                 Assert.Throws<System.ArgumentException>(() => p.GetFloat("step_size", 7f), token.Type.ToString());
@@ -385,8 +378,22 @@ namespace MCPForUnityTests.Editor.Helpers
                 Assert.IsFalse(ParamCoercion.CoerceBool(token, true));
                 Assert.AreEqual(false, ParamCoercion.CoerceBoolNullable(token));
             }
-            foreach (var token in new JToken[] { new JValue("yes"), new JValue("on"), new JValue("no"), new JValue("off"),
-                new JValue(0), new JValue(1), new JValue("0"), new JValue("1"), new JValue("invalid"), new JObject(), new JArray(true) })
+            foreach (
+                var token in new JToken[]
+                {
+                    new JValue("yes"),
+                    new JValue("on"),
+                    new JValue("no"),
+                    new JValue("off"),
+                    new JValue(0),
+                    new JValue(1),
+                    new JValue("0"),
+                    new JValue("1"),
+                    new JValue("invalid"),
+                    new JObject(),
+                    new JArray(true),
+                }
+            )
             {
                 Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceBool(token, false));
                 Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceBoolNullable(token));
@@ -396,8 +403,16 @@ namespace MCPForUnityTests.Editor.Helpers
         [Test]
         public void FloatCoercion_NonfiniteValues_ThrowArgumentError()
         {
-            foreach (var token in new JToken[] { new JValue(double.NaN), new JValue("NaN"),
-                new JValue(double.PositiveInfinity), new JValue("Infinity"), new JValue(double.NegativeInfinity) })
+            foreach (
+                var token in new JToken[]
+                {
+                    new JValue(double.NaN),
+                    new JValue("NaN"),
+                    new JValue(double.PositiveInfinity),
+                    new JValue("Infinity"),
+                    new JValue(double.NegativeInfinity),
+                }
+            )
             {
                 Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceFloat(token, 7f));
                 Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceFloatNullable(token));
@@ -558,7 +573,10 @@ namespace MCPForUnityTests.Editor.Helpers
         [Test]
         public void GetRaw_Array_ReturnsJToken()
         {
-            var json = new JObject { ["items"] = new JArray { "a", "b", "c" } };
+            var json = new JObject
+            {
+                ["items"] = new JArray { "a", "b", "c" },
+            };
             var p = new ToolParams(json);
 
             var raw = p.GetRaw("items");

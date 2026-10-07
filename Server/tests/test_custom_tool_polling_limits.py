@@ -1,4 +1,5 @@
 """Bound whole polling executions, including initial dispatch and sleeping tasks."""
+
 import asyncio
 from unittest.mock import AsyncMock
 
@@ -37,12 +38,20 @@ def test_polling_schema_rejects_out_of_range_seconds(seconds):
 async def test_poll_execution_clamps_unvalidated_metadata(service, monkeypatch, seconds):
     # Given: a constructed/mutated internal definition bypasses schema validation.
     now = [0.0]
+
     async def advance(delay):
         now[0] += delay
+
     monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(module.asyncio, "sleep", advance)
-    monkeypatch.setattr(module, "send_with_unity_instance", AsyncMock(return_value={"_mcp_status": "pending", "_mcp_poll_interval": 5}))
-    definition = ToolDefinitionModel.model_construct(name="build", requires_polling=True, max_poll_seconds=seconds)
+    monkeypatch.setattr(
+        module,
+        "send_with_unity_instance",
+        AsyncMock(return_value={"_mcp_status": "pending", "_mcp_poll_interval": 5}),
+    )
+    definition = ToolDefinitionModel.model_construct(
+        name="build", requires_polling=True, max_poll_seconds=seconds
+    )
     monkeypatch.setattr(service, "get_tool_definition", AsyncMock(return_value=definition))
     # When: the execution never completes.
     result = await service.execute_tool("project", "build", "Project@hash", {})
@@ -57,11 +66,21 @@ async def test_poll_execution_clamps_unvalidated_metadata(service, monkeypatch, 
 async def test_initial_dispatch_counts_toward_deadline(service, monkeypatch):
     # Given: a dispatch completes after its one-second execution deadline.
     now = [0.0]
+
     async def late_response(*args, **kwargs):
         now[0] = 1.1
         return {"_mcp_status": "complete", "data": {"value": 1}}
+
     monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(service, "get_tool_definition", AsyncMock(return_value=ToolDefinitionModel(name="build", requires_polling=True, max_poll_seconds=1)))
+    monkeypatch.setattr(
+        service,
+        "get_tool_definition",
+        AsyncMock(
+            return_value=ToolDefinitionModel(
+                name="build", requires_polling=True, max_poll_seconds=1
+            )
+        ),
+    )
     monkeypatch.setattr(module, "send_with_unity_instance", late_response)
     # When: the caller runs the tool.
     result = await service.execute_tool("project", "build", "Project@hash", {})
@@ -75,38 +94,55 @@ async def test_initial_dispatch_counts_toward_deadline(service, monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("scope,limit", [("session", 16), ("user", 32), ("global", 256)])
 @pytest.mark.parametrize("phase", ["dispatch", "sleep"])
-async def test_active_polling_capacity_is_retained_and_released(service, monkeypatch, scope, limit, phase):
+async def test_active_polling_capacity_is_retained_and_released(
+    service, monkeypatch, scope, limit, phase
+):
     # Given: admitted executions are blocked in initial dispatch or between polls.
     entered = asyncio.Queue()
     blocked = asyncio.Event()
+
     async def send(*args, **kwargs):
         if phase == "dispatch":
             entered.put_nowait(True)
             await blocked.wait()
         return {"_mcp_status": "pending"}
+
     async def sleep(delay):
         entered.put_nowait(True)
         await blocked.wait()
+
     monkeypatch.setattr(module, "send_with_unity_instance", send)
     monkeypatch.setattr(module.asyncio, "sleep", sleep)
-    monkeypatch.setattr(service, "get_tool_definition", AsyncMock(return_value=ToolDefinitionModel(name="build", requires_polling=True)))
+    monkeypatch.setattr(
+        service,
+        "get_tool_definition",
+        AsyncMock(return_value=ToolDefinitionModel(name="build", requires_polling=True)),
+    )
     tasks = []
+
     def identity(index):
         if scope == "session":
             return "user-a", "Project@hash"
         if scope == "user":
             return "user-a", f"Project@hash-{index}"
         return f"user-{index}", f"Project@hash-{index}"
+
     try:
         for index in range(limit):
             user, target = identity(index)
-            tasks.append(asyncio.create_task(service.execute_tool("project", "build", target, {}, user_id=user)))
+            tasks.append(
+                asyncio.create_task(
+                    service.execute_tool("project", "build", target, {}, user_id=user)
+                )
+            )
             await asyncio.wait_for(entered.get(), timeout=1)
         user, target = identity(limit)
         if scope == "session":
             target = "HASH"  # An alternate spelling of the same Unity target.
         # When: one more execution reaches the same constrained scope.
-        result = await asyncio.wait_for(service.execute_tool("project", "build", target, {}, user_id=user), timeout=0.05)
+        result = await asyncio.wait_for(
+            service.execute_tool("project", "build", target, {}, user_id=user), timeout=0.05
+        )
         # Then: reject immediately without dispatching or queuing another waiter.
         assert not result.success
         assert result.hint == "retry"
@@ -118,8 +154,12 @@ async def test_active_polling_capacity_is_retained_and_released(service, monkeyp
     assert service._active_polls == 0
     assert service._polls_by_session == service._polls_by_user == {}
     # Cancellation returns every reservation; an ordinary invocation can succeed.
-    monkeypatch.setattr(module, "send_with_unity_instance", AsyncMock(return_value={"_mcp_status": "complete"}))
-    assert (await service.execute_tool("project", "build", "Project@hash", {}, user_id="user-a")).success
+    monkeypatch.setattr(
+        module, "send_with_unity_instance", AsyncMock(return_value={"_mcp_status": "complete"})
+    )
+    assert (
+        await service.execute_tool("project", "build", "Project@hash", {}, user_id="user-a")
+    ).success
 
 
 @pytest.mark.asyncio
@@ -141,7 +181,11 @@ async def test_missing_remote_principal_cannot_dispatch(service, monkeypatch):
 @pytest.mark.asyncio
 async def test_implicit_target_cannot_bypass_session_admission(service, monkeypatch):
     # Given: the service is called without a selected instance.
-    monkeypatch.setattr(service, "get_tool_definition", AsyncMock(return_value=ToolDefinitionModel(name="build", requires_polling=True)))
+    monkeypatch.setattr(
+        service,
+        "get_tool_definition",
+        AsyncMock(return_value=ToolDefinitionModel(name="build", requires_polling=True)),
+    )
     send = AsyncMock(return_value={"_mcp_status": "complete"})
     monkeypatch.setattr(module, "send_with_unity_instance", send)
     # When: an implicit selection is requested.
@@ -159,6 +203,7 @@ async def test_dispatch_deadline_cancels_work_and_releases_capacity(service, mon
     now = [0.0]
     cancelled = []
     requests = []
+
     async def send(*args, **kwargs):
         requests.append(args[3]["action"])
         if phase == "poll" and len(requests) == 1:
@@ -169,12 +214,22 @@ async def test_dispatch_deadline_cancels_work_and_releases_capacity(service, mon
             await asyncio.Event().wait()
         finally:
             cancelled.append(True)
+
     async def advance(delay):
         now[0] += delay
+
     monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(module.asyncio, "sleep", advance)
     monkeypatch.setattr(module, "send_with_unity_instance", send)
-    monkeypatch.setattr(service, "get_tool_definition", AsyncMock(return_value=ToolDefinitionModel(name="build", requires_polling=True, max_poll_seconds=1)))
+    monkeypatch.setattr(
+        service,
+        "get_tool_definition",
+        AsyncMock(
+            return_value=ToolDefinitionModel(
+                name="build", requires_polling=True, max_poll_seconds=1
+            )
+        ),
+    )
     # When: dispatch remains blocked until the event-loop deadline fires.
     result = await service.execute_tool("project", "build", "Project@hash", {"action": "start"})
     # Then: cancel at the original deadline and clear both scopes exactly once.
@@ -188,8 +243,16 @@ async def test_dispatch_deadline_cancels_work_and_releases_capacity(service, mon
 @pytest.mark.asyncio
 async def test_initial_dispatch_error_releases_capacity(service, monkeypatch):
     # Given: the transport fails after admission.
-    monkeypatch.setattr(service, "get_tool_definition", AsyncMock(return_value=ToolDefinitionModel(name="build", requires_polling=True)))
-    monkeypatch.setattr(module, "send_with_unity_instance", AsyncMock(side_effect=RuntimeError("fixture transport failed")))
+    monkeypatch.setattr(
+        service,
+        "get_tool_definition",
+        AsyncMock(return_value=ToolDefinitionModel(name="build", requires_polling=True)),
+    )
+    monkeypatch.setattr(
+        module,
+        "send_with_unity_instance",
+        AsyncMock(side_effect=RuntimeError("fixture transport failed")),
+    )
     # When: the error propagates to the caller.
     with pytest.raises(RuntimeError, match="fixture transport failed"):
         await service.execute_tool("project", "build", "Project@hash", {})
@@ -204,20 +267,32 @@ async def test_same_target_budgets_are_isolated_between_users(service, monkeypat
     entered = asyncio.Queue()
     blocked = asyncio.Event()
     monkeypatch.setattr(config, "http_remote_hosted", True)
-    monkeypatch.setattr(service, "get_tool_definition", AsyncMock(return_value=ToolDefinitionModel(name="build", requires_polling=True)))
+    monkeypatch.setattr(
+        service,
+        "get_tool_definition",
+        AsyncMock(return_value=ToolDefinitionModel(name="build", requires_polling=True)),
+    )
+
     async def send(*args, **kwargs):
         if kwargs["user_id"] == "user-a":
             entered.put_nowait(True)
             await blocked.wait()
         return {"_mcp_status": "complete", "data": {"owner": kwargs["user_id"]}}
+
     monkeypatch.setattr(module, "send_with_unity_instance", send)
     tasks = []
     try:
         for index in range(16):
-            tasks.append(asyncio.create_task(service.execute_tool("project", "build", "Project@hash", {}, user_id="user-a")))
+            tasks.append(
+                asyncio.create_task(
+                    service.execute_tool("project", "build", "Project@hash", {}, user_id="user-a")
+                )
+            )
             await asyncio.wait_for(entered.get(), timeout=1)
         # When: the other tenant executes its own tool on its own same-hash target.
-        result = await service.execute_tool("project", "build", "Project@hash", {}, user_id="user-b")
+        result = await service.execute_tool(
+            "project", "build", "Project@hash", {}, user_id="user-b"
+        )
         # Then: first-user capacity and responses cannot leak to the other user.
         assert result.success
         assert result.data == {"owner": "user-b"}

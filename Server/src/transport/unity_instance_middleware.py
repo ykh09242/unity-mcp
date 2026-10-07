@@ -4,6 +4,7 @@ Middleware for managing Unity instance selection per session.
 This middleware intercepts all tool calls and injects the active Unity instance
 into the request-scoped state, allowing tools to access it via ctx.get_state("unity_instance").
 """
+
 from threading import RLock
 from types import SimpleNamespace
 import asyncio
@@ -28,7 +29,7 @@ _unity_instance_middleware = None
 _middleware_lock = RLock()
 
 
-def get_unity_instance_middleware() -> 'UnityInstanceMiddleware':
+def get_unity_instance_middleware() -> "UnityInstanceMiddleware":
     """Get the global Unity instance middleware."""
     global _unity_instance_middleware
     if _unity_instance_middleware is None:
@@ -40,7 +41,7 @@ def get_unity_instance_middleware() -> 'UnityInstanceMiddleware':
     return _unity_instance_middleware
 
 
-def set_unity_instance_middleware(middleware: 'UnityInstanceMiddleware') -> None:
+def set_unity_instance_middleware(middleware: "UnityInstanceMiddleware") -> None:
     """Replace the global middleware instance.
 
     This is a test seam: production code uses ``get_unity_instance_middleware()``
@@ -118,6 +119,7 @@ class UnityInstanceMiddleware(Middleware):
         Returns a list of objects with .id (Name@hash) and .hash attributes.
         """
         from types import SimpleNamespace
+
         transport = (config.transport_mode or "stdio").lower()
         results: list = []
 
@@ -133,26 +135,33 @@ class UnityInstanceMiddleware(Middleware):
                     project = getattr(session_info, "project", None) or "Unknown"
                     hash_value = getattr(session_info, "hash", None)
                     if hash_value:
-                        results.append(SimpleNamespace(
-                            id=f"{project}@{hash_value}",
-                            hash=hash_value,
-                            name=project,
-                        ))
+                        results.append(
+                            SimpleNamespace(
+                                id=f"{project}@{hash_value}",
+                                hash=hash_value,
+                                name=project,
+                            )
+                        )
             except Exception as exc:
                 if isinstance(exc, (SystemExit, KeyboardInterrupt)):
                     raise
-                logger.debug("PluginHub instance discovery failed (%s)", type(exc).__name__, exc_info=True)
+                logger.debug(
+                    "PluginHub instance discovery failed (%s)", type(exc).__name__, exc_info=True
+                )
 
         if not results and transport != "http":
             try:
                 from transport.legacy.unity_connection import get_unity_connection_pool
+
                 pool = get_unity_connection_pool()
                 # Status files, probes and the discovery lock may all block.
                 results = await asyncio.to_thread(pool.discover_all_instances, force_refresh=True)
             except Exception as exc:
                 if isinstance(exc, (SystemExit, KeyboardInterrupt)):
                     raise
-                logger.debug("Stdio instance discovery failed (%s)", type(exc).__name__, exc_info=True)
+                logger.debug(
+                    "Stdio instance discovery failed (%s)", type(exc).__name__, exc_info=True
+                )
 
         return results
 
@@ -177,11 +186,17 @@ class UnityInstanceMiddleware(Middleware):
         # Local stdio exact IDs need fresh target metadata, not unrelated port
         # probes. Leave PluginHub discovery and tenant visibility unchanged.
         if transport != "http" and not config.http_remote_hosted and not PluginHub.is_configured():
-            from transport.legacy.unity_connection import get_unity_connection_pool, UnityConnectionPool
+            from transport.legacy.unity_connection import (
+                get_unity_connection_pool,
+                UnityConnectionPool,
+            )
+
             if UnityConnectionPool.is_exact_instance_id(value):
                 pool = get_unity_connection_pool()
                 try:
-                    target = await asyncio.to_thread(pool.resolve_instance, value, force_refresh=True)
+                    target = await asyncio.to_thread(
+                        pool.resolve_instance, value, force_refresh=True
+                    )
                     if target.id == value:
                         return value
                 except ConnectionError:
@@ -201,21 +216,17 @@ class UnityInstanceMiddleware(Middleware):
             for inst in instances:
                 if getattr(inst, "port", None) == port_int:
                     return inst.id
-            available = ", ".join(
-                f"{getattr(i, 'id', '?')} (port {getattr(i, 'port', '?')})"
-                for i in instances
-            ) or "none"
-            raise ValueError(
-                f"No Unity instance found on port {value}. Available: {available}."
+            available = (
+                ", ".join(
+                    f"{getattr(i, 'id', '?')} (port {getattr(i, 'port', '?')})" for i in instances
+                )
+                or "none"
             )
+            raise ValueError(f"No Unity instance found on port {value}. Available: {available}.")
 
         if instances is None:
             instances = await self._discover_instances(ctx)
-        ids = {
-            getattr(inst, "id", None): inst
-            for inst in instances
-            if getattr(inst, "id", None)
-        }
+        ids = {getattr(inst, "id", None): inst for inst in instances if getattr(inst, "id", None)}
 
         # Exact Name@hash match
         if "@" in value:
@@ -230,7 +241,8 @@ class UnityInstanceMiddleware(Middleware):
         # Hash prefix match
         lookup = value.lower()
         matches = [
-            inst for inst in instances
+            inst
+            for inst in instances
             if getattr(inst, "hash", "") and getattr(inst, "hash", "").lower().startswith(lookup)
         ]
         if len(matches) == 1:
@@ -266,8 +278,7 @@ class UnityInstanceMiddleware(Middleware):
                     sessions = sessions_data.sessions or {}
                     ids: list[str] = []
                     for session_info in sessions.values():
-                        project = getattr(
-                            session_info, "project", None) or "Unknown"
+                        project = getattr(session_info, "project", None) or "Unknown"
                         hash_value = getattr(session_info, "hash", None)
                         if hash_value:
                             ids.append(f"{project}@{hash_value}")
@@ -282,7 +293,8 @@ class UnityInstanceMiddleware(Middleware):
                         logger.info(
                             "Multiple Unity instances found (%d). Pass unity_instance on any tool call "
                             "or call set_active_instance to choose one. Available: %s",
-                            len(ids), ", ".join(ids),
+                            len(ids),
+                            ", ".join(ids),
                         )
                 except (ConnectionError, ValueError, KeyError, TimeoutError, AttributeError) as exc:
                     logger.debug(
@@ -305,7 +317,9 @@ class UnityInstanceMiddleware(Middleware):
                     from transport.legacy.unity_connection import get_unity_connection_pool
 
                     pool = get_unity_connection_pool()
-                    instances = await asyncio.to_thread(pool.discover_all_instances, force_refresh=True)
+                    instances = await asyncio.to_thread(
+                        pool.discover_all_instances, force_refresh=True
+                    )
                     ids = [getattr(inst, "id", None) for inst in instances]
                     ids = [inst_id for inst_id in ids if inst_id]
                     if len(ids) == 1:
@@ -319,7 +333,8 @@ class UnityInstanceMiddleware(Middleware):
                         logger.info(
                             "Multiple Unity instances found (%d). Pass unity_instance on any tool call "
                             "or call set_active_instance to choose one. Available: %s",
-                            len(ids), ", ".join(ids),
+                            len(ids),
+                            ", ".join(ids),
                         )
                 except (ConnectionError, ValueError, KeyError, TimeoutError, AttributeError) as exc:
                     logger.debug(
@@ -352,10 +367,14 @@ class UnityInstanceMiddleware(Middleware):
             return None
         # Lazy import to avoid circular dependencies (same pattern as _maybe_autoselect_instance).
         from transport.unity_transport import _resolve_user_id_from_request
+
         return await _resolve_user_id_from_request()
 
     async def _inject_unity_instance(
-        self, context: MiddlewareContext, *, authenticated_user_id: str | None = None,
+        self,
+        context: MiddlewareContext,
+        *,
+        authenticated_user_id: str | None = None,
     ) -> None:
         """Inject active Unity instance and user_id into context if available."""
         ctx = context.fastmcp_context
@@ -365,11 +384,13 @@ class UnityInstanceMiddleware(Middleware):
             await ctx.set_state(key, None, serializable=False)
 
         # Resolve user_id from the HTTP request's API key header
-        user_id = authenticated_user_id if authenticated_user_id is not None else await self._resolve_user_id()
+        user_id = (
+            authenticated_user_id
+            if authenticated_user_id is not None
+            else await self._resolve_user_id()
+        )
         if config.http_remote_hosted and user_id is None:
-            raise RuntimeError(
-                "API key authentication required. Provide a valid X-API-Key header."
-            )
+            raise RuntimeError("API key authentication required. Provide a valid X-API-Key header.")
         if user_id:
             await ctx.set_state("user_id", user_id, serializable=False)
 
@@ -409,13 +430,16 @@ class UnityInstanceMiddleware(Middleware):
             # Only validate via PluginHub if we are actually using HTTP transport.
             # For stdio transport, skip PluginHub entirely - we only need the instance ID.
             from transport.unity_transport import _is_http_transport
+
             if _is_http_transport() and PluginHub.is_configured():
                 try:
                     # resolving session_id might fail if the plugin disconnected
                     # We only need session_id for HTTP transport routing.
                     # For stdio, we just need the instance ID.
                     # Pass user_id for remote-hosted mode session isolation
-                    session_id = await PluginHub._resolve_session_id(active_instance, user_id=user_id)
+                    session_id = await PluginHub._resolve_session_id(
+                        active_instance, user_id=user_id
+                    )
                 except (ConnectionError, ValueError, KeyError, TimeoutError) as exc:
                     # If resolution fails, it means the Unity instance is not reachable via HTTP/WS.
                     # If we are in stdio mode, this might still be fine if the user is just setting state?
@@ -436,7 +460,7 @@ class UnityInstanceMiddleware(Middleware):
                         "Unexpected error during PluginHub session resolution for %s: %s",
                         active_instance,
                         exc,
-                        exc_info=True
+                        exc_info=True,
                     )
 
             await ctx.set_state("unity_instance", active_instance, serializable=False)
@@ -449,7 +473,9 @@ class UnityInstanceMiddleware(Middleware):
         if config.http_remote_hosted:
             user_id = await self._resolve_user_id()
             if user_id is None:
-                raise RuntimeError("API key authentication required. Provide a valid X-API-Key header.")
+                raise RuntimeError(
+                    "API key authentication required. Provide a valid X-API-Key header."
+                )
         ctx = context.fastmcp_context
         server = getattr(ctx, "fastmcp", None)
         name = getattr(context.message, "name", None)
@@ -459,13 +485,25 @@ class UnityInstanceMiddleware(Middleware):
             if tool is not None:
                 supplied = dict(arguments or {})
                 selector = supplied.pop("unity_instance", None)
-                if selector is not None and not isinstance(selector, str) and type(selector) is not int:
-                    raise ValidationError("unity_instance must be a string identifier or an integer port")
-                validate_tool_arguments(tool, supplied, strict=True if server.strict_input_validation else None)
+                if (
+                    selector is not None
+                    and not isinstance(selector, str)
+                    and type(selector) is not int
+                ):
+                    raise ValidationError(
+                        "unity_instance must be a string identifier or an integer port"
+                    )
+                validate_tool_arguments(
+                    tool, supplied, strict=True if server.strict_input_validation else None
+                )
         await self._inject_unity_instance(context, authenticated_user_id=user_id)
         if config.http_remote_hosted:
             session_id = await ctx.get_state("unity_session_id")
-            identity = await PluginHub.capture_tool_identity(session_id) if session_id is not None else None
+            identity = (
+                await PluginHub.capture_tool_identity(session_id)
+                if session_id is not None
+                else None
+            )
             await ctx.set_state(self._TOOL_IDENTITY_STATE_KEY, identity, serializable=False)
             self._refresh_tool_visibility_metadata_from_registry()
             tool_name = getattr(context.message, "name", None)
@@ -474,12 +512,20 @@ class UnityInstanceMiddleware(Middleware):
                 enabled_names = await self._resolve_enabled_tool_names_for_context(context)
                 allowed = self._is_tool_visible(tool_name, enabled_names or set())
             if not allowed:
-                raise ValueError(f"Tool '{tool_name}' is disabled or unavailable for this Unity instance")
+                raise ValueError(
+                    f"Tool '{tool_name}' is disabled or unavailable for this Unity instance"
+                )
         return await call_next(context)
 
-    async def _selected_tool_is_visible(self, context, tool_name: str | None, user_id: str) -> bool | None:
+    async def _selected_tool_is_visible(
+        self, context, tool_name: str | None, user_id: str
+    ) -> bool | None:
         """Use live selected membership; None alone permits the existing fallback."""
-        if not isinstance(tool_name, str) or not tool_name or tool_name in self._server_only_tool_names:
+        if (
+            not isinstance(tool_name, str)
+            or not tool_name
+            or tool_name in self._server_only_tool_names
+        ):
             return True
         ctx = context.fastmcp_context
         identity = await ctx.get_state(self._TOOL_IDENTITY_STATE_KEY)
@@ -487,7 +533,7 @@ class UnityInstanceMiddleware(Middleware):
             return False
         if not isinstance(identity, _ConnectionReadIdentity):
             return None
-        active_instance = await ctx.get_state('unity_instance')
+        active_instance = await ctx.get_state("unity_instance")
         project_hashes = self._resolve_candidate_project_hashes(active_instance)
         if not project_hashes:
             return False
@@ -518,7 +564,8 @@ class UnityInstanceMiddleware(Middleware):
                 raise
             _diag.warning(
                 "on_list_tools: _inject_unity_instance failed (%s: %s), continuing without instance",
-                type(exc).__name__, exc,
+                type(exc).__name__,
+                exc,
             )
 
         tools = await call_next(context)
@@ -533,19 +580,26 @@ class UnityInstanceMiddleware(Middleware):
         tool_names_from_fastmcp = sorted(getattr(t, "name", "?") for t in tools)
         _diag.debug(
             "on_list_tools: FastMCP returned %d tools: %s",
-            len(tools), tool_names_from_fastmcp,
+            len(tools),
+            tool_names_from_fastmcp,
         )
 
         if not self._should_filter_tool_listing() and not config.http_remote_hosted:
-            _diag.debug("on_list_tools: skipping middleware filter (not HTTP or PluginHub not configured)")
+            _diag.debug(
+                "on_list_tools: skipping middleware filter (not HTTP or PluginHub not configured)"
+            )
             return tools
 
         self._refresh_tool_visibility_metadata_from_registry()
         enabled_tool_names = await self._resolve_enabled_tool_names_for_context(
-            SimpleNamespace(fastmcp_context=ctx))
+            SimpleNamespace(fastmcp_context=ctx)
+        )
         if enabled_tool_names is None:
             if not config.http_remote_hosted:
-                _diag.debug("on_list_tools: no Unity session data, returning %d tools from FastMCP as-is", len(tools))
+                _diag.debug(
+                    "on_list_tools: no Unity session data, returning %d tools from FastMCP as-is",
+                    len(tools),
+                )
                 return tools
             enabled_tool_names = set()
 
@@ -556,9 +610,10 @@ class UnityInstanceMiddleware(Middleware):
                 filtered.append(tool)
 
         _diag.debug(
-            "on_list_tools: filtered %d/%d tools visible (Unity register_tools). "
-            "enabled_names=%s",
-            len(filtered), len(tools), sorted(enabled_tool_names),
+            "on_list_tools: filtered %d/%d tools visible (Unity register_tools). enabled_names=%s",
+            len(filtered),
+            len(tools),
+            sorted(enabled_tool_names),
         )
         return filtered
 
@@ -618,7 +673,9 @@ class UnityInstanceMiddleware(Middleware):
         resolved_any_project = False
         for project_hash in project_hashes:
             try:
-                registered_tools = await PluginHub.get_tools_for_project(project_hash, user_id=user_id)
+                registered_tools = await PluginHub.get_tools_for_project(
+                    project_hash, user_id=user_id
+                )
                 # Only mark as resolved if tools are actually registered.
                 # An empty list means register_tools hasn't been sent yet.
                 if registered_tools:
@@ -645,12 +702,18 @@ class UnityInstanceMiddleware(Middleware):
 
     def _refresh_tool_visibility_metadata_from_registry(self) -> None:
         now = time.monotonic()
-        if now - self._last_tool_visibility_refresh < self._tool_visibility_refresh_interval_seconds:
+        if (
+            now - self._last_tool_visibility_refresh
+            < self._tool_visibility_refresh_interval_seconds
+        ):
             return
 
         with self._metadata_lock:
             now = time.monotonic()
-            if now - self._last_tool_visibility_refresh < self._tool_visibility_refresh_interval_seconds:
+            if (
+                now - self._last_tool_visibility_refresh
+                < self._tool_visibility_refresh_interval_seconds
+            ):
                 return
 
             try:

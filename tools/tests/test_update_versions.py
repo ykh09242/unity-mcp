@@ -5,6 +5,7 @@ while the lock still recorded 10.1.0, which `uv sync --locked` rejects. These te
 the lock updater to the lock format uv actually writes for this repo, so a format change
 surfaces here rather than in a release run.
 """
+
 import json
 import re
 import shutil
@@ -23,24 +24,24 @@ REAL_LOCK = _TOOLS_DIR.parent / "Server" / "uv.lock"
 REAL_PYPROJECT = _TOOLS_DIR.parent / "Server" / "pyproject.toml"
 
 SAMPLE_LOCK = (
-    'version = 1\n'
-    'revision = 3\n'
+    "version = 1\n"
+    "revision = 3\n"
     'requires-python = ">=3.10"\n'
-    '\n'
-    '[[package]]\n'
+    "\n"
+    "[[package]]\n"
     'name = "click"\n'
     'version = "8.3.1"\n'
     'source = { registry = "https://pypi.org/simple" }\n'
-    '\n'
-    '[[package]]\n'
+    "\n"
+    "[[package]]\n"
     'name = "ykh09242-unity-mcp-server"\n'
     'version = "10.1.0"\n'
     'source = { editable = "." }\n'
-    'dependencies = [\n'
+    "dependencies = [\n"
     '    { name = "click" },\n'
-    ']\n'
-    '\n'
-    '[[package]]\n'
+    "]\n"
+    "\n"
+    "[[package]]\n"
     'name = "mcp"\n'
     'version = "1.26.0"\n'
     'source = { registry = "https://pypi.org/simple" }\n'
@@ -125,7 +126,9 @@ def test_checked_in_lock_agrees_with_pyproject_version():
     assert lock_version == pyproject_version
 
 
-def test_readme_version_update_preserves_immutable_server_references(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_readme_version_update_preserves_immutable_server_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Given fork and upstream server references pinned to an immutable commit.
     commit = "910fce0e" + "a" * 32
     references = [
@@ -135,7 +138,11 @@ def test_readme_version_update_preserves_immutable_server_references(tmp_path: P
     repo = tmp_path / "checkout"
     path = repo / "Server" / "README.md"
     path.parent.mkdir(parents=True)
-    path.write_text("\n".join(references) + "\ngit+https://github.com/CoplayDev/unity-mcp@v10.1.0#subdirectory=Server\n", encoding="utf-8")
+    path.write_text(
+        "\n".join(references)
+        + "\ngit+https://github.com/CoplayDev/unity-mcp@v10.1.0#subdirectory=Server\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(update_versions, "REPO_ROOT", repo)
     monkeypatch.setattr(update_versions, "SERVER_README", path)
 
@@ -154,11 +161,20 @@ def version_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     repo = tmp_path / "checkout"
     pin = "git+https://github.com/ykh09242/unity-mcp.git@" + "a" * 40 + "#subdirectory=Server"
     contents = {
-        "PACKAGE_JSON": ("MCPForUnity/package.json", json.dumps({"version": "3.2.1", "mcpServerSource": pin})),
-        "MANIFEST_JSON": ("manifest.json", json.dumps({"version": "3.2.1", "server": {"source": pin}})),
+        "PACKAGE_JSON": (
+            "MCPForUnity/package.json",
+            json.dumps({"version": "3.2.1", "mcpServerSource": pin}),
+        ),
+        "MANIFEST_JSON": (
+            "manifest.json",
+            json.dumps({"version": "3.2.1", "server": {"source": pin}}),
+        ),
         "PYPROJECT_TOML": ("Server/pyproject.toml", '[project]\nversion = "10.1.0"\n'),
         "UV_LOCK": ("Server/uv.lock", SAMPLE_LOCK),
-        "SERVER_README": ("Server/README.md", "git+https://github.com/CoplayDev/unity-mcp@v10.1.0#subdirectory=Server\n"),
+        "SERVER_README": (
+            "Server/README.md",
+            "git+https://github.com/CoplayDev/unity-mcp@v10.1.0#subdirectory=Server\n",
+        ),
     }
     for constant, (relative, content) in contents.items():
         path = repo / relative
@@ -171,10 +187,16 @@ def version_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.mark.parametrize("component", [None, "unity", "server", "all"])
 def test_component_version_updates_do_not_synchronize_unselected_packages(
-    version_checkout: Path, monkeypatch: pytest.MonkeyPatch, component: str | None,
+    version_checkout: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    component: str | None,
 ) -> None:
     # Given: Unity and server have different versions and a commit-pinned source.
-    before = {path.relative_to(version_checkout): path.read_bytes() for path in version_checkout.rglob("*") if path.is_file()}
+    before = {
+        path.relative_to(version_checkout): path.read_bytes()
+        for path in version_checkout.rglob("*")
+        if path.is_file()
+    }
     argv = ["update_versions.py", "--version", "4.5.6"]
     if component is not None:
         argv.extend(["--component", component])
@@ -189,7 +211,11 @@ def test_component_version_updates_do_not_synchronize_unselected_packages(
         "server": {Path("Server/pyproject.toml"), Path("Server/uv.lock")},
         "all": set(before),
     }[selected]
-    changed = {path for path, content in before.items() if (version_checkout / path).read_bytes() != content}
+    changed = {
+        path
+        for path, content in before.items()
+        if (version_checkout / path).read_bytes() != content
+    }
     assert changed == expected
     for relative in (Path("MCPForUnity/package.json"), Path("manifest.json")):
         original = json.loads(before[relative])
@@ -203,7 +229,9 @@ def test_component_version_updates_do_not_synchronize_unselected_packages(
         assert 'name = "click"\nversion = "8.3.1"' in lock
 
 
-def test_server_version_requires_an_explicit_value(version_checkout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_server_version_requires_an_explicit_value(
+    version_checkout: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Given: the server version must not be inferred from the Unity package.
     before = {path: path.read_bytes() for path in version_checkout.rglob("*") if path.is_file()}
     monkeypatch.setattr(sys, "argv", ["update_versions.py", "--component", "server"])

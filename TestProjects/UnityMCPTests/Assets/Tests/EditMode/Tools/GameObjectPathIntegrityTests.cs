@@ -41,16 +41,20 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (!captured) return;
+            if (!captured)
+                return;
             try
             {
                 foreach (GameObject obj in owned)
-                    if (obj != null) UnityEngine.Object.DestroyImmediate(obj);
-                if (ownedScene.IsValid()) EditorSceneManager.CloseScene(ownedScene, true);
+                    if (obj != null)
+                        UnityEngine.Object.DestroyImmediate(obj);
+                if (ownedScene.IsValid())
+                    EditorSceneManager.CloseScene(ownedScene, true);
             }
             finally
             {
-                if (previousScene.IsValid() && previousScene.isLoaded) SceneManager.SetActiveScene(previousScene);
+                if (previousScene.IsValid() && previousScene.isLoaded)
+                    SceneManager.SetActiveScene(previousScene);
                 Selection.objects = previousSelection;
                 captured = false;
             }
@@ -86,7 +90,10 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsTrue(Matches(marked, "Ch\u00ADild"));
                 Assert.IsFalse(Matches(marked, "Child"));
             }
-            finally { CultureInfo.CurrentCulture = previous; }
+            finally
+            {
+                CultureInfo.CurrentCulture = previous;
+            }
         }
 
         [Test]

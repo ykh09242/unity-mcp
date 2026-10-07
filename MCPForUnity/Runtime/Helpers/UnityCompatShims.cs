@@ -35,7 +35,5 @@ namespace MCPForUnity.Runtime.Helpers
     /// This class is intentionally empty — its purpose is to anchor the catalog so any
     /// reader can <c>F12</c> from a shim file and land on the full list and policy.
     /// </remarks>
-    public static class UnityCompatShims
-    {
-    }
+    public static class UnityCompatShims { }
 }

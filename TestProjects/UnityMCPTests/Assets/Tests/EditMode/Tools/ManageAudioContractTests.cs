@@ -14,10 +14,14 @@ namespace MCPForUnityTests.Editor.Tools
     public class ManageAudioContractTests
     {
         private static JObject Send(JObject request) => JObject.FromObject(ManageAudio.HandleCommand(request));
-        private static JObject Request(string action, GameObject target) => new JObject
-        {
-            ["action"] = action, ["target"] = target.GetInstanceIDCompat(), ["searchMethod"] = "by_id"
-        };
+
+        private static JObject Request(string action, GameObject target) =>
+            new JObject
+            {
+                ["action"] = action,
+                ["target"] = target.GetInstanceIDCompat(),
+                ["searchMethod"] = "by_id",
+            };
 
         [TestCase("play")]
         [TestCase("stop")]
@@ -165,7 +169,8 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 Object.DestroyImmediate(unrelated);
                 Object.DestroyImmediate(root);
-                if (named != null) Object.DestroyImmediate(named);
+                if (named != null)
+                    Object.DestroyImmediate(named);
             }
         }
 

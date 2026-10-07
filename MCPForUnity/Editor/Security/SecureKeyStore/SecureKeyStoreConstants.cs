@@ -7,9 +7,6 @@ namespace MCPForUnity.Editor.Security
         internal const string ServiceName = "MCPForUnity.AssetGen";
 
         /// <summary>Known asset-generation provider ids (lowercase).</summary>
-        internal static readonly string[] ProviderIds =
-        {
-            "tripo", "meshy", "sketchfab", "fal", "openrouter"
-        };
+        internal static readonly string[] ProviderIds = { "tripo", "meshy", "sketchfab", "fal", "openrouter" };
     }
 }

@@ -1,8 +1,8 @@
-using NUnit.Framework;
-using UnityEngine;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
+using UnityEngine;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -28,9 +28,12 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (testGo != null) Object.DestroyImmediate(testGo);
-            if (sprite != null) Object.DestroyImmediate(sprite);
-            if (texture != null) Object.DestroyImmediate(texture);
+            if (testGo != null)
+                Object.DestroyImmediate(testGo);
+            if (sprite != null)
+                Object.DestroyImmediate(sprite);
+            if (texture != null)
+                Object.DestroyImmediate(texture);
         }
 
         [Test]
@@ -100,8 +103,11 @@ namespace MCPForUnityTests.Editor.Tools
     /// <summary>Two serialized fields that both normalize to "target".</summary>
     public class AmbiguousFieldsBehaviour : MonoBehaviour
     {
-        [SerializeField] private GameObject target_ = null;
-        [SerializeField] private GameObject m_Target = null;
+        [SerializeField]
+        private GameObject target_ = null;
+
+        [SerializeField]
+        private GameObject m_Target = null;
 
         public GameObject TargetUnderscore => target_;
         public GameObject TargetPrefixed => m_Target;

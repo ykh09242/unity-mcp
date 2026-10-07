@@ -1,4 +1,5 @@
 """Fresh public Animator control/read request and result contracts."""
+
 import os
 import subprocess
 import sys
@@ -6,14 +7,26 @@ import textwrap
 
 
 def _run(code, tmp_path):
-    env = {**os.environ, "APPDATA": str(tmp_path), "XDG_DATA_HOME": str(tmp_path), "UNITY_MCP_DISABLE_TELEMETRY": "true"}
-    result = subprocess.run([sys.executable, "-B", "-c", textwrap.dedent(code)], env=env, capture_output=True, text=True, timeout=60)
+    env = {
+        **os.environ,
+        "APPDATA": str(tmp_path),
+        "XDG_DATA_HOME": str(tmp_path),
+        "UNITY_MCP_DISABLE_TELEMETRY": "true",
+    }
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", textwrap.dedent(code)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
 
 def test_animator_control_read_actual_cli_transport(tmp_path):
-    output = _run(r'''
+    output = _run(
+        r"""
         import copy
         import json
         import httpx
@@ -102,12 +115,15 @@ def test_animator_control_read_actual_cli_transport(tmp_path):
             print("FULL_HELP",command,json.dumps(result.stdout))
         print(f"fresh Animator CLI checks={checks} failures={len(failures)} requests={len(requests)}")
         assert not failures, failures
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
     assert "fresh Animator CLI checks=" in output
 
 
 def test_animator_control_read_registered_sdk(tmp_path):
-    output = _run(r'''
+    output = _run(
+        r"""
         import copy
         import json
         import anyio
@@ -215,5 +231,7 @@ def test_animator_control_read_registered_sdk(tmp_path):
             print(f"fresh Animator SDK checks={checks} failures={len(failures)} requests={len(requests)}")
             assert not failures, failures
         anyio.run(main)
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
     assert "fresh Animator SDK checks=" in output

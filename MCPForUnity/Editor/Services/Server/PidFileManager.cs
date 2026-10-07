@@ -160,9 +160,21 @@ namespace MCPForUnity.Editor.Services.Server
         /// <inheritdoc/>
         public void StoreTracking(int pid, int port, string argsHash = null)
         {
-            try { EditorPrefs.SetInt(EditorPrefKeys.LastLocalHttpServerPid, pid); } catch { }
-            try { EditorPrefs.SetInt(EditorPrefKeys.LastLocalHttpServerPort, port); } catch { }
-            try { EditorPrefs.SetString(EditorPrefKeys.LastLocalHttpServerStartedUtc, DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture)); } catch { }
+            try
+            {
+                EditorPrefs.SetInt(EditorPrefKeys.LastLocalHttpServerPid, pid);
+            }
+            catch { }
+            try
+            {
+                EditorPrefs.SetInt(EditorPrefKeys.LastLocalHttpServerPort, port);
+            }
+            catch { }
+            try
+            {
+                EditorPrefs.SetString(EditorPrefKeys.LastLocalHttpServerStartedUtc, DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+            }
+            catch { }
             try
             {
                 if (!string.IsNullOrEmpty(argsHash))
@@ -194,8 +206,15 @@ namespace MCPForUnity.Editor.Services.Server
 
                 // Only trust the stored PID for a short window to avoid PID reuse issues.
                 // (We still verify the PID is listening on the expected port before killing.)
-                if (!string.IsNullOrEmpty(storedUtc)
-                    && DateTime.TryParse(storedUtc, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var startedAt))
+                if (
+                    !string.IsNullOrEmpty(storedUtc)
+                    && DateTime.TryParse(
+                        storedUtc,
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal,
+                        out var startedAt
+                    )
+                )
                 {
                     if ((DateTime.UtcNow - startedAt) > TimeSpan.FromHours(6))
                     {
@@ -228,18 +247,43 @@ namespace MCPForUnity.Editor.Services.Server
         /// <inheritdoc/>
         public void ClearTracking()
         {
-            try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPid); } catch { }
-            try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPort); } catch { }
-            try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerStartedUtc); } catch { }
-            try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPidArgsHash); } catch { }
-            try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPidFilePath); } catch { }
-            try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerInstanceToken); } catch { }
+            try
+            {
+                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPid);
+            }
+            catch { }
+            try
+            {
+                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPort);
+            }
+            catch { }
+            try
+            {
+                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerStartedUtc);
+            }
+            catch { }
+            try
+            {
+                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPidArgsHash);
+            }
+            catch { }
+            try
+            {
+                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPidFilePath);
+            }
+            catch { }
+            try
+            {
+                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerInstanceToken);
+            }
+            catch { }
         }
 
         /// <inheritdoc/>
         public string ComputeShortHash(string input)
         {
-            if (string.IsNullOrEmpty(input)) return string.Empty;
+            if (string.IsNullOrEmpty(input))
+                return string.Empty;
             try
             {
                 using var sha = SHA256.Create();

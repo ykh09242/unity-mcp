@@ -8,7 +8,7 @@ import textwrap
 
 
 def test_editor_readiness_nested_validation_and_existing_advice(tmp_path):
-    source = '''
+    source = """
         import copy
         import json
         import socket
@@ -93,7 +93,7 @@ def test_editor_readiness_nested_validation_and_existing_advice(tmp_path):
                     assert all(result[key] == value for key, value in reply.items())
                     assert captured[before:] == ["get_editor_state"]
         anyio.run(scenario)
-    '''
+    """
     env = {**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"}
     for key in ("APPDATA", "XDG_DATA_HOME", "UNITY_MCP_LOG_DIR"):
         directory = tmp_path / key
@@ -101,7 +101,10 @@ def test_editor_readiness_nested_validation_and_existing_advice(tmp_path):
         env[key] = str(directory)
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1], env=env,
-        capture_output=True, text=True, timeout=45,
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=45,
     )
     assert result.returncode == 0, result.stdout + result.stderr

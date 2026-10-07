@@ -28,31 +28,35 @@ namespace MCPForUnity.Editor.Resources.Editor
                     {
                         foreach (var p in tool.Parameters)
                         {
-                            paramsArray.Add(new JObject
-                            {
-                                ["name"] = p.Name,
-                                ["description"] = p.Description,
-                                ["type"] = p.Type,
-                                ["required"] = p.Required,
-                                ["default_value"] = p.DefaultValue
-                            });
+                            paramsArray.Add(
+                                new JObject
+                                {
+                                    ["name"] = p.Name,
+                                    ["description"] = p.Description,
+                                    ["type"] = p.Type,
+                                    ["required"] = p.Required,
+                                    ["default_value"] = p.DefaultValue,
+                                }
+                            );
                         }
                     }
 
-                    toolsArray.Add(new JObject
-                    {
-                        ["name"] = tool.Name,
-                        ["group"] = tool.Group ?? "core",
-                        ["enabled"] = discovery.IsToolEnabled(tool.Name),
-                        ["description"] = tool.Description,
-                        ["auto_register"] = tool.AutoRegister,
-                        ["is_built_in"] = tool.IsBuiltIn,
-                        ["structured_output"] = tool.StructuredOutput,
-                        ["requires_polling"] = tool.RequiresPolling,
-                        ["poll_action"] = tool.PollAction ?? "status",
-                        ["max_poll_seconds"] = tool.MaxPollSeconds,
-                        ["parameters"] = paramsArray
-                    });
+                    toolsArray.Add(
+                        new JObject
+                        {
+                            ["name"] = tool.Name,
+                            ["group"] = tool.Group ?? "core",
+                            ["enabled"] = discovery.IsToolEnabled(tool.Name),
+                            ["description"] = tool.Description,
+                            ["auto_register"] = tool.AutoRegister,
+                            ["is_built_in"] = tool.IsBuiltIn,
+                            ["structured_output"] = tool.StructuredOutput,
+                            ["requires_polling"] = tool.RequiresPolling,
+                            ["poll_action"] = tool.PollAction ?? "status",
+                            ["max_poll_seconds"] = tool.MaxPollSeconds,
+                            ["parameters"] = paramsArray,
+                        }
+                    );
                 }
 
                 var groups = toolsArray
@@ -61,14 +65,10 @@ namespace MCPForUnity.Editor.Resources.Editor
                     {
                         ["name"] = g.Key,
                         ["enabled_count"] = g.Count(t => (bool)t["enabled"]),
-                        ["total_count"] = g.Count()
+                        ["total_count"] = g.Count(),
                     });
 
-                var result = new JObject
-                {
-                    ["tools"] = toolsArray,
-                    ["groups"] = new JArray(groups)
-                };
+                var result = new JObject { ["tools"] = toolsArray, ["groups"] = new JArray(groups) };
 
                 return new SuccessResponse("Retrieved tool states.", result);
             }

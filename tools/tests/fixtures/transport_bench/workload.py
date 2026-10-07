@@ -1,4 +1,5 @@
 """Deterministic owned workloads shared by transport experiments."""
+
 from __future__ import annotations
 
 from enum import StrEnum
@@ -26,7 +27,12 @@ class PeerRequest(BaseModel):
 
     @property
     def correlation(self) -> str:
-        return str(self.params.get("filterText", self.params.get("job_id", self.params.get("benchCorrelation", "state:0"))))
+        return str(
+            self.params.get(
+                "filterText",
+                self.params.get("job_id", self.params.get("benchCorrelation", "state:0")),
+            )
+        )
 
     @property
     def workload(self) -> Workload:
@@ -47,16 +53,32 @@ def make_result(workload: Workload, large_bytes: int) -> dict[str, JsonValue]:
         case Workload.SMALL:
             data: JsonValue = {"lines": [{"message": "owned benchmark", "type": "log"}]}
         case Workload.STATE:
-            data = {"schema_version": "owned-bench-state@1", "scene": "OwnedScene",
-                    "object_count": 100, "is_compiling": False,
-                    "settings": {"batch_execute_max_commands": 25},
-                    "objects": [{"name": f"Object{index}", "active": True} for index in range(100)]}
+            data = {
+                "schema_version": "owned-bench-state@1",
+                "scene": "OwnedScene",
+                "object_count": 100,
+                "is_compiling": False,
+                "settings": {"batch_execute_max_commands": 25},
+                "objects": [{"name": f"Object{index}", "active": True} for index in range(100)],
+            }
         case Workload.LARGE:
             data = {"lines": [{"message": "x" * large_bytes, "type": "log"}]}
         case Workload.JOB:
-            data = {"job_id": "owned-job", "status": "succeeded",
-                    "result": {"mode": "EditMode", "summary": {"passed": 10, "failed": 0,
-                    "skipped": 0, "total": 10, "durationSeconds": 0.012, "resultState": "Passed"}}}
+            data = {
+                "job_id": "owned-job",
+                "status": "succeeded",
+                "result": {
+                    "mode": "EditMode",
+                    "summary": {
+                        "passed": 10,
+                        "failed": 0,
+                        "skipped": 0,
+                        "total": 10,
+                        "durationSeconds": 0.012,
+                        "resultState": "Passed",
+                    },
+                },
+            }
         case unreachable:
             assert_never(unreachable)
     return {"success": True, "data": data}

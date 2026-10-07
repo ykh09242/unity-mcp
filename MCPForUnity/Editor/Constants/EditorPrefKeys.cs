@@ -78,6 +78,7 @@ namespace MCPForUnity.Editor.Constants
         internal const string AssetGenSelectedModelProvider = "MCPForUnity.AssetGen.ModelProvider";
         internal const string AssetGenSelectedImageProvider = "MCPForUnity.AssetGen.ImageProvider";
         internal const string AssetGenSelectedAudioProvider = "MCPForUnity.AssetGen.AudioProvider";
+
         // Selected model id per (kind, provider): key = prefix + "<kind>.<provider>". Empty => use
         // the catalog default. Per-provider (not per-type) so e.g. the Tripo and Meshy 3D dropdowns
         // — which have disjoint model lists — never clobber each other's selection.

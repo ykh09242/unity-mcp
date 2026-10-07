@@ -65,16 +65,13 @@ def format_as_text(data: Any, indent: int = 0) -> str:
                 lines.append(f"{prefix}{key}: [{len(value)} items]")
                 if len(value) <= 10:
                     for i, item in enumerate(value):
-                        lines.append(
-                            f"{prefix}  [{i}] {_format_list_item(item)}")
+                        lines.append(f"{prefix}  [{i}] {_format_list_item(item)}")
                 else:
                     for i, item in enumerate(value[:5]):
-                        lines.append(
-                            f"{prefix}  [{i}] {_format_list_item(item)}")
+                        lines.append(f"{prefix}  [{i}] {_format_list_item(item)}")
                     lines.append(f"{prefix}  ... ({len(value) - 10} more)")
                     for i, item in enumerate(value[-5:], len(value) - 5):
-                        lines.append(
-                            f"{prefix}  [{i}] {_format_list_item(item)}")
+                        lines.append(f"{prefix}  [{i}] {_format_list_item(item)}")
             else:
                 lines.append(f"{prefix}{key}: {value}")
         return "\n".join(lines)
@@ -96,8 +93,7 @@ def _format_list_item(item: Any) -> str:
     """Format a single list item."""
     if isinstance(item, dict):
         # Try to find a name/id field for display
-        name = item.get("name") or item.get(
-            "Name") or item.get("id") or item.get("Id")
+        name = item.get("name") or item.get("Name") or item.get("id") or item.get("Id")
         if name:
             extra = ""
             if "instanceID" in item:
@@ -115,8 +111,7 @@ def format_as_table(data: Any) -> str:
     if isinstance(data, dict):
         # Check for success response with data
         if "success" in data and data.get("success"):
-            result = data.get("data") or data.get(
-                "result") or data.get("items")
+            result = data.get("data") or data.get("result") or data.get("items")
             if isinstance(result, list):
                 return _build_table(result)
 
@@ -164,16 +159,14 @@ def _build_table(
     lines = []
 
     # Header
-    header_line = " | ".join(
-        h.ljust(col_widths[i]) for i, h in enumerate(headers))
+    header_line = " | ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers))
     lines.append(header_line)
     lines.append("-+-".join("-" * w for w in col_widths))
 
     # Rows
     for row in rows:
         row_line = " | ".join(
-            (row[i] if i < len(row) else "").ljust(col_widths[i])
-            for i in range(len(headers))
+            (row[i] if i < len(row) else "").ljust(col_widths[i]) for i in range(len(headers))
         )
         lines.append(row_line)
 

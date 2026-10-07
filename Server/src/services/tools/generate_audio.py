@@ -5,6 +5,7 @@ Thin pass-through: this tool carries NO API keys and NO file bytes. The C# side
 reads the user's fal.ai key from the OS secure store, performs the provider
 HTTPS call, downloads the result, and imports it as an AudioClip.
 """
+
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -41,14 +42,18 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 )
 async def generate_audio(
     ctx: Context,
-    action: Annotated[Literal["generate", "status", "cancel", "list_providers", "list_models", "refresh_models"],
-                      "Action to perform."],
-
+    action: Annotated[
+        Literal["generate", "status", "cancel", "list_providers", "list_models", "refresh_models"],
+        "Action to perform.",
+    ],
     provider: Annotated[str, "Provider id (fal)."] | None = None,
     prompt: Annotated[str, "Text prompt describing the sound or music."] | None = None,
-    model: Annotated[str, "fal model id returned by list_models. "
-                     "Omit to use the GUI-selected default."] | None = None,
-    duration: Annotated[float, "Requested length in seconds (soft-clamped per model)."] | None = None,
+    model: Annotated[
+        str, "fal model id returned by list_models. Omit to use the GUI-selected default."
+    ]
+    | None = None,
+    duration: Annotated[float, "Requested length in seconds (soft-clamped per model)."]
+    | None = None,
     name: Annotated[str, "Base name for the imported asset."] | None = None,
     output_folder: Annotated[str, "Destination folder under Assets/ for the import."] | None = None,
     job_id: Annotated[str, "Job id for status/cancel."] | None = None,

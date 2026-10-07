@@ -1,4 +1,5 @@
 """End-to-end-ish smoke tests for transport routing paths."""
+
 from __future__ import annotations
 
 import pytest
@@ -25,9 +26,7 @@ async def test_http_local_smoke(monkeypatch):
     async def _unused_send_fn(*_args, **_kwargs):
         raise AssertionError("send_fn should not be used in HTTP mode")
 
-    result = await unity_transport.send_with_unity_instance(
-        _unused_send_fn, None, "ping", {}
-    )
+    result = await unity_transport.send_with_unity_instance(_unused_send_fn, None, "ping", {})
 
     assert result["success"] is True
     assert result["data"] == {"via": "http"}
@@ -101,7 +100,12 @@ async def test_stdio_smoke(monkeypatch):
     async def fake_send_fn(command_type, params, *, instance_id=None, **_kwargs):
         return {
             "success": True,
-            "data": {"via": "stdio", "command": command_type, "instance": instance_id, "params": params},
+            "data": {
+                "via": "stdio",
+                "command": command_type,
+                "instance": instance_id,
+                "params": params,
+            },
         }
 
     result = await unity_transport.send_with_unity_instance(

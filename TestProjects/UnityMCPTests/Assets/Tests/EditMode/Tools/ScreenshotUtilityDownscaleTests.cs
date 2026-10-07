@@ -1,7 +1,7 @@
+using MCPForUnity.Runtime.Helpers;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.Rendering;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -29,7 +29,8 @@ namespace MCPForUnityTests.Editor.Tools
             var source = new Texture2D(64, 64, TextureFormat.RGBA32, false, linear: true);
             var fill = new Color32(11, 11, 11, 255); // the dark value reported in #1328
             var pixels = new Color32[64 * 64];
-            for (int i = 0; i < pixels.Length; i++) pixels[i] = fill;
+            for (int i = 0; i < pixels.Length; i++)
+                pixels[i] = fill;
             source.SetPixels32(pixels);
             source.Apply();
 
@@ -48,7 +49,8 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                if (result != null) Object.DestroyImmediate(result);
+                if (result != null)
+                    Object.DestroyImmediate(result);
                 Object.DestroyImmediate(source);
             }
         }
@@ -59,7 +61,8 @@ namespace MCPForUnityTests.Editor.Tools
             var source = new Texture2D(64, 64, TextureFormat.RGBA32, false, linear: false);
             var fill = new Color32(128, 64, 32, 255);
             var pixels = new Color32[64 * 64];
-            for (int i = 0; i < pixels.Length; i++) pixels[i] = fill;
+            for (int i = 0; i < pixels.Length; i++)
+                pixels[i] = fill;
             source.SetPixels32(pixels);
             source.Apply();
 
@@ -75,7 +78,8 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                if (result != null) Object.DestroyImmediate(result);
+                if (result != null)
+                    Object.DestroyImmediate(result);
                 Object.DestroyImmediate(source);
             }
         }
@@ -95,7 +99,8 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                if (result != null) Object.DestroyImmediate(result);
+                if (result != null)
+                    Object.DestroyImmediate(result);
                 Object.DestroyImmediate(source);
             }
         }

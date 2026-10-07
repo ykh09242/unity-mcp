@@ -71,9 +71,7 @@ namespace MCPForUnity.Editor.Windows
             string basePath = AssetPathUtility.GetMcpPackageRootPath();
 
             // Load UXML
-            var visualTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
-                $"{basePath}/Editor/Windows/MCPSetupWindow.uxml"
-            );
+            var visualTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>($"{basePath}/Editor/Windows/MCPSetupWindow.uxml");
 
             if (visualTree == null)
             {
@@ -125,7 +123,8 @@ namespace MCPForUnity.Editor.Windows
             doneButton.clicked += OnDoneClicked;
             openPythonLinkButton.clicked += OnOpenPythonInstallClicked;
             openUvLinkButton.clicked += OnOpenUvInstallClicked;
-            if (installUvButton != null) installUvButton.clicked += OnInstallUvClicked;
+            if (installUvButton != null)
+                installUvButton.clicked += OnInstallUvClicked;
             skipClientsButton.clicked += OnSkipClientsClicked;
             configureSelectedButton.clicked += OnConfigureSelectedClicked;
             rootVisualElement.Q<Button>("back-button").clicked += () =>
@@ -186,12 +185,9 @@ namespace MCPForUnity.Editor.Windows
             configureSelectedButton.SetEnabled(true);
             foreach (var c in McpClientRegistry.All)
             {
-                if (!c.IsInstalled) continue;
-                var toggle = new Toggle(c.DisplayName)
-                {
-                    value = true,
-                    tooltip = c.GetConfigPath()
-                };
+                if (!c.IsInstalled)
+                    continue;
+                var toggle = new Toggle(c.DisplayName) { value = true, tooltip = c.GetConfigPath() };
                 clientToggles.Add((c, toggle));
                 clientsList.Add(toggle);
             }
@@ -212,11 +208,13 @@ namespace MCPForUnity.Editor.Windows
 
         private void OnConfigureSelectedClicked()
         {
-            int success = 0, failure = 0;
+            int success = 0,
+                failure = 0;
             var failures = new List<string>();
             foreach (var (c, toggle) in clientToggles)
             {
-                if (!toggle.value) continue;
+                if (!toggle.value)
+                    continue;
                 try
                 {
                     MCPServiceLocator.Client.ConfigureClient(c);
@@ -233,19 +231,18 @@ namespace MCPForUnity.Editor.Windows
                 EditorUtility.DisplayDialog(
                     "Client Configuration",
                     "No clients were selected. Tick at least one client to continue, or close the window to skip setup.",
-                    "OK");
+                    "OK"
+                );
                 return;
             }
             // Keep the summary short: a count, only the failures (if any), and the next step —
             // no need to enumerate every successfully-configured client.
             string failureList = failures.Count > 0 ? "\n\n" + string.Join("\n", failures) : "";
-            string nextStep = (failure == 0 && success > 0)
-                ? "\n\nYou're all set. Ask your AI assistant to create a GameObject in the open scene to confirm the connection."
-                : "";
-            EditorUtility.DisplayDialog(
-                "Client Configuration",
-                $"{success} configured, {failure} failed.{failureList}{nextStep}",
-                "OK");
+            string nextStep =
+                (failure == 0 && success > 0)
+                    ? "\n\nYou're all set. Ask your AI assistant to create a GameObject in the open scene to confirm the connection."
+                    : "";
+            EditorUtility.DisplayDialog("Client Configuration", $"{success} configured, {failure} failed.{failureList}{nextStep}", "OK");
             Setup.SetupWindowService.MarkSetupCompleted();
             Close();
         }
@@ -264,16 +261,17 @@ namespace MCPForUnity.Editor.Windows
 
         private void OnInstallUvClicked()
         {
-            if (_uvInstallTask != null) return; // already running
+            if (_uvInstallTask != null)
+                return; // already running
 
             bool proceed = EditorUtility.DisplayDialog(
                 "Install UV",
-                "This will download and run the official uv installer:\n\n" +
-                UvInstaller.DescribeCommand() +
-                "\n\nContinue?",
+                "This will download and run the official uv installer:\n\n" + UvInstaller.DescribeCommand() + "\n\nContinue?",
                 "Install",
-                "Cancel");
-            if (!proceed) return;
+                "Cancel"
+            );
+            if (!proceed)
+                return;
 
             installUvButton.SetEnabled(false);
             installUvButton.text = "Installing UV…";
@@ -294,7 +292,8 @@ namespace MCPForUnity.Editor.Windows
                 EditorApplication.update -= PollUvInstall;
                 return;
             }
-            if (_uvInstallTask == null || !_uvInstallTask.IsCompleted) return;
+            if (_uvInstallTask == null || !_uvInstallTask.IsCompleted)
+                return;
 
             EditorApplication.update -= PollUvInstall;
             var task = _uvInstallTask;
@@ -314,9 +313,10 @@ namespace MCPForUnity.Editor.Windows
                 {
                     EditorUtility.DisplayDialog(
                         "Install UV",
-                        "uv installed, but it isn't visible on PATH yet. Restart Unity (or your terminal) so it picks up the new PATH, then click Refresh.\n\n" +
-                        result.Output,
-                        "OK");
+                        "uv installed, but it isn't visible on PATH yet. Restart Unity (or your terminal) so it picks up the new PATH, then click Refresh.\n\n"
+                            + result.Output,
+                        "OK"
+                    );
                 }
             }
             else
@@ -325,9 +325,9 @@ namespace MCPForUnity.Editor.Windows
                 UpdateUI();
                 EditorUtility.DisplayDialog(
                     "Install UV Failed",
-                    "The installer did not complete successfully. You can install uv manually via \"Open UV Install Page\".\n\n" +
-                    result.Output,
-                    "OK");
+                    "The installer did not complete successfully. You can install uv manually via \"Open UV Install Page\".\n\n" + result.Output,
+                    "OK"
+                );
             }
         }
 

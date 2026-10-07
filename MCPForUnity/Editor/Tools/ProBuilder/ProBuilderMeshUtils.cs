@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -43,23 +43,20 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             // Set positions via property setter
             SetVertexPositions(pbMesh, newPositions);
 
-
             // Move transform to compensate
             var worldOffset = pbMesh.transform.TransformVector(localCenter);
             pbMesh.transform.position += worldOffset;
 
             ManageProBuilder.RefreshMesh(pbMesh);
 
-            return new SuccessResponse("Pivot centered to mesh bounds center", new
-            {
-                offset = new[] { Round(localCenter.x), Round(localCenter.y), Round(localCenter.z) },
-                newPosition = new[]
+            return new SuccessResponse(
+                "Pivot centered to mesh bounds center",
+                new
                 {
-                    Round(pbMesh.transform.position.x),
-                    Round(pbMesh.transform.position.y),
-                    Round(pbMesh.transform.position.z),
-                },
-            });
+                    offset = new[] { Round(localCenter.x), Round(localCenter.y), Round(localCenter.z) },
+                    newPosition = new[] { Round(pbMesh.transform.position.x), Round(pbMesh.transform.position.y), Round(pbMesh.transform.position.z) },
+                }
+            );
         }
 
         internal static object FreezeTransform(JObject @params)
@@ -92,10 +89,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             ManageProBuilder.RefreshMesh(pbMesh);
 
-            return new SuccessResponse("Transform frozen into vertex data", new
-            {
-                vertexCount = worldPositions.Length,
-            });
+            return new SuccessResponse("Transform frozen into vertex data", new { vertexCount = worldPositions.Length });
         }
 
         internal static object ValidateMesh(JObject @params)
@@ -115,7 +109,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 foreach (var face in facesList)
                 {
                     var indexes = indexesProp.GetValue(face) as System.Collections.IList;
-                    if (indexes == null) continue;
+                    if (indexes == null)
+                        continue;
 
                     // Check triangles in groups of 3
                     for (int i = 0; i + 2 < indexes.Count; i += 3)
@@ -138,7 +133,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 foreach (var face in facesList)
                 {
                     var indexes = indexesProp.GetValue(face) as System.Collections.IList;
-                    if (indexes == null) continue;
+                    if (indexes == null)
+                        continue;
                     foreach (int idx in indexes)
                         usedVertices.Add(idx);
                 }
@@ -163,7 +159,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     degenerateTriangles = degenerateCount,
                     unusedVertices,
                     issues,
-                });
+                }
+            );
         }
 
         internal static object SetPivot(JObject @params)
@@ -206,10 +203,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             ManageProBuilder.RefreshMesh(pbMesh);
 
-            return new SuccessResponse("Pivot set to world position", new
-            {
-                position = new[] { Round(worldPosition.x), Round(worldPosition.y), Round(worldPosition.z) },
-            });
+            return new SuccessResponse(
+                "Pivot set to world position",
+                new { position = new[] { Round(worldPosition.x), Round(worldPosition.y), Round(worldPosition.z) } }
+            );
         }
 
         private static void SetVertexPositions(Component pbMesh, Vector3[] positions)
@@ -230,8 +227,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             // Try MeshValidation.RemoveDegenerateTriangles
             if (ManageProBuilder._meshValidationType != null)
             {
-                var removeMethod = ManageProBuilder._meshValidationType.GetMethod("RemoveDegenerateTriangles",
-                    BindingFlags.Static | BindingFlags.Public);
+                var removeMethod = ManageProBuilder._meshValidationType.GetMethod("RemoveDegenerateTriangles", BindingFlags.Static | BindingFlags.Public);
 
                 if (removeMethod != null)
                 {
@@ -247,11 +243,13 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                         // Some overloads differ; try without faces param
                         try
                         {
-                            var altMethod = ManageProBuilder._meshValidationType.GetMethod("RemoveDegenerateTriangles",
+                            var altMethod = ManageProBuilder._meshValidationType.GetMethod(
+                                "RemoveDegenerateTriangles",
                                 BindingFlags.Static | BindingFlags.Public,
                                 null,
                                 new[] { ManageProBuilder._proBuilderMeshType },
-                                null);
+                                null
+                            );
                             if (altMethod != null)
                             {
                                 var result = altMethod.Invoke(null, new object[] { pbMesh });
@@ -276,7 +274,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     degenerateTrianglesRemoved = repaired,
                     faceCount = ManageProBuilder.GetFaceCount(pbMesh),
                     vertexCount = ManageProBuilder.GetVertexCount(pbMesh),
-                });
+                }
+            );
         }
 
         private static float Round(float v) => ManageProBuilder.Round(v);

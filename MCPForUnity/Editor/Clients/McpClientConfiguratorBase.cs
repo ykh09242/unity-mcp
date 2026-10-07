@@ -25,16 +25,18 @@ namespace MCPForUnity.Editor.Clients
         public McpStatus Status => client.status;
         public ConfiguredTransport ConfiguredTransport => client.configuredTransport;
         public virtual bool SupportsAutoConfigure => true;
+
         // Default to a filesystem check on the configured path. Concrete configurators
         // whose presence isn't path-based (CLI binaries, etc.) override this. This makes
         // any future configurator that forgets to override fail-closed rather than be
         // treated as "detected" by ConfigureAllDetectedClients.
         public virtual bool IsInstalled => ParentDirectoryExists(GetConfigPath());
-        private static readonly ConfiguredTransport[] DefaultTransports =
-            { ConfiguredTransport.Stdio, ConfiguredTransport.Http };
+        private static readonly ConfiguredTransport[] DefaultTransports = { ConfiguredTransport.Stdio, ConfiguredTransport.Http };
         public virtual IReadOnlyList<ConfiguredTransport> SupportedTransports => DefaultTransports;
         public virtual bool SupportsSkills => false;
+
         public virtual string GetConfigureActionLabel() => "Configure";
+
         public virtual string GetSkillInstallPath() => null;
 
         public abstract string GetConfigPath();
@@ -71,11 +73,15 @@ namespace MCPForUnity.Editor.Clients
         {
             try
             {
-                if (string.IsNullOrEmpty(configPath)) return false;
+                if (string.IsNullOrEmpty(configPath))
+                    return false;
                 string parent = Path.GetDirectoryName(configPath);
                 return !string.IsNullOrEmpty(parent) && Directory.Exists(parent);
             }
-            catch { return false; }
+            catch
+            {
+                return false;
+            }
         }
 
         protected bool UrlsEqual(string a, string b)
@@ -85,15 +91,9 @@ namespace MCPForUnity.Editor.Clients
                 return false;
             }
 
-            if (Uri.TryCreate(a.Trim(), UriKind.Absolute, out var uriA) &&
-                Uri.TryCreate(b.Trim(), UriKind.Absolute, out var uriB))
+            if (Uri.TryCreate(a.Trim(), UriKind.Absolute, out var uriA) && Uri.TryCreate(b.Trim(), UriKind.Absolute, out var uriB))
             {
-                return Uri.Compare(
-                           uriA,
-                           uriB,
-                           UriComponents.HttpRequestUrl,
-                           UriFormat.SafeUnescaped,
-                           StringComparison.OrdinalIgnoreCase) == 0;
+                return Uri.Compare(uriA, uriB, UriComponents.HttpRequestUrl, UriFormat.SafeUnescaped, StringComparison.OrdinalIgnoreCase) == 0;
             }
 
             string Normalize(string value) => value.Trim().TrimEnd('/');

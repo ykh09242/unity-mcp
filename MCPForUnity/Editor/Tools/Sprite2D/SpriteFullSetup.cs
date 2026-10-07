@@ -1,8 +1,8 @@
 using System.IO;
 using System.Linq;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
-using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Sprite2D
 {
@@ -28,18 +28,17 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             if (!SpriteParams.TryReadAssetPath(@params, "path", out string path, out string pathError))
                 return diagnostics.Fail("BAD_PARAM", pathError);
 
-            if (!SpriteParams.TryReadBool(@params, "overwrite", false, out bool overwrite, out string flagError)
-                || !SpriteParams.TryReadBool(@params, "add_to_scene", false, out bool addToScene, out flagError))
+            if (
+                !SpriteParams.TryReadBool(@params, "overwrite", false, out bool overwrite, out string flagError)
+                || !SpriteParams.TryReadBool(@params, "add_to_scene", false, out bool addToScene, out flagError)
+            )
                 return diagnostics.Fail("BAD_PARAM", flagError);
 
-            string outputDir = @params["output_dir"]?.ToString()
-                ?? Path.GetDirectoryName(path)?.Replace('\\', '/') ?? "Assets";
-            if (!SpriteParams.TryReadAssetPath(new JObject { ["output_dir"] = outputDir },
-                "output_dir", out outputDir, out pathError))
+            string outputDir = @params["output_dir"]?.ToString() ?? Path.GetDirectoryName(path)?.Replace('\\', '/') ?? "Assets";
+            if (!SpriteParams.TryReadAssetPath(new JObject { ["output_dir"] = outputDir }, "output_dir", out outputDir, out pathError))
                 return diagnostics.Fail("BAD_PARAM", pathError);
 
-            string controllerPath = @params["controller_path"]?.ToString()
-                ?? $"{outputDir}/{Path.GetFileNameWithoutExtension(path)}_Controller.controller";
+            string controllerPath = @params["controller_path"]?.ToString() ?? $"{outputDir}/{Path.GetFileNameWithoutExtension(path)}_Controller.controller";
             if (!SpriteControllerBuilder.TryResolveControllerPath(controllerPath, out controllerPath, out pathError))
                 return diagnostics.Fail("BAD_PARAM", pathError);
 
@@ -57,33 +56,40 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             if (clipsToken == null || clipsToken.Count == 0)
             {
-                string animName = @params["animation_name"]?.ToString()
-                    ?? Path.GetFileNameWithoutExtension(path);
+                string animName = @params["animation_name"]?.ToString() ?? Path.GetFileNameWithoutExtension(path);
                 int totalFrames = GetSliceCount(path);
-                clipsToken = new JArray(new JObject
-                {
-                    ["name"]        = animName,
-                    ["start_frame"] = 0,
-                    ["end_frame"]   = totalFrames - 1,
-                    ["fps"]         = 12,
-                });
+                clipsToken = new JArray(
+                    new JObject
+                    {
+                        ["name"] = animName,
+                        ["start_frame"] = 0,
+                        ["end_frame"] = totalFrames - 1,
+                        ["fps"] = 12,
+                    }
+                );
             }
 
             var clips = SpriteClipBuilder.CreateClips(path, clipsToken, outputDir, overwrite, diagnostics);
             // A repeated run skips every clip, and the controller step then failed with "No valid
             // clips loaded.", which named neither the cause nor the way past it.
             if (clips.Count == 0 && diagnostics.Build().Count(d => d.code == "CLIP_EXISTS") == clipsToken.Count)
-                diagnostics.AddError("ALL_CLIPS_EXIST",
+                diagnostics.AddError(
+                    "ALL_CLIPS_EXIST",
                     "Every requested clip already exists, so no clip was written and full_setup stopped before the controller step.",
                     "Set overwrite=true to replace the clips and the controller.",
-                    "Call setup_controller with the existing .anim paths, which the CLIP_EXISTS warnings name, and overwrite=true if the controller already exists.");
+                    "Call setup_controller with the existing .anim paths, which the CLIP_EXISTS warnings name, and overwrite=true if the controller already exists."
+                );
             if (diagnostics.HasErrors)
                 return Stop("setup_clips", diagnostics);
 
             // ── Step 3: Controller ─────────────────────────────────────────────
 
             var controller = SpriteControllerBuilder.BuildController(
-                clips.Select(c => (c.name, c.path, (bool?)c.loop)), controllerPath, overwrite, diagnostics);
+                clips.Select(c => (c.name, c.path, (bool?)c.loop)),
+                controllerPath,
+                overwrite,
+                diagnostics
+            );
             if (diagnostics.HasErrors)
                 return Stop("setup_controller", diagnostics);
 
@@ -94,9 +100,12 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             // An attachment asked for but not made is not a success, so both misses are errors.
             if (addToScene && string.IsNullOrEmpty(sceneTarget))
             {
-                diagnostics.AddError("SCENE_TARGET_MISSING",
+                diagnostics.AddError(
+                    "SCENE_TARGET_MISSING",
                     "'add_to_scene' is true but 'scene_target' is empty.",
-                    "Pass 'scene_target' with the GameObject name.", "Set add_to_scene=false.");
+                    "Pass 'scene_target' with the GameObject name.",
+                    "Set add_to_scene=false."
+                );
             }
             else if (addToScene)
             {
@@ -106,9 +115,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 var go = matches.Count == 1 ? GameObjectLookup.FindById(matches[0]) : null;
                 if (matches.Count > 1)
                 {
-                    diagnostics.AddError("SCENE_TARGET_AMBIGUOUS",
+                    diagnostics.AddError(
+                        "SCENE_TARGET_AMBIGUOUS",
                         $"{matches.Count} GameObjects are named '{sceneTarget}'; nothing was attached.",
-                        "Rename the target or pick a unique name.");
+                        "Rename the target or pick a unique name."
+                    );
                 }
                 else if (go != null)
                 {
@@ -129,8 +140,10 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                         if (go.GetComponent<UnityEngine.SpriteRenderer>() == null)
                         {
                             UnityEditor.Undo.AddComponent<UnityEngine.SpriteRenderer>(go);
-                            diagnostics.AddWarning("SCENE_SPRITE_RENDERER_ADDED",
-                                $"'{sceneTarget}' had no SpriteRenderer, so one was added for the clips to drive.");
+                            diagnostics.AddWarning(
+                                "SCENE_SPRITE_RENDERER_ADDED",
+                                $"'{sceneTarget}' had no SpriteRenderer, so one was added for the clips to drive."
+                            );
                         }
                         // Recorded and dirtied like the sibling controller_assign path.
                         UnityEditor.Undo.RecordObject(animator, "Assign AnimatorController");
@@ -139,16 +152,20 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     }
                     else
                     {
-                        diagnostics.AddError("SCENE_CONTROLLER_NOT_LOADED",
+                        diagnostics.AddError(
+                            "SCENE_CONTROLLER_NOT_LOADED",
                             $"The controller at '{controller.path}' could not be loaded, so '{sceneTarget}' was left unchanged.",
-                            "Check the controller_path in the response.");
+                            "Check the controller_path in the response."
+                        );
                     }
                 }
                 else
                 {
-                    diagnostics.AddError("SCENE_TARGET_NOT_FOUND",
+                    diagnostics.AddError(
+                        "SCENE_TARGET_NOT_FOUND",
                         $"GameObject '{sceneTarget}' not found in scene.",
-                        "Check GameObject name or open the correct scene first.");
+                        "Check GameObject name or open the correct scene first."
+                    );
                 }
             }
 
@@ -160,29 +177,35 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             if (diagnostics.HasErrors)
                 return new
                 {
-                    success           = false,
-                    step              = "add_to_scene",
-                    message           = diagnostics.FirstError,
-                    sprite_path       = path,
-                    controller_path   = controller.path,
-                    state_count       = controller.stateCount,
-                    clip_count        = clips.Count,
-                    diagnostics       = diagnostics.Build(),
+                    success = false,
+                    step = "add_to_scene",
+                    message = diagnostics.FirstError,
+                    sprite_path = path,
+                    controller_path = controller.path,
+                    state_count = controller.stateCount,
+                    clip_count = clips.Count,
+                    diagnostics = diagnostics.Build(),
                 };
 
             return new
             {
-                success               = true,
-                sprite_path           = path,
-                controller_path       = controller.path,
-                state_count           = controller.stateCount,
-                clip_count            = clips.Count,
-                diagnostics           = diagnostics.Build(),
+                success = true,
+                sprite_path = path,
+                controller_path = controller.path,
+                state_count = controller.stateCount,
+                clip_count = clips.Count,
+                diagnostics = diagnostics.Build(),
             };
         }
 
         private static object Stop(string step, SpriteDiagnosticBuilder diagnostics) =>
-            new { success = false, step, message = diagnostics.FirstError, diagnostics = diagnostics.Build() };
+            new
+            {
+                success = false,
+                step,
+                message = diagnostics.FirstError,
+                diagnostics = diagnostics.Build(),
+            };
 
         private static int GetSliceCount(string path)
         {

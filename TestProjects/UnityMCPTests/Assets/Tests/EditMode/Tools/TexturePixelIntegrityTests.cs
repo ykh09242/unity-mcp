@@ -23,7 +23,8 @@ namespace MCPForUnityTests.EditMode.Tools
         [TearDown]
         public void TearDown()
         {
-            if (_texture != null) Object.DestroyImmediate(_texture);
+            if (_texture != null)
+                Object.DestroyImmediate(_texture);
         }
 
         [TestCase("[[1,2,3],false]")]
@@ -38,16 +39,14 @@ namespace MCPForUnityTests.EditMode.Tools
         public void InvalidPayloadPreservesEveryPixel(string json)
         {
             var before = _texture.GetPixels32();
-            Assert.Catch(() => TextureOps.ApplyPixelDataToRegion(
-                _texture, JToken.Parse(json), 0, 0, 2, 1));
+            Assert.Catch(() => TextureOps.ApplyPixelDataToRegion(_texture, JToken.Parse(json), 0, 0, 2, 1));
             CollectionAssert.AreEqual(before, _texture.GetPixels32());
         }
 
         [Test]
         public void NegativeOriginUsesTheCorrectSourcePixel()
         {
-            TextureOps.ApplyPixelDataToRegion(_texture,
-                JArray.Parse("[[1,2,3],[4,5,6]]"), -1, 0, 2, 1);
+            TextureOps.ApplyPixelDataToRegion(_texture, JArray.Parse("[[1,2,3],[4,5,6]]"), -1, 0, 2, 1);
             var after = _texture.GetPixels32();
             Assert.AreEqual(new Color32(4, 5, 6, 255), after[0]);
             Assert.AreEqual(new Color32(20, 30, 40, 255), after[1]);
@@ -57,8 +56,7 @@ namespace MCPForUnityTests.EditMode.Tools
         public void FullyOutsideRegionPreservesEveryPixel()
         {
             var before = _texture.GetPixels32();
-            TextureOps.ApplyPixelDataToRegion(_texture,
-                JArray.Parse("[[1,2,3]]"), int.MaxValue, 0, 1, 1);
+            TextureOps.ApplyPixelDataToRegion(_texture, JArray.Parse("[[1,2,3]]"), int.MaxValue, 0, 1, 1);
             CollectionAssert.AreEqual(before, _texture.GetPixels32());
         }
 
@@ -66,8 +64,7 @@ namespace MCPForUnityTests.EditMode.Tools
         public void OverflowingRequestedCountRejectsBeforeAnyPixelChanges()
         {
             var before = _texture.GetPixels32();
-            Assert.Catch(() => TextureOps.ApplyPixelDataToRegion(_texture,
-                JArray.Parse("[[1,2,3]]"), 0, 0, int.MaxValue, int.MaxValue));
+            Assert.Catch(() => TextureOps.ApplyPixelDataToRegion(_texture, JArray.Parse("[[1,2,3]]"), 0, 0, int.MaxValue, int.MaxValue));
             CollectionAssert.AreEqual(before, _texture.GetPixels32());
         }
 
@@ -102,8 +99,7 @@ namespace MCPForUnityTests.EditMode.Tools
                 bytes[i * 4 + 2] = 20;
                 bytes[i * 4 + 3] = 255;
             }
-            foreach (var payload in new JToken[] {
-                colors, new JValue("base64:" + System.Convert.ToBase64String(bytes)) })
+            foreach (var payload in new JToken[] { colors, new JValue("base64:" + System.Convert.ToBase64String(bytes)) })
             {
                 TextureOps.FillTexture(_texture, new Color32(20, 30, 40, 255));
                 TextureOps.ApplyPixelDataToRegion(_texture, payload, x, y, 3, 3);
@@ -112,10 +108,12 @@ namespace MCPForUnityTests.EditMode.Tools
                 {
                     for (int px = 0; px < 2; px++)
                     {
-                        long sourceX = (long)px - x, sourceY = (long)py - y;
-                        var expected = sourceX >= 0 && sourceX < 3 && sourceY >= 0 && sourceY < 3
-                            ? new Color32((byte)(sourceY * 3 + sourceX + 1), 10, 20, 255)
-                            : new Color32(20, 30, 40, 255);
+                        long sourceX = (long)px - x,
+                            sourceY = (long)py - y;
+                        var expected =
+                            sourceX >= 0 && sourceX < 3 && sourceY >= 0 && sourceY < 3
+                                ? new Color32((byte)(sourceY * 3 + sourceX + 1), 10, 20, 255)
+                                : new Color32(20, 30, 40, 255);
                         Assert.AreEqual(expected, after[py * 2 + px]);
                     }
                 }
@@ -127,8 +125,7 @@ namespace MCPForUnityTests.EditMode.Tools
         public void InvalidInvisibleColorsStillRejectBeforeAnyPixelChanges(int x)
         {
             var before = _texture.GetPixels32();
-            Assert.Catch(() => TextureOps.ApplyPixelDataToRegion(_texture,
-                JArray.Parse("[['bad',2,3],[4,5,6]]"), x, 0, 2, 1));
+            Assert.Catch(() => TextureOps.ApplyPixelDataToRegion(_texture, JArray.Parse("[['bad',2,3],[4,5,6]]"), x, 0, 2, 1));
             CollectionAssert.AreEqual(before, _texture.GetPixels32());
         }
 
@@ -140,10 +137,13 @@ namespace MCPForUnityTests.EditMode.Tools
             var texture = new Texture2D(2, 2, format, false);
             try
             {
-                foreach (var payload in new JToken[] {
-                    JArray.Parse("[[1,2,3,255],[4,5,6,255]]"),
-                    new JValue("base64:" + System.Convert.ToBase64String(
-                        new byte[] { 1, 2, 3, 255, 4, 5, 6, 255 })) })
+                foreach (
+                    var payload in new JToken[]
+                    {
+                        JArray.Parse("[[1,2,3,255],[4,5,6,255]]"),
+                        new JValue("base64:" + System.Convert.ToBase64String(new byte[] { 1, 2, 3, 255, 4, 5, 6, 255 })),
+                    }
+                )
                 {
                     TextureOps.ApplyPixelDataToRegion(texture, payload, 1, 0, 1, 2);
                     var after = texture.GetPixels32();
@@ -162,11 +162,9 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase(int.MaxValue)]
         public void LargeDotSizesDoNotOverflowDistanceCalculations(int size)
         {
-            var method = typeof(ManageTexture).GetMethod("GetPatternColor",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            var method = typeof(ManageTexture).GetMethod("GetPatternColor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
             var background = new Color32(20, 30, 40, 255);
-            var palette = new System.Collections.Generic.List<Color32>
-                { background, new Color32(255, 0, 0, 255) };
+            var palette = new System.Collections.Generic.List<Color32> { background, new Color32(255, 0, 0, 255) };
             var actual = method.Invoke(null, new object[] { 0, 0, "dots", palette, size, 2, 2 });
             Assert.AreEqual(background, actual);
         }

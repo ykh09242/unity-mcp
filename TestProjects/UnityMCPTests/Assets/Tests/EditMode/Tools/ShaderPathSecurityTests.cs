@@ -20,11 +20,17 @@ namespace MCPForUnityTests.Editor.Tools
         {
             foreach (string action in new[] { "create", "read", "update", "delete" })
             {
-                var response = JObject.FromObject(ManageShader.HandleCommand(new JObject
-                {
-                    ["action"] = action, ["name"] = "SecurityProbe", ["path"] = path,
-                    ["contents"] = "sentinel"
-                }));
+                var response = JObject.FromObject(
+                    ManageShader.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = action,
+                            ["name"] = "SecurityProbe",
+                            ["path"] = path,
+                            ["contents"] = "sentinel",
+                        }
+                    )
+                );
                 Assert.IsFalse(response.Value<bool>("success"), action);
                 StringAssert.Contains("path", response.ToString().ToLowerInvariant());
             }
@@ -33,10 +39,11 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void CanonicalBoundaryDoesNotAcceptSiblingPrefix()
         {
-            Assert.Throws<InvalidOperationException>(() => SafePathUtility.ResolveWithinRoot(
-                Application.dataPath, "../AssetsOutside/probe.shader"));
-            Assert.AreEqual(Path.Combine(Application.dataPath, "Shaders", "Valid.shader").Replace('/', Path.DirectorySeparatorChar),
-                SafePathUtility.ResolveWithinRoot(Application.dataPath, "Shaders/Valid.shader").Replace('/', Path.DirectorySeparatorChar));
+            Assert.Throws<InvalidOperationException>(() => SafePathUtility.ResolveWithinRoot(Application.dataPath, "../AssetsOutside/probe.shader"));
+            Assert.AreEqual(
+                Path.Combine(Application.dataPath, "Shaders", "Valid.shader").Replace('/', Path.DirectorySeparatorChar),
+                SafePathUtility.ResolveWithinRoot(Application.dataPath, "Shaders/Valid.shader").Replace('/', Path.DirectorySeparatorChar)
+            );
         }
     }
 }

@@ -39,11 +39,7 @@ namespace MCPForUnity.Editor.Tools
 
             if (TestRunStatus.IsRunning)
             {
-                return new ErrorResponse("tests_running", new
-                {
-                    reason = "tests_running",
-                    retry_after_ms = 5000
-                });
+                return new ErrorResponse("tests_running", new { reason = "tests_running", retry_after_ms = 5000 });
             }
 
             bool refreshTriggered = false;
@@ -53,8 +49,8 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 // Best-effort semantics: if_dirty currently behaves like force unless future dirty signals are added.
-                bool shouldRefresh = string.Equals(mode, "force", StringComparison.OrdinalIgnoreCase)
-                                     || string.Equals(mode, "if_dirty", StringComparison.OrdinalIgnoreCase);
+                bool shouldRefresh =
+                    string.Equals(mode, "force", StringComparison.OrdinalIgnoreCase) || string.Equals(mode, "if_dirty", StringComparison.OrdinalIgnoreCase);
 
                 if (shouldRefresh)
                 {
@@ -113,9 +109,7 @@ namespace MCPForUnity.Editor.Tools
             bool? compileStarted = null;
             if (compileRequested && waitForReady)
             {
-                compileStarted = await WaitForCompilationToStartAsync(
-                    compileCountBefore,
-                    TimeSpan.FromSeconds(CompileStartGraceSeconds)).ConfigureAwait(true);
+                compileStarted = await WaitForCompilationToStartAsync(compileCountBefore, TimeSpan.FromSeconds(CompileStartGraceSeconds)).ConfigureAwait(true);
             }
 
             // Unity 6+ fix: Skip wait_for_ready when compile was requested.
@@ -132,18 +126,20 @@ namespace MCPForUnity.Editor.Tools
             {
                 try
                 {
-                    await WaitForUnityReadyAsync(
-                        TimeSpan.FromSeconds(DefaultWaitTimeoutSeconds)).ConfigureAwait(true);
+                    await WaitForUnityReadyAsync(TimeSpan.FromSeconds(DefaultWaitTimeoutSeconds)).ConfigureAwait(true);
                 }
                 catch (TimeoutException)
                 {
-                    return new ErrorResponse("refresh_timeout_waiting_for_ready", new
-                    {
-                        refresh_triggered = refreshTriggered,
-                        compile_requested = compileRequested,
-                        compile_started = compileStarted,
-                        resulting_state = "unknown",
-                    });
+                    return new ErrorResponse(
+                        "refresh_timeout_waiting_for_ready",
+                        new
+                        {
+                            refresh_triggered = refreshTriggered,
+                            compile_requested = compileRequested,
+                            compile_started = compileStarted,
+                            resulting_state = "unknown",
+                        }
+                    );
                 }
                 catch (Exception ex)
                 {
@@ -151,20 +147,21 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
 
-            string resultingState = EditorStateCache.GetActualIsCompiling()
-                ? "compiling"
-                : (EditorApplication.isUpdating ? "asset_import" : "idle");
+            string resultingState = EditorStateCache.GetActualIsCompiling() ? "compiling" : (EditorApplication.isUpdating ? "asset_import" : "idle");
 
-            return new SuccessResponse("Refresh requested.", new
-            {
-                refresh_triggered = refreshTriggered,
-                compile_requested = compileRequested,
-                compile_started = compileStarted,
-                resulting_state = resultingState,
-                hint = shouldWaitForReady
-                    ? "Unity refresh completed; editor should be ready."
-                    : "If Unity enters compilation/domain reload, poll the mcpforunity://editor/state resource until data.advice.ready_for_tools is true."
-            });
+            return new SuccessResponse(
+                "Refresh requested.",
+                new
+                {
+                    refresh_triggered = refreshTriggered,
+                    compile_requested = compileRequested,
+                    compile_started = compileStarted,
+                    resulting_state = resultingState,
+                    hint = shouldWaitForReady
+                        ? "Unity refresh completed; editor should be ready."
+                        : "If Unity enters compilation/domain reload, poll the mcpforunity://editor/state resource until data.advice.ready_for_tools is true.",
+                }
+            );
         }
 
         /// <summary>
@@ -196,8 +193,7 @@ namespace MCPForUnity.Editor.Tools
             // discards along with the rest of the domain — losing the response. An
             // already-completed task resumes the await inline instead, so nothing is
             // left queued.
-            if (EditorStateCache.CompileCount != compileCountBefore
-                || EditorStateCache.GetActualIsCompiling())
+            if (EditorStateCache.CompileCount != compileCountBefore || EditorStateCache.GetActualIsCompiling())
             {
                 return Task.FromResult(true);
             }
@@ -249,7 +245,11 @@ namespace MCPForUnity.Editor.Tools
             CompilationPipeline.compilationStarted += onStarted;
             EditorApplication.update += tick;
             // Nudge Unity to pump once in case update is throttled.
-            try { EditorApplication.QueuePlayerLoopUpdate(); } catch { }
+            try
+            {
+                EditorApplication.QueuePlayerLoopUpdate();
+            }
+            catch { }
             return tcs.Task;
         }
 
@@ -275,10 +275,12 @@ namespace MCPForUnity.Editor.Tools
                         return;
                     }
 
-                    if (!EditorStateCache.GetActualIsCompiling()
+                    if (
+                        !EditorStateCache.GetActualIsCompiling()
                         && !EditorApplication.isUpdating
                         && !TestRunStatus.IsRunning
-                        && !EditorApplication.isPlayingOrWillChangePlaymode)
+                        && !EditorApplication.isPlayingOrWillChangePlaymode
+                    )
                     {
                         EditorApplication.update -= Tick;
                         tcs.TrySetResult(true);
@@ -293,7 +295,11 @@ namespace MCPForUnity.Editor.Tools
 
             EditorApplication.update += Tick;
             // Nudge Unity to pump once in case update is throttled.
-            try { EditorApplication.QueuePlayerLoopUpdate(); } catch { }
+            try
+            {
+                EditorApplication.QueuePlayerLoopUpdate();
+            }
+            catch { }
             return tcs.Task;
         }
     }

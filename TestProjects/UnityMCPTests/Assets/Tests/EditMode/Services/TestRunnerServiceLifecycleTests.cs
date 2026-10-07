@@ -29,15 +29,16 @@ namespace MCPForUnityTests.Editor.Services
         private string _currentJobSession;
         private long _persistTime;
         private const BindingFlags StaticPrivate = BindingFlags.NonPublic | BindingFlags.Static;
-        private static Dictionary<string, TestJob> Jobs =>
-            (Dictionary<string, TestJob>)typeof(TestJobManager).GetField("Jobs", StaticPrivate).GetValue(null);
+        private static Dictionary<string, TestJob> Jobs => (Dictionary<string, TestJob>)typeof(TestJobManager).GetField("Jobs", StaticPrivate).GetValue(null);
 
         [SetUp]
         public void SetUp()
         {
-            if (PlayModeOptionsGuard.IsPending) Assert.Ignore("An existing run owns the PlayMode options backup.");
+            if (PlayModeOptionsGuard.IsPending)
+                Assert.Ignore("An existing run owns the PlayMode options backup.");
             foreach (var field in typeof(TestRunStatus).GetFields(BindingFlags.NonPublic | BindingFlags.Static))
-                if (!field.IsInitOnly) _status[field] = field.GetValue(null);
+                if (!field.IsInitOnly)
+                    _status[field] = field.GetValue(null);
             _idleTime = EditorPrefs.GetInt("ApplicationIdleTime", 4);
             _interactionMode = EditorPrefs.GetInt("InteractionMode", 0);
             _playOptionsEnabled = EditorSettings.enterPlayModeOptionsEnabled;
@@ -63,9 +64,11 @@ namespace MCPForUnityTests.Editor.Services
         [TearDown]
         public void TearDown()
         {
-            if (!_stateCaptured) return;
+            if (!_stateCaptured)
+                return;
             _service?.Dispose();
-            foreach (var pair in _status) pair.Key.SetValue(null, pair.Value);
+            foreach (var pair in _status)
+                pair.Key.SetValue(null, pair.Value);
             _status.Clear();
             EditorPrefs.SetInt("ApplicationIdleTime", _idleTime);
             EditorPrefs.SetInt("InteractionMode", _interactionMode);
@@ -76,7 +79,8 @@ namespace MCPForUnityTests.Editor.Services
             SessionState.SetInt("TestRunnerNoThrottle_PrevIdleTime", _savedIdle);
             SessionState.SetInt("TestRunnerNoThrottle_PrevInteractionMode", _savedMode);
             Jobs.Clear();
-            foreach (var pair in _jobs) Jobs.Add(pair.Key, pair.Value);
+            foreach (var pair in _jobs)
+                Jobs.Add(pair.Key, pair.Value);
             SetCurrent(_currentJobId);
             typeof(TestJobManager).GetField("_lastPersistUnixMs", StaticPrivate).SetValue(null, _persistTime);
             SessionState.SetString("MCPForUnity.TestJobsV1", _jobSession);
@@ -129,12 +133,22 @@ namespace MCPForUnityTests.Editor.Services
             var oldRun = _service.RunTestsAsync(TestMode.EditMode);
             Assert.IsTrue(TestJobManager.ClearStuckJob());
 
-            var newJob = new TestJob { JobId = "new", Status = TestJobStatus.Running, TotalTests = 7, CompletedTests = 3 };
+            var newJob = new TestJob
+            {
+                JobId = "new",
+                Status = TestJobStatus.Running,
+                TotalTests = 7,
+                CompletedTests = 3,
+            };
             Jobs.Add(newJob.JobId, newJob);
             SetCurrent(newJob.JobId);
             // The newer request is queued behind the old run's operation lock.
             int schedules = 0;
-            SetSchedule(_ => { schedules++; throw new InvalidOperationException("new-startup-failure"); });
+            SetSchedule(_ =>
+            {
+                schedules++;
+                throw new InvalidOperationException("new-startup-failure");
+            });
             var newRun = _service.RunTestsAsync(TestMode.EditMode);
             Assert.IsFalse(newRun.IsCompleted);
 
@@ -143,11 +157,21 @@ namespace MCPForUnityTests.Editor.Services
             int completedAfterOldStart = newJob.CompletedTests;
             _service.RunFinished(null);
             await oldRun;
-            try { await newRun; Assert.Fail("Expected the injected new startup failure."); }
-            catch (InvalidOperationException ex) { Assert.AreEqual("new-startup-failure", ex.Message); }
+            try
+            {
+                await newRun;
+                Assert.Fail("Expected the injected new startup failure.");
+            }
+            catch (InvalidOperationException ex)
+            {
+                Assert.AreEqual("new-startup-failure", ex.Message);
+            }
 
-            Assert.AreEqual("7/3/Running/new", $"{totalAfterOldStart}/{completedAfterOldStart}/{newJob.Status}/{TestJobManager.CurrentJobId}",
-                "Old callbacks must preserve the replacement's progress, status and ownership.");
+            Assert.AreEqual(
+                "7/3/Running/new",
+                $"{totalAfterOldStart}/{completedAfterOldStart}/{newJob.Status}/{TestJobManager.CurrentJobId}",
+                "Old callbacks must preserve the replacement's progress, status and ownership."
+            );
             Assert.AreEqual(TestJobStatus.Failed, oldJob.Status);
             Assert.AreEqual(1, schedules);
         }
@@ -155,21 +179,30 @@ namespace MCPForUnityTests.Editor.Services
         [Test]
         public async Task SynchronousRunFinished_CompletesOriginalRunTask()
         {
-            SetSchedule(_ => { _service.RunFinished(null); return "finished-synchronously"; });
+            SetSchedule(_ =>
+            {
+                _service.RunFinished(null);
+                return "finished-synchronously";
+            });
             var result = await _service.RunTestsAsync(TestMode.EditMode);
             Assert.IsNotNull(result);
             Assert.AreEqual(0, result.Total);
             Assert.IsNull(typeof(TestRunnerService).GetField("_runCompletionSource", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service));
         }
 
-        private static void SetCurrent(string id) =>
-            typeof(TestJobManager).GetField("_currentJobId", StaticPrivate).SetValue(null, id);
+        private static void SetCurrent(string id) => typeof(TestJobManager).GetField("_currentJobId", StaticPrivate).SetValue(null, id);
 
         private static Exception ObserveFailure(Task task)
         {
             Assert.IsTrue(task.IsCompleted, "A startup exception must complete synchronously without pumping Editor updates.");
-            try { task.GetAwaiter().GetResult(); }
-            catch (Exception ex) { return ex; }
+            try
+            {
+                task.GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                return ex;
+            }
             Assert.Fail("Expected the injected scheduling failure.");
             return null;
         }

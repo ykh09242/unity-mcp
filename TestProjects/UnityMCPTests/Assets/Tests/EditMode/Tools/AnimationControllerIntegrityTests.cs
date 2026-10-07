@@ -3,12 +3,12 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Tools.Animation;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.EditMode.Tools
@@ -47,18 +47,14 @@ namespace MCPForUnityTests.EditMode.Tools
         [TearDown]
         public void TearDown()
         {
-            if (!string.IsNullOrEmpty(_rootGuid)
-                && AssetDatabase.AssetPathToGUID(_root, AssetPathToGUIDOptions.OnlyExistingAssets) == _rootGuid)
+            if (!string.IsNullOrEmpty(_rootGuid) && AssetDatabase.AssetPathToGUID(_root, AssetPathToGUIDOptions.OnlyExistingAssets) == _rootGuid)
                 AssetDatabase.DeleteAsset(_root);
         }
 
         private JObject Send(string action, JObject properties)
         {
             properties["controller_path"] = _path;
-            return JObject.FromObject(ManageAnimation.HandleCommand(new JObject
-            {
-                ["action"] = "controller_" + action, ["properties"] = properties
-            }));
+            return JObject.FromObject(ManageAnimation.HandleCommand(new JObject { ["action"] = "controller_" + action, ["properties"] = properties }));
         }
 
         private string Snapshot()
@@ -69,15 +65,13 @@ namespace MCPForUnityTests.EditMode.Tools
                 ["info"] = Send("get_info", new JObject()),
                 ["guid"] = AssetDatabase.AssetPathToGUID(_path),
                 ["dirtyCount"] = EditorUtility.GetDirtyCount(_controller),
-                ["file"] = Convert.ToBase64String(File.ReadAllBytes(
-                    Path.Combine(Application.dataPath, _path.Substring("Assets/".Length)))),
-                ["assets"] = new JArray(AssetDatabase.LoadAllAssetsAtPath(_path)
-                    .OrderBy(asset => asset.GetInstanceIDCompat())
-                    .Select(asset => new JObject
-                    {
-                        ["id"] = asset.GetInstanceIDCompat(),
-                        ["serialized"] = EditorJsonUtility.ToJson(asset)
-                    }))
+                ["file"] = Convert.ToBase64String(File.ReadAllBytes(Path.Combine(Application.dataPath, _path.Substring("Assets/".Length)))),
+                ["assets"] = new JArray(
+                    AssetDatabase
+                        .LoadAllAssetsAtPath(_path)
+                        .OrderBy(asset => asset.GetInstanceIDCompat())
+                        .Select(asset => new JObject { ["id"] = asset.GetInstanceIDCompat(), ["serialized"] = EditorJsonUtility.ToJson(asset) })
+                ),
             }.ToString(Newtonsoft.Json.Formatting.None);
         }
 
@@ -85,8 +79,7 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             string before = Snapshot();
             if (expectsErrorLog)
-                LogAssert.Expect(LogType.Error,
-                    new Regex(@"\[ManageAnimation\] Action 'controller_" + action + @"' failed:"));
+                LogAssert.Expect(LogType.Error, new Regex(@"\[ManageAnimation\] Action 'controller_" + action + @"' failed:"));
             JObject response = Send(action, properties);
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(before, Snapshot(), "Rejected input changed controller state, subassets, GUID or file bytes.");
@@ -96,43 +89,53 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("is_default")]
         public void InvalidLateStateValueDoesNotCreateStateOrSubasset(string property)
         {
-            RejectWithoutMutation("add_state", new JObject
-            {
-                ["state_name"] = "New", [property] = "bad"
-            }, true);
+            RejectWithoutMutation("add_state", new JObject { ["state_name"] = "New", [property] = "bad" }, true);
         }
 
         [TestCase("Missing.anim")]
         [TestCase("../Missing.anim")]
         public void ExplicitUnresolvedClipDoesNotCreateState(string clip)
         {
-            RejectWithoutMutation("add_state", new JObject
-            {
-                ["state_name"] = "New", ["clip_path"] = clip.StartsWith("..") ? clip : _root + "/" + clip
-            }, false);
+            RejectWithoutMutation(
+                "add_state",
+                new JObject { ["state_name"] = "New", ["clip_path"] = clip.StartsWith("..") ? clip : _root + "/" + clip },
+                false
+            );
         }
 
         [TestCase("From")]
         [TestCase("AnyState")]
         public void InvalidTransitionValueDoesNotCreateTransitionSubasset(string from)
         {
-            RejectWithoutMutation("add_transition", new JObject
-            {
-                ["from_state"] = from, ["to_state"] = "To", ["duration"] = "bad"
-            }, true);
+            RejectWithoutMutation(
+                "add_transition",
+                new JObject
+                {
+                    ["from_state"] = from,
+                    ["to_state"] = "To",
+                    ["duration"] = "bad",
+                },
+                true
+            );
         }
 
         [TestCase("From")]
         [TestCase("AnyState")]
         public void InvalidLaterConditionDoesNotCreatePartialTransition(string from)
         {
-            RejectWithoutMutation("add_transition", new JObject
-            {
-                ["from_state"] = from, ["to_state"] = "To",
-                ["conditions"] = new JArray(
-                    new JObject { ["parameter"] = "First", ["threshold"] = 0 },
-                    new JObject { ["parameter"] = "Later", ["threshold"] = "bad" })
-            }, true);
+            RejectWithoutMutation(
+                "add_transition",
+                new JObject
+                {
+                    ["from_state"] = from,
+                    ["to_state"] = "To",
+                    ["conditions"] = new JArray(
+                        new JObject { ["parameter"] = "First", ["threshold"] = 0 },
+                        new JObject { ["parameter"] = "Later", ["threshold"] = "bad" }
+                    ),
+                },
+                true
+            );
         }
 
         [TestCase("float")]
@@ -140,19 +143,22 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("bool")]
         public void InvalidParameterDefaultDoesNotAddParameter(string type)
         {
-            RejectWithoutMutation("add_parameter", new JObject
-            {
-                ["parameter_name"] = "New", ["parameter_type"] = type, ["default_value"] = "bad"
-            }, true);
+            RejectWithoutMutation(
+                "add_parameter",
+                new JObject
+                {
+                    ["parameter_name"] = "New",
+                    ["parameter_type"] = type,
+                    ["default_value"] = "bad",
+                },
+                true
+            );
         }
 
         [Test]
         public void NullNumericParameterDefaultRemainsRejectedWithoutAddingParameter()
         {
-            RejectWithoutMutation("add_parameter", new JObject
-            {
-                ["parameter_name"] = "New", ["default_value"] = JValue.CreateNull()
-            }, true);
+            RejectWithoutMutation("add_parameter", new JObject { ["parameter_name"] = "New", ["default_value"] = JValue.CreateNull() }, true);
         }
 
         [Test]
@@ -164,10 +170,9 @@ namespace MCPForUnityTests.EditMode.Tools
             string guid = AssetDatabase.AssetPathToGUID(collision);
             Assert.IsNotNull(existing);
             Assert.IsFalse(existing is AnimatorController);
-            JObject response = JObject.FromObject(ManageAnimation.HandleCommand(new JObject
-            {
-                ["action"] = "controller_create", ["controller_path"] = collision
-            }));
+            JObject response = JObject.FromObject(
+                ManageAnimation.HandleCommand(new JObject { ["action"] = "controller_create", ["controller_path"] = collision })
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.AreSame(existing, AssetDatabase.LoadMainAssetAtPath(collision));
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(collision));
@@ -178,10 +183,7 @@ namespace MCPForUnityTests.EditMode.Tools
         public void NewControllerPersistsAtRequestedPathWithBaseLayer()
         {
             string path = _root + "/New.controller";
-            JObject response = JObject.FromObject(ManageAnimation.HandleCommand(new JObject
-            {
-                ["action"] = "controller_create", ["controller_path"] = path
-            }));
+            JObject response = JObject.FromObject(ManageAnimation.HandleCommand(new JObject { ["action"] = "controller_create", ["controller_path"] = path }));
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
             Assert.IsNotNull(controller);
@@ -199,13 +201,15 @@ namespace MCPForUnityTests.EditMode.Tools
             var originalDefault = _controller.layers[0].stateMachine.defaultState;
             var properties = new JObject
             {
-                ["controller_path"] = _path, ["state_name"] = "New", ["clip_path"] = clipPath,
-                ["speed"] = "0", ["is_default"] = false
+                ["controller_path"] = _path,
+                ["state_name"] = "New",
+                ["clip_path"] = clipPath,
+                ["speed"] = "0",
+                ["is_default"] = false,
             };
-            JObject response = JObject.FromObject(ManageAnimation.HandleCommand(new JObject
-            {
-                ["action"] = "controller_add_state", ["properties"] = properties.ToString()
-            }));
+            JObject response = JObject.FromObject(
+                ManageAnimation.HandleCommand(new JObject { ["action"] = "controller_add_state", ["properties"] = properties.ToString() })
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var state = _controller.layers[0].stateMachine.states.Single(s => s.state.name == "New").state;
             Assert.AreSame(clip, state.motion);
@@ -222,10 +226,7 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsTrue(AssetDatabase.DeleteAsset(path));
             Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(path));
             Assert.IsEmpty(AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets));
-            JObject response = JObject.FromObject(ManageAnimation.HandleCommand(new JObject
-            {
-                ["action"] = "controller_create", ["controller_path"] = path
-            }));
+            JObject response = JObject.FromObject(ManageAnimation.HandleCommand(new JObject { ["action"] = "controller_create", ["controller_path"] = path }));
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimatorController>(path));
         }
@@ -235,7 +236,8 @@ namespace MCPForUnityTests.EditMode.Tools
         public void OmittedAndNullClipKeepOptionalStateDefaults(bool explicitNull)
         {
             var properties = new JObject { ["state_name"] = "New" };
-            if (explicitNull) properties["clip_path"] = JValue.CreateNull();
+            if (explicitNull)
+                properties["clip_path"] = JValue.CreateNull();
             JObject response = Send("add_state", properties);
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var state = _controller.layers[0].stateMachine.states.Single(s => s.state.name == "New").state;
@@ -248,11 +250,15 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("boolean")]
         public void ValidZeroAndFalseParameterDefaultsArePreserved(string type)
         {
-            JObject response = Send("add_parameter", new JObject
-            {
-                ["parameter_name"] = "New", ["parameter_type"] = type,
-                ["default_value"] = type == "boolean" ? (JToken)false : (JToken)"0"
-            });
+            JObject response = Send(
+                "add_parameter",
+                new JObject
+                {
+                    ["parameter_name"] = "New",
+                    ["parameter_type"] = type,
+                    ["default_value"] = type == "boolean" ? (JToken)false : (JToken)"0",
+                }
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var parameter = _controller.parameters.Single();
             Assert.AreEqual(0f, parameter.defaultFloat);
@@ -263,12 +269,26 @@ namespace MCPForUnityTests.EditMode.Tools
         [Test]
         public void TransitionDefaultsAndIgnoredConditionEntriesRemainCompatible()
         {
-            JObject response = Send("add_transition", new JObject
-            {
-                ["from_state"] = "Any", ["to_state"] = "To", ["has_exit_time"] = false,
-                ["duration"] = "0", ["conditions"] = new JArray(1, new JObject(),
-                    new JObject { ["parameter"] = "Speed", ["mode"] = "unknown", ["threshold"] = "-2" })
-            });
+            JObject response = Send(
+                "add_transition",
+                new JObject
+                {
+                    ["from_state"] = "Any",
+                    ["to_state"] = "To",
+                    ["has_exit_time"] = false,
+                    ["duration"] = "0",
+                    ["conditions"] = new JArray(
+                        1,
+                        new JObject(),
+                        new JObject
+                        {
+                            ["parameter"] = "Speed",
+                            ["mode"] = "unknown",
+                            ["threshold"] = "-2",
+                        }
+                    ),
+                }
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var transition = _controller.layers[0].stateMachine.anyStateTransitions.Single();
             Assert.IsFalse(transition.hasExitTime);
@@ -283,10 +303,15 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("", AnimatorLayerBlendingMode.Override)]
         public void LayerModeCompatibilityAndZeroWeightRemainUnchanged(string mode, AnimatorLayerBlendingMode expected)
         {
-            JObject response = Send("add_layer", new JObject
-            {
-                ["layer_name"] = "Extra", ["blending_mode"] = mode, ["weight"] = 0
-            });
+            JObject response = Send(
+                "add_layer",
+                new JObject
+                {
+                    ["layer_name"] = "Extra",
+                    ["blending_mode"] = mode,
+                    ["weight"] = 0,
+                }
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var layer = _controller.layers.Last();
             Assert.AreEqual(expected, layer.blendingMode);
@@ -303,11 +328,17 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("create_blend_tree_2d")]
         public void BlendTreeCreationWithExistingOrdinaryStateNameDoesNotMutateController(string action)
         {
-            RejectWithoutMutation(action, new JObject
-            {
-                ["state_name"] = "From", ["blend_parameter"] = "Speed",
-                ["blend_parameter_x"] = "Speed", ["blend_parameter_y"] = "Turn"
-            }, false);
+            RejectWithoutMutation(
+                action,
+                new JObject
+                {
+                    ["state_name"] = "From",
+                    ["blend_parameter"] = "Speed",
+                    ["blend_parameter_x"] = "Speed",
+                    ["blend_parameter_y"] = "Turn",
+                },
+                false
+            );
         }
 
         [TestCase("create_blend_tree_1d", "Simple1D")]
@@ -316,8 +347,10 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             var properties = new JObject
             {
-                ["state_name"] = "Move", ["blend_parameter"] = "Speed",
-                ["blend_parameter_x"] = "Speed", ["blend_parameter_y"] = "Turn"
+                ["state_name"] = "Move",
+                ["blend_parameter"] = "Speed",
+                ["blend_parameter_x"] = "Speed",
+                ["blend_parameter_y"] = "Turn",
             };
             JObject response = Send(action, properties);
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
@@ -327,7 +360,8 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(state.name, response["data"].Value<string>("stateName"));
             Assert.AreEqual(blendType, motion.blendType.ToString());
             Assert.AreEqual("Speed", motion.blendParameter);
-            if (action == "create_blend_tree_2d") Assert.AreEqual("Turn", motion.blendParameterY);
+            if (action == "create_blend_tree_2d")
+                Assert.AreEqual("Turn", motion.blendParameterY);
 
             RejectWithoutMutation(action, properties, false);
             Assert.AreSame(motion, state.motion);

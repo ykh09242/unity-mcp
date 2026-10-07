@@ -1,5 +1,5 @@
-using NUnit.Framework;
 using MCPForUnity.Editor.Windows.Components.Connection;
+using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Windows
 {

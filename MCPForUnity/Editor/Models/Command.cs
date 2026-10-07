@@ -18,4 +18,3 @@ namespace MCPForUnity.Editor.Models
         public JObject @params { get; set; }
     }
 }
-

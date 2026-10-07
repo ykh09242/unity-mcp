@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using MCPForUnity.Editor.Helpers;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools.Animation
@@ -98,9 +98,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 }
                 catch (JsonException ex)
                 {
-                    throw new JsonException(
-                        "'properties' must be a JSON object or a JSON string containing an object.",
-                        ex);
+                    throw new JsonException("'properties' must be a JSON object or a JSON string containing an object.", ex);
                 }
             }
 
@@ -201,15 +199,26 @@ namespace MCPForUnity.Editor.Tools.Animation
         {
             switch (action)
             {
-                case "get_info": return AnimatorRead.GetInfo(@params);
-                case "get_parameter": return AnimatorRead.GetParameter(@params);
-                case "play": return AnimatorControl.Play(@params);
-                case "crossfade": return AnimatorControl.Crossfade(@params);
-                case "set_parameter": return AnimatorControl.SetParameter(@params);
-                case "set_speed": return AnimatorControl.SetSpeed(@params);
-                case "set_enabled": return AnimatorControl.SetEnabled(@params);
+                case "get_info":
+                    return AnimatorRead.GetInfo(@params);
+                case "get_parameter":
+                    return AnimatorRead.GetParameter(@params);
+                case "play":
+                    return AnimatorControl.Play(@params);
+                case "crossfade":
+                    return AnimatorControl.Crossfade(@params);
+                case "set_parameter":
+                    return AnimatorControl.SetParameter(@params);
+                case "set_speed":
+                    return AnimatorControl.SetSpeed(@params);
+                case "set_enabled":
+                    return AnimatorControl.SetEnabled(@params);
                 default:
-                    return new { success = false, message = $"Unknown animator action: {action}. Valid: get_info, get_parameter, play, crossfade, set_parameter, set_speed, set_enabled" };
+                    return new
+                    {
+                        success = false,
+                        message = $"Unknown animator action: {action}. Valid: get_info, get_parameter, play, crossfade, set_parameter, set_speed, set_enabled",
+                    };
             }
         }
 
@@ -217,20 +226,36 @@ namespace MCPForUnity.Editor.Tools.Animation
         {
             switch (action)
             {
-                case "create": return ControllerCreate.Create(@params);
-                case "add_state": return ControllerCreate.AddState(@params);
-                case "add_transition": return ControllerCreate.AddTransition(@params);
-                case "add_parameter": return ControllerCreate.AddParameter(@params);
-                case "get_info": return ControllerCreate.GetInfo(@params);
-                case "assign": return ControllerCreate.AssignToGameObject(@params);
-                case "add_layer": return ControllerLayers.AddLayer(@params);
-                case "remove_layer": return ControllerLayers.RemoveLayer(@params);
-                case "set_layer_weight": return ControllerLayers.SetLayerWeight(@params);
-                case "create_blend_tree_1d": return ControllerBlendTrees.CreateBlendTree1D(@params);
-                case "create_blend_tree_2d": return ControllerBlendTrees.CreateBlendTree2D(@params);
-                case "add_blend_tree_child": return ControllerBlendTrees.AddBlendTreeChild(@params);
+                case "create":
+                    return ControllerCreate.Create(@params);
+                case "add_state":
+                    return ControllerCreate.AddState(@params);
+                case "add_transition":
+                    return ControllerCreate.AddTransition(@params);
+                case "add_parameter":
+                    return ControllerCreate.AddParameter(@params);
+                case "get_info":
+                    return ControllerCreate.GetInfo(@params);
+                case "assign":
+                    return ControllerCreate.AssignToGameObject(@params);
+                case "add_layer":
+                    return ControllerLayers.AddLayer(@params);
+                case "remove_layer":
+                    return ControllerLayers.RemoveLayer(@params);
+                case "set_layer_weight":
+                    return ControllerLayers.SetLayerWeight(@params);
+                case "create_blend_tree_1d":
+                    return ControllerBlendTrees.CreateBlendTree1D(@params);
+                case "create_blend_tree_2d":
+                    return ControllerBlendTrees.CreateBlendTree2D(@params);
+                case "add_blend_tree_child":
+                    return ControllerBlendTrees.AddBlendTreeChild(@params);
                 default:
-                    return new { success = false, message = $"Unknown controller action: {action}. Valid: create, add_state, add_transition, add_parameter, get_info, assign, add_layer, remove_layer, set_layer_weight, create_blend_tree_1d, create_blend_tree_2d, add_blend_tree_child" };
+                    return new
+                    {
+                        success = false,
+                        message = $"Unknown controller action: {action}. Valid: create, add_state, add_transition, add_parameter, get_info, assign, add_layer, remove_layer, set_layer_weight, create_blend_tree_1d, create_blend_tree_2d, add_blend_tree_child",
+                    };
             }
         }
 
@@ -238,17 +263,30 @@ namespace MCPForUnity.Editor.Tools.Animation
         {
             switch (action)
             {
-                case "create": return ClipCreate.Create(@params);
-                case "get_info": return ClipCreate.GetInfo(@params);
-                case "add_curve": return ClipCreate.AddCurve(@params);
-                case "set_curve": return ClipCreate.SetCurve(@params);
-                case "set_vector_curve": return ClipCreate.SetVectorCurve(@params);
-                case "create_preset": return ClipPresets.CreatePreset(@params);
-                case "assign": return ClipCreate.Assign(@params);
-                case "add_event": return ClipCreate.AddEvent(@params);
-                case "remove_event": return ClipCreate.RemoveEvent(@params);
+                case "create":
+                    return ClipCreate.Create(@params);
+                case "get_info":
+                    return ClipCreate.GetInfo(@params);
+                case "add_curve":
+                    return ClipCreate.AddCurve(@params);
+                case "set_curve":
+                    return ClipCreate.SetCurve(@params);
+                case "set_vector_curve":
+                    return ClipCreate.SetVectorCurve(@params);
+                case "create_preset":
+                    return ClipPresets.CreatePreset(@params);
+                case "assign":
+                    return ClipCreate.Assign(@params);
+                case "add_event":
+                    return ClipCreate.AddEvent(@params);
+                case "remove_event":
+                    return ClipCreate.RemoveEvent(@params);
                 default:
-                    return new { success = false, message = $"Unknown clip action: {action}. Valid: create, get_info, add_curve, set_curve, set_vector_curve, create_preset, assign, add_event, remove_event" };
+                    return new
+                    {
+                        success = false,
+                        message = $"Unknown clip action: {action}. Valid: create, get_info, add_curve, set_curve, set_vector_curve, create_preset, assign, add_event, remove_event",
+                    };
             }
         }
     }

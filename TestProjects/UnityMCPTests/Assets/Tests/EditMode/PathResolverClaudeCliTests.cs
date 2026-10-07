@@ -29,8 +29,10 @@ namespace MCPForUnityTests.Editor
         [TearDown]
         public void TearDown()
         {
-            if (_hadOverride) EditorPrefs.SetString(Key, _savedOverride);
-            else EditorPrefs.DeleteKey(Key);
+            if (_hadOverride)
+                EditorPrefs.SetString(Key, _savedOverride);
+            else
+                EditorPrefs.DeleteKey(Key);
         }
 
         [Test]

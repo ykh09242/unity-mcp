@@ -1,14 +1,14 @@
-using NUnit.Framework;
-using UnityEngine;
-using UnityEngine.TestTools;
-using UnityEditor;
-using Newtonsoft.Json.Linq;
-using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Editor.Tools;
-using MCPForUnity.Editor.Tools.GameObjects;
 using System;
 using System.IO;
 using System.Text.RegularExpressions;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.GameObjects;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
+using UnityEditor;
+using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -34,10 +34,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             Assert.IsNotNull(s, "Shader should not be null");
             var name = s.name;
-            bool ok = name == "Universal Render Pipeline/Lit"
-                || name == "HDRP/Lit"
-                || name == "Standard"
-                || name == "Unlit/Color";
+            bool ok = name == "Universal Render Pipeline/Lit" || name == "HDRP/Lit" || name == "Standard" || name == "Unlit/Color";
             Assert.IsTrue(ok, $"Unexpected shader: {name}");
         }
 
@@ -84,14 +81,19 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "create",
                 ["path"] = matPath,
                 ["assetType"] = "Material",
-                ["properties"] = new JObject { ["shader"] = "Universal Render Pipeline/Lit", ["color"] = new JArray(0, 0, 1, 1) }
+                ["properties"] = new JObject { ["shader"] = "Universal Render Pipeline/Lit", ["color"] = new JArray(0, 0, 1, 1) },
             };
             var createMatRes = ManageAsset.HandleCommand(createMat);
             var createMatObj = createMatRes as JObject ?? JObject.FromObject(createMatRes);
             Assert.IsTrue(createMatObj.Value<bool>("success"), createMatObj.ToString());
 
             // Create a sphere
-            var createGo = new JObject { ["action"] = "create", ["name"] = "MCPParamTestSphere", ["primitiveType"] = "Sphere" };
+            var createGo = new JObject
+            {
+                ["action"] = "create",
+                ["name"] = "MCPParamTestSphere",
+                ["primitiveType"] = "Sphere",
+            };
             var createGoRes = ManageGameObject.HandleCommand(createGo);
             var createGoObj = createGoRes as JObject ?? JObject.FromObject(createGoRes);
             Assert.IsTrue(createGoObj.Value<bool>("success"), createGoObj.ToString());
@@ -106,7 +108,7 @@ namespace MCPForUnityTests.Editor.Tools
                     ["action"] = "modify",
                     ["target"] = "MCPParamTestSphere",
                     ["searchMethod"] = "by_name",
-                    ["componentProperties"] = compJson
+                    ["componentProperties"] = compJson,
                 };
                 var raw = ManageGameObject.HandleCommand(modify);
                 var result = raw as JObject ?? JObject.FromObject(raw);
@@ -126,7 +128,8 @@ namespace MCPForUnityTests.Editor.Tools
             finally
             {
                 var go = GameObject.Find("MCPParamTestSphere");
-                if (go != null) UnityEngine.Object.DestroyImmediate(go);
+                if (go != null)
+                    UnityEngine.Object.DestroyImmediate(go);
                 if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(matPath) != null)
                     AssetDatabase.DeleteAsset(matPath);
                 AssetDatabase.Refresh();
@@ -159,7 +162,8 @@ namespace MCPForUnityTests.Editor.Tools
 
             // Ensure clean state
             var preSphere = GameObject.Find(sphereName);
-            if (preSphere != null) UnityEngine.Object.DestroyImmediate(preSphere);
+            if (preSphere != null)
+                UnityEngine.Object.DestroyImmediate(preSphere);
             if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(matPath) != null)
                 AssetDatabase.DeleteAsset(matPath);
             if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(badJsonPath) != null)
@@ -170,7 +174,8 @@ namespace MCPForUnityTests.Editor.Tools
             // Create test texture for texture-dependent scenarios (4, 5, 10)
             var tex = new Texture2D(4, 4, TextureFormat.RGBA32, false);
             var pixels = new Color[16];
-            for (int i = 0; i < pixels.Length; i++) pixels[i] = Color.white;
+            for (int i = 0; i < pixels.Length; i++)
+                pixels[i] = Color.white;
             tex.SetPixels(pixels);
             tex.Apply();
             AssetDatabase.CreateAsset(tex, texPath);
@@ -185,7 +190,7 @@ namespace MCPForUnityTests.Editor.Tools
                     ["action"] = "create",
                     ["path"] = matPath,
                     ["assetType"] = "Material",
-                    ["properties"] = "{\"shader\":\"Universal Render Pipeline/Lit\",\"color\":[1,0,0,1]}"
+                    ["properties"] = "{\"shader\":\"Universal Render Pipeline/Lit\",\"color\":[1,0,0,1]}",
                 };
                 var createRaw = ManageAsset.HandleCommand(createParams);
                 var createResult = createRaw as JObject ?? JObject.FromObject(createRaw);
@@ -204,7 +209,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "modify",
                     ["path"] = matPath,
-                    ["properties"] = "{\"color\":[0,0.5,1,1],\"metallic\":0.6}"
+                    ["properties"] = "{\"color\":[0,0.5,1,1],\"metallic\":0.6}",
                 };
                 var modifyRaw1 = ManageAsset.HandleCommand(modify1);
                 var modifyResult1 = modifyRaw1 as JObject ?? JObject.FromObject(modifyRaw1);
@@ -224,8 +229,8 @@ namespace MCPForUnityTests.Editor.Tools
                     ["path"] = matPath,
                     ["properties"] = new JObject
                     {
-                        ["float"] = new JObject { ["name"] = "_Metallic", ["value"] = 0.1 }
-                    }
+                        ["float"] = new JObject { ["name"] = "_Metallic", ["value"] = 0.1 },
+                    },
                 };
                 var modifyRaw2 = ManageAsset.HandleCommand(modify2);
                 var modifyResult2 = modifyRaw2 as JObject ?? JObject.FromObject(modifyRaw2);
@@ -238,7 +243,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "modify",
                     ["path"] = matPath,
-                    ["properties"] = "{\"_BaseMap\":\"" + texPath + "\"}"
+                    ["properties"] = "{\"_BaseMap\":\"" + texPath + "\"}",
                 };
                 var modifyRaw3 = ManageAsset.HandleCommand(modify3);
                 var modifyResult3 = modifyRaw3 as JObject ?? JObject.FromObject(modifyRaw3);
@@ -251,8 +256,8 @@ namespace MCPForUnityTests.Editor.Tools
                     ["path"] = matPath,
                     ["properties"] = new JObject
                     {
-                        ["texture"] = new JObject { ["name"] = "_MainTex", ["path"] = texPath }
-                    }
+                        ["texture"] = new JObject { ["name"] = "_MainTex", ["path"] = texPath },
+                    },
                 };
                 var modifyRaw4 = ManageAsset.HandleCommand(modify4);
                 var modifyResult4 = modifyRaw4 as JObject ?? JObject.FromObject(modifyRaw4);
@@ -263,7 +268,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "create",
                     ["name"] = sphereName,
-                    ["primitiveType"] = "Sphere"
+                    ["primitiveType"] = "Sphere",
                 };
                 var sphereRaw = ManageGameObject.HandleCommand(createSphere);
                 var sphereResult = sphereRaw as JObject ?? JObject.FromObject(sphereRaw);
@@ -274,7 +279,7 @@ namespace MCPForUnityTests.Editor.Tools
                     ["action"] = "modify",
                     ["target"] = sphereName,
                     ["searchMethod"] = "by_name",
-                    ["componentProperties"] = "{\"MeshRenderer\":{\"sharedMaterial\":\"" + matPath + "\"}}"
+                    ["componentProperties"] = "{\"MeshRenderer\":{\"sharedMaterial\":\"" + matPath + "\"}}",
                 };
                 var sphereModifyRaw = ManageGameObject.HandleCommand(modifySphere);
                 var sphereModifyResult = sphereModifyRaw as JObject ?? JObject.FromObject(sphereModifyRaw);
@@ -289,10 +294,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "modify",
                     ["path"] = matPath,
-                    ["properties"] = new JObject
-                    {
-                        ["_BaseColor"] = new JArray(0.2, 0.8, 0.3, 1)
-                    }
+                    ["properties"] = new JObject { ["_BaseColor"] = new JArray(0.2, 0.8, 0.3, 1) },
                 };
                 var modifyRaw5 = ManageAsset.HandleCommand(modify5);
                 var modifyResult5 = modifyRaw5 as JObject ?? JObject.FromObject(modifyRaw5);
@@ -310,7 +312,7 @@ namespace MCPForUnityTests.Editor.Tools
                     ["action"] = "create",
                     ["path"] = badJsonPath,
                     ["assetType"] = "Material",
-                    ["properties"] = "{\"invalid\": json, \"missing\": quotes}"
+                    ["properties"] = "{\"invalid\": json, \"missing\": quotes}",
                 };
                 LogAssert.Expect(LogType.Warning, new Regex("(failed to parse)|(Could not parse 'properties' JSON string)", RegexOptions.IgnoreCase));
                 var invalidRaw = ManageAsset.HandleCommand(invalidJson);
@@ -322,7 +324,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "modify",
                     ["path"] = matPath,
-                    ["properties"] = "{\"shader\":\"Standard\",\"color\":[1,1,0,1]}"
+                    ["properties"] = "{\"shader\":\"Standard\",\"color\":[1,1,0,1]}",
                 };
                 var modifyRaw6 = ManageAsset.HandleCommand(modify6);
                 var modifyResult6 = modifyRaw6 as JObject ?? JObject.FromObject(modifyRaw6);
@@ -334,14 +336,16 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     RenderPipelineUtility.PipelineKind.Universal => "Universal Render Pipeline/Lit",
                     RenderPipelineUtility.PipelineKind.HighDefinition => "HDRP/Lit",
-                    _ => "Standard"
+                    _ => "Standard",
                 };
                 Assert.AreEqual(expectedShader9, mat.shader.name, $"Test 9: Shader should be {expectedShader9}");
                 string colorProp9 = mat.HasProperty("_BaseColor") ? "_BaseColor" : "_Color";
                 var c9 = mat.GetColor(colorProp9);
                 // Looser tolerance (0.02) for shader-switched colors due to color space conversion differences
-                Assert.IsTrue(Mathf.Abs(c9.r - 1f) < 0.02f && Mathf.Abs(c9.g - 1f) < 0.02f && Mathf.Abs(c9.b - 0f) < 0.02f,
-                    "Test 9: Color should be near yellow");
+                Assert.IsTrue(
+                    Mathf.Abs(c9.r - 1f) < 0.02f && Mathf.Abs(c9.g - 1f) < 0.02f && Mathf.Abs(c9.b - 0f) < 0.02f,
+                    "Test 9: Color should be near yellow"
+                );
 
                 // 10. Mixed friendly and alias keys in one go
                 var modify7 = new JObject
@@ -352,8 +356,8 @@ namespace MCPForUnityTests.Editor.Tools
                     {
                         ["metallic"] = 0.8,
                         ["smoothness"] = 0.3,
-                        ["albedo"] = texPath
-                    }
+                        ["albedo"] = texPath,
+                    },
                 };
                 var modifyRaw7 = ManageAsset.HandleCommand(modify7);
                 var modifyResult7 = modifyRaw7 as JObject ?? JObject.FromObject(modifyRaw7);
@@ -367,7 +371,8 @@ namespace MCPForUnityTests.Editor.Tools
             finally
             {
                 var sphere = GameObject.Find(sphereName);
-                if (sphere != null) UnityEngine.Object.DestroyImmediate(sphere);
+                if (sphere != null)
+                    UnityEngine.Object.DestroyImmediate(sphere);
                 if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(matPath) != null)
                     AssetDatabase.DeleteAsset(matPath);
                 if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(badJsonPath) != null)

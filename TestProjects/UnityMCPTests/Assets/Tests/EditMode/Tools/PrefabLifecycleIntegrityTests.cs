@@ -3,12 +3,12 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Tools.Prefabs;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using Object = UnityEngine.Object;
@@ -51,7 +51,8 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (!capturedState) return;
+            if (!capturedState)
+                return;
             try
             {
                 var stage = PrefabStageUtility.GetCurrentPrefabStage();
@@ -65,7 +66,8 @@ namespace MCPForUnityTests.Editor.Tools
                 }
                 foreach (GameObject go in ownedObjects)
                 {
-                    if (go == null || EditorUtility.IsPersistent(go)) continue;
+                    if (go == null || EditorUtility.IsPersistent(go))
+                        continue;
                     Undo.ClearUndo(go);
                     Undo.ClearUndo(go.transform);
                     Object.DestroyImmediate(go);
@@ -74,8 +76,7 @@ namespace MCPForUnityTests.Editor.Tools
                 if (!string.IsNullOrEmpty(folderGuid))
                 {
                     Assert.AreEqual(folderGuid, AssetDatabase.AssetPathToGUID(assetRoot));
-                    Assert.IsFalse(PrefabStageUtility.GetCurrentPrefabStage() != null
-                        && OwnsPath(PrefabStageUtility.GetCurrentPrefabStage().assetPath));
+                    Assert.IsFalse(PrefabStageUtility.GetCurrentPrefabStage() != null && OwnsPath(PrefabStageUtility.GetCurrentPrefabStage().assetPath));
                     Assert.IsTrue(AssetDatabase.DeleteAsset(assetRoot));
                 }
             }
@@ -93,8 +94,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         private bool OwnsPath(string path)
         {
-            return !string.IsNullOrEmpty(assetRoot)
-                && path != null && path.StartsWith(assetRoot + "/", StringComparison.Ordinal);
+            return !string.IsNullOrEmpty(assetRoot) && path != null && path.StartsWith(assetRoot + "/", StringComparison.Ordinal);
         }
 
         private GameObject Source()
@@ -107,7 +107,10 @@ namespace MCPForUnityTests.Editor.Tools
             return go;
         }
 
-        private string PathFor(string name) { return assetRoot + "/" + name + ".prefab"; }
+        private string PathFor(string name)
+        {
+            return assetRoot + "/" + name + ".prefab";
+        }
 
         private static JObject Send(string action, JObject options = null)
         {
@@ -124,8 +127,15 @@ namespace MCPForUnityTests.Editor.Tools
             return Send("create_from_gameobject", options);
         }
 
-        private static void Success(JObject response) { Assert.IsTrue((bool)response["success"], response.ToString()); }
-        private static void Failure(JObject response) { Assert.IsFalse((bool)response["success"], response.ToString()); }
+        private static void Success(JObject response)
+        {
+            Assert.IsTrue((bool)response["success"], response.ToString());
+        }
+
+        private static void Failure(JObject response)
+        {
+            Assert.IsFalse((bool)response["success"], response.ToString());
+        }
 
         private string Seed(GameObject source, string name)
         {
@@ -151,7 +161,8 @@ namespace MCPForUnityTests.Editor.Tools
             GameObject source = Source();
             var child = new GameObject("OwnedChild");
             child.transform.SetParent(source.transform, false);
-            if (previouslyConnected) Seed(source, "Original");
+            if (previouslyConnected)
+                Seed(source, "Original");
             string path = PathFor("Created");
 
             JObject response = Create(source, path, new JObject { ["unlinkIfInstance"] = previouslyConnected });
@@ -202,7 +213,8 @@ namespace MCPForUnityTests.Editor.Tools
             string resultPath = (string)response["data"]["prefabPath"];
             Assert.AreEqual(overwrite, (bool)response["data"]["wasReplaced"]);
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
-            if (overwrite) Assert.AreEqual(path, resultPath);
+            if (overwrite)
+                Assert.AreEqual(path, resultPath);
             else
             {
                 Assert.AreNotEqual(path, resultPath);
@@ -263,7 +275,17 @@ namespace MCPForUnityTests.Editor.Tools
             int previewScenes = EditorSceneManager.previewSceneCount;
             LogAssert.Expect(LogType.Error, new Regex("\\[ManagePrefabs\\] Action 'modify_contents' failed:"));
 
-            Failure(Send("modify_contents", new JObject { ["prefabPath"] = path, ["name"] = "Changed", ["setActive"] = "not-a-bool" }));
+            Failure(
+                Send(
+                    "modify_contents",
+                    new JObject
+                    {
+                        ["prefabPath"] = path,
+                        ["name"] = "Changed",
+                        ["setActive"] = "not-a-bool",
+                    }
+                )
+            );
 
             CollectionAssert.AreEqual(original, Bytes(path));
             Assert.AreEqual(previewScenes, EditorSceneManager.previewSceneCount);
@@ -277,11 +299,20 @@ namespace MCPForUnityTests.Editor.Tools
             byte[] original = Bytes(path);
             int previewScenes = EditorSceneManager.previewSceneCount;
 
-            Failure(Send("modify_contents", new JObject
-            {
-                ["prefabPath"] = path,
-                ["create_child"] = new JObject { ["name"] = "Temporary", ["components_to_add"] = new JArray("Missing_" + Guid.NewGuid().ToString("N")) }
-            }));
+            Failure(
+                Send(
+                    "modify_contents",
+                    new JObject
+                    {
+                        ["prefabPath"] = path,
+                        ["create_child"] = new JObject
+                        {
+                            ["name"] = "Temporary",
+                            ["components_to_add"] = new JArray("Missing_" + Guid.NewGuid().ToString("N")),
+                        },
+                    }
+                )
+            );
 
             CollectionAssert.AreEqual(original, Bytes(path));
             Assert.AreEqual(previewScenes, EditorSceneManager.previewSceneCount);

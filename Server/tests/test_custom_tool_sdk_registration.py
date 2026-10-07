@@ -12,13 +12,17 @@ def run_sdk_regression(source):
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "1"
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],
-        cwd=server_root, env=env, capture_output=True, text=True, timeout=30,
+        cwd=server_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_dynamic_custom_tool_registers_and_executes_through_real_sdk():
-    run_sdk_regression('''
+    run_sdk_regression("""
         import asyncio, sys
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
@@ -55,11 +59,11 @@ def test_dynamic_custom_tool_registers_and_executes_through_real_sdk():
                 await client.call_tool("custom_echo", {"text": "hello", "count": None})
                 assert module.send_with_unity_instance.call_args.args[3] == {"text": "hello"}
         asyncio.run(scenario())
-    ''')
+    """)
 
 
 def test_invalid_custom_parameter_names_do_not_abort_following_registrations():
-    run_sdk_regression('''
+    run_sdk_regression("""
         import asyncio, sys
         sys.path.insert(0, "src")
         from fastmcp import FastMCP
@@ -77,11 +81,11 @@ def test_invalid_custom_parameter_names_do_not_abort_following_registrations():
             assert [tool.name for tool in await mcp.list_tools()] == ["valid_empty"]
             assert list(service._global_tools) == ["valid_empty"]
         asyncio.run(scenario())
-    ''')
+    """)
 
 
 def test_custom_structured_output_flag_controls_schema_and_result():
-    run_sdk_regression('''
+    run_sdk_regression("""
         import asyncio, json, sys
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
@@ -113,4 +117,4 @@ def test_custom_structured_output_flag_controls_schema_and_result():
                 assert error.structured_content is None
                 assert json.loads(error.content[0].text)["success"] is False
         asyncio.run(scenario())
-    ''')
+    """)

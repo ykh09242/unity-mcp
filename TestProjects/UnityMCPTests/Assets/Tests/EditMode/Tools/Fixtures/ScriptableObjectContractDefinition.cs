@@ -26,8 +26,13 @@ namespace MCPForUnityTests.Editor.Tools.Fixtures
         public bool enabledValue = true;
         public string textValue = "fixture";
         public ScriptableObjectContractNested nested = new() { numbers = new[] { 1, 2 }, text = "nested" };
-        public ScriptableObjectContractNested[] groups = { new() { numbers = new[] { 1, 2 }, text = "group" } };
-        [SerializeReference] public ScriptableObjectContractManaged[] managed = { new() };
+        public ScriptableObjectContractNested[] groups =
+        {
+            new() { numbers = new[] { 1, 2 }, text = "group" },
+        };
+
+        [SerializeReference]
+        public ScriptableObjectContractManaged[] managed = { new() };
     }
 
     public abstract class AbstractScriptableObjectContractDefinition : ScriptableObject { }

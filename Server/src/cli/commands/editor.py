@@ -7,7 +7,13 @@ from typing import Optional, Any
 
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success, print_info
-from cli.utils.connection import run_command, run_list_custom_tools, handle_unity_errors, UnityConnectionError, UnityCommandError
+from cli.utils.connection import (
+    run_command,
+    run_list_custom_tools,
+    handle_unity_errors,
+    UnityConnectionError,
+    UnityCommandError,
+)
 from cli.utils.suggestions import suggest_matches, format_suggestions
 from cli.utils.parsers import parse_json_dict_or_exit
 
@@ -53,37 +59,24 @@ def stop():
 
 @editor.command("console")
 @click.option(
-    "--type", "-t",
+    "--type",
+    "-t",
     "log_types",
     multiple=True,
     type=click.Choice(["error", "warning", "log", "all"]),
     default=["error", "warning", "log"],
-    help="Message types to retrieve."
+    help="Message types to retrieve.",
 )
+@click.option("--count", "-n", default=10, type=int, help="Number of messages to retrieve.")
 @click.option(
-    "--count", "-n",
-    default=10,
-    type=int,
-    help="Number of messages to retrieve."
+    "--filter", "-f", "filter_text", default=None, help="Filter messages containing this text."
 )
-@click.option(
-    "--filter", "-f",
-    "filter_text",
-    default=None,
-    help="Filter messages containing this text."
-)
-@click.option(
-    "--stacktrace", "-s",
-    is_flag=True,
-    help="Include stack traces."
-)
-@click.option(
-    "--clear",
-    is_flag=True,
-    help="Clear the console instead of reading."
-)
+@click.option("--stacktrace", "-s", is_flag=True, help="Include stack traces.")
+@click.option("--clear", is_flag=True, help="Clear the console instead of reading.")
 @handle_unity_errors
-def console(log_types: tuple, count: int, filter_text: Optional[str], stacktrace: bool, clear: bool):
+def console(
+    log_types: tuple, count: int, filter_text: Optional[str], stacktrace: bool, clear: bool
+):
     """Read or clear the Unity console.
 
     \b
@@ -116,7 +109,13 @@ def console(log_types: tuple, count: int, filter_text: Optional[str], stacktrace
 
     result = run_command("read_console", params, config)
     data = result.get("data")
-    if stacktrace and config.format != "json" and result.get("success") and isinstance(data, list) and data:
+    if (
+        stacktrace
+        and config.format != "json"
+        and result.get("success")
+        and isinstance(data, list)
+        and data
+    ):
         for entry in data:
             click.echo(format_output(entry, "text"))
     else:
@@ -135,8 +134,7 @@ def add_tag(tag_name: str):
         unity-mcp editor add-tag "Collectible"
     """
     config = get_config()
-    result = run_command(
-        "manage_editor", {"action": "add_tag", "tagName": tag_name}, config)
+    result = run_command("manage_editor", {"action": "add_tag", "tagName": tag_name}, config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Added tag: {tag_name}")
@@ -153,8 +151,7 @@ def remove_tag(tag_name: str):
         unity-mcp editor remove-tag "OldTag"
     """
     config = get_config()
-    result = run_command(
-        "manage_editor", {"action": "remove_tag", "tagName": tag_name}, config)
+    result = run_command("manage_editor", {"action": "remove_tag", "tagName": tag_name}, config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Removed tag: {tag_name}")
@@ -171,8 +168,7 @@ def add_layer(layer_name: str):
         unity-mcp editor add-layer "Interactable"
     """
     config = get_config()
-    result = run_command(
-        "manage_editor", {"action": "add_layer", "layerName": layer_name}, config)
+    result = run_command("manage_editor", {"action": "add_layer", "layerName": layer_name}, config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Added layer: {layer_name}")
@@ -190,7 +186,8 @@ def remove_layer(layer_name: str):
     """
     config = get_config()
     result = run_command(
-        "manage_editor", {"action": "remove_layer", "layerName": layer_name}, config)
+        "manage_editor", {"action": "remove_layer", "layerName": layer_name}, config
+    )
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Removed layer: {layer_name}")
@@ -210,7 +207,8 @@ def set_tool(tool_name: str):
     """
     config = get_config()
     result = run_command(
-        "manage_editor", {"action": "set_active_tool", "toolName": tool_name}, config)
+        "manage_editor", {"action": "set_active_tool", "toolName": tool_name}, config
+    )
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Set active tool: {tool_name}")
@@ -307,39 +305,38 @@ def execute_menu(menu_path: str):
 
 @editor.command("tests")
 @click.option(
-    "--mode", "-m",
+    "--mode",
+    "-m",
     type=click.Choice(["EditMode", "PlayMode"]),
     default="EditMode",
-    help="Test mode to run."
+    help="Test mode to run.",
 )
 @click.option(
-    "--async", "async_mode",
-    is_flag=True,
-    help="Run asynchronously and return job ID for polling."
+    "--async", "async_mode", is_flag=True, help="Run asynchronously and return job ID for polling."
 )
 @click.option(
-    "--wait", "-w",
+    "--wait",
+    "-w",
     type=int,
     default=None,
-    help="Wait up to N seconds for completion (default: no wait)."
+    help="Wait up to N seconds for completion (default: no wait).",
 )
-@click.option(
-    "--details",
-    is_flag=True,
-    help="Include detailed results for all tests."
-)
-@click.option(
-    "--failed-only",
-    is_flag=True,
-    help="Include details for failed/skipped tests only."
-)
+@click.option("--details", is_flag=True, help="Include detailed results for all tests.")
+@click.option("--failed-only", is_flag=True, help="Include details for failed/skipped tests only.")
 @click.option(
     "--clear-stuck",
     is_flag=True,
-    help="Clear an orphaned running job that is blocking new runs, instead of starting a run."
+    help="Clear an orphaned running job that is blocking new runs, instead of starting a run.",
 )
 @handle_unity_errors
-def run_tests(mode: str, async_mode: bool, wait: Optional[int], details: bool, failed_only: bool, clear_stuck: bool):
+def run_tests(
+    mode: str,
+    async_mode: bool,
+    wait: Optional[int],
+    details: bool,
+    failed_only: bool,
+    clear_stuck: bool,
+):
     """Run Unity tests.
 
     \b
@@ -388,21 +385,10 @@ def run_tests(mode: str, async_mode: bool, wait: Optional[int], details: bool, f
 @editor.command("poll-test")
 @click.argument("job_id")
 @click.option(
-    "--wait", "-w",
-    type=int,
-    default=30,
-    help="Wait up to N seconds for completion (default: 30)."
+    "--wait", "-w", type=int, default=30, help="Wait up to N seconds for completion (default: 30)."
 )
-@click.option(
-    "--details",
-    is_flag=True,
-    help="Include detailed results for all tests."
-)
-@click.option(
-    "--failed-only",
-    is_flag=True,
-    help="Include details for failed/skipped tests only."
-)
+@click.option("--details", is_flag=True, help="Include detailed results for all tests.")
+@click.option("--failed-only", is_flag=True, help="Include details for failed/skipped tests only.")
 @handle_unity_errors
 def poll_test(job_id: str, wait: int, details: bool, failed_only: bool):
     """Poll an async test job for status/results.
@@ -425,7 +411,11 @@ def poll_test(job_id: str, wait: int, details: bool, failed_only: bool):
     if wait > 0:
         result = run_command("get_test_job", params, config, timeout=min(config.timeout, wait))
         if time.monotonic() >= deadline:
-            result = {"success": False, "error": "Timeout waiting for test job", "data": {"job_id": job_id}}
+            result = {
+                "success": False,
+                "error": "Timeout waiting for test job",
+                "data": {"job_id": job_id},
+            }
     else:
         result = run_command("get_test_job", params, config)
     while wait > 0 and result.get("success"):
@@ -444,7 +434,9 @@ def poll_test(job_id: str, wait: int, details: bool, failed_only: bool):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        response = run_command("get_test_job", params, config, timeout=min(config.timeout, remaining))
+        response = run_command(
+            "get_test_job", params, config, timeout=min(config.timeout, remaining)
+        )
         if time.monotonic() >= deadline:
             break
         result = response
@@ -474,27 +466,16 @@ def poll_test(job_id: str, wait: int, details: bool, failed_only: bool):
 
 @editor.command("refresh")
 @click.option(
-    "--mode",
-    type=click.Choice(["if_dirty", "force"]),
-    default="if_dirty",
-    help="Refresh mode."
+    "--mode", type=click.Choice(["if_dirty", "force"]), default="if_dirty", help="Refresh mode."
 )
 @click.option(
     "--scope",
     type=click.Choice(["assets", "scripts", "all"]),
     default="all",
-    help="What to refresh."
+    help="What to refresh.",
 )
-@click.option(
-    "--compile",
-    is_flag=True,
-    help="Request script compilation."
-)
-@click.option(
-    "--no-wait",
-    is_flag=True,
-    help="Don't wait for refresh to complete."
-)
+@click.option("--compile", is_flag=True, help="Request script compilation.")
+@click.option("--no-wait", is_flag=True, help="Don't wait for refresh to complete.")
 @handle_unity_errors
 def refresh(mode: str, scope: str, compile: bool, no_wait: bool):
     """Force Unity to refresh assets/scripts.
@@ -540,16 +521,25 @@ def refresh(mode: str, scope: str, compile: bool, no_wait: bool):
                 response = error.response
                 message = str(response.get("error") or response.get("message") or "").lower()
                 if response.get("hint") != "retry" and not any(
-                    transient in message for transient in ("disconnected", "connection closed", "timeout", "timed out")
+                    transient in message
+                    for transient in ("disconnected", "connection closed", "timeout", "timed out")
                 ):
                     raise
             else:
                 if time.monotonic() >= deadline:
                     break
                 data = state.get("data")
-                if not isinstance(data, dict) or data.get("schema_version") != "unity-mcp/editor_state@2":
-                    raise UnityCommandError({"success": False, "error": "invalid_editor_state",
-                                             "message": "Readiness requires a canonical editor state snapshot."})
+                if (
+                    not isinstance(data, dict)
+                    or data.get("schema_version") != "unity-mcp/editor_state@2"
+                ):
+                    raise UnityCommandError(
+                        {
+                            "success": False,
+                            "error": "invalid_editor_state",
+                            "message": "Readiness requires a canonical editor state snapshot.",
+                        }
+                    )
                 advice = _enrich_advice_and_staleness(data)["advice"]
                 if advice["ready_for_tools"] is True:
                     ready = True
@@ -558,13 +548,19 @@ def refresh(mode: str, scope: str, compile: bool, no_wait: bool):
             if remaining > 0:
                 time.sleep(min(0.25, remaining))
         if not ready:
-            raise UnityCommandError({
-                "success": False,
-                "error": "refresh_timeout_waiting_for_ready",
-                "message": f"Refresh was acknowledged, but editor readiness was not confirmed within {config.timeout}s.",
-                "data": {"timeout": True, "wait_seconds": config.timeout, "refresh_response": result},
-                "hint": "Check editor state before deciding whether to refresh again.",
-            })
+            raise UnityCommandError(
+                {
+                    "success": False,
+                    "error": "refresh_timeout_waiting_for_ready",
+                    "message": f"Refresh was acknowledged, but editor readiness was not confirmed within {config.timeout}s.",
+                    "data": {
+                        "timeout": True,
+                        "wait_seconds": config.timeout,
+                        "refresh_response": result,
+                    },
+                    "hint": "Check editor state before deciding whether to refresh again.",
+                }
+            )
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(result.get("message") or "Unity refresh requested")
@@ -572,11 +568,7 @@ def refresh(mode: str, scope: str, compile: bool, no_wait: bool):
 
 @editor.command("custom-tool")
 @click.argument("tool_name")
-@click.option(
-    "--params", "-p",
-    default="{}",
-    help="Tool parameters as JSON."
-)
+@click.option("--params", "-p", default="{}", help="Tool parameters as JSON.")
 @handle_unity_errors
 def custom_tool(tool_name: str, params: str):
     """Execute a custom Unity tool.
@@ -593,10 +585,14 @@ def custom_tool(tool_name: str, params: str):
     params_dict = parse_json_dict_or_exit(params, "params")
 
     try:
-        result = run_command("execute_custom_tool", {
-            "tool_name": tool_name,
-            "parameters": params_dict,
-        }, config)
+        result = run_command(
+            "execute_custom_tool",
+            {
+                "tool_name": tool_name,
+                "parameters": params_dict,
+            },
+            config,
+        )
     except UnityCommandError as error:
         result = error.response
     click.echo(format_output(result, config.format))
@@ -612,9 +608,11 @@ def custom_tool(tool_name: str, params: str):
                 if tools is None:
                     data = tools_result.get("data", {})
                     tools = data.get("tools") if isinstance(data, dict) else None
-                names = [
-                    t.get("name") for t in tools if isinstance(t, dict) and t.get("name")
-                ] if isinstance(tools, list) else []
+                names = (
+                    [t.get("name") for t in tools if isinstance(t, dict) and t.get("name")]
+                    if isinstance(tools, list)
+                    else []
+                )
                 matches = suggest_matches(tool_name, names)
                 suggestion = format_suggestions(matches)
                 if suggestion:

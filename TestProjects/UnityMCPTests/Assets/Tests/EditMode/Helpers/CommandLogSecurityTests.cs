@@ -17,11 +17,20 @@ namespace MCPForUnityTests.Editor.Helpers
             try
             {
                 McpLogRecord.IsEnabled = true;
-                McpLogRecord.Log("manage_script", new JObject
-                {
-                    ["action"] = sentinel, ["api_key"] = sentinel,
-                    ["contents"] = sentinel, ["nested"] = new JObject { ["url"] = sentinel }
-                }, "tool", "ERROR", 10, sentinel);
+                McpLogRecord.Log(
+                    "manage_script",
+                    new JObject
+                    {
+                        ["action"] = sentinel,
+                        ["api_key"] = sentinel,
+                        ["contents"] = sentinel,
+                        ["nested"] = new JObject { ["url"] = sentinel },
+                    },
+                    "tool",
+                    "ERROR",
+                    10,
+                    sentinel
+                );
                 string logDir = Path.Combine(Application.dataPath, "..", "Library", "MCPForUnity", "Logs");
                 foreach (string name in new[] { "mcp.log", "mcpError.log" })
                 {
@@ -33,7 +42,10 @@ namespace MCPForUnityTests.Editor.Helpers
                     StringAssert.DoesNotContain("\"error\"", text);
                 }
             }
-            finally { McpLogRecord.IsEnabled = wasEnabled; }
+            finally
+            {
+                McpLogRecord.IsEnabled = wasEnabled;
+            }
         }
     }
 }

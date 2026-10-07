@@ -26,7 +26,7 @@ namespace MCPForUnity.Editor.Windows.Components.Validation
             Basic,
             Standard,
             Comprehensive,
-            Strict
+            Strict,
         }
 
         public VisualElement Root { get; private set; }
@@ -72,7 +72,7 @@ namespace MCPForUnity.Editor.Windows.Components.Validation
                 ValidationLevel.Standard => "Standard (Recommended): Checks syntax + common errors. Balanced speed and coverage.",
                 ValidationLevel.Comprehensive => "Comprehensive: Detailed validation including code quality. Slower but thorough.",
                 ValidationLevel.Strict => "Strict: Maximum validation + warnings as errors. Slowest but catches all issues.",
-                _ => "Unknown validation level"
+                _ => "Unknown validation level",
             };
         }
     }

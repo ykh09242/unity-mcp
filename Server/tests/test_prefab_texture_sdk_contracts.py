@@ -1,4 +1,5 @@
 """Fresh real SDK checks with actual preflight and controlled Editor boundaries."""
+
 import os
 import subprocess
 import sys
@@ -6,7 +7,7 @@ import textwrap
 
 
 def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import asyncio, copy, importlib
         from fastmcp import FastMCP, Client
         from fastmcp.exceptions import ToolError
@@ -143,9 +144,11 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
             print(f"actual SDK/preflight checks={checks} failures={len(errors)}")
             assert not errors, errors
         asyncio.run(main())
-    ''')
+    """)
     env = {name: value for name, value in os.environ.items() if name != "PYTEST_CURRENT_TEST"}
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "true"
-    result = subprocess.run([sys.executable, "-B", "-c", code], env=env, capture_output=True, text=True, timeout=60)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", code], env=env, capture_output=True, text=True, timeout=60
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "actual SDK/preflight checks=" in result.stdout

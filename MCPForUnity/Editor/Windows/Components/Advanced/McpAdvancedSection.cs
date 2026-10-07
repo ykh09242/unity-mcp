@@ -98,7 +98,8 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             if (uvxPathOverride != null)
                 uvxPathOverride.tooltip = "Override path to uvx executable. Leave empty for auto-detection.";
             if (gitUrlOverride != null)
-                gitUrlOverride.tooltip = "Override server source for uvx --from. Leave empty to use the pinned Git source in package.json. Example local dev: /path/to/unity-mcp/Server";
+                gitUrlOverride.tooltip =
+                    "Override server source for uvx --from. Leave empty to use the pinned Git source in package.json. Example local dev: /path/to/unity-mcp/Server";
             if (debugLogsToggle != null)
             {
                 debugLogsToggle.tooltip = "Enable verbose debug logging to the Unity Console.";
@@ -108,21 +109,24 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             }
             if (logRecordToggle != null)
             {
-                logRecordToggle.tooltip = "Log execution metadata (tool, status, duration) to Library/MCPForUnity/Logs/mcp.log. Parameters and error text are excluded.";
+                logRecordToggle.tooltip =
+                    "Log execution metadata (tool, status, duration) to Library/MCPForUnity/Logs/mcp.log. Parameters and error text are excluded.";
                 var logRecordLabel = logRecordToggle?.parent?.Q<Label>();
                 if (logRecordLabel != null)
                     logRecordLabel.tooltip = logRecordToggle.tooltip;
             }
             if (devModeForceRefreshToggle != null)
             {
-                devModeForceRefreshToggle.tooltip = "When enabled, generated uvx commands add '--no-cache --refresh' before launching (slower startup, but avoids stale cached builds while iterating on the Server).";
+                devModeForceRefreshToggle.tooltip =
+                    "When enabled, generated uvx commands add '--no-cache --refresh' before launching (slower startup, but avoids stale cached builds while iterating on the Server).";
                 var forceRefreshLabel = devModeForceRefreshToggle?.parent?.Q<Label>();
                 if (forceRefreshLabel != null)
                     forceRefreshLabel.tooltip = devModeForceRefreshToggle.tooltip;
             }
             if (allowLanHttpBindToggle != null)
             {
-                allowLanHttpBindToggle.tooltip = "Allow HTTP Local to bind on all interfaces (0.0.0.0 / ::). Disabled by default because devices on your LAN may reach MCP tools.";
+                allowLanHttpBindToggle.tooltip =
+                    "Allow HTTP Local to bind on all interfaces (0.0.0.0 / ::). Disabled by default because devices on your LAN may reach MCP tools.";
                 var lanBindLabel = allowLanHttpBindToggle?.parent?.Q<Label>();
                 if (lanBindLabel != null)
                     lanBindLabel.tooltip = allowLanHttpBindToggle.tooltip;
@@ -138,9 +142,10 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
                 testConnectionButton.tooltip = "Test the connection between Unity and the MCP server.";
             if (screenshotsFolderOverride != null)
             {
-                screenshotsFolderOverride.tooltip = "Default folder for screenshots from manage_camera / manage_ui. " +
-                    "Project-relative (e.g. 'Assets/Screenshots' or 'Captures'). Empty = built-in default (Assets/Screenshots). " +
-                    "Per-call 'output_folder' parameters always override this.";
+                screenshotsFolderOverride.tooltip =
+                    "Default folder for screenshots from manage_camera / manage_ui. "
+                    + "Project-relative (e.g. 'Assets/Screenshots' or 'Captures'). Empty = built-in default (Assets/Screenshots). "
+                    + "Per-call 'output_folder' parameters always override this.";
                 screenshotsFolderOverride.SetValueWithoutNotify(ScreenshotPreferences.DefaultFolder);
             }
             if (browseScreenshotsFolderButton != null)
@@ -170,7 +175,8 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
 
             if (autoStartOnLoadToggle != null)
             {
-                autoStartOnLoadToggle.tooltip = "Automatically start the local HTTP server and connect the MCP bridge when the Unity Editor opens. Only applies to HTTP transport (stdio always auto-starts).";
+                autoStartOnLoadToggle.tooltip =
+                    "Automatically start the local HTTP server and connect the MCP bridge when the Unity Editor opens. Only applies to HTTP transport (stdio always auto-starts).";
                 var autoStartLabel = autoStartOnLoadToggle.parent?.Q<Label>();
                 if (autoStartLabel != null)
                     autoStartLabel.tooltip = autoStartOnLoadToggle.tooltip;
@@ -470,10 +476,12 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
                 return path;
 
             // If path is not a local filesystem path, return as-is (git URLs, PyPI refs, etc.)
-            if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("git+", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase))
+            if (
+                path.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("git+", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase)
+            )
             {
                 return path;
             }
@@ -549,9 +557,10 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
                 // root rather than silently revert the override the user just chose.
                 EditorUtility.DisplayDialog(
                     "Pick a Subfolder",
-                    "Please pick a subfolder of the project (for example 'Assets/Screenshots' or 'Captures'). " +
-                    "Selecting the project root would mix screenshots in with your project files.",
-                    "OK");
+                    "Please pick a subfolder of the project (for example 'Assets/Screenshots' or 'Captures'). "
+                        + "Selecting the project root would mix screenshots in with your project files.",
+                    "OK"
+                );
                 return;
             }
 
@@ -560,7 +569,8 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
                 EditorUtility.DisplayDialog(
                     "Folder Outside Project",
                     $"The selected folder is outside the Unity project root.\n\nPicked: {normalizedPicked}\nProject: {projectRoot}\n\nPlease pick a folder inside the project.",
-                    "OK");
+                    "OK"
+                );
                 return;
             }
 
@@ -611,7 +621,11 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             }
             else
             {
-                EditorUtility.DisplayDialog("Deployment Complete", result.Message + (string.IsNullOrEmpty(result.BackupPath) ? string.Empty : $"\nBackup: {result.BackupPath}"), "OK");
+                EditorUtility.DisplayDialog(
+                    "Deployment Complete",
+                    result.Message + (string.IsNullOrEmpty(result.BackupPath) ? string.Empty : $"\nBackup: {result.BackupPath}"),
+                    "OK"
+                );
                 OnPackageDeployed?.Invoke();
             }
 
@@ -644,9 +658,7 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             }
 
             deployStatusLabel.text = message;
-            deployStatusLabel.style.color = isError
-                ? new StyleColor(new Color(0.85f, 0.2f, 0.2f))
-                : StyleKeyword.Null;
+            deployStatusLabel.style.color = isError ? new StyleColor(new Color(0.85f, 0.2f, 0.2f)) : StyleKeyword.Null;
         }
 
         public void UpdateHealthStatus(bool isHealthy, string statusText)

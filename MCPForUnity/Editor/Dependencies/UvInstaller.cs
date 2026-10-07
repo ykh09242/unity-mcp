@@ -26,9 +26,9 @@ namespace MCPForUnity.Editor.Dependencies
 
         /// <summary>One-click install is available on Windows, macOS and Linux.</summary>
         public static bool IsSupported =>
-            RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ||
-            RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ||
-            RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            || RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+            || RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
 
         /// <summary>
         /// Build the installer invocation for the current platform. Pure and testable — the
@@ -39,8 +39,7 @@ namespace MCPForUnity.Editor.Dependencies
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                return ("powershell",
-                    "-NoProfile -ExecutionPolicy ByPass -c \"irm https://astral.sh/uv/install.ps1 | iex\"");
+                return ("powershell", "-NoProfile -ExecutionPolicy ByPass -c \"irm https://astral.sh/uv/install.ps1 | iex\"");
             }
 
             // macOS and Linux share the POSIX shell installer.
@@ -77,9 +76,9 @@ namespace MCPForUnity.Editor.Dependencies
             string outText = (stdout ?? string.Empty).Trim();
             string errText = (stderr ?? string.Empty).Trim();
             string combined =
-                string.IsNullOrEmpty(errText) ? outText :
-                string.IsNullOrEmpty(outText) ? errText :
-                outText + "\n" + errText;
+                string.IsNullOrEmpty(errText) ? outText
+                : string.IsNullOrEmpty(outText) ? errText
+                : outText + "\n" + errText;
 
             // Keep dialogs readable — echo only the tail of long installer output.
             const int max = 1500;

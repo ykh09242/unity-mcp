@@ -24,15 +24,16 @@ namespace MCPForUnityTests.Editor.Helpers
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.I1)]
         private static extern bool CreateSymbolicLinkW(string link, string target, int flags);
+
         [DllImport("libc", SetLastError = true)]
         private static extern int symlink(string target, string link);
 
         private static void Link(string link, string target, bool directory)
         {
-            bool created = Application.platform == RuntimePlatform.WindowsEditor
-                ? CreateSymbolicLinkW(link, target, (directory ? 1 : 0) | 2)
-                : symlink(target, link) == 0;
-            if (!created) Assert.Ignore("Symlink creation unavailable: " + Marshal.GetLastWin32Error());
+            bool created =
+                Application.platform == RuntimePlatform.WindowsEditor ? CreateSymbolicLinkW(link, target, (directory ? 1 : 0) | 2) : symlink(target, link) == 0;
+            if (!created)
+                Assert.Ignore("Symlink creation unavailable: " + Marshal.GetLastWin32Error());
         }
 
         [TestCase(false)]
@@ -67,7 +68,7 @@ namespace MCPForUnityTests.Editor.Helpers
                 var properties = new JObject
                 {
                     ["float"] = new JObject { ["name"] = "_Glossiness", ["value"] = original == 1f ? 0f : 1f },
-                    ["_MainTex"] = referenceToken
+                    ["_MainTex"] = referenceToken,
                 };
                 Assert.Catch<Exception>(() => MaterialOps.ApplyProperties(material, properties, serializer));
                 Assert.AreEqual(original, material.GetFloat("_Glossiness"), "Rejected reference partially changed the material.");
@@ -77,11 +78,14 @@ namespace MCPForUnityTests.Editor.Helpers
             {
                 // Restore the owned ordinary entry before asking Unity to delete it; remove only the link itself.
                 File.Delete(fullPath);
-                if (File.Exists(savedPath)) File.Move(savedPath, fullPath);
+                if (File.Exists(savedPath))
+                    File.Move(savedPath, fullPath);
                 AssetDatabase.DeleteAsset(relativePath);
-                if (texture != null) UnityEngine.Object.DestroyImmediate(texture);
+                if (texture != null)
+                    UnityEngine.Object.DestroyImmediate(texture);
                 UnityEngine.Object.DestroyImmediate(material);
-                if (Directory.Exists(root)) Directory.Delete(root);
+                if (Directory.Exists(root))
+                    Directory.Delete(root);
                 File.Delete(root + ".meta");
                 Directory.Delete(ownedTargetRoot);
             }
@@ -98,11 +102,13 @@ namespace MCPForUnityTests.Editor.Helpers
             string outside = Path.GetFullPath(Path.Combine(Application.dataPath, "../" + id));
             string[] extensions = { ".cs", ".uss", ".png", ".prefab" };
             Directory.CreateDirectory(root);
-            if (!broken) Directory.CreateDirectory(outside);
+            if (!broken)
+                Directory.CreateDirectory(outside);
             try
             {
                 if (!broken)
-                    foreach (string ext in extensions) File.WriteAllText(Path.Combine(outside, "Probe" + ext), "// sentinel");
+                    foreach (string ext in extensions)
+                        File.WriteAllText(Path.Combine(outside, "Probe" + ext), "// sentinel");
                 string relative = "Assets/" + id;
                 if (directory)
                 {
@@ -110,7 +116,8 @@ namespace MCPForUnityTests.Editor.Helpers
                     relative += "/Linked";
                 }
                 else
-                    foreach (string ext in extensions) Link(Path.Combine(root, "Probe" + ext), Path.Combine(outside, "Probe" + ext), false);
+                    foreach (string ext in extensions)
+                        Link(Path.Combine(root, "Probe" + ext), Path.Combine(outside, "Probe" + ext), false);
 
                 Exception denied = Assert.Catch<Exception>(() => AssetPathUtility.GetFullAssetPath(relative + "/Probe.cs"));
                 Assert.That(denied, Is.InstanceOf<InvalidOperationException>().Or.InstanceOf<IOException>());
@@ -122,24 +129,48 @@ namespace MCPForUnityTests.Editor.Helpers
                 Assert.Throws<UnauthorizedAccessException>(() => LocalImage.ToDataUri(relative + "/Probe.png"));
                 foreach (string action in new[] { "read", "get_sha", "update", "delete", "apply_text_edits", "validate", "edit" })
                 {
-                    var result = JObject.FromObject(ManageScript.HandleCommand(new JObject
-                    { ["action"] = action, ["path"] = relative, ["name"] = "Probe", ["contents"] = "// changed" }));
+                    var result = JObject.FromObject(
+                        ManageScript.HandleCommand(
+                            new JObject
+                            {
+                                ["action"] = action,
+                                ["path"] = relative,
+                                ["name"] = "Probe",
+                                ["contents"] = "// changed",
+                            }
+                        )
+                    );
                     Assert.IsFalse(result.Value<bool>("success"), "script " + action);
                 }
                 foreach (string action in new[] { "read", "create", "update", "delete" })
                 {
-                    var result = JObject.FromObject(ManageUI.HandleCommand(new JObject
-                    { ["action"] = action, ["path"] = relative + "/Probe.uss", ["contents"] = ".a { color: red; }" }));
+                    var result = JObject.FromObject(
+                        ManageUI.HandleCommand(
+                            new JObject
+                            {
+                                ["action"] = action,
+                                ["path"] = relative + "/Probe.uss",
+                                ["contents"] = ".a { color: red; }",
+                            }
+                        )
+                    );
                     Assert.IsFalse(result.Value<bool>("success"), "UI " + action);
                 }
                 LogAssert.Expect(LogType.Error, new Regex(@"\[ManageTexture\] Action 'delete' failed:"));
-                Assert.IsFalse(JObject.FromObject(ManageTexture.HandleCommand(new JObject
-                { ["action"] = "delete", ["path"] = relative + "/Probe.png" })).Value<bool>("success"));
+                Assert.IsFalse(
+                    JObject
+                        .FromObject(ManageTexture.HandleCommand(new JObject { ["action"] = "delete", ["path"] = relative + "/Probe.png" }))
+                        .Value<bool>("success")
+                );
                 LogAssert.Expect(LogType.Error, new Regex(@"\[ManagePrefabs\] Action 'get_info' failed:"));
-                Assert.IsFalse(JObject.FromObject(ManagePrefabs.HandleCommand(new JObject
-                { ["action"] = "get_info", ["path"] = relative + "/Probe.prefab" })).Value<bool>("success"));
+                Assert.IsFalse(
+                    JObject
+                        .FromObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "get_info", ["path"] = relative + "/Probe.prefab" }))
+                        .Value<bool>("success")
+                );
                 if (!broken)
-                    foreach (string ext in extensions) Assert.AreEqual("// sentinel", File.ReadAllText(Path.Combine(outside, "Probe" + ext)));
+                    foreach (string ext in extensions)
+                        Assert.AreEqual("// sentinel", File.ReadAllText(Path.Combine(outside, "Probe" + ext)));
             }
             finally
             {
@@ -147,16 +178,23 @@ namespace MCPForUnityTests.Editor.Helpers
                 string directoryLink = Path.Combine(root, "Linked");
                 if (directory)
                 {
-                    try { Directory.Delete(directoryLink); } catch (DirectoryNotFoundException) { }
+                    try
+                    {
+                        Directory.Delete(directoryLink);
+                    }
+                    catch (DirectoryNotFoundException) { }
                 }
                 else
-                    foreach (string ext in extensions) File.Delete(Path.Combine(root, "Probe" + ext));
-                foreach (string file in Directory.GetFiles(root)) File.Delete(file);
+                    foreach (string ext in extensions)
+                        File.Delete(Path.Combine(root, "Probe" + ext));
+                foreach (string file in Directory.GetFiles(root))
+                    File.Delete(file);
                 Directory.Delete(root);
                 File.Delete(root + ".meta");
                 if (Directory.Exists(outside))
                 {
-                    foreach (string ext in extensions) File.Delete(Path.Combine(outside, "Probe" + ext));
+                    foreach (string ext in extensions)
+                        File.Delete(Path.Combine(outside, "Probe" + ext));
                     Directory.Delete(outside);
                 }
             }
@@ -174,8 +212,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("rename", true, false, false)]
         [TestCase("duplicate", true, false, true)]
         [TestCase("move", true, true, true)]
-        public void AssetOperationsRejectLinksBeforeCreatingDirectories(
-            string action, bool sourceLink, bool directory, bool broken)
+        public void AssetOperationsRejectLinksBeforeCreatingDirectories(string action, bool sourceLink, bool directory, bool broken)
         {
             string id = "LinkedAssetOperation_" + Guid.NewGuid().ToString("N");
             string root = Path.Combine(Application.dataPath, id);
@@ -194,17 +231,22 @@ namespace MCPForUnityTests.Editor.Helpers
                 Link(link, directory ? outside : Path.Combine(outside, "Source.asset"), directory);
                 string relative = "Assets/" + id;
                 string linkedPath = relative + (directory ? "/Linked/Source.asset" : "/Linked.asset");
-                string destination = sourceLink
-                    ? relative + "/New/Probe.asset"
-                    : relative + (directory ? "/Linked/New/Probe.asset" : "/Linked.asset");
+                string destination = sourceLink ? relative + "/New/Probe.asset" : relative + (directory ? "/Linked/New/Probe.asset" : "/Linked.asset");
                 LogAssert.Expect(LogType.Error, new Regex(@"\[ManageAsset\] Action '" + action + @"' failed"));
-                var result = JObject.FromObject(ManageAsset.HandleCommand(new JObject
-                {
-                    ["action"] = action,
-                    ["path"] = action == "create" ? destination : sourceLink ? linkedPath : relative + "/Source.asset",
-                    ["destination"] = destination,
-                    ["assetType"] = "PhysicsMaterial"
-                }));
+                var result = JObject.FromObject(
+                    ManageAsset.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = action,
+                            ["path"] =
+                                action == "create" ? destination
+                                : sourceLink ? linkedPath
+                                : relative + "/Source.asset",
+                            ["destination"] = destination,
+                            ["assetType"] = "PhysicsMaterial",
+                        }
+                    )
+                );
                 Assert.IsFalse(result.Value<bool>("success"));
                 Assert.IsFalse(Directory.Exists(Path.Combine(root, "New")), "Rejected source must not prepare a destination.");
                 Assert.IsFalse(Directory.Exists(Path.Combine(outside, "New")), "Rejected destination must not create linked children.");
@@ -217,9 +259,14 @@ namespace MCPForUnityTests.Editor.Helpers
                 // Remove the link itself first; every target belongs to this GUID-named tree.
                 if (directory)
                 {
-                    try { Directory.Delete(link); } catch (DirectoryNotFoundException) { }
+                    try
+                    {
+                        Directory.Delete(link);
+                    }
+                    catch (DirectoryNotFoundException) { }
                 }
-                else File.Delete(link);
+                else
+                    File.Delete(link);
                 Directory.Delete(root, true);
                 File.Delete(root + ".meta");
             }
@@ -240,16 +287,17 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("import", true, false, false)]
         [TestCase("modify", true, false, false)]
         [TestCase("delete", true, false, false)]
-        public void RemainingAssetMutationConsumersRejectLinkedPaths(
-            string consumer, bool directory, bool broken, bool omitExtension)
+        public void RemainingAssetMutationConsumersRejectLinkedPaths(string consumer, bool directory, bool broken, bool omitExtension)
         {
             string id = "LinkedMutation_" + Guid.NewGuid().ToString("N");
             string root = Path.Combine(Application.dataPath, id);
             string outside = Path.Combine(root, "Outside");
-            string extension = consumer == "material" ? ".mat"
+            string extension =
+                consumer == "material" ? ".mat"
                 : consumer == "controller" ? ".controller"
                 : consumer == "physics" ? ".physicMaterial"
-                : consumer == "clip" || consumer == "preset" ? ".anim" : ".asset";
+                : consumer == "clip" || consumer == "preset" ? ".anim"
+                : ".asset";
             string link = Path.Combine(root, directory ? "Linked" : "Probe" + extension);
             Directory.CreateDirectory(root);
             if (!broken)
@@ -262,7 +310,15 @@ namespace MCPForUnityTests.Editor.Helpers
                 Link(link, directory ? outside : Path.Combine(outside, "Probe" + extension), directory);
                 string relative = "Assets/" + id;
                 bool existingTarget = consumer == "import" || consumer == "modify" || consumer == "delete" || consumer == "scriptable_modify";
-                string assetPath = relative + (directory ? existingTarget ? "/Linked/Probe" : "/Linked/New/Probe" : "/Probe")
+                string assetPath =
+                    relative
+                    + (
+                        directory
+                            ? existingTarget
+                                ? "/Linked/Probe"
+                                : "/Linked/New/Probe"
+                            : "/Probe"
+                    )
                     + (omitExtension ? "" : extension);
                 string folderPath = relative + "/Linked/New";
                 JObject request;
@@ -274,28 +330,58 @@ namespace MCPForUnityTests.Editor.Helpers
                 }
                 else if (consumer == "clip" || consumer == "controller" || consumer == "preset")
                 {
-                    string action = consumer == "controller" ? "controller_create" : consumer == "preset" ? "clip_create_preset" : "clip_create";
+                    string action =
+                        consumer == "controller" ? "controller_create"
+                        : consumer == "preset" ? "clip_create_preset"
+                        : "clip_create";
                     LogAssert.Expect(LogType.Error, new Regex(@"\[ManageAnimation\] Action '" + action + @"' failed"));
-                    request = new JObject { ["action"] = action, [consumer == "controller" ? "controllerPath" : "clipPath"] = assetPath, ["preset"] = "bounce" };
+                    request = new JObject
+                    {
+                        ["action"] = action,
+                        [consumer == "controller" ? "controllerPath" : "clipPath"] = assetPath,
+                        ["preset"] = "bounce",
+                    };
                     result = ManageAnimation.HandleCommand(request);
                 }
                 else if (consumer == "physics")
                 {
                     LogAssert.Expect(LogType.Error, new Regex(@"\[ManagePhysics\] Action 'create_physics_material' failed"));
-                    request = new JObject { ["action"] = "create_physics_material", ["path"] = directory ? folderPath : relative, ["name"] = "Probe" };
+                    request = new JObject
+                    {
+                        ["action"] = "create_physics_material",
+                        ["path"] = directory ? folderPath : relative,
+                        ["name"] = "Probe",
+                    };
                     result = ManagePhysics.HandleCommand(request);
                 }
                 else if (consumer == "scriptable" || consumer == "scriptable_modify")
                 {
-                    request = consumer == "scriptable"
-                        ? new JObject { ["action"] = "create", ["folderPath"] = folderPath, ["assetName"] = "Probe", ["typeName"] = typeof(LinkedPathScriptableFixture).FullName }
-                        : new JObject { ["action"] = "modify", ["target"] = new JObject { ["path"] = assetPath }, ["patches"] = new JArray() };
+                    request =
+                        consumer == "scriptable"
+                            ? new JObject
+                            {
+                                ["action"] = "create",
+                                ["folderPath"] = folderPath,
+                                ["assetName"] = "Probe",
+                                ["typeName"] = typeof(LinkedPathScriptableFixture).FullName,
+                            }
+                            : new JObject
+                            {
+                                ["action"] = "modify",
+                                ["target"] = new JObject { ["path"] = assetPath },
+                                ["patches"] = new JArray(),
+                            };
                     result = ManageScriptableObject.HandleCommand(request);
                 }
                 else
                 {
                     LogAssert.Expect(LogType.Error, new Regex(@"\[ManageAsset\] Action '" + consumer + @"' failed"));
-                    request = new JObject { ["action"] = consumer, ["path"] = assetPath, ["properties"] = new JObject { ["name"] = "Changed" } };
+                    request = new JObject
+                    {
+                        ["action"] = consumer,
+                        ["path"] = assetPath,
+                        ["properties"] = new JObject { ["name"] = "Changed" },
+                    };
                     result = ManageAsset.HandleCommand(request);
                 }
                 Assert.IsFalse(JObject.FromObject(result).Value<bool>("success"));
@@ -307,9 +393,14 @@ namespace MCPForUnityTests.Editor.Helpers
             {
                 if (directory)
                 {
-                    try { Directory.Delete(link); } catch (DirectoryNotFoundException) { }
+                    try
+                    {
+                        Directory.Delete(link);
+                    }
+                    catch (DirectoryNotFoundException) { }
                 }
-                else File.Delete(link);
+                else
+                    File.Delete(link);
                 Directory.Delete(root, true);
                 File.Delete(root + ".meta");
             }
@@ -324,5 +415,8 @@ namespace MCPForUnityTests.Editor.Helpers
         }
     }
 
-    public class LinkedPathScriptableFixture : ScriptableObject { public int value; }
+    public class LinkedPathScriptableFixture : ScriptableObject
+    {
+        public int value;
+    }
 }

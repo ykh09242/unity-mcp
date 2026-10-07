@@ -63,10 +63,15 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         private static TestNode Suite(string name, params ITestAdaptor[] children) =>
-            new TestNode { Name = name, FullName = name, IsSuite = true, Children = children };
+            new TestNode
+            {
+                Name = name,
+                FullName = name,
+                IsSuite = true,
+                Children = children,
+            };
 
-        private static TestNode Leaf(string name, string fullName) =>
-            new TestNode { Name = name, FullName = fullName };
+        private static TestNode Leaf(string name, string fullName) => new TestNode { Name = name, FullName = fullName };
 
         private class TestNode : ITestAdaptor
         {

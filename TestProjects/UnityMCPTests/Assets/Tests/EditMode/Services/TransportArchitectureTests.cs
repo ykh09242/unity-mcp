@@ -24,12 +24,20 @@ namespace MCPForUnityTests.Editor.Services
             try
             {
                 context.SetValue(null, null);
-                Task.Run(() => { queued = TransportCommandDispatcher.RunOnMainThreadAsync(() => Thread.CurrentThread.ManagedThreadId, CancellationToken.None); }).GetAwaiter().GetResult();
+                Task.Run(() =>
+                    {
+                        queued = TransportCommandDispatcher.RunOnMainThreadAsync(() => Thread.CurrentThread.ManagedThreadId, CancellationToken.None);
+                    })
+                    .GetAwaiter()
+                    .GetResult();
                 Assert.IsFalse(queued.IsCompleted, "Missing Unity synchronization context must never execute Unity work on a receiver thread.");
                 typeof(TransportCommandDispatcher).GetMethod("ProcessQueue", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
                 Assert.AreEqual(mainThread, queued.GetAwaiter().GetResult());
             }
-            finally { context.SetValue(null, original); }
+            finally
+            {
+                context.SetValue(null, original);
+            }
         }
 
         [Test]
@@ -41,11 +49,16 @@ namespace MCPForUnityTests.Editor.Services
             bool secondStarted = false;
             Assert.IsNull(owner.TryStart("first", _ => active.Task));
             Assert.AreEqual("Duplicate command id", owner.TryStart("first", _ => Task.CompletedTask));
-            Assert.IsNull(owner.TryStart("second", async previous =>
-            {
-                await previous.ConfigureAwait(false);
-                secondStarted = true;
-            }));
+            Assert.IsNull(
+                owner.TryStart(
+                    "second",
+                    async previous =>
+                    {
+                        await previous.ConfigureAwait(false);
+                        secondStarted = true;
+                    }
+                )
+            );
             Assert.AreEqual("Command queue is full", owner.TryStart("third", _ => Task.CompletedTask));
             Assert.IsFalse(secondStarted);
             active.SetResult(true);
@@ -72,8 +85,10 @@ namespace MCPForUnityTests.Editor.Services
             }
             finally
             {
-                if (previous == null) handlers.Remove(name);
-                else handlers[name] = previous;
+                if (previous == null)
+                    handlers.Remove(name);
+                else
+                    handlers[name] = previous;
             }
         }
 
@@ -94,8 +109,10 @@ namespace MCPForUnityTests.Editor.Services
             }
             finally
             {
-                if (previous == null) handlers.Remove(name);
-                else handlers[name] = previous;
+                if (previous == null)
+                    handlers.Remove(name);
+                else
+                    handlers[name] = previous;
             }
         }
 
@@ -121,8 +138,10 @@ namespace MCPForUnityTests.Editor.Services
             finally
             {
                 handlerCompletion.TrySetResult(new { done = true });
-                if (previous == null) handlers.Remove(name);
-                else handlers[name] = previous;
+                if (previous == null)
+                    handlers.Remove(name);
+                else
+                    handlers[name] = previous;
             }
         }
     }

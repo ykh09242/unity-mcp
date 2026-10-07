@@ -1,4 +1,5 @@
 """Batch file inputs preserve Unicode and report local file errors cleanly."""
+
 import builtins
 import json
 from pathlib import Path
@@ -13,10 +14,22 @@ from click.testing import CliRunner
 @pytest.fixture
 def batch_transport(monkeypatch, tmp_path):
     # Own application paths before importing the real CLI and connection code.
-    for key in ("HOME", "USERPROFILE", "APPDATA", "XDG_DATA_HOME", "UNITY_MCP_LOG_DIR", "UNITY_MCP_STATUS_DIR"):
+    for key in (
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "XDG_DATA_HOME",
+        "UNITY_MCP_LOG_DIR",
+        "UNITY_MCP_STATUS_DIR",
+    ):
         monkeypatch.setenv(key, str(tmp_path))
     monkeypatch.setenv("UNITY_MCP_DISABLE_TELEMETRY", "true")
-    for key in ("UNITY_MCP_INSTANCE", "UNITY_MCP_FORMAT", "UNITY_MCP_HTTP_PORT", "UNITY_MCP_TIMEOUT"):
+    for key in (
+        "UNITY_MCP_INSTANCE",
+        "UNITY_MCP_FORMAT",
+        "UNITY_MCP_HTTP_PORT",
+        "UNITY_MCP_TIMEOUT",
+    ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
@@ -48,7 +61,9 @@ def batch_transport(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("name", ["Caf\u00e9", "\uc601\uc6c5", "\U0001f680"])
 @pytest.mark.parametrize("legacy_encoding", [False, True])
-def test_utf8_file_preserves_unicode_at_real_http_boundary(batch_transport, tmp_path, monkeypatch, name, legacy_encoding):
+def test_utf8_file_preserves_unicode_at_real_http_boundary(
+    batch_transport, tmp_path, monkeypatch, name, legacy_encoding
+):
     cli, requests, response = batch_transport
     commands = [{"tool": "manage_gameobject", "params": {"action": "create", "name": name}}]
     path = tmp_path / "commands.json"
@@ -60,10 +75,29 @@ def test_utf8_file_preserves_unicode_at_real_http_boundary(batch_transport, tmp_
             return builtins.open(file, mode, **kwargs)
 
         monkeypatch.setattr(sys.modules["cli.commands.batch"], "open", locale_open, raising=False)
-    result = CliRunner().invoke(cli, ["--instance", "Owned@aaaa1111", "--format", "json", "batch", "run", str(path), "--parallel", "--fail-fast"])
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--instance",
+            "Owned@aaaa1111",
+            "--format",
+            "json",
+            "batch",
+            "run",
+            str(path),
+            "--parallel",
+            "--fail-fast",
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == response
-    assert requests == [{"type": "batch_execute", "unity_instance": "Owned@aaaa1111", "params": {"commands": commands, "parallel": True, "failFast": True}}]
+    assert requests == [
+        {
+            "type": "batch_execute",
+            "unity_instance": "Owned@aaaa1111",
+            "params": {"commands": commands, "parallel": True, "failFast": True},
+        }
+    ]
 
 
 @pytest.mark.parametrize("format", ["text", "json", "table"])

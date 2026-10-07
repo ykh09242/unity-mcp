@@ -2,14 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools.Physics;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
-using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Editor.Tools.Physics;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -21,8 +21,10 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var go = new GameObject("PhysicsBodyJoint_" + Guid.NewGuid().ToString("N"));
             objects.Add(go);
-            if (twoD) go.AddComponent<Rigidbody2D>();
-            else go.AddComponent<Rigidbody>();
+            if (twoD)
+                go.AddComponent<Rigidbody2D>();
+            else
+                go.AddComponent<Rigidbody>();
             return go;
         }
 
@@ -38,7 +40,8 @@ namespace MCPForUnityTests.Editor.Tools
         public void TearDown()
         {
             foreach (var go in objects)
-                if (go != null) UnityEngine.Object.DestroyImmediate(go);
+                if (go != null)
+                    UnityEngine.Object.DestroyImmediate(go);
             objects.Clear();
         }
 
@@ -54,10 +57,14 @@ namespace MCPForUnityTests.Editor.Tools
             int dirty = EditorUtility.GetDirtyCount(rb);
             if (invalidProperty == "useGravity")
                 LogAssert.Expect(LogType.Error, new Regex("\\[ManagePhysics\\] Action 'configure_rigidbody' failed:"));
-            var response = Send(go, "configure_rigidbody", new JObject
-            {
-                ["properties"] = new JObject { ["mass"] = 2, [invalidProperty] = "bad" }
-            });
+            var response = Send(
+                go,
+                "configure_rigidbody",
+                new JObject
+                {
+                    ["properties"] = new JObject { ["mass"] = 2, [invalidProperty] = "bad" },
+                }
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.IsTrue(JToken.DeepEquals(before, Send(go, "get_rigidbody", new JObject())["data"]));
             Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(rb));
@@ -75,10 +82,14 @@ namespace MCPForUnityTests.Editor.Tools
             int dirty = EditorUtility.GetDirtyCount(rb);
             if (invalidProperty == "simulated")
                 LogAssert.Expect(LogType.Error, new Regex("\\[ManagePhysics\\] Action 'configure_rigidbody' failed:"));
-            var response = Send(go, "configure_rigidbody", new JObject
-            {
-                ["properties"] = new JObject { ["mass"] = 2, [invalidProperty] = "bad" }
-            });
+            var response = Send(
+                go,
+                "configure_rigidbody",
+                new JObject
+                {
+                    ["properties"] = new JObject { ["mass"] = 2, [invalidProperty] = "bad" },
+                }
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.IsTrue(JToken.DeepEquals(before, Send(go, "get_rigidbody", new JObject())["data"]));
             Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(rb));
@@ -90,11 +101,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Body();
             int dirty = EditorUtility.GetDirtyCount(go);
             LogAssert.Expect(LogType.Error, new Regex("\\[ManagePhysics\\] Action 'add_joint' failed:"));
-            var response = Send(go, "add_joint", new JObject
-            {
-                ["joint_type"] = "fixed",
-                ["properties"] = JObject.Parse("{breakForce:2,breakTorque:'bad'}")
-            });
+            var response = Send(go, "add_joint", new JObject { ["joint_type"] = "fixed", ["properties"] = JObject.Parse("{breakForce:2,breakTorque:'bad'}") });
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.IsEmpty(go.GetComponents<Joint>());
             Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(go));
@@ -113,14 +120,16 @@ namespace MCPForUnityTests.Editor.Tools
             int dirty = EditorUtility.GetDirtyCount(joint);
             if (section != "drive")
                 LogAssert.Expect(LogType.Error, new Regex("\\[ManagePhysics\\] Action 'configure_joint' failed:"));
-            var response = Send(go, "configure_joint", new JObject
-            {
-                ["joint_type"] = "hinge",
-                ["motor"] = JObject.Parse("{targetVelocity:2,force:3}"),
-                [section] = section == "properties"
-                    ? JObject.Parse("{breakForce:2,breakTorque:'bad'}")
-                    : JObject.Parse("{min:'bad'}")
-            });
+            var response = Send(
+                go,
+                "configure_joint",
+                new JObject
+                {
+                    ["joint_type"] = "hinge",
+                    ["motor"] = JObject.Parse("{targetVelocity:2,force:3}"),
+                    [section] = section == "properties" ? JObject.Parse("{breakForce:2,breakTorque:'bad'}") : JObject.Parse("{min:'bad'}"),
+                }
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(motor.targetVelocity, joint.motor.targetVelocity);
             Assert.AreEqual(motor.force, joint.motor.force);
@@ -133,11 +142,11 @@ namespace MCPForUnityTests.Editor.Tools
         public void ValidJointProperties_PreserveNumericStringZeroAndVectorExtras()
         {
             var go = Body();
-            var response = Send(go, "add_joint", new JObject
-            {
-                ["joint_type"] = "fixed",
-                ["properties"] = JObject.Parse("{breakForce:'2',anchor:[1,2,3,4],unknown:1,enableCollision:false}")
-            });
+            var response = Send(
+                go,
+                "add_joint",
+                new JObject { ["joint_type"] = "fixed", ["properties"] = JObject.Parse("{breakForce:'2',anchor:[1,2,3,4],unknown:1,enableCollision:false}") }
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var joint = go.GetComponent<FixedJoint>();
             Assert.AreEqual(2f, joint.breakForce);
@@ -149,10 +158,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void ValidBodyAndJointSections_PreserveValues()
         {
             var go = Body(true);
-            var bodyResponse = Send(go, "configure_rigidbody", new JObject
-            {
-                ["properties"] = JObject.Parse("{mass:'2',gravityScale:-2,simulated:false}")
-            });
+            var bodyResponse = Send(go, "configure_rigidbody", new JObject { ["properties"] = JObject.Parse("{mass:'2',gravityScale:-2,simulated:false}") });
             Assert.IsTrue(bodyResponse.Value<bool>("success"), bodyResponse.ToString());
             Assert.AreEqual(2f, go.GetComponent<Rigidbody2D>().mass);
             Assert.AreEqual(-2f, go.GetComponent<Rigidbody2D>().gravityScale);
@@ -160,12 +166,16 @@ namespace MCPForUnityTests.Editor.Tools
 
             var threeD = Body();
             var joint = threeD.AddComponent<HingeJoint>();
-            var response = Send(threeD, "configure_joint", new JObject
-            {
-                ["joint_type"] = "hinge",
-                ["motor"] = JObject.Parse("{targetVelocity:'2',force:0,freeSpin:false}"),
-                ["limits"] = JObject.Parse("{min:-2,max:2}")
-            });
+            var response = Send(
+                threeD,
+                "configure_joint",
+                new JObject
+                {
+                    ["joint_type"] = "hinge",
+                    ["motor"] = JObject.Parse("{targetVelocity:'2',force:0,freeSpin:false}"),
+                    ["limits"] = JObject.Parse("{min:-2,max:2}"),
+                }
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(2f, joint.motor.targetVelocity);
             Assert.AreEqual(0f, joint.motor.force);
@@ -184,13 +194,19 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.Ignore("A numeric-name collision already exists; preserve unowned objects.");
             var collision = Body();
             collision.name = id;
-            var response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = action, ["target"] = id,
-                ["properties"] = JObject.Parse("{mass:3}")
-            }));
+            var response = JObject.FromObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["target"] = id,
+                        ["properties"] = JObject.Parse("{mass:3}"),
+                    }
+                )
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
-            if (action == "get_rigidbody") Assert.AreEqual(go.GetInstanceIDCompat(), response["data"].Value<int>("instanceID"));
+            if (action == "get_rigidbody")
+                Assert.AreEqual(go.GetInstanceIDCompat(), response["data"].Value<int>("instanceID"));
             else
             {
                 Assert.AreEqual(3f, go.GetComponent<Rigidbody>().mass);
@@ -202,18 +218,29 @@ namespace MCPForUnityTests.Editor.Tools
         public void ExplicitPathAndInactivePolicies_ArePreserved()
         {
             var go = Body();
-            var response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "configure_rigidbody", ["target"] = go.name,
-                ["search_method"] = "by_path", ["properties"] = JObject.Parse("{mass:2}")
-            }));
+            var response = JObject.FromObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "configure_rigidbody",
+                        ["target"] = go.name,
+                        ["search_method"] = "by_path",
+                        ["properties"] = JObject.Parse("{mass:2}"),
+                    }
+                )
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             go.SetActive(false);
-            response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "configure_rigidbody", ["target"] = go.GetInstanceIDCompat().ToString(),
-                ["properties"] = JObject.Parse("{mass:3}")
-            }));
+            response = JObject.FromObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "configure_rigidbody",
+                        ["target"] = go.GetInstanceIDCompat().ToString(),
+                        ["properties"] = JObject.Parse("{mass:3}"),
+                    }
+                )
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(2f, go.GetComponent<Rigidbody>().mass);
         }
@@ -229,11 +256,16 @@ namespace MCPForUnityTests.Editor.Tools
             var second = go.AddComponent<FixedJoint>();
             float firstBefore = first.breakForce;
             float secondBefore = second.breakForce;
-            var response = Send(go, "configure_joint", new JObject
-            {
-                ["joint_type"] = "fixed", ["componentIndex"] = JToken.Parse(selector),
-                ["properties"] = JObject.Parse("{breakForce:2}")
-            });
+            var response = Send(
+                go,
+                "configure_joint",
+                new JObject
+                {
+                    ["joint_type"] = "fixed",
+                    ["componentIndex"] = JToken.Parse(selector),
+                    ["properties"] = JObject.Parse("{breakForce:2}"),
+                }
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(expectedIndex == 0 ? 2f : firstBefore, first.breakForce);
             Assert.AreEqual(expectedIndex == 1 ? 2f : secondBefore, second.breakForce);
@@ -248,10 +280,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Body();
             var first = go.AddComponent<FixedJoint>();
             var second = go.AddComponent<FixedJoint>();
-            var response = Send(go, "remove_joint", new JObject
-            {
-                ["joint_type"] = "fixed", ["componentIndex"] = JToken.Parse(selector)
-            });
+            var response = Send(go, "remove_joint", new JObject { ["joint_type"] = "fixed", ["componentIndex"] = JToken.Parse(selector) });
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(expectedRemoved, response["data"].Value<int>("removedCount"));
             if (selector == "1")
@@ -264,7 +293,8 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsTrue(first == null);
                 Assert.IsTrue(second != null);
             }
-            else Assert.IsEmpty(go.GetComponents<FixedJoint>());
+            else
+                Assert.IsEmpty(go.GetComponents<FixedJoint>());
         }
 
         [Test]
@@ -272,10 +302,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var go = Body();
             int dirty = EditorUtility.GetDirtyCount(go.GetComponent<Rigidbody>());
-            var response = Send(go, "configure_rigidbody", new JObject
-            {
-                ["dimension"] = "4d", ["properties"] = JObject.Parse("{mass:2}")
-            });
+            var response = Send(go, "configure_rigidbody", new JObject { ["dimension"] = "4d", ["properties"] = JObject.Parse("{mass:2}") });
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(1f, go.GetComponent<Rigidbody>().mass);
             Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(go.GetComponent<Rigidbody>()));

@@ -1,9 +1,9 @@
 #nullable disable
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.GameObjects
 {
@@ -27,7 +27,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             JToken lookAtToken = @params["look_at_target"] ?? @params["lookAtTarget"];
             if (lookAtToken == null)
             {
-                return new ErrorResponse("'look_at_target' parameter is required for 'look_at' action. Provide a world position [x,y,z] or a GameObject name/path/ID.");
+                return new ErrorResponse(
+                    "'look_at_target' parameter is required for 'look_at' action. Provide a world position [x,y,z] or a GameObject name/path/ID."
+                );
             }
 
             // Try parsing as a position vector first
@@ -35,7 +37,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             if (!lookAtPos.HasValue)
             {
                 // Preserve an explicit selector match, then resolve an independent GO reference.
-                GameObject lookAtGo = ManageGameObjectCommon.FindObjectInternal(lookAtToken, searchMethod)
+                GameObject lookAtGo =
+                    ManageGameObjectCommon.FindObjectInternal(lookAtToken, searchMethod)
                     ?? ManageGameObjectCommon.FindObjectInternal(lookAtToken, "by_id_or_name_or_path");
                 if (lookAtGo == null)
                 {

@@ -24,7 +24,7 @@ def _run(program, tmp_path):
     return result.stdout
 
 
-CLI_PROGRAM = r'''
+CLI_PROGRAM = r"""
 import copy
 import os
 import json
@@ -165,10 +165,10 @@ for command in ([], ['create'], ['read'], ['delete'], ['edit'], ['validate']):
     print('FULL_HELP', json.dumps({'command': command, 'text': result.output}))
 print('CLI_SUMMARY', json.dumps({'checks': checks, 'failures': failures, 'requests': len(requests)}))
 assert not failures, failures
-'''
+"""
 
 
-SDK_PROGRAM = r'''
+SDK_PROGRAM = r"""
 import base64
 import copy
 import hashlib
@@ -429,7 +429,7 @@ async def main():
     assert not failures, failures
 
 anyio.run(main)
-'''
+"""
 
 
 def test_script_cli_central_http_contracts(tmp_path):

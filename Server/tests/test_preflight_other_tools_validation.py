@@ -28,11 +28,16 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> Boundary:
         mutate=AsyncMock(return_value={"success": True}),
     )
     monkeypatch.setattr("services.tools.preflight._in_pytest", lambda: False)
-    monkeypatch.setattr("services.resources.editor_state.get_editor_state_authoritative", fixture.state)
+    monkeypatch.setattr(
+        "services.resources.editor_state.get_editor_state_authoritative", fixture.state
+    )
     monkeypatch.setattr("services.tools.refresh_unity.refresh_unity", fixture.refresh)
     monkeypatch.setattr("services.tools.manage_ugui.send_with_unity_instance", fixture.read)
     monkeypatch.setattr("services.tools.manage_ugui.send_mutation", fixture.mutate)
-    monkeypatch.setattr("services.tools.manage_ugui.get_unity_instance_from_context", AsyncMock(return_value="UGUI@fixture"))
+    monkeypatch.setattr(
+        "services.tools.manage_ugui.get_unity_instance_from_context",
+        AsyncMock(return_value="UGUI@fixture"),
+    )
     return fixture
 
 
@@ -60,13 +65,22 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> Boundary:
         {"action": "set_layout", "properties": {"type": "unsupported"}},
         {"action": "set_layout", "properties": {"type": "grid", "spacing": 0}},
         {"action": "set_layout", "properties": {"type": "grid", "constraintCount": False}},
-        {"action": "set_layout", "properties": {"type": "vertical", "padding": {"left": 1, "right": 1}}},
-        {"action": "create", "element_type": "text", "parent": "Canvas", "properties": {"fontSize": "24"}},
+        {
+            "action": "set_layout",
+            "properties": {"type": "vertical", "padding": {"left": 1, "right": 1}},
+        },
+        {
+            "action": "create",
+            "element_type": "text",
+            "parent": "Canvas",
+            "properties": {"fontSize": "24"},
+        },
         {"action": "create", "element_type": "canvas", "properties": {"fontSize": 24}},
     ],
 )
 async def test_invalid_ugui_properties_do_not_check_editor_readiness(
-    boundary: Boundary, options: dict[str, JsonValue],
+    boundary: Boundary,
+    options: dict[str, JsonValue],
 ) -> None:
     # Given: real preflight would report running tests if it reached Editor state.
     # When
@@ -91,16 +105,22 @@ async def test_invalid_ugui_properties_do_not_check_editor_readiness(
     ],
 )
 async def test_nested_ugui_errors_are_rejected_through_the_sdk_before_preflight(
-    boundary: Boundary, properties: JsonValue,
+    boundary: Boundary,
+    properties: JsonValue,
 ) -> None:
     # Given: the MCP schema accepts a properties object or embedded JSON string.
     server = FastMCP("ugui-preflight-validation")
     server.tool()(manage_ugui)
     # When
     async with Client(server) as client:
-        result = await client.call_tool("manage_ugui", {
-            "action": "set_text", "target": "Canvas", "properties": properties,
-        })
+        result = await client.call_tool(
+            "manage_ugui",
+            {
+                "action": "set_text",
+                "target": "Canvas",
+                "properties": properties,
+            },
+        )
     # Then: nested values reach local semantic validation without Editor reads.
     assert result.structured_content["success"] is False
     assert result.structured_content.get("error") != "busy"
@@ -122,7 +142,9 @@ async def test_nested_ugui_errors_are_rejected_through_the_sdk_before_preflight(
     ],
 )
 async def test_valid_ugui_properties_keep_false_zero_and_nullable_reference(
-    boundary: Boundary, action: str, properties: dict[str, JsonValue],
+    boundary: Boundary,
+    action: str,
+    properties: dict[str, JsonValue],
 ) -> None:
     # Given
     boundary.state.return_value = {"success": True, "data": {"tests": {"is_running": False}}}
@@ -140,13 +162,18 @@ async def test_valid_ugui_properties_keep_false_zero_and_nullable_reference(
 @pytest.mark.parametrize("selector", ["target", "parent"])
 @pytest.mark.parametrize("value", [-(2**31) - 1, 2**31])
 async def test_out_of_range_ugui_selectors_do_not_check_editor_readiness(
-    boundary: Boundary, selector: str, value: int,
+    boundary: Boundary,
+    selector: str,
+    value: int,
 ) -> None:
     # Given: native instance IDs have Int32 bounds, but the MCP integer has none.
     options = {"target": "Canvas", selector: value}
     # When
     result = await manage_ugui(
-        SimpleNamespace(), action="set_text", properties={"text": "valid"}, **options,
+        SimpleNamespace(),
+        action="set_text",
+        properties={"text": "valid"},
+        **options,
     )
     # Then
     assert result["success"] is False
@@ -170,10 +197,15 @@ async def test_out_of_range_ugui_selectors_do_not_check_editor_readiness(
     ],
 )
 async def test_invalid_ugui_create_properties_are_checked_against_known_defaults(
-    boundary: Boundary, element_type: str, properties: dict[str, JsonValue],
+    boundary: Boundary,
+    element_type: str,
+    properties: dict[str, JsonValue],
 ) -> None:
     result = await manage_ugui(
-        SimpleNamespace(), action="create", parent="Canvas", element_type=element_type,
+        SimpleNamespace(),
+        action="create",
+        parent="Canvas",
+        element_type=element_type,
         properties=properties,
     )
     assert result["success"] is False
@@ -197,11 +229,16 @@ async def test_invalid_ugui_create_properties_are_checked_against_known_defaults
     ],
 )
 async def test_valid_ugui_create_properties_preserve_default_boundaries(
-    boundary: Boundary, element_type: str, properties: dict[str, JsonValue],
+    boundary: Boundary,
+    element_type: str,
+    properties: dict[str, JsonValue],
 ) -> None:
     boundary.state.return_value = {"success": True, "data": {"tests": {"is_running": False}}}
     result = await manage_ugui(
-        SimpleNamespace(), action="create", parent="Canvas", element_type=element_type,
+        SimpleNamespace(),
+        action="create",
+        parent="Canvas",
+        element_type=element_type,
         properties=properties,
     )
     assert result["success"] is True
@@ -220,9 +257,13 @@ async def test_valid_ugui_create_properties_preserve_default_boundaries(
     ],
 )
 async def test_invalid_ugui_float32_domain_values_precede_editor_readiness(
-    boundary: Boundary, action: str, properties: dict[str, JsonValue],
+    boundary: Boundary,
+    action: str,
+    properties: dict[str, JsonValue],
 ) -> None:
-    result = await manage_ugui(SimpleNamespace(), action=action, target="Canvas", properties=properties)
+    result = await manage_ugui(
+        SimpleNamespace(), action=action, target="Canvas", properties=properties
+    )
     assert result["success"] is False
     assert result.get("error") != "busy"
     boundary.state.assert_not_awaited()
@@ -246,10 +287,14 @@ async def test_invalid_ugui_float32_domain_values_precede_editor_readiness(
     ],
 )
 async def test_valid_ugui_float32_rounding_preserves_raw_payload(
-    boundary: Boundary, action: str, properties: dict[str, JsonValue],
+    boundary: Boundary,
+    action: str,
+    properties: dict[str, JsonValue],
 ) -> None:
     boundary.state.return_value = {"success": True, "data": {"tests": {"is_running": False}}}
-    result = await manage_ugui(SimpleNamespace(), action=action, target="Canvas", properties=properties)
+    result = await manage_ugui(
+        SimpleNamespace(), action=action, target="Canvas", properties=properties
+    )
     assert result["success"] is True
     boundary.state.assert_awaited_once()
     assert boundary.mutate.await_args.args[3]["properties"] == properties
@@ -258,7 +303,10 @@ async def test_valid_ugui_float32_rounding_preserves_raw_payload(
 @pytest.mark.asyncio
 async def test_create_ugui_offset_overflow_precedes_editor_readiness(boundary: Boundary) -> None:
     result = await manage_ugui(
-        SimpleNamespace(), action="create", element_type="image", parent="Canvas",
+        SimpleNamespace(),
+        action="create",
+        element_type="image",
+        parent="Canvas",
         properties={"offsetMin": [-3e38, 0], "offsetMax": [3e38, 0]},
     )
     assert result["success"] is False
@@ -274,7 +322,10 @@ async def test_create_ugui_finite_large_offsets_are_forwarded(boundary: Boundary
     boundary.state.return_value = {"success": True, "data": {"tests": {"is_running": False}}}
     properties = {"offsetMin": [-1.7e38, 0], "offsetMax": [1.7e38, 0]}
     result = await manage_ugui(
-        SimpleNamespace(), action="create", element_type="image", parent="Canvas",
+        SimpleNamespace(),
+        action="create",
+        element_type="image",
+        parent="Canvas",
         properties=properties,
     )
     assert result["success"] is True

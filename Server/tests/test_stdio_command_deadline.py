@@ -1,4 +1,5 @@
 """Whole production transport calls with clocked inert socket boundaries."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -7,7 +8,7 @@ import textwrap
 
 import pytest
 
-COMMON = r'''
+COMMON = r"""
 import json
 import os
 from pathlib import Path
@@ -72,7 +73,7 @@ header = struct.pack(">Q", len(payload))
 # This fixture intentionally exercises the old framed protocol, not authentication.
 conn = module.UnityConnection(port=1111, instance_id="Selected@owned", allow_legacy_auth=True)
 conn.use_framing = True
-'''
+"""
 
 
 def _run(source, tmp_path):
@@ -84,19 +85,33 @@ def _run(source, tmp_path):
     env.pop("UNITY_MCP_DEFAULT_INSTANCE", None)
     result = subprocess.run(
         [sys.executable, "-c", COMMON + textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1], env=env,
-        capture_output=True, text=True, timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("case", [
-    "header", "payload", "heartbeat", "legacy", "writes", "connect",
-    "handshake", "below_floor", "final_at_deadline",
-])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "header",
+        "payload",
+        "heartbeat",
+        "legacy",
+        "writes",
+        "connect",
+        "handshake",
+        "below_floor",
+        "final_at_deadline",
+    ],
+)
 def test_command_rejects_cumulative_io_at_deadline(case, tmp_path):
     # Given each operation fits its initial timeout but their sum exhausts the budget.
-    _run(f'''
+    _run(
+        f"""
 case = {case!r}
 budget = 0.01 if case == "below_floor" else 1.0
 reads = [(0.0, header), (0.0, payload)]
@@ -136,12 +151,17 @@ assert sock.closed and conn.sock is None
 # Header/payload failure must never automatically dispatch the command again.
 expected_attempts = 0 if case in ("connect", "handshake") else (1 if case == "legacy" else 2)
 assert len(sock.send_attempts) == expected_attempts
-''', tmp_path)
+""",
+        tmp_path,
+    )
 
 
-@pytest.mark.parametrize("mode", ["framed", "legacy", "handshake", "heartbeat", "ping", "blocking_socket"])
+@pytest.mark.parametrize(
+    "mode", ["framed", "legacy", "handshake", "heartbeat", "ping", "blocking_socket"]
+)
 def test_command_preserves_within_budget_protocol_and_timeout(mode, tmp_path):
-    _run(f'''
+    _run(
+        f"""
 # Given a complete response that fits the shared command budget.
 mode = {mode!r}
 if mode == "ping":
@@ -164,12 +184,24 @@ assert result == ({{"message": "pong"}} if mode == "ping" else {{"ok": True}})
 assert clock.now < 1.0 and not sock.closed
 assert sock.timeout == original_timeout
 if mode == "handshake": assert conn._needs_tool_resync is True
-''', tmp_path)
+""",
+        tmp_path,
+    )
 
 
-@pytest.mark.parametrize("case", ["direct_receive", "direct_connect", "direct_connect_local_deadline", "required_framing", "heartbeat_limit"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "direct_receive",
+        "direct_connect",
+        "direct_connect_local_deadline",
+        "required_framing",
+        "heartbeat_limit",
+    ],
+)
 def test_direct_protocol_calls_preserve_existing_contracts(case, tmp_path):
-    _run(f'''
+    _run(
+        f"""
 # Given the direct API without an absolute command deadline.
 case = {case!r}
 if case == "direct_receive":
@@ -201,11 +233,14 @@ if case == "heartbeat_limit":
     try: conn.receive_full_response(sock)
     except TimeoutError as exc: assert str(exc) == "Timeout receiving Unity response"
     else: raise AssertionError("heartbeat limit lost")
-''', tmp_path)
+""",
+        tmp_path,
+    )
 
 
 def test_retry_receive_limit_does_not_shorten_writes(tmp_path):
-    _run('''
+    _run(
+        """
 # Given the first header write fails before payload dispatch; retry writes exceed the receive limit.
 config.connection_timeout = 5.0
 class PreDispatchSocket(ClockedSocket):
@@ -227,11 +262,14 @@ assert first.closed and first.send_attempts == [struct.pack(">Q", len(b'{"type":
 assert retry.write_timeouts[0] > 1.2
 assert retry.read_timeouts[-2:] == [1.0, 1.0]
 assert len(retry.send_attempts) == 2
-''', tmp_path)
+""",
+        tmp_path,
+    )
 
 
 def test_first_receive_retains_configured_idle_limit_after_socket_peek(tmp_path):
-    _run('''
+    _run(
+        """
 # Given real setblocking semantics reset the finite timeout during the liveness peek.
 config.connection_timeout = 5.0
 class BlockingModeSocket(ClockedSocket):
@@ -248,15 +286,23 @@ assert result.hint == "inspect_state_before_retry"
 assert clock.now == 5.0 and sock.closed and sock.timeout == 5.0
 assert sock.read_timeouts == [5.0, 5.0]
 assert len(sock.send_attempts) == 2
-''', tmp_path)
+""",
+        tmp_path,
+    )
 
 
-@pytest.mark.parametrize("budget,max_wait,recover,expected_wait", [
-    (0.02, 20.0, False, 0.02), (0.1, 20.0, False, 0.1),
-    (1.0, 0.03, False, 0.03), (1.0, 20.0, True, 0.25),
-])
+@pytest.mark.parametrize(
+    "budget,max_wait,recover,expected_wait",
+    [
+        (0.02, 20.0, False, 0.02),
+        (0.1, 20.0, False, 0.1),
+        (1.0, 0.03, False, 0.03),
+        (1.0, 20.0, True, 0.25),
+    ],
+)
 def test_reload_wait_respects_remaining_budgets(budget, max_wait, recover, expected_wait, tmp_path):
-    _run(f'''
+    _run(
+        f"""
 # Given an owned selected editor reports reloading.
 config.command_total_timeout = {budget!r}
 os.environ["UNITY_MCP_RELOAD_MAX_WAIT_S"] = {str(max_wait)!r}
@@ -279,4 +325,6 @@ result = module.send_command_with_retry("fixture_query", {{}}, instance_id=conn.
 assert waits == [{expected_wait!r}] and clock.now == {expected_wait!r}
 if {recover!r}: assert result == {{"ok": True}}
 else: assert result.success is False and result.hint == "retry" and result.data["reason"] == "reloading"
-''', tmp_path)
+""",
+        tmp_path,
+    )

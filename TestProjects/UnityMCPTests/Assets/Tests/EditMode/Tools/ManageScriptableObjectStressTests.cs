@@ -3,15 +3,15 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using MCPForUnity.Editor.Tools;
+using MCPForUnityTests.Editor.Tools.Fixtures;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.TestTools;
-using MCPForUnity.Editor.Tools;
-using MCPForUnityTests.Editor.Tools.Fixtures;
-using Debug = UnityEngine.Debug;
 using static MCPForUnityTests.Editor.TestUtilities;
+using Debug = UnityEngine.Debug;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -94,46 +94,58 @@ namespace MCPForUnityTests.Editor.Tools
             var patches = new JArray();
 
             // First resize the array
-            patches.Add(new JObject
-            {
-                ["propertyPath"] = "nestedDataList.Array.size",
-                ["op"] = "array_resize",
-                ["value"] = elementCount
-            });
+            patches.Add(
+                new JObject
+                {
+                    ["propertyPath"] = "nestedDataList.Array.size",
+                    ["op"] = "array_resize",
+                    ["value"] = elementCount,
+                }
+            );
 
             // Then set each element's fields
             for (int i = 0; i < elementCount; i++)
             {
-                patches.Add(new JObject
-                {
-                    ["propertyPath"] = $"nestedDataList.Array.data[{i}].id",
-                    ["op"] = "set",
-                    ["value"] = $"item_{i:D4}"
-                });
-                patches.Add(new JObject
-                {
-                    ["propertyPath"] = $"nestedDataList.Array.data[{i}].value",
-                    ["op"] = "set",
-                    ["value"] = i * 1.5f
-                });
-                patches.Add(new JObject
-                {
-                    ["propertyPath"] = $"nestedDataList.Array.data[{i}].position",
-                    ["op"] = "set",
-                    ["value"] = new JArray(i, i * 2, i * 3)
-                });
+                patches.Add(
+                    new JObject
+                    {
+                        ["propertyPath"] = $"nestedDataList.Array.data[{i}].id",
+                        ["op"] = "set",
+                        ["value"] = $"item_{i:D4}",
+                    }
+                );
+                patches.Add(
+                    new JObject
+                    {
+                        ["propertyPath"] = $"nestedDataList.Array.data[{i}].value",
+                        ["op"] = "set",
+                        ["value"] = i * 1.5f,
+                    }
+                );
+                patches.Add(
+                    new JObject
+                    {
+                        ["propertyPath"] = $"nestedDataList.Array.data[{i}].position",
+                        ["op"] = "set",
+                        ["value"] = new JArray(i, i * 2, i * 3),
+                    }
+                );
             }
 
             var sw = Stopwatch.StartNew();
-            var result = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "BigBang",
-                ["overwrite"] = true,
-                ["patches"] = patches
-            }));
+            var result = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "BigBang",
+                        ["overwrite"] = true,
+                        ["patches"] = patches,
+                    }
+                )
+            );
             sw.Stop();
 
             Debug.Log($"[BigBang] {elementCount} elements with {patches.Count} patches in {sw.ElapsedMilliseconds}ms");
@@ -166,14 +178,18 @@ namespace MCPForUnityTests.Editor.Tools
         public void AutoGrow_SetElementBeyondArraySize_AutoResizesArray()
         {
             // Create an ArrayStressSO first
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ArrayStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "AutoGrow",
-                ["overwrite"] = true
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ArrayStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "AutoGrow",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
 
             var path = createResult["data"]?["path"]?.ToString();
@@ -181,20 +197,24 @@ namespace MCPForUnityTests.Editor.Tools
             _createdAssets.Add(path);
 
             // Set element at index 99 (array starts with 3 elements) - should auto-grow
-            var modifyResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["guid"] = guid },
-                ["patches"] = new JArray
-                {
+            var modifyResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "floatArray.Array.data[99]",
-                        ["op"] = "set",
-                        ["value"] = 42.0f
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["guid"] = guid },
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "floatArray.Array.data[99]",
+                                ["op"] = "set",
+                                ["value"] = 42.0f,
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             var patchResults = modifyResult["data"]?["results"] as JArray;
             Assert.IsNotNull(patchResults);
@@ -219,18 +239,27 @@ namespace MCPForUnityTests.Editor.Tools
         public void FriendlySyntax_BracketNotation_IsNormalized()
         {
             // Create asset first
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ArrayStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "FriendlySyntax",
-                ["overwrite"] = true,
-                ["patches"] = new JArray
-                {
-                    new JObject { ["propertyPath"] = "floatArray.Array.size", ["op"] = "array_resize", ["value"] = 5 }
-                }
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ArrayStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "FriendlySyntax",
+                        ["overwrite"] = true,
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "floatArray.Array.size",
+                                ["op"] = "array_resize",
+                                ["value"] = 5,
+                            },
+                        },
+                    }
+                )
+            );
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
 
             var path = createResult["data"]?["path"]?.ToString();
@@ -238,20 +267,24 @@ namespace MCPForUnityTests.Editor.Tools
             _createdAssets.Add(path);
 
             // Use friendly syntax: floatArray[2] instead of floatArray.Array.data[2]
-            var modifyResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["guid"] = guid },
-                ["patches"] = new JArray
-                {
+            var modifyResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "floatArray[2]",  // Friendly syntax - gets normalized to floatArray.Array.data[2]
-                        ["op"] = "set",
-                        ["value"] = 123.456f
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["guid"] = guid },
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "floatArray[2]", // Friendly syntax - gets normalized to floatArray.Array.data[2]
+                                ["op"] = "set",
+                                ["value"] = 123.456f,
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             var patchResults = modifyResult["data"]?["results"] as JArray;
             Assert.IsNotNull(patchResults);
@@ -275,47 +308,51 @@ namespace MCPForUnityTests.Editor.Tools
         public void DeepNesting_SetVectorAtDepth3()
         {
             // Create DeepStressSO and set level1.mid.deep.pos
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "DeepStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "DeepNesting",
-                ["overwrite"] = true,
-                ["patches"] = new JArray
-                {
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "level1.topName",
-                        ["op"] = "set",
-                        ["value"] = "TopLevel"
-                    },
-                    new JObject
-                    {
-                        ["propertyPath"] = "level1.mid.midName",
-                        ["op"] = "set",
-                        ["value"] = "MiddleLevel"
-                    },
-                    new JObject
-                    {
-                        ["propertyPath"] = "level1.mid.deep.detail",
-                        ["op"] = "set",
-                        ["value"] = "DeepDetail"
-                    },
-                    new JObject
-                    {
-                        ["propertyPath"] = "level1.mid.deep.pos",
-                        ["op"] = "set",
-                        ["value"] = new JArray(1.0f, 2.0f, 3.0f)
-                    },
-                    new JObject
-                    {
-                        ["propertyPath"] = "overtone",
-                        ["op"] = "set",
-                        ["value"] = new JArray(1.0f, 0.5f, 0.25f, 1.0f)
+                        ["action"] = "create",
+                        ["typeName"] = "DeepStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "DeepNesting",
+                        ["overwrite"] = true,
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "level1.topName",
+                                ["op"] = "set",
+                                ["value"] = "TopLevel",
+                            },
+                            new JObject
+                            {
+                                ["propertyPath"] = "level1.mid.midName",
+                                ["op"] = "set",
+                                ["value"] = "MiddleLevel",
+                            },
+                            new JObject
+                            {
+                                ["propertyPath"] = "level1.mid.deep.detail",
+                                ["op"] = "set",
+                                ["value"] = "DeepDetail",
+                            },
+                            new JObject
+                            {
+                                ["propertyPath"] = "level1.mid.deep.pos",
+                                ["op"] = "set",
+                                ["value"] = new JArray(1.0f, 2.0f, 3.0f),
+                            },
+                            new JObject
+                            {
+                                ["propertyPath"] = "overtone",
+                                ["op"] = "set",
+                                ["value"] = new JArray(1.0f, 0.5f, 0.25f, 1.0f),
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(createResult.Value<bool>("success"), $"DeepNesting create failed: {createResult}");
 
@@ -343,59 +380,63 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var matGuid = AssetDatabase.AssetPathToGUID(_matPath);
 
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "MixedRefs",
-                ["overwrite"] = true,
-                ["patches"] = new JArray
-                {
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "intValue",
-                        ["op"] = "set",
-                        ["value"] = 42
-                    },
-                    new JObject
-                    {
-                        ["propertyPath"] = "floatValue",
-                        ["op"] = "set",
-                        ["value"] = 3.14f
-                    },
-                    new JObject
-                    {
-                        ["propertyPath"] = "stringValue",
-                        ["op"] = "set",
-                        ["value"] = "TestString"
-                    },
-                    new JObject
-                    {
-                        ["propertyPath"] = "boolValue",
-                        ["op"] = "set",
-                        ["value"] = true
-                    },
-                    new JObject
-                    {
-                        ["propertyPath"] = "enumValue",
-                        ["op"] = "set",
-                        ["value"] = "Beta"
-                    },
-                    new JObject
-                    {
-                        ["propertyPath"] = "vectorValue",
-                        ["op"] = "set",
-                        ["value"] = new JArray(10, 20, 30)
-                    },
-                    new JObject
-                    {
-                        ["propertyPath"] = "colorValue",
-                        ["op"] = "set",
-                        ["value"] = new JArray(1.0f, 0.0f, 0.0f, 1.0f)
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "MixedRefs",
+                        ["overwrite"] = true,
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "intValue",
+                                ["op"] = "set",
+                                ["value"] = 42,
+                            },
+                            new JObject
+                            {
+                                ["propertyPath"] = "floatValue",
+                                ["op"] = "set",
+                                ["value"] = 3.14f,
+                            },
+                            new JObject
+                            {
+                                ["propertyPath"] = "stringValue",
+                                ["op"] = "set",
+                                ["value"] = "TestString",
+                            },
+                            new JObject
+                            {
+                                ["propertyPath"] = "boolValue",
+                                ["op"] = "set",
+                                ["value"] = true,
+                            },
+                            new JObject
+                            {
+                                ["propertyPath"] = "enumValue",
+                                ["op"] = "set",
+                                ["value"] = "Beta",
+                            },
+                            new JObject
+                            {
+                                ["propertyPath"] = "vectorValue",
+                                ["op"] = "set",
+                                ["value"] = new JArray(10, 20, 30),
+                            },
+                            new JObject
+                            {
+                                ["propertyPath"] = "colorValue",
+                                ["op"] = "set",
+                                ["value"] = new JArray(1.0f, 0.0f, 0.0f, 1.0f),
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(createResult.Value<bool>("success"), $"MixedRefs create failed: {createResult}");
 
@@ -423,14 +464,18 @@ namespace MCPForUnityTests.Editor.Tools
         public void RapidFire_100SequentialModifies()
         {
             // Create initial asset
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "RapidFire",
-                ["overwrite"] = true
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "RapidFire",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
 
             var path = createResult["data"]?["path"]?.ToString();
@@ -443,20 +488,24 @@ namespace MCPForUnityTests.Editor.Tools
 
             for (int i = 0; i < iterations; i++)
             {
-                var modifyResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-                {
-                    ["action"] = "modify",
-                    ["target"] = new JObject { ["guid"] = guid },
-                    ["patches"] = new JArray
-                    {
+                var modifyResult = ToJObject(
+                    ManageScriptableObject.HandleCommand(
                         new JObject
                         {
-                            ["propertyPath"] = "intValue",
-                            ["op"] = "set",
-                            ["value"] = i
+                            ["action"] = "modify",
+                            ["target"] = new JObject { ["guid"] = guid },
+                            ["patches"] = new JArray
+                            {
+                                new JObject
+                                {
+                                    ["propertyPath"] = "intValue",
+                                    ["op"] = "set",
+                                    ["value"] = i,
+                                },
+                            },
                         }
-                    }
-                }));
+                    )
+                );
 
                 if (modifyResult.Value<bool>("success"))
                 {
@@ -469,7 +518,9 @@ namespace MCPForUnityTests.Editor.Tools
             }
 
             sw.Stop();
-            Debug.Log($"[RapidFire] {successCount}/{iterations} successful in {sw.ElapsedMilliseconds}ms ({sw.ElapsedMilliseconds / (float)iterations:F2}ms/op)");
+            Debug.Log(
+                $"[RapidFire] {successCount}/{iterations} successful in {sw.ElapsedMilliseconds}ms ({sw.ElapsedMilliseconds / (float)iterations:F2}ms/op)"
+            );
 
             Assert.AreEqual(iterations, successCount, "All rapid fire modifications should succeed");
 
@@ -486,14 +537,18 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void TypeMismatch_InvalidValueForPropertyType()
         {
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "TypeMismatch",
-                ["overwrite"] = true
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "TypeMismatch",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
 
             var path = createResult["data"]?["path"]?.ToString();
@@ -501,20 +556,24 @@ namespace MCPForUnityTests.Editor.Tools
             _createdAssets.Add(path);
 
             // Try to set an int field to a non-integer string
-            var modifyResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["guid"] = guid },
-                ["patches"] = new JArray
-                {
+            var modifyResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "intValue",
-                        ["op"] = "set",
-                        ["value"] = "not_an_integer"
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["guid"] = guid },
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "intValue",
+                                ["op"] = "set",
+                                ["value"] = "not_an_integer",
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             var patchResults = modifyResult["data"]?["results"] as JArray;
             Assert.IsNotNull(patchResults);
@@ -525,22 +584,27 @@ namespace MCPForUnityTests.Editor.Tools
 
             // Type mismatch should fail gracefully with a clear error
             Assert.IsFalse(patchOk, "Setting int to string should fail");
-            Assert.IsTrue(message.Contains("int", StringComparison.OrdinalIgnoreCase) || 
-                          message.Contains("Expected", StringComparison.OrdinalIgnoreCase),
-                          $"Error message should indicate type issue: {message}");
+            Assert.IsTrue(
+                message.Contains("int", StringComparison.OrdinalIgnoreCase) || message.Contains("Expected", StringComparison.OrdinalIgnoreCase),
+                $"Error message should indicate type issue: {message}"
+            );
         }
 
         [Test]
         public void TypeMismatch_WrongVectorFormat()
         {
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "WrongVector",
-                ["overwrite"] = true
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "WrongVector",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
 
             var path = createResult["data"]?["path"]?.ToString();
@@ -548,20 +612,24 @@ namespace MCPForUnityTests.Editor.Tools
             _createdAssets.Add(path);
 
             // Try to set a Vector3 field to a single number
-            var modifyResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["guid"] = guid },
-                ["patches"] = new JArray
-                {
+            var modifyResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "vectorValue",
-                        ["op"] = "set",
-                        ["value"] = 123  // Wrong format for Vector3
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["guid"] = guid },
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "vectorValue",
+                                ["op"] = "set",
+                                ["value"] = 123, // Wrong format for Vector3
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             var patchResults = modifyResult["data"]?["results"] as JArray;
             Assert.IsNotNull(patchResults);
@@ -580,14 +648,18 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void BulkArrayMapping_SetsEntireArrayFromJArray()
         {
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "BulkArray",
-                ["overwrite"] = true
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "BulkArray",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
 
             var path = createResult["data"]?["path"]?.ToString();
@@ -595,20 +667,24 @@ namespace MCPForUnityTests.Editor.Tools
             _createdAssets.Add(path);
 
             // Set the entire intArray using a JArray value directly
-            var modifyResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["guid"] = guid },
-                ["patches"] = new JArray
-                {
+            var modifyResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "intArray",
-                        ["op"] = "set",
-                        ["value"] = new JArray(1, 2, 3, 4, 5)  // Bulk array mapping
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["guid"] = guid },
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "intArray",
+                                ["op"] = "set",
+                                ["value"] = new JArray(1, 2, 3, 4, 5), // Bulk array mapping
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             var patchResults = modifyResult["data"]?["results"] as JArray;
             Assert.IsNotNull(patchResults);
@@ -637,26 +713,35 @@ namespace MCPForUnityTests.Editor.Tools
 
             // Create a test SO that has an ObjectReference field
             // For this test, we'll create a ManageScriptableObjectTestDefinition and set a material
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "MCPForUnityTests.Editor.Tools.Fixtures.ManageScriptableObjectTestDefinition",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "GuidShorthand",
-                ["overwrite"] = true,
-                ["patches"] = new JArray
-                {
-                    // Resize materials list first
-                    new JObject { ["propertyPath"] = "materials.Array.size", ["op"] = "array_resize", ["value"] = 1 },
-                    // Use GUID shorthand - just the 32-char hex string as value
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "materials.Array.data[0]",
-                        ["op"] = "set",
-                        ["value"] = matGuid  // Plain GUID string!
+                        ["action"] = "create",
+                        ["typeName"] = "MCPForUnityTests.Editor.Tools.Fixtures.ManageScriptableObjectTestDefinition",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "GuidShorthand",
+                        ["overwrite"] = true,
+                        ["patches"] = new JArray
+                        {
+                            // Resize materials list first
+                            new JObject
+                            {
+                                ["propertyPath"] = "materials.Array.size",
+                                ["op"] = "array_resize",
+                                ["value"] = 1,
+                            },
+                            // Use GUID shorthand - just the 32-char hex string as value
+                            new JObject
+                            {
+                                ["propertyPath"] = "materials.Array.data[0]",
+                                ["op"] = "set",
+                                ["value"] = matGuid, // Plain GUID string!
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(createResult.Value<bool>("success"), $"Create with GUID shorthand failed: {createResult}");
 
@@ -682,14 +767,18 @@ namespace MCPForUnityTests.Editor.Tools
         public void DryRun_ValidatePatchesWithoutApplying()
         {
             // Create a test asset first
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "DryRunTest",
-                ["overwrite"] = true
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "DryRunTest",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
 
             var path = createResult["data"]?["path"]?.ToString();
@@ -701,21 +790,40 @@ namespace MCPForUnityTests.Editor.Tools
             int originalValue = asset.intValue;
 
             // Try a dry-run modify with some valid and some invalid patches
-            var dryRunResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["guid"] = guid },
-                ["dryRun"] = true,
-                ["patches"] = new JArray
-                {
-                    new JObject { ["propertyPath"] = "intValue", ["op"] = "set", ["value"] = 999 },
-                    new JObject { ["propertyPath"] = "nonExistentField", ["op"] = "set", ["value"] = "test" },
-                    new JObject { ["propertyPath"] = "stringList[5]", ["op"] = "set", ["value"] = "auto-grow" }
-                }
-            }));
+            var dryRunResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["guid"] = guid },
+                        ["dryRun"] = true,
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "intValue",
+                                ["op"] = "set",
+                                ["value"] = 999,
+                            },
+                            new JObject
+                            {
+                                ["propertyPath"] = "nonExistentField",
+                                ["op"] = "set",
+                                ["value"] = "test",
+                            },
+                            new JObject
+                            {
+                                ["propertyPath"] = "stringList[5]",
+                                ["op"] = "set",
+                                ["value"] = "auto-grow",
+                            },
+                        },
+                    }
+                )
+            );
 
             Assert.IsTrue(dryRunResult.Value<bool>("success"), $"Dry-run should succeed: {dryRunResult}");
-            
+
             var data = dryRunResult["data"] as JObject;
             Assert.IsNotNull(data);
             Assert.IsTrue(data["dryRun"]?.Value<bool>() ?? false, "Response should indicate dry-run mode");
@@ -726,10 +834,10 @@ namespace MCPForUnityTests.Editor.Tools
 
             // First patch should be valid
             Assert.IsTrue(validationResults[0].Value<bool>("ok"), $"intValue patch should be valid: {validationResults[0]}");
-            
+
             // Second patch should be invalid (field doesn't exist)
             Assert.IsFalse(validationResults[1].Value<bool>("ok"), $"nonExistentField patch should be invalid: {validationResults[1]}");
-            
+
             // Third patch should be valid (auto-growable)
             Assert.IsTrue(validationResults[2].Value<bool>("ok"), $"stringList[5] patch should be valid (auto-grow): {validationResults[2]}");
 
@@ -748,14 +856,18 @@ namespace MCPForUnityTests.Editor.Tools
         public void DryRun_AnimationCurve_ValidFormat_PassesValidation()
         {
             // Create a test asset first
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "DryRunAnimCurveValid",
-                ["overwrite"] = true
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "DryRunAnimCurveValid",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
 
             var path = createResult["data"]?["path"]?.ToString();
@@ -763,28 +875,38 @@ namespace MCPForUnityTests.Editor.Tools
             _createdAssets.Add(path);
 
             // Dry-run with valid AnimationCurve format
-            var dryRunResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["guid"] = guid },
-                ["dryRun"] = true,
-                ["patches"] = new JArray
-                {
+            var dryRunResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "animCurve",
-                        ["op"] = "set",
-                        ["value"] = new JObject
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["guid"] = guid },
+                        ["dryRun"] = true,
+                        ["patches"] = new JArray
                         {
-                            ["keys"] = new JArray
+                            new JObject
                             {
-                                new JObject { ["time"] = 0f, ["value"] = 0f },
-                                new JObject { ["time"] = 1f, ["value"] = 1f, ["inSlope"] = 0f, ["outSlope"] = 0f }
-                            }
-                        }
+                                ["propertyPath"] = "animCurve",
+                                ["op"] = "set",
+                                ["value"] = new JObject
+                                {
+                                    ["keys"] = new JArray
+                                    {
+                                        new JObject { ["time"] = 0f, ["value"] = 0f },
+                                        new JObject
+                                        {
+                                            ["time"] = 1f,
+                                            ["value"] = 1f,
+                                            ["inSlope"] = 0f,
+                                            ["outSlope"] = 0f,
+                                        },
+                                    },
+                                },
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(dryRunResult.Value<bool>("success"), $"Dry-run should succeed: {dryRunResult}");
 
@@ -796,8 +918,7 @@ namespace MCPForUnityTests.Editor.Tools
             // Should pass validation with informative message
             Assert.IsTrue(validationResults[0].Value<bool>("ok"), $"Valid AnimationCurve format should pass: {validationResults[0]}");
             var message = validationResults[0].Value<string>("message");
-            Assert.IsTrue(message.Contains("AnimationCurve") && message.Contains("2 keyframes"), 
-                $"Message should describe curve: {message}");
+            Assert.IsTrue(message.Contains("AnimationCurve") && message.Contains("2 keyframes"), $"Message should describe curve: {message}");
 
             Debug.Log($"[DryRun_AnimationCurve] Valid format passed: {message}");
         }
@@ -809,14 +930,18 @@ namespace MCPForUnityTests.Editor.Tools
         public void DryRun_AnimationCurve_InvalidFormat_FailsWithClearError()
         {
             // Create a test asset first
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "DryRunAnimCurveInvalid",
-                ["overwrite"] = true
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "DryRunAnimCurveInvalid",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
 
             var path = createResult["data"]?["path"]?.ToString();
@@ -824,27 +949,31 @@ namespace MCPForUnityTests.Editor.Tools
             _createdAssets.Add(path);
 
             // Dry-run with INVALID AnimationCurve format (non-numeric time)
-            var dryRunResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["guid"] = guid },
-                ["dryRun"] = true,
-                ["patches"] = new JArray
-                {
+            var dryRunResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "animCurve",
-                        ["op"] = "set",
-                        ["value"] = new JObject
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["guid"] = guid },
+                        ["dryRun"] = true,
+                        ["patches"] = new JArray
                         {
-                            ["keys"] = new JArray
+                            new JObject
                             {
-                                new JObject { ["time"] = "not-a-number", ["value"] = 0f }  // Invalid!
-                            }
-                        }
+                                ["propertyPath"] = "animCurve",
+                                ["op"] = "set",
+                                ["value"] = new JObject
+                                {
+                                    ["keys"] = new JArray
+                                    {
+                                        new JObject { ["time"] = "not-a-number", ["value"] = 0f }, // Invalid!
+                                    },
+                                },
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(dryRunResult.Value<bool>("success"), $"Dry-run call should succeed: {dryRunResult}");
 
@@ -855,8 +984,10 @@ namespace MCPForUnityTests.Editor.Tools
             // Validation should FAIL with clear error message
             Assert.IsFalse(validationResults[0].Value<bool>("ok"), $"Invalid AnimationCurve format should fail validation: {validationResults[0]}");
             var message = validationResults[0].Value<string>("message");
-            Assert.IsTrue(message.Contains("Keyframe") && message.Contains("time") && message.Contains("number"),
-                $"Error message should identify the problem: {message}");
+            Assert.IsTrue(
+                message.Contains("Keyframe") && message.Contains("time") && message.Contains("number"),
+                $"Error message should identify the problem: {message}"
+            );
 
             Debug.Log($"[DryRun_AnimationCurve] Invalid format caught early: {message}");
         }
@@ -868,14 +999,18 @@ namespace MCPForUnityTests.Editor.Tools
         public void DryRun_Quaternion_ValidFormat_PassesValidation()
         {
             // Create a test asset first
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "DryRunQuatValid",
-                ["overwrite"] = true
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "DryRunQuatValid",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
 
             var path = createResult["data"]?["path"]?.ToString();
@@ -883,21 +1018,25 @@ namespace MCPForUnityTests.Editor.Tools
             _createdAssets.Add(path);
 
             // Dry-run with valid Quaternion format (Euler angles)
-            var dryRunResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["guid"] = guid },
-                ["dryRun"] = true,
-                ["patches"] = new JArray
-                {
+            var dryRunResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "rotation",
-                        ["op"] = "set",
-                        ["value"] = new JArray { 45f, 90f, 0f }  // Valid Euler angles
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["guid"] = guid },
+                        ["dryRun"] = true,
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "rotation",
+                                ["op"] = "set",
+                                ["value"] = new JArray { 45f, 90f, 0f }, // Valid Euler angles
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(dryRunResult.Value<bool>("success"), $"Dry-run should succeed: {dryRunResult}");
 
@@ -908,8 +1047,7 @@ namespace MCPForUnityTests.Editor.Tools
             // Should pass validation with informative message
             Assert.IsTrue(validationResults[0].Value<bool>("ok"), $"Valid Quaternion format should pass: {validationResults[0]}");
             var message = validationResults[0].Value<string>("message");
-            Assert.IsTrue(message.Contains("Quaternion") && message.Contains("Euler"),
-                $"Message should describe format: {message}");
+            Assert.IsTrue(message.Contains("Quaternion") && message.Contains("Euler"), $"Message should describe format: {message}");
 
             Debug.Log($"[DryRun_Quaternion] Valid Euler format passed: {message}");
         }
@@ -921,14 +1059,18 @@ namespace MCPForUnityTests.Editor.Tools
         public void DryRun_Quaternion_WrongArrayLength_FailsWithClearError()
         {
             // Create a test asset first
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "DryRunQuatWrongLength",
-                ["overwrite"] = true
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "DryRunQuatWrongLength",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
 
             var path = createResult["data"]?["path"]?.ToString();
@@ -936,21 +1078,25 @@ namespace MCPForUnityTests.Editor.Tools
             _createdAssets.Add(path);
 
             // Dry-run with INVALID Quaternion format (wrong array length)
-            var dryRunResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["guid"] = guid },
-                ["dryRun"] = true,
-                ["patches"] = new JArray
-                {
+            var dryRunResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "rotation",
-                        ["op"] = "set",
-                        ["value"] = new JArray { 1f, 2f }  // Invalid! Must be 3 or 4 elements
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["guid"] = guid },
+                        ["dryRun"] = true,
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "rotation",
+                                ["op"] = "set",
+                                ["value"] = new JArray { 1f, 2f }, // Invalid! Must be 3 or 4 elements
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(dryRunResult.Value<bool>("success"), $"Dry-run call should succeed: {dryRunResult}");
 
@@ -961,8 +1107,7 @@ namespace MCPForUnityTests.Editor.Tools
             // Validation should FAIL with clear error message
             Assert.IsFalse(validationResults[0].Value<bool>("ok"), $"Wrong array length should fail validation: {validationResults[0]}");
             var message = validationResults[0].Value<string>("message");
-            Assert.IsTrue(message.Contains("3 elements") || message.Contains("4 elements"),
-                $"Error message should explain valid lengths: {message}");
+            Assert.IsTrue(message.Contains("3 elements") || message.Contains("4 elements"), $"Error message should explain valid lengths: {message}");
 
             Debug.Log($"[DryRun_Quaternion] Wrong array length caught early: {message}");
         }
@@ -974,14 +1119,18 @@ namespace MCPForUnityTests.Editor.Tools
         public void DryRun_Quaternion_NonNumericValue_FailsWithClearError()
         {
             // Create a test asset first
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = "DryRunQuatNonNumeric",
-                ["overwrite"] = true
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = "DryRunQuatNonNumeric",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
 
             var path = createResult["data"]?["path"]?.ToString();
@@ -989,21 +1138,25 @@ namespace MCPForUnityTests.Editor.Tools
             _createdAssets.Add(path);
 
             // Dry-run with INVALID Quaternion format (non-numeric value)
-            var dryRunResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["guid"] = guid },
-                ["dryRun"] = true,
-                ["patches"] = new JArray
-                {
+            var dryRunResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "rotation",
-                        ["op"] = "set",
-                        ["value"] = new JArray { 45f, "ninety", 0f }  // Invalid! Non-numeric
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["guid"] = guid },
+                        ["dryRun"] = true,
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "rotation",
+                                ["op"] = "set",
+                                ["value"] = new JArray { 45f, "ninety", 0f }, // Invalid! Non-numeric
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(dryRunResult.Value<bool>("success"), $"Dry-run call should succeed: {dryRunResult}");
 
@@ -1014,8 +1167,7 @@ namespace MCPForUnityTests.Editor.Tools
             // Validation should FAIL with clear error message
             Assert.IsFalse(validationResults[0].Value<bool>("ok"), $"Non-numeric value should fail validation: {validationResults[0]}");
             var message = validationResults[0].Value<string>("message");
-            Assert.IsTrue(message.Contains("number") || message.Contains("numeric"),
-                $"Error message should mention number requirement: {message}");
+            Assert.IsTrue(message.Contains("number") || message.Contains("numeric"), $"Error message should mention number requirement: {message}");
 
             Debug.Log($"[DryRun_Quaternion] Non-numeric value caught early: {message}");
         }
@@ -1036,41 +1188,67 @@ namespace MCPForUnityTests.Editor.Tools
             EnsureFolder(_runRoot);
 
             // Create the SO
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = Path.GetFileNameWithoutExtension(path)
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = Path.GetFileNameWithoutExtension(path),
+                    }
+                )
+            );
 
             Assert.IsTrue(createResult.Value<bool>("success"), $"Create should succeed: {createResult}");
             string actualPath = createResult["data"]?["path"]?.ToString();
             Assert.IsNotNull(actualPath, "Should return asset path");
 
             // Set AnimationCurve with keyframe array
-            var modifyResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["path"] = actualPath },
-                ["patches"] = new JArray
-                {
+            var modifyResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "animCurve",
-                        ["op"] = "set",
-                        ["value"] = new JObject
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["path"] = actualPath },
+                        ["patches"] = new JArray
                         {
-                            ["keys"] = new JArray
+                            new JObject
                             {
-                                new JObject { ["time"] = 0f, ["value"] = 0f, ["inSlope"] = 0f, ["outSlope"] = 2f },
-                                new JObject { ["time"] = 0.5f, ["value"] = 1f, ["inSlope"] = 2f, ["outSlope"] = 0f },
-                                new JObject { ["time"] = 1f, ["value"] = 0.5f, ["inSlope"] = -1f, ["outSlope"] = -1f }
-                            }
-                        }
+                                ["propertyPath"] = "animCurve",
+                                ["op"] = "set",
+                                ["value"] = new JObject
+                                {
+                                    ["keys"] = new JArray
+                                    {
+                                        new JObject
+                                        {
+                                            ["time"] = 0f,
+                                            ["value"] = 0f,
+                                            ["inSlope"] = 0f,
+                                            ["outSlope"] = 2f,
+                                        },
+                                        new JObject
+                                        {
+                                            ["time"] = 0.5f,
+                                            ["value"] = 1f,
+                                            ["inSlope"] = 2f,
+                                            ["outSlope"] = 0f,
+                                        },
+                                        new JObject
+                                        {
+                                            ["time"] = 1f,
+                                            ["value"] = 0.5f,
+                                            ["inSlope"] = -1f,
+                                            ["outSlope"] = -1f,
+                                        },
+                                    },
+                                },
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(modifyResult.Value<bool>("success"), $"Modify should succeed: {modifyResult}");
 
@@ -1100,36 +1278,44 @@ namespace MCPForUnityTests.Editor.Tools
             EnsureFolder(_runRoot);
 
             // Create the SO
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = Path.GetFileNameWithoutExtension(path)
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = Path.GetFileNameWithoutExtension(path),
+                    }
+                )
+            );
 
             Assert.IsTrue(createResult.Value<bool>("success"), $"Create should succeed: {createResult}");
             string actualPath = createResult["data"]?["path"]?.ToString();
 
             // Set AnimationCurve with direct array (no "keys" wrapper)
-            var modifyResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["path"] = actualPath },
-                ["patches"] = new JArray
-                {
+            var modifyResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "animCurve",
-                        ["op"] = "set",
-                        ["value"] = new JArray
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["path"] = actualPath },
+                        ["patches"] = new JArray
                         {
-                            new JObject { ["time"] = 0f, ["value"] = 0f },
-                            new JObject { ["time"] = 1f, ["value"] = 1f }
-                        }
+                            new JObject
+                            {
+                                ["propertyPath"] = "animCurve",
+                                ["op"] = "set",
+                                ["value"] = new JArray
+                                {
+                                    new JObject { ["time"] = 0f, ["value"] = 0f },
+                                    new JObject { ["time"] = 1f, ["value"] = 1f },
+                                },
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(modifyResult.Value<bool>("success"), $"Modify should succeed: {modifyResult}");
 
@@ -1153,32 +1339,40 @@ namespace MCPForUnityTests.Editor.Tools
             EnsureFolder(_runRoot);
 
             // Create the SO
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = Path.GetFileNameWithoutExtension(path)
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = Path.GetFileNameWithoutExtension(path),
+                    }
+                )
+            );
 
             Assert.IsTrue(createResult.Value<bool>("success"), $"Create should succeed: {createResult}");
             string actualPath = createResult["data"]?["path"]?.ToString();
 
             // Set Quaternion via Euler angles
-            var modifyResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["path"] = actualPath },
-                ["patches"] = new JArray
-                {
+            var modifyResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "rotation",
-                        ["op"] = "set",
-                        ["value"] = new JArray { 45f, 90f, 0f } // Euler angles
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["path"] = actualPath },
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "rotation",
+                                ["op"] = "set",
+                                ["value"] = new JArray { 45f, 90f, 0f }, // Euler angles
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(modifyResult.Value<bool>("success"), $"Modify should succeed: {modifyResult}");
 
@@ -1206,13 +1400,17 @@ namespace MCPForUnityTests.Editor.Tools
             EnsureFolder(_runRoot);
 
             // Create the SO
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = Path.GetFileNameWithoutExtension(path)
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = Path.GetFileNameWithoutExtension(path),
+                    }
+                )
+            );
 
             Assert.IsTrue(createResult.Value<bool>("success"), $"Create should succeed: {createResult}");
             string actualPath = createResult["data"]?["path"]?.ToString();
@@ -1223,20 +1421,24 @@ namespace MCPForUnityTests.Editor.Tools
             float expectedW = Mathf.Cos(halfAngle);
 
             // Set Quaternion via raw components [x, y, z, w]
-            var modifyResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["path"] = actualPath },
-                ["patches"] = new JArray
-                {
+            var modifyResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "rotation",
-                        ["op"] = "set",
-                        ["value"] = new JArray { 0f, expectedY, 0f, expectedW }
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["path"] = actualPath },
+                        ["patches"] = new JArray
+                        {
+                            new JObject
+                            {
+                                ["propertyPath"] = "rotation",
+                                ["op"] = "set",
+                                ["value"] = new JArray { 0f, expectedY, 0f, expectedW },
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(modifyResult.Value<bool>("success"), $"Modify should succeed: {modifyResult}");
 
@@ -1263,38 +1465,46 @@ namespace MCPForUnityTests.Editor.Tools
             EnsureFolder(_runRoot);
 
             // Create the SO
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = Path.GetFileNameWithoutExtension(path)
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = Path.GetFileNameWithoutExtension(path),
+                    }
+                )
+            );
 
             Assert.IsTrue(createResult.Value<bool>("success"), $"Create should succeed: {createResult}");
             string actualPath = createResult["data"]?["path"]?.ToString();
 
             // Set Quaternion via object format
-            var modifyResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["path"] = actualPath },
-                ["patches"] = new JArray
-                {
+            var modifyResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "rotation",
-                        ["op"] = "set",
-                        ["value"] = new JObject
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["path"] = actualPath },
+                        ["patches"] = new JArray
                         {
-                            ["x"] = 0f,
-                            ["y"] = 0f,
-                            ["z"] = 0f,
-                            ["w"] = 1f // Identity quaternion
-                        }
+                            new JObject
+                            {
+                                ["propertyPath"] = "rotation",
+                                ["op"] = "set",
+                                ["value"] = new JObject
+                                {
+                                    ["x"] = 0f,
+                                    ["y"] = 0f,
+                                    ["z"] = 0f,
+                                    ["w"] = 1f, // Identity quaternion
+                                },
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(modifyResult.Value<bool>("success"), $"Modify should succeed: {modifyResult}");
 
@@ -1321,35 +1531,43 @@ namespace MCPForUnityTests.Editor.Tools
             EnsureFolder(_runRoot);
 
             // Create the SO
-            var createResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "ComplexStressSO",
-                ["folderPath"] = _runRoot,
-                ["assetName"] = Path.GetFileNameWithoutExtension(path)
-            }));
+            var createResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "ComplexStressSO",
+                        ["folderPath"] = _runRoot,
+                        ["assetName"] = Path.GetFileNameWithoutExtension(path),
+                    }
+                )
+            );
 
             Assert.IsTrue(createResult.Value<bool>("success"), $"Create should succeed: {createResult}");
             string actualPath = createResult["data"]?["path"]?.ToString();
 
             // Set Quaternion via explicit euler property
-            var modifyResult = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["path"] = actualPath },
-                ["patches"] = new JArray
-                {
+            var modifyResult = ToJObject(
+                ManageScriptableObject.HandleCommand(
                     new JObject
                     {
-                        ["propertyPath"] = "rotation",
-                        ["op"] = "set",
-                        ["value"] = new JObject
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["path"] = actualPath },
+                        ["patches"] = new JArray
                         {
-                            ["euler"] = new JArray { 0f, 180f, 0f }
-                        }
+                            new JObject
+                            {
+                                ["propertyPath"] = "rotation",
+                                ["op"] = "set",
+                                ["value"] = new JObject
+                                {
+                                    ["euler"] = new JArray { 0f, 180f, 0f },
+                                },
+                            },
+                        },
                     }
-                }
-            }));
+                )
+            );
 
             Assert.IsTrue(modifyResult.Value<bool>("success"), $"Modify should succeed: {modifyResult}");
 
@@ -1386,4 +1604,3 @@ namespace MCPForUnityTests.Editor.Tools
         #endregion
     }
 }
-

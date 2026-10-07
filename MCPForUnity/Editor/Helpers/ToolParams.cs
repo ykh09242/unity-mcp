@@ -1,7 +1,7 @@
+using System;
 using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using System;
 
 namespace MCPForUnity.Editor.Helpers
 {
@@ -26,9 +26,7 @@ namespace MCPForUnity.Editor.Helpers
             var value = GetString(key);
             if (string.IsNullOrEmpty(value))
             {
-                return Result<string>.Error(
-                    errorMessage ?? $"'{key}' parameter is required."
-                );
+                return Result<string>.Error(errorMessage ?? $"'{key}' parameter is required.");
             }
             return Result<string>.Success(value);
         }
@@ -102,12 +100,14 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         internal static string[] CoerceStringArray(JToken token)
         {
-            if (token == null || token.Type == JTokenType.Null) return null;
+            if (token == null || token.Type == JTokenType.Null)
+                return null;
 
             if (token.Type == JTokenType.String)
             {
                 var value = token.ToString();
-                if (string.IsNullOrWhiteSpace(value)) return null;
+                if (string.IsNullOrWhiteSpace(value))
+                    return null;
                 // Handle stringified JSON arrays (e.g. "[\"name1\", \"name2\"]")
                 var trimmed = value.Trim();
                 if (trimmed.StartsWith("[") && trimmed.EndsWith("]"))
@@ -115,9 +115,7 @@ namespace MCPForUnity.Editor.Helpers
                     try
                     {
                         var parsed = JArray.Parse(trimmed);
-                        var values = parsed.Values<string>()
-                            .Where(s => !string.IsNullOrWhiteSpace(s))
-                            .ToArray();
+                        var values = parsed.Values<string>().Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
                         return values.Length > 0 ? values : null;
                     }
                     catch (JsonException) { /* not a valid JSON array, treat as plain string */ }
@@ -128,7 +126,8 @@ namespace MCPForUnity.Editor.Helpers
             if (token.Type == JTokenType.Array)
             {
                 var array = token as JArray;
-                if (array == null || array.Count == 0) return null;
+                if (array == null || array.Count == 0)
+                    return null;
                 // Handle double-serialized arrays: MCP bridge may send ["[\"name1\"]"]
                 // where the inner string is a stringified JSON array
                 if (array.Count == 1 && array[0].Type == JTokenType.String)
@@ -150,10 +149,7 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     array = array[0] as JArray ?? array;
                 }
-                var values = array
-                    .Values<string>()
-                    .Where(s => !string.IsNullOrWhiteSpace(s))
-                    .ToArray();
+                var values = array.Values<string>().Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
                 return values.Length > 0 ? values : null;
             }
 
@@ -167,14 +163,16 @@ namespace MCPForUnity.Editor.Helpers
         {
             // Try exact match first
             var token = _params[key];
-            if (token != null) return token;
+            if (token != null)
+                return token;
 
             // Try snake_case if camelCase was provided
             var snakeKey = ToSnakeCase(key);
             if (snakeKey != key)
             {
                 token = _params[snakeKey];
-                if (token != null) return token;
+                if (token != null)
+                    return token;
             }
 
             // Try camelCase if snake_case was provided
@@ -191,14 +189,16 @@ namespace MCPForUnity.Editor.Helpers
         {
             // Try exact match first
             var value = _params[key]?.ToString();
-            if (value != null) return value;
+            if (value != null)
+                return value;
 
             // Try snake_case if camelCase was provided
             var snakeKey = ToSnakeCase(key);
             if (snakeKey != key)
             {
                 value = _params[snakeKey]?.ToString();
-                if (value != null) return value;
+                if (value != null)
+                    return value;
             }
 
             // Try camelCase if snake_case was provided
@@ -233,6 +233,7 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         public static Result<T> Success(T value) => new Result<T>(true, value, null);
+
         public static Result<T> Error(string errorMessage) => new Result<T>(false, default, errorMessage);
 
         /// <summary>

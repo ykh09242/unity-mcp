@@ -18,8 +18,18 @@ def code():
 
 @code.command("execute")
 @click.argument("source", required=False)
-@click.option("--file", "-f", default=None, type=click.Path(exists=True), help="Read code from a file instead of argument.")
-@click.option("--no-safety-checks", is_flag=True, help="Disable blocked-pattern checks (allows File.Delete, Process.Start, etc).")
+@click.option(
+    "--file",
+    "-f",
+    default=None,
+    type=click.Path(exists=True),
+    help="Read code from a file instead of argument.",
+)
+@click.option(
+    "--no-safety-checks",
+    is_flag=True,
+    help="Disable blocked-pattern checks (allows File.Delete, Process.Start, etc).",
+)
 @handle_unity_errors
 def execute(source: Optional[str], file: Optional[str], no_safety_checks: bool):
     """Execute C# code in Unity Editor.
@@ -54,7 +64,9 @@ def execute(source: Optional[str], file: Optional[str], no_safety_checks: bool):
 
 
 @code.command("history")
-@click.option("--limit", "-n", default=10, type=int, help="Number of entries to show (default: 10).")
+@click.option(
+    "--limit", "-n", default=10, type=int, help="Number of entries to show (default: 10)."
+)
 @handle_unity_errors
 def history(limit: int):
     """Show execution history.
@@ -104,18 +116,8 @@ def clear_history():
 
 @code.command("read")
 @click.argument("path")
-@click.option(
-    "--start-line", "-s",
-    default=None,
-    type=int,
-    help="Starting line number (1-based)."
-)
-@click.option(
-    "--line-count", "-n",
-    default=None,
-    type=int,
-    help="Number of lines to read."
-)
+@click.option("--start-line", "-s", default=None, type=int, help="Starting line number (1-based).")
+@click.option("--line-count", "-n", default=None, type=int, help="Number of lines to read.")
 @handle_unity_errors
 def read(path: str, start_line: Optional[int], line_count: Optional[int]):
     """Read a source file.
@@ -159,15 +161,13 @@ def read(path: str, start_line: Optional[int], line_count: Optional[int]):
 @click.argument("pattern")
 @click.argument("path")
 @click.option(
-    "--max-results", "-n",
-    default=50,
-    type=int,
-    help="Maximum number of results (default: 50)."
+    "--max-results", "-n", default=50, type=int, help="Maximum number of results (default: 50)."
 )
 @click.option(
-    "--case-sensitive", "-c",
+    "--case-sensitive",
+    "-c",
     is_flag=True,
-    help="Make search case-sensitive (default: case-insensitive)."
+    help="Make search case-sensitive (default: case-insensitive).",
 )
 @handle_unity_errors
 def search(pattern: str, path: str, max_results: int, case_sensitive: bool):
@@ -215,8 +215,7 @@ def search(pattern: str, path: str, max_results: int, case_sensitive: bool):
     # Handle base64 encoded content
     if not contents and data.get("contentsEncoded") and data.get("encodedContents"):
         try:
-            contents = base64.b64decode(
-                data["encodedContents"]).decode("utf-8", "replace")
+            contents = base64.b64decode(data["encodedContents"]).decode("utf-8", "replace")
         except (ValueError, TypeError):
             pass
 
@@ -246,21 +245,23 @@ def search(pattern: str, path: str, max_results: int, case_sensitive: bool):
         start_idx = m.start()
 
         # Calculate line number
-        line_num = contents.count('\n', 0, start_idx) + 1
+        line_num = contents.count("\n", 0, start_idx) + 1
 
         # Get line content
-        line_start = contents.rfind('\n', 0, start_idx) + 1
-        line_end = contents.find('\n', start_idx)
+        line_start = contents.rfind("\n", 0, start_idx) + 1
+        line_end = contents.find("\n", start_idx)
         if line_end == -1:
             line_end = len(contents)
 
         line_content = contents[line_start:line_end].strip()
 
-        results.append({
-            "line": line_num,
-            "content": line_content,
-            "match": m.group(0),
-        })
+        results.append(
+            {
+                "line": line_num,
+                "content": line_content,
+                "match": m.group(0),
+            }
+        )
 
     # Display results
     click.echo(f"Found {len(results)} matches (total: {len(found)}):\n")

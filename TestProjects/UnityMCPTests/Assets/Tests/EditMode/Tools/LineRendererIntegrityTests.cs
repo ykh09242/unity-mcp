@@ -1,11 +1,11 @@
 using System;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Vfx;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -36,8 +36,10 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (root != null) UnityEngine.Object.DestroyImmediate(root);
-            if (material != null) UnityEngine.Object.DestroyImmediate(material);
+            if (root != null)
+                UnityEngine.Object.DestroyImmediate(root);
+            if (material != null)
+                UnityEngine.Object.DestroyImmediate(material);
             Selection.objects = previousSelection;
             Selection.activeObject = previousActiveObject;
         }
@@ -119,7 +121,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void ValidVectorFormatsPreserveExtrasNumericStringsZeroAndNegativeCoordinates()
         {
             AssignUsableMaterial();
-            Assert.IsTrue(Call("line_set_positions", JObject.Parse("{positions:[[0,'-2',3,99],{x:4,y:0,z:-6}]}" )).Value<bool>("success"));
+            Assert.IsTrue(Call("line_set_positions", JObject.Parse("{positions:[[0,'-2',3,99],{x:4,y:0,z:-6}]}")).Value<bool>("success"));
             CollectionAssert.AreEqual(new[] { new Vector3(0, -2, 3), new Vector3(4, 0, -6) }, Positions(line));
         }
 
@@ -173,7 +175,12 @@ namespace MCPForUnityTests.Editor.Tools
         public void ValidShapeCreationPreservesOneSegmentAndAppearanceOverrides(string action, int count)
         {
             AssignUsableMaterial();
-            var response = Call(action, JObject.Parse("{start:[7,8,9],end:[10,11,12],controlPoint1:[1,2,3],segments:1,width:3,startWidth:0,endWidth:'-2',color:[1,0,0,1],endColor:[0,1,0,0]}"));
+            var response = Call(
+                action,
+                JObject.Parse(
+                    "{start:[7,8,9],end:[10,11,12],controlPoint1:[1,2,3],segments:1,width:3,startWidth:0,endWidth:'-2',color:[1,0,0,1],endColor:[0,1,0,0]}"
+                )
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(count, line.positionCount);
             Assert.AreEqual(0f, line.startWidth);
@@ -196,19 +203,24 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Call(string action, JObject properties)
         {
-            return JObject.FromObject(ManageVFX.HandleCommand(new JObject
-            {
-                ["action"] = action,
-                ["target"] = root.GetInstanceIDCompat(),
-                ["searchMethod"] = "by_id",
-                ["properties"] = properties
-            }));
+            return JObject.FromObject(
+                ManageVFX.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["target"] = root.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["properties"] = properties,
+                    }
+                )
+            );
         }
 
         private void AssignUsableMaterial()
         {
             Shader shader = RenderPipelineUtility.ResolveShader("Standard");
-            if (shader == null || !shader.isSupported) Assert.Ignore("An active-pipeline-compatible shader is required.");
+            if (shader == null || !shader.isSupported)
+                Assert.Ignore("An active-pipeline-compatible shader is required.");
             material = new Material(shader);
             if (RenderPipelineUtility.IsMaterialInvalidForActivePipeline(material, out string reason))
                 Assert.Ignore("A usable material is required: " + reason);

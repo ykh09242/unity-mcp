@@ -39,20 +39,24 @@ namespace MCPForUnityTests.Editor.Tools
             if (Directory.Exists(resolved))
             {
                 AssetDatabase.DeleteAsset(assetRoot);
-                if (Directory.Exists(resolved)) Directory.Delete(resolved, true);
+                if (Directory.Exists(resolved))
+                    Directory.Delete(resolved, true);
             }
             foreach (string relativePath in new[] { "Assets/" + shaderName + ".shader", "Assets/Shaders/" + shaderName + ".shader" })
             {
                 string full = Path.Combine(Application.dataPath, relativePath.Substring("Assets/".Length));
-                if (!File.Exists(full)) continue;
+                if (!File.Exists(full))
+                    continue;
                 AssetDatabase.DeleteAsset(relativePath);
-                if (File.Exists(full)) File.Delete(full);
+                if (File.Exists(full))
+                    File.Delete(full);
             }
             string shadersDirectory = Path.GetDirectoryName(SiblingShaderPath);
             if (shadersDirectoryWasMissing && Directory.Exists(shadersDirectory) && Directory.GetFileSystemEntries(shadersDirectory).Length == 0)
             {
                 AssetDatabase.DeleteAsset("Assets/Shaders");
-                if (Directory.Exists(shadersDirectory)) Directory.Delete(shadersDirectory);
+                if (Directory.Exists(shadersDirectory))
+                    Directory.Delete(shadersDirectory);
             }
         }
 
@@ -84,15 +88,18 @@ namespace MCPForUnityTests.Editor.Tools
         public void MalformedUtf8RejectsBeforeFolderCreationOrExistingFileReplacement(string action, string encoded)
         {
             byte[] original = Encoding.UTF8.GetBytes("// original shader bytes 한글");
-            if (action == "update") Seed(original);
+            if (action == "update")
+                Seed(original);
             var request = Request(action);
             request["contentsEncoded"] = true;
             request["encodedContents"] = encoded;
 
             AssertFailure(request);
 
-            if (action == "create") Assert.IsFalse(Directory.Exists(FullAssetRoot));
-            else CollectionAssert.AreEqual(original, File.ReadAllBytes(ShaderPath));
+            if (action == "create")
+                Assert.IsFalse(Directory.Exists(FullAssetRoot));
+            else
+                CollectionAssert.AreEqual(original, File.ReadAllBytes(ShaderPath));
         }
 
         [TestCase("create")]
@@ -100,20 +107,24 @@ namespace MCPForUnityTests.Editor.Tools
         public void UnpairedSurrogateRejectsBeforeFolderCreationOrFileTruncation(string action)
         {
             byte[] original = Encoding.UTF8.GetBytes("// original bytes 한글");
-            if (action == "update") Seed(original);
+            if (action == "update")
+                Seed(original);
             var request = Request(action);
             request["contents"] = "invalid" + '\ud800';
 
             AssertFailure(request);
 
-            if (action == "create") Assert.IsFalse(Directory.Exists(FullAssetRoot));
-            else CollectionAssert.AreEqual(original, File.ReadAllBytes(ShaderPath));
+            if (action == "create")
+                Assert.IsFalse(Directory.Exists(FullAssetRoot));
+            else
+                CollectionAssert.AreEqual(original, File.ReadAllBytes(ShaderPath));
         }
 
         [Test]
         public void ExistingShaderNameRejectsBeforePreparingARequestedFolder()
         {
-            if (Shader.Find("Standard") == null) Assert.Ignore("Requires the installed Standard shader for a deterministic name conflict.");
+            if (Shader.Find("Standard") == null)
+                Assert.Ignore("Requires the installed Standard shader for a deterministic name conflict.");
             var request = Request("create");
             request["name"] = "Standard";
 
@@ -152,13 +163,26 @@ namespace MCPForUnityTests.Editor.Tools
             Encoding encoding;
             switch (kind)
             {
-                case "utf8": encoding = new UTF8Encoding(false); break;
-                case "utf8_bom": encoding = new UTF8Encoding(true); break;
-                case "utf16le": encoding = new UnicodeEncoding(false, true); break;
-                case "utf16be": encoding = new UnicodeEncoding(true, true); break;
-                case "utf32le": encoding = new UTF32Encoding(false, true); break;
-                case "utf32be": encoding = new UTF32Encoding(true, true); break;
-                default: throw new ArgumentException("Unknown test encoding.", nameof(kind));
+                case "utf8":
+                    encoding = new UTF8Encoding(false);
+                    break;
+                case "utf8_bom":
+                    encoding = new UTF8Encoding(true);
+                    break;
+                case "utf16le":
+                    encoding = new UnicodeEncoding(false, true);
+                    break;
+                case "utf16be":
+                    encoding = new UnicodeEncoding(true, true);
+                    break;
+                case "utf32le":
+                    encoding = new UTF32Encoding(false, true);
+                    break;
+                case "utf32be":
+                    encoding = new UTF32Encoding(true, true);
+                    break;
+                default:
+                    throw new ArgumentException("Unknown test encoding.", nameof(kind));
             }
             byte[] preamble = encoding.GetPreamble();
             // Preserve an intentional second U+FEFF, as well as a valid replacement character.
@@ -199,7 +223,8 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(length > 10000, (bool)response["data"]["contentsEncoded"]);
             if (length > 10000)
                 Assert.AreEqual(text, Encoding.UTF8.GetString(Convert.FromBase64String((string)response["data"]["encodedContents"])));
-            else Assert.AreEqual(JTokenType.Null, response["data"]["encodedContents"].Type);
+            else
+                Assert.AreEqual(JTokenType.Null, response["data"]["encodedContents"].Type);
             CollectionAssert.AreEqual(original, File.ReadAllBytes(ShaderPath));
         }
 
@@ -236,10 +261,14 @@ namespace MCPForUnityTests.Editor.Tools
 
             Assert.IsTrue((bool)response["success"], response.ToString());
             Assert.AreEqual(sibling, File.ReadAllText(SiblingShaderPath));
-            if (action == "delete") Assert.IsFalse(File.Exists(RootShaderPath));
-            else if (action == "read") Assert.AreEqual(original, (string)response["data"]["contents"]);
-            else Assert.AreEqual(replacement, File.ReadAllText(RootShaderPath));
-            if (action != "delete") Assert.AreEqual("Assets/" + shaderName + ".shader", (string)response["data"]["path"]);
+            if (action == "delete")
+                Assert.IsFalse(File.Exists(RootShaderPath));
+            else if (action == "read")
+                Assert.AreEqual(original, (string)response["data"]["contents"]);
+            else
+                Assert.AreEqual(replacement, File.ReadAllText(RootShaderPath));
+            if (action != "delete")
+                Assert.AreEqual("Assets/" + shaderName + ".shader", (string)response["data"]["path"]);
         }
 
         [TestCase(null)]
@@ -249,8 +278,10 @@ namespace MCPForUnityTests.Editor.Tools
             Directory.CreateDirectory(Path.GetDirectoryName(SiblingShaderPath));
             File.WriteAllText(SiblingShaderPath, "// default shader", new UTF8Encoding(false));
             var request = Request("read");
-            if (path == null) request.Remove("path");
-            else request["path"] = path;
+            if (path == null)
+                request.Remove("path");
+            else
+                request["path"] = path;
 
             var response = JObject.FromObject(ManageShader.HandleCommand(request));
 
@@ -270,12 +301,13 @@ namespace MCPForUnityTests.Editor.Tools
             File.WriteAllBytes(ShaderPath, contents);
         }
 
-        private JObject Request(string action) => new JObject
-        {
-            ["action"] = action,
-            ["name"] = shaderName,
-            ["path"] = assetRoot
-        };
+        private JObject Request(string action) =>
+            new JObject
+            {
+                ["action"] = action,
+                ["name"] = shaderName,
+                ["path"] = assetRoot,
+            };
 
         private static JObject AssertFailure(JObject request)
         {

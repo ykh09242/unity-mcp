@@ -23,7 +23,8 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         public static object HandleCommand(JObject @params)
         {
-            if (@params == null) return new ErrorResponse("Parameters cannot be null.");
+            if (@params == null)
+                return new ErrorResponse("Parameters cannot be null.");
 
             // Extract parameters
             string action = @params["action"]?.ToString()?.ToLowerInvariant();
@@ -69,9 +70,7 @@ namespace MCPForUnity.Editor.Tools
             // Basic name validation (alphanumeric, underscores, cannot start with number)
             if (!Regex.IsMatch(name, @"^[a-zA-Z_][a-zA-Z0-9_]*$"))
             {
-                return new ErrorResponse(
-                    $"Invalid shader name: '{name}'. Use only letters, numbers, underscores, and don't start with a number."
-                );
+                return new ErrorResponse($"Invalid shader name: '{name}'. Use only letters, numbers, underscores, and don't start with a number.");
             }
 
             // Ensure path is relative to Assets/, removing any leading "Assets/"
@@ -80,8 +79,11 @@ namespace MCPForUnity.Editor.Tools
             if (!string.IsNullOrEmpty(relativeDir))
             {
                 relativeDir = AssetPathUtility.NormalizeSeparators(relativeDir);
-                if (Path.IsPathRooted(relativeDir) || relativeDir.Contains(":") ||
-                    relativeDir.Split('/').Any(segment => segment == ".." || segment.EndsWith(".") || segment.EndsWith(" ")))
+                if (
+                    Path.IsPathRooted(relativeDir)
+                    || relativeDir.Contains(":")
+                    || relativeDir.Split('/').Any(segment => segment == ".." || segment.EndsWith(".") || segment.EndsWith(" "))
+                )
                     return new ErrorResponse("Shader path must be a relative directory inside Assets.");
                 relativeDir = relativeDir.TrimEnd('/');
                 if (string.Equals(relativeDir, "Assets", StringComparison.OrdinalIgnoreCase))
@@ -106,13 +108,17 @@ namespace MCPForUnity.Editor.Tools
             {
                 fullPath = SafePathUtility.ResolveWithinRoot(Application.dataPath, Path.Combine(relativeDir, shaderFileName));
             }
-            catch (Exception ex) when (ex is ArgumentException || ex is IOException || ex is InvalidOperationException || ex is UnauthorizedAccessException || ex is NotSupportedException)
+            catch (Exception ex)
+                when (ex is ArgumentException
+                    || ex is IOException
+                    || ex is InvalidOperationException
+                    || ex is UnauthorizedAccessException
+                    || ex is NotSupportedException
+                )
             {
                 return new ErrorResponse($"Invalid shader path: {ex.Message}");
             }
-            string relativePath = AssetPathUtility.NormalizeSeparators(
-                Path.Combine("Assets", relativeDir, shaderFileName)
-            ); // Ensure "Assets/" prefix and forward slashes
+            string relativePath = AssetPathUtility.NormalizeSeparators(Path.Combine("Assets", relativeDir, shaderFileName)); // Ensure "Assets/" prefix and forward slashes
 
             // Route to specific action handlers
             switch (action)
@@ -126,9 +132,7 @@ namespace MCPForUnity.Editor.Tools
                 case "delete":
                     return DeleteShader(fullPath, relativePath);
                 default:
-                    return new ErrorResponse(
-                        $"Unknown action: '{action}'. Valid actions are: create, read, update, delete."
-                    );
+                    return new ErrorResponse($"Unknown action: '{action}'. Valid actions are: create, read, update, delete.");
             }
         }
 
@@ -150,27 +154,18 @@ namespace MCPForUnity.Editor.Tools
             return Convert.ToBase64String(data);
         }
 
-        private static object CreateShader(
-            string fullPath,
-            string relativePath,
-            string name,
-            string contents
-        )
+        private static object CreateShader(string fullPath, string relativePath, string name, string contents)
         {
             // Check if shader already exists
             if (File.Exists(fullPath))
             {
-                return new ErrorResponse(
-                    $"Shader already exists at '{relativePath}'. Use 'update' action to modify."
-                );
+                return new ErrorResponse($"Shader already exists at '{relativePath}'. Use 'update' action to modify.");
             }
 
             // Add validation for shader name conflicts in Unity
             if (Shader.Find(name) != null)
             {
-                return new ErrorResponse(
-                    $"A shader with name '{name}' already exists in the project. Choose a different name."
-                );
+                return new ErrorResponse($"A shader with name '{name}' already exists in the project. Choose a different name.");
             }
 
             // Generate default content if none provided
@@ -188,10 +183,7 @@ namespace MCPForUnity.Editor.Tools
                 fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
                 File.WriteAllText(fullPath, contents, StrictUtf8);
                 AssetDatabase.ImportAsset(relativePath, ImportAssetOptions.ForceSynchronousImport);
-                var response = new SuccessResponse(
-                    $"Shader '{name}.shader' created successfully at '{relativePath}'.",
-                    new { path = relativePath }
-                );
+                var response = new SuccessResponse($"Shader '{name}.shader' created successfully at '{relativePath}'.", new { path = relativePath });
                 folders.Complete();
                 return response;
             }
@@ -224,10 +216,7 @@ namespace MCPForUnity.Editor.Tools
                     contentsEncoded = isLarge,
                 };
 
-                return new SuccessResponse(
-                    $"Shader '{Path.GetFileName(relativePath)}' read successfully.",
-                    responseData
-                );
+                return new SuccessResponse($"Shader '{Path.GetFileName(relativePath)}' read successfully.", responseData);
             }
             catch (Exception e)
             {
@@ -267,18 +256,11 @@ namespace MCPForUnity.Editor.Tools
             return encoding.GetString(bytes, offset, bytes.Length - offset);
         }
 
-        private static object UpdateShader(
-            string fullPath,
-            string relativePath,
-            string name,
-            string contents
-        )
+        private static object UpdateShader(string fullPath, string relativePath, string name, string contents)
         {
             if (!File.Exists(fullPath))
             {
-                return new ErrorResponse(
-                    $"Shader not found at '{relativePath}'. Use 'create' action to add a new shader."
-                );
+                return new ErrorResponse($"Shader not found at '{relativePath}'. Use 'create' action to add a new shader.");
             }
             if (string.IsNullOrEmpty(contents))
             {
@@ -290,10 +272,7 @@ namespace MCPForUnity.Editor.Tools
                 StrictUtf8.GetByteCount(contents);
                 File.WriteAllText(fullPath, contents, StrictUtf8);
                 AssetDatabase.ImportAsset(relativePath, ImportAssetOptions.ForceSynchronousImport);
-                return new SuccessResponse(
-                    $"Shader '{Path.GetFileName(relativePath)}' updated successfully.",
-                    new { path = relativePath }
-                );
+                return new SuccessResponse($"Shader '{Path.GetFileName(relativePath)}' updated successfully.", new { path = relativePath });
             }
             catch (Exception e)
             {
@@ -335,7 +314,9 @@ namespace MCPForUnity.Editor.Tools
         //TODO: making a HLSL template as well?
         private static string GenerateDefaultShaderContent(string name)
         {
-            return @"Shader """ + name + @"""
+            return @"Shader """
+                + name
+                + @"""
         {
             Properties
             {

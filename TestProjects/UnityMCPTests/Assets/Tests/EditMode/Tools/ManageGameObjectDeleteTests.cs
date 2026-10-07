@@ -1,9 +1,9 @@
 using System.Collections.Generic;
-using NUnit.Framework;
-using UnityEngine;
+using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
-using MCPForUnity.Editor.Tools.GameObjects;
+using NUnit.Framework;
+using UnityEngine;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -46,18 +46,18 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "delete",
                 ["target"] = "DeleteTargetByName",
-                ["searchMethod"] = "by_name"
+                ["searchMethod"] = "by_name",
             };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
 
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
-            
+
             // Verify object is deleted
             var found = GameObject.Find("DeleteTargetByName");
             Assert.IsNull(found, "Object should be deleted");
-            
+
             // Remove from our tracking list since it's deleted
             testObjects.Remove(target);
         }
@@ -72,18 +72,18 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "delete",
                 ["target"] = instanceID,
-                ["searchMethod"] = "by_id"
+                ["searchMethod"] = "by_id",
             };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
 
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
-            
+
             // Verify object is deleted
             var found = GameObject.Find("DeleteTargetByID");
             Assert.IsNull(found, "Object should be deleted");
-            
+
             testObjects.Remove(target);
         }
 
@@ -94,7 +94,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "delete",
                 ["target"] = "NonExistentObject12345",
-                ["searchMethod"] = "by_name"
+                ["searchMethod"] = "by_name",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -106,10 +106,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Delete_WithoutTarget_ReturnsError()
         {
-            var p = new JObject
-            {
-                ["action"] = "delete"
-            };
+            var p = new JObject { ["action"] = "delete" };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
@@ -128,7 +125,7 @@ namespace MCPForUnityTests.Editor.Tools
             // This test verifies at least one tagged object is deleted.
             var target1 = CreateTestObject("DeleteByTag1");
             var target2 = CreateTestObject("DeleteByTag2");
-            
+
             // Use built-in tag
             target1.tag = "MainCamera";
             target2.tag = "MainCamera";
@@ -137,26 +134,28 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "delete",
                 ["target"] = "MainCamera",
-                ["searchMethod"] = "by_tag"
+                ["searchMethod"] = "by_tag",
             };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
 
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
-            
+
             // Verify at least one object was deleted (current behavior deletes first match)
             bool target1Deleted = target1 == null; // Unity Object == null check
             bool target2Deleted = target2 == null;
             Assert.IsTrue(target1Deleted || target2Deleted, "At least one tagged object should be deleted");
-            
+
             // Check response data for deletion info
             var data = resultObj["data"];
             Assert.IsNotNull(data, "Response should include data");
-            
+
             // Clean up only surviving objects from tracking
-            if (!target1Deleted) testObjects.Remove(target1);
-            if (!target2Deleted) testObjects.Remove(target2);
+            if (!target1Deleted)
+                testObjects.Remove(target1);
+            if (!target2Deleted)
+                testObjects.Remove(target2);
         }
 
         [Test]
@@ -169,21 +168,22 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "delete",
                 ["target"] = "UI",
-                ["searchMethod"] = "by_layer"
+                ["searchMethod"] = "by_layer",
             };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
 
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
-            
+
             // Verify the object was actually deleted
             bool targetDeleted = target == null; // Unity Object == null check
             Assert.IsTrue(targetDeleted, "Object on UI layer should be deleted");
             Assert.IsFalse(testObjects.Contains(target) && target != null, "Deleted object should not be findable");
-            
+
             // Only remove from tracking if not already destroyed
-            if (!targetDeleted) testObjects.Remove(target);
+            if (!targetDeleted)
+                testObjects.Remove(target);
         }
 
         [Test]
@@ -197,13 +197,13 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "delete",
                 ["target"] = "DeleteParent/DeleteChild",
-                ["searchMethod"] = "by_path"
+                ["searchMethod"] = "by_path",
             };
 
             var result = ManageGameObject.HandleCommand(p);
             // Capture current behavior
             Assert.IsNotNull(result, "Should return a result");
-            
+
             testObjects.Remove(child);
         }
 
@@ -218,7 +218,7 @@ namespace MCPForUnityTests.Editor.Tools
             var child1 = CreateTestObject("Child1");
             var child2 = CreateTestObject("Child2");
             var grandchild = CreateTestObject("Grandchild");
-            
+
             child1.transform.SetParent(parent.transform);
             child2.transform.SetParent(parent.transform);
             grandchild.transform.SetParent(child1.transform);
@@ -227,20 +227,20 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "delete",
                 ["target"] = "DeleteParentWithChildren",
-                ["searchMethod"] = "by_name"
+                ["searchMethod"] = "by_name",
             };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
 
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
-            
+
             // All should be deleted
             Assert.IsNull(GameObject.Find("DeleteParentWithChildren"), "Parent should be deleted");
             Assert.IsNull(GameObject.Find("Child1"), "Child1 should be deleted");
             Assert.IsNull(GameObject.Find("Child2"), "Child2 should be deleted");
             Assert.IsNull(GameObject.Find("Grandchild"), "Grandchild should be deleted");
-            
+
             testObjects.Remove(parent);
             testObjects.Remove(child1);
             testObjects.Remove(child2);
@@ -258,18 +258,18 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "delete",
                 ["target"] = "ChildToDelete",
-                ["searchMethod"] = "by_name"
+                ["searchMethod"] = "by_name",
             };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
 
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
-            
+
             // Child deleted, parent survives
             Assert.IsNull(GameObject.Find("ChildToDelete"), "Child should be deleted");
             Assert.IsNotNull(GameObject.Find("ParentShouldSurvive"), "Parent should survive");
-            
+
             testObjects.Remove(child);
         }
 
@@ -286,30 +286,31 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "delete",
                 ["target"] = "DeleteCountTest",
-                ["searchMethod"] = "by_name"
+                ["searchMethod"] = "by_name",
             };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
 
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
-            
+
             // Verify object was actually deleted
             bool targetDeleted = target == null;
             Assert.IsTrue(targetDeleted, "Object should be deleted");
-            
+
             // Check for deleted count in response
             var data = resultObj["data"];
             Assert.IsNotNull(data, "Response should include data");
-            
+
             // Verify the actual count if present
             if (data is JObject dataObj && dataObj.ContainsKey("deletedCount"))
             {
                 Assert.AreEqual(1, dataObj.Value<int>("deletedCount"), "Should report 1 deleted object");
             }
-            
+
             // Only remove from tracking if not already destroyed
-            if (!targetDeleted) testObjects.Remove(target);
+            if (!targetDeleted)
+                testObjects.Remove(target);
         }
 
         #endregion
@@ -326,13 +327,13 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "delete",
                 ["target"] = "InactiveDeleteTarget",
-                ["searchMethod"] = "by_name"
+                ["searchMethod"] = "by_name",
             };
 
             var result = ManageGameObject.HandleCommand(p);
             // Capture current behavior for inactive objects
             Assert.IsNotNull(result, "Should return a result");
-            
+
             testObjects.Remove(target);
         }
 
@@ -348,34 +349,37 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "delete",
                 ["target"] = "DuplicateName",
-                ["searchMethod"] = "by_name"
+                ["searchMethod"] = "by_name",
             };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
 
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
-            
+
             // Verify deletion occurred - at least one should be deleted
             bool target1Deleted = target1 == null;
             bool target2Deleted = target2 == null;
             Assert.IsTrue(target1Deleted || target2Deleted, "At least one object should be deleted");
-            
+
             // Count remaining objects with the name to verify behavior
             int remainingCount = 0;
-            if (!target1Deleted) remainingCount++;
-            if (!target2Deleted) remainingCount++;
-            
+            if (!target1Deleted)
+                remainingCount++;
+            if (!target2Deleted)
+                remainingCount++;
+
             // Document the actual behavior: first match is deleted, second survives
             // If both are deleted, that's also acceptable (bulk delete mode)
             Assert.IsTrue(remainingCount <= 1, $"Expected at most 1 remaining, got {remainingCount}");
-            
+
             // Clean up only survivors from tracking
-            if (!target1Deleted) testObjects.Remove(target1);
-            if (!target2Deleted) testObjects.Remove(target2);
+            if (!target1Deleted)
+                testObjects.Remove(target1);
+            if (!target2Deleted)
+                testObjects.Remove(target2);
         }
 
         #endregion
     }
 }
-

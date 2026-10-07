@@ -1,6 +1,7 @@
 """
 Resource registry for auto-discovery of MCP resources.
 """
+
 from typing import Callable, Any
 
 # Global registry to collect decorated resources
@@ -8,10 +9,7 @@ _resource_registry: list[dict[str, Any]] = []
 
 
 def mcp_for_unity_resource(
-    uri: str,
-    name: str | None = None,
-    description: str | None = None,
-    **kwargs
+    uri: str, name: str | None = None, description: str | None = None, **kwargs
 ) -> Callable:
     """
     Decorator for registering MCP resources in the server's resources directory.
@@ -28,15 +26,18 @@ def mcp_for_unity_resource(
         async def my_custom_resource(ctx: Context, ...):
             pass
     """
+
     def decorator(func: Callable) -> Callable:
         resource_name = name if name is not None else func.__name__
-        _resource_registry.append({
-            'func': func,
-            'uri': uri,
-            'name': resource_name,
-            'description': description,
-            'kwargs': kwargs
-        })
+        _resource_registry.append(
+            {
+                "func": func,
+                "uri": uri,
+                "name": resource_name,
+                "description": description,
+                "kwargs": kwargs,
+            }
+        )
 
         return func
 

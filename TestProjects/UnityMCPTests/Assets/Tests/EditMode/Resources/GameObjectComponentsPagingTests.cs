@@ -2,10 +2,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using MCPForUnity.Editor.Resources.Scene;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.Editor.Resources
 {
@@ -111,24 +111,32 @@ namespace MCPForUnityTests.Editor.Resources
         [Test]
         public void CamelCasePageSize_TakesPrecedenceOverSnakeCase()
         {
-            var response = JObject.FromObject(GameObjectComponentsResource.HandleCommand(new JObject
-            {
-                ["instanceID"] = _target.GetInstanceIDCompat(),
-                ["pageSize"] = 1,
-                ["page_size"] = new JValue(2147483648L),
-                ["includeProperties"] = false
-            }));
+            var response = JObject.FromObject(
+                GameObjectComponentsResource.HandleCommand(
+                    new JObject
+                    {
+                        ["instanceID"] = _target.GetInstanceIDCompat(),
+                        ["pageSize"] = 1,
+                        ["page_size"] = new JValue(2147483648L),
+                        ["includeProperties"] = false,
+                    }
+                )
+            );
             Assert.AreEqual(1, response["data"]["pageSize"].Value<int>());
             Assert.AreEqual(1, response["data"]["components"].Count());
         }
 
-        private JObject ReadPage(JToken cursor, JToken pageSize = null)
-            => JObject.FromObject(GameObjectComponentsResource.HandleCommand(new JObject
-            {
-                ["instanceID"] = _target.GetInstanceIDCompat(),
-                ["cursor"] = cursor,
-                ["pageSize"] = pageSize ?? new JValue(1),
-                ["includeProperties"] = false
-            }));
+        private JObject ReadPage(JToken cursor, JToken pageSize = null) =>
+            JObject.FromObject(
+                GameObjectComponentsResource.HandleCommand(
+                    new JObject
+                    {
+                        ["instanceID"] = _target.GetInstanceIDCompat(),
+                        ["cursor"] = cursor,
+                        ["pageSize"] = pageSize ?? new JValue(1),
+                        ["includeProperties"] = false,
+                    }
+                )
+            );
     }
 }

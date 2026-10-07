@@ -18,17 +18,32 @@ from services.tools.import_model import import_model
 
 COMMAND = "import_model"
 ALLOWED_KEYS = {
-    "action", "query", "categories", "downloadable", "count", "cursor",
-    "uid", "targetSize", "name", "outputFolder", "jobId",
+    "action",
+    "query",
+    "categories",
+    "downloadable",
+    "count",
+    "cursor",
+    "uid",
+    "targetSize",
+    "name",
+    "outputFolder",
+    "jobId",
 }
 
 
 def _call_tool(**kwargs):
     ctx = MagicMock()
-    with patch.object(import_model_module, "get_unity_instance_from_context",
-                      new=AsyncMock(return_value="unity-1")):
-        with patch.object(import_model_module, "send_with_unity_instance",
-                          new=AsyncMock(return_value={"success": True, "data": {}})) as mock_send:
+    with patch.object(
+        import_model_module,
+        "get_unity_instance_from_context",
+        new=AsyncMock(return_value="unity-1"),
+    ):
+        with patch.object(
+            import_model_module,
+            "send_with_unity_instance",
+            new=AsyncMock(return_value={"success": True, "data": {}}),
+        ) as mock_send:
             result = asyncio.run(import_model(ctx, **kwargs))
     return result, mock_send.call_args.args
 
@@ -55,10 +70,13 @@ def mock_config():
 def cli_runner(runner, mock_config):
     def _invoke(args):
         with patch("cli.commands.asset_gen.get_config", return_value=mock_config):
-            with patch("cli.commands.asset_gen.run_command",
-                       return_value={"success": True, "message": "OK", "data": {}}) as mock_run:
+            with patch(
+                "cli.commands.asset_gen.run_command",
+                return_value={"success": True, "message": "OK", "data": {}},
+            ) as mock_run:
                 result = runner.invoke(asset_gen, args)
                 return result, mock_run
+
     return _invoke
 
 
@@ -85,8 +103,11 @@ class TestImportModelRouting:
 
     def test_import_routes_with_param_mapping(self):
         _, sent = _call_tool(
-            action="import", uid="u9", target_size=2.0,
-            name="Prop", output_folder="Assets/Generated/Sketchfab",
+            action="import",
+            uid="u9",
+            target_size=2.0,
+            name="Prop",
+            output_folder="Assets/Generated/Sketchfab",
         )
         params = _sent_params(sent)
         assert _sent_command(sent) == COMMAND
@@ -109,9 +130,17 @@ class TestImportModelRouting:
 
     def test_no_secret_keys_in_payload(self):
         _, sent = _call_tool(
-            action="search", query="q", categories="cars", downloadable=True,
-            count=5, cursor="c1", uid="u", target_size=1.0, name="N",
-            output_folder="Assets/Generated/Sketchfab", job_id="j",
+            action="search",
+            query="q",
+            categories="cars",
+            downloadable=True,
+            count=5,
+            cursor="c1",
+            uid="u",
+            target_size=1.0,
+            name="N",
+            output_folder="Assets/Generated/Sketchfab",
+            job_id="j",
         )
         params = _sent_params(sent)
         assert set(params.keys()).issubset(ALLOWED_KEYS)
@@ -121,20 +150,29 @@ class TestImportModelRouting:
 
     def test_non_dict_response_guarded(self):
         ctx = MagicMock()
-        with patch.object(import_model_module, "get_unity_instance_from_context",
-                          new=AsyncMock(return_value="u")):
-            with patch.object(import_model_module, "send_with_unity_instance",
-                              new=AsyncMock(return_value=None)):
+        with patch.object(
+            import_model_module, "get_unity_instance_from_context", new=AsyncMock(return_value="u")
+        ):
+            with patch.object(
+                import_model_module, "send_with_unity_instance", new=AsyncMock(return_value=None)
+            ):
                 result = asyncio.run(import_model(ctx, action="status", job_id="j"))
         assert result["success"] is False
 
 
 class TestImportModelCLI:
     def test_import_model_cli(self, cli_runner):
-        result, mock_run = cli_runner([
-            "import-model", "--uid", "abc123", "--name", "Prop",
-            "--output-folder", "Assets/Props",
-        ])
+        result, mock_run = cli_runner(
+            [
+                "import-model",
+                "--uid",
+                "abc123",
+                "--name",
+                "Prop",
+                "--output-folder",
+                "Assets/Props",
+            ]
+        )
         assert result.exit_code == 0
         command = mock_run.call_args.args[0]
         params = mock_run.call_args.args[1]

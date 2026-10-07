@@ -17,7 +17,9 @@ namespace MCPForUnityTests.Editor.Helpers
         [SetUp]
         public void SetUp()
         {
-            foreach (string key in new[] { EditorPrefKeys.HttpTransportScope, EditorPrefKeys.HttpRemoteBaseUrl, EditorPrefKeys.HttpBaseUrl, EditorPrefKeys.ApiKey })
+            foreach (
+                string key in new[] { EditorPrefKeys.HttpTransportScope, EditorPrefKeys.HttpRemoteBaseUrl, EditorPrefKeys.HttpBaseUrl, EditorPrefKeys.ApiKey }
+            )
                 strings[key] = UnityEditor.EditorPrefs.HasKey(key) ? UnityEditor.EditorPrefs.GetString(key) : null;
             foreach (string key in new[] { EditorPrefKeys.UseHttpTransport, EditorPrefKeys.AllowInsecureRemoteHttp, EditorPrefKeys.AllowLanHttpBind })
                 flags[key] = UnityEditor.EditorPrefs.HasKey(key) ? UnityEditor.EditorPrefs.GetBool(key) : (bool?)null;
@@ -33,11 +35,15 @@ namespace MCPForUnityTests.Editor.Helpers
         public void TearDown()
         {
             foreach (var pair in strings)
-                if (pair.Value == null) UnityEditor.EditorPrefs.DeleteKey(pair.Key);
-                else UnityEditor.EditorPrefs.SetString(pair.Key, pair.Value);
+                if (pair.Value == null)
+                    UnityEditor.EditorPrefs.DeleteKey(pair.Key);
+                else
+                    UnityEditor.EditorPrefs.SetString(pair.Key, pair.Value);
             foreach (var pair in flags)
-                if (!pair.Value.HasValue) UnityEditor.EditorPrefs.DeleteKey(pair.Key);
-                else UnityEditor.EditorPrefs.SetBool(pair.Key, pair.Value.Value);
+                if (!pair.Value.HasValue)
+                    UnityEditor.EditorPrefs.DeleteKey(pair.Key);
+                else
+                    UnityEditor.EditorPrefs.SetBool(pair.Key, pair.Value.Value);
             EditorConfigurationCache.Instance.Refresh();
         }
 
@@ -85,7 +91,9 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.AreSame(sibling, root["mcpServers"]["other"]);
 
             string toml = CodexConfigHelper.UpsertCodexServerBlock(
-                "model = \"synthetic\"\n[mcp_servers.other]\nenabled = false\n[mcp_servers.unityMCP]\ntool_timeout_sec = 7", null);
+                "model = \"synthetic\"\n[mcp_servers.other]\nenabled = false\n[mcp_servers.unityMCP]\ntool_timeout_sec = 7",
+                null
+            );
             Assert.IsTrue(CodexConfigHelper.TryParseCodexServer(toml, out _, out _, out string url));
             Assert.AreEqual(prefix + "/mcp" + query, url);
             StringAssert.Contains("tool_timeout_sec = 7", toml);
@@ -134,8 +142,10 @@ namespace MCPForUnityTests.Editor.Helpers
         {
             UnityEditor.EditorPrefs.SetBool(EditorPrefKeys.AllowLanHttpBind, lan);
             Assert.AreEqual(expected, HttpEndpointUtility.IsHttpLocalUrlAllowedForLaunch(url, out string error));
-            if (expected) Assert.IsNull(error);
-            else Assert.IsNotEmpty(error);
+            if (expected)
+                Assert.IsNull(error);
+            else
+                Assert.IsNotEmpty(error);
         }
 
         [TestCase("test-only-quote\"backslash\\end")]

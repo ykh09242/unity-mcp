@@ -6,6 +6,7 @@ Resources:
 - mcpforunity://scene/gameobject/{instance_id}/components
 - mcpforunity://scene/gameobject/{instance_id}/component/{component_name}
 """
+
 import pytest
 
 from .test_helpers import DummyContext
@@ -207,6 +208,7 @@ async def test_get_gameobject_component_single(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_gameobject_component_not_found(monkeypatch):
     """Test error when component is not found."""
+
     async def fake_send(cmd, params, **kwargs):
         return {
             "success": False,
@@ -232,6 +234,7 @@ async def test_get_gameobject_component_not_found(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_gameobject_not_found(monkeypatch):
     """Test error when GameObject is not found."""
+
     async def fake_send(cmd, params, **kwargs):
         return {
             "success": False,
@@ -251,4 +254,3 @@ async def test_get_gameobject_not_found(monkeypatch):
 
     assert resp.success is False
     assert "99999" in (resp.message or "")
-

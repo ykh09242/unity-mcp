@@ -33,7 +33,7 @@ def _split_uri(uri: str) -> tuple[str, str]:
     """
     raw_path: str
     if uri.startswith("mcpforunity://path/"):
-        raw_path = uri[len("mcpforunity://path/"):]
+        raw_path = uri[len("mcpforunity://path/") :]
     elif uri.startswith("file://"):
         parsed = urlparse(uri)
         host = (parsed.netloc or "").strip()
@@ -57,8 +57,7 @@ def _split_uri(uri: str) -> tuple[str, str]:
 
     # If an 'Assets' segment exists, compute path relative to it (case-insensitive)
     parts = [p for p in norm.split("/") if p not in ("", ".")]
-    idx = next((i for i, seg in enumerate(parts)
-                if seg.lower() == "assets"), None)
+    idx = next((i for i, seg in enumerate(parts) if seg.lower() == "assets"), None)
     assets_rel = "/".join(parts[idx:]) if idx is not None else None
 
     effective_path = assets_rel if assets_rel else norm
@@ -69,7 +68,9 @@ def _split_uri(uri: str) -> tuple[str, str]:
 
     name, extension = os.path.splitext(os.path.basename(effective_path))
     if extension and extension.lower() != ".cs":
-        raise ValueError("find_in_file supports C# scripts (.cs) or extensionless script paths only.")
+        raise ValueError(
+            "find_in_file supports C# scripts (.cs) or extensionless script paths only."
+        )
     directory = os.path.dirname(effective_path)
     return name, directory
 
@@ -91,8 +92,7 @@ async def find_in_file(
     pattern: Annotated[str, "The regex pattern to search for"],
     project_root: Annotated[str | None, "Optional project root path"] = None,
     max_results: Annotated[int, "Cap results to avoid huge payloads"] = 200,
-    ignore_case: Annotated[bool | str | None,
-                           "Case insensitive search"] = True,
+    ignore_case: Annotated[bool | str | None, "Case insensitive search"] = True,
 ) -> dict[str, Any]:
     # project_root is currently unused but kept for interface consistency
     try:
@@ -131,14 +131,19 @@ async def find_in_file(
     )
 
     if not isinstance(read_resp, dict) or not read_resp.get("success"):
-        return read_resp if isinstance(read_resp, dict) else {"success": False, "message": str(read_resp)}
+        return (
+            read_resp
+            if isinstance(read_resp, dict)
+            else {"success": False, "message": str(read_resp)}
+        )
 
     data = read_resp.get("data", {})
     contents = data.get("contents")
     if not contents and data.get("contentsEncoded") and data.get("encodedContents"):
         try:
-            contents = base64.b64decode(data.get("encodedContents", "").encode(
-                "utf-8")).decode("utf-8", "replace")
+            contents = base64.b64decode(data.get("encodedContents", "").encode("utf-8")).decode(
+                "utf-8", "replace"
+            )
         except (ValueError, TypeError, base64.binascii.Error):
             contents = contents or ""
 
@@ -160,11 +165,11 @@ async def find_in_file(
     # Reverse regex searches return descending offsets. Count disjoint ranges
     # in sorted order, then emit matches in the regex's original order.
     for start_idx in sorted({m.start() for m in selected}):
-        line_num += contents.count('\n', previous_start, start_idx)
+        line_num += contents.count("\n", previous_start, start_idx)
         previous_start = start_idx
         if excerpt is None or (line_end != -1 and line_end < start_idx):
-            line_start = contents.rfind('\n', 0, start_idx) + 1
-            line_end = contents.find('\n', start_idx)
+            line_start = contents.rfind("\n", 0, start_idx) + 1
+            line_end = contents.find("\n", start_idx)
             end = line_end if line_end != -1 else len(contents)
             excerpt = contents[line_start:end].strip()[:2000]
         line_metadata[start_idx] = (line_num, excerpt)
@@ -173,19 +178,17 @@ async def find_in_file(
     for m in selected:
         start_idx = m.start()
         line_num, excerpt = line_metadata[start_idx]
-        results.append({
-            "line": line_num,
-            "content": excerpt,
-            "match": m.group(0)[:2000],
-            "start": start_idx,
-            "end": m.end()
-        })
+        results.append(
+            {
+                "line": line_num,
+                "content": excerpt,
+                "match": m.group(0)[:2000],
+                "start": start_idx,
+                "end": m.end(),
+            }
+        )
 
     return {
         "success": True,
-        "data": {
-            "matches": results,
-            "count": len(results),
-            "total_matches": len(found)
-        }
+        "data": {"matches": results, "count": len(results), "total_matches": len(found)},
     }

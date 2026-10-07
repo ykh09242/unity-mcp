@@ -1,8 +1,8 @@
 using System;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
-using MCPForUnity.Editor.Tools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -14,11 +14,19 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string marker = "ConsoleCursorContract_" + Guid.NewGuid().ToString("N");
             Debug.Log(marker);
-            var response = JObject.FromObject(ReadConsole.HandleCommand(new JObject
-            {
-                ["action"] = "get", ["types"] = new JArray("all"), ["format"] = "json",
-                ["filterText"] = marker, ["pageSize"] = 1, ["count"] = count
-            }));
+            var response = JObject.FromObject(
+                ReadConsole.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "get",
+                        ["types"] = new JArray("all"),
+                        ["format"] = "json",
+                        ["filterText"] = marker,
+                        ["pageSize"] = 1,
+                        ["count"] = count,
+                    }
+                )
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var items = (JArray)response["data"]["items"];
             Assert.AreEqual(1, items.Count);
@@ -32,8 +40,12 @@ namespace MCPForUnityTests.Editor.Tools
             Debug.Log(marker);
             var parameters = new JObject
             {
-                ["action"] = "get", ["types"] = new JArray("all"), ["format"] = "json",
-                ["filterText"] = marker, ["pageSize"] = 2, ["cursor"] = int.MaxValue
+                ["action"] = "get",
+                ["types"] = new JArray("all"),
+                ["format"] = "json",
+                ["filterText"] = marker,
+                ["pageSize"] = 2,
+                ["cursor"] = int.MaxValue,
             };
             var beyondEnd = JObject.FromObject(ReadConsole.HandleCommand(parameters));
             Assert.IsTrue(beyondEnd.Value<bool>("success"), beyondEnd.ToString());

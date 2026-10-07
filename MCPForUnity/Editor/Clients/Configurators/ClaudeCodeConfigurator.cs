@@ -10,12 +10,8 @@ namespace MCPForUnity.Editor.Clients.Configurators
     /// </summary>
     public class ClaudeCodeConfigurator : ClaudeCliMcpConfigurator
     {
-        public ClaudeCodeConfigurator() : base(new McpClient
-        {
-            name = "Claude Code",
-            SupportsHttpTransport = true,
-        })
-        { }
+        public ClaudeCodeConfigurator()
+            : base(new McpClient { name = "Claude Code", SupportsHttpTransport = true }) { }
 
         public override bool SupportsSkills => true;
 
@@ -24,6 +20,5 @@ namespace MCPForUnity.Editor.Clients.Configurators
             var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             return Path.Combine(userHome, ".claude", "skills", "unity-mcp-skill");
         }
-
     }
 }

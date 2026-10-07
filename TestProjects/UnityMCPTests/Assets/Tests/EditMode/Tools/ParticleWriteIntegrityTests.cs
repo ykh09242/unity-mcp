@@ -2,12 +2,12 @@ using System;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Vfx;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -68,8 +68,10 @@ namespace MCPForUnityTests.Editor.Tools
         {
             try
             {
-                if (root != null) UnityEngine.Object.DestroyImmediate(root);
-                if (material != null && !EditorUtility.IsPersistent(material)) UnityEngine.Object.DestroyImmediate(material);
+                if (root != null)
+                    UnityEngine.Object.DestroyImmediate(root);
+                if (material != null && !EditorUtility.IsPersistent(material))
+                    UnityEngine.Object.DestroyImmediate(material);
                 if (ownsAssetFolder)
                 {
                     const string prefix = "Assets/__McpParticleWriteIntegrity_";
@@ -183,7 +185,10 @@ namespace MCPForUnityTests.Editor.Tools
         public void MainCurveNullStringAndUnknownModeFallbacksRemainCompatible()
         {
             AssignUsableMaterial();
-            Assert.IsTrue(Call("particle_set_main", JObject.Parse("{startSpeed:'bad',startLifetime:null,startDelay:{mode:'unknown'},startColor:null}")).Value<bool>("success"));
+            Assert.IsTrue(
+                Call("particle_set_main", JObject.Parse("{startSpeed:'bad',startLifetime:null,startDelay:{mode:'unknown'},startColor:null}"))
+                    .Value<bool>("success")
+            );
             Assert.AreEqual(5f, particles.main.startSpeed.constant);
             Assert.AreEqual(5f, particles.main.startLifetime.constant);
             Assert.AreEqual(0f, particles.main.startDelay.constant);
@@ -201,7 +206,15 @@ namespace MCPForUnityTests.Editor.Tools
             AssetDatabase.CreateAsset(material, path);
             Assert.AreSame(material, AssetDatabase.LoadAssetAtPath<Material>(path));
             renderer.sharedMaterial = null;
-            JObject response = Call("particle_set_renderer", new JObject { ["materialPath"] = path, ["allowRoll"] = false, ["sortingOrder"] = 0 });
+            JObject response = Call(
+                "particle_set_renderer",
+                new JObject
+                {
+                    ["materialPath"] = path,
+                    ["allowRoll"] = false,
+                    ["sortingOrder"] = 0,
+                }
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreSame(material, renderer.sharedMaterial);
             Assert.IsFalse(response.Value<bool>("materialReplaced"));
@@ -221,19 +234,24 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Call(string action, JObject properties)
         {
-            return JObject.FromObject(ManageVFX.HandleCommand(new JObject
-            {
-                ["action"] = action,
-                ["target"] = root.GetInstanceIDCompat(),
-                ["searchMethod"] = "by_id",
-                ["properties"] = properties
-            }));
+            return JObject.FromObject(
+                ManageVFX.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["target"] = root.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["properties"] = properties,
+                    }
+                )
+            );
         }
 
         private void AssignUsableMaterial()
         {
             Shader shader = RenderPipelineUtility.ResolveShader("Standard");
-            if (shader == null || !shader.isSupported) Assert.Ignore("An active-pipeline usable shader is required.");
+            if (shader == null || !shader.isSupported)
+                Assert.Ignore("An active-pipeline usable shader is required.");
             material = new Material(shader);
             if (RenderPipelineUtility.IsMaterialInvalidForActivePipeline(material, out string reason))
                 Assert.Ignore("An active-pipeline usable material is required: " + reason);
@@ -249,54 +267,156 @@ namespace MCPForUnityTests.Editor.Tools
             var size = particles.sizeOverLifetime;
             var velocity = particles.velocityOverLifetime;
             var noise = particles.noise;
-            return JObject.FromObject(new
-            {
-                main = new { main.duration, main.loop, main.prewarm, startDelay = CurveSnapshot(main.startDelay), startLifetime = CurveSnapshot(main.startLifetime), startSpeed = CurveSnapshot(main.startSpeed), startSize = CurveSnapshot(main.startSize), startRotation = CurveSnapshot(main.startRotation), startColor = GradientSnapshot(main.startColor), gravityModifier = CurveSnapshot(main.gravityModifier), main.simulationSpace, main.scalingMode, main.playOnAwake, main.maxParticles },
-                emission = new { emission.enabled, rateOverTime = CurveSnapshot(emission.rateOverTime), rateOverDistance = CurveSnapshot(emission.rateOverDistance) },
-                shape = new { shape.enabled, shape.shapeType, shape.radius, shape.radiusThickness, shape.angle, shape.arc, position = VectorSnapshot(shape.position), rotation = VectorSnapshot(shape.rotation), scale = VectorSnapshot(shape.scale) },
-                color = new { color.enabled, color = GradientSnapshot(color.color) },
-                size = new { size.enabled, size.separateAxes, size = CurveSnapshot(size.size), x = CurveSnapshot(size.x), y = CurveSnapshot(size.y), z = CurveSnapshot(size.z) },
-                velocity = new { velocity.enabled, velocity.space, x = CurveSnapshot(velocity.x), y = CurveSnapshot(velocity.y), z = CurveSnapshot(velocity.z), speedModifier = CurveSnapshot(velocity.speedModifier) },
-                noise = new { noise.enabled, strength = CurveSnapshot(noise.strength), noise.frequency, scrollSpeed = CurveSnapshot(noise.scrollSpeed), noise.damping, noise.octaveCount, noise.quality },
-                renderer = new { material = renderer.sharedMaterial != null ? renderer.sharedMaterial.GetInstanceIDCompat() : 0, trailMaterial = renderer.trailMaterial != null ? renderer.trailMaterial.GetInstanceIDCompat() : 0, renderer.renderMode, renderer.sortMode, renderer.minParticleSize, renderer.maxParticleSize, renderer.lengthScale, renderer.velocityScale, renderer.cameraVelocityScale, renderer.normalDirection, renderer.alignment, pivot = VectorSnapshot(renderer.pivot), flip = VectorSnapshot(renderer.flip), renderer.allowRoll, renderer.shadowBias, renderer.receiveShadows, renderer.shadowCastingMode, renderer.lightProbeUsage, renderer.reflectionProbeUsage, renderer.motionVectorGenerationMode, renderer.sortingOrder, renderer.sortingLayerID, renderer.sortingLayerName, renderer.renderingLayerMask },
-                particles.isPlaying,
-                particles.particleCount,
-                childPlaying = child.isPlaying,
-                childParticleCount = child.particleCount
-            }).ToString(Formatting.None);
+            return JObject
+                .FromObject(
+                    new
+                    {
+                        main = new
+                        {
+                            main.duration,
+                            main.loop,
+                            main.prewarm,
+                            startDelay = CurveSnapshot(main.startDelay),
+                            startLifetime = CurveSnapshot(main.startLifetime),
+                            startSpeed = CurveSnapshot(main.startSpeed),
+                            startSize = CurveSnapshot(main.startSize),
+                            startRotation = CurveSnapshot(main.startRotation),
+                            startColor = GradientSnapshot(main.startColor),
+                            gravityModifier = CurveSnapshot(main.gravityModifier),
+                            main.simulationSpace,
+                            main.scalingMode,
+                            main.playOnAwake,
+                            main.maxParticles,
+                        },
+                        emission = new
+                        {
+                            emission.enabled,
+                            rateOverTime = CurveSnapshot(emission.rateOverTime),
+                            rateOverDistance = CurveSnapshot(emission.rateOverDistance),
+                        },
+                        shape = new
+                        {
+                            shape.enabled,
+                            shape.shapeType,
+                            shape.radius,
+                            shape.radiusThickness,
+                            shape.angle,
+                            shape.arc,
+                            position = VectorSnapshot(shape.position),
+                            rotation = VectorSnapshot(shape.rotation),
+                            scale = VectorSnapshot(shape.scale),
+                        },
+                        color = new { color.enabled, color = GradientSnapshot(color.color) },
+                        size = new
+                        {
+                            size.enabled,
+                            size.separateAxes,
+                            size = CurveSnapshot(size.size),
+                            x = CurveSnapshot(size.x),
+                            y = CurveSnapshot(size.y),
+                            z = CurveSnapshot(size.z),
+                        },
+                        velocity = new
+                        {
+                            velocity.enabled,
+                            velocity.space,
+                            x = CurveSnapshot(velocity.x),
+                            y = CurveSnapshot(velocity.y),
+                            z = CurveSnapshot(velocity.z),
+                            speedModifier = CurveSnapshot(velocity.speedModifier),
+                        },
+                        noise = new
+                        {
+                            noise.enabled,
+                            strength = CurveSnapshot(noise.strength),
+                            noise.frequency,
+                            scrollSpeed = CurveSnapshot(noise.scrollSpeed),
+                            noise.damping,
+                            noise.octaveCount,
+                            noise.quality,
+                        },
+                        renderer = new
+                        {
+                            material = renderer.sharedMaterial != null ? renderer.sharedMaterial.GetInstanceIDCompat() : 0,
+                            trailMaterial = renderer.trailMaterial != null ? renderer.trailMaterial.GetInstanceIDCompat() : 0,
+                            renderer.renderMode,
+                            renderer.sortMode,
+                            renderer.minParticleSize,
+                            renderer.maxParticleSize,
+                            renderer.lengthScale,
+                            renderer.velocityScale,
+                            renderer.cameraVelocityScale,
+                            renderer.normalDirection,
+                            renderer.alignment,
+                            pivot = VectorSnapshot(renderer.pivot),
+                            flip = VectorSnapshot(renderer.flip),
+                            renderer.allowRoll,
+                            renderer.shadowBias,
+                            renderer.receiveShadows,
+                            renderer.shadowCastingMode,
+                            renderer.lightProbeUsage,
+                            renderer.reflectionProbeUsage,
+                            renderer.motionVectorGenerationMode,
+                            renderer.sortingOrder,
+                            renderer.sortingLayerID,
+                            renderer.sortingLayerName,
+                            renderer.renderingLayerMask,
+                        },
+                        particles.isPlaying,
+                        particles.particleCount,
+                        childPlaying = child.isPlaying,
+                        childParticleCount = child.particleCount,
+                    }
+                )
+                .ToString(Formatting.None);
         }
 
         private static float[] VectorSnapshot(Vector3 value) => new[] { value.x, value.y, value.z };
+
         private static float[] ColorSnapshot(Color value) => new[] { value.r, value.g, value.b, value.a };
 
-        private static object CurveSnapshot(ParticleSystem.MinMaxCurve curve) => new
-        {
-            curve.mode,
-            curve.constantMin,
-            curve.constantMax,
-            curve.curveMultiplier,
-            min = AnimationSnapshot(curve.curveMin),
-            max = AnimationSnapshot(curve.curveMax)
-        };
+        private static object CurveSnapshot(ParticleSystem.MinMaxCurve curve) =>
+            new
+            {
+                curve.mode,
+                curve.constantMin,
+                curve.constantMax,
+                curve.curveMultiplier,
+                min = AnimationSnapshot(curve.curveMin),
+                max = AnimationSnapshot(curve.curveMax),
+            };
 
-        private static object AnimationSnapshot(AnimationCurve curve) => curve?.keys.Select(key => new
-        {
-            key.time, key.value, key.inTangent, key.outTangent, key.inWeight, key.outWeight, key.weightedMode
-        }).ToArray();
+        private static object AnimationSnapshot(AnimationCurve curve) =>
+            curve
+                ?.keys.Select(key => new
+                {
+                    key.time,
+                    key.value,
+                    key.inTangent,
+                    key.outTangent,
+                    key.inWeight,
+                    key.outWeight,
+                    key.weightedMode,
+                })
+                .ToArray();
 
-        private static object GradientSnapshot(ParticleSystem.MinMaxGradient gradient) => new
-        {
-            gradient.mode,
-            minColor = ColorSnapshot(gradient.colorMin),
-            maxColor = ColorSnapshot(gradient.colorMax),
-            minGradient = GradientKeys(gradient.gradientMin),
-            maxGradient = GradientKeys(gradient.gradientMax)
-        };
+        private static object GradientSnapshot(ParticleSystem.MinMaxGradient gradient) =>
+            new
+            {
+                gradient.mode,
+                minColor = ColorSnapshot(gradient.colorMin),
+                maxColor = ColorSnapshot(gradient.colorMax),
+                minGradient = GradientKeys(gradient.gradientMin),
+                maxGradient = GradientKeys(gradient.gradientMax),
+            };
 
-        private static object GradientKeys(Gradient gradient) => gradient == null ? null : new
-        {
-            color = gradient.colorKeys.Select(key => new { key.time, color = ColorSnapshot(key.color) }).ToArray(),
-            alpha = gradient.alphaKeys.Select(key => new { key.time, key.alpha }).ToArray()
-        };
+        private static object GradientKeys(Gradient gradient) =>
+            gradient == null
+                ? null
+                : new
+                {
+                    color = gradient.colorKeys.Select(key => new { key.time, color = ColorSnapshot(key.color) }).ToArray(),
+                    alpha = gradient.alphaKeys.Select(key => new { key.time, key.alpha }).ToArray(),
+                };
     }
 }

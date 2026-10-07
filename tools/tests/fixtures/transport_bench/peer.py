@@ -1,4 +1,5 @@
 """Owned synthetic Unity wire peers; never discover or contact an Editor."""
+
 from __future__ import annotations
 
 import json
@@ -20,12 +21,18 @@ from pydantic import JsonValue
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
-from tools.tests.fixtures.transport_bench.workload import PROJECT_HASH, PeerRequest, PeerTiming, make_result
+from tools.tests.fixtures.transport_bench.workload import (
+    PROJECT_HASH,
+    PeerRequest,
+    PeerTiming,
+    make_result,
+)
 
 
 @dataclass(slots=True)
 class PeerState:
     """Mutable counters and connection leases belong to this fixture run."""
+
     timing_path: Path
     large_bytes: int
     work_ms: float
@@ -56,7 +63,9 @@ class PeerState:
         with self.write_lock:
             self.active.setdefault(request.correlation, threading.Event()).set()
             with self.timing_path.with_name("active.jsonl").open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps({"correlation": request.correlation, "command": request.name}) + "\n")
+                stream.write(
+                    json.dumps({"correlation": request.correlation, "command": request.name}) + "\n"
+                )
 
     def completed(self, correlation: str) -> None:
         with self.write_lock:
@@ -80,7 +89,9 @@ class PeerState:
         count, event = self.cohorts.get(key, (0, anyio.Event()))
         count += 1
         self.cohorts[key] = count, event
-        expected = min(self.concurrency, self.samples - index // self.concurrency * self.concurrency)
+        expected = min(
+            self.concurrency, self.samples - index // self.concurrency * self.concurrency
+        )
         if count == expected:
             event.set()
 
@@ -92,16 +103,22 @@ class PeerState:
 
     def serialize(self, request: PeerRequest, queue_ms: float, work_ms: float) -> bytes:
         started = time.perf_counter()
-        result: dict[str, JsonValue] = ({"message": "pong"} if request.name == "ping"
-                                        else make_result(request.workload, self.large_bytes))
+        result: dict[str, JsonValue] = (
+            {"message": "pong"}
+            if request.name == "ping"
+            else make_result(request.workload, self.large_bytes)
+        )
         envelope: dict[str, JsonValue] = {"status": "success", "result": result}
         if request.id:
             envelope = {"type": "command_result", "id": request.id, "result": envelope}
         payload = json.dumps(envelope, separators=(",", ":")).encode()
-        timing = PeerTiming(correlation=request.correlation, queue_ms=queue_ms,
-                            synthetic_unity_work_ms=work_ms,
-                            peer_serialization_ms=(time.perf_counter() - started) * 1000,
-                            response_bytes=len(payload))
+        timing = PeerTiming(
+            correlation=request.correlation,
+            queue_ms=queue_ms,
+            synthetic_unity_work_ms=work_ms,
+            peer_serialization_ms=(time.perf_counter() - started) * 1000,
+            response_bytes=len(payload),
+        )
         with self.write_lock:
             self.commands[request.name] = self.commands.get(request.name, 0) + 1
             with self.timing_path.open("a", encoding="utf-8") as stream:
@@ -121,6 +138,7 @@ def read_exact(connection: socket.socket, size: int) -> bytes:
 
 class TcpPeer(socketserver.ThreadingTCPServer):
     """Ephemeral listener serving the production legacy frame format."""
+
     daemon_threads = True
 
     def __init__(self, state: PeerState) -> None:
@@ -135,20 +153,32 @@ class TcpHandler(socketserver.BaseRequestHandler):
         self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         state = self.server.state
         challenge = secrets.token_hex(32)
-        banner = (f"WELCOME UNITY-MCP 2 FRAMING=1 AUTH=HMAC-SHA256 SERVER={state.server_generation} "
-                  f"CHALLENGE={challenge}\n").encode("ascii")
+        banner = (
+            f"WELCOME UNITY-MCP 2 FRAMING=1 AUTH=HMAC-SHA256 SERVER={state.server_generation} "
+            f"CHALLENGE={challenge}\n"
+        ).encode("ascii")
         self.request.sendall(banner)
         auth_size = struct.unpack(">Q", read_exact(self.request, 8))[0]
         if auth_size > 1024:
             raise ValueError("Owned authentication frame too large")
         auth = json.loads(read_exact(self.request, auth_size))
         base = f"{state.server_generation}\n{challenge}\n{auth['client_nonce']}"
-        proof = hmac.new(state.auth_token.encode(), ("unity-mcp-stdio-v2\nclient\n" + base).encode(), hashlib.sha256).hexdigest()
+        proof = hmac.new(
+            state.auth_token.encode(),
+            ("unity-mcp-stdio-v2\nclient\n" + base).encode(),
+            hashlib.sha256,
+        ).hexdigest()
         if not hmac.compare_digest(proof, auth["proof"]):
             raise ValueError("Owned authentication proof mismatch")
         session_id = secrets.token_hex(16)
-        server_proof = hmac.new(state.auth_token.encode(), ("unity-mcp-stdio-v2\nserver\n" + base + "\n" + session_id).encode(), hashlib.sha256).hexdigest()
-        ack = json.dumps({"type": "authenticated", "version": 2, "session_id": session_id, "proof": server_proof}).encode()
+        server_proof = hmac.new(
+            state.auth_token.encode(),
+            ("unity-mcp-stdio-v2\nserver\n" + base + "\n" + session_id).encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        ack = json.dumps(
+            {"type": "authenticated", "version": 2, "session_id": session_id, "proof": server_proof}
+        ).encode()
         self.request.sendall(struct.pack(">Q", len(ack)) + ack)
         self.server.state.registrations += 1
         try:
@@ -158,9 +188,13 @@ class TcpHandler(socketserver.BaseRequestHandler):
                 request = PeerRequest(name=raw["type"], params=raw["params"])
                 self.server.state.mark_active(request)
                 started = time.perf_counter()
-                delay = 0.5 if ":cancel" in request.correlation else self.server.state.work_ms / 1000
+                delay = (
+                    0.5 if ":cancel" in request.correlation else self.server.state.work_ms / 1000
+                )
                 time.sleep(delay)
-                payload = self.server.state.serialize(request, 0.0, (time.perf_counter() - started) * 1000)
+                payload = self.server.state.serialize(
+                    request, 0.0, (time.perf_counter() - started) * 1000
+                )
                 self.request.sendall(struct.pack(">Q", len(payload)) + payload)
                 state.completed(request.correlation)
         except (EOFError, ConnectionError, OSError):
@@ -182,7 +216,11 @@ async def serve_websocket(state: PeerState, endpoint: str, token: str) -> None:
                 await state.wait_cohort(request.correlation)
             if state.resource_enabled:
                 await state.resource_entered.wait()
-            delay = 0.5 if request.name != "ping" and ":cancel" in request.correlation else state.work_ms / 1000
+            delay = (
+                0.5
+                if request.name != "ping" and ":cancel" in request.correlation
+                else state.work_ms / 1000
+            )
             await anyio.sleep(delay)
             payload = state.serialize(request, queue_ms, (time.perf_counter() - started) * 1000)
             if len(payload) < THRESHOLD_BYTES:
@@ -191,24 +229,49 @@ async def serve_websocket(state: PeerState, endpoint: str, token: str) -> None:
                 chunks = (len(payload) + CHUNK_PAYLOAD_BYTES - 1) // CHUNK_PAYLOAD_BYTES
                 if request.correlation == "large:partial_cancel":
                     state.partial_command_id, state.partial_total_bytes = request.id, len(payload)
-                await websocket.send(json.dumps({"type": "result_start", "id": request.id,
-                                                 "total_bytes": len(payload), "chunk_count": chunks}))
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "type": "result_start",
+                            "id": request.id,
+                            "total_bytes": len(payload),
+                            "chunk_count": chunks,
+                        }
+                    )
+                )
                 for index in range(chunks):
                     start = index * CHUNK_PAYLOAD_BYTES
-                    await websocket.send(MAGIC + request.id.encode("ascii") + struct.pack(">I", start)
-                                         + payload[start:start + CHUNK_PAYLOAD_BYTES])
+                    await websocket.send(
+                        MAGIC
+                        + request.id.encode("ascii")
+                        + struct.pack(">I", start)
+                        + payload[start : start + CHUNK_PAYLOAD_BYTES]
+                    )
                     if index == 0 and request.correlation == "large:partial_cancel":
                         await state.partial_release.wait()
             state.completed(request.correlation)
 
     while True:
         try:
-            async with websockets.connect(endpoint, additional_headers={LOCAL_AUTH_HEADER: token},
-                                          proxy=None, compression=None, max_size=2**20) as websocket:
+            async with websockets.connect(
+                endpoint,
+                additional_headers={LOCAL_AUTH_HEADER: token},
+                proxy=None,
+                compression=None,
+                max_size=2**20,
+            ) as websocket:
                 json.loads(await websocket.recv())  # welcome precedes registration
-                await websocket.send(json.dumps({"type": "register", "project_name": "OwnedBench",
-                                                 "project_hash": PROJECT_HASH, "unity_version": "synthetic",
-                                                 "capabilities": ["large_result_v1"]}))
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "type": "register",
+                            "project_name": "OwnedBench",
+                            "project_hash": PROJECT_HASH,
+                            "unity_version": "synthetic",
+                            "capabilities": ["large_result_v1"],
+                        }
+                    )
+                )
                 registered = json.loads(await websocket.recv())
                 if registered["type"] != "registered":
                     raise ValueError("Owned peer registration rejected")
@@ -225,10 +288,21 @@ async def serve_websocket(state: PeerState, endpoint: str, token: str) -> None:
                                     request = PeerRequest.model_validate(raw)
                                     correlation = state.command_correlations.pop(request.id, "")
                                     if correlation:
-                                        request = request.model_copy(update={"params": {**request.params, "benchCorrelation": correlation}})
+                                        request = request.model_copy(
+                                            update={
+                                                "params": {
+                                                    **request.params,
+                                                    "benchCorrelation": correlation,
+                                                }
+                                            }
+                                        )
                                     group.start_soon(execute, request)
                                 case "ping":
-                                    await websocket.send(json.dumps({"type": "pong", "session_id": registered["session_id"]}))
+                                    await websocket.send(
+                                        json.dumps(
+                                            {"type": "pong", "session_id": registered["session_id"]}
+                                        )
+                                    )
                                 case "registered" | "tools_registered":
                                     pass
                                 case other:

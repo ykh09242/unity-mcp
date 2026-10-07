@@ -22,7 +22,11 @@ def test_upm_and_bundle_use_the_same_commit_archive_without_git_checkout():
         source,
     )
     assert bundle["server"]["mcp_config"]["args"] == [
-        "--python", ">=3.11", "--from", source, "mcp-for-unity",
+        "--python",
+        ">=3.11",
+        "--from",
+        source,
+        "mcp-for-unity",
     ]
 
 
@@ -40,11 +44,14 @@ def test_git_upm_subfolder_carries_the_original_mit_notice():
     assert bundled == original
 
 
-@pytest.mark.parametrize("python_version,allowed", [
-    ("3.10.20", False),
-    ("3.11.0", True),
-    ("3.14.8", True),
-])
+@pytest.mark.parametrize(
+    "python_version,allowed",
+    [
+        ("3.10.20", False),
+        ("3.11.0", True),
+        ("3.14.8", True),
+    ],
+)
 def test_published_metadata_requires_python311(python_version, allowed):
     project = tomllib.loads((ROOT / "Server/pyproject.toml").read_text(encoding="utf-8"))["project"]
     assert (python_version in SpecifierSet(project["requires-python"])) is allowed

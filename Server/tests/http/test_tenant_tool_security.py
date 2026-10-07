@@ -44,9 +44,14 @@ async def test_remote_registration_does_not_mutate_global_catalog(tenant_state, 
         ws = SimpleNamespace(state=SimpleNamespace(user_id=user))
         await registry.register(user, "Project", "shared-hash", "6000", user_id=user)
         PluginHub._connections[user] = ws
-        await hub._handle_register_tools(ws, RegisterToolsMessage(tools=[
-            ToolDefinitionModel(name="shared_tool", description=user),
-        ]))
+        await hub._handle_register_tools(
+            ws,
+            RegisterToolsMessage(
+                tools=[
+                    ToolDefinitionModel(name="shared_tool", description=user),
+                ]
+            ),
+        )
 
     assert await mcp.list_tools() == []
     assert mcp._transforms == transforms
@@ -86,9 +91,14 @@ async def test_oversized_tool_metadata_is_rejected_before_storage(tenant_state):
     PluginHub._connections["alice"] = ws
     hub = PluginHub({"type": "websocket"}, receive=AsyncMock(), send=AsyncMock())
 
-    await hub._handle_register_tools(ws, RegisterToolsMessage(tools=[
-        ToolDefinitionModel(name="oversized", description="x" * (512 * 1024)),
-    ]))
+    await hub._handle_register_tools(
+        ws,
+        RegisterToolsMessage(
+            tools=[
+                ToolDefinitionModel(name="oversized", description="x" * (512 * 1024)),
+            ]
+        ),
+    )
 
     ws.close.assert_awaited_once()
     assert await service.list_registered_tools("hash", user_id="alice") == []
@@ -103,19 +113,23 @@ async def test_tool_listing_filters_each_users_enabled_set(tenant_state, monkeyp
         {"name": "execute_custom_tool", "unity_target": None},
     ]
     monkeypatch.setattr(
-        "transport.unity_instance_middleware.get_registered_tools", lambda: metadata)
+        "transport.unity_instance_middleware.get_registered_tools", lambda: metadata
+    )
     middleware = UnityInstanceMiddleware()
     monkeypatch.setattr(middleware, "_inject_unity_instance", AsyncMock())
-    tools = [SimpleNamespace(name=name) for name in (
-        "manage_scene", "manage_gameobject", "execute_custom_tool", "foreign_custom")]
+    tools = [
+        SimpleNamespace(name=name)
+        for name in ("manage_scene", "manage_gameobject", "execute_custom_tool", "foreign_custom")
+    ]
     for user, enabled in (("alice", "manage_scene"), ("bob", "manage_gameobject")):
         await registry.register(user, "Project", "hash", "6000", user_id=user)
         await registry.register_tools_for_session(user, [ToolDefinitionModel(name=enabled)])
 
     for user, enabled in (("alice", "manage_scene"), ("bob", "manage_gameobject")):
         state = {"user_id": user, "unity_instance": "Project@hash"}
-        context = SimpleNamespace(fastmcp_context=SimpleNamespace(
-            get_state=AsyncMock(side_effect=state.get)))
+        context = SimpleNamespace(
+            fastmcp_context=SimpleNamespace(get_state=AsyncMock(side_effect=state.get))
+        )
 
         visible = await middleware.on_list_tools(context, AsyncMock(return_value=tools))
 

@@ -1,4 +1,5 @@
 """Preserve declared scalar types before FastMCP can coerce tool arguments."""
+
 from copy import copy
 import inspect
 from types import ModuleType, UnionType
@@ -57,11 +58,16 @@ def strict_scalar_annotation(annotation: Any) -> Any:
                     value = Strict()
                 elif isinstance(value, AllowInfNan) and scalar is float:
                     value = AllowInfNan(False)
-                elif isinstance(value, FieldInfo) and any(isinstance(item, (Strict, AllowInfNan)) for item in value.metadata):
+                elif isinstance(value, FieldInfo) and any(
+                    isinstance(item, (Strict, AllowInfNan)) for item in value.metadata
+                ):
                     value = copy(value)
                     value.metadata = [
-                        Strict() if isinstance(item, Strict) else
-                        AllowInfNan(False) if isinstance(item, AllowInfNan) and scalar is float else item
+                        Strict()
+                        if isinstance(item, Strict)
+                        else AllowInfNan(False)
+                        if isinstance(item, AllowInfNan) and scalar is float
+                        else item
                         for item in value.metadata
                     ]
                 preserved.append(value)
@@ -70,7 +76,11 @@ def strict_scalar_annotation(annotation: Any) -> Any:
     if origin in (Union, UnionType):
         return Union[tuple(strict_scalar_annotation(arg) for arg in arguments)]
     if origin in (list, dict, tuple, set, frozenset):
-        return origin[tuple(strict_scalar_annotation(arg) for arg in arguments)] if arguments else annotation
+        return (
+            origin[tuple(strict_scalar_annotation(arg) for arg in arguments)]
+            if arguments
+            else annotation
+        )
     if origin is Literal:
         return annotation  # Tool enums declare strings; enum members are values, not types.
     return annotation

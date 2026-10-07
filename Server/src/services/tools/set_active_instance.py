@@ -26,21 +26,23 @@ from transport.protocol import is_sessionless
     ),
 )
 async def set_active_instance(
-        ctx: Context,
-        instance: Annotated[str, "Target instance (Name@hash, hash prefix, or port number in stdio mode)"]
+    ctx: Context,
+    instance: Annotated[
+        str, "Target instance (Name@hash, hash prefix, or port number in stdio mode)"
+    ],
 ) -> dict[str, Any]:
     value = (instance or "").strip()
     if not value:
         return {
             "success": False,
             "error": "Instance identifier is required. "
-                     "Use mcpforunity://instances to copy a Name@hash or provide a hash prefix.",
+            "Use mcpforunity://instances to copy a Name@hash or provide a hash prefix.",
         }
     if is_sessionless(ctx):
         return {
             "success": False,
             "error": "This MCP protocol is sessionless, so active instance selection cannot persist. "
-                     "Pass unity_instance on each tool call, or use a client with a stateful MCP handshake.",
+            "Pass unity_instance on each tool call, or use a client with a stateful MCP handshake.",
         }
     transport = (config.transport_mode or "stdio").lower()
 
@@ -50,19 +52,20 @@ async def set_active_instance(
             return {
                 "success": False,
                 "error": f"Port-based targeting ('{value}') is not supported in HTTP transport mode. "
-                         "Use Name@hash or a hash prefix. Read mcpforunity://instances for available instances."
+                "Use Name@hash or a hash prefix. Read mcpforunity://instances for available instances.",
             }
         port_int = int(value)
         pool = get_unity_connection_pool()
         instances = pool.discover_all_instances(force_refresh=True)
         match = next((inst for inst in instances if getattr(inst, "port", None) == port_int), None)
         if match is None:
-            available = ", ".join(
-                f"{inst.id} (port {getattr(inst, 'port', '?')})" for inst in instances
-            ) or "none"
+            available = (
+                ", ".join(f"{inst.id} (port {getattr(inst, 'port', '?')})" for inst in instances)
+                or "none"
+            )
             return {
                 "success": False,
-                "error": f"No Unity instance found on port {value}. Available: {available}."
+                "error": f"No Unity instance found on port {value}. Available: {available}.",
             }
         resolved_id = match.id
         middleware = get_unity_instance_middleware()
@@ -79,8 +82,7 @@ async def set_active_instance(
     # Discover running instances based on transport
     if transport == "http":
         # In remote-hosted mode, filter sessions by user_id
-        user_id = (await ctx.get_state(
-            "user_id")) if config.http_remote_hosted else None
+        user_id = (await ctx.get_state("user_id")) if config.http_remote_hosted else None
         sessions_data = await PluginHub.get_sessions(user_id=user_id)
         sessions = sessions_data.sessions
         instances = []
@@ -90,12 +92,14 @@ async def set_active_instance(
             if not hash_value:
                 continue
             inst_id = f"{project}@{hash_value}"
-            instances.append(SimpleNamespace(
-                id=inst_id,
-                hash=hash_value,
-                name=project,
-                session_id=session_id,
-            ))
+            instances.append(
+                SimpleNamespace(
+                    id=inst_id,
+                    hash=hash_value,
+                    name=project,
+                    session_id=session_id,
+                )
+            )
     else:
         pool = get_unity_connection_pool()
         instances = pool.discover_all_instances(force_refresh=True)
@@ -103,7 +107,7 @@ async def set_active_instance(
     if not instances:
         return {
             "success": False,
-            "error": "No Unity instances are currently connected. Start Unity and press 'Start Session'."
+            "error": "No Unity instances are currently connected. Start Unity and press 'Start Session'.",
         }
     ids = {inst.id: inst for inst in instances if getattr(inst, "id", None)}
 
@@ -114,7 +118,7 @@ async def set_active_instance(
             return {
                 "success": False,
                 "error": f"Instance '{value}' not found. "
-                "Use mcpforunity://instances to copy an exact Name@hash."
+                "Use mcpforunity://instances to copy an exact Name@hash.",
             }
     else:
         lookup = value.lower()
@@ -129,25 +133,23 @@ async def set_active_instance(
             return {
                 "success": False,
                 "error": f"Instance hash '{value}' does not match any running Unity editors. "
-                "Use mcpforunity://instances to confirm the available hashes."
+                "Use mcpforunity://instances to confirm the available hashes.",
             }
         if len(matches) > 1:
-            matching_ids = ", ".join(
-                inst.id for inst in matches if getattr(inst, "id", None)
-            ) or "multiple instances"
+            matching_ids = (
+                ", ".join(inst.id for inst in matches if getattr(inst, "id", None))
+                or "multiple instances"
+            )
             return {
                 "success": False,
                 "error": f"Instance hash '{value}' is ambiguous ({matching_ids}). "
-                "Provide the full Name@hash from mcpforunity://instances."
+                "Provide the full Name@hash from mcpforunity://instances.",
             }
         resolved = matches[0]
 
     if resolved is None:
         # Should be unreachable due to logic above, but satisfies static analysis
-        return {
-            "success": False,
-            "error": "Internal error: Instance resolution failed."
-        }
+        return {"success": False, "error": "Internal error: Instance resolution failed."}
 
     # Store selection in middleware (session-scoped via FastMCP context state).
     middleware = get_unity_instance_middleware()

@@ -22,14 +22,28 @@ namespace MCPForUnity.Editor.MenuItems
         [MenuItem(Root + "Import Selection From Blender (GLB)", priority = 20)]
         private static async void ImportSelection()
         {
-            await RunAsync(new JObject { ["action"] = "import_model", ["selection_only"] = true, ["format"] = "glb" });
+            await RunAsync(
+                new JObject
+                {
+                    ["action"] = "import_model",
+                    ["selection_only"] = true,
+                    ["format"] = "glb",
+                }
+            );
         }
 
         /// <summary>Exports Blender's whole scene as GLB and places it in the open scene.</summary>
         [MenuItem(Root + "Import Whole Scene From Blender (GLB)", priority = 21)]
         private static async void ImportScene()
         {
-            await RunAsync(new JObject { ["action"] = "import_model", ["format"] = "glb", ["name"] = "BlenderScene" });
+            await RunAsync(
+                new JObject
+                {
+                    ["action"] = "import_model",
+                    ["format"] = "glb",
+                    ["name"] = "BlenderScene",
+                }
+            );
         }
 
         /// <summary>Captures Blender's viewport and reveals the PNG.</summary>
@@ -38,7 +52,8 @@ namespace MCPForUnity.Editor.MenuItems
         {
             JObject r = await RunAsync(new JObject { ["action"] = "screenshot" });
             string path = r?["data"]?["path"]?.ToString();
-            if (!string.IsNullOrEmpty(path)) EditorUtility.RevealInFinder(path);
+            if (!string.IsNullOrEmpty(path))
+                EditorUtility.RevealInFinder(path);
         }
 
         /// <summary>Opens the MCP for Unity window; the Blender Bridge panel is in its Generative tab.</summary>
@@ -56,8 +71,10 @@ namespace MCPForUnity.Editor.MenuItems
             JObject json = JObject.FromObject(result);
             bool ok = json.Value<bool?>("success") ?? false;
             string text = json.ToString(Formatting.Indented);
-            if (ok) McpLog.Info($"[Blender Bridge] {parameters["action"]}: {json["message"]}\n{text}");
-            else McpLog.Error($"[Blender Bridge] {parameters["action"]} failed: {json["error"]}\n{text}");
+            if (ok)
+                McpLog.Info($"[Blender Bridge] {parameters["action"]}: {json["message"]}\n{text}");
+            else
+                McpLog.Error($"[Blender Bridge] {parameters["action"]} failed: {json["error"]}\n{text}");
             return json;
         }
     }

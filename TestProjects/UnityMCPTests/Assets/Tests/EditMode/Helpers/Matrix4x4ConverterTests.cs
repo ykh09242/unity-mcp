@@ -19,10 +19,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [SetUp]
         public void SetUp()
         {
-            _settings = new JsonSerializerSettings
-            {
-                Converters = { new Matrix4x4Converter() }
-            };
+            _settings = new JsonSerializerSettings { Converters = { new Matrix4x4Converter() } };
         }
 
         [Test]
@@ -66,7 +63,9 @@ namespace MCPForUnityTests.Editor.Helpers
             // This is the key test - a degenerate matrix that would crash
             // if we accessed lossyScale or rotation properties
             var matrix = new Matrix4x4();
-            matrix.m00 = 0; matrix.m11 = 0; matrix.m22 = 0; // Degenerate - determinant = 0
+            matrix.m00 = 0;
+            matrix.m11 = 0;
+            matrix.m22 = 0; // Degenerate - determinant = 0
 
             // This should NOT throw or crash - the old code would fail here
             var json = JsonConvert.SerializeObject(matrix, _settings);
@@ -74,13 +73,7 @@ namespace MCPForUnityTests.Editor.Helpers
 
             // Verify JSON only contains raw mXY properties
             var jo = JObject.Parse(json);
-            var expectedProps = new[]
-            {
-                "m00", "m01", "m02", "m03",
-                "m10", "m11", "m12", "m13",
-                "m20", "m21", "m22", "m23",
-                "m30", "m31", "m32", "m33"
-            };
+            var expectedProps = new[] { "m00", "m01", "m02", "m03", "m10", "m11", "m12", "m13", "m20", "m21", "m22", "m23", "m30", "m31", "m32", "m33" };
             CollectionAssert.AreEquivalent(expectedProps, jo.Properties().Select(p => p.Name).ToArray());
 
             // Verify values roundtrip correctly (all zeros for degenerate matrix)

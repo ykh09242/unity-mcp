@@ -11,13 +11,15 @@ def run_sdk_regression(source):
         [sys.executable, "-c", textwrap.dedent(source)],
         cwd=Path(__file__).resolve().parents[1],
         env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "1"},
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_remote_optional_groups_follow_each_tenants_catalog_through_real_sdk():
-    run_sdk_regression('''
+    run_sdk_regression("""
         import asyncio, sys
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
@@ -67,11 +69,11 @@ def test_remote_optional_groups_follow_each_tenants_catalog_through_real_sdk():
                         assert not result.is_error
                         assert result.content[0].text == user
         asyncio.run(scenario())
-    ''')
+    """)
 
 
 def test_local_http_optional_groups_keep_legacy_session_activation_isolated():
-    run_sdk_regression('''
+    run_sdk_regression("""
         import asyncio, sys
         sys.path.insert(0, "src")
         from fastmcp import Client, FastMCP
@@ -105,4 +107,4 @@ def test_local_http_optional_groups_keep_legacy_session_activation_isolated():
                 await first.call_tool("manage_tools", {"action": "reset"})
                 assert "effect_probe" not in {tool.name for tool in await first.list_tools()}
         asyncio.run(scenario())
-    ''')
+    """)

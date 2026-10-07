@@ -127,8 +127,7 @@ namespace MCPForUnity.Editor.Services
                     return false;
                 }
 
-                if (!int.TryParse(lines[0].Trim(), out int enabledInt) ||
-                    !int.TryParse(lines[1].Trim(), out int optionsInt))
+                if (!int.TryParse(lines[0].Trim(), out int enabledInt) || !int.TryParse(lines[1].Trim(), out int optionsInt))
                 {
                     return false;
                 }
@@ -167,8 +166,7 @@ namespace MCPForUnity.Editor.Services
 
         internal void ResumeJobAfterReload(string jobId, string mode)
         {
-            if (_runCompletionSource != null || _trackedJobId != null ||
-                string.IsNullOrEmpty(jobId) || TestJobManager.CurrentJobId != jobId)
+            if (_runCompletionSource != null || _trackedJobId != null || string.IsNullOrEmpty(jobId) || TestJobManager.CurrentJobId != jobId)
             {
                 return;
             }
@@ -180,8 +178,7 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        private bool IsTrackingCurrentJob =>
-            !string.IsNullOrEmpty(_trackedJobId) && TestJobManager.CurrentJobId == _trackedJobId;
+        private bool IsTrackingCurrentJob => !string.IsNullOrEmpty(_trackedJobId) && TestJobManager.CurrentJobId == _trackedJobId;
 
         public async Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode)
         {
@@ -247,9 +244,7 @@ namespace MCPForUnity.Editor.Services
                     // MCP bridge stays alive). We do NOT force runSynchronously here because that can freeze the
                     // editor in some projects. If the TestRunner still hits the save task after entering play, the
                     // run can fail; in that case, rerun from a clean Edit Mode state.
-                    adjustedPlayModeOptions = EnsurePlayModeRunsWithoutDomainReload(
-                        out originalEnterPlayModeOptionsEnabled,
-                        out originalEnterPlayModeOptions);
+                    adjustedPlayModeOptions = EnsurePlayModeRunsWithoutDomainReload(out originalEnterPlayModeOptionsEnabled, out originalEnterPlayModeOptions);
                 }
 
                 _leafResults.Clear();
@@ -266,7 +261,7 @@ namespace MCPForUnity.Editor.Services
                     testNames = filterOptions?.TestNames,
                     groupNames = filterOptions?.GroupNames,
                     categoryNames = filterOptions?.CategoryNames,
-                    assemblyNames = filterOptions?.AssemblyNames
+                    assemblyNames = filterOptions?.AssemblyNames,
                 };
                 var settings = new ExecutionSettings(filter);
 
@@ -393,7 +388,6 @@ namespace MCPForUnity.Editor.Services
 
         private void CompleteRun(TestRunResult payload, Exception error)
         {
-
             // A late callback from a cleared job must not finish a newer job or restore
             // settings belonging to it. Callbacks do not contain an MCP job identifier.
             bool ownsCurrentJob = IsTrackingCurrentJob;
@@ -431,8 +425,10 @@ namespace MCPForUnity.Editor.Services
             _leafResults.Clear();
             if (completion != null)
             {
-                if (error == null) completion.TrySetResult(payload);
-                else completion.TrySetException(error);
+                if (error == null)
+                    completion.TrySetResult(payload);
+                else
+                    completion.TrySetException(error);
             }
         }
 
@@ -539,7 +535,8 @@ namespace MCPForUnity.Editor.Services
 
         private static bool EnsurePlayModeRunsWithoutDomainReload(
             out bool originalEnterPlayModeOptionsEnabled,
-            out EnterPlayModeOptions originalEnterPlayModeOptions)
+            out EnterPlayModeOptions originalEnterPlayModeOptions
+        )
         {
             originalEnterPlayModeOptionsEnabled = EditorSettings.enterPlayModeOptionsEnabled;
             originalEnterPlayModeOptions = EditorSettings.enterPlayModeOptions;
@@ -602,10 +599,13 @@ namespace MCPForUnity.Editor.Services
         {
             var tcs = new TaskCompletionSource<ITestAdaptor>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            _testRunnerApi.RetrieveTestList(mode, root =>
-            {
-                tcs.TrySetResult(root);
-            });
+            _testRunnerApi.RetrieveTestList(
+                mode,
+                root =>
+                {
+                    tcs.TrySetResult(root);
+                }
+            );
 
             // Ensure the editor pumps at least one additional update in case the window is unfocused.
             EditorApplication.QueuePlayerLoopUpdate();
@@ -628,12 +628,7 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        private static void CollectFromNode(
-            ITestAdaptor node,
-            TestMode mode,
-            List<Dictionary<string, string>> output,
-            HashSet<string> seen,
-            List<string> path)
+        private static void CollectFromNode(ITestAdaptor node, TestMode mode, List<Dictionary<string, string>> output, HashSet<string> seen, List<string> path)
         {
             if (node == null)
             {
@@ -656,13 +651,15 @@ namespace MCPForUnity.Editor.Services
                 if (!string.IsNullOrEmpty(fullName) && seen.Add(key))
                 {
                     string computedPath = path.Count > 0 ? string.Join("/", path) : fullName;
-                    output.Add(new Dictionary<string, string>
-                    {
-                        ["name"] = node.Name ?? fullName,
-                        ["full_name"] = fullName,
-                        ["path"] = computedPath,
-                        ["mode"] = mode.ToString(),
-                    });
+                    output.Add(
+                        new Dictionary<string, string>
+                        {
+                            ["name"] = node.Name ?? fullName,
+                            ["full_name"] = fullName,
+                            ["path"] = computedPath,
+                            ["mode"] = mode.ToString(),
+                        }
+                    );
                 }
             }
             else if (hasChildren)
@@ -713,9 +710,7 @@ namespace MCPForUnity.Editor.Services
             else if (includeFailedTests)
             {
                 // Include only failed and skipped tests
-                resultsToSerialize = Results
-                    .Where(r => !string.Equals(r.State, "Passed", StringComparison.OrdinalIgnoreCase))
-                    .Select(r => r.ToSerializable());
+                resultsToSerialize = Results.Where(r => !string.Equals(r.State, "Passed", StringComparison.OrdinalIgnoreCase)).Select(r => r.ToSerializable());
             }
             else
             {
@@ -742,27 +737,18 @@ namespace MCPForUnity.Editor.Services
             }
             var materializedTests = (resultLeaves.Count > 0 ? resultLeaves : tests)
                 .Where(t => t != null && t.Test?.IsSuite != true)
-                .Select(TestRunTestResult.FromAdaptor).ToList();
+                .Select(TestRunTestResult.FromAdaptor)
+                .ToList();
 
-            int passed = summary?.PassCount
-                ?? materializedTests.Count(t => string.Equals(t.State, "Passed", StringComparison.OrdinalIgnoreCase));
-            int failed = summary?.FailCount
-                ?? materializedTests.Count(t => string.Equals(t.State, "Failed", StringComparison.OrdinalIgnoreCase));
-            int skipped = summary?.SkipCount
-                ?? materializedTests.Count(t => string.Equals(t.State, "Skipped", StringComparison.OrdinalIgnoreCase));
+            int passed = summary?.PassCount ?? materializedTests.Count(t => string.Equals(t.State, "Passed", StringComparison.OrdinalIgnoreCase));
+            int failed = summary?.FailCount ?? materializedTests.Count(t => string.Equals(t.State, "Failed", StringComparison.OrdinalIgnoreCase));
+            int skipped = summary?.SkipCount ?? materializedTests.Count(t => string.Equals(t.State, "Skipped", StringComparison.OrdinalIgnoreCase));
 
-            double duration = summary?.Duration
-                ?? materializedTests.Sum(t => t.DurationSeconds);
+            double duration = summary?.Duration ?? materializedTests.Sum(t => t.DurationSeconds);
 
             int total = summary != null ? passed + failed + skipped : materializedTests.Count;
 
-            var summaryPayload = new TestRunSummary(
-                total,
-                passed,
-                failed,
-                skipped,
-                duration,
-                summary?.ResultState ?? "Unknown");
+            var summaryPayload = new TestRunSummary(total, passed, failed, skipped, duration, summary?.ResultState ?? "Unknown");
 
             return new TestRunResult(summaryPayload, materializedTests);
         }
@@ -775,7 +761,8 @@ namespace MCPForUnity.Editor.Services
             }
             if (!result.HasChildren)
             {
-                if (result.Test?.IsSuite != true) leaves.Add(result);
+                if (result.Test?.IsSuite != true)
+                    leaves.Add(result);
                 return;
             }
             if (result.Children != null)
@@ -823,14 +810,7 @@ namespace MCPForUnity.Editor.Services
 
     public sealed class TestRunTestResult
     {
-        internal TestRunTestResult(
-            string name,
-            string fullName,
-            string state,
-            double durationSeconds,
-            string message,
-            string stackTrace,
-            string output)
+        internal TestRunTestResult(string name, string fullName, string state, double durationSeconds, string message, string stackTrace, string output)
         {
             Name = name;
             FullName = fullName;
@@ -877,7 +857,8 @@ namespace MCPForUnity.Editor.Services
                 adaptor.Duration,
                 adaptor.Message,
                 adaptor.StackTrace,
-                adaptor.Output);
+                adaptor.Output
+            );
         }
     }
 }

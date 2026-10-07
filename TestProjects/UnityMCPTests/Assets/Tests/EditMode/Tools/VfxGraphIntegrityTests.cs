@@ -2,10 +2,10 @@ using System;
 using System.IO;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Vfx;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
@@ -19,22 +19,30 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             _object = new GameObject("VfxGraphIntegrity_" + Guid.NewGuid().ToString("N"));
             Type type = Type.GetType("UnityEngine.VFX.VisualEffect, UnityEngine.VFXModule");
-            if (type != null) _effect = _object.AddComponent(type);
+            if (type != null)
+                _effect = _object.AddComponent(type);
         }
 
         [TearDown]
         public void TearDown()
         {
-            if (_object != null) UnityEngine.Object.DestroyImmediate(_object);
+            if (_object != null)
+                UnityEngine.Object.DestroyImmediate(_object);
         }
 
         private JObject Send(string action, JObject properties)
         {
-            return JObject.FromObject(ManageVFX.HandleCommand(new JObject
-            {
-                ["action"] = action, ["target"] = _object.GetInstanceIDCompat(),
-                ["search_method"] = "by_id", ["properties"] = properties
-            }));
+            return JObject.FromObject(
+                ManageVFX.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["target"] = _object.GetInstanceIDCompat(),
+                        ["search_method"] = "by_id",
+                        ["properties"] = properties,
+                    }
+                )
+            );
         }
 
         private void RequireEnabledGraph()
@@ -47,8 +55,7 @@ namespace MCPForUnityTests.EditMode.Tools
             StringAssert.Contains("Unknown vfx action", response["message"]?.ToString());
         }
 
-        private T GetProperty<T>(string name)
-            => (T)_effect.GetType().GetProperty(name).GetValue(_effect);
+        private T GetProperty<T>(string name) => (T)_effect.GetType().GetProperty(name).GetValue(_effect);
 
         [Test]
         public void PublicAvailabilityHasExplicitEnabledOrUnavailableResponse()
@@ -76,11 +83,17 @@ namespace MCPForUnityTests.EditMode.Tools
                 originalGuid = UnityEditor.AssetDatabase.CreateFolder("Assets", Path.GetFileName(root));
             try
             {
-                var response = JObject.FromObject(ManageVFX.HandleCommand(new JObject
-                {
-                    ["action"] = "vfx_create_asset", ["assetName"] = "Missing",
-                    ["folderPath"] = folder, ["template"] = "Missing_" + Guid.NewGuid().ToString("N"),
-                }));
+                var response = JObject.FromObject(
+                    ManageVFX.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "vfx_create_asset",
+                            ["assetName"] = "Missing",
+                            ["folderPath"] = folder,
+                            ["template"] = "Missing_" + Guid.NewGuid().ToString("N"),
+                        }
+                    )
+                );
 
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 StringAssert.Contains("VFX template not found", response.Value<string>("message"));
@@ -124,11 +137,12 @@ namespace MCPForUnityTests.EditMode.Tools
             var properties = new JObject
             {
                 ["parameter"] = "Missing_" + Guid.NewGuid().ToString("N"),
-                ["value"] = kind == "bool" ? (JToken)new JValue(false)
+                ["value"] =
+                    kind == "bool" ? (JToken)new JValue(false)
                     : kind.StartsWith("vector") || kind == "color" ? new JArray(1, 2, 3, 4)
                     : new JValue(0),
                 ["texture_path"] = "Assets/AbsentTexture.png",
-                ["mesh_path"] = "Assets/AbsentMesh.asset"
+                ["mesh_path"] = "Assets/AbsentMesh.asset",
             };
             int dirtyCount = UnityEditor.EditorUtility.GetDirtyCount(_effect);
             JObject response = Send("vfx_set_" + kind, properties);

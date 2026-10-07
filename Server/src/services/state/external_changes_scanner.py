@@ -60,10 +60,17 @@ class ExternalChangesScanner:
     - It scans at most once per scan_interval_ms per instance to keep overhead bounded.
     """
 
-    def __init__(self, *, scan_interval_ms: int = 1500, max_entries: int = 20000,
-                 max_states: int = 32, state_ttl_ms: int = 900000,
-                 max_scan_seconds: float = 0.25, max_manifest_bytes: int = 1024 * 1024,
-                 max_extra_roots: int = 256):
+    def __init__(
+        self,
+        *,
+        scan_interval_ms: int = 1500,
+        max_entries: int = 20000,
+        max_states: int = 32,
+        state_ttl_ms: int = 900000,
+        max_scan_seconds: float = 0.25,
+        max_manifest_bytes: int = 1024 * 1024,
+        max_extra_roots: int = 256,
+    ):
         self._states: OrderedDict[str, ExternalChangesState] = OrderedDict()
         self._last_access: dict[str, int] = {}
         self._scan_interval_ms = int(scan_interval_ms)
@@ -81,8 +88,11 @@ class ExternalChangesScanner:
     def _get_state(self, instance_id: str) -> ExternalChangesState:
         now = _now_unix_ms()
         with self._state_lock:
-            expired = [key for key in self._states
-                       if now - self._last_access.get(key, now) >= self._state_ttl_ms]
+            expired = [
+                key
+                for key in self._states
+                if now - self._last_access.get(key, now) >= self._state_ttl_ms
+            ]
             for key in expired:
                 del self._states[key]
                 self._last_access.pop(key, None)
@@ -99,11 +109,15 @@ class ExternalChangesScanner:
     def set_project_root(self, instance_id: str, project_root: str | None) -> None:
         if config.http_remote_hosted:
             return
-        if len(instance_id) > 256 or (project_root and (len(project_root) > 4096 or not Path(project_root).is_absolute())):
+        if len(instance_id) > 256 or (
+            project_root and (len(project_root) > 4096 or not Path(project_root).is_absolute())
+        ):
             return
         with self._state_lock:
             st = self._get_state(instance_id)
-            if project_root and (st.project_root is None or Path(st.project_root) != Path(project_root)):
+            if project_root and (
+                st.project_root is None or Path(st.project_root) != Path(project_root)
+            ):
                 # Cached package paths, timestamps and dirty state belong to this project.
                 self._states[instance_id] = ExternalChangesState(project_root=project_root)
 
@@ -115,13 +129,17 @@ class ExternalChangesScanner:
             st = self._get_state(instance_id)
             return ExternalChangesSnapshot(st, st.last_seen_mtime_ns)
 
-    def clear_dirty(self, instance_id: str, *, expected: ExternalChangesSnapshot | None = None) -> bool:
+    def clear_dirty(
+        self, instance_id: str, *, expected: ExternalChangesSnapshot | None = None
+    ) -> bool:
         """Acknowledge edits, optionally only if the pre-dispatch snapshot still matches."""
         if config.http_remote_hosted or len(instance_id) > 256:
             return False
         with self._state_lock:
             st = self._get_state(instance_id)
-            if expected is not None and (st is not expected.state or st.last_seen_mtime_ns != expected.last_seen_mtime_ns):
+            if expected is not None and (
+                st is not expected.state or st.last_seen_mtime_ns != expected.last_seen_mtime_ns
+            ):
                 return False
             st.dirty = False
             st.dirty_since_unix_ms = None
@@ -160,7 +178,11 @@ class ExternalChangesScanner:
                                 if len(pending) < self._max_entries - entries:
                                     pending.append(Path(entry.path))
                             else:
-                                newest = stat.st_mtime_ns if newest is None else max(newest, stat.st_mtime_ns)
+                                newest = (
+                                    stat.st_mtime_ns
+                                    if newest is None
+                                    else max(newest, stat.st_mtime_ns)
+                                )
                         except OSError:
                             continue
             except OSError:
@@ -169,9 +191,11 @@ class ExternalChangesScanner:
         return newest
 
     def _scan_stopped(self) -> bool:
-        return (config.http_remote_hosted or
-                (self._active_stop is not None and self._active_stop.is_set()) or
-                (self._scan_deadline > 0 and time.monotonic() >= self._scan_deadline))
+        return (
+            config.http_remote_hosted
+            or (self._active_stop is not None and self._active_stop.is_set())
+            or (self._scan_deadline > 0 and time.monotonic() >= self._scan_deadline)
+        )
 
     @staticmethod
     def _existing_directory_roots(roots: Iterable[str]) -> list[Path]:
@@ -185,7 +209,9 @@ class ExternalChangesScanner:
                 continue
         return existing
 
-    def _resolve_manifest_extra_roots(self, project_root: Path, st: ExternalChangesState) -> list[Path]:
+    def _resolve_manifest_extra_roots(
+        self, project_root: Path, st: ExternalChangesState
+    ) -> list[Path]:
         """
         Parse Packages/manifest.json for local file: dependencies and resolve them to absolute paths.
         Returns a list of Paths that exist and are directories.
@@ -200,8 +226,7 @@ class ExternalChangesScanner:
             st.manifest_last_mtime_ns = None
             return []
 
-        mtime_ns = getattr(stat, "st_mtime_ns", int(
-            stat.st_mtime * 1_000_000_000))
+        mtime_ns = getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))
         if st.extra_roots is not None and st.manifest_last_mtime_ns == mtime_ns:
             return self._existing_directory_roots(st.extra_roots)
 
@@ -236,7 +261,7 @@ class ExternalChangesScanner:
             v = ver.strip()
             if not v.startswith("file:"):
                 continue
-            suffix = v[len("file:"):].strip()
+            suffix = v[len("file:") :].strip()
             if not suffix or len(suffix) > 4096:
                 continue
             # Decode explicit file:/// URIs, including Windows drives.
@@ -280,13 +305,17 @@ class ExternalChangesScanner:
         # retaining the same state expiry and LRU updates as a worker read.
         with self._state_lock:
             st = self._get_state(instance_id)
-            if (st.last_scan_unix_ms is not None
-                    and _now_unix_ms() - st.last_scan_unix_ms < self._scan_interval_ms):
+            if (
+                st.last_scan_unix_ms is not None
+                and _now_unix_ms() - st.last_scan_unix_ms < self._scan_interval_ms
+            ):
                 self._scan_lock.release()
                 return self._cached_result(instance_id)
         stop = threading.Event()
         try:
-            future = asyncio.get_running_loop().run_in_executor(None, self._run_update_locked, instance_id, stop)
+            future = asyncio.get_running_loop().run_in_executor(
+                None, self._run_update_locked, instance_id, stop
+            )
         except (RuntimeError, OSError):
             self._scan_lock.release()
             raise
@@ -307,7 +336,9 @@ class ExternalChangesScanner:
                 "last_cleared_unix_ms": st.last_cleared_unix_ms,
             }
 
-    def _run_update_locked(self, instance_id: str, stop: threading.Event) -> dict[str, int | bool | None]:
+    def _run_update_locked(
+        self, instance_id: str, stop: threading.Event
+    ) -> dict[str, int | bool | None]:
         self._active_stop = stop
         self._scan_deadline = time.monotonic() + self._max_scan_seconds
         try:
@@ -338,7 +369,10 @@ class ExternalChangesScanner:
             }
 
         now = _now_unix_ms()
-        if st.last_scan_unix_ms is not None and (now - st.last_scan_unix_ms) < self._scan_interval_ms:
+        if (
+            st.last_scan_unix_ms is not None
+            and (now - st.last_scan_unix_ms) < self._scan_interval_ms
+        ):
             return {
                 "external_changes_dirty": st.dirty,
                 "external_changes_last_seen_unix_ms": st.external_changes_last_seen_unix_ms,

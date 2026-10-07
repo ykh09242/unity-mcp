@@ -6,6 +6,7 @@ Thin pass-through: this tool carries NO API keys and NO file bytes. The C# side
 reads the user's Sketchfab token from the OS secure store, performs the search /
 download, and imports the model into the Unity project.
 """
+
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -41,16 +42,18 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 )
 async def import_model(
     ctx: Context,
-    action: Annotated[Literal["search", "preview", "import", "status", "cancel", "list_providers"],
-                      "Action to perform."],
-
+    action: Annotated[
+        Literal["search", "preview", "import", "status", "cancel", "list_providers"],
+        "Action to perform.",
+    ],
     query: Annotated[str, "Search query for the search action."] | None = None,
     categories: Annotated[str, "Filter search by category."] | None = None,
     downloadable: Annotated[bool, "Restrict search to downloadable models."] | None = None,
     count: Annotated[int, "Maximum number of search results."] | None = None,
     cursor: Annotated[str, "Pagination cursor for search."] | None = None,
     uid: Annotated[str, "Sketchfab model uid for preview/import."] | None = None,
-    target_size: Annotated[float, "Normalize the largest dimension to this size (meters)."] | None = None,
+    target_size: Annotated[float, "Normalize the largest dimension to this size (meters)."]
+    | None = None,
     name: Annotated[str, "Base name for the imported asset."] | None = None,
     output_folder: Annotated[str, "Destination folder under Assets/ for the import."] | None = None,
     job_id: Annotated[str, "Job id for status/cancel."] | None = None,

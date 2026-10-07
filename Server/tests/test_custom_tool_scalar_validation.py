@@ -11,39 +11,56 @@ import services.custom_tool_service as module
 from services.custom_tool_service import CustomToolService
 
 
-@pytest.mark.parametrize("payload", [
-    {"required": 1}, {"required": "false"}, {"required": None},
-    {"type": "boolean", "default_value": "flase"},
-    {"type": "boolean", "default_value": "1"},
-    {"type": "boolean", "default_value": "yes"},
-    {"type": "integer", "default_value": "1.5"},
-    {"type": "number", "default_value": "NaN"},
-    {"type": "number", "default_value": "Infinity"},
-    {"type": "number", "default_value": "-inf"},
-    {"type": "array", "default_value": "{}"},
-    {"type": "object", "default_value": "[]"},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"required": 1},
+        {"required": "false"},
+        {"required": None},
+        {"type": "boolean", "default_value": "flase"},
+        {"type": "boolean", "default_value": "1"},
+        {"type": "boolean", "default_value": "yes"},
+        {"type": "integer", "default_value": "1.5"},
+        {"type": "number", "default_value": "NaN"},
+        {"type": "number", "default_value": "Infinity"},
+        {"type": "number", "default_value": "-inf"},
+        {"type": "array", "default_value": "{}"},
+        {"type": "object", "default_value": "[]"},
+    ],
+)
 def test_malformed_parameter_descriptors_are_rejected(payload):
     with pytest.raises(ValidationError):
         ToolParameterModel(name="value", **payload)
 
 
-@pytest.mark.parametrize("payload", [
-    {"requires_polling": "false"}, {"requires_polling": 0},
-    {"structured_output": 1}, {"structured_output": "true"},
-    {"max_poll_seconds": True}, {"max_poll_seconds": "3"},
-    {"max_poll_seconds": 3.0},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"requires_polling": "false"},
+        {"requires_polling": 0},
+        {"structured_output": 1},
+        {"structured_output": "true"},
+        {"max_poll_seconds": True},
+        {"max_poll_seconds": "3"},
+        {"max_poll_seconds": 3.0},
+    ],
+)
 def test_malformed_tool_metadata_is_rejected(payload):
     with pytest.raises(ValidationError):
         ToolDefinitionModel(name="custom_fixture", **payload)
 
 
-@pytest.mark.parametrize("ptype,value,expected", [
-    ("integer", "3", 3), ("number", "2.5", 2.5),
-    ("boolean", "true", True), ("boolean", "False", False),
-    ("array", "[1,2]", [1, 2]), ("object", '{"flag":false}', {"flag": False}),
-])
+@pytest.mark.parametrize(
+    "ptype,value,expected",
+    [
+        ("integer", "3", 3),
+        ("number", "2.5", 2.5),
+        ("boolean", "true", True),
+        ("boolean", "False", False),
+        ("array", "[1,2]", [1, 2]),
+        ("object", '{"flag":false}', {"flag": False}),
+    ],
+)
 def test_valid_legacy_defaults_remain_supported(ptype, value, expected):
     parameter = ToolParameterModel(name="value", type=ptype, required=False, default_value=value)
     service = object.__new__(CustomToolService)
@@ -57,19 +74,26 @@ def custom_server(monkeypatch):
     server = FastMCP("custom-scalars")
     monkeypatch.setattr(CustomToolService, "_instance", None)
     service = CustomToolService(server)
-    definition = ToolDefinitionModel(name="custom_fixture", parameters=[
-        ToolParameterModel(name="flag", type="boolean", description="Boolean input"),
-        ToolParameterModel(name="count", type="integer", description="Integer input"),
-        ToolParameterModel(name="ratio", type="number", description="Numeric input"),
-        ToolParameterModel(name="optional", type="integer", required=False, default_value="3"),
-        ToolParameterModel(name="enabled", type="boolean", required=False, default_value="false"),
-    ])
+    definition = ToolDefinitionModel(
+        name="custom_fixture",
+        parameters=[
+            ToolParameterModel(name="flag", type="boolean", description="Boolean input"),
+            ToolParameterModel(name="count", type="integer", description="Integer input"),
+            ToolParameterModel(name="ratio", type="number", description="Numeric input"),
+            ToolParameterModel(name="optional", type="integer", required=False, default_value="3"),
+            ToolParameterModel(
+                name="enabled", type="boolean", required=False, default_value="false"
+            ),
+        ],
+    )
     service._register_tool("project", definition)
     service.register_global_tools([definition])
     scoped = importlib.import_module("services.tools.execute_custom_tool")
     server.tool(name="execute_custom_tool")(scoped.execute_custom_tool)
     for target in (module, scoped):
-        monkeypatch.setattr(target, "get_unity_instance_from_context", AsyncMock(return_value="Project@hash"))
+        monkeypatch.setattr(
+            target, "get_unity_instance_from_context", AsyncMock(return_value="Project@hash")
+        )
         monkeypatch.setattr(target, "get_user_id_from_context", AsyncMock(return_value=None))
         monkeypatch.setattr(target, "resolve_project_id_for_unity_instance", lambda _: "project")
     send = AsyncMock(return_value={"success": True, "data": {}})
@@ -84,15 +108,30 @@ async def test_actual_custom_tool_routes_validate_before_transport(custom_server
     server, service, send = custom_server
     valid = {"flag": False, "count": 0, "ratio": 1.5}
     invalid = [
-        {"flag": 0}, {"flag": "false"}, {"flag": None},
-        {"count": True}, {"count": 3.0}, {"count": "3"}, {"count": None},
-        {"ratio": True}, {"ratio": "1.5"}, {"optional": True}, {"enabled": 1},
-        {"ratio": float("nan")}, {"ratio": float("inf")}, {"ratio": float("-inf")},
+        {"flag": 0},
+        {"flag": "false"},
+        {"flag": None},
+        {"count": True},
+        {"count": 3.0},
+        {"count": "3"},
+        {"count": None},
+        {"ratio": True},
+        {"ratio": "1.5"},
+        {"optional": True},
+        {"enabled": 1},
+        {"ratio": float("nan")},
+        {"ratio": float("inf")},
+        {"ratio": float("-inf")},
     ]
     async with Client(server, mode=mode) as client:
+
         async def call(arguments):
             name = "custom_fixture" if route == "global" else "execute_custom_tool"
-            payload = arguments if route == "global" else {"tool_name": "custom_fixture", "parameters": arguments}
+            payload = (
+                arguments
+                if route == "global"
+                else {"tool_name": "custom_fixture", "parameters": arguments}
+            )
             return await client.call_tool(name, payload, raise_on_error=False)
 
         tools = await client.list_tools()
@@ -124,8 +163,9 @@ async def test_actual_custom_tool_routes_validate_before_transport(custom_server
 @pytest.mark.parametrize("ratio", [float("nan"), float("inf"), float("-inf")])
 async def test_scoped_nonfinite_values_fail_before_transport(custom_server, ratio):
     _, service, send = custom_server
-    result = await service.execute_tool("project", "custom_fixture", "Project@hash",
-                                        {"flag": True, "count": 3, "ratio": ratio})
+    result = await service.execute_tool(
+        "project", "custom_fixture", "Project@hash", {"flag": True, "count": 3, "ratio": ratio}
+    )
     assert result.success is False
     send.assert_not_awaited()
 
@@ -134,8 +174,12 @@ async def test_scoped_nonfinite_values_fail_before_transport(custom_server, rati
 async def test_descriptorless_commands_preserve_extra_values(custom_server):
     _, service, send = custom_server
     service._register_tool("project", ToolDefinitionModel(name="legacy_custom"))
-    result = await service.execute_tool("project", "legacy_custom", "Project@hash",
-                                        {"action": "start", "value": True, "explicit_null": None})
+    result = await service.execute_tool(
+        "project",
+        "legacy_custom",
+        "Project@hash",
+        {"action": "start", "value": True, "explicit_null": None},
+    )
     assert result.success is True
     assert send.call_args.args[3] == {"action": "start", "value": True, "explicit_null": None}
 
@@ -143,14 +187,24 @@ async def test_descriptorless_commands_preserve_extra_values(custom_server):
 @pytest.mark.asyncio
 async def test_scoped_omits_absent_optional_null_defaults(custom_server):
     _, service, send = custom_server
-    service._register_tool("project", ToolDefinitionModel(name="optional_fixture", parameters=[
-        ToolParameterModel(name="nullable", type="integer", required=False),
-        ToolParameterModel(name="defaulted", type="integer", required=False, default_value="3"),
-    ]))
+    service._register_tool(
+        "project",
+        ToolDefinitionModel(
+            name="optional_fixture",
+            parameters=[
+                ToolParameterModel(name="nullable", type="integer", required=False),
+                ToolParameterModel(
+                    name="defaulted", type="integer", required=False, default_value="3"
+                ),
+            ],
+        ),
+    )
     result = await service.execute_tool("project", "optional_fixture", "Project@hash", {})
     assert result.success is True
     assert send.call_args.args[3] == {"defaulted": 3}
-    await service.execute_tool("project", "optional_fixture", "Project@hash", {"nullable": None, "defaulted": None})
+    await service.execute_tool(
+        "project", "optional_fixture", "Project@hash", {"nullable": None, "defaulted": None}
+    )
     assert send.call_args.args[3] == {"nullable": None, "defaulted": None}
 
 
@@ -158,9 +212,15 @@ async def test_scoped_omits_absent_optional_null_defaults(custom_server):
 @pytest.mark.parametrize("name", ["_count", "model_dump"])
 async def test_valid_python_parameter_names_keep_strict_scoped_contract(custom_server, name):
     _, service, send = custom_server
-    service._register_tool("project", ToolDefinitionModel(name="named_fixture", parameters=[
-        ToolParameterModel(name=name, type="integer"),
-    ]))
+    service._register_tool(
+        "project",
+        ToolDefinitionModel(
+            name="named_fixture",
+            parameters=[
+                ToolParameterModel(name=name, type="integer"),
+            ],
+        ),
+    )
     invalid = await service.execute_tool("project", "named_fixture", "Project@hash", {name: True})
     assert invalid.success is False
     send.assert_not_awaited()
@@ -172,9 +232,12 @@ async def test_valid_python_parameter_names_keep_strict_scoped_contract(custom_s
 @pytest.mark.asyncio
 async def test_input_model_cache_tracks_schema_and_bounds_retained_models(custom_server):
     _, service, send = custom_server
-    definition = ToolDefinitionModel(name="cached_fixture", parameters=[
-        ToolParameterModel(name="value", type="integer", required=False, default_value="3"),
-    ])
+    definition = ToolDefinitionModel(
+        name="cached_fixture",
+        parameters=[
+            ToolParameterModel(name="value", type="integer", required=False, default_value="3"),
+        ],
+    )
     service._register_tool("project", definition)
     await service.execute_tool("project", "cached_fixture", "Project@hash", {})
     cached = service._get_input_model(definition)
@@ -189,12 +252,21 @@ async def test_input_model_cache_tracks_schema_and_bounds_retained_models(custom
     rejected = await service.execute_tool("project", "cached_fixture", "Project@hash", {"value": 5})
     assert rejected.success is False
     for index in range(140):
-        service._get_input_model(ToolDefinitionModel(name="bounded_fixture", parameters=[
-            ToolParameterModel(name="value", type="integer", required=False, default_value=str(index)),
-        ]))
+        service._get_input_model(
+            ToolDefinitionModel(
+                name="bounded_fixture",
+                parameters=[
+                    ToolParameterModel(
+                        name="value", type="integer", required=False, default_value=str(index)
+                    ),
+                ],
+            )
+        )
     assert len(service._input_models) == 128
     assert cached not in service._input_models.values()
-    invalid = ToolDefinitionModel(name="invalid_fixture", parameters=[ToolParameterModel(name="ctx")])
+    invalid = ToolDefinitionModel(
+        name="invalid_fixture", parameters=[ToolParameterModel(name="ctx")]
+    )
     with pytest.raises(ValueError):
         service._get_input_model(invalid)
     assert len(service._input_models) == 128
@@ -202,7 +274,9 @@ async def test_input_model_cache_tracks_schema_and_bounds_retained_models(custom
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("transport", ["stdio", "http"])
-async def test_sync_preserves_good_descriptors_and_reports_invalid_fields(custom_server, monkeypatch, caplog, transport):
+async def test_sync_preserves_good_descriptors_and_reports_invalid_fields(
+    custom_server, monkeypatch, caplog, transport
+):
     from services.tools import sync_tool_visibility_from_unity
     from transport.plugin_hub import PluginHub
     from transport.plugin_registry import PluginRegistry
@@ -217,15 +291,27 @@ async def test_sync_preserves_good_descriptors_and_reports_invalid_fields(custom
     monkeypatch.setattr(PluginHub, "_sync_server_tool_visibility", lambda _: None)
     bad_default = "private-malformed-default"
     descriptors = [
-        {"name": "bad_custom", "is_built_in": False, "enabled": True, "parameters": [
-            {"name": "flag", "type": "boolean", "default_value": bad_default},
-        ]},
-        {"name": "good_custom", "is_built_in": False, "enabled": True, "parameters": [
-            {"name": "count", "type": "integer", "required": False, "default_value": "3"},
-        ]},
+        {
+            "name": "bad_custom",
+            "is_built_in": False,
+            "enabled": True,
+            "parameters": [
+                {"name": "flag", "type": "boolean", "default_value": bad_default},
+            ],
+        },
+        {
+            "name": "good_custom",
+            "is_built_in": False,
+            "enabled": True,
+            "parameters": [
+                {"name": "count", "type": "integer", "required": False, "default_value": "3"},
+            ],
+        },
     ]
-    monkeypatch.setattr("transport.unity_transport.send_with_unity_instance",
-                        AsyncMock(return_value={"success": True, "data": {"tools": descriptors}}))
+    monkeypatch.setattr(
+        "transport.unity_transport.send_with_unity_instance",
+        AsyncMock(return_value={"success": True, "data": {"tools": descriptors}}),
+    )
 
     result = await sync_tool_visibility_from_unity("Project@hash", notify=False)
 
@@ -234,5 +320,9 @@ async def test_sync_preserves_good_descriptors_and_reports_invalid_fields(custom
     if transport == "http":
         session = await registry.get_session("session")
         assert set(session.tools) == {"good_custom"}
-    assert "bad_custom" in caplog.text and "default_value" in caplog.text and "value_error" in caplog.text
+    assert (
+        "bad_custom" in caplog.text
+        and "default_value" in caplog.text
+        and "value_error" in caplog.text
+    )
     assert bad_default not in caplog.text

@@ -20,11 +20,14 @@ namespace MCPForUnityTests.Editor.Tools
             Assembly editor = typeof(EditorApplication).Assembly;
             Type entries = editor.GetType("UnityEditor.LogEntries");
             Type entry = editor.GetType("UnityEditor.LogEntry");
-            if (entries == null || entry == null) Assert.Ignore("Internal console metadata unavailable.");
+            if (entries == null || entry == null)
+                Assert.Ignore("Internal console metadata unavailable.");
             foreach (string name in new[] { "StartGettingEntries", "EndGettingEntries", "Clear", "GetCount", "GetEntryInternal" })
-                if (entries.GetMethod(name, methods) == null) Assert.Ignore("Required console method metadata unavailable.");
+                if (entries.GetMethod(name, methods) == null)
+                    Assert.Ignore("Required console method metadata unavailable.");
             foreach (string name in new[] { "mode", "message", "file", "line" })
-                if (entry.GetField(name, fields) == null) Assert.Ignore("Required console field metadata unavailable.");
+                if (entry.GetField(name, fields) == null)
+                    Assert.Ignore("Required console field metadata unavailable.");
         }
 
         private static (string body, string stackTrace) Split(string text, int? offset)
@@ -94,6 +97,5 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual("body", result.body);
             Assert.AreEqual(stack, result.stackTrace);
         }
-
     }
 }

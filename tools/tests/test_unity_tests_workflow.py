@@ -1,4 +1,5 @@
 """The Unity test workflow must not float on game-ci's v4 tag or its CLI's latest release."""
+
 import json
 from pathlib import Path
 import re
@@ -19,7 +20,7 @@ def test_every_runner_step_pins_the_action_commit_and_cli_release():
     assert len(steps) == 2
     for step in steps:
         # Both failures flow into their XML gate, which checks the raw outcome.
-        assert re.search(r'^        continue-on-error: true$', step, re.M), step
+        assert re.search(r"^        continue-on-error: true$", step, re.M), step
         ref = re.search(r"uses: game-ci/unity-test-runner@(\S+)", step).group(1)
         assert re.fullmatch(r"[0-9a-f]{40}", ref), ref
         assert re.search(r"^          cliVersion: v\d+\.\d+\.\d+$", step, re.M), step
@@ -30,5 +31,12 @@ def test_every_runner_step_pins_the_action_commit_and_cli_release():
 def test_unity_test_project_uses_the_packages_test_framework():
     root = WORKFLOW.parents[2]
     package = json.loads((root / "MCPForUnity" / "package.json").read_text(encoding="utf-8"))
-    project = json.loads((root / "TestProjects" / "UnityMCPTests" / "Packages" / "manifest.json").read_text(encoding="utf-8"))
-    assert project["dependencies"]["com.unity.test-framework"] == package["dependencies"]["com.unity.test-framework"]
+    project = json.loads(
+        (root / "TestProjects" / "UnityMCPTests" / "Packages" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert (
+        project["dependencies"]["com.unity.test-framework"]
+        == package["dependencies"]["com.unity.test-framework"]
+    )

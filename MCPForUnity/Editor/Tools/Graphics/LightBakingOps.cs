@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Graphics
 {
@@ -40,11 +40,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = "Light bake completed (synchronous).",
-                data = new
-                {
-                    mode = "sync",
-                    lightmapCount = LightmapSettings.lightmaps.Length
-                }
+                data = new { mode = "sync", lightmapCount = LightmapSettings.lightmaps.Length },
             };
         }
 
@@ -52,11 +48,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
         internal static object CancelBake(JObject @params)
         {
             Lightmapping.Cancel();
-            return new
-            {
-                success = true,
-                message = "Light bake cancelled."
-            };
+            return new { success = true, message = "Light bake cancelled." };
         }
 
         // === bake_get_status ===
@@ -82,8 +74,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
 #else
                     realtimeGI = Lightmapping.realtimeGI,
 #endif
-                    lightmapCount = LightmapSettings.lightmaps.Length
-                }
+                    lightmapCount = LightmapSettings.lightmaps.Length,
+                },
             };
         }
 
@@ -92,11 +84,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
         {
             Lightmapping.Clear();
             Lightmapping.ClearLightingDataAsset();
-            return new
-            {
-                success = true,
-                message = "Cleared all baked lighting data and lighting data asset."
-            };
+            return new { success = true, message = "Cleared all baked lighting data and lighting data asset." };
         }
 
         // === bake_reflection_probe ===
@@ -137,8 +125,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     probeName = probe.name,
                     outputPath,
-                    instanceID = go.GetInstanceIDCompat()
-                }
+                    instanceID = go.GetInstanceIDCompat(),
+                },
             };
         }
 
@@ -148,8 +136,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (!Lightmapping.TryGetLightingSettings(out var settings))
                 settings = Lightmapping.lightingSettingsDefaults;
             if (settings == null)
-                return new ErrorResponse(
-                    "LightingSettings are unavailable. Open Window > Rendering > Lighting manually.");
+                return new ErrorResponse("LightingSettings are unavailable. Open Window > Rendering > Lighting manually.");
 #if UNITY_6000_7_OR_NEWER
             if (!TryReadRealtimeGI(settings, out bool realtimeGI))
                 return new ErrorResponse(RealtimeGIUnavailable);
@@ -174,7 +161,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 ["mixedBakeMode"] = settings.mixedBakeMode.ToString(),
                 ["lightmapCompression"] = settings.lightmapCompression.ToString(),
                 ["ao"] = settings.ao,
-                ["aoMaxDistance"] = settings.aoMaxDistance
+                ["aoMaxDistance"] = settings.aoMaxDistance,
             };
 
             // bounceCount vs maxBounces — name varies by Unity version
@@ -184,7 +171,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Lighting settings: {settings.lightmapper}, resolution {settings.lightmapResolution}.",
-                data
+                data,
             };
         }
 
@@ -207,9 +194,14 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 return new ErrorResponse($"Failed to set any settings. Invalid properties: {string.Join(", ", prepared.Select(entry => entry.name))}");
 
 #if UNITY_6000_7_OR_NEWER
-            if (settingsToken.Properties().Any(prop =>
-                string.Equals(prop.Name, "realtimeGI", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(prop.Name, "realtime_gi", StringComparison.OrdinalIgnoreCase)))
+            if (
+                settingsToken
+                    .Properties()
+                    .Any(prop =>
+                        string.Equals(prop.Name, "realtimeGI", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(prop.Name, "realtime_gi", StringComparison.OrdinalIgnoreCase)
+                    )
+            )
             {
                 if (!Lightmapping.TryGetLightingSettings(out var current))
                     current = Lightmapping.lightingSettingsDefaults;
@@ -219,8 +211,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 #endif
             var lightingSettings = EnsureLightingSettings();
             if (lightingSettings == null)
-                return new ErrorResponse(
-                    "Failed to create LightingSettings. Open Window > Rendering > Lighting manually.");
+                return new ErrorResponse("Failed to create LightingSettings. Open Window > Rendering > Lighting manually.");
 
             Undo.RecordObject(lightingSettings, "Modify Lighting Settings");
 
@@ -256,7 +247,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = msg,
-                data = new { changed, failed }
+                data = new { changed, failed },
             };
         }
 
@@ -269,9 +260,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
             float spacing = p.GetFloat("spacing") ?? 2.0f;
 
             var posToken = p.GetRaw("position") as JArray;
-            Vector3 position = posToken != null && posToken.Count >= 3
-                ? new Vector3(posToken[0].ReadScalar<float>(), posToken[1].ReadScalar<float>(), posToken[2].ReadScalar<float>())
-                : Vector3.zero;
+            Vector3 position =
+                posToken != null && posToken.Count >= 3
+                    ? new Vector3(posToken[0].ReadScalar<float>(), posToken[1].ReadScalar<float>(), posToken[2].ReadScalar<float>())
+                    : Vector3.zero;
 
             var gridToken = p.GetRaw("grid_size") as JArray;
             int gridX = gridToken != null && gridToken.Count >= 1 ? gridToken[0].ReadScalar<int>() : 3;
@@ -299,11 +291,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     {
                         for (int z = 0; z < gridZ; z++)
                         {
-                            positions.Add(new Vector3(
-                                x * spacing - halfX,
-                                y * spacing - halfY,
-                                z * spacing - halfZ
-                            ));
+                            positions.Add(new Vector3(x * spacing - halfX, y * spacing - halfY, z * spacing - halfZ));
                         }
                     }
                 }
@@ -321,8 +309,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         probeCount = positions.Count,
                         gridSize = new[] { gridX, gridY, gridZ },
                         spacing,
-                        position = new[] { position.x, position.y, position.z }
-                    }
+                        position = new[] { position.x, position.y, position.z },
+                    },
                 };
             }
             finally
@@ -344,18 +332,19 @@ namespace MCPForUnity.Editor.Tools.Graphics
             string modeStr = p.Get("mode") ?? "Baked";
 
             var posToken = p.GetRaw("position") as JArray;
-            Vector3 position = posToken != null && posToken.Count >= 3
-                ? new Vector3(posToken[0].ReadScalar<float>(), posToken[1].ReadScalar<float>(), posToken[2].ReadScalar<float>())
-                : Vector3.zero;
+            Vector3 position =
+                posToken != null && posToken.Count >= 3
+                    ? new Vector3(posToken[0].ReadScalar<float>(), posToken[1].ReadScalar<float>(), posToken[2].ReadScalar<float>())
+                    : Vector3.zero;
 
             var sizeToken = p.GetRaw("size") as JArray;
-            Vector3 size = sizeToken != null && sizeToken.Count >= 3
-                ? new Vector3(sizeToken[0].ReadScalar<float>(), sizeToken[1].ReadScalar<float>(), sizeToken[2].ReadScalar<float>())
-                : new Vector3(10f, 10f, 10f);
+            Vector3 size =
+                sizeToken != null && sizeToken.Count >= 3
+                    ? new Vector3(sizeToken[0].ReadScalar<float>(), sizeToken[1].ReadScalar<float>(), sizeToken[2].ReadScalar<float>())
+                    : new Vector3(10f, 10f, 10f);
 
             if (!Enum.TryParse<ReflectionProbeMode>(modeStr, true, out var mode))
-                return new ErrorResponse(
-                    $"Invalid mode '{modeStr}'. Valid values: Baked, Realtime, Custom.");
+                return new ErrorResponse($"Invalid mode '{modeStr}'. Valid values: Baked, Realtime, Custom.");
 
             var go = new GameObject(name);
             bool completed = false;
@@ -386,8 +375,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         hdr,
                         boxProjection,
                         size = new[] { size.x, size.y, size.z },
-                        position = new[] { position.x, position.y, position.z }
-                    }
+                        position = new[] { position.x, position.y, position.z },
+                    },
                 };
             }
             finally
@@ -424,11 +413,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 var arr = positionsToken[i] as JArray;
                 if (arr == null || arr.Count < 3)
                     return new ErrorResponse($"Position at index {i} must be an array of [x, y, z].");
-                positions[i] = new Vector3(
-                    arr[0].ReadScalar<float>(),
-                    arr[1].ReadScalar<float>(),
-                    arr[2].ReadScalar<float>()
-                );
+                positions[i] = new Vector3(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(), arr[2].ReadScalar<float>());
             }
 
             Undo.RecordObject(probeGroup, "Set Light Probe Positions");
@@ -439,25 +424,24 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Set {positions.Length} probe positions on '{go.name}'.",
-                data = new
-                {
-                    instanceID = go.GetInstanceIDCompat(),
-                    probeCount = positions.Length
-                }
+                data = new { instanceID = go.GetInstanceIDCompat(), probeCount = positions.Length },
             };
         }
 
 #if UNITY_6000_7_OR_NEWER
-        private const string RealtimeGIUnavailable = "realtimeGI is unavailable: LightingSettings does not expose the Boolean m_EnableRealtimeLightmaps property.";
+        private const string RealtimeGIUnavailable =
+            "realtimeGI is unavailable: LightingSettings does not expose the Boolean m_EnableRealtimeLightmaps property.";
 
         // Unity's Lighting Inspector edits this serialized field after the 6.7 API deprecation.
         private static bool TryReadRealtimeGI(LightingSettings settings, out bool value)
         {
             value = false;
-            if (settings == null) return false;
+            if (settings == null)
+                return false;
             using var serializedSettings = new SerializedObject(settings);
             var property = serializedSettings.FindProperty("m_EnableRealtimeLightmaps");
-            if (property == null || property.propertyType != SerializedPropertyType.Boolean) return false;
+            if (property == null || property.propertyType != SerializedPropertyType.Boolean)
+                return false;
             value = property.boolValue;
             return true;
         }
@@ -466,7 +450,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
         {
             using var serializedSettings = new SerializedObject(settings);
             var property = serializedSettings.FindProperty("m_EnableRealtimeLightmaps");
-            if (property == null || property.propertyType != SerializedPropertyType.Boolean) return false;
+            if (property == null || property.propertyType != SerializedPropertyType.Boolean)
+                return false;
             property.boolValue = ParamCoercion.CoerceBool(value, property.boolValue);
             serializedSettings.ApplyModifiedPropertiesWithoutUndo();
             return true;
@@ -479,7 +464,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
             try
             {
                 var settings = Lightmapping.lightingSettings;
-                if (settings != null) return settings;
+                if (settings != null)
+                    return settings;
             }
             catch { /* getter throws when no asset exists */ }
 
@@ -490,7 +476,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 Lightmapping.lightingSettings = created;
                 return Lightmapping.TryGetLightingSettings(out var assigned) && assigned == created ? created : null;
             }
-            catch { return null; }
+            catch
+            {
+                return null;
+            }
             finally
             {
                 if (created != null && (!Lightmapping.TryGetLightingSettings(out var assigned) || assigned != created))
@@ -507,7 +496,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (int.TryParse(target, out int instanceId))
             {
                 var byId = GameObjectLookup.ResolveInstanceID(instanceId) as GameObject;
-                if (byId != null) return byId;
+                if (byId != null)
+                    return byId;
             }
 
             return GameObject.Find(target);
@@ -541,7 +531,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 case "bakedgi":
                 case "baked_gi":
-                    apply = settings => { settings.bakedGI = ParamCoercion.CoerceBool(value, settings.bakedGI); return true; };
+                    apply = settings =>
+                    {
+                        settings.bakedGI = ParamCoercion.CoerceBool(value, settings.bakedGI);
+                        return true;
+                    };
                     return true;
 
                 case "realtimegi":
@@ -549,41 +543,69 @@ namespace MCPForUnity.Editor.Tools.Graphics
 #if UNITY_6000_7_OR_NEWER
                     apply = settings => TrySetRealtimeGI(settings, value);
 #else
-                    apply = settings => { settings.realtimeGI = ParamCoercion.CoerceBool(value, settings.realtimeGI); return true; };
+                    apply = settings =>
+                    {
+                        settings.realtimeGI = ParamCoercion.CoerceBool(value, settings.realtimeGI);
+                        return true;
+                    };
 #endif
                     return true;
 
                 case "lightmapper":
                     if (TryParseEnum<LightingSettings.Lightmapper>(value, out var lm))
                     {
-                        apply = settings => { settings.lightmapper = lm; return true; };
+                        apply = settings =>
+                        {
+                            settings.lightmapper = lm;
+                            return true;
+                        };
                         return true;
                     }
                     return false;
 
                 case "lightmapresolution":
                 case "lightmap_resolution":
-                    apply = settings => { settings.lightmapResolution = ParamCoercion.CoerceFloat(value, settings.lightmapResolution); return true; };
+                    apply = settings =>
+                    {
+                        settings.lightmapResolution = ParamCoercion.CoerceFloat(value, settings.lightmapResolution);
+                        return true;
+                    };
                     return true;
 
                 case "lightmapmaxsize":
                 case "lightmap_max_size":
-                    apply = settings => { settings.lightmapMaxSize = ParamCoercion.CoerceInt(value, settings.lightmapMaxSize); return true; };
+                    apply = settings =>
+                    {
+                        settings.lightmapMaxSize = ParamCoercion.CoerceInt(value, settings.lightmapMaxSize);
+                        return true;
+                    };
                     return true;
 
                 case "directsamplecount":
                 case "direct_sample_count":
-                    apply = settings => { settings.directSampleCount = ParamCoercion.CoerceInt(value, settings.directSampleCount); return true; };
+                    apply = settings =>
+                    {
+                        settings.directSampleCount = ParamCoercion.CoerceInt(value, settings.directSampleCount);
+                        return true;
+                    };
                     return true;
 
                 case "indirectsamplecount":
                 case "indirect_sample_count":
-                    apply = settings => { settings.indirectSampleCount = ParamCoercion.CoerceInt(value, settings.indirectSampleCount); return true; };
+                    apply = settings =>
+                    {
+                        settings.indirectSampleCount = ParamCoercion.CoerceInt(value, settings.indirectSampleCount);
+                        return true;
+                    };
                     return true;
 
                 case "environmentsamplecount":
                 case "environment_sample_count":
-                    apply = settings => { settings.environmentSampleCount = ParamCoercion.CoerceInt(value, settings.environmentSampleCount); return true; };
+                    apply = settings =>
+                    {
+                        settings.environmentSampleCount = ParamCoercion.CoerceInt(value, settings.environmentSampleCount);
+                        return true;
+                    };
                     return true;
 
                 case "bouncecount":
@@ -593,7 +615,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     var bounceProperty = typeof(LightingSettings).GetProperty("bounceCount", BindingFlags.Public | BindingFlags.Instance);
                     if (bounceProperty == null || !bounceProperty.CanWrite)
                         bounceProperty = typeof(LightingSettings).GetProperty("maxBounces", BindingFlags.Public | BindingFlags.Instance);
-                    if (bounceProperty == null || !bounceProperty.CanWrite) return false;
+                    if (bounceProperty == null || !bounceProperty.CanWrite)
+                        return false;
                     int bounceCount = ParamCoercion.CoerceInt(value, 2);
                     apply = settings => TrySetBounceCount(settings, bounceCount);
                     return true;
@@ -602,7 +625,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 case "mixed_bake_mode":
                     if (TryParseEnum<MixedLightingMode>(value, out var mlm))
                     {
-                        apply = settings => { settings.mixedBakeMode = mlm; return true; };
+                        apply = settings =>
+                        {
+                            settings.mixedBakeMode = mlm;
+                            return true;
+                        };
                         return true;
                     }
                     return false;
@@ -615,23 +642,34 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     if (!System.Enum.TryParse<LightmapCompression>(strVal, true, out var compression))
                     {
                         if (bool.TryParse(strVal, out var boolVal))
-                            compression = boolVal
-                            ? LightmapCompression.NormalQuality : LightmapCompression.None;
+                            compression = boolVal ? LightmapCompression.NormalQuality : LightmapCompression.None;
                         else if (int.TryParse(strVal, out var intVal))
                             compression = (LightmapCompression)intVal;
                         else
                             return false;
                     }
-                    apply = settings => { settings.lightmapCompression = compression; return true; };
+                    apply = settings =>
+                    {
+                        settings.lightmapCompression = compression;
+                        return true;
+                    };
                     return true;
 
                 case "ao":
-                    apply = settings => { settings.ao = ParamCoercion.CoerceBool(value, settings.ao); return true; };
+                    apply = settings =>
+                    {
+                        settings.ao = ParamCoercion.CoerceBool(value, settings.ao);
+                        return true;
+                    };
                     return true;
 
                 case "aomaxdistance":
                 case "ao_max_distance":
-                    apply = settings => { settings.aoMaxDistance = ParamCoercion.CoerceFloat(value, settings.aoMaxDistance); return true; };
+                    apply = settings =>
+                    {
+                        settings.aoMaxDistance = ParamCoercion.CoerceFloat(value, settings.aoMaxDistance);
+                        return true;
+                    };
                     return true;
 
                 default:
@@ -664,10 +702,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
         }
 
         // --- Helper: Parse enum from JToken (string name or int value) ---
-        private static bool TryParseEnum<T>(JToken value, out T result) where T : struct, Enum
+        private static bool TryParseEnum<T>(JToken value, out T result)
+            where T : struct, Enum
         {
             result = default;
-            if (value == null || value.Type == JTokenType.Null) return false;
+            if (value == null || value.Type == JTokenType.Null)
+                return false;
 
             string str = value.ToString();
 

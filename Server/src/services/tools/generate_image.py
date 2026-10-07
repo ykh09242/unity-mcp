@@ -5,6 +5,7 @@ Thin pass-through: this tool carries NO API keys and NO file bytes. The C# side
 reads the user's provider key from the OS secure store, performs the provider
 HTTPS call, downloads/decodes the result, and imports it as a texture.
 """
+
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -41,18 +42,34 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 )
 async def generate_image(
     ctx: Context,
-    action: Annotated[Literal["generate", "remove_background", "status", "cancel", "list_providers", "list_models", "refresh_models"],
-                      "Action to perform."],
-
+    action: Annotated[
+        Literal[
+            "generate",
+            "remove_background",
+            "status",
+            "cancel",
+            "list_providers",
+            "list_models",
+            "refresh_models",
+        ],
+        "Action to perform.",
+    ],
     provider: Annotated[str, "Provider id (fal, openrouter)."] | None = None,
     mode: Annotated[str, "Generation mode: text or image."] | None = None,
     prompt: Annotated[str, "Text prompt for text->image."] | None = None,
     image_path: Annotated[str, "Path to a source image for image->image mode."] | None = None,
     image_url: Annotated[str, "URL of a source image for image->image."] | None = None,
-    model: Annotated[str, "Provider model id/slug returned by list_models; omit for the GUI-selected default."] | None = None,
-    transparent: Annotated[bool, "Mark the imported texture as alpha-is-transparency. NOTE: fal/FLUX "
-                           "and OpenRouter have no generation-time transparency, so this only sets the "
-                           "Unity import flag — it does not make the model render a transparent background."] | None = None,
+    model: Annotated[
+        str, "Provider model id/slug returned by list_models; omit for the GUI-selected default."
+    ]
+    | None = None,
+    transparent: Annotated[
+        bool,
+        "Mark the imported texture as alpha-is-transparency. NOTE: fal/FLUX "
+        "and OpenRouter have no generation-time transparency, so this only sets the "
+        "Unity import flag — it does not make the model render a transparent background.",
+    ]
+    | None = None,
     width: Annotated[int, "Output width in pixels."] | None = None,
     height: Annotated[int, "Output height in pixels."] | None = None,
     name: Annotated[str, "Base name for the imported asset."] | None = None,

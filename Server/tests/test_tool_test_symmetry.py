@@ -13,6 +13,7 @@ quarantine list as coverage lands -- a stale entry (a module that now *has*
 coverage) also fails the guard, so the list can only get smaller, never grow
 silently.
 """
+
 import re
 from pathlib import Path
 

@@ -24,6 +24,7 @@ DUPLICATION NOTES:
   - NOTE: McpClient (C#) has many configuration flags that could be simplified via builder pattern
     This relates to refactor P2-3
 """
+
 import json
 import pytest
 from datetime import datetime
@@ -58,7 +59,7 @@ class TestMCPResponseModel:
             message="Operation completed successfully",
             error=None,
             data={"key": "value"},
-            hint="retry"
+            hint="retry",
         )
 
         assert response.success is True
@@ -70,10 +71,7 @@ class TestMCPResponseModel:
     def test_mcp_response_success_false_with_error(self):
         """Test MCPResponse with success=False and error message."""
         response = MCPResponse(
-            success=False,
-            message=None,
-            error="Failed to execute command",
-            data=None
+            success=False, message=None, error="Failed to execute command", data=None
         )
 
         assert response.success is False
@@ -82,11 +80,7 @@ class TestMCPResponseModel:
 
     def test_mcp_response_serialization_to_json(self):
         """Test MCPResponse can be serialized to JSON."""
-        response = MCPResponse(
-            success=True,
-            message="Success",
-            data={"count": 5}
-        )
+        response = MCPResponse(success=True, message="Success", data={"count": 5})
 
         json_str = response.model_dump_json()
         assert isinstance(json_str, str)
@@ -98,12 +92,9 @@ class TestMCPResponseModel:
 
     def test_mcp_response_deserialization_from_json(self):
         """Test MCPResponse can be deserialized from JSON."""
-        json_str = json.dumps({
-            "success": True,
-            "message": "All good",
-            "error": None,
-            "data": {"result": "ok"}
-        })
+        json_str = json.dumps(
+            {"success": True, "message": "All good", "error": None, "data": {"result": "ok"}}
+        )
 
         response = MCPResponse.model_validate_json(json_str)
 
@@ -122,19 +113,8 @@ class TestMCPResponseModel:
     def test_mcp_response_complex_data_structure(self):
         """Test MCPResponse with nested data structures."""
         complex_data = {
-            "items": [
-                {"id": 1, "name": "Item 1"},
-                {"id": 2, "name": "Item 2"}
-            ],
-            "metadata": {
-                "total": 2,
-                "page": 1,
-                "nested": {
-                    "deep": {
-                        "value": "here"
-                    }
-                }
-            }
+            "items": [{"id": 1, "name": "Item 1"}, {"id": 2, "name": "Item 2"}],
+            "metadata": {"total": 2, "page": 1, "nested": {"deep": {"value": "here"}}},
         }
 
         response = MCPResponse(success=True, data=complex_data)
@@ -144,12 +124,15 @@ class TestMCPResponseModel:
         restored = MCPResponse.model_validate_json(json_str)
         assert restored.data == complex_data
 
-    @pytest.mark.parametrize("success,message,error", [
-        (True, "OK", None),
-        (False, None, "Error occurred"),
-        (True, "Completed", "Old error"),
-        (False, "Message", "Error"),
-    ])
+    @pytest.mark.parametrize(
+        "success,message,error",
+        [
+            (True, "OK", None),
+            (False, None, "Error occurred"),
+            (True, "Completed", "Old error"),
+            (False, "Message", "Error"),
+        ],
+    )
     def test_mcp_response_various_combinations(self, success, message, error):
         """Parametrized test for various field combinations."""
         response = MCPResponse(success=success, message=message, error=error)
@@ -184,7 +167,7 @@ class TestToolParameterModel:
             description="Number of items",
             type="integer",
             required=False,
-            default_value="10"
+            default_value="10",
         )
 
         assert param.name == "count"
@@ -214,10 +197,7 @@ class TestToolParameterModel:
     def test_tool_parameter_serialization(self):
         """Test ToolParameterModel serialization to JSON."""
         param = ToolParameterModel(
-            name="search_term",
-            description="What to search for",
-            type="string",
-            required=True
+            name="search_term", description="What to search for", type="string", required=True
         )
 
         json_str = param.model_dump_json()
@@ -230,13 +210,15 @@ class TestToolParameterModel:
 
     def test_tool_parameter_deserialization(self):
         """Test ToolParameterModel deserialization from JSON."""
-        json_str = json.dumps({
-            "name": "filepath",
-            "description": "Path to file",
-            "type": "string",
-            "required": True,
-            "default_value": None
-        })
+        json_str = json.dumps(
+            {
+                "name": "filepath",
+                "description": "Path to file",
+                "type": "string",
+                "required": True,
+                "default_value": None,
+            }
+        )
 
         param = ToolParameterModel.model_validate_json(json_str)
 
@@ -246,29 +228,25 @@ class TestToolParameterModel:
     def test_tool_parameter_with_default_value(self):
         """Test ToolParameterModel with default values."""
         param = ToolParameterModel(
-            name="timeout",
-            type="integer",
-            required=False,
-            default_value="30"
+            name="timeout", type="integer", required=False, default_value="30"
         )
 
         assert param.default_value == "30"
         assert param.required is False
 
-    @pytest.mark.parametrize("name,param_type,required", [
-        ("api_key", "string", True),
-        ("limit", "integer", False),
-        ("enabled", "boolean", True),
-        ("data", "object", False),
-        ("items", "array", True),
-    ])
+    @pytest.mark.parametrize(
+        "name,param_type,required",
+        [
+            ("api_key", "string", True),
+            ("limit", "integer", False),
+            ("enabled", "boolean", True),
+            ("data", "object", False),
+            ("items", "array", True),
+        ],
+    )
     def test_tool_parameter_combinations(self, name, param_type, required):
         """Parametrized test for various parameter specifications."""
-        param = ToolParameterModel(
-            name=name,
-            type=param_type,
-            required=required
-        )
+        param = ToolParameterModel(name=name, type=param_type, required=required)
 
         assert param.name == name
         assert param.type == param_type
@@ -293,7 +271,9 @@ class TestToolDefinitionModel:
         """Test ToolDefinitionModel with all fields specified."""
         params = [
             ToolParameterModel(name="path", type="string", required=True),
-            ToolParameterModel(name="encoding", type="string", required=False, default_value="utf-8")
+            ToolParameterModel(
+                name="encoding", type="string", required=False, default_value="utf-8"
+            ),
         ]
 
         tool = ToolDefinitionModel(
@@ -302,7 +282,7 @@ class TestToolDefinitionModel:
             structured_output=True,
             requires_polling=False,
             poll_action="status",
-            parameters=params
+            parameters=params,
         )
 
         assert tool.name == "read_file"
@@ -322,9 +302,7 @@ class TestToolDefinitionModel:
     def test_tool_definition_with_polling(self):
         """Test ToolDefinitionModel for tool requiring polling."""
         tool = ToolDefinitionModel(
-            name="long_running_task",
-            requires_polling=True,
-            poll_action="check_progress"
+            name="long_running_task", requires_polling=True, poll_action="check_progress"
         )
 
         assert tool.requires_polling is True
@@ -332,10 +310,7 @@ class TestToolDefinitionModel:
 
     def test_tool_definition_with_many_parameters(self):
         """Test ToolDefinitionModel with multiple parameters."""
-        params = [
-            ToolParameterModel(name=f"param_{i}", type="string")
-            for i in range(5)
-        ]
+        params = [ToolParameterModel(name=f"param_{i}", type="string") for i in range(5)]
 
         tool = ToolDefinitionModel(name="complex_tool", parameters=params)
 
@@ -346,13 +321,11 @@ class TestToolDefinitionModel:
         """Test ToolDefinitionModel serialization to JSON."""
         params = [
             ToolParameterModel(name="input", type="string", required=True),
-            ToolParameterModel(name="format", type="string", required=False, default_value="json")
+            ToolParameterModel(name="format", type="string", required=False, default_value="json"),
         ]
 
         tool = ToolDefinitionModel(
-            name="process_data",
-            description="Process input data",
-            parameters=params
+            name="process_data", description="Process input data", parameters=params
         )
 
         json_str = tool.model_dump_json()
@@ -364,22 +337,24 @@ class TestToolDefinitionModel:
 
     def test_tool_definition_deserialization(self):
         """Test ToolDefinitionModel deserialization from JSON."""
-        json_str = json.dumps({
-            "name": "analyze",
-            "description": "Analyze data",
-            "structured_output": True,
-            "requires_polling": False,
-            "poll_action": "status",
-            "parameters": [
-                {
-                    "name": "data",
-                    "type": "string",
-                    "required": True,
-                    "default_value": None,
-                    "description": None
-                }
-            ]
-        })
+        json_str = json.dumps(
+            {
+                "name": "analyze",
+                "description": "Analyze data",
+                "structured_output": True,
+                "requires_polling": False,
+                "poll_action": "status",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "type": "string",
+                        "required": True,
+                        "default_value": None,
+                        "description": None,
+                    }
+                ],
+            }
+        )
 
         tool = ToolDefinitionModel.model_validate_json(json_str)
 
@@ -387,18 +362,19 @@ class TestToolDefinitionModel:
         assert len(tool.parameters) == 1
         assert tool.parameters[0].name == "data"
 
-    @pytest.mark.parametrize("name,requires_polling,poll_action", [
-        ("instant_tool", False, "status"),
-        ("async_tool", True, "get_result"),
-        ("check_tool", True, "check_status"),
-        ("simple", False, "status"),
-    ])
+    @pytest.mark.parametrize(
+        "name,requires_polling,poll_action",
+        [
+            ("instant_tool", False, "status"),
+            ("async_tool", True, "get_result"),
+            ("check_tool", True, "check_status"),
+            ("simple", False, "status"),
+        ],
+    )
     def test_tool_definition_polling_combinations(self, name, requires_polling, poll_action):
         """Parametrized test for polling configurations."""
         tool = ToolDefinitionModel(
-            name=name,
-            requires_polling=requires_polling,
-            poll_action=poll_action
+            name=name, requires_polling=requires_polling, poll_action=poll_action
         )
 
         assert tool.requires_polling == requires_polling
@@ -416,7 +392,7 @@ class TestUnityInstanceInfo:
             path="/path/to/project",
             hash="abc123",
             port=12345,
-            status="running"
+            status="running",
         )
 
         assert instance.id == "MyProject@abc123"
@@ -439,7 +415,7 @@ class TestUnityInstanceInfo:
             port=12345,
             status="running",
             last_heartbeat=now,
-            unity_version="2022.3.0f1"
+            unity_version="2022.3.0f1",
         )
 
         assert instance.last_heartbeat == now
@@ -451,12 +427,7 @@ class TestUnityInstanceInfo:
 
         for status in statuses:
             instance = UnityInstanceInfo(
-                id="id",
-                name="name",
-                path="/path",
-                hash="hash",
-                port=12345,
-                status=status
+                id="id", name="name", path="/path", hash="hash", port=12345, status=status
             )
             assert instance.status == status
 
@@ -468,7 +439,7 @@ class TestUnityInstanceInfo:
             path="/path/to/project",
             hash="abc123",
             port=8080,
-            status="running"
+            status="running",
         )
 
         dict_repr = instance.to_dict()
@@ -493,7 +464,7 @@ class TestUnityInstanceInfo:
             hash="hash",
             port=12345,
             status="running",
-            last_heartbeat=now
+            last_heartbeat=now,
         )
 
         dict_repr = instance.to_dict()
@@ -509,7 +480,7 @@ class TestUnityInstanceInfo:
             path="/path/to/project",
             hash="abc",
             port=8888,
-            status="running"
+            status="running",
         )
 
         json_str = instance.model_dump_json()
@@ -520,16 +491,18 @@ class TestUnityInstanceInfo:
 
     def test_unity_instance_info_deserialization_from_json(self):
         """Test UnityInstanceInfo deserialization from JSON."""
-        json_str = json.dumps({
-            "id": "Project@hash123",
-            "name": "MyProject",
-            "path": "/home/user/unity/project",
-            "hash": "hash123",
-            "port": 9999,
-            "status": "reloading",
-            "last_heartbeat": "2024-01-15T10:30:45",
-            "unity_version": "2023.2.0f1"
-        })
+        json_str = json.dumps(
+            {
+                "id": "Project@hash123",
+                "name": "MyProject",
+                "path": "/home/user/unity/project",
+                "hash": "hash123",
+                "port": 9999,
+                "status": "reloading",
+                "last_heartbeat": "2024-01-15T10:30:45",
+                "unity_version": "2023.2.0f1",
+            }
+        )
 
         instance = UnityInstanceInfo.model_validate_json(json_str)
 
@@ -547,7 +520,7 @@ class TestUnityInstanceInfo:
             hash="xyz789",
             port=5555,
             status="offline",
-            unity_version="2021.3.0f1"
+            unity_version="2021.3.0f1",
         )
 
         json_str = original.model_dump_json()
@@ -561,22 +534,20 @@ class TestUnityInstanceInfo:
         assert restored.status == original.status
         assert restored.unity_version == original.unity_version
 
-    @pytest.mark.parametrize("port,status", [
-        (8000, "running"),
-        (9000, "reloading"),
-        (10000, "offline"),
-        (65535, "running"),
-        (1234, "offline"),
-    ])
+    @pytest.mark.parametrize(
+        "port,status",
+        [
+            (8000, "running"),
+            (9000, "reloading"),
+            (10000, "offline"),
+            (65535, "running"),
+            (1234, "offline"),
+        ],
+    )
     def test_unity_instance_info_port_status_combinations(self, port, status):
         """Parametrized test for port and status combinations."""
         instance = UnityInstanceInfo(
-            id="id",
-            name="name",
-            path="/path",
-            hash="hash",
-            port=port,
-            status=status
+            id="id", name="name", path="/path", hash="hash", port=port, status=status
         )
 
         assert instance.port == port
@@ -594,12 +565,7 @@ class TestNormalizeUnityResponse:
 
     def test_normalize_already_normalized_response(self):
         """Test normalizing already MCPResponse-shaped response."""
-        response = {
-            "success": True,
-            "message": "OK",
-            "error": None,
-            "data": None
-        }
+        response = {"success": True, "message": "OK", "error": None, "data": None}
 
         result = normalize_unity_response(response)
 
@@ -608,12 +574,7 @@ class TestNormalizeUnityResponse:
 
     def test_normalize_status_success_response(self):
         """Test normalizing status='success' response."""
-        response = {
-            "status": "success",
-            "result": {
-                "message": "Operation succeeded"
-            }
-        }
+        response = {"status": "success", "result": {"message": "Operation succeeded"}}
 
         result = normalize_unity_response(response)
 
@@ -622,12 +583,7 @@ class TestNormalizeUnityResponse:
 
     def test_normalize_status_error_response(self):
         """Test normalizing status='error' response."""
-        response = {
-            "status": "error",
-            "result": {
-                "error": "Something went wrong"
-            }
-        }
+        response = {"status": "error", "result": {"error": "Something went wrong"}}
 
         result = normalize_unity_response(response)
 
@@ -638,10 +594,7 @@ class TestNormalizeUnityResponse:
         """Test normalizing response with data in result."""
         response = {
             "status": "success",
-            "result": {
-                "message": "Retrieved data",
-                "data": {"id": 1, "name": "Test"}
-            }
+            "result": {"message": "Retrieved data", "data": {"id": 1, "name": "Test"}},
         }
 
         result = normalize_unity_response(response)
@@ -672,14 +625,7 @@ class TestNormalizeUnityResponse:
         """Test normalizing result field containing nested dict."""
         response = {
             "status": "success",
-            "result": {
-                "message": "Complex result",
-                "nested": {
-                    "deep": {
-                        "value": "found"
-                    }
-                }
-            }
+            "result": {"message": "Complex result", "nested": {"deep": {"value": "found"}}},
         }
 
         result = normalize_unity_response(response)
@@ -689,10 +635,7 @@ class TestNormalizeUnityResponse:
 
     def test_normalize_no_status_no_success_field(self):
         """Test normalizing response with neither status nor success field."""
-        response = {
-            "id": 123,
-            "name": "Some response"
-        }
+        response = {"id": 123, "name": "Some response"}
 
         result = normalize_unity_response(response)
 
@@ -704,7 +647,7 @@ class TestNormalizeUnityResponse:
         response = {
             "status": "success",
             "result": "simple string result",
-            "message": "Operation complete"
+            "message": "Operation complete",
         }
 
         result = normalize_unity_response(response)
@@ -714,11 +657,7 @@ class TestNormalizeUnityResponse:
 
     def test_normalize_error_message_fallback(self):
         """Test error message falls back to message field."""
-        response = {
-            "status": "error",
-            "message": "Command failed",
-            "result": {}
-        }
+        response = {"status": "error", "message": "Command failed", "result": {}}
 
         result = normalize_unity_response(response)
 
@@ -727,10 +666,7 @@ class TestNormalizeUnityResponse:
 
     def test_normalize_unknown_status(self):
         """Test normalizing response with unknown status."""
-        response = {
-            "status": "unknown_status",
-            "message": "Unclear what happened"
-        }
+        response = {"status": "unknown_status", "message": "Unclear what happened"}
 
         result = normalize_unity_response(response)
 
@@ -739,11 +675,7 @@ class TestNormalizeUnityResponse:
 
     def test_normalize_result_none_value(self):
         """Test normalizing when result field is None."""
-        response = {
-            "status": "success",
-            "result": None,
-            "message": "OK but no data"
-        }
+        response = {"status": "success", "result": None, "message": "OK but no data"}
 
         result = normalize_unity_response(response)
 
@@ -754,11 +686,7 @@ class TestNormalizeUnityResponse:
         """Test normalizing when result itself contains 'success' field."""
         response = {
             "status": "pending",
-            "result": {
-                "success": True,
-                "message": "Inner success",
-                "data": {"value": 42}
-            }
+            "result": {"success": True, "message": "Inner success", "data": {"value": 42}},
         }
 
         result = normalize_unity_response(response)
@@ -767,19 +695,19 @@ class TestNormalizeUnityResponse:
         assert result["success"] is True
         assert result["message"] == "Inner success"
 
-    @pytest.mark.parametrize("status,expected_success", [
-        ("success", True),
-        ("error", False),
-        ("failed", False),
-        ("pending", False),
-        ("completed", False),
-    ])
+    @pytest.mark.parametrize(
+        "status,expected_success",
+        [
+            ("success", True),
+            ("error", False),
+            ("failed", False),
+            ("pending", False),
+            ("completed", False),
+        ],
+    )
     def test_normalize_status_to_success_mapping(self, status, expected_success):
         """Parametrized test for status to success field mapping."""
-        response = {
-            "status": status,
-            "result": {"message": f"Status is {status}"}
-        }
+        response = {"status": status, "result": {"message": f"Status is {status}"}}
 
         result = normalize_unity_response(response)
 
@@ -789,12 +717,7 @@ class TestNormalizeUnityResponse:
         """Test that extra fields in result are included in data."""
         response = {
             "status": "success",
-            "result": {
-                "message": "Done",
-                "field1": "value1",
-                "field2": 123,
-                "field3": True
-            }
+            "result": {"message": "Done", "field1": "value1", "field2": 123, "field3": True},
         }
 
         result = normalize_unity_response(response)
@@ -806,10 +729,7 @@ class TestNormalizeUnityResponse:
 
     def test_normalize_empty_result_dict(self):
         """Test normalizing response with empty result dict."""
-        response = {
-            "status": "success",
-            "result": {}
-        }
+        response = {"status": "success", "result": {}}
 
         result = normalize_unity_response(response)
 
@@ -820,12 +740,7 @@ class TestNormalizeUnityResponse:
         """Test that 'code' and 'status' fields are filtered from data."""
         response = {
             "status": "success",
-            "result": {
-                "message": "OK",
-                "code": 200,
-                "status": "ok",
-                "data": {"actual": "data"}
-            }
+            "result": {"message": "OK", "code": 200, "status": "ok", "data": {"actual": "data"}},
         }
 
         result = normalize_unity_response(response)
@@ -867,7 +782,7 @@ class TestModelValidation:
             "path": "/path",
             "hash": "hash",
             # Missing port
-            "status": "running"
+            "status": "running",
         }
 
         with pytest.raises(Exception):
@@ -879,17 +794,9 @@ class TestSchemaConsistency:
 
     def test_mcp_response_with_tool_definition_as_data(self):
         """Test MCPResponse containing ToolDefinitionModel as data."""
-        tool = ToolDefinitionModel(
-            name="test_tool",
-            description="A test tool"
-        )
+        tool = ToolDefinitionModel(name="test_tool", description="A test tool")
 
-        response = MCPResponse(
-            success=True,
-            data={
-                "tool": tool.model_dump()
-            }
-        )
+        response = MCPResponse(success=True, data={"tool": tool.model_dump()})
 
         assert response.data == {"tool": tool.model_dump()}
 
@@ -898,8 +805,7 @@ class TestSchemaConsistency:
         param_types = ["string", "integer", "float", "boolean", "array", "object"]
 
         params = [
-            ToolParameterModel(name=f"param_{i}", type=ptype)
-            for i, ptype in enumerate(param_types)
+            ToolParameterModel(name=f"param_{i}", type=ptype) for i, ptype in enumerate(param_types)
         ]
 
         tool = ToolDefinitionModel(name="multi_type_tool", parameters=params)
@@ -916,7 +822,7 @@ class TestSchemaConsistency:
             hash="id",
             port=9876,
             status="running",
-            unity_version="2023.1.0f1"
+            unity_version="2023.1.0f1",
         )
 
         dict_repr = original.to_dict()

@@ -150,10 +150,7 @@ async def test_normalizes_json_when_client_supplies_strings(boundary: Boundary) 
         {"name": "Menu/Title"},
         {"include_inactive": "false"},
         *[{"max_nodes": value} for value in (0, 1001, True, 2.5, "200")],
-        *[
-            {"properties": value}
-            for value in ('{"bad":', "[]", "null", "[object Object]", "", 42)
-        ],
+        *[{"properties": value} for value in ('{"bad":', "[]", "null", "[object Object]", "", 42)],
         *[
             {"resolutions": value}
             for value in (
@@ -331,9 +328,7 @@ async def test_rejects_nonfinite_json_before_http_transport(
         send_with_unity_instance,
     )
     monkeypatch.setattr("services.tools.manage_ugui.send_mutation", send_mutation)
-    monkeypatch.setattr(
-        "transport.plugin_hub.PluginHub.send_command_for_instance", http_send
-    )
+    monkeypatch.setattr("transport.plugin_hub.PluginHub.send_command_for_instance", http_send)
     server = FastMCP("ugui-finite-json")
     server.tool()(manage_ugui)
     # When: embedded JSON accepts nonstandard constants and numeric overflow.
@@ -343,7 +338,7 @@ async def test_rejects_nonfinite_json_before_http_transport(
             {
                 "action": "set_rect",
                 "target": "Canvas",
-                "properties": '{"anchorMin":[' + number + ',0]}',
+                "properties": '{"anchorMin":[' + number + ",0]}",
             },
         )
     result = response.structured_content
@@ -428,10 +423,7 @@ async def test_preserves_finite_extremes_in_json_properties(boundary: Boundary) 
         {"properties": '{"text":"\\udc00"}'},
         {"properties": '{"\\ud800":0}'},
         {"properties": '{"nested":[{"\\udc00":0}]}'},
-        *[
-            {"action": "get_hierarchy", "target": value}
-            for value in ("\ud800", "\udc00")
-        ],
+        *[{"action": "get_hierarchy", "target": value} for value in ("\ud800", "\udc00")],
         *[
             {"action": "create", "element_type": "text", "parent": value}
             for value in ("\ud800", "\udc00")
@@ -471,9 +463,7 @@ async def test_rejects_unpaired_surrogates_before_http_encoding(
         "services.tools.manage_ugui.send_with_unity_instance",
         send_with_unity_instance,
     )
-    monkeypatch.setattr(
-        "transport.plugin_hub.PluginHub.send_command_for_instance", http_send
-    )
+    monkeypatch.setattr("transport.plugin_hub.PluginHub.send_command_for_instance", http_send)
     server = FastMCP("ugui-unicode-json")
     server.tool()(manage_ugui)
     # When: the MCP envelope accepts strings that cannot reach the UTF-8 sink.
@@ -676,9 +666,14 @@ async def test_recovers_legacy_status_file_rejection_before_sending_mutation(
         return True, 0.0
 
     expected = {"success": True, "data": {"created": "SafeCanvas"}}
-    receive = Mock(return_value=json.dumps({
-        "status": "success", "result": expected,
-    }).encode("utf-8"))
+    receive = Mock(
+        return_value=json.dumps(
+            {
+                "status": "success",
+                "result": expected,
+            }
+        ).encode("utf-8")
+    )
     monkeypatch.setattr(config, "transport_mode", "stdio")
     monkeypatch.setattr(config, "http_remote_hosted", False)
     boundary.instance.return_value = "Safe@sixsafe"
@@ -692,19 +687,27 @@ async def test_recovers_legacy_status_file_rejection_before_sending_mutation(
     server.tool()(manage_ugui)
     # When: real Client, routing, async/sync wrappers and status-file preflight run.
     async with Client(server) as client:
-        result = await asyncio.wait_for(client.call_tool(
-            "manage_ugui", {"action": "create", "element_type": "canvas"},
-        ), timeout=3)
+        result = await asyncio.wait_for(
+            client.call_tool(
+                "manage_ugui",
+                {"action": "create", "element_type": "canvas"},
+            ),
+            timeout=3,
+        )
     # Then: wait out the refusal, send exactly once and preserve the native result.
     assert result.structured_content == expected
     assert dispatch_counts_at_readiness == [0, 1]
-    assert payloads == [{
-        "type": "manage_ugui",
-        "params": {
-            "action": "create", "include_inactive": False,
-            "max_nodes": 200, "element_type": "canvas",
-        },
-    }]
+    assert payloads == [
+        {
+            "type": "manage_ugui",
+            "params": {
+                "action": "create",
+                "include_inactive": False,
+                "max_nodes": 200,
+                "element_type": "canvas",
+            },
+        }
+    ]
     receive.assert_called_once()
 
 
@@ -713,7 +716,7 @@ async def test_rejects_nested_json_when_properties_exceed_decoder_depth(
     boundary: Boundary,
 ) -> None:
     # Given: JSON supplied inside a string bypasses the MCP envelope's depth bound.
-    properties = '{"anchorMin":' + '[' * 2000 + '0' + ']' * 2000 + '}'
+    properties = '{"anchorMin":' + "[" * 2000 + "0" + "]" * 2000 + "}"
     server = FastMCP("ugui-json-depth")
     server.tool()(manage_ugui)
     # When
@@ -733,9 +736,7 @@ async def test_rejects_nested_json_when_properties_exceed_decoder_depth(
 async def test_bounds_error_when_resolution_keys_are_invalid(boundary: Boundary) -> None:
     # Given: each key's value is only a small scalar, but validation repeats its name.
     unknown = "unexpected_" + "x" * 2000
-    resolutions = [
-        {"width": 64, "height": 64, **{f"{unknown}{n}": 64 + n for n in range(20)}}
-    ]
+    resolutions = [{"width": 64, "height": 64, **{f"{unknown}{n}": 64 + n for n in range(20)}}]
     server = FastMCP("ugui-json-validation-budget")
     server.tool()(manage_ugui)
     # When
@@ -785,12 +786,15 @@ async def test_returns_instance_selection_failure_without_waiting_for_editor(
             "manage_ugui", {"action": "create", "element_type": "canvas"}
         )
     # Then: preserve the transport's actionable refusal without polling readiness.
-    assert response.structured_content == MCPResponse(
-        success=False,
-        error=InstanceSelectionRequiredError._MULTIPLE_INSTANCES,
-        hint="select_instance",
-        data={"reason": "instance_selection_required", "available_instances": []},
-    ).model_dump()
+    assert (
+        response.structured_content
+        == MCPResponse(
+            success=False,
+            error=InstanceSelectionRequiredError._MULTIPLE_INSTANCES,
+            hint="select_instance",
+            data={"reason": "instance_selection_required", "available_instances": []},
+        ).model_dump()
+    )
     send.assert_not_awaited()
     ready.assert_not_awaited()
     assert listing.await_count == 3

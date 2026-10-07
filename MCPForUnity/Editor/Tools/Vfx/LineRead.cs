@@ -6,16 +6,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
 {
     internal static class LineRead
     {
-        public static LineRenderer FindLineRenderer(JObject @params)
-            => ManageVfxCommon.FindComponent<LineRenderer>(@params);
+        public static LineRenderer FindLineRenderer(JObject @params) => ManageVfxCommon.FindComponent<LineRenderer>(@params);
 
-        public static string FindLineRendererError(JObject @params)
-            => ManageVfxCommon.FindComponentError<LineRenderer>(@params);
+        public static string FindLineRendererError(JObject @params) => ManageVfxCommon.FindComponentError<LineRenderer>(@params);
 
         public static object GetInfo(JObject @params)
         {
             LineRenderer lr = FindLineRenderer(@params);
-            if (lr == null) return new { success = false, message = FindLineRendererError(@params) };
+            if (lr == null)
+                return new { success = false, message = FindLineRendererError(@params) };
 
             var positions = new Vector3[lr.positionCount];
             lr.GetPositions(positions);
@@ -27,7 +26,14 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 {
                     gameObject = lr.gameObject.name,
                     positionCount = lr.positionCount,
-                    positions = positions.Select(p => new { x = p.x, y = p.y, z = p.z }).ToArray(),
+                    positions = positions
+                        .Select(p => new
+                        {
+                            x = p.x,
+                            y = p.y,
+                            z = p.z,
+                        })
+                        .ToArray(),
                     startWidth = lr.startWidth,
                     endWidth = lr.endWidth,
                     loop = lr.loop,
@@ -44,8 +50,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     reflectionProbeUsage = lr.reflectionProbeUsage.ToString(),
                     sortingOrder = lr.sortingOrder,
                     sortingLayerName = lr.sortingLayerName,
-                    renderingLayerMask = lr.renderingLayerMask
-                }
+                    renderingLayerMask = lr.renderingLayerMask,
+                },
             };
         }
     }

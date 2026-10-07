@@ -31,7 +31,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["searchTerm"] = name,
                 ["searchMethod"] = "by_name",
                 [sizeKey] = 1000,
-                [numberKey] = 2
+                [numberKey] = 2,
             };
 
             var response = JObject.FromObject(FindGameObjects.HandleCommand(parameters));
@@ -48,7 +48,8 @@ namespace MCPForUnityTests.Editor.Tools
         public void LargeOffset_ReturnsEmptyFinalPage(
             [Values("cursor", "page_number", "pageNumber")] string offsetKey,
             [Values("2147483646", "2147483647", "2147483648", "9223372036854775808", "1000000000000000000000000000000")] string offset,
-            [Values(false, true)] bool stringToken)
+            [Values(false, true)] bool stringToken
+        )
         {
             string name = "Paging_" + Guid.NewGuid().ToString("N");
             _objects.Add(new GameObject(name));
@@ -56,7 +57,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["searchTerm"] = name,
                 ["pageSize"] = 1,
-                [offsetKey] = stringToken ? new JValue(offset) : JToken.Parse(offset)
+                [offsetKey] = stringToken ? new JValue(offset) : JToken.Parse(offset),
             };
 
             var response = JObject.FromObject(FindGameObjects.HandleCommand(parameters));
@@ -74,15 +75,12 @@ namespace MCPForUnityTests.Editor.Tools
         public void LargePageSize_UsesMaximumPageSize(
             [Values("page_size", "pageSize")] string sizeKey,
             [Values("2147483646", "2147483647", "2147483648", "9223372036854775808", "1000000000000000000000000000000")] string size,
-            [Values(false, true)] bool stringToken)
+            [Values(false, true)] bool stringToken
+        )
         {
             string name = "Paging_" + Guid.NewGuid().ToString("N");
             _objects.Add(new GameObject(name));
-            var parameters = new JObject
-            {
-                ["searchTerm"] = name,
-                [sizeKey] = stringToken ? new JValue(size) : JToken.Parse(size)
-            };
+            var parameters = new JObject { ["searchTerm"] = name, [sizeKey] = stringToken ? new JValue(size) : JToken.Parse(size) };
 
             var response = JObject.FromObject(FindGameObjects.HandleCommand(parameters));
 
@@ -106,7 +104,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["searchTerm"] = name,
                 ["pageSize"] = JToken.Parse(size),
-                ["cursor"] = JToken.Parse(cursor)
+                ["cursor"] = JToken.Parse(cursor),
             };
 
             var response = JObject.FromObject(FindGameObjects.HandleCommand(parameters));
@@ -127,7 +125,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["searchTerm"] = name,
                 ["pageSize"] = 1,
                 ["cursor"] = 0,
-                ["page_number"] = JToken.Parse("1000000000000000000000000000000")
+                ["page_number"] = JToken.Parse("1000000000000000000000000000000"),
             };
 
             var response = JObject.FromObject(FindGameObjects.HandleCommand(parameters));
@@ -143,7 +141,7 @@ namespace MCPForUnityTests.Editor.Tools
             var parameters = new JObject
             {
                 ["searchTerm"] = "Paging_" + Guid.NewGuid().ToString("N"),
-                ["cursor"] = JToken.Parse("1000000000000000000000000000000")
+                ["cursor"] = JToken.Parse("1000000000000000000000000000000"),
             };
 
             var response = JObject.FromObject(FindGameObjects.HandleCommand(parameters));

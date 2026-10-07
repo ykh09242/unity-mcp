@@ -89,8 +89,7 @@ class TestWebSocketAuthGate:
     async def test_invalid_api_key_rejected(self, monkeypatch):
         """WebSocket with invalid API key -> close 4403."""
         monkeypatch.setattr(config, "http_remote_hosted", True)
-        _init_api_key_service(ValidationResult(
-            valid=False, error="Invalid API key"))
+        _init_api_key_service(ValidationResult(valid=False, error="Invalid API key"))
 
         ws = _make_mock_websocket(headers={API_KEY_HEADER: "sk-bad-key"})
         hub = _make_hub()
@@ -105,8 +104,7 @@ class TestWebSocketAuthGate:
         """WebSocket with valid API key -> accepted, user_id stored in state."""
         monkeypatch.setattr(config, "http_remote_hosted", True)
         _init_api_key_service(
-            ValidationResult(valid=True, user_id="user-42",
-                             metadata={"plan": "pro"})
+            ValidationResult(valid=True, user_id="user-42", metadata={"plan": "pro"})
         )
 
         ws = _make_mock_websocket(headers={API_KEY_HEADER: "sk-valid-key"})
@@ -126,8 +124,7 @@ class TestWebSocketAuthGate:
         """Auth service error with 'unavailable' -> close 1013 (try again later)."""
         monkeypatch.setattr(config, "http_remote_hosted", True)
         _init_api_key_service(
-            ValidationResult(
-                valid=False, error="Auth service unavailable", cacheable=False)
+            ValidationResult(valid=False, error="Auth service unavailable", cacheable=False)
         )
 
         ws = _make_mock_websocket(headers={API_KEY_HEADER: "sk-some-key"})
@@ -157,9 +154,7 @@ class TestUserIdFlowsToRegistration:
     async def test_user_id_passed_to_registry_on_register(self, monkeypatch):
         """After valid auth, the register message should pass user_id to registry."""
         monkeypatch.setattr(config, "http_remote_hosted", True)
-        _init_api_key_service(
-            ValidationResult(valid=True, user_id="user-99")
-        )
+        _init_api_key_service(ValidationResult(valid=True, user_id="user-99"))
 
         registry = PluginRegistry()
         loop = asyncio.get_running_loop()

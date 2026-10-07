@@ -2,10 +2,10 @@ using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -18,6 +18,7 @@ namespace MCPForUnityTests.Editor.Tools
     public class ManageComponentsContractTests
     {
         private readonly List<GameObject> _objects = new List<GameObject>();
+
         private GameObject Create(string name)
         {
             var go = new GameObject(name);
@@ -28,16 +29,20 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            foreach (var go in _objects) Object.DestroyImmediate(go);
+            foreach (var go in _objects)
+                Object.DestroyImmediate(go);
             _objects.Clear();
         }
 
         private static JObject Send(JObject request) => JObject.FromObject(ManageComponents.HandleCommand(request));
-        private static JObject Request(string action, JToken target) => new JObject
-        {
-            ["action"] = action, ["target"] = target,
-            ["componentType"] = typeof(ManageComponentsContractProbe).FullName
-        };
+
+        private static JObject Request(string action, JToken target) =>
+            new JObject
+            {
+                ["action"] = action,
+                ["target"] = target,
+                ["componentType"] = typeof(ManageComponentsContractProbe).FullName,
+            };
 
         [TestCase("add", false)]
         [TestCase("remove", false)]
@@ -48,17 +53,23 @@ namespace MCPForUnityTests.Editor.Tools
             var unrelated = Create("unrelated-component-target");
             var unrelatedComponent = unrelated.AddComponent<ManageComponentsContractProbe>();
             var named = Create(unrelated.GetInstanceIDCompat().ToString());
-            if (action != "add") named.AddComponent<ManageComponentsContractProbe>();
+            if (action != "add")
+                named.AddComponent<ManageComponentsContractProbe>();
             var request = Request(action, integer ? new JValue(unrelated.GetInstanceIDCompat()) : new JValue(named.name));
             request["searchMethod"] = "by_name";
-            if (action == "set_property") { request["property"] = "amount"; request["value"] = 7; }
+            if (action == "set_property")
+            {
+                request["property"] = "amount";
+                request["value"] = 7;
+            }
             var result = Send(request);
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(named.GetInstanceIDCompat(), result["data"].Value<int>("instanceID"));
             Assert.AreEqual(1f, unrelatedComponent.amount);
             Assert.AreEqual(1, unrelated.GetComponents<ManageComponentsContractProbe>().Length);
             Assert.AreEqual(action == "remove" ? 0 : 1, named.GetComponents<ManageComponentsContractProbe>().Length);
-            if (action == "set_property") Assert.AreEqual(7f, named.GetComponent<ManageComponentsContractProbe>().amount);
+            if (action == "set_property")
+                Assert.AreEqual(7f, named.GetComponent<ManageComponentsContractProbe>().amount);
         }
 
         [Test]
@@ -69,7 +80,9 @@ namespace MCPForUnityTests.Editor.Tools
             var named = Create(unrelated.GetInstanceIDCompat().ToString());
             named.AddComponent<ManageComponentsContractProbe>();
             var request = Request("set_property", named.name);
-            request["search_method"] = "by_path"; request["property"] = "amount"; request["value"] = 9;
+            request["search_method"] = "by_path";
+            request["property"] = "amount";
+            request["value"] = 9;
             var result = Send(request);
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(9f, named.GetComponent<ManageComponentsContractProbe>().amount);
@@ -83,7 +96,8 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Create("implicit-target");
             var component = go.AddComponent<ManageComponentsContractProbe>();
             var request = Request("set_property", integer ? new JValue(go.GetInstanceIDCompat()) : new JValue(go.GetInstanceIDCompat().ToString()));
-            request["property"] = "amount"; request["value"] = 3;
+            request["property"] = "amount";
+            request["value"] = 3;
             var result = Send(request);
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(3f, component.amount);
@@ -110,7 +124,8 @@ namespace MCPForUnityTests.Editor.Tools
             var component = go.AddComponent<ManageComponentsContractProbe>();
             component.reference = Create("referenced-object");
             var request = Request("set_property", go.GetInstanceIDCompat());
-            request["property"] = "reference"; request["value"] = JValue.CreateNull();
+            request["property"] = "reference";
+            request["value"] = JValue.CreateNull();
             var result = Send(request);
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsNull(component.reference);
@@ -123,7 +138,8 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Create("partial-add-target");
             var request = Request("add", go.GetInstanceIDCompat());
             var properties = new JObject { ["missingField"] = 4 };
-            if (mixed) properties["amount"] = 6;
+            if (mixed)
+                properties["amount"] = 6;
             request["properties"] = properties;
             var result = Send(request);
             var component = go.GetComponent<ManageComponentsContractProbe>();
@@ -152,7 +168,8 @@ namespace MCPForUnityTests.Editor.Tools
         public void PropertyErrors_AreRecognizedAsFailuresByBatchClassifier(string action)
         {
             var go = Create("batch-property-error");
-            if (action == "set_property") go.AddComponent<ManageComponentsContractProbe>();
+            if (action == "set_property")
+                go.AddComponent<ManageComponentsContractProbe>();
             var request = Request(action, go.GetInstanceIDCompat());
             request["properties"] = new JObject { ["missingField"] = 2 };
             var rawResult = ManageComponents.HandleCommand(request);

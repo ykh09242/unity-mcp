@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.GameObjects;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
-using Newtonsoft.Json.Linq;
-using MCPForUnity.Editor.Tools;
-using MCPForUnity.Editor.Tools.GameObjects;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -59,11 +59,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void HandleCommand_ProcessesValidCreateAction()
         {
-            var createParams = new JObject
-            {
-                ["action"] = "create",
-                ["name"] = "TestCreateObject"
-            };
+            var createParams = new JObject { ["action"] = "create", ["name"] = "TestCreateObject" };
 
             var result = ManageGameObject.HandleCommand(createParams);
 
@@ -97,7 +93,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ("Collider", typeof(Collider)),
                 ("Renderer", typeof(Renderer)),
                 ("Camera", typeof(Camera)),
-                ("Light", typeof(Light))
+                ("Light", typeof(Light)),
             };
 
             foreach (var (componentName, expectedType) in components)
@@ -107,8 +103,7 @@ namespace MCPForUnityTests.Editor.Tools
                 // Some components might not resolve (abstract classes), but the method should handle gracefully
                 if (result)
                 {
-                    Assert.IsTrue(expectedType.IsAssignableFrom(actualType),
-                        $"{componentName} should resolve to assignable type");
+                    Assert.IsTrue(expectedType.IsAssignableFrom(actualType), $"{componentName} should resolve to assignable type");
                 }
                 else
                 {
@@ -156,7 +151,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ("Max Reach Distance", "maxReachDistance"),
                 ("MAX_REACH_DISTANCE", "maxReachDistance"),
                 ("player health", "playerHealth"),
-                ("movement speed", "movementSpeed")
+                ("movement speed", "movementSpeed"),
             };
 
             foreach (var (input, expected) in testCases)
@@ -221,20 +216,35 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["Transform"] = new JObject
                     {
-                        ["localPosition"] = new JObject { ["x"] = 1.0f, ["y"] = 2.0f, ["z"] = 3.0f },  // Valid
-                        ["rotatoin"] = new JObject { ["x"] = 0.0f, ["y"] = 90.0f, ["z"] = 0.0f }, // Invalid (typo - should be rotation)
-                        ["localScale"] = new JObject { ["x"] = 2.0f, ["y"] = 2.0f, ["z"] = 2.0f }      // Valid
+                        ["localPosition"] = new JObject
+                        {
+                            ["x"] = 1.0f,
+                            ["y"] = 2.0f,
+                            ["z"] = 3.0f,
+                        }, // Valid
+                        ["rotatoin"] = new JObject
+                        {
+                            ["x"] = 0.0f,
+                            ["y"] = 90.0f,
+                            ["z"] = 0.0f,
+                        }, // Invalid (typo - should be rotation)
+                        ["localScale"] = new JObject
+                        {
+                            ["x"] = 2.0f,
+                            ["y"] = 2.0f,
+                            ["z"] = 2.0f,
+                        }, // Valid
                     },
                     ["Rigidbody"] = new JObject
                     {
-                        ["mass"] = 5.0f,            // Valid
-                        ["invalidProp"] = "test",   // Invalid - doesn't exist
-                        ["useGravity"] = true       // Valid
-                    }
-                }
+                        ["mass"] = 5.0f, // Valid
+                        ["invalidProp"] = "test", // Invalid - doesn't exist
+                        ["useGravity"] = true, // Valid
+                    },
+                },
             };
 
-            // Store original values to verify changes  
+            // Store original values to verify changes
             var originalLocalPosition = transform.localPosition;
             var originalLocalScale = transform.localScale;
             var originalMass = rigidbody.mass;
@@ -254,19 +264,15 @@ namespace MCPForUnityTests.Editor.Tools
             Debug.Log($"AFTER TEST - LocalScale: {transform.localScale}");
 
             // Assert - verify that valid properties were set despite invalid ones
-            Assert.AreEqual(new Vector3(1.0f, 2.0f, 3.0f), transform.localPosition,
-                "Valid localPosition should be set even with other invalid properties");
-            Assert.AreEqual(new Vector3(2.0f, 2.0f, 2.0f), transform.localScale,
-                "Valid localScale should be set even with other invalid properties");
-            Assert.AreEqual(5.0f, rigidbody.mass, 0.001f,
-                "Valid mass should be set even with other invalid properties");
-            Assert.AreEqual(true, rigidbody.useGravity,
-                "Valid useGravity should be set even with other invalid properties");
+            Assert.AreEqual(new Vector3(1.0f, 2.0f, 3.0f), transform.localPosition, "Valid localPosition should be set even with other invalid properties");
+            Assert.AreEqual(new Vector3(2.0f, 2.0f, 2.0f), transform.localScale, "Valid localScale should be set even with other invalid properties");
+            Assert.AreEqual(5.0f, rigidbody.mass, 0.001f, "Valid mass should be set even with other invalid properties");
+            Assert.AreEqual(true, rigidbody.useGravity, "Valid useGravity should be set even with other invalid properties");
 
             // Verify the result indicates errors (since we had invalid properties)
             Assert.IsNotNull(result, "Should return a result object");
 
-            // The collect-and-continue behavior means we should get an error response 
+            // The collect-and-continue behavior means we should get an error response
             // that contains info about the failed properties, but valid ones were still applied
             // This proves the collect-and-continue behavior is working
 
@@ -289,8 +295,10 @@ namespace MCPForUnityTests.Editor.Tools
             foreach (var err in errorsEnum)
             {
                 string s = err?.ToString() ?? string.Empty;
-                if (s.Contains("rotatoin")) foundRotatoin = true;
-                if (s.Contains("invalidProp")) foundInvalidProp = true;
+                if (s.Contains("rotatoin"))
+                    foundRotatoin = true;
+                if (s.Contains("invalidProp"))
+                    foundInvalidProp = true;
             }
             Assert.IsTrue(foundRotatoin, "errors should mention the misspelled 'rotatoin' property");
             Assert.IsTrue(foundInvalidProp, "errors should mention the 'invalidProp' property");
@@ -315,11 +323,11 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["Rigidbody"] = new JObject
                     {
-                        ["mass"] = 2.5f,                    // Valid - should be set
-                        ["velocity"] = "invalid_type",      // Invalid type - will cause exception  
-                        ["useGravity"] = false              // Valid - should still be set after exception
-                    }
-                }
+                        ["mass"] = 2.5f, // Valid - should be set
+                        ["velocity"] = "invalid_type", // Invalid type - will cause exception
+                        ["useGravity"] = false, // Valid - should still be set after exception
+                    },
+                },
             };
 
             // Expect the error logs from the invalid property
@@ -333,10 +341,8 @@ namespace MCPForUnityTests.Editor.Tools
             var result = ManageGameObject.HandleCommand(setPropertiesParams);
 
             // Assert - verify that valid properties before AND after the exception were still set
-            Assert.AreEqual(2.5f, rigidbody.mass, 0.001f,
-                "Mass should be set even if later property causes exception");
-            Assert.AreEqual(false, rigidbody.useGravity,
-                "UseGravity should be set even if previous property caused exception");
+            Assert.AreEqual(2.5f, rigidbody.mass, 0.001f, "Mass should be set even if later property causes exception");
+            Assert.AreEqual(false, rigidbody.useGravity, "UseGravity should be set even if previous property caused exception");
 
             Assert.IsNotNull(result, "Should return a result even with exceptions");
 
@@ -361,7 +367,11 @@ namespace MCPForUnityTests.Editor.Tools
             foreach (var err in errorsEnum2)
             {
                 string s = err?.ToString() ?? string.Empty;
-                if (s.Contains("velocity")) { foundVelocityError = true; break; }
+                if (s.Contains("velocity"))
+                {
+                    foundVelocityError = true;
+                    break;
+                }
             }
             Assert.IsTrue(foundVelocityError, "errors should include a message referencing 'velocity'");
         }
@@ -373,17 +383,17 @@ namespace MCPForUnityTests.Editor.Tools
             var testObject = new GameObject("MaterialMeshTestObject");
             var meshRenderer = testObject.AddComponent<MeshRenderer>();
             var meshFilter = testObject.AddComponent<MeshFilter>();
-            
+
             // Create a simple material and mesh for testing
             var testMaterial = new Material(Shader.Find("Standard"));
             var tempCube = GameObject.CreatePrimitive(PrimitiveType.Cube);
             var testMesh = tempCube.GetComponent<MeshFilter>().sharedMesh;
             UnityEngine.Object.DestroyImmediate(tempCube);
-            
+
             // Set the shared material and mesh (these should be used in edit mode)
             meshRenderer.sharedMaterial = testMaterial;
             meshFilter.sharedMesh = testMesh;
-            
+
             // Act - Get component data which should trigger material/mesh property access
             var prevIgnore = LogAssert.ignoreFailingMessages;
             LogAssert.ignoreFailingMessages = true; // Avoid failing due to incidental editor logs during reflection
@@ -396,17 +406,24 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 LogAssert.ignoreFailingMessages = prevIgnore;
             }
-            
+
             // Assert - Basic success and shape tolerance
             Assert.IsNotNull(result, "GetComponentData should return a result");
-            if (result is Dictionary<string, object> dict &&
-                dict.TryGetValue("properties", out var propsObj) &&
-                propsObj is Dictionary<string, object> properties)
+            if (
+                result is Dictionary<string, object> dict
+                && dict.TryGetValue("properties", out var propsObj)
+                && propsObj is Dictionary<string, object> properties
+            )
             {
-                Assert.IsTrue(properties.ContainsKey("material") || properties.ContainsKey("sharedMaterial") || properties.ContainsKey("materials") || properties.ContainsKey("sharedMaterials"),
-                    "Serialized data should include a material-related key when present.");
+                Assert.IsTrue(
+                    properties.ContainsKey("material")
+                        || properties.ContainsKey("sharedMaterial")
+                        || properties.ContainsKey("materials")
+                        || properties.ContainsKey("sharedMaterials"),
+                    "Serialized data should include a material-related key when present."
+                );
             }
-            
+
             // Clean up
             UnityEngine.Object.DestroyImmediate(testMaterial);
             UnityEngine.Object.DestroyImmediate(testObject);
@@ -418,13 +435,13 @@ namespace MCPForUnityTests.Editor.Tools
             // Arrange - Create a GameObject with MeshFilter component
             var testObject = new GameObject("MeshTestObject");
             var meshFilter = testObject.AddComponent<MeshFilter>();
-            
+
             // Create a simple mesh for testing
             var tempSphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             var testMesh = tempSphere.GetComponent<MeshFilter>().sharedMesh;
             UnityEngine.Object.DestroyImmediate(tempSphere);
             meshFilter.sharedMesh = testMesh;
-            
+
             // Act - Get component data which should trigger mesh property access
             var prevIgnore2 = LogAssert.ignoreFailingMessages;
             LogAssert.ignoreFailingMessages = true;
@@ -437,17 +454,21 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 LogAssert.ignoreFailingMessages = prevIgnore2;
             }
-            
+
             // Assert - Basic success and shape tolerance
             Assert.IsNotNull(result, "GetComponentData should return a result");
-            if (result is Dictionary<string, object> dict2 &&
-                dict2.TryGetValue("properties", out var propsObj2) &&
-                propsObj2 is Dictionary<string, object> properties2)
+            if (
+                result is Dictionary<string, object> dict2
+                && dict2.TryGetValue("properties", out var propsObj2)
+                && propsObj2 is Dictionary<string, object> properties2
+            )
             {
-                Assert.IsTrue(properties2.ContainsKey("mesh") || properties2.ContainsKey("sharedMesh"),
-                    "Serialized data should include a mesh-related key when present.");
+                Assert.IsTrue(
+                    properties2.ContainsKey("mesh") || properties2.ContainsKey("sharedMesh"),
+                    "Serialized data should include a mesh-related key when present."
+                );
             }
-            
+
             // Clean up
             UnityEngine.Object.DestroyImmediate(testObject);
         }
@@ -458,27 +479,31 @@ namespace MCPForUnityTests.Editor.Tools
             // Arrange - Create a GameObject with MeshRenderer
             var testObject = new GameObject("SharedMaterialTestObject");
             var meshRenderer = testObject.AddComponent<MeshRenderer>();
-            
+
             // Create a test material
             var testMaterial = new Material(Shader.Find("Standard"));
             testMaterial.name = "TestMaterial";
             meshRenderer.sharedMaterial = testMaterial;
-            
+
             // Act - Get component data in edit mode
             var result = MCPForUnity.Editor.Helpers.GameObjectSerializer.GetComponentData(meshRenderer);
-            
+
             // Assert - Verify that the material property was accessed without instantiation
             Assert.IsNotNull(result, "GetComponentData should return a result");
-            
+
             // Check that result is a dictionary with properties key
-            if (result is Dictionary<string, object> resultDict && 
-                resultDict.TryGetValue("properties", out var propertiesObj) &&
-                propertiesObj is Dictionary<string, object> properties)
+            if (
+                result is Dictionary<string, object> resultDict
+                && resultDict.TryGetValue("properties", out var propertiesObj)
+                && propertiesObj is Dictionary<string, object> properties
+            )
             {
-                Assert.IsTrue(properties.ContainsKey("material") || properties.ContainsKey("sharedMaterial"),
-                    "Serialized data should include 'material' or 'sharedMaterial' when present.");
+                Assert.IsTrue(
+                    properties.ContainsKey("material") || properties.ContainsKey("sharedMaterial"),
+                    "Serialized data should include 'material' or 'sharedMaterial' when present."
+                );
             }
-            
+
             // Clean up
             UnityEngine.Object.DestroyImmediate(testMaterial);
             UnityEngine.Object.DestroyImmediate(testObject);
@@ -490,29 +515,33 @@ namespace MCPForUnityTests.Editor.Tools
             // Arrange - Create a GameObject with MeshFilter
             var testObject = new GameObject("SharedMeshTestObject");
             var meshFilter = testObject.AddComponent<MeshFilter>();
-            
+
             // Create a test mesh
             var tempCylinder = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             var testMesh = tempCylinder.GetComponent<MeshFilter>().sharedMesh;
             UnityEngine.Object.DestroyImmediate(tempCylinder);
             testMesh.name = "TestMesh";
             meshFilter.sharedMesh = testMesh;
-            
+
             // Act - Get component data in edit mode
             var result = MCPForUnity.Editor.Helpers.GameObjectSerializer.GetComponentData(meshFilter);
-            
+
             // Assert - Verify that the mesh property was accessed without instantiation
             Assert.IsNotNull(result, "GetComponentData should return a result");
-            
+
             // Check that result is a dictionary with properties key
-            if (result is Dictionary<string, object> resultDict && 
-                resultDict.TryGetValue("properties", out var propertiesObj) &&
-                propertiesObj is Dictionary<string, object> properties)
+            if (
+                result is Dictionary<string, object> resultDict
+                && resultDict.TryGetValue("properties", out var propertiesObj)
+                && propertiesObj is Dictionary<string, object> properties
+            )
             {
-                Assert.IsTrue(properties.ContainsKey("mesh") || properties.ContainsKey("sharedMesh"),
-                    "Serialized data should include 'mesh' or 'sharedMesh' when present.");
+                Assert.IsTrue(
+                    properties.ContainsKey("mesh") || properties.ContainsKey("sharedMesh"),
+                    "Serialized data should include 'mesh' or 'sharedMesh' when present."
+                );
             }
-            
+
             // Clean up
             UnityEngine.Object.DestroyImmediate(testObject);
         }
@@ -524,17 +553,17 @@ namespace MCPForUnityTests.Editor.Tools
             var testObject = new GameObject("NullMaterialMeshTestObject");
             var meshRenderer = testObject.AddComponent<MeshRenderer>();
             var meshFilter = testObject.AddComponent<MeshFilter>();
-            
+
             // Don't set any materials or meshes - they should be null
-            
+
             // Act - Get component data
             var rendererResult = MCPForUnity.Editor.Helpers.GameObjectSerializer.GetComponentData(meshRenderer);
             var meshFilterResult = MCPForUnity.Editor.Helpers.GameObjectSerializer.GetComponentData(meshFilter);
-            
+
             // Assert - Verify that the operations succeeded even with null materials/meshes
             Assert.IsNotNull(rendererResult, "GetComponentData should handle null materials");
             Assert.IsNotNull(meshFilterResult, "GetComponentData should handle null meshes");
-            
+
             // Clean up
             UnityEngine.Object.DestroyImmediate(testObject);
         }
@@ -545,21 +574,21 @@ namespace MCPForUnityTests.Editor.Tools
             // Arrange - Create a GameObject with MeshRenderer that has multiple materials
             var testObject = new GameObject("MultiMaterialTestObject");
             var meshRenderer = testObject.AddComponent<MeshRenderer>();
-            
+
             // Create multiple test materials
             var material1 = new Material(Shader.Find("Standard"));
             material1.name = "TestMaterial1";
             var material2 = new Material(Shader.Find("Standard"));
             material2.name = "TestMaterial2";
-            
+
             meshRenderer.sharedMaterials = new Material[] { material1, material2 };
-            
+
             // Act - Get component data
             var result = MCPForUnity.Editor.Helpers.GameObjectSerializer.GetComponentData(meshRenderer);
-            
+
             // Assert - Verify that the operation succeeded with multiple materials
             Assert.IsNotNull(result, "GetComponentData should handle multiple materials");
-            
+
             // Clean up
             UnityEngine.Object.DestroyImmediate(material1);
             UnityEngine.Object.DestroyImmediate(material2);
@@ -572,11 +601,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void HandleCommand_WithPrefabPath_ReturnsGuidanceError_ForModifyAction()
         {
             // Arrange - Attempt to modify a prefab asset directly
-            var modifyParams = new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = "Assets/Prefabs/MyPrefab.prefab"
-            };
+            var modifyParams = new JObject { ["action"] = "modify", ["target"] = "Assets/Prefabs/MyPrefab.prefab" };
 
             // Act
             var result = ManageGameObject.HandleCommand(modifyParams);
@@ -595,11 +620,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void HandleCommand_WithPrefabPath_ReturnsGuidanceError_ForDeleteAction()
         {
             // Arrange - Attempt to delete a prefab asset directly
-            var deleteParams = new JObject
-            {
-                ["action"] = "delete",
-                ["target"] = "Assets/Prefabs/SomePrefab.prefab"
-            };
+            var deleteParams = new JObject { ["action"] = "delete", ["target"] = "Assets/Prefabs/SomePrefab.prefab" };
 
             // Act
             var result = ManageGameObject.HandleCommand(deleteParams);
@@ -622,7 +643,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["prefab_path"] = "Assets/Prefabs/NonExistent.prefab",
-                ["name"] = "TestInstance"
+                ["name"] = "TestInstance",
             };
 
             // Act
@@ -634,8 +655,7 @@ namespace MCPForUnityTests.Editor.Tools
             if (errorResponse != null)
             {
                 // If there's an error, it should NOT be the prefab asset guidance error
-                Assert.That(errorResponse.Error, Does.Not.Contain("Use 'manage_asset'"),
-                    "Create action should not be blocked by prefab check");
+                Assert.That(errorResponse.Error, Does.Not.Contain("Use 'manage_asset'"), "Create action should not be blocked by prefab check");
             }
             // If it's not an error, that's also fine (means create was allowed)
         }

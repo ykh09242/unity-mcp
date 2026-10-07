@@ -14,7 +14,9 @@ namespace MCPForUnityTests.Editor.Tools
         public Behaviour behaviour;
         public GameObject target;
         public int count;
-        [SerializeField] private Light privateLight = null;
+
+        [SerializeField]
+        private Light privateLight = null;
         public Light PrivateLight => privateLight;
     }
 
@@ -77,7 +79,8 @@ namespace MCPForUnityTests.Editor.Tools
         public void SetProperty_UiComponentReference_IntegerAndObjectFormsRoundTrip(string typeName, bool objectForm, bool gameObjectId)
         {
             var type = UnityTypeResolver.ResolveComponent(typeName);
-            if (type == null) Assert.Ignore($"Optional UI component '{typeName}' is not installed.");
+            if (type == null)
+                Assert.Ignore($"Optional UI component '{typeName}' is not installed.");
             var ui = new GameObject("UiReferenceSource", typeof(RectTransform));
             try
             {
@@ -132,8 +135,9 @@ namespace MCPForUnityTests.Editor.Tools
         public void SetProperty_WrongComponentType_FailsWithoutChangingReference(bool objectForm)
         {
             probe.lightReference = light;
-            Assert.IsFalse(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.lightReference),
-                Reference(owner.transform, objectForm), out string error));
+            Assert.IsFalse(
+                ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.lightReference), Reference(owner.transform, objectForm), out string error)
+            );
             Assert.IsNotEmpty(error);
             Assert.AreSame(light, probe.lightReference);
         }
@@ -143,8 +147,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void SetProperty_GameObjectWithoutRequiredComponent_FailsWithoutChangingReference(bool objectForm)
         {
             probe.lightReference = light;
-            Assert.IsFalse(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.lightReference),
-                Reference(owner, objectForm), out string error));
+            Assert.IsFalse(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.lightReference), Reference(owner, objectForm), out string error));
             Assert.IsNotEmpty(error);
             Assert.AreSame(light, probe.lightReference);
         }
@@ -166,8 +169,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void SetProperty_NullReference_ClearsExistingReference()
         {
             probe.lightReference = light;
-            Assert.IsTrue(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.lightReference),
-                JValue.CreateNull(), out string error), error);
+            Assert.IsTrue(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.lightReference), JValue.CreateNull(), out string error), error);
             Assert.IsNull(probe.lightReference);
         }
 

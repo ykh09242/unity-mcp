@@ -3,12 +3,12 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Prefabs
 {
@@ -27,7 +27,20 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         private const string ACTION_OPEN_PREFAB_STAGE = "open_prefab_stage";
         private const string ACTION_SAVE_PREFAB_STAGE = "save_prefab_stage";
         private const string ACTION_CLOSE_PREFAB_STAGE = "close_prefab_stage";
-        private const string SupportedActions = ACTION_CREATE_FROM_GAMEOBJECT + ", " + ACTION_GET_INFO + ", " + ACTION_GET_HIERARCHY + ", " + ACTION_MODIFY_CONTENTS + ", " + ACTION_OPEN_PREFAB_STAGE + ", " + ACTION_SAVE_PREFAB_STAGE + ", " + ACTION_CLOSE_PREFAB_STAGE;
+        private const string SupportedActions =
+            ACTION_CREATE_FROM_GAMEOBJECT
+            + ", "
+            + ACTION_GET_INFO
+            + ", "
+            + ACTION_GET_HIERARCHY
+            + ", "
+            + ACTION_MODIFY_CONTENTS
+            + ", "
+            + ACTION_OPEN_PREFAB_STAGE
+            + ", "
+            + ACTION_SAVE_PREFAB_STAGE
+            + ", "
+            + ACTION_CLOSE_PREFAB_STAGE;
 
         public static object HandleCommand(JObject @params)
         {
@@ -105,7 +118,9 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
             if (sourceObject == null)
             {
-                return new ErrorResponse($"GameObject '{targetName}' not found in the active scene or prefab stage{(includeInactive ? " (including inactive objects)" : "")}.");
+                return new ErrorResponse(
+                    $"GameObject '{targetName}' not found in the active scene or prefab stage{(includeInactive ? " (including inactive objects)" : "")}."
+                );
             }
 
             // 3. Validate source object state
@@ -176,7 +191,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         wasReplaced = replaceExisting && fileExistedAtPath,
                         componentCount = sourceObject.GetComponents<Component>().Length,
                         childCount = sourceObject.transform.childCount,
-                        materialsPersisted = persistResult.count
+                        materialsPersisted = persistResult.count,
                     }
                 );
                 folders.Complete();
@@ -192,8 +207,15 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// <summary>
         /// Validates parameters for creating a prefab from GameObject.
         /// </summary>
-        private static (bool isValid, string errorMessage, string targetName, string finalPath, bool includeInactive, bool replaceExisting, bool unlinkIfInstance)
-        ValidateCreatePrefabParams(JObject @params)
+        private static (
+            bool isValid,
+            string errorMessage,
+            string targetName,
+            string finalPath,
+            bool includeInactive,
+            bool replaceExisting,
+            bool unlinkIfInstance
+        ) ValidateCreatePrefabParams(JObject @params)
         {
             string targetName = @params["target"]?.ToString() ?? @params["name"]?.ToString();
             if (string.IsNullOrEmpty(targetName))
@@ -237,16 +259,15 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// <summary>
         /// Validates source object can be converted to prefab.
         /// </summary>
-        private static (bool isValid, string errorMessage, bool shouldUnlink, string existingPrefabPath)
-            ValidateSourceObjectForPrefab(GameObject sourceObject, bool unlinkIfInstance)
+        private static (bool isValid, string errorMessage, bool shouldUnlink, string existingPrefabPath) ValidateSourceObjectForPrefab(
+            GameObject sourceObject,
+            bool unlinkIfInstance
+        )
         {
             // Check if this is a Prefab Asset (the .prefab file itself in the editor)
             if (PrefabUtility.IsPartOfPrefabAsset(sourceObject))
             {
-                return (false,
-                    $"GameObject '{sourceObject.name}' is part of a prefab asset. " +
-                    "Open the prefab stage to save changes instead.",
-                    false, null);
+                return (false, $"GameObject '{sourceObject.name}' is part of a prefab asset. " + "Open the prefab stage to save changes instead.", false, null);
             }
 
             // Check if this is already a Prefab Instance
@@ -257,10 +278,13 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
                 if (!unlinkIfInstance)
                 {
-                    return (false,
-                        $"GameObject '{sourceObject.name}' is already linked to prefab '{existingPath}'. " +
-                        "Set 'unlinkIfInstance' to true to unlink it first, or modify the existing prefab instead.",
-                        false, existingPath);
+                    return (
+                        false,
+                        $"GameObject '{sourceObject.name}' is already linked to prefab '{existingPath}'. "
+                            + "Set 'unlinkIfInstance' to true to unlink it first, or modify the existing prefab instead.",
+                        false,
+                        existingPath
+                    );
                 }
 
                 // Needs to be unlinked
@@ -276,12 +300,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         private static bool CreatePrefabAsset(GameObject sourceObject, string path, bool replaceExisting)
         {
             path = AssetPathUtility.GetContainedAssetPath(path);
-            PrefabUtility.SaveAsPrefabAssetAndConnect(
-                sourceObject,
-                path,
-                InteractionMode.AutomatedAction,
-                out bool success
-            );
+            PrefabUtility.SaveAsPrefabAssetAndConnect(sourceObject, path, InteractionMode.AutomatedAction, out bool success);
 
             string action = replaceExisting ? "Replaced existing" : "Created new";
             McpLog.Info($"[ManagePrefabs] {action} prefab at '{path}'.");
@@ -341,9 +360,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
                     matPath = AssetDatabase.GenerateUniqueAssetPath(matPath);
                     // Never update an existing asset just because its generated name matches this slot.
-                    Shader shader = isRuntimeInstance && mat.shader != null
-                        ? mat.shader
-                        : RenderPipelineUtility.ResolveShader("Standard");
+                    Shader shader = isRuntimeInstance && mat.shader != null ? mat.shader : RenderPipelineUtility.ResolveShader("Standard");
                     Material persisted = new Material(shader);
                     AssetPathUtility.GetFullAssetPath(matPath);
                     AssetDatabase.CreateAsset(persisted, matPath);
@@ -384,7 +401,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         {
             MaterialPropertyBlock block = new MaterialPropertyBlock();
             renderer.GetPropertyBlock(block, slot);
-            if (block.isEmpty) renderer.GetPropertyBlock(block);
+            if (block.isEmpty)
+                renderer.GetPropertyBlock(block);
             return block.HasColor("_BaseColor") || block.HasColor("_Color");
         }
 
@@ -396,7 +414,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             MaterialPropertyBlock block = new MaterialPropertyBlock();
             renderer.GetPropertyBlock(block, slot);
             // A nonempty per-material block takes precedence over the renderer-level block.
-            if (block.isEmpty) renderer.GetPropertyBlock(block);
+            if (block.isEmpty)
+                renderer.GetPropertyBlock(block);
 
             // Try the standard color property names
             string[] colorProps = { "_BaseColor", "_Color" };
@@ -446,11 +465,14 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             bool isPath = target.Contains("/");
             GameObject FindUnique(IEnumerable<GameObject> roots, out bool ambiguous)
             {
-                var matches = roots.SelectMany(root => root.GetComponentsInChildren<Transform>(includeInactive))
+                var matches = roots
+                    .SelectMany(root => root.GetComponentsInChildren<Transform>(includeInactive))
                     .Select(transform => transform.gameObject)
                     .Where(go => includeInactive || go.activeInHierarchy)
                     .Where(go => isPath ? GameObjectLookup.GetGameObjectPath(go) == path : go.name == target)
-                    .Distinct().Take(2).ToList();
+                    .Distinct()
+                    .Take(2)
+                    .ToList();
                 ambiguous = matches.Count > 1;
                 return matches.Count == 1 ? matches[0] : null;
             }
@@ -508,7 +530,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     rootComponentTypes = componentTypes,
                     childCount = childCount,
                     isVariant = isVariant,
-                    parentPrefab = parentPrefab
+                    parentPrefab = parentPrefab,
                 }
             );
         }
@@ -549,7 +571,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     {
                         prefabPath = sanitizedPath,
                         total = allItems.Count,
-                        items = allItems
+                        items = allItems,
                     }
                 );
             }
@@ -617,7 +639,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         {
                             prefabPath = sanitizedPath,
                             targetName = targetGo.name,
-                            modified = false
+                            modified = false,
                         }
                     );
                 }
@@ -643,11 +665,26 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         modified = modifyResult.modified,
                         transform = new
                         {
-                            position = new { x = targetGo.transform.localPosition.x, y = targetGo.transform.localPosition.y, z = targetGo.transform.localPosition.z },
-                            rotation = new { x = targetGo.transform.localEulerAngles.x, y = targetGo.transform.localEulerAngles.y, z = targetGo.transform.localEulerAngles.z },
-                            scale = new { x = targetGo.transform.localScale.x, y = targetGo.transform.localScale.y, z = targetGo.transform.localScale.z }
+                            position = new
+                            {
+                                x = targetGo.transform.localPosition.x,
+                                y = targetGo.transform.localPosition.y,
+                                z = targetGo.transform.localPosition.z,
+                            },
+                            rotation = new
+                            {
+                                x = targetGo.transform.localEulerAngles.x,
+                                y = targetGo.transform.localEulerAngles.y,
+                                z = targetGo.transform.localEulerAngles.z,
+                            },
+                            scale = new
+                            {
+                                x = targetGo.transform.localScale.x,
+                                y = targetGo.transform.localScale.y,
+                                z = targetGo.transform.localScale.z,
+                            },
                         },
-                        componentTypes = PrefabUtilityHelper.GetComponentTypeNames(targetGo)
+                        componentTypes = PrefabUtilityHelper.GetComponentTypeNames(targetGo),
                     }
                 );
             }
@@ -712,7 +749,12 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// Applies modifications to a GameObject within loaded prefab contents.
         /// Returns (modified: bool, error: ErrorResponse or null).
         /// </summary>
-        private static (bool modified, ErrorResponse error) ApplyModificationsToPrefabObject(GameObject targetGo, JObject @params, GameObject prefabRoot, string editingPrefabPath)
+        private static (bool modified, ErrorResponse error) ApplyModificationsToPrefabObject(
+            GameObject targetGo,
+            JObject @params,
+            GameObject prefabRoot,
+            string editingPrefabPath
+        )
         {
             bool modified = false;
 
@@ -795,7 +837,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
                 if (string.IsNullOrEmpty(parentTarget) && targetGo != prefabRoot)
                 {
-                    return (false, new ErrorResponse($"Cannot detach '{targetGo.name}' from the prefab root. Specify a parent name or path within the prefab."));
+                    return (
+                        false,
+                        new ErrorResponse($"Cannot detach '{targetGo.name}' from the prefab root. Specify a parent name or path within the prefab.")
+                    );
                 }
 
                 if (!string.IsNullOrEmpty(parentTarget))
@@ -824,9 +869,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             {
                 foreach (var compToken in componentsToAdd)
                 {
-                    string typeName = compToken.Type == JTokenType.String
-                        ? compToken.ToString()
-                        : (compToken as JObject)?["typeName"]?.ToString();
+                    string typeName = compToken.Type == JTokenType.String ? compToken.ToString() : (compToken as JObject)?["typeName"]?.ToString();
 
                     if (!string.IsNullOrEmpty(typeName))
                     {
@@ -964,7 +1007,12 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// <summary>
         /// Creates a single child GameObject within the prefab contents.
         /// </summary>
-        private static (bool created, ErrorResponse error) CreateSingleChildInPrefab(JToken createChildToken, GameObject defaultParent, GameObject prefabRoot, string editingPrefabPath)
+        private static (bool created, ErrorResponse error) CreateSingleChildInPrefab(
+            JToken createChildToken,
+            GameObject defaultParent,
+            GameObject prefabRoot,
+            string editingPrefabPath
+        )
         {
             JObject childParams;
             if (createChildToken is JObject obj)
@@ -1014,8 +1062,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     return (false, new ErrorResponse($"Invalid source_prefab_path '{sourcePrefabPath}'. Path traversal sequences are not allowed."));
                 }
 
-                if (!string.IsNullOrEmpty(editingPrefabPath) &&
-                    sanitizedSourcePath.Equals(editingPrefabPath, StringComparison.OrdinalIgnoreCase))
+                if (!string.IsNullOrEmpty(editingPrefabPath) && sanitizedSourcePath.Equals(editingPrefabPath, StringComparison.OrdinalIgnoreCase))
                 {
                     return (false, new ErrorResponse($"Cannot nest prefab '{sanitizedSourcePath}' inside itself. This would create a circular reference."));
                 }
@@ -1043,7 +1090,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 }
                 catch (ArgumentException)
                 {
-                    return (false, new ErrorResponse($"Invalid primitive type: '{primitiveType}'. Valid types: {string.Join(", ", Enum.GetNames(typeof(PrimitiveType)))}"));
+                    return (
+                        false,
+                        new ErrorResponse($"Invalid primitive type: '{primitiveType}'. Valid types: {string.Join(", ", Enum.GetNames(typeof(PrimitiveType)))}")
+                    );
                 }
             }
             else
@@ -1079,15 +1129,16 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 for (int i = 0; i < componentsToAdd.Count; i++)
                 {
                     var compToken = componentsToAdd[i];
-                    string typeName = compToken.Type == JTokenType.String
-                        ? compToken.ToString()
-                        : (compToken as JObject)?["typeName"]?.ToString();
+                    string typeName = compToken.Type == JTokenType.String ? compToken.ToString() : (compToken as JObject)?["typeName"]?.ToString();
 
                     if (string.IsNullOrEmpty(typeName))
                     {
                         // Clean up partially created child
                         UnityEngine.Object.DestroyImmediate(newChild);
-                        return (false, new ErrorResponse($"create_child.components_to_add[{i}] must be a string or object with 'typeName' field, got {compToken.Type}"));
+                        return (
+                            false,
+                            new ErrorResponse($"create_child.components_to_add[{i}] must be a string or object with 'typeName' field, got {compToken.Type}")
+                        );
                     }
 
                     if (!ComponentResolver.TryResolve(typeName, out Type componentType, out string error))
@@ -1180,8 +1231,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             // Only destroy topmost requested objects; descendants are removed with them.
-            var removalRoots = resolvedChildren.Where(child =>
-                !resolvedChildren.Any(other => other != child && child.IsChildOf(other))).ToList();
+            var removalRoots = resolvedChildren.Where(child => !resolvedChildren.Any(other => other != child && child.IsChildOf(other))).ToList();
             foreach (var childToRemove in removalRoots)
             {
                 string childName = childToRemove.name;
@@ -1218,9 +1268,16 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// <param name="mainPrefabPath">Asset path of the main prefab.</param>
         /// <param name="parentPath">Parent path for building full hierarchy path.</param>
         /// <param name="items">List to accumulate hierarchy items.</param>
-        private static void BuildHierarchyItemsRecursive(Transform transform, Transform mainPrefabRoot, string mainPrefabPath, string parentPath, List<object> items)
+        private static void BuildHierarchyItemsRecursive(
+            Transform transform,
+            Transform mainPrefabRoot,
+            string mainPrefabPath,
+            string parentPath,
+            List<object> items
+        )
         {
-            if (transform == null) return;
+            if (transform == null)
+                return;
 
             string name = transform.gameObject.name;
             string path = string.IsNullOrEmpty(parentPath) ? name : $"{parentPath}/{name}";
@@ -1233,9 +1290,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             bool isNestedPrefab = PrefabUtility.IsAnyPrefabInstanceRoot(transform.gameObject);
             bool isPrefabRoot = transform == mainPrefabRoot;
             int nestingDepth = isPrefabRoot ? 0 : PrefabUtilityHelper.GetPrefabNestingDepth(transform.gameObject, mainPrefabRoot);
-            string parentPrefabPath = isNestedPrefab && !isPrefabRoot
-                ? PrefabUtilityHelper.GetParentPrefabPath(transform.gameObject, mainPrefabRoot)
-                : null;
+            string parentPrefabPath = isNestedPrefab && !isPrefabRoot ? PrefabUtilityHelper.GetParentPrefabPath(transform.gameObject, mainPrefabRoot) : null;
             string nestedPrefabPath = isNestedPrefab ? PrefabUtilityHelper.GetNestedPrefabPath(transform.gameObject) : null;
 
             var item = new
@@ -1252,8 +1307,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     isNestedRoot = isNestedPrefab,
                     nestingDepth = nestingDepth,
                     assetPath = isNestedPrefab ? nestedPrefabPath : mainPrefabPath,
-                    parentPath = parentPrefabPath
-                }
+                    parentPath = parentPrefabPath,
+                },
             };
 
             items.Add(item);
@@ -1301,13 +1356,16 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 }
 
                 var prefabStage = PrefabStageUtility.OpenPrefab(sanitizedPath);
-                bool enteredStage = prefabStage != null
+                bool enteredStage =
+                    prefabStage != null
                     && string.Equals(prefabStage.assetPath, sanitizedPath, StringComparison.OrdinalIgnoreCase)
                     && prefabStage.prefabContentsRoot != null;
 
                 if (!enteredStage)
                 {
-                    return new ErrorResponse($"Failed to open prefab stage for '{sanitizedPath}'. PrefabStageUtility.OpenPrefab did not enter the requested prefab stage.");
+                    return new ErrorResponse(
+                        $"Failed to open prefab stage for '{sanitizedPath}'. PrefabStageUtility.OpenPrefab did not enter the requested prefab stage."
+                    );
                 }
 
                 return new SuccessResponse(
@@ -1317,7 +1375,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         prefabPath = sanitizedPath,
                         openedPrefabPath = prefabStage.assetPath,
                         rootName = prefabStage.prefabContentsRoot.name,
-                        enteredPrefabStage = enteredStage
+                        enteredPrefabStage = enteredStage,
                     }
                 );
             }

@@ -1,7 +1,7 @@
 using System;
 using System.Reflection;
-using NUnit.Framework;
 using MCPForUnity.Editor.Services;
+using NUnit.Framework;
 using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Services.Characterization
@@ -37,8 +37,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
             Assert.IsNotNull(service2);
 
             // Check that the class has minimal instance fields (primarily static or none)
-            var instanceFields = typeof(ServerManagementService)
-                .GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            var instanceFields = typeof(ServerManagementService).GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
 
             // Stateless services should have no or minimal instance fields
             // This documents the current architecture
@@ -54,12 +53,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
         {
             // Document that EditorPrefs keys exist for server tracking
             // These keys are defined in EditorPrefKeys constants
-            var expectedKeys = new[]
-            {
-                "LastLocalHttpServerPid",
-                "LastLocalHttpServerPort",
-                "LastLocalHttpServerStartedUtc"
-            };
+            var expectedKeys = new[] { "LastLocalHttpServerPid", "LastLocalHttpServerPort", "LastLocalHttpServerStartedUtc" };
 
             // This test documents the persistence mechanism
             Assert.Pass($"Server metadata uses EditorPrefs with keys like: {string.Join(", ", expectedKeys)}");
@@ -79,10 +73,13 @@ namespace MCPForUnityTests.Editor.Services.Characterization
 
             // The method should not throw - it handles all edge cases
             bool result = false;
-            Assert.DoesNotThrow(() =>
-            {
-                result = service.IsLocalHttpServerRunning();
-            }, "IsLocalHttpServerRunning should handle all detection strategies gracefully");
+            Assert.DoesNotThrow(
+                () =>
+                {
+                    result = service.IsLocalHttpServerRunning();
+                },
+                "IsLocalHttpServerRunning should handle all detection strategies gracefully"
+            );
 
             // Result depends on actual server state - document the behavior
             Assert.Pass($"IsLocalHttpServerRunning returned {result} using multi-strategy detection");
@@ -99,10 +96,13 @@ namespace MCPForUnityTests.Editor.Services.Characterization
 
             // Should complete quickly without hanging
             bool reachable = false;
-            Assert.DoesNotThrow(() =>
-            {
-                reachable = service.IsLocalHttpServerReachable();
-            }, "Network probe should complete without hanging");
+            Assert.DoesNotThrow(
+                () =>
+                {
+                    reachable = service.IsLocalHttpServerReachable();
+                },
+                "Network probe should complete without hanging"
+            );
 
             Assert.Pass($"IsLocalHttpServerReachable returned {reachable} via network probe");
         }
@@ -158,11 +158,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
         public void ServerManagementService_TerminateProcess_UsesGracefulThenForced_OnUnix()
         {
             // Document the termination strategy without actually terminating anything
-            var platforms = new[]
-            {
-                "Unix: SIGTERM with 8s grace, then SIGKILL",
-                "Windows: taskkill /T, then /F"
-            };
+            var platforms = new[] { "Unix: SIGTERM with 8s grace, then SIGKILL", "Windows: taskkill /T, then /F" };
 
             Assert.Pass($"Process termination strategies: {string.Join("; ", platforms)}");
         }
@@ -180,7 +176,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
                 "Command line contains 'uvx' or 'python'",
                 "Command line contains 'mcp-for-unity'",
                 "PID args hash matching",
-                "Token validation"
+                "Token validation",
             };
 
             Assert.Pass($"Process validation uses: {string.Join(", ", strategies)}");
@@ -198,10 +194,13 @@ namespace MCPForUnityTests.Editor.Services.Characterization
 
             // WARNING: This test calls StopLocalHttpServer() which will kill the running MCP server
             // Calling stop when no server is running should not throw
-            Assert.DoesNotThrow(() =>
-            {
-                service.StopLocalHttpServer();
-            }, "StopLocalHttpServer should handle no-server case gracefully");
+            Assert.DoesNotThrow(
+                () =>
+                {
+                    service.StopLocalHttpServer();
+                },
+                "StopLocalHttpServer should handle no-server case gracefully"
+            );
 
             Assert.Pass("StopLocalHttpServer uses pidfile-based approach with fallbacks");
         }
@@ -213,14 +212,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
         public void ServerManagementService_StoreLocalServerPidTracking_UsesArgHash()
         {
             // Document the PID tracking mechanism
-            var trackingElements = new[]
-            {
-                "PID value",
-                "Command args hash",
-                "Start timestamp (6-hour validity)",
-                "Pidfile path",
-                "Instance token"
-            };
+            var trackingElements = new[] { "PID value", "Command args hash", "Start timestamp (6-hour validity)", "Pidfile path", "Instance token" };
 
             Assert.Pass($"PID tracking includes: {string.Join(", ", trackingElements)}");
         }
@@ -257,7 +249,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
                 "Stage 1: Fast check (compilation edge + throttle)",
                 "Stage 2: Cheap capture (scene, focus, play mode)",
                 "Stage 3: Comparison (string/bool diff)",
-                "Stage 4: Expensive BuildSnapshot only if changed"
+                "Stage 4: Expensive BuildSnapshot only if changed",
             };
 
             Assert.Pass($"Change detection: {string.Join(" -> ", stages)}");
@@ -353,13 +345,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
             Assert.IsNotNull(service, "ClientConfigurationService should be available");
 
             // Document the configuration pattern
-            var pattern = new[]
-            {
-                "Clean build artifacts once",
-                "Iterate all registered clients",
-                "Catch exceptions per client",
-                "Return summary with counts"
-            };
+            var pattern = new[] { "Clean build artifacts once", "Iterate all registered clients", "Catch exceptions per client", "Return summary with counts" };
 
             Assert.Pass($"Configuration loop: {string.Join(" -> ", pattern)}");
         }
@@ -393,12 +379,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
         public void MCPServiceLocator_Reset_DisposesAndClears_AllServices()
         {
             // Document the reset behavior without actually calling it (would break other tests)
-            var resetBehavior = new[]
-            {
-                "Calls Dispose() on IDisposable services",
-                "Sets all fields to null",
-                "Used in test teardown and shutdown"
-            };
+            var resetBehavior = new[] { "Calls Dispose() on IDisposable services", "Sets all fields to null", "Used in test teardown and shutdown" };
 
             Assert.Pass($"Reset behavior: {string.Join(", ", resetBehavior)}");
         }
@@ -447,7 +428,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
                 "T1 accesses property, finds null",
                 "T2 accesses property, finds null (before T1 assignment)",
                 "Both create instances, last wins",
-                "First instance discarded (no leak - services are light)"
+                "First instance discarded (no leak - services are light)",
             };
 
             Assert.Pass($"Race scenario: {string.Join(" -> ", scenario)}");
@@ -475,7 +456,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
                 "EditorStateCache [InitializeOnLoad]",
                 "MCPServiceLocator services (lazy)",
                 "BridgeControlService (on first access)",
-                "Transport initialization (async)"
+                "Transport initialization (async)",
             };
 
             Assert.Pass($"Load sequence: {string.Join(" -> ", sequence)}");
@@ -492,7 +473,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
                 "User changes config in UI",
                 "EditorPrefs.SetBool/String called",
                 "Service method reads EditorPrefs",
-                "Behavior reflects new config immediately"
+                "Behavior reflects new config immediately",
             };
 
             Assert.Pass($"Config flow: {string.Join(" -> ", flow)}");

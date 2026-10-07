@@ -14,15 +14,16 @@ namespace MCPForUnityTests.Editor.Helpers
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.I1)]
         private static extern bool CreateSymbolicLinkW(string link, string target, int flags);
+
         [DllImport("libc", SetLastError = true)]
         private static extern int symlink(string target, string link);
 
         private static void Link(string link, string target, bool directory)
         {
-            bool created = Application.platform == RuntimePlatform.WindowsEditor
-                ? CreateSymbolicLinkW(link, target, (directory ? 1 : 0) | 2)
-                : symlink(target, link) == 0;
-            if (!created) Assert.Ignore("Owned screenshot link creation unavailable: " + Marshal.GetLastWin32Error());
+            bool created =
+                Application.platform == RuntimePlatform.WindowsEditor ? CreateSymbolicLinkW(link, target, (directory ? 1 : 0) | 2) : symlink(target, link) == 0;
+            if (!created)
+                Assert.Ignore("Owned screenshot link creation unavailable: " + Marshal.GetLastWin32Error());
         }
 
         [TestCase("../escape.png")]
@@ -33,8 +34,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("//host/share/escape.png")]
         public void ScreenshotRejectsPathInFilename(string name)
         {
-            Assert.Throws<InvalidOperationException>(() =>
-                ScreenshotUtility.PrepareCaptureResult(name, 1, true, "Captures", false));
+            Assert.Throws<InvalidOperationException>(() => ScreenshotUtility.PrepareCaptureResult(name, 1, true, "Captures", false));
         }
 
         [Test]
@@ -73,14 +73,20 @@ namespace MCPForUnityTests.Editor.Helpers
                 using (var folders = new OutputFolderScope(root))
                 {
                     folders.EnsureParentDirectory(output);
-                    if (preservePartialFile) File.WriteAllBytes(output, new byte[] { 1, 2, 3 });
+                    if (preservePartialFile)
+                        File.WriteAllBytes(output, new byte[] { 1, 2, 3 });
                 }
                 Assert.IsTrue(Directory.Exists(existing), "A pre-existing empty parent must survive failure.");
                 Assert.AreEqual(preservePartialFile, Directory.Exists(owned));
-                if (preservePartialFile) CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, File.ReadAllBytes(output));
-                else Assert.IsFalse(Directory.Exists(Path.Combine(existing, "New")));
+                if (preservePartialFile)
+                    CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, File.ReadAllBytes(output));
+                else
+                    Assert.IsFalse(Directory.Exists(Path.Combine(existing, "New")));
             }
-            finally { Directory.Delete(root, true); }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
         }
 
         [Test]
@@ -100,7 +106,10 @@ namespace MCPForUnityTests.Editor.Helpers
                 Assert.IsFalse(Directory.Exists(Path.Combine(root, "New")));
                 Assert.AreEqual("sentinel", File.ReadAllText(blocker));
             }
-            finally { Directory.Delete(root, true); }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
         }
 
         [Test]
@@ -116,7 +125,11 @@ namespace MCPForUnityTests.Editor.Helpers
                 ScreenshotUtility.WriteCaptureBytes(output, new byte[] { 4, 5, 6 });
                 CollectionAssert.AreEqual(new byte[] { 4, 5, 6 }, File.ReadAllBytes(output));
             }
-            finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+            finally
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, true);
+            }
         }
 
         [TestCase(false, false, false)]
@@ -152,8 +165,16 @@ namespace MCPForUnityTests.Editor.Helpers
             finally
             {
                 // Remove only the link itself before recursively removing this exact owned tree.
-                if (directory) { try { Directory.Delete(link); } catch (DirectoryNotFoundException) { } }
-                else File.Delete(link);
+                if (directory)
+                {
+                    try
+                    {
+                        Directory.Delete(link);
+                    }
+                    catch (DirectoryNotFoundException) { }
+                }
+                else
+                    File.Delete(link);
                 StringAssert.StartsWith(Path.GetFullPath(Application.dataPath) + Path.DirectorySeparatorChar, Path.GetFullPath(root));
                 Directory.Delete(root, true);
                 File.Delete(root + ".meta");
@@ -173,13 +194,17 @@ namespace MCPForUnityTests.Editor.Helpers
             try
             {
                 Link(requested, missing, false);
-                Assert.That(Assert.Throws<TargetInvocationException>(() => prepare.Invoke(null, new object[] { "capture", 1, true, root })).InnerException,
-                    Is.InstanceOf<InvalidOperationException>().Or.InstanceOf<IOException>());
+                Assert.That(
+                    Assert.Throws<TargetInvocationException>(() => prepare.Invoke(null, new object[] { "capture", 1, true, root })).InnerException,
+                    Is.InstanceOf<InvalidOperationException>().Or.InstanceOf<IOException>()
+                );
                 File.Delete(requested);
                 File.WriteAllText(requested, "ordinary screenshot");
                 Link(suffix, missing, false);
-                Assert.That(Assert.Throws<TargetInvocationException>(() => prepare.Invoke(null, new object[] { "capture", 1, true, root })).InnerException,
-                    Is.InstanceOf<InvalidOperationException>().Or.InstanceOf<IOException>());
+                Assert.That(
+                    Assert.Throws<TargetInvocationException>(() => prepare.Invoke(null, new object[] { "capture", 1, true, root })).InnerException,
+                    Is.InstanceOf<InvalidOperationException>().Or.InstanceOf<IOException>()
+                );
                 Assert.AreEqual("ordinary screenshot", File.ReadAllText(requested));
                 Assert.IsFalse(File.Exists(missing));
             }

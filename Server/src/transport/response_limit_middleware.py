@@ -1,4 +1,5 @@
 """Bound final MCP output and retain result capacity through response handoff."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,7 +16,11 @@ from mcp_types import CallToolResult
 from pydantic import BaseModel, ConfigDict
 
 from models.response_limits import (
-    MAX_RESPONSE_BYTES, ResponseOwner, response_owner, response_size, response_limit_error,
+    MAX_RESPONSE_BYTES,
+    ResponseOwner,
+    response_owner,
+    response_size,
+    response_limit_error,
 )
 from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE
 from transport.stdio_response_delivery import stdio_delivery
@@ -25,8 +30,9 @@ from transport.stdio_response_delivery import stdio_delivery
 _http_response_owners: dict[tuple[str, str, type, str], list[ResponseOwner]] = {}
 _response_envelope = re.compile(
     rb'^\s*\{\s*"jsonrpc"\s*:\s*"2\.0"\s*,\s*"id"\s*:\s*'
-    rb'("(?:[^"\\]|\\.)*"|-?[0-9]+)\s*,\s*"(?:result|error)"\s*:')
-_endpoint_session = re.compile(rb'session_id=([a-f0-9]{32})')
+    rb'("(?:[^"\\]|\\.)*"|-?[0-9]+)\s*,\s*"(?:result|error)"\s*:'
+)
+_endpoint_session = re.compile(rb"session_id=([a-f0-9]{32})")
 _OWNER_STATE = "unity_mcp_response_owners"
 
 
@@ -35,9 +41,9 @@ def _frame_id(body: bytes) -> str | int | None:
     prefix = body[:65_536]
     # Installed SDK envelopes put jsonrpc/id/result in this order. If an SDK
     # changes that order or chunks the prefix, retain until request/stream exit.
-    if prefix.startswith((b'id:', b'event:', b'data:')):
+    if prefix.startswith((b"id:", b"event:", b"data:")):
         lines = prefix.splitlines()
-        prefix = next((line[5:].lstrip() for line in lines if line.startswith(b'data:')), b'')
+        prefix = next((line[5:].lstrip() for line in lines if line.startswith(b"data:")), b"")
     match = _response_envelope.match(prefix)
     if match is None:
         return None
@@ -58,8 +64,12 @@ def _scope_session(scope) -> str | None:
 
 def _owner_key(scope, session: str, request_id: str | int) -> tuple[str, str, type, str]:
     principal = scope.get("state", {}).get(AUTHENTICATED_USER_STATE) or "local"
-    return (sha256(principal.encode("utf-8")).hexdigest(), session,
-            type(request_id), sha256(str(request_id).encode("utf-8")).hexdigest())
+    return (
+        sha256(principal.encode("utf-8")).hexdigest(),
+        session,
+        type(request_id),
+        sha256(str(request_id).encode("utf-8")).hexdigest(),
+    )
 
 
 def _release_http_owner(key: tuple[str, str, type, str], *, closing: bool = False) -> None:
@@ -167,10 +177,16 @@ class ResponseLimitMiddleware(Middleware):
     async def on_call_tool(self, context: MiddlewareContext, call_next: CallNext) -> ToolResult:
         result = await call_next(context)
         raw = getattr(result, "_raw_mcp_result", None)
-        wire = raw if raw is not None else {
-            "content": result.content, "structuredContent": result.structured_content,
-            "_meta": result.meta, "isError": result.is_error,
-        }
+        wire = (
+            raw
+            if raw is not None
+            else {
+                "content": result.content,
+                "structuredContent": result.structured_content,
+                "_meta": result.meta,
+                "isError": result.is_error,
+            }
+        )
         # Reserve envelope overhead independently of the plugin graph ceiling.
         if response_size(wire, max_bytes=MAX_RESPONSE_BYTES - 32_768) is None:
             error = response_limit_error()
@@ -183,7 +199,9 @@ class ResponseLimitMiddleware(Middleware):
             result = ToolResult.from_mcp_result(self._WireCallToolResult.model_validate(projection))
         return result
 
-    async def on_read_resource(self, context: MiddlewareContext, call_next: CallNext) -> ResourceResult:
+    async def on_read_resource(
+        self, context: MiddlewareContext, call_next: CallNext
+    ) -> ResourceResult:
         result = await call_next(context)
         wire = result.to_mcp_result(str(context.message.uri))
         if response_size(wire, max_bytes=MAX_RESPONSE_BYTES - 32_768) is None:
@@ -231,18 +249,24 @@ class ResponseRetentionMiddleware:
             await send(message)
             # Release only after the actual socket/ASGI consumer accepts the
             # complete response frame. POST202 is never mistaken for delivery.
-            complete = (body.endswith((b"\r\n\r\n", b"\n\n")) if sse
-                        else not message.get("more_body", False))
+            complete = (
+                body.endswith((b"\r\n\r\n", b"\n\n"))
+                if sse
+                else not message.get("more_body", False)
+            )
             if session is not None and request_id is not None and complete:
                 _release_http_owner(_owner_key(scope, session, request_id))
+
         try:
             await self.app(owned_scope, receive, send_owned)
         finally:
             response_owner.reset(token)
             owner.release()
-            legacy_post = (scope.get("method") == "POST" and
-                           "session_id" in parse_qs(scope.get("query_string", b"").decode("latin-1")) and
-                           b"mcp-session-id" not in dict(scope.get("headers", [])))
+            legacy_post = (
+                scope.get("method") == "POST"
+                and "session_id" in parse_qs(scope.get("query_string", b"").decode("latin-1"))
+                and b"mcp-session-id" not in dict(scope.get("headers", []))
+            )
             if not legacy_post:
                 for request_owner in request_owners:
                     request_owner.release()

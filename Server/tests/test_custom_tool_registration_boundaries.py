@@ -17,14 +17,18 @@ def _run_sdk_scenario(source: str, evidence_dir: Path) -> None:
     result = subprocess.run(
         [sys.executable, "-B", "-W", "error", "-c", textwrap.dedent(source)],
         cwd=Path(__file__).resolve().parents[1],
-        env=env, capture_output=True, text=True, timeout=30,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("project_scoped", [False, True])
 def test_project_registration_preserves_builtin_schema_and_execution(tmp_path, project_scoped):
-    _run_sdk_scenario('''
+    _run_sdk_scenario(
+        """
         import asyncio, socket, sys
         sys.path.insert(0, "src")
         import httpx
@@ -75,12 +79,15 @@ def test_project_registration_preserves_builtin_schema_and_execution(tmp_path, p
                 assert service._project_tools["project"]["builtin_probe"].parameters[0].name == "replacement"
                 assert service.get_project_id_for_hash("hash") == "project"
         asyncio.run(scenario())
-    '''.replace("PROJECT_SCOPED", repr(project_scoped)), tmp_path)
+    """.replace("PROJECT_SCOPED", repr(project_scoped)),
+        tmp_path,
+    )
 
 
 @pytest.mark.parametrize("invalid_number", ["NaN", "Infinity", "-Infinity"])
 def test_nonfinite_registration_input_returns_validation_error(tmp_path, invalid_number):
-    _run_sdk_scenario('''
+    _run_sdk_scenario(
+        """
         import asyncio, socket, sys
         sys.path.insert(0, "src")
         import httpx
@@ -113,4 +120,6 @@ def test_nonfinite_registration_input_returns_validation_error(tmp_path, invalid
                 assert valid.status_code == 200
                 assert valid.json()["registered"] == ["valid"]
         asyncio.run(scenario())
-    '''.replace("INVALID_NUMBER", invalid_number), tmp_path)
+    """.replace("INVALID_NUMBER", invalid_number),
+        tmp_path,
+    )

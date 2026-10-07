@@ -16,17 +16,19 @@ namespace MCPForUnity.Editor.Clients.Configurators
         // marker in the new location and renames the previous folder to `antigravity-backup`.
         // The old path is no longer read by Antigravity at all, so writing there silently
         // fails to register UnityMCP on every modern install.
-        public AntigravityConfigurator() : base(new McpClient
-        {
-            name = "Antigravity 2.0",
-            windowsConfigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "config", "mcp_config.json"),
-            macConfigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "config", "mcp_config.json"),
-            linuxConfigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "config", "mcp_config.json"),
-            HttpUrlProperty = "serverUrl",
-            DefaultUnityFields = { { "disabled", false } },
-            StripEnvWhenNotRequired = true
-        })
-        { }
+        public AntigravityConfigurator()
+            : base(
+                new McpClient
+                {
+                    name = "Antigravity 2.0",
+                    windowsConfigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "config", "mcp_config.json"),
+                    macConfigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "config", "mcp_config.json"),
+                    linuxConfigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "config", "mcp_config.json"),
+                    HttpUrlProperty = "serverUrl",
+                    DefaultUnityFields = { { "disabled", false } },
+                    StripEnvWhenNotRequired = true,
+                }
+            ) { }
 
         // Detect Antigravity itself, not just its config dir. ~/.gemini/config/ is created on
         // first launch of Antigravity 2.x, so the inherited ParentDirectoryExists check
@@ -39,21 +41,25 @@ namespace MCPForUnity.Editor.Clients.Configurators
             get
             {
                 string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                if (Directory.Exists(Path.Combine(home, ".antigravity"))) return true;
-                if (Directory.Exists(Path.Combine(home, ".gemini", "config"))) return true;
-                if (Directory.Exists(Path.Combine(home, ".gemini", "antigravity"))) return true;
+                if (Directory.Exists(Path.Combine(home, ".antigravity")))
+                    return true;
+                if (Directory.Exists(Path.Combine(home, ".gemini", "config")))
+                    return true;
+                if (Directory.Exists(Path.Combine(home, ".gemini", "antigravity")))
+                    return true;
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                     return Directory.Exists("/Applications/Antigravity.app");
                 return false;
             }
         }
 
-        public override IList<string> GetInstallationSteps() => new List<string>
-        {
-            "Open Antigravity 2.0",
-            "Click the more_horiz menu in the Agent pane > MCP Servers",
-            "Select 'Install' for Unity MCP or use the Configure button above",
-            "Restart Antigravity if necessary"
-        };
+        public override IList<string> GetInstallationSteps() =>
+            new List<string>
+            {
+                "Open Antigravity 2.0",
+                "Click the more_horiz menu in the Agent pane > MCP Servers",
+                "Select 'Install' for Unity MCP or use the Configure button above",
+                "Restart Antigravity if necessary",
+            };
     }
 }

@@ -21,11 +21,12 @@ def dlog(*args):
 
 def find_status_files() -> list[Path]:
     home = Path.home()
-    status_dir = Path(os.environ.get(
-        "UNITY_MCP_STATUS_DIR", home / ".unity-mcp"))
+    status_dir = Path(os.environ.get("UNITY_MCP_STATUS_DIR", home / ".unity-mcp"))
     if not status_dir.exists():
         return []
-    return sorted(status_dir.glob("unity-mcp-status-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return sorted(
+        status_dir.glob("unity-mcp-status-*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
 
 
 def discover_port(project_path: str | None) -> int:
@@ -88,8 +89,7 @@ def make_ping_frame() -> bytes:
 
 def make_execute_menu_item(menu_path: str) -> bytes:
     # Retained for manual debugging; not used in normal stress runs
-    payload = {"type": "execute_menu_item", "params": {
-        "action": "execute", "menu_path": menu_path}}
+    payload = {"type": "execute_menu_item", "params": {"action": "execute", "menu_path": menu_path}}
     return json.dumps(payload).encode("utf-8")
 
 
@@ -100,7 +100,9 @@ async def client_loop(idx: int, host: str, port: int, stop_time: float, stats: d
         try:
             # slight stagger to prevent burst synchronization across clients
             await asyncio.sleep(0.003 * (idx % 11))
-            reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=TIMEOUT)
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=TIMEOUT
+            )
             await asyncio.wait_for(do_handshake(reader), timeout=TIMEOUT)
             # Send a quick ping first
             await write_frame(writer, make_ping_frame())
@@ -135,7 +137,15 @@ async def client_loop(idx: int, host: str, port: int, stop_time: float, stats: d
                     pass
 
 
-async def reload_churn_task(project_path: str, stop_time: float, unity_file: str | None, host: str, port: int, stats: dict, storm_count: int = 1):
+async def reload_churn_task(
+    project_path: str,
+    stop_time: float,
+    unity_file: str | None,
+    host: str,
+    port: int,
+    stats: dict,
+    storm_count: int = 1,
+):
     # Use script edit tool to touch a C# file, which triggers compilation reliably
     path = Path(unity_file) if unity_file else None
     seq = 0
@@ -185,8 +195,7 @@ async def reload_churn_task(project_path: str, stop_time: float, unity_file: str
                     if relative:
                         # Derive name and directory for ManageScript and compute precondition SHA + EOF position
                         name_base = Path(relative).stem
-                        dir_path = str(
-                            Path(relative).parent).replace('\\', '/')
+                        dir_path = str(Path(relative).parent).replace("\\", "/")
 
                         # 1) Read current contents via manage_script.read to compute SHA and true EOF location
                         contents = None
@@ -194,23 +203,27 @@ async def reload_churn_task(project_path: str, stop_time: float, unity_file: str
                         for attempt in range(3):
                             writer = None
                             try:
-                                reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=TIMEOUT)
+                                reader, writer = await asyncio.wait_for(
+                                    asyncio.open_connection(host, port), timeout=TIMEOUT
+                                )
                                 await asyncio.wait_for(do_handshake(reader), timeout=TIMEOUT)
                                 read_payload = {
                                     "type": "manage_script",
                                     "params": {
                                         "action": "read",
                                         "name": name_base,
-                                        "path": dir_path
-                                    }
+                                        "path": dir_path,
+                                    },
                                 }
                                 await write_frame(writer, json.dumps(read_payload).encode("utf-8"))
                                 resp = await asyncio.wait_for(read_frame(reader), timeout=TIMEOUT)
 
-                                read_obj = json.loads(
-                                    resp.decode("utf-8", errors="ignore"))
-                                result = read_obj.get("result", read_obj) if isinstance(
-                                    read_obj, dict) else {}
+                                read_obj = json.loads(resp.decode("utf-8", errors="ignore"))
+                                result = (
+                                    read_obj.get("result", read_obj)
+                                    if isinstance(read_obj, dict)
+                                    else {}
+                                )
                                 if result.get("success"):
                                     data_obj = result.get("data", {})
                                     contents = data_obj.get("contents") or ""
@@ -218,9 +231,9 @@ async def reload_churn_task(project_path: str, stop_time: float, unity_file: str
                                     break
                             except Exception:
                                 # retry with backoff
-                                await asyncio.sleep(0.2 * (2 ** attempt) + random.uniform(0.0, 0.1))
+                                await asyncio.sleep(0.2 * (2**attempt) + random.uniform(0.0, 0.1))
                             finally:
-                                if 'writer' in locals() and writer is not None:
+                                if "writer" in locals() and writer is not None:
                                     try:
                                         writer.close()
                                         await writer.wait_closed()
@@ -228,15 +241,14 @@ async def reload_churn_task(project_path: str, stop_time: float, unity_file: str
                                         pass
 
                         if not read_success or contents is None:
-                            stats["apply_errors"] = stats.get(
-                                "apply_errors", 0) + 1
+                            stats["apply_errors"] = stats.get("apply_errors", 0) + 1
                             await asyncio.sleep(0.5)
                             continue
 
                         # Compute SHA and EOF insertion point
                         import hashlib
-                        sha = hashlib.sha256(
-                            contents.encode("utf-8")).hexdigest()
+
+                        sha = hashlib.sha256(contents.encode("utf-8")).hexdigest()
                         lines = contents.splitlines(keepends=True)
                         # Insert at true EOF (safe against header guards)
                         end_line = len(lines) + 1  # 1-based exclusive end
@@ -245,8 +257,7 @@ async def reload_churn_task(project_path: str, stop_time: float, unity_file: str
                         # Build a unique marker append; ensure it begins with a newline if needed
                         marker = f"// MCP_STRESS seq={seq} time={int(time.time())}"
                         seq += 1
-                        insert_text = ("\n" if not contents.endswith(
-                            "\n") else "") + marker + "\n"
+                        insert_text = ("\n" if not contents.endswith("\n") else "") + marker + "\n"
 
                         # 2) Apply text edits with immediate refresh and precondition
                         apply_payload = {
@@ -261,31 +272,32 @@ async def reload_churn_task(project_path: str, stop_time: float, unity_file: str
                                         "startCol": end_col,
                                         "endLine": end_line,
                                         "endCol": end_col,
-                                        "newText": insert_text
+                                        "newText": insert_text,
                                     }
                                 ],
                                 "precondition_sha256": sha,
-                                "options": {"refresh": "immediate", "validate": "standard"}
-                            }
+                                "options": {"refresh": "immediate", "validate": "standard"},
+                            },
                         }
 
                         apply_success = False
                         for attempt in range(3):
                             writer = None
                             try:
-                                reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=TIMEOUT)
+                                reader, writer = await asyncio.wait_for(
+                                    asyncio.open_connection(host, port), timeout=TIMEOUT
+                                )
                                 await asyncio.wait_for(do_handshake(reader), timeout=TIMEOUT)
                                 await write_frame(writer, json.dumps(apply_payload).encode("utf-8"))
                                 resp = await asyncio.wait_for(read_frame(reader), timeout=TIMEOUT)
                                 try:
-                                    data = json.loads(resp.decode(
-                                        "utf-8", errors="ignore"))
-                                    result = data.get("result", data) if isinstance(
-                                        data, dict) else {}
+                                    data = json.loads(resp.decode("utf-8", errors="ignore"))
+                                    result = (
+                                        data.get("result", data) if isinstance(data, dict) else {}
+                                    )
                                     ok = bool(result.get("success", False))
                                     if ok:
-                                        stats["applies"] = stats.get(
-                                            "applies", 0) + 1
+                                        stats["applies"] = stats.get("applies", 0) + 1
                                         apply_success = True
                                         break
                                 except Exception:
@@ -293,17 +305,16 @@ async def reload_churn_task(project_path: str, stop_time: float, unity_file: str
                                     pass
                             except Exception:
                                 # retry with backoff
-                                await asyncio.sleep(0.2 * (2 ** attempt) + random.uniform(0.0, 0.1))
+                                await asyncio.sleep(0.2 * (2**attempt) + random.uniform(0.0, 0.1))
                             finally:
-                                if 'writer' in locals() and writer is not None:
+                                if "writer" in locals() and writer is not None:
                                     try:
                                         writer.close()
                                         await writer.wait_closed()
                                     except Exception:
                                         pass
                         if not apply_success:
-                            stats["apply_errors"] = stats.get(
-                                "apply_errors", 0) + 1
+                            stats["apply_errors"] = stats.get("apply_errors", 0) + 1
 
         except Exception:
             pass
@@ -312,16 +323,29 @@ async def reload_churn_task(project_path: str, stop_time: float, unity_file: str
 
 async def main():
     ap = argparse.ArgumentParser(
-        description="Stress test MCP for Unity with concurrent clients and reload churn")
+        description="Stress test MCP for Unity with concurrent clients and reload churn"
+    )
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--project", default=str(
-        Path(__file__).resolve().parents[1] / "TestProjects" / "UnityMCPTests"))
-    ap.add_argument("--unity-file", default=str(Path(__file__).resolve(
-    ).parents[1] / "TestProjects" / "UnityMCPTests" / "Assets" / "Scripts" / "LongUnityScriptClaudeTest.cs"))
+    ap.add_argument(
+        "--project",
+        default=str(Path(__file__).resolve().parents[1] / "TestProjects" / "UnityMCPTests"),
+    )
+    ap.add_argument(
+        "--unity-file",
+        default=str(
+            Path(__file__).resolve().parents[1]
+            / "TestProjects"
+            / "UnityMCPTests"
+            / "Assets"
+            / "Scripts"
+            / "LongUnityScriptClaudeTest.cs"
+        ),
+    )
     ap.add_argument("--clients", type=int, default=10)
     ap.add_argument("--duration", type=int, default=60)
-    ap.add_argument("--storm-count", type=int, default=1,
-                    help="Number of scripts to touch each cycle")
+    ap.add_argument(
+        "--storm-count", type=int, default=1, help="Number of scripts to touch each cycle"
+    )
     args = ap.parse_args()
 
     port = discover_port(args.project)
@@ -332,12 +356,22 @@ async def main():
 
     # Spawn clients
     for i in range(max(1, args.clients)):
-        tasks.append(asyncio.create_task(
-            client_loop(i, args.host, port, stop_time, stats)))
+        tasks.append(asyncio.create_task(client_loop(i, args.host, port, stop_time, stats)))
 
     # Spawn reload churn task
-    tasks.append(asyncio.create_task(reload_churn_task(args.project, stop_time,
-                 args.unity_file, args.host, port, stats, storm_count=args.storm_count)))
+    tasks.append(
+        asyncio.create_task(
+            reload_churn_task(
+                args.project,
+                stop_time,
+                args.unity_file,
+                args.host,
+                port,
+                stats,
+                storm_count=args.storm_count,
+            )
+        )
+    )
 
     await asyncio.gather(*tasks, return_exceptions=True)
     print(json.dumps({"port": port, "stats": stats}, indent=2))

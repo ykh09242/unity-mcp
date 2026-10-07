@@ -38,7 +38,9 @@ def orbit_limits_error(azimuths: int, elevations: Sequence[float]) -> str | None
     if azimuths * len(elevations) > MAX_ORBIT_SHOTS:
         return f"Orbit capture exceeds the {MAX_ORBIT_SHOTS} shot budget."
     try:
-        finite_angles = all(not isinstance(angle, bool) and math.isfinite(angle) for angle in elevations)
+        finite_angles = all(
+            not isinstance(angle, bool) and math.isfinite(angle) for angle in elevations
+        )
     except OverflowError:
         finite_angles = False
     if not finite_angles:

@@ -40,5 +40,3 @@ async def test_manage_scene_get_hierarchy_paging_params_pass_through(monkeypatch
     assert p["maxDepth"] in (6, "6")
     assert p["maxChildrenPerNode"] in (200, "200")
     assert p["includeTransform"] in (True, "true")
-
-

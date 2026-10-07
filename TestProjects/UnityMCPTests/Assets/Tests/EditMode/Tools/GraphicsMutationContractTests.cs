@@ -1,10 +1,10 @@
+using MCPForUnity.Editor.Tools.Graphics;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using MCPForUnity.Editor.Tools.Graphics;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -154,8 +154,8 @@ namespace MCPForUnityTests.Editor.Tools
 #endif
         }
 
-        private static JObject SetLightingSettings(JObject settings) => JObject.FromObject(ManageGraphics.HandleCommand(
-            new JObject { ["action"] = "bake_set_settings", ["settings"] = settings }));
+        private static JObject SetLightingSettings(JObject settings) =>
+            JObject.FromObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "bake_set_settings", ["settings"] = settings }));
 
         [TestCase("Invalid")]
         [TestCase("999")]
@@ -163,10 +163,16 @@ namespace MCPForUnityTests.Editor.Tools
         {
             RenderSettings.fog = true;
             var originalMode = RenderSettings.fogMode;
-            var result = JObject.FromObject(ManageGraphics.HandleCommand(new JObject
-            {
-                ["action"] = "skybox_set_fog", ["fog_enabled"] = false, ["fog_mode"] = mode
-            }));
+            var result = JObject.FromObject(
+                ManageGraphics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "skybox_set_fog",
+                        ["fog_enabled"] = false,
+                        ["fog_mode"] = mode,
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             Assert.IsTrue(RenderSettings.fog);
@@ -179,17 +185,15 @@ namespace MCPForUnityTests.Editor.Tools
             string name = "GraphicsContractVolume_" + System.Guid.NewGuid().ToString("N");
             try
             {
-                var result = JObject.FromObject(VolumeOps.CreateVolume(new JObject
-                {
-                    ["name"] = name, ["profile_path"] = "Assets//" + name + ".asset"
-                }));
+                var result = JObject.FromObject(VolumeOps.CreateVolume(new JObject { ["name"] = name, ["profile_path"] = "Assets//" + name + ".asset" }));
                 Assert.IsFalse(result.Value<bool>("success"), result.ToString());
                 Assert.IsNull(GameObject.Find(name));
             }
             finally
             {
                 var leftover = GameObject.Find(name);
-                if (leftover != null) Object.DestroyImmediate(leftover);
+                if (leftover != null)
+                    Object.DestroyImmediate(leftover);
             }
         }
 
@@ -200,11 +204,17 @@ namespace MCPForUnityTests.Editor.Tools
             RenderSettings.reflectionIntensity = 1;
             RenderSettings.reflectionBounces = 2;
             var originalMode = RenderSettings.defaultReflectionMode;
-            var result = JObject.FromObject(ManageGraphics.HandleCommand(new JObject
-            {
-                ["action"] = "skybox_set_reflection", ["intensity"] = 0, ["bounces"] = 0,
-                ["reflection_mode"] = mode
-            }));
+            var result = JObject.FromObject(
+                ManageGraphics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "skybox_set_reflection",
+                        ["intensity"] = 0,
+                        ["bounces"] = 0,
+                        ["reflection_mode"] = mode,
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(1, RenderSettings.reflectionIntensity);
@@ -248,7 +258,8 @@ namespace MCPForUnityTests.Editor.Tools
             finally
             {
                 AssetDatabase.DeleteAsset(path);
-                if (cube != null) Object.DestroyImmediate(cube);
+                if (cube != null)
+                    Object.DestroyImmediate(cube);
                 Object.DestroyImmediate(original);
             }
         }
@@ -270,7 +281,8 @@ namespace MCPForUnityTests.Editor.Tools
             finally
             {
                 AssetDatabase.DeleteAsset(path);
-                if (texture != null) Object.DestroyImmediate(texture);
+                if (texture != null)
+                    Object.DestroyImmediate(texture);
             }
         }
 
@@ -299,13 +311,18 @@ namespace MCPForUnityTests.Editor.Tools
         private static TextureEffect CreateTextureEffect(Texture value, bool texture2DOnly)
         {
             var genericParameter = System.Type.GetType("UnityEngine.Rendering.VolumeParameter`1, Unity.RenderPipelines.Core.Runtime");
-            if (genericParameter == null) Assert.Ignore("Volume system not available.");
+            if (genericParameter == null)
+                Assert.Ignore("Volume system not available.");
             var parameterType = genericParameter.MakeGenericType(texture2DOnly ? typeof(Texture2D) : typeof(Texture));
             return new TextureEffect
             {
-                texture = System.Activator.CreateInstance(parameterType,
+                texture = System.Activator.CreateInstance(
+                    parameterType,
                     System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic,
-                    null, new object[] { value, false }, null)
+                    null,
+                    new object[] { value, false },
+                    null
+                ),
             };
         }
     }

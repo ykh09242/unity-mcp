@@ -15,6 +15,7 @@ and pins the set of tools that are safe to auto-approve. ``readOnlyHint`` is not
 required: omitting it means *false*, which is the safe direction and is already
 correct for every tool that leaves it unset.
 """
+
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -82,10 +83,13 @@ def _hint(annotations, field: str):
         return getattr(annotations, field, None)
 
 
-@pytest.mark.parametrize("field, python_field", [
-    ("destructiveHint", "destructive_hint"),
-    ("readOnlyHint", "read_only_hint"),
-])
+@pytest.mark.parametrize(
+    "field, python_field",
+    [
+        ("destructiveHint", "destructive_hint"),
+        ("readOnlyHint", "read_only_hint"),
+    ],
+)
 @pytest.mark.parametrize("value", [True, False, None])
 def test_hint_prefers_current_fields_and_supports_legacy_models(field, python_field, value):
     current = SimpleNamespace(**{python_field: value, field: not value})
@@ -129,8 +133,7 @@ def test_every_tool_declares_its_hints(tools):
         if _hint(annotations, "destructiveHint") is None:
             missing.append(f"{name}: destructiveHint not stated (defaults to True)")
     assert not missing, (
-        "Every tool must state title and destructiveHint explicitly:\n  "
-        + "\n  ".join(missing)
+        "Every tool must state title and destructiveHint explicitly:\n  " + "\n  ".join(missing)
     )
 
 

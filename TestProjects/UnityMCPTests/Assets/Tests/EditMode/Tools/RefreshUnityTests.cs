@@ -1,12 +1,12 @@
 using System;
 using System.Collections;
 using System.Reflection;
+using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine.TestTools;
-using MCPForUnity.Editor.Services;
-using MCPForUnity.Editor.Tools;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -19,11 +19,21 @@ namespace MCPForUnityTests.Editor.Tools
             if (TestRunStatus.IsRunning)
                 Assert.Ignore("Refresh is intentionally blocked during bridge-managed test runs.");
 
-            var parameters = (JObject)typeof(BatchExecute)
-                .GetMethod("NormalizeParameterKeys", BindingFlags.NonPublic | BindingFlags.Static)
-                .Invoke(null, new object[] { new JObject {
-                    ["scope"] = "scripts", ["compile"] = "none", ["wait_for_ready"] = true
-                } });
+            var parameters = (JObject)
+                typeof(BatchExecute)
+                    .GetMethod("NormalizeParameterKeys", BindingFlags.NonPublic | BindingFlags.Static)
+                    .Invoke(
+                        null,
+                        new object[]
+                        {
+                            new JObject
+                            {
+                                ["scope"] = "scripts",
+                                ["compile"] = "none",
+                                ["wait_for_ready"] = true,
+                            },
+                        }
+                    );
             var task = RefreshUnity.HandleCommand(parameters);
 
             Assert.IsFalse(task.IsCompleted, "Batch normalization must preserve the readiness wait.");
@@ -46,7 +56,8 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.Ignore("Refresh is intentionally blocked during bridge-managed test runs.");
 
             var parameters = new JObject { ["scope"] = "scripts", ["compile"] = "none" };
-            if (waitKey != null) parameters[waitKey] = false;
+            if (waitKey != null)
+                parameters[waitKey] = false;
             var task = RefreshUnity.HandleCommand(parameters);
             Assert.IsTrue(task.IsCompleted, "The default and false values must not wait.");
             Assert.IsTrue(ToJObject(task.Result).Value<bool>("success"));
@@ -58,10 +69,15 @@ namespace MCPForUnityTests.Editor.Tools
             if (TestRunStatus.IsRunning)
                 Assert.Ignore("Refresh is intentionally blocked during bridge-managed test runs.");
 
-            var task = RefreshUnity.HandleCommand(new JObject {
-                ["scope"] = "scripts", ["compile"] = "none",
-                ["wait_for_ready"] = false, ["waitForReady"] = true
-            });
+            var task = RefreshUnity.HandleCommand(
+                new JObject
+                {
+                    ["scope"] = "scripts",
+                    ["compile"] = "none",
+                    ["wait_for_ready"] = false,
+                    ["waitForReady"] = true,
+                }
+            );
             Assert.IsTrue(task.IsCompleted, "The established snake_case parameter must take precedence.");
             Assert.IsTrue(ToJObject(task.Result).Value<bool>("success"));
         }
@@ -72,13 +88,15 @@ namespace MCPForUnityTests.Editor.Tools
             // scope=scripts skips AssetDatabase.Refresh, compile=none skips the
             // request, wait_for_ready=false skips both waits: nothing on this path
             // yields, so the task must already be complete when it is handed back.
-            var task = RefreshUnity.HandleCommand(new JObject
-            {
-                ["mode"] = "if_dirty",
-                ["scope"] = "scripts",
-                ["compile"] = "none",
-                ["wait_for_ready"] = false,
-            });
+            var task = RefreshUnity.HandleCommand(
+                new JObject
+                {
+                    ["mode"] = "if_dirty",
+                    ["scope"] = "scripts",
+                    ["compile"] = "none",
+                    ["wait_for_ready"] = false,
+                }
+            );
 
             Assert.IsTrue(task.IsCompleted, "compile=none with wait_for_ready=false must not defer");
 
@@ -96,8 +114,7 @@ namespace MCPForUnityTests.Editor.Tools
             var data = result["data"];
             Assert.IsFalse(data.Value<bool>("refresh_triggered"), result.ToString());
             Assert.IsFalse(data.Value<bool>("compile_requested"), result.ToString());
-            Assert.AreEqual(JTokenType.Null, data["compile_started"].Type,
-                "compile_started must be null when no compile was waited for");
+            Assert.AreEqual(JTokenType.Null, data["compile_started"].Type, "compile_started must be null when no compile was waited for");
         }
 
         [Test]
@@ -106,9 +123,7 @@ namespace MCPForUnityTests.Editor.Tools
             // A compile that began and ended inside AssetDatabase.Refresh leaves only
             // the counter behind. Presenting a stale "before" value reproduces that
             // state without triggering a compile.
-            var task = RefreshUnity.WaitForCompilationToStartAsync(
-                EditorStateCache.CompileCount - 1,
-                TimeSpan.FromSeconds(10));
+            var task = RefreshUnity.WaitForCompilationToStartAsync(EditorStateCache.CompileCount - 1, TimeSpan.FromSeconds(10));
 
             Assert.IsTrue(task.IsCompleted, "counter already moved must resolve without a tick");
             Assert.IsTrue(task.Result, "a moved counter is a start, not a grace expiry");
@@ -119,9 +134,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // No compile is requested here, so with the counter current the only way
             // out is the grace. A zero grace expires on the first update tick.
-            var task = RefreshUnity.WaitForCompilationToStartAsync(
-                EditorStateCache.CompileCount,
-                TimeSpan.Zero);
+            var task = RefreshUnity.WaitForCompilationToStartAsync(EditorStateCache.CompileCount, TimeSpan.Zero);
 
             Assert.IsFalse(task.IsCompleted, "nothing has started, so the wait must actually wait");
 

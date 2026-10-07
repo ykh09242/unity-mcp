@@ -61,8 +61,8 @@ namespace MCPForUnity.Editor.Resources.Tests
             {
                 filteredTests = allTests
                     .Where(t =>
-                        (t.ContainsKey("name") && t["name"].IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0) ||
-                        (t.ContainsKey("full_name") && t["full_name"].IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0)
+                        (t.ContainsKey("name") && t["name"].IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0)
+                        || (t.ContainsKey("full_name") && t["full_name"].IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0)
                     )
                     .ToList();
             }
@@ -72,12 +72,10 @@ namespace MCPForUnity.Editor.Resources.Tests
             }
 
             // Clamp page_size before parsing pagination to ensure cursor is computed correctly
-            int requestedPageSize = ParamCoercion.CoerceInt(
-                @params?["page_size"] ?? @params?["pageSize"],
-                DEFAULT_PAGE_SIZE
-            );
+            int requestedPageSize = ParamCoercion.CoerceInt(@params?["page_size"] ?? @params?["pageSize"], DEFAULT_PAGE_SIZE);
             int clampedPageSize = System.Math.Min(requestedPageSize, MAX_PAGE_SIZE);
-            if (clampedPageSize <= 0) clampedPageSize = DEFAULT_PAGE_SIZE;
+            if (clampedPageSize <= 0)
+                clampedPageSize = DEFAULT_PAGE_SIZE;
 
             // Create modified params with clamped page_size for cursor calculation
             var paginationParams = @params != null ? new JObject(@params) : new JObject();
@@ -149,8 +147,8 @@ namespace MCPForUnity.Editor.Resources.Tests
             {
                 filteredTests = allTests
                     .Where(t =>
-                        (t.ContainsKey("name") && t["name"].IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0) ||
-                        (t.ContainsKey("full_name") && t["full_name"].IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0)
+                        (t.ContainsKey("name") && t["name"].IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0)
+                        || (t.ContainsKey("full_name") && t["full_name"].IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0)
                     )
                     .ToList();
             }
@@ -160,12 +158,10 @@ namespace MCPForUnity.Editor.Resources.Tests
             }
 
             // Clamp page_size before parsing pagination to ensure cursor is computed correctly
-            int requestedPageSize = ParamCoercion.CoerceInt(
-                @params?["page_size"] ?? @params?["pageSize"],
-                DEFAULT_PAGE_SIZE
-            );
+            int requestedPageSize = ParamCoercion.CoerceInt(@params?["page_size"] ?? @params?["pageSize"], DEFAULT_PAGE_SIZE);
             int clampedPageSize = System.Math.Min(requestedPageSize, MAX_PAGE_SIZE);
-            if (clampedPageSize <= 0) clampedPageSize = DEFAULT_PAGE_SIZE;
+            if (clampedPageSize <= 0)
+                clampedPageSize = DEFAULT_PAGE_SIZE;
 
             // Create modified params with clamped page_size for cursor calculation
             var paginationParams = new JObject(@params);
@@ -177,9 +173,10 @@ namespace MCPForUnity.Editor.Resources.Tests
             // Create paginated response
             var response = PaginationResponse<Dictionary<string, string>>.Create(filteredTests, pagination);
 
-            string message = nameFilter != null
-                ? $"Retrieved {response.Items.Count} of {response.TotalCount} {parsedMode.Value} tests matching '{nameFilter}'"
-                : $"Retrieved {response.Items.Count} of {response.TotalCount} {parsedMode.Value} tests";
+            string message =
+                nameFilter != null
+                    ? $"Retrieved {response.Items.Count} of {response.TotalCount} {parsedMode.Value} tests matching '{nameFilter}'"
+                    : $"Retrieved {response.Items.Count} of {response.TotalCount} {parsedMode.Value} tests";
 
             return new SuccessResponse(message, response);
         }

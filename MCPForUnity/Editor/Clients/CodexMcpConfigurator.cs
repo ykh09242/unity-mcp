@@ -7,11 +7,11 @@ using MCPForUnity.Editor.Services;
 
 namespace MCPForUnity.Editor.Clients
 {
-
     /// <summary>Codex (TOML) configurator.</summary>
     public abstract class CodexMcpConfigurator : McpClientConfiguratorBase
     {
-        public CodexMcpConfigurator(McpClient client) : base(client) { }
+        public CodexMcpConfigurator(McpClient client)
+            : base(client) { }
 
         public override string GetConfigPath() => CurrentOsPath();
 
@@ -63,8 +63,10 @@ namespace MCPForUnity.Editor.Clients
                     {
                         if (!attemptAutoRewrite)
                         {
-                            client.SetStatus(McpStatus.IncorrectPath,
-                                "Codex transport does not match the selected server transport. Click Configure to update.");
+                            client.SetStatus(
+                                McpStatus.IncorrectPath,
+                                "Codex transport does not match the selected server transport. Click Configure to update."
+                            );
                             return client.status;
                         }
                     }
@@ -176,14 +178,15 @@ namespace MCPForUnity.Editor.Clients
             }
         }
 
-        public override IList<string> GetInstallationSteps() => new List<string>
-        {
-            "Open the config file at the path above",
-            "Merge the TOML into the existing unityMCP entry, replacing fields from the previous transport",
-            "Current Codex does not need rmcp_client. Existing legacy feature settings are preserved",
-            "Local HTTP uses automatic token-file lookup when Codex support is confirmed. Update Codex or use stdio if unavailable",
-            "Start the local server before connecting. Token rotation does not require reconfiguration; reconnect if the client does not recover",
-            "Save and restart Codex"
-        };
+        public override IList<string> GetInstallationSteps() =>
+            new List<string>
+            {
+                "Open the config file at the path above",
+                "Merge the TOML into the existing unityMCP entry, replacing fields from the previous transport",
+                "Current Codex does not need rmcp_client. Existing legacy feature settings are preserved",
+                "Local HTTP uses automatic token-file lookup when Codex support is confirmed. Update Codex or use stdio if unavailable",
+                "Start the local server before connecting. Token rotation does not require reconfiguration; reconnect if the client does not recover",
+                "Save and restart Codex",
+            };
     }
 }

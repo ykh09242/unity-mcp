@@ -25,7 +25,9 @@ def test_distribution_includes_preserved_mit_notice() -> None:
     assert license_files[0].read_bytes() == (server_root.parent / "LICENSE").read_bytes()
 
 
-def test_version_uses_installed_fork_when_upstream_is_also_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_version_uses_installed_fork_when_upstream_is_also_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Given distinct installed versions for the fork and upstream distribution.
     for name, version in (("ykh09242-unity-mcp-server", "98.7.6"), ("mcpforunityserver", "1.2.3")):
         dist = tmp_path / f"{name.replace('-', '_')}-{version}.dist-info"
@@ -75,7 +77,12 @@ def fork_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     defaults = ServerConfig()
     monkeypatch.setattr(config, "telemetry_enabled", defaults.telemetry_enabled)
     monkeypatch.setattr(config, "telemetry_endpoint", defaults.telemetry_endpoint)
-    for name in ("DISABLE_TELEMETRY", "UNITY_MCP_DISABLE_TELEMETRY", "MCP_DISABLE_TELEMETRY", "UNITY_MCP_TELEMETRY_ENDPOINT"):
+    for name in (
+        "DISABLE_TELEMETRY",
+        "UNITY_MCP_DISABLE_TELEMETRY",
+        "MCP_DISABLE_TELEMETRY",
+        "UNITY_MCP_TELEMETRY_ENDPOINT",
+    ):
         monkeypatch.delenv(name, raising=False)
     for name in ("APPDATA", "XDG_DATA_HOME"):
         monkeypatch.setenv(name, str(tmp_path))
@@ -104,7 +111,9 @@ def test_default_collection_does_not_start_worker_or_touch_storage(fork_defaults
 
 
 @pytest.mark.parametrize("endpoint", ["file:///tmp/events", "http://localhost/events", "invalid"])
-def test_invalid_override_keeps_collection_disabled(fork_defaults: Path, monkeypatch: pytest.MonkeyPatch, endpoint: str) -> None:
+def test_invalid_override_keeps_collection_disabled(
+    fork_defaults: Path, monkeypatch: pytest.MonkeyPatch, endpoint: str
+) -> None:
     # Given an invalid explicit endpoint and no configured fallback.
     monkeypatch.setenv("UNITY_MCP_TELEMETRY_ENDPOINT", endpoint)
 
@@ -117,7 +126,9 @@ def test_invalid_override_keeps_collection_disabled(fork_defaults: Path, monkeyp
     assert not fork_defaults.exists()
 
 
-def test_explicit_endpoint_enables_collection_when_allowed(fork_defaults: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_explicit_endpoint_enables_collection_when_allowed(
+    fork_defaults: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Given an explicit endpoint with no opt-out.
     monkeypatch.setenv("UNITY_MCP_TELEMETRY_ENDPOINT", "https://owned.example/events")
 
@@ -129,8 +140,12 @@ def test_explicit_endpoint_enables_collection_when_allowed(fork_defaults: Path, 
     assert resolved.endpoint == "https://owned.example/events"
 
 
-@pytest.mark.parametrize("optout", ["DISABLE_TELEMETRY", "UNITY_MCP_DISABLE_TELEMETRY", "MCP_DISABLE_TELEMETRY"])
-def test_env_opt_out_overrides_explicit_endpoint(fork_defaults: Path, monkeypatch: pytest.MonkeyPatch, optout: str) -> None:
+@pytest.mark.parametrize(
+    "optout", ["DISABLE_TELEMETRY", "UNITY_MCP_DISABLE_TELEMETRY", "MCP_DISABLE_TELEMETRY"]
+)
+def test_env_opt_out_overrides_explicit_endpoint(
+    fork_defaults: Path, monkeypatch: pytest.MonkeyPatch, optout: str
+) -> None:
     # Given an explicit endpoint with an environment opt-out.
     monkeypatch.setenv("UNITY_MCP_TELEMETRY_ENDPOINT", "https://owned.example/events")
     monkeypatch.setenv(optout, "true")
@@ -143,7 +158,9 @@ def test_env_opt_out_overrides_explicit_endpoint(fork_defaults: Path, monkeypatc
     assert not fork_defaults.exists()
 
 
-def test_config_opt_out_overrides_explicit_endpoint(fork_defaults: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_opt_out_overrides_explicit_endpoint(
+    fork_defaults: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Given an explicit endpoint with the config opt-out.
     monkeypatch.setenv("UNITY_MCP_TELEMETRY_ENDPOINT", "https://owned.example/events")
     monkeypatch.setattr(config, "telemetry_enabled", False)
@@ -156,7 +173,9 @@ def test_config_opt_out_overrides_explicit_endpoint(fork_defaults: Path, monkeyp
     assert not fork_defaults.exists()
 
 
-def test_invalid_config_endpoint_keeps_collection_disabled(fork_defaults: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_invalid_config_endpoint_keeps_collection_disabled(
+    fork_defaults: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Given an invalid config endpoint without an environment override.
     monkeypatch.setattr(config, "telemetry_endpoint", "file:///tmp/events")
 

@@ -12,7 +12,8 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ManageScriptTextEditContractTests
     {
-        private bool? _savedEnabled, _savedConsent;
+        private bool? _savedEnabled,
+            _savedConsent;
         private const string EnabledKey = "MCPForUnity.ToolEnabled.manage_script";
         private const string ConsentKey = "MCPForUnity.ToolEnabled.ExplicitConsent.manage_script";
         private string _folder;
@@ -35,13 +36,20 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            try { AssetDatabase.DeleteAsset(_folder); }
+            try
+            {
+                AssetDatabase.DeleteAsset(_folder);
+            }
             finally
             {
-                if (_savedEnabled.HasValue) EditorPrefs.SetBool(EnabledKey, _savedEnabled.Value);
-                else EditorPrefs.DeleteKey(EnabledKey);
-                if (_savedConsent.HasValue) EditorPrefs.SetBool(ConsentKey, _savedConsent.Value);
-                else EditorPrefs.DeleteKey(ConsentKey);
+                if (_savedEnabled.HasValue)
+                    EditorPrefs.SetBool(EnabledKey, _savedEnabled.Value);
+                else
+                    EditorPrefs.DeleteKey(EnabledKey);
+                if (_savedConsent.HasValue)
+                    EditorPrefs.SetBool(ConsentKey, _savedConsent.Value);
+                else
+                    EditorPrefs.DeleteKey(ConsentKey);
             }
         }
 
@@ -76,12 +84,18 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Apply(string newText, int endLine)
         {
-            return Apply(new JArray(new JObject
-            {
-                ["startLine"] = 4, ["startCol"] = 1,
-                ["endLine"] = endLine, ["endCol"] = 1,
-                ["newText"] = newText
-            }));
+            return Apply(
+                new JArray(
+                    new JObject
+                    {
+                        ["startLine"] = 4,
+                        ["startCol"] = 1,
+                        ["endLine"] = endLine,
+                        ["endCol"] = 1,
+                        ["newText"] = newText,
+                    }
+                )
+            );
         }
 
         [TestCase("startLine", false)]
@@ -98,19 +112,31 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var invalid = new JObject
             {
-                ["startLine"] = 4, ["startCol"] = 1,
-                ["endLine"] = 5, ["endCol"] = 1,
-                ["newText"] = "    public void A() { int n = 1; }\n"
+                ["startLine"] = 4,
+                ["startCol"] = 1,
+                ["endLine"] = 5,
+                ["endCol"] = 1,
+                ["newText"] = "    public void A() { int n = 1; }\n",
             };
-            if (explicitNull) invalid[missingField] = JValue.CreateNull();
-            else invalid.Remove(missingField);
+            if (explicitNull)
+                invalid[missingField] = JValue.CreateNull();
+            else
+                invalid.Remove(missingField);
             var bytes = File.ReadAllBytes(_path);
             var modified = File.GetLastWriteTimeUtc(_path);
-            var response = Apply(new JArray(new JObject
-            {
-                ["startLine"] = 5, ["startCol"] = 1, ["endLine"] = 5, ["endCol"] = 1,
-                ["newText"] = "    // valid first edit\n"
-            }, invalid));
+            var response = Apply(
+                new JArray(
+                    new JObject
+                    {
+                        ["startLine"] = 5,
+                        ["startCol"] = 1,
+                        ["endLine"] = 5,
+                        ["endCol"] = 1,
+                        ["newText"] = "    // valid first edit\n",
+                    },
+                    invalid
+                )
+            );
 
             Assert.IsFalse(response.Value<bool>("success"));
             StringAssert.Contains("requires startLine/startCol/endLine/endCol", response.Value<string>("error"));
@@ -127,8 +153,11 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var edit = new JObject
             {
-                ["startLine"] = 4, ["startCol"] = 1, ["endLine"] = 5, ["endCol"] = 1,
-                ["newText"] = JToken.Parse(json)
+                ["startLine"] = 4,
+                ["startCol"] = 1,
+                ["endLine"] = 5,
+                ["endCol"] = 1,
+                ["newText"] = JToken.Parse(json),
             };
             var response = Apply(new JArray(edit));
 
@@ -151,11 +180,17 @@ namespace MCPForUnityTests.Editor.Tools
         {
             File.WriteAllText(_path, Original.Replace("public void A() { }", "public void A() { ([)] }"), new UTF8Encoding(false));
             var bytes = File.ReadAllBytes(_path);
-            var response = JObject.FromObject(ManageScript.HandleCommand(new JObject
-            {
-                ["action"] = "validate", ["name"] = "ContractEditProbe", ["path"] = _folder,
-                ["level"] = level
-            }));
+            var response = JObject.FromObject(
+                ManageScript.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "validate",
+                        ["name"] = "ContractEditProbe",
+                        ["path"] = _folder,
+                        ["level"] = level,
+                    }
+                )
+            );
 
             Assert.IsFalse(response.Value<bool>("success"));
             Assert.AreEqual("error", response["data"]["diagnostics"][0].Value<string>("severity"));
@@ -168,11 +203,19 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var bytes = File.ReadAllBytes(_path);
             var modified = File.GetLastWriteTimeUtc(_path);
-            var response = Apply(new JArray(new JObject
-            {
-                ["startLine"] = 4, ["startCol"] = 1, ["endLine"] = 4, ["endCol"] = 1,
-                ["newText"] = "    ([)]\n"
-            }), action);
+            var response = Apply(
+                new JArray(
+                    new JObject
+                    {
+                        ["startLine"] = 4,
+                        ["startCol"] = 1,
+                        ["endLine"] = 4,
+                        ["endCol"] = 1,
+                        ["newText"] = "    ([)]\n",
+                    }
+                ),
+                action
+            );
 
             Assert.IsFalse(response.Value<bool>("success"));
             Assert.AreEqual("unbalanced_braces", response["data"]["status"].Value<string>());
@@ -185,15 +228,19 @@ namespace MCPForUnityTests.Editor.Tools
             string hash;
             using (var sha = SHA256.Create())
                 hash = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(Original))).Replace("-", string.Empty).ToLowerInvariant();
-            return JObject.FromObject(ManageScript.HandleCommand(new JObject
-            {
-                ["action"] = action,
-                ["name"] = "ContractEditProbe",
-                ["path"] = _folder,
-                ["precondition_sha256"] = hash,
-                ["edits"] = edits,
-                ["options"] = new JObject { ["refresh"] = "deferred", ["validate"] = "syntax" }
-            }));
+            return JObject.FromObject(
+                ManageScript.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["name"] = "ContractEditProbe",
+                        ["path"] = _folder,
+                        ["precondition_sha256"] = hash,
+                        ["edits"] = edits,
+                        ["options"] = new JObject { ["refresh"] = "deferred", ["validate"] = "syntax" },
+                    }
+                )
+            );
         }
     }
 

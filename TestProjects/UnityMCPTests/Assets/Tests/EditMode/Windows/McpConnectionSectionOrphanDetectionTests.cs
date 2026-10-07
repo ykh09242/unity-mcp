@@ -1,5 +1,5 @@
-using NUnit.Framework;
 using MCPForUnity.Editor.Windows.Components.Connection;
+using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Windows
 {
@@ -16,57 +16,99 @@ namespace MCPForUnityTests.Editor.Windows
         [Test]
         public void EndsSession_AtThreshold_WhenIdleAndRunning()
         {
-            Assert.IsTrue(McpConnectionSection.ShouldEndOrphanedSession(
-                httpLocalSelected: true, sessionRunning: true, toggleInProgress: false,
-                editorBusy: false, consecutiveDownPolls: Threshold));
+            Assert.IsTrue(
+                McpConnectionSection.ShouldEndOrphanedSession(
+                    httpLocalSelected: true,
+                    sessionRunning: true,
+                    toggleInProgress: false,
+                    editorBusy: false,
+                    consecutiveDownPolls: Threshold
+                )
+            );
         }
 
         [Test]
         public void SingleFailedPoll_DoesNotEndSession()
         {
-            Assert.IsFalse(McpConnectionSection.ShouldEndOrphanedSession(
-                httpLocalSelected: true, sessionRunning: true, toggleInProgress: false,
-                editorBusy: false, consecutiveDownPolls: 1));
+            Assert.IsFalse(
+                McpConnectionSection.ShouldEndOrphanedSession(
+                    httpLocalSelected: true,
+                    sessionRunning: true,
+                    toggleInProgress: false,
+                    editorBusy: false,
+                    consecutiveDownPolls: 1
+                )
+            );
         }
 
         [Test]
         public void BelowThreshold_DoesNotEndSession()
         {
-            Assert.IsFalse(McpConnectionSection.ShouldEndOrphanedSession(
-                httpLocalSelected: true, sessionRunning: true, toggleInProgress: false,
-                editorBusy: false, consecutiveDownPolls: Threshold - 1));
+            Assert.IsFalse(
+                McpConnectionSection.ShouldEndOrphanedSession(
+                    httpLocalSelected: true,
+                    sessionRunning: true,
+                    toggleInProgress: false,
+                    editorBusy: false,
+                    consecutiveDownPolls: Threshold - 1
+                )
+            );
         }
 
         [Test]
         public void BusyEditor_DefersEvenPastThreshold()
         {
-            Assert.IsFalse(McpConnectionSection.ShouldEndOrphanedSession(
-                httpLocalSelected: true, sessionRunning: true, toggleInProgress: false,
-                editorBusy: true, consecutiveDownPolls: Threshold + 2));
+            Assert.IsFalse(
+                McpConnectionSection.ShouldEndOrphanedSession(
+                    httpLocalSelected: true,
+                    sessionRunning: true,
+                    toggleInProgress: false,
+                    editorBusy: true,
+                    consecutiveDownPolls: Threshold + 2
+                )
+            );
         }
 
         [Test]
         public void ToggleInProgress_DoesNotEndSession()
         {
-            Assert.IsFalse(McpConnectionSection.ShouldEndOrphanedSession(
-                httpLocalSelected: true, sessionRunning: true, toggleInProgress: true,
-                editorBusy: false, consecutiveDownPolls: Threshold));
+            Assert.IsFalse(
+                McpConnectionSection.ShouldEndOrphanedSession(
+                    httpLocalSelected: true,
+                    sessionRunning: true,
+                    toggleInProgress: true,
+                    editorBusy: false,
+                    consecutiveDownPolls: Threshold
+                )
+            );
         }
 
         [Test]
         public void NonHttpLocalTransport_NeverEndsSession()
         {
-            Assert.IsFalse(McpConnectionSection.ShouldEndOrphanedSession(
-                httpLocalSelected: false, sessionRunning: true, toggleInProgress: false,
-                editorBusy: false, consecutiveDownPolls: Threshold + 5));
+            Assert.IsFalse(
+                McpConnectionSection.ShouldEndOrphanedSession(
+                    httpLocalSelected: false,
+                    sessionRunning: true,
+                    toggleInProgress: false,
+                    editorBusy: false,
+                    consecutiveDownPolls: Threshold + 5
+                )
+            );
         }
 
         [Test]
         public void SessionNotRunning_NothingToEnd()
         {
-            Assert.IsFalse(McpConnectionSection.ShouldEndOrphanedSession(
-                httpLocalSelected: true, sessionRunning: false, toggleInProgress: false,
-                editorBusy: false, consecutiveDownPolls: Threshold + 5));
+            Assert.IsFalse(
+                McpConnectionSection.ShouldEndOrphanedSession(
+                    httpLocalSelected: true,
+                    sessionRunning: false,
+                    toggleInProgress: false,
+                    editorBusy: false,
+                    consecutiveDownPolls: Threshold + 5
+                )
+            );
         }
     }
 }

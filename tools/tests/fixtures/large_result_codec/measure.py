@@ -4,6 +4,7 @@
 # ///
 # Run: uv run --directory Server --no-sync python ../tools/tests/fixtures/large_result_codec/measure.py --output ../reports/CS-20261006-mcp-usability/phase7/data/baseline.json
 """Measure actual C# writer frames and Python assembly using synthetic payloads."""
+
 import argparse
 import asyncio
 import base64
@@ -25,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / "Server/src"))
 from transport.large_result_assembler import LargeResultAssembler
 from models.response_limits import bounded_json_text, response_size
+
 ASSEMBLER = LargeResultAssembler
 BASELINE = False
 
@@ -38,18 +40,48 @@ def build(work, baseline_ref=None):
     latest = max(refs.iterdir(), key=lambda p: tuple(map(int, p.name.split("."))))
     target = next((latest / "ref").iterdir())
     dll = work / "CodecHarness.dll"
-    sources = [ROOT / "MCPForUnity/Editor/Services/Transport/LargeResultWriter.cs", Path(__file__).with_name("CodecHarness.cs")]
+    sources = [
+        ROOT / "MCPForUnity/Editor/Services/Transport/LargeResultWriter.cs",
+        Path(__file__).with_name("CodecHarness.cs"),
+    ]
     if baseline_ref:
         saved = work / "BaselineLargeResultWriter.cs"
-        saved.write_bytes(subprocess.check_output(["git", "show", f"{baseline_ref}:MCPForUnity/Editor/Services/Transport/LargeResultWriter.cs"], cwd=ROOT))
+        saved.write_bytes(
+            subprocess.check_output(
+                [
+                    "git",
+                    "show",
+                    f"{baseline_ref}:MCPForUnity/Editor/Services/Transport/LargeResultWriter.cs",
+                ],
+                cwd=ROOT,
+            )
+        )
         sources[0] = saved
-    args = [dotnet, str(compiler), "/nologo", "/noconfig", "/nostdlib+", "/target:exe", "/langversion:latest", f"/out:{dll}"]
+    args = [
+        dotnet,
+        str(compiler),
+        "/nologo",
+        "/noconfig",
+        "/nostdlib+",
+        "/target:exe",
+        "/langversion:latest",
+        f"/out:{dll}",
+    ]
     args.extend(f"/reference:{ref}" for ref in target.glob("*.dll"))
     if not baseline_ref:
         args.append("/define:CURRENT_CODEC")
     subprocess.run([*args, *map(str, sources)], check=True, capture_output=True, text=True)
-    dll.with_suffix(".runtimeconfig.json").write_text(json.dumps({"runtimeOptions": {
-        "tfm": target.name, "framework": {"name": "Microsoft.NETCore.App", "version": latest.name}}}), encoding="utf-8")
+    dll.with_suffix(".runtimeconfig.json").write_text(
+        json.dumps(
+            {
+                "runtimeOptions": {
+                    "tfm": target.name,
+                    "framework": {"name": "Microsoft.NETCore.App", "version": latest.name},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     return dotnet, dll
 
 
@@ -66,7 +98,11 @@ def run_case(work, harness, name, payload, mode="bytes"):
     source = work / f"{name}.json"
     trace = work / f"{name}.frames"
     source.write_bytes(payload)
-    measured = json.loads(subprocess.check_output([harness[0], str(harness[1]), str(source), str(trace), mode], text=True))
+    measured = json.loads(
+        subprocess.check_output(
+            [harness[0], str(harness[1]), str(source), str(trace), mode], text=True
+        )
+    )
     times, peaks, parse_times = [], [], []
     for _ in range(7):
         tracemalloc.start()
@@ -77,9 +113,21 @@ def run_case(work, harness, name, payload, mode="bytes"):
         for kind, frame in read_frames(trace):
             if kind == 0:
                 metadata = json.loads(frame)
-                attributes = {} if metadata.get("encoding", "identity") == "identity" else {
-                    "encoding": metadata["encoding"], "decoded_bytes": metadata["decoded_bytes"]}
-                assembler.begin("owned", metadata["id"], metadata["total_bytes"], metadata["chunk_count"], **attributes)
+                attributes = (
+                    {}
+                    if metadata.get("encoding", "identity") == "identity"
+                    else {
+                        "encoding": metadata["encoding"],
+                        "decoded_bytes": metadata["decoded_bytes"],
+                    }
+                )
+                assembler.begin(
+                    "owned",
+                    metadata["id"],
+                    metadata["total_bytes"],
+                    metadata["chunk_count"],
+                    **attributes,
+                )
             else:
                 complete = assembler.feed("owned", frame)
         elapsed = (time.perf_counter() - before) * 1000
@@ -87,41 +135,62 @@ def run_case(work, harness, name, payload, mode="bytes"):
         tracemalloc.stop()
         assert complete.payload == payload
         parse_before = time.perf_counter()
-        text = bounded_json_text(complete.payload.decode("utf-8"), max_bytes=32 * 1024 * 1024, max_depth=64, max_nodes=100000)
+        text = bounded_json_text(
+            complete.payload.decode("utf-8"),
+            max_bytes=32 * 1024 * 1024,
+            max_depth=64,
+            max_nodes=100000,
+        )
         assert text is not None
         decoded = json.loads(text)
         assert response_size(decoded["result"]) is not None
         parse_times.append((time.perf_counter() - parse_before) * 1000)
         times.append(elapsed)
         peaks.append(peak)
-    measured.update(assemble_ms=times, python_peak_bytes=peaks, normal_parse_and_charge_ms=parse_times,
-                    encode_median_ms=statistics.median(measured["encode_ms"]),
-                    assemble_median_ms=statistics.median(times))
+    measured.update(
+        assemble_ms=times,
+        python_peak_bytes=peaks,
+        normal_parse_and_charge_ms=parse_times,
+        encode_median_ms=statistics.median(measured["encode_ms"]),
+        assemble_median_ms=statistics.median(times),
+    )
     return measured
 
 
 async def wire_case(work, harness, name, payload, mode, rate):
     from websockets.asyncio.server import serve
+
     source = work / f"{name}-wire.json"
     trace = work / f"{name}-wire.frames"
     source.write_bytes(payload)
     done = asyncio.get_running_loop().create_future()
-    assembler = LargeResultAssembler(lambda *_: True, lambda *_: True, lambda *_: None,
-                                    reserve_compressed=lambda *_: True)
+    assembler = LargeResultAssembler(
+        lambda *_: True, lambda *_: True, lambda *_: None, reserve_compressed=lambda *_: True
+    )
 
     async def receive(socket):
         receiver_begin = time.perf_counter()
         async for frame in socket:
             if isinstance(frame, str):
                 start = json.loads(frame)
-                assembler.begin("owned", start["id"], start["total_bytes"], start["chunk_count"],
-                                encoding=start.get("encoding", "identity"), decoded_bytes=start.get("decoded_bytes"))
+                assembler.begin(
+                    "owned",
+                    start["id"],
+                    start["total_bytes"],
+                    start["chunk_count"],
+                    encoding=start.get("encoding", "identity"),
+                    decoded_bytes=start.get("decoded_bytes"),
+                )
             else:
                 complete = assembler.feed("owned", frame)
                 if complete is not None:
                     assert complete.payload == payload
-                    text = bounded_json_text(complete.payload.decode("utf-8"), max_bytes=32 * 1024 * 1024,
-                                             max_depth=64, max_nodes=100000)
+                    text = bounded_json_text(
+                        complete.payload.decode("utf-8"),
+                        max_bytes=32 * 1024 * 1024,
+                        max_depth=64,
+                        max_nodes=100000,
+                    )
                     assert text is not None
                     decoded = json.loads(text)
                     assert decoded["type"] == "command_result"
@@ -131,8 +200,17 @@ async def wire_case(work, harness, name, payload, mode, rate):
 
     async with serve(receive, "127.0.0.1", 0, compression=None, max_size=65536) as server:
         port = server.sockets[0].getsockname()[1]
-        process = await asyncio.create_subprocess_exec(harness[0], str(harness[1]), str(source), str(trace), mode,
-                    f"ws://127.0.0.1:{port}", str(rate), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        process = await asyncio.create_subprocess_exec(
+            harness[0],
+            str(harness[1]),
+            str(source),
+            str(trace),
+            mode,
+            f"ws://127.0.0.1:{port}",
+            str(rate),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         try:
             receiver_ms = await asyncio.wait_for(done, 30)
             stdout, stderr = await asyncio.wait_for(process.communicate(), 10)
@@ -155,10 +233,20 @@ def main():
     parser.add_argument("--baseline-ref")
     args = parser.parse_args()
     rng = random.Random(7008)
-    base = {"type": "command_result", "id": "01234567-89ab-cdef-0123-456789abcdef", "result": {
-        "success": True, "unicode": "한글😀", "integer": 9007199254740993, "escaped_surrogate": "\\ud800"}}
+    base = {
+        "type": "command_result",
+        "id": "01234567-89ab-cdef-0123-456789abcdef",
+        "result": {
+            "success": True,
+            "unicode": "한글😀",
+            "integer": 9007199254740993,
+            "escaped_surrogate": "\\ud800",
+        },
+    }
     dense = json.loads(json.dumps(base))
-    dense["result"]["rows"] = [{"id": i, "name": f"Synthetic-{i}", "value": "same-json-value" * 20} for i in range(14000)]
+    dense["result"]["rows"] = [
+        {"id": i, "name": f"Synthetic-{i}", "value": "same-json-value" * 20} for i in range(14000)
+    ]
     preview = json.loads(json.dumps(base))
     preview["result"]["preview"] = base64.b64encode(rng.randbytes(3 * 1024 * 1024)).decode("ascii")
     with tempfile.TemporaryDirectory(prefix="large-result-codec-") as temporary:
@@ -167,7 +255,16 @@ def main():
         if args.baseline_ref:
             BASELINE = True
             saved = work / "baseline_assembler.py"
-            saved.write_bytes(subprocess.check_output(["git", "show", f"{args.baseline_ref}:Server/src/transport/large_result_assembler.py"], cwd=ROOT))
+            saved.write_bytes(
+                subprocess.check_output(
+                    [
+                        "git",
+                        "show",
+                        f"{args.baseline_ref}:Server/src/transport/large_result_assembler.py",
+                    ],
+                    cwd=ROOT,
+                )
+            )
             spec = importlib.util.spec_from_file_location("_codec_baseline_assembler", saved)
             module = importlib.util.module_from_spec(spec)
             sys.modules[spec.name] = module
@@ -183,18 +280,43 @@ def main():
             if args.wire:
                 for rate in [512, 5120]:
                     for mode in ["string_json", "gzip_json"]:
-                        wire_results[f"{name}:{mode}:{rate}KiB_s"] = asyncio.run(wire_case(work, harness, name, payload, mode, rate))
-    report = {"python": platform.python_version(), "baseline_ref": args.baseline_ref, "cases": cases, "owned_wire": wire_results,
-              "source_sha256": {name: hashlib.sha256(subprocess.check_output(["git", "show", f"{args.baseline_ref}:{name}"], cwd=ROOT)
-                    if args.baseline_ref else (ROOT / name).read_bytes()).hexdigest() for name in [
-                  "MCPForUnity/Editor/Services/Transport/LargeResultWriter.cs", "Server/src/transport/large_result_assembler.py"]}}
+                        wire_results[f"{name}:{mode}:{rate}KiB_s"] = asyncio.run(
+                            wire_case(work, harness, name, payload, mode, rate)
+                        )
+    report = {
+        "python": platform.python_version(),
+        "baseline_ref": args.baseline_ref,
+        "cases": cases,
+        "owned_wire": wire_results,
+        "source_sha256": {
+            name: hashlib.sha256(
+                subprocess.check_output(["git", "show", f"{args.baseline_ref}:{name}"], cwd=ROOT)
+                if args.baseline_ref
+                else (ROOT / name).read_bytes()
+            ).hexdigest()
+            for name in [
+                "MCPForUnity/Editor/Services/Transport/LargeResultWriter.cs",
+                "Server/src/transport/large_result_assembler.py",
+            ]
+        },
+    }
     output = Path(args.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(json.dumps({name: {"bytes": case["bytes"], "encode_median_ms": case["encode_median_ms"],
-                             "assemble_median_ms": case["assemble_median_ms"],
-                             "python_peak_bytes": statistics.median(case["python_peak_bytes"]),
-                             "allocated_bytes": statistics.median(case["allocated_bytes"])} for name, case in cases.items()}))
+    print(
+        json.dumps(
+            {
+                name: {
+                    "bytes": case["bytes"],
+                    "encode_median_ms": case["encode_median_ms"],
+                    "assemble_median_ms": case["assemble_median_ms"],
+                    "python_peak_bytes": statistics.median(case["python_peak_bytes"]),
+                    "allocated_bytes": statistics.median(case["allocated_bytes"]),
+                }
+                for name, case in cases.items()
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

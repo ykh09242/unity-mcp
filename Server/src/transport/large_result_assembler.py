@@ -4,6 +4,7 @@ Call synchronously under the hub lock. Reservation callbacks share the hub's
 retained-result accounting; completed bytes remain reserved until discard().
 No JSON is parsed here, so the caller can decode the normal result exactly once.
 """
+
 from collections.abc import Callable
 from dataclasses import dataclass
 import time
@@ -66,13 +67,17 @@ class LargeResultAssembler:
     reserve/release must coordinate with the normal response retention budget.
     """
 
-    def __init__(self, pending: Callable[[str, str], bool],
-                 reserve: Callable[[str, str, int], bool],
-                 release: Callable[[str, str], None], *,
-                 timeout_seconds: float = 30.0,
-                 max_total_bytes: int = 64 * 1024 * 1024,
-                 clock: Callable[[], float] = time.monotonic,
-                 reserve_compressed: Callable[[str, str, int, int], bool] | None = None) -> None:
+    def __init__(
+        self,
+        pending: Callable[[str, str], bool],
+        reserve: Callable[[str, str, int], bool],
+        release: Callable[[str, str], None],
+        *,
+        timeout_seconds: float = 30.0,
+        max_total_bytes: int = 64 * 1024 * 1024,
+        clock: Callable[[], float] = time.monotonic,
+        reserve_compressed: Callable[[str, str, int, int], bool] | None = None,
+    ) -> None:
         if not 0 < timeout_seconds <= 300 or not 0 < max_total_bytes <= 256 * 1024 * 1024:
             raise LargeResultProtocolError("invalid_assembler_limits")
         self._pending = pending
@@ -89,20 +94,34 @@ class LargeResultAssembler:
     def retained_bytes(self) -> int:
         return self._retained_bytes
 
-    def begin(self, owner: str, command_id: str, total_bytes: int, chunk_count: int, *,
-              encoding: str = "identity", decoded_bytes: int | None = None) -> bool:
+    def begin(
+        self,
+        owner: str,
+        command_id: str,
+        total_bytes: int,
+        chunk_count: int,
+        *,
+        encoding: str = "identity",
+        decoded_bytes: int | None = None,
+    ) -> bool:
         """Reserve a pending transfer; ignore valid late/unowned results without allocation."""
         if not _canonical_id(command_id):
             raise LargeResultProtocolError("invalid_result_id")
         if encoding not in {"identity", "gzip"}:
             raise LargeResultProtocolError("unsupported_result_encoding", command_id)
         compressed = encoding == "gzip"
-        if (type(total_bytes) is not int or type(chunk_count) is not int
-                or not (1 if compressed else THRESHOLD_BYTES) <= total_bytes <= MAX_RESULT_BYTES
-                or chunk_count != (total_bytes + CHUNK_PAYLOAD_BYTES - 1) // CHUNK_PAYLOAD_BYTES):
+        if (
+            type(total_bytes) is not int
+            or type(chunk_count) is not int
+            or not (1 if compressed else THRESHOLD_BYTES) <= total_bytes <= MAX_RESULT_BYTES
+            or chunk_count != (total_bytes + CHUNK_PAYLOAD_BYTES - 1) // CHUNK_PAYLOAD_BYTES
+        ):
             raise LargeResultProtocolError("invalid_result_size", command_id)
         if compressed:
-            if type(decoded_bytes) is not int or not COMPRESSION_THRESHOLD_BYTES <= decoded_bytes <= MAX_RESULT_BYTES:
+            if (
+                type(decoded_bytes) is not int
+                or not COMPRESSION_THRESHOLD_BYTES <= decoded_bytes <= MAX_RESULT_BYTES
+            ):
                 raise LargeResultProtocolError("invalid_decoded_result_size", command_id)
             allocation_bytes = decoded_bytes
         else:
@@ -120,13 +139,15 @@ class LargeResultAssembler:
             raise LargeResultProtocolError("result_capacity", command_id)
         if compressed:
             if self._reserve_compressed is None or not self._reserve_compressed(
-                    owner, command_id, allocation_bytes, GZIP_WORKING_BYTES):
+                owner, command_id, allocation_bytes, GZIP_WORKING_BYTES
+            ):
                 raise LargeResultProtocolError("result_capacity", command_id)
         elif not self._reserve(owner, command_id, allocation_bytes):
             raise LargeResultProtocolError("result_capacity", command_id)
         try:
-            transfer = _Transfer(bytearray(allocation_bytes), chunk_count,
-                                 self._clock() + self._timeout, total_bytes)
+            transfer = _Transfer(
+                bytearray(allocation_bytes), chunk_count, self._clock() + self._timeout, total_bytes
+            )
             if compressed:
                 transfer.decoder = GzipResultDecoder(transfer.payload)
         except MemoryError:
@@ -159,18 +180,24 @@ class LargeResultAssembler:
             reason = "result_replay"
         elif int.from_bytes(frame[40:44], "big") != transfer.offset:
             reason = "invalid_result_offset"
-        elif len(frame) - HEADER_BYTES != min(CHUNK_PAYLOAD_BYTES, transfer.wire_bytes - transfer.offset):
+        elif len(frame) - HEADER_BYTES != min(
+            CHUNK_PAYLOAD_BYTES, transfer.wire_bytes - transfer.offset
+        ):
             reason = "invalid_result_chunk_size"
         if reason is not None:
             self.discard(owner, command_id)
             raise LargeResultProtocolError(reason, command_id)
         length = len(frame) - HEADER_BYTES
         if transfer.decoder is None:
-            memoryview(transfer.payload)[transfer.offset:transfer.offset + length] = memoryview(frame)[HEADER_BYTES:]
+            memoryview(transfer.payload)[transfer.offset : transfer.offset + length] = memoryview(
+                frame
+            )[HEADER_BYTES:]
         else:
             try:
-                transfer.decoder.feed(memoryview(frame)[HEADER_BYTES:],
-                                      final=transfer.offset + length == transfer.wire_bytes)
+                transfer.decoder.feed(
+                    memoryview(frame)[HEADER_BYTES:],
+                    final=transfer.offset + length == transfer.wire_bytes,
+                )
             except GzipResultError as exc:
                 self.discard(owner, command_id)
                 raise LargeResultProtocolError("invalid_result_compression", command_id) from exc

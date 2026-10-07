@@ -1,8 +1,8 @@
 using System.Collections.Generic;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Physics
 {
@@ -22,7 +22,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             for (int i = 0; i < 32; i++)
             {
                 string name = LayerMask.LayerToName(i);
-                if (string.IsNullOrEmpty(name)) continue;
+                if (string.IsNullOrEmpty(name))
+                    continue;
                 layers.Add(new { index = i, name });
                 populatedIndices.Add(i);
             }
@@ -36,11 +37,10 @@ namespace MCPForUnity.Editor.Tools.Physics
 
                 foreach (int j in populatedIndices)
                 {
-                    if (j > i) continue;
+                    if (j > i)
+                        continue;
                     string nameB = LayerMask.LayerToName(j);
-                    bool collides = dimension == "2d"
-                        ? !Physics2D.GetIgnoreLayerCollision(i, j)
-                        : !UnityEngine.Physics.GetIgnoreLayerCollision(i, j);
+                    bool collides = dimension == "2d" ? !Physics2D.GetIgnoreLayerCollision(i, j) : !UnityEngine.Physics.GetIgnoreLayerCollision(i, j);
                     row[nameB] = collides;
                 }
 
@@ -51,7 +51,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Collision matrix retrieved ({dimension}).",
-                data = new { layers, matrix }
+                data = new { layers, matrix },
             };
         }
 
@@ -81,8 +81,7 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             var collideToken = p.GetRaw("collide");
             bool collide = true;
-            if (collideToken != null && collideToken.Type != JTokenType.Null
-                && !string.IsNullOrWhiteSpace(collideToken.ToString()))
+            if (collideToken != null && collideToken.Type != JTokenType.Null && !string.IsNullOrWhiteSpace(collideToken.ToString()))
             {
                 bool? parsedCollide = ParamCoercion.CoerceBoolNullable(collideToken);
                 if (!parsedCollide.HasValue)
@@ -103,14 +102,22 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             string nameA = LayerMask.LayerToName(layerA);
             string nameB = LayerMask.LayerToName(layerB);
-            if (string.IsNullOrEmpty(nameA)) nameA = layerA.ToString();
-            if (string.IsNullOrEmpty(nameB)) nameB = layerB.ToString();
+            if (string.IsNullOrEmpty(nameA))
+                nameA = layerA.ToString();
+            if (string.IsNullOrEmpty(nameB))
+                nameB = layerB.ToString();
 
             return new
             {
                 success = true,
                 message = $"Collision between '{nameA}' and '{nameB}' set to {(collide ? "enabled" : "disabled")} ({dimension}).",
-                data = new { layer_a = nameA, layer_b = nameB, collide, dimension }
+                data = new
+                {
+                    layer_a = nameA,
+                    layer_b = nameB,
+                    collide,
+                    dimension,
+                },
             };
         }
 

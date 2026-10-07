@@ -23,10 +23,9 @@ namespace MCPForUnity.Editor.Tools
                 if (ParamCoercion.CoerceBool(@params?["clear_stuck"], false))
                 {
                     bool wasCleared = TestJobManager.ClearStuckJob();
-                    return Task.FromResult<object>(new SuccessResponse(
-                        wasCleared ? "Stuck job cleared." : "No running job to clear.",
-                        new { cleared = wasCleared }
-                    ));
+                    return Task.FromResult<object>(
+                        new SuccessResponse(wasCleared ? "Stuck job cleared." : "No running job to clear.", new { cleared = wasCleared })
+                    );
                 }
 
                 string modeStr = @params?["mode"]?.ToString();
@@ -48,14 +47,19 @@ namespace MCPForUnity.Editor.Tools
                 long initTimeoutMs = p.GetInt("initTimeout") ?? 0;
                 string jobId = TestJobManager.StartJob(parsedMode.Value, filterOptions, initTimeoutMs);
 
-                return Task.FromResult<object>(new SuccessResponse("Test job started.", new
-                {
-                    job_id = jobId,
-                    status = "running",
-                    mode = parsedMode.Value.ToString(),
-                    include_details = includeDetails,
-                    include_failed_tests = includeFailedTests
-                }));
+                return Task.FromResult<object>(
+                    new SuccessResponse(
+                        "Test job started.",
+                        new
+                        {
+                            job_id = jobId,
+                            status = "running",
+                            mode = parsedMode.Value.ToString(),
+                            include_details = includeDetails,
+                            include_failed_tests = includeFailedTests,
+                        }
+                    )
+                );
             }
             catch (Exception ex)
             {
@@ -91,7 +95,7 @@ namespace MCPForUnity.Editor.Tools
                 TestNames = testNames,
                 GroupNames = groupNames,
                 CategoryNames = categoryNames,
-                AssemblyNames = assemblyNames
+                AssemblyNames = assemblyNames,
             };
         }
     }

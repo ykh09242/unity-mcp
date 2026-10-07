@@ -1,15 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.WebSockets;
 using System.Reflection;
 using System.Text;
-using System.Net.WebSockets;
 using System.Threading;
 using System.Threading.Tasks;
-using MCPForUnity.Editor.Services.Transport;
-using MCPForUnity.Editor.Services.Transport.Transports;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services.Transport;
+using MCPForUnity.Editor.Services.Transport.Transports;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -40,7 +40,10 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.AreEqual(WebSocketState.None, replacement.State);
                 Assert.IsFalse(current.IsCancellationRequested);
             }
-            finally { client.ForceStop(); }
+            finally
+            {
+                client.ForceStop();
+            }
         }
 
         [Test]
@@ -57,15 +60,16 @@ namespace MCPForUnityTests.Editor.Services
             try
             {
                 var reconnect = typeof(WebSocketTransportClient).GetMethod("AttemptReconnectAsync", BindingFlags.Instance | BindingFlags.NonPublic);
-                var args = reconnect.GetParameters().Length == 1
-                    ? new object[] { oldLifecycle.Token }
-                    : new object[] { oldLifecycle.Token, oldLifecycle };
+                var args = reconnect.GetParameters().Length == 1 ? new object[] { oldLifecycle.Token } : new object[] { oldLifecycle.Token, oldLifecycle };
                 ((Task)reconnect.Invoke(client, args)).GetAwaiter().GetResult();
                 Assert.IsFalse(newConnection.IsCancellationRequested, "A stale reconnect worker must not stop the replacement connection.");
                 Assert.AreSame(newConnection, GetField(client, "_connectionCts"));
                 Assert.AreEqual(1, GetField(client, "_isReconnectingFlag"), "An old reconnect must not clear the new session's guard.");
             }
-            finally { client.ForceStop(); }
+            finally
+            {
+                client.ForceStop();
+            }
         }
 
         [Test]
@@ -88,7 +92,10 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.AreEqual("Server closed connection", client.State.Error);
                 Assert.AreEqual(0, GetField(client, "_isReconnectingFlag"), "Canceled reconnect scheduling must release its guard.");
             }
-            finally { client.ForceStop(); }
+            finally
+            {
+                client.ForceStop();
+            }
         }
 
         [TestCase(false)]
@@ -100,7 +107,8 @@ namespace MCPForUnityTests.Editor.Services
             using var newLifecycle = new CancellationTokenSource();
             using var newConnection = new CancellationTokenSource();
             using var registration = newConnection.Token.Register(() => newLifecycle.Cancel());
-            if (cancelOldConnection) oldConnection.Cancel();
+            if (cancelOldConnection)
+                oldConnection.Cancel();
             SetField(client, "_lifecycleCts", newLifecycle);
             SetField(client, "_connectionCts", newConnection);
             SetField(client, "_isConnected", true);
@@ -116,7 +124,10 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.AreEqual("new-session", client.State.SessionId);
                 Assert.AreEqual(0, GetField(client, "_isReconnectingFlag"));
             }
-            finally { client.ForceStop(); }
+            finally
+            {
+                client.ForceStop();
+            }
         }
 
         [Test]
@@ -139,7 +150,8 @@ namespace MCPForUnityTests.Editor.Services
             SetField(client, "_state", TransportState.Connected("websocket", sessionId: "old-session"));
             UnityEngine.Application.LogCallback pauseClosure = (message, trace, type) =>
             {
-                if (!message.Contains("HandleSocketClosureAsync called. Reason: overlap-old")) return;
+                if (!message.Contains("HandleSocketClosureAsync called. Reason: overlap-old"))
+                    return;
                 reachedLog.Set();
                 resumeClosure.Wait(TimeSpan.FromSeconds(5));
             };
@@ -152,7 +164,9 @@ namespace MCPForUnityTests.Editor.Services
                 closureTask = Task.Run(async () => await (Task)closure.Invoke(client, new object[] { "overlap-old", oldToken }));
                 Assert.IsTrue(reachedLog.Wait(TimeSpan.FromSeconds(5)), "Pause the actual background callback after its ownership validation.");
                 client.ForceStop();
-                var restartLock = typeof(WebSocketTransportClient).GetField("_ownershipLock", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(client) ?? new object();
+                var restartLock =
+                    typeof(WebSocketTransportClient).GetField("_ownershipLock", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(client)
+                    ?? new object();
                 lock (restartLock)
                 {
                     SetField(client, "_lifecycleCts", newLifecycle);
@@ -173,7 +187,8 @@ namespace MCPForUnityTests.Editor.Services
             finally
             {
                 resumeClosure.Set();
-                if (closureTask != null) SpinWait.SpinUntil(() => closureTask.IsCompleted, TimeSpan.FromSeconds(5));
+                if (closureTask != null)
+                    SpinWait.SpinUntil(() => closureTask.IsCompleted, TimeSpan.FromSeconds(5));
                 UnityEngine.Application.logMessageReceivedThreaded -= pauseClosure;
                 logField.SetValue(null, previousDebug);
                 client.ForceStop();
@@ -198,8 +213,10 @@ namespace MCPForUnityTests.Editor.Services
             {
                 var payload = new JObject
                 {
-                    ["type"] = messageType, ["session_id"] = "old-session",
-                    ["keepAliveInterval"] = 90, ["serverTimeout"] = 120
+                    ["type"] = messageType,
+                    ["session_id"] = "old-session",
+                    ["keepAliveInterval"] = 90,
+                    ["serverTimeout"] = 120,
                 };
                 var handler = typeof(WebSocketTransportClient).GetMethod("HandleMessageAsync", BindingFlags.Instance | BindingFlags.NonPublic);
                 ((Task)handler.Invoke(client, new object[] { payload.ToString(), oldConnection.Token })).GetAwaiter().GetResult();
@@ -207,8 +224,11 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.AreEqual("new-session", client.State.SessionId);
                 Assert.AreEqual(TimeSpan.FromSeconds(15), GetField(client, "_keepAliveInterval"));
                 Assert.AreEqual(TimeSpan.FromSeconds(15), GetField(client, "_socketKeepAliveInterval"));
-                CollectionAssert.AreEqual(previousCallbacks, EditorApplication.delayCall?.GetInvocationList() ?? Array.Empty<Delegate>(),
-                    "An obsolete registration must not enqueue a session preference write.");
+                CollectionAssert.AreEqual(
+                    previousCallbacks,
+                    EditorApplication.delayCall?.GetInvocationList() ?? Array.Empty<Delegate>(),
+                    "An obsolete registration must not enqueue a session preference write."
+                );
             }
             finally
             {
@@ -235,7 +255,17 @@ namespace MCPForUnityTests.Editor.Services
             try
             {
                 var registered = typeof(WebSocketTransportClient).GetMethod("HandleRegisteredAsync", BindingFlags.Instance | BindingFlags.NonPublic);
-                ((Task)registered.Invoke(client, new object[] { new JObject { ["session_id"] = "old-session" }, oldConnection.Token })).GetAwaiter().GetResult();
+                (
+                    (Task)
+                        registered.Invoke(
+                            client,
+                            new object[]
+                            {
+                                new JObject { ["session_id"] = "old-session" },
+                                oldConnection.Token,
+                            }
+                        )
+                ).GetAwaiter().GetResult();
                 var callbacks = (EditorApplication.delayCall?.GetInvocationList() ?? Array.Empty<Delegate>()).Except(previousCallbacks).ToArray();
                 Assert.AreEqual(1, callbacks.Length);
                 Assert.AreEqual("old-session", client.State.SessionId, "The current owner must still publish registration.");
@@ -247,14 +277,17 @@ namespace MCPForUnityTests.Editor.Services
                     SetField(client, "_sessionId", "new-session");
                 }
                 EditorPrefs.SetString(preferenceKey, "new-session");
-                foreach (var callback in callbacks) ((EditorApplication.CallbackFunction)callback)();
+                foreach (var callback in callbacks)
+                    ((EditorApplication.CallbackFunction)callback)();
                 Assert.AreEqual("new-session", EditorPrefs.GetString(preferenceKey));
             }
             finally
             {
                 RemoveAddedDelayCallbacks(previousCallbacks);
-                if (hadPreference) EditorPrefs.SetString(preferenceKey, previousPreference);
-                else EditorPrefs.DeleteKey(preferenceKey);
+                if (hadPreference)
+                    EditorPrefs.SetString(preferenceKey, previousPreference);
+                else
+                    EditorPrefs.DeleteKey(preferenceKey);
                 client.ForceStop();
             }
         }
@@ -327,8 +360,10 @@ namespace MCPForUnityTests.Editor.Services
             try
             {
                 oldReceive.SetResult(true);
-                Assert.IsTrue(SpinWait.SpinUntil(() => stop.IsCompleted, TimeSpan.FromSeconds(5)),
-                    "Old shutdown must not wait for loops from a replacement session.");
+                Assert.IsTrue(
+                    SpinWait.SpinUntil(() => stop.IsCompleted, TimeSpan.FromSeconds(5)),
+                    "Old shutdown must not wait for loops from a replacement session."
+                );
                 Assert.IsFalse(stop.IsFaulted, stop.Exception?.GetBaseException().Message);
                 Assert.AreSame(newLifecycle, GetField(client, "_lifecycleCts"));
                 Assert.AreSame(newConnection, GetField(client, "_connectionCts"));
@@ -349,11 +384,11 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
-        private static void SetField(WebSocketTransportClient client, string name, object value)
-            => typeof(WebSocketTransportClient).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(client, value);
+        private static void SetField(WebSocketTransportClient client, string name, object value) =>
+            typeof(WebSocketTransportClient).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(client, value);
 
-        private static object GetField(WebSocketTransportClient client, string name)
-            => typeof(WebSocketTransportClient).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(client);
+        private static object GetField(WebSocketTransportClient client, string name) =>
+            typeof(WebSocketTransportClient).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(client);
 
         [Test]
         public void BuildConnectionCandidateUris_NullEndpoint_ReturnsEmptyList()
@@ -391,14 +426,9 @@ namespace MCPForUnityTests.Editor.Services
 
             // Assert
             Assert.AreEqual(3, candidates.Count);
-            CollectionAssert.AreEqual(
-                new[] { "localhost", "127.0.0.1", "::1" },
-                candidates.Select(uri => NormalizeHostForComparison(uri.Host)).ToArray());
+            CollectionAssert.AreEqual(new[] { "localhost", "127.0.0.1", "::1" }, candidates.Select(uri => NormalizeHostForComparison(uri.Host)).ToArray());
 
-            int uniqueCount = candidates
-                .Select(uri => uri.AbsoluteUri)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Count();
+            int uniqueCount = candidates.Select(uri => uri.AbsoluteUri).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             Assert.AreEqual(candidates.Count, uniqueCount, "Fallback list should not contain duplicate endpoints.");
         }
 
@@ -463,38 +493,34 @@ namespace MCPForUnityTests.Editor.Services
         private static MethodInfo GetCandidateBuilderMethod(Type type)
         {
             const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static;
-            MethodInfo direct = type.GetMethod(
-                CandidateBuilderMethodName,
-                flags,
-                binder: null,
-                types: new[] { typeof(Uri) },
-                modifiers: null);
+            MethodInfo direct = type.GetMethod(CandidateBuilderMethodName, flags, binder: null, types: new[] { typeof(Uri) }, modifiers: null);
             if (direct != null)
             {
                 return direct;
             }
 
             // Fallback for environments where signature binding can differ between loaded copies.
-            return type.GetMethods(flags).FirstOrDefault(method =>
-            {
-                if (!string.Equals(method.Name, CandidateBuilderMethodName, StringComparison.Ordinal))
+            return type.GetMethods(flags)
+                .FirstOrDefault(method =>
                 {
-                    return false;
-                }
+                    if (!string.Equals(method.Name, CandidateBuilderMethodName, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
 
-                ParameterInfo[] parameters = method.GetParameters();
-                return parameters.Length == 1 && parameters[0].ParameterType == typeof(Uri);
-            });
+                    ParameterInfo[] parameters = method.GetParameters();
+                    return parameters.Length == 1 && parameters[0].ParameterType == typeof(Uri);
+                });
         }
 
         private static string BuildMissingMethodDiagnostic()
         {
             var sb = new StringBuilder();
             sb.Append("Expected private candidate builder method to exist. Searched loaded assemblies for ")
-              .Append(WebSocketTransportClientTypeName)
-              .Append('.')
-              .Append(CandidateBuilderMethodName)
-              .Append(". Loaded candidate types:");
+                .Append(WebSocketTransportClientTypeName)
+                .Append('.')
+                .Append(CandidateBuilderMethodName)
+                .Append(". Loaded candidate types:");
 
             foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
@@ -504,10 +530,7 @@ namespace MCPForUnityTests.Editor.Services
                     continue;
                 }
 
-                sb.Append("\n- ")
-                  .Append(assembly.FullName)
-                  .Append(" @ ")
-                  .Append(string.IsNullOrEmpty(assembly.Location) ? "<dynamic>" : assembly.Location);
+                sb.Append("\n- ").Append(assembly.FullName).Append(" @ ").Append(string.IsNullOrEmpty(assembly.Location) ? "<dynamic>" : assembly.Location);
             }
 
             return sb.ToString();

@@ -41,19 +41,31 @@ def prepare(args):
     if snapshot.exists():
         raise ValueError("Snapshot already exists; choose a fresh evidence directory")
     ref = subprocess.check_output(["git", "rev-parse", args.ref], cwd=ROOT, text=True).strip()
-    paths = ["MCPForUnity", "TestProjects/UnityMCPTests/Assets/Tests", "TestProjects/UnityMCPTests/Assets/Scripts",
-             "TestProjects/UnityMCPTests/ProjectSettings", "tools/unity_ci_packages.py",
-             "tools/unity-ci-packages.json"]
+    paths = [
+        "MCPForUnity",
+        "TestProjects/UnityMCPTests/Assets/Tests",
+        "TestProjects/UnityMCPTests/Assets/Scripts",
+        "TestProjects/UnityMCPTests/ProjectSettings",
+        "tools/unity_ci_packages.py",
+        "tools/unity-ci-packages.json",
+    ]
     snapshot.mkdir()
     source = {"ref": ref, "snapshotPaths": paths, "workingTree": args.working_tree}
     if args.working_tree:
+
         def excluded(directory, names):
-            result = {name for name in names if name in {"Library", "Temp", "Logs", "obj", ".git", "GameData", "__pycache__"}
-                      or name.startswith(".env") or Path(name).suffix.lower() in {".key", ".pem", ".pfx", ".p12"}}
+            result = {
+                name
+                for name in names
+                if name in {"Library", "Temp", "Logs", "obj", ".git", "GameData", "__pycache__"}
+                or name.startswith(".env")
+                or Path(name).suffix.lower() in {".key", ".pem", ".pfx", ".p12"}
+            }
             for name in set(names) - result:
                 if (Path(directory) / name).is_symlink():
                     raise ValueError("Linked source is prohibited")
             return result
+
         for relative in paths:
             src, dst = ROOT / relative, snapshot / relative
             if src.is_dir():
@@ -61,14 +73,21 @@ def prepare(args):
             else:
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(src, dst)
-        source["fileSha256"] = {path.relative_to(snapshot).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-                                for path in snapshot.rglob("*") if path.is_file()}
+        source["fileSha256"] = {
+            path.relative_to(snapshot).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in snapshot.rglob("*")
+            if path.is_file()
+        }
     else:
         content = subprocess.check_output(["git", "archive", ref, *paths], cwd=ROOT)
         with tarfile.open(fileobj=io.BytesIO(content)) as archive:
             for member in archive.getmembers():
                 relative = Path(member.name)
-                if relative.is_absolute() or ".." in relative.parts or not (member.isfile() or member.isdir()):
+                if (
+                    relative.is_absolute()
+                    or ".." in relative.parts
+                    or not (member.isfile() or member.isdir())
+                ):
                     raise ValueError("Unsafe source snapshot member")
                 if "GameData" in relative.parts or member.name.startswith(".env"):
                     raise ValueError("Forbidden source path in snapshot")
@@ -85,13 +104,23 @@ def resolve(args):
     spec = importlib.util.spec_from_file_location("editor_qa_packages", module_path)
     module = importlib.util.module_from_spec(spec)
     import sys
+
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    result = module.prepare(args.version, args.editor.parent / "Data", snapshot / "isolated",
-                            repo=snapshot, profiles_path=snapshot / "tools/unity-ci-packages.json",
-                            registry_cache=Path(args.registry_cache).resolve() if args.registry_cache else None)
+    result = module.prepare(
+        args.version,
+        args.editor.parent / "Data",
+        snapshot / "isolated",
+        repo=snapshot,
+        profiles_path=snapshot / "tools/unity-ci-packages.json",
+        registry_cache=Path(args.registry_cache).resolve() if args.registry_cache else None,
+    )
     from dataclasses import asdict
-    write_json(output / "preparation.json", {**asdict(result), "projectAbsolute": str(snapshot / result.project_path)})
+
+    write_json(
+        output / "preparation.json",
+        {**asdict(result), "projectAbsolute": str(snapshot / result.project_path)},
+    )
     print(json.dumps({"status": "PREPARED", "project": str(snapshot / result.project_path)}))
 
 
@@ -112,9 +141,23 @@ def launch(args):
     record_path = output / f"{args.label}-launch.json"
     if record_path.exists():
         raise ValueError("Launch evidence already exists; use a fresh label")
-    command = [str(args.editor), "-batchmode", "-nographics", "-forgetProjectPath",
-               "-projectPath", str(project), "-runTests", "-testPlatform", "EditMode",
-               "-testFilter", args.filter, "-testResults", str(result_path), "-logFile", str(log_path)]
+    command = [
+        str(args.editor),
+        "-batchmode",
+        "-nographics",
+        "-forgetProjectPath",
+        "-projectPath",
+        str(project),
+        "-runTests",
+        "-testPlatform",
+        "EditMode",
+        "-testFilter",
+        args.filter,
+        "-testResults",
+        str(result_path),
+        "-logFile",
+        str(log_path),
+    ]
     env = os.environ.copy()
     env.pop("UNITY_MCP_ALLOW_BATCH", None)
     env["UNITY_MCP_OWNED_TRANSPORT_TESTS"] = "1"
@@ -130,13 +173,26 @@ def launch(args):
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = 0
     started = time.time()
-    process = subprocess.Popen(command, env=env, cwd=project, creationflags=creationflags,
-                               startupinfo=startupinfo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    record = {"command": command, "pid": process.pid, "startedUtcEpoch": started,
-              "project": str(project), "autostartSuppressed": True,
-              "timeoutSeconds": args.timeout, "isolationVerified": True,
-              "ownedTransportTests": True,
-              "stdioCommandTimeoutMs": args.stdio_command_timeout_ms}
+    process = subprocess.Popen(
+        command,
+        env=env,
+        cwd=project,
+        creationflags=creationflags,
+        startupinfo=startupinfo,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    record = {
+        "command": command,
+        "pid": process.pid,
+        "startedUtcEpoch": started,
+        "project": str(project),
+        "autostartSuppressed": True,
+        "timeoutSeconds": args.timeout,
+        "isolationVerified": True,
+        "ownedTransportTests": True,
+        "stdioCommandTimeoutMs": args.stdio_command_timeout_ms,
+    }
     failure = None
     try:
         write_json(record_path, record)
@@ -148,7 +204,11 @@ def launch(args):
     except BaseException as error:
         failure = error
         record["status"] = "BLOCKED"
-        record["reason"] = "Owned QA runner interrupted" if isinstance(error, KeyboardInterrupt) else "Owned QA runner failed"
+        record["reason"] = (
+            "Owned QA runner interrupted"
+            if isinstance(error, KeyboardInterrupt)
+            else "Owned QA runner failed"
+        )
         record["exceptionType"] = type(error).__name__
     finally:
         # Only the held Popen handle is used. Never discover a process by name/PID.
@@ -168,18 +228,30 @@ def launch(args):
         try:
             root = ET.parse(result_path).getroot()
             record["nunit"] = root.attrib
-            record["testCases"] = [{"name": case.get("fullname"), "result": case.get("result")}
-                                   for case in root.iter("test-case")]
+            record["testCases"] = [
+                {"name": case.get("fullname"), "result": case.get("result")}
+                for case in root.iter("test-case")
+            ]
             if "status" not in record:
-                record["status"] = "PASS" if (record.get("exitCode") == 0 and int(root.get("total", "0")) > 0
-                    and root.get("result") == "Passed" and int(root.get("skipped", "0")) == 0) else "FAIL"
+                record["status"] = (
+                    "PASS"
+                    if (
+                        record.get("exitCode") == 0
+                        and int(root.get("total", "0")) > 0
+                        and root.get("result") == "Passed"
+                        and int(root.get("skipped", "0")) == 0
+                    )
+                    else "FAIL"
+                )
         except (ET.ParseError, ValueError) as error:
             record.setdefault("status", "BLOCKED")
             record.setdefault("reason", "Editor produced invalid NUnit XML")
             record["xmlExceptionType"] = type(error).__name__
     else:
         record["status"] = "BLOCKED"
-        record.setdefault("reason", "Editor did not produce NUnit result XML; inspect owned launch log")
+        record.setdefault(
+            "reason", "Editor did not produce NUnit result XML; inspect owned launch log"
+        )
     write_json(record_path, record)
     print(json.dumps(record))
     if failure is not None:
@@ -197,7 +269,10 @@ def main():
     parser.add_argument("--registry-cache")
     parser.add_argument("--working-tree", action="store_true")
     parser.add_argument("--label", default="editmode")
-    parser.add_argument("--filter", default="StdioTransportClientReadinessTests;TransportArchitectureTests;TransportCommandDispatcherTests")
+    parser.add_argument(
+        "--filter",
+        default="StdioTransportClientReadinessTests;TransportArchitectureTests;TransportCommandDispatcherTests",
+    )
     parser.add_argument("--timeout", type=int, default=240)
     parser.add_argument("--stdio-command-timeout-ms", type=int)
     parser.add_argument("--isolation-verified", action="store_true")

@@ -21,14 +21,32 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
         // compile or load inside the Editor. See SafeZipExtractor for the enforcement.
         private static readonly HashSet<string> ArchiveAllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
-            ".gltf", ".glb", ".bin", ".fbx", ".obj", ".mtl",
-            ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".tif", ".tiff", ".webp", ".exr", ".hdr",
-            ".ktx", ".ktx2", ".basis", ".dds",
+            ".gltf",
+            ".glb",
+            ".bin",
+            ".fbx",
+            ".obj",
+            ".mtl",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".tga",
+            ".bmp",
+            ".tif",
+            ".tiff",
+            ".webp",
+            ".exr",
+            ".hdr",
+            ".ktx",
+            ".ktx2",
+            ".basis",
+            ".dds",
         };
 
         public static AssetGenJob ImportInto(AssetGenJob job, string localFilePath)
         {
-            if (job == null) return null;
+            if (job == null)
+                return null;
             try
             {
                 if (string.IsNullOrEmpty(localFilePath))
@@ -55,8 +73,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
 
             if (isGltf && !IsGltfastAvailable())
             {
-                return Fail(job,
-                    "GLB import requires glTFast. Install it from the MCP for Unity → Dependencies tab, or choose FBX output.");
+                return Fail(job, "GLB import requires glTFast. Install it from the MCP for Unity → Dependencies tab, or choose FBX output.");
             }
 
             AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
@@ -99,8 +116,12 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             folders.EnsureFolder(folderRel);
             // Provider archives are untrusted: only inert model/texture files are written under
             // Assets/ — scripts/assemblies are skipped so they can't be compiled on import.
-            SafeZipExtractor.ExtractTo(zipAbs, folderAbs, ArchiveAllowedExtensions,
-                ensureDirectory: directory => folders.EnsureFolder(AssetGenPaths.ToProjectRelative(directory)));
+            SafeZipExtractor.ExtractTo(
+                zipAbs,
+                folderAbs,
+                ArchiveAllowedExtensions,
+                ensureDirectory: directory => folders.EnsureFolder(AssetGenPaths.ToProjectRelative(directory))
+            );
 
             string modelRel = FindFirstModel(folderAbs);
             if (string.IsNullOrEmpty(modelRel))
@@ -110,12 +131,13 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             bool isGltf = ext == ".glb" || ext == ".gltf";
             if (isGltf && !IsGltfastAvailable())
             {
-                return Fail(job,
-                    "This model is glTF (.glb/.gltf), which requires glTFast. Install it from the MCP for Unity → Dependencies tab.");
+                return Fail(job, "This model is glTF (.glb/.gltf), which requires glTFast. Install it from the MCP for Unity → Dependencies tab.");
             }
 
-            AssetDatabase.ImportAsset(folderRel,
-                ImportAssetOptions.ImportRecursive | ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+            AssetDatabase.ImportAsset(
+                folderRel,
+                ImportAssetOptions.ImportRecursive | ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport
+            );
 
             if (!isGltf)
                 ApplyModelImporterSettings(modelRel, job);
@@ -138,8 +160,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
         private static string FindFirstModel(string folderAbs)
         {
             string[] all;
-            try { all = Directory.GetFiles(folderAbs, "*", SearchOption.AllDirectories); }
-            catch { return null; }
+            try
+            {
+                all = Directory.GetFiles(folderAbs, "*", SearchOption.AllDirectories);
+            }
+            catch
+            {
+                return null;
+            }
 
             string firstGltf = null;
             foreach (string abs in all)
@@ -155,7 +183,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
 
         private static void ApplyModelImporterSettings(string rel, AssetGenJob job)
         {
-            if (!(AssetImporter.GetAtPath(rel) is ModelImporter importer)) return;
+            if (!(AssetImporter.GetAtPath(rel) is ModelImporter importer))
+                return;
             importer.useFileScale = true;
             importer.materialImportMode = ModelImporterMaterialImportMode.ImportStandard;
             importer.animationType = ParseAnimationType(job?.AnimationType);
@@ -186,11 +215,15 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
         {
             switch ((value ?? string.Empty).Trim().ToLowerInvariant())
             {
-                case "generic": return ModelImporterAnimationType.Generic;
+                case "generic":
+                    return ModelImporterAnimationType.Generic;
                 case "humanoid":
-                case "human": return ModelImporterAnimationType.Human;
-                case "legacy": return ModelImporterAnimationType.Legacy;
-                default: return ModelImporterAnimationType.None;
+                case "human":
+                    return ModelImporterAnimationType.Human;
+                case "legacy":
+                    return ModelImporterAnimationType.Legacy;
+                default:
+                    return ModelImporterAnimationType.None;
             }
         }
 
@@ -199,27 +232,44 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             try
             {
                 var go = AssetDatabase.LoadAssetAtPath<GameObject>(rel);
-                if (go == null) return 0f;
+                if (go == null)
+                    return 0f;
 
                 bool any = false;
                 Bounds acc = new Bounds(Vector3.zero, Vector3.zero);
                 foreach (var mf in go.GetComponentsInChildren<MeshFilter>(true))
                 {
-                    if (mf.sharedMesh == null) continue;
-                    if (!any) { acc = mf.sharedMesh.bounds; any = true; }
-                    else acc.Encapsulate(mf.sharedMesh.bounds);
+                    if (mf.sharedMesh == null)
+                        continue;
+                    if (!any)
+                    {
+                        acc = mf.sharedMesh.bounds;
+                        any = true;
+                    }
+                    else
+                        acc.Encapsulate(mf.sharedMesh.bounds);
                 }
                 foreach (var smr in go.GetComponentsInChildren<SkinnedMeshRenderer>(true))
                 {
-                    if (smr.sharedMesh == null) continue;
-                    if (!any) { acc = smr.sharedMesh.bounds; any = true; }
-                    else acc.Encapsulate(smr.sharedMesh.bounds);
+                    if (smr.sharedMesh == null)
+                        continue;
+                    if (!any)
+                    {
+                        acc = smr.sharedMesh.bounds;
+                        any = true;
+                    }
+                    else
+                        acc.Encapsulate(smr.sharedMesh.bounds);
                 }
-                if (!any) return 0f;
+                if (!any)
+                    return 0f;
                 Vector3 s = acc.size;
                 return Mathf.Max(s.x, Mathf.Max(s.y, s.z));
             }
-            catch { return 0f; }
+            catch
+            {
+                return 0f;
+            }
         }
 
         private static bool? _gltfastAvailable;
@@ -231,13 +281,21 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
         /// </summary>
         internal static bool IsGltfastAvailable()
         {
-            if (_gltfastAvailable.HasValue) return _gltfastAvailable.Value;
+            if (_gltfastAvailable.HasValue)
+                return _gltfastAvailable.Value;
             bool found = Type.GetType("GLTFast.GltfImport, glTFast") != null;
             if (!found)
             {
                 foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 {
-                    try { if (asm.GetType("GLTFast.GltfImport") != null) { found = true; break; } }
+                    try
+                    {
+                        if (asm.GetType("GLTFast.GltfImport") != null)
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
                     catch { /* dynamic/!resolvable assembly */ }
                 }
             }

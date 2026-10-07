@@ -1,7 +1,17 @@
 import json
 from typing import Annotated, Any
 from datetime import datetime
-from pydantic import BaseModel, Field, StrictBool, StrictFloat, StrictInt, StrictStr, TypeAdapter, ValidationInfo, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    TypeAdapter,
+    ValidationInfo,
+    field_validator,
+)
 
 
 def parse_tool_parameter_default(value: str | None, param_type: str | None) -> object:
@@ -13,7 +23,9 @@ def parse_tool_parameter_default(value: str | None, param_type: str | None) -> o
         case "integer" | "int":
             return TypeAdapter(StrictInt).validate_python(int(value))
         case "number" | "float" | "double":
-            return TypeAdapter(Annotated[StrictFloat, Field(allow_inf_nan=False)]).validate_python(float(value))
+            return TypeAdapter(Annotated[StrictFloat, Field(allow_inf_nan=False)]).validate_python(
+                float(value)
+            )
         case "bool" | "boolean":
             if value.lower() not in ("true", "false"):
                 raise ValueError("Boolean defaults must be 'true' or 'false'")
@@ -64,6 +76,7 @@ class ToolDefinitionModel(BaseModel):
 
 class UnityInstanceInfo(BaseModel):
     """Information about a Unity Editor instance"""
+
     id: str  # "ProjectName@hash" or fallback to hash
     name: str  # Project name extracted from path
     path: str  # Full project path (Assets folder)

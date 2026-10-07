@@ -1,4 +1,5 @@
 """Real SDK delivery and suspended WebSocket frame lifetime regressions."""
+
 import asyncio
 import gc
 import json
@@ -16,7 +17,10 @@ from models.response_limits import ResponseOwner, response_owner, response_size
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
 from transport.response_limit_middleware import (
-    ResponseLimitMiddleware, ResponseRetentionMiddleware, _http_response_owners, _owner_key,
+    ResponseLimitMiddleware,
+    ResponseRetentionMiddleware,
+    _http_response_owners,
+    _owner_key,
 )
 from test_plugin_response_delivery import Wire, remote_delivery  # pylint: disable=unused-import
 
@@ -25,9 +29,13 @@ from test_plugin_response_delivery import Wire, remote_delivery  # pylint: disab
 @pytest.mark.parametrize("json_response", [True, False])
 @pytest.mark.parametrize("post_exit", ["complete", "cancel"])
 async def test_standalone_get_disconnect_preserves_blocked_post_charge(
-    remote_delivery, monkeypatch, json_response, post_exit,
+    remote_delivery,
+    monkeypatch,
+    json_response,
+    post_exit,
 ):
     from main import UnityMCP
+
     registry = PluginRegistry()
     PluginHub.configure(registry)
     await registry.register("unity", "inert", "inert", "test", user_id="alice")
@@ -37,7 +45,9 @@ async def test_standalone_get_disconnect_preserves_blocked_post_charge(
     PluginHub._last_pong["unity"] = time.monotonic()
     hub = PluginHub({"type": "websocket"}, None, None)
     result = {"success": True, "data": {"preview": "a" * 4000}}
-    monkeypatch.setattr(PluginHub, "MAX_RETAINED_RESULT_BYTES_PER_USER", response_size(result) + 100)
+    monkeypatch.setattr(
+        PluginHub, "MAX_RETAINED_RESULT_BYTES_PER_USER", response_size(result) + 100
+    )
 
     async def answer(payload):
         await hub._handle_command_result(ws, CommandResultMessage(id=payload["id"], result=result))
@@ -54,17 +64,41 @@ async def test_standalone_get_disconnect_preserves_blocked_post_charge(
     stream_task = blocked_task = None
     try:
         async with app.router.lifespan_context(app):
-            init = Wire(app, "POST", "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-                "protocolVersion": "2025-03-26", "capabilities": {},
-                "clientInfo": {"name": "inert-lifetime", "version": "1"}}})
+            init = Wire(
+                app,
+                "POST",
+                "/mcp",
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-03-26",
+                        "capabilities": {},
+                        "clientInfo": {"name": "inert-lifetime", "version": "1"},
+                    },
+                },
+            )
             await asyncio.wait_for(init.run(), 2)
             start = next(msg for msg in init.sent if msg["type"] == "http.response.start")
-            headers = [(b"mcp-session-id", dict(start["headers"])[b"mcp-session-id"]),
-                       (b"mcp-protocol-version", b"2025-03-26")]
-            initialized = Wire(app, "POST", "/mcp", {"jsonrpc": "2.0", "method": "notifications/initialized"}, headers)
+            headers = [
+                (b"mcp-session-id", dict(start["headers"])[b"mcp-session-id"]),
+                (b"mcp-protocol-version", b"2025-03-26"),
+            ]
+            initialized = Wire(
+                app,
+                "POST",
+                "/mcp",
+                {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                headers,
+            )
             await asyncio.wait_for(initialized.run(), 2)
-            call = {"jsonrpc": "2.0", "id": 9, "method": "tools/call",
-                    "params": {"name": "preview", "arguments": {}}}
+            call = {
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "tools/call",
+                "params": {"name": "preview", "arguments": {}},
+            }
             blocked = Wire(app, "POST", "/mcp", call, headers, blocked_id=9)
             blocked_task = asyncio.create_task(blocked.run())
             await asyncio.wait_for(blocked.blocked.wait(), 2)
@@ -74,14 +108,19 @@ async def test_standalone_get_disconnect_preserves_blocked_post_charge(
                 stream = Wire(app, "GET", "/mcp", headers=headers)
                 stream_task = asyncio.create_task(stream.run())
                 await asyncio.wait_for(stream.changed.wait(), 2)
-                stream_start = next(msg for msg in stream.sent if msg["type"] == "http.response.start")
+                stream_start = next(
+                    msg for msg in stream.sent if msg["type"] == "http.response.start"
+                )
                 assert stream_start["status"] == 200
-                assert dict(stream_start["headers"])[b"content-type"].startswith(b"text/event-stream")
+                assert dict(stream_start["headers"])[b"content-type"].startswith(
+                    b"text/event-stream"
+                )
                 stream.disconnect.set()
                 await asyncio.wait_for(stream_task, 2)
                 assert not blocked_task.done() and not blocked.resume.is_set()
                 assert PluginHub._retained_results.total_bytes == charge, (
-                    "An unrelated GET disconnect released a still-blocked POST result")
+                    "An unrelated GET disconnect released a still-blocked POST result"
+                )
                 assert len(_http_response_owners) == 1
             second = Wire(app, "POST", "/mcp", {**call, "id": 10}, headers)
             await asyncio.wait_for(second.run(), 2)
@@ -99,7 +138,10 @@ async def test_standalone_get_disconnect_preserves_blocked_post_charge(
             assert b"preview" in b"".join(msg.get("body", b"") for msg in recovered.sent)
             delete = Wire(app, "DELETE", "/mcp", headers=headers)
             await asyncio.wait_for(delete.run(), 2)
-            assert next(msg for msg in delete.sent if msg["type"] == "http.response.start")["status"] == 200
+            assert (
+                next(msg for msg in delete.sent if msg["type"] == "http.response.start")["status"]
+                == 200
+            )
     finally:
         for task in (stream_task, blocked_task):
             if task is not None:
@@ -119,11 +161,17 @@ class TrackedDict(dict):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("session_header", [False, True])
-async def test_generic_sse_get_without_legacy_endpoint_does_not_release_session_owners(session_header):
+async def test_generic_sse_get_without_legacy_endpoint_does_not_release_session_owners(
+    session_header,
+):
     session = "a" * 32
-    scope = {"type": "http", "method": "GET", "state": {},
-             "headers": [(b"mcp-session-id", session.encode())] if session_header else [],
-             "query_string": b"" if session_header else f"session_id={session}".encode()}
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "state": {},
+        "headers": [(b"mcp-session-id", session.encode())] if session_header else [],
+        "query_string": b"" if session_header else f"session_id={session}".encode(),
+    }
     ledger = {"blocked-post": 100}
     owner = ResponseOwner()
     owner.entries.append((ledger, "blocked-post"))
@@ -131,10 +179,20 @@ async def test_generic_sse_get_without_legacy_endpoint_does_not_release_session_
     _http_response_owners[key] = [owner]
 
     async def stream(owned_scope, receive, send):
-        await send({"type": "http.response.start", "status": 200,
-                    "headers": [(b"content-type", b"text/event-stream")]})
-        await send({"type": "http.response.body", "body": (
-            f'event: message\r\ndata: {{"session_id":"{session}"}}\r\n\r\n'.encode()), "more_body": True})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": (f'event: message\r\ndata: {{"session_id":"{session}"}}\r\n\r\n'.encode()),
+                "more_body": True,
+            }
+        )
 
     try:
         await ResponseRetentionMiddleware(stream)(scope, AsyncMock(), AsyncMock())
@@ -160,7 +218,10 @@ def dispatch_hub(monkeypatch):
 @pytest.mark.parametrize("invalid_result", [False, True])
 @pytest.mark.parametrize("raw_mode", ["tracked_text", "text", "bytes"])
 async def test_idle_dispatch_drops_raw_and_decoded_frames_after_handling(
-    dispatch_hub, monkeypatch, invalid_result, raw_mode,
+    dispatch_hub,
+    monkeypatch,
+    invalid_result,
+    raw_mode,
 ):
     PluginHub.configure(dispatch_hub)
     inbound, outbound = asyncio.Queue(), asyncio.Queue()
@@ -193,7 +254,12 @@ async def test_idle_dispatch_drops_raw_and_decoded_frames_after_handling(
     try:
         await asyncio.wait_for(outbound.get(), 2)  # accept
         await asyncio.wait_for(outbound.get(), 2)  # welcome
-        await inbound.put({"type": "websocket.receive", "text": json.dumps({"type": "register", "project_hash": "inert"})})
+        await inbound.put(
+            {
+                "type": "websocket.receive",
+                "text": json.dumps({"type": "register", "project_hash": "inert"}),
+            }
+        )
         registered = json.loads((await asyncio.wait_for(outbound.get(), 2))["text"])
         session = registered["session_id"]
         token = response_owner.set(owner)
@@ -202,8 +268,11 @@ async def test_idle_dispatch_drops_raw_and_decoded_frames_after_handling(
         finally:
             response_owner.reset(token)
         sent = json.loads((await asyncio.wait_for(outbound.get(), 2))["text"])
-        payload = {"type": "command_result", "id": sent["id"], "result": {
-            "success": True, "data": {"preview": "x" * 1024 * 1024}}}
+        payload = {
+            "type": "command_result",
+            "id": sent["id"],
+            "result": {"success": True, "data": {"preview": "x" * 1024 * 1024}},
+        }
         if invalid_result:
             payload.pop("id")  # Real on_receive catches Pydantic validation failure.
         raw = json.dumps(payload)
@@ -213,7 +282,9 @@ async def test_idle_dispatch_drops_raw_and_decoded_frames_after_handling(
             raw = raw.encode()
         raw_reference = weakref.ref(raw) if raw_mode == "tracked_text" else None
         waiting.clear()
-        await inbound.put({"type": "websocket.receive", "bytes" if raw_mode == "bytes" else "text": raw})
+        await inbound.put(
+            {"type": "websocket.receive", "bytes" if raw_mode == "bytes" else "text": raw}
+        )
         del raw, payload
         await asyncio.wait_for(waiting.wait(), 2)
         if not invalid_result:
@@ -226,11 +297,16 @@ async def test_idle_dispatch_drops_raw_and_decoded_frames_after_handling(
         assert PluginHub._retained_results.total_bytes == 0
         assert not task.done(), "The dispatcher must be suspended on its next receive"
         if raw_reference is not None:
-            assert raw_reference() is None, "Idle dispatch retains the previous raw JSON frame outside result accounting"
+            assert raw_reference() is None, (
+                "Idle dispatch retains the previous raw JSON frame outside result accounting"
+            )
         frame = task.get_coro().cr_frame
         assert frame.f_locals.get("message") is None and frame.f_locals.get("data") is None, (
-            "Suspended dispatch must drop raw and decoded references for exact str/bytes paths too")
-        assert len(references) == 1 and references[0]() is None, "Idle dispatch retains the previous decoded graph"
+            "Suspended dispatch must drop raw and decoded references for exact str/bytes paths too"
+        )
+        assert len(references) == 1 and references[0]() is None, (
+            "Idle dispatch retains the previous decoded graph"
+        )
     finally:
         owner.release()
         if command is not None and not command.done():
@@ -244,7 +320,9 @@ async def test_idle_dispatch_drops_raw_and_decoded_frames_after_handling(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_site", ["decode", "on_receive"])
-async def test_exceptional_dispatch_drops_frame_locals_before_disconnect_cleanup(dispatch_hub, monkeypatch, failure_site):
+async def test_exceptional_dispatch_drops_frame_locals_before_disconnect_cleanup(
+    dispatch_hub, monkeypatch, failure_site
+):
     PluginHub.configure(dispatch_hub)
     inbound = asyncio.Queue()
     cleanup_started, finish_cleanup = asyncio.Event(), asyncio.Event()
@@ -261,14 +339,22 @@ async def test_exceptional_dispatch_drops_frame_locals_before_disconnect_cleanup
     monkeypatch.setattr(PluginHub, "on_disconnect", blocked_cleanup)
     monkeypatch.setattr(PluginHub, failure_site, fail)
     await inbound.put({"type": "websocket.connect"})
-    await inbound.put({"type": "websocket.receive", "text": json.dumps({"type": "register", "project_hash": "inert"})})
-    hub = PluginHub({"type": "websocket", "path": "/hub/plugin", "headers": []}, inbound.get, AsyncMock())
+    await inbound.put(
+        {
+            "type": "websocket.receive",
+            "text": json.dumps({"type": "register", "project_hash": "inert"}),
+        }
+    )
+    hub = PluginHub(
+        {"type": "websocket", "path": "/hub/plugin", "headers": []}, inbound.get, AsyncMock()
+    )
     task = asyncio.create_task(hub.dispatch())
     try:
         await asyncio.wait_for(cleanup_started.wait(), 2)
         frame = task.get_coro().cr_frame
         assert frame.f_locals.get("message") is None and frame.f_locals.get("data") is None, (
-            "Dispatch exception path retains frame locals while disconnect cleanup is suspended")
+            "Dispatch exception path retains frame locals while disconnect cleanup is suspended"
+        )
         finish_cleanup.set()
         with pytest.raises(RuntimeError, match="inert frame failure"):
             await asyncio.wait_for(task, 2)

@@ -27,6 +27,7 @@ namespace MCPForUnity.Editor.Tools
         private const string CodeInvalidFolderPath = "invalid_folder_path";
         private const string CodeTargetNotFound = "target_not_found";
         private const string CodeAssetCreateFailed = "asset_create_failed";
+
         // Growth limits do not prevent edits/shrinks of pre-existing larger arrays.
         private const int MaxArrayGrowthSize = 1_048_576;
         private const long MaxRequestArrayGrowth = 2_097_152;
@@ -94,14 +95,22 @@ namespace MCPForUnity.Editor.Tools
                     if (createPatches[i] is not JObject patch)
                         return new ErrorResponse(CodeInvalidParams, new { message = $"Patch at index {i} must be an object." });
                     string op = patch["op"]?.ToString()?.Trim();
-                    if (!string.IsNullOrEmpty(op) && !string.Equals(op, "set", StringComparison.OrdinalIgnoreCase)
-                        && !string.Equals(op, "array_resize", StringComparison.OrdinalIgnoreCase))
+                    if (
+                        !string.IsNullOrEmpty(op)
+                        && !string.Equals(op, "set", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(op, "array_resize", StringComparison.OrdinalIgnoreCase)
+                    )
                         return new ErrorResponse(CodeInvalidParams, new { message = $"Unknown patch operation: '{op}'." });
-                    if ((string.IsNullOrEmpty(op) || string.Equals(op, "set", StringComparison.OrdinalIgnoreCase))
-                        && patch["value"] == null && patch["ref"] == null)
+                    if (
+                        (string.IsNullOrEmpty(op) || string.Equals(op, "set", StringComparison.OrdinalIgnoreCase))
+                        && patch["value"] == null
+                        && patch["ref"] == null
+                    )
                         return new ErrorResponse(CodeInvalidParams, new { message = $"Patch at index {i} requires 'value' or 'ref'." });
-                    if (string.Equals(op, "array_resize", StringComparison.OrdinalIgnoreCase)
-                        && (patch["value"] == null || patch["value"].Type == JTokenType.Null))
+                    if (
+                        string.Equals(op, "array_resize", StringComparison.OrdinalIgnoreCase)
+                        && (patch["value"] == null || patch["value"].Type == JTokenType.Null)
+                    )
                         return new ErrorResponse(CodeInvalidParams, new { message = $"Patch at index {i} requires integer 'value'." });
                 }
             }
@@ -135,9 +144,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse(CodeInvalidFolderPath, new { message = folderNormalizeError, folderPath });
             }
 
-            string fileName = assetName.EndsWith(".asset", StringComparison.OrdinalIgnoreCase)
-                ? assetName
-                : assetName + ".asset";
+            string fileName = assetName.EndsWith(".asset", StringComparison.OrdinalIgnoreCase) ? assetName : assetName + ".asset";
             string desiredPath;
             try
             {
@@ -150,15 +157,22 @@ namespace MCPForUnity.Editor.Tools
             }
 
             var resolvedType = ResolveType(typeName);
-            if (resolvedType == null || !typeof(ScriptableObject).IsAssignableFrom(resolvedType)
-                || resolvedType.IsAbstract || resolvedType.ContainsGenericParameters)
+            if (
+                resolvedType == null
+                || !typeof(ScriptableObject).IsAssignableFrom(resolvedType)
+                || resolvedType.IsAbstract
+                || resolvedType.ContainsGenericParameters
+            )
             {
                 return new ErrorResponse(CodeTypeNotFound, new { message = $"ScriptableObject type not found: '{typeName}'", typeName });
             }
 
             string finalPath = overwrite ? desiredPath : AssetDatabase.GenerateUniqueAssetPath(desiredPath);
 
-            try { finalPath = AssetPathUtility.GetContainedAssetPath(finalPath); }
+            try
+            {
+                finalPath = AssetPathUtility.GetContainedAssetPath(finalPath);
+            }
             catch (Exception ex)
             {
                 return new ErrorResponse(CodeAssetCreateFailed, new { message = ex.Message, path = finalPath });
@@ -206,7 +220,7 @@ namespace MCPForUnity.Editor.Tools
                         // Preserve GUID by overwriting existing asset data in-place
                         AssetPathUtility.GetFullAssetPath(finalPath);
                         EditorUtility.CopySerialized(instance, existingAsset);
-                        
+
                         // Fix for "Main Object Name does not match filename" warning:
                         // CopySerialized overwrites the name with the (empty) name of the new instance.
                         // We must restore the correct name to match the filename.
@@ -215,7 +229,7 @@ namespace MCPForUnity.Editor.Tools
                         UnityEngine.Object.DestroyImmediate(instance); // Destroy temporary instance
                         instance = existingAsset; // Proceed with patching the existing asset
                         isNewAsset = false;
-                        
+
                         // Mark dirty to ensure changes are picked up
                         EditorUtility.SetDirty(instance);
                     }
@@ -234,8 +248,10 @@ namespace MCPForUnity.Editor.Tools
                     instance.name = Path.GetFileNameWithoutExtension(finalPath);
                     AssetPathUtility.GetFullAssetPath(finalPath);
                     AssetDatabase.CreateAsset(instance, finalPath);
-                    if (!EditorUtility.IsPersistent(instance)
-                        || !string.Equals(AssetDatabase.GetAssetPath(instance), finalPath, StringComparison.OrdinalIgnoreCase))
+                    if (
+                        !EditorUtility.IsPersistent(instance)
+                        || !string.Equals(AssetDatabase.GetAssetPath(instance), finalPath, StringComparison.OrdinalIgnoreCase)
+                    )
                         throw new IOException($"Unity could not create the asset at '{finalPath}'.");
                 }
             }
@@ -270,7 +286,7 @@ namespace MCPForUnity.Editor.Tools
                     path = finalPath,
                     typeNameResolved = resolvedType.FullName,
                     patchResults,
-                    warnings = warnings.Count > 0 ? warnings : null
+                    warnings = warnings.Count > 0 ? warnings : null,
                 }
             );
             folders.Complete();
@@ -288,19 +304,43 @@ namespace MCPForUnity.Editor.Tools
             var patchesToken = @params["patches"];
             if (patchesToken == null || patchesToken.Type == JTokenType.Null)
             {
-                return new ErrorResponse(CodeInvalidParams, new { message = "'patches' is required.", targetPath, targetGuid });
+                return new ErrorResponse(
+                    CodeInvalidParams,
+                    new
+                    {
+                        message = "'patches' is required.",
+                        targetPath,
+                        targetGuid,
+                    }
+                );
             }
 
             if (patchesToken is not JArray patches)
             {
-                return new ErrorResponse(CodeInvalidParams, new { message = "'patches' must be an array.", targetPath, targetGuid });
+                return new ErrorResponse(
+                    CodeInvalidParams,
+                    new
+                    {
+                        message = "'patches' must be an array.",
+                        targetPath,
+                        targetGuid,
+                    }
+                );
             }
 
             if (!TryValidateArrayGrowth(target, patches, out var growthError))
-                return new ErrorResponse(CodeInvalidParams, new { message = growthError, targetPath, targetGuid });
+                return new ErrorResponse(
+                    CodeInvalidParams,
+                    new
+                    {
+                        message = growthError,
+                        targetPath,
+                        targetGuid,
+                    }
+                );
 
             // Phase 5: Dry-run mode - validate patches without applying
-            
+
             if (dryRun)
             {
                 var validationResults = ValidatePatches(target, patches);
@@ -313,15 +353,26 @@ namespace MCPForUnity.Editor.Tools
                         targetTypeName = target.GetType().FullName,
                         dryRun = true,
                         valid = validationResults.All(r => (bool)r.GetType().GetProperty("ok")?.GetValue(r)),
-                        validationResults
+                        validationResults,
                     }
                 );
             }
 
-            try { AssetPathUtility.GetFullAssetPath(targetPath); }
+            try
+            {
+                AssetPathUtility.GetFullAssetPath(targetPath);
+            }
             catch (Exception ex)
             {
-                return new ErrorResponse(CodeInvalidParams, new { message = ex.Message, targetPath, targetGuid });
+                return new ErrorResponse(
+                    CodeInvalidParams,
+                    new
+                    {
+                        message = ex.Message,
+                        targetPath,
+                        targetGuid,
+                    }
+                );
             }
             var (results, warnings) = ApplyPatches(target, patches);
 
@@ -333,7 +384,7 @@ namespace MCPForUnity.Editor.Tools
                     targetPath,
                     targetTypeName = target.GetType().FullName,
                     results,
-                    warnings = warnings.Count > 0 ? warnings : null
+                    warnings = warnings.Count > 0 ? warnings : null,
                 }
             );
         }
@@ -346,11 +397,15 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 long value = token.ReadScalar<long>();
-                if (value < 0 || value > int.MaxValue) return false;
+                if (value < 0 || value > int.MaxValue)
+                    return false;
                 size = (int)value;
                 return true;
             }
-            catch (Exception) { return false; }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         private static void CheckArraySizeChange(int oldSize, int newSize)
@@ -369,23 +424,29 @@ namespace MCPForUnity.Editor.Tools
                 foreach (var token in patches)
                 {
                     plan.Inspect();
-                    if (token is not JObject patch) continue;
+                    if (token is not JObject patch)
+                        continue;
                     string path = patch["propertyPath"]?.ToString() ?? patch["property_path"]?.ToString() ?? patch["path"]?.ToString();
-                    if (string.IsNullOrWhiteSpace(path)) continue;
+                    if (string.IsNullOrWhiteSpace(path))
+                        continue;
                     path = NormalizePropertyPath(path);
                     string op = patch["op"]?.ToString()?.Trim().ToLowerInvariant();
-                    if (string.IsNullOrEmpty(op)) op = "set";
+                    if (string.IsNullOrEmpty(op))
+                        op = "set";
                     if (op == "array_resize" || (op == "set" && path.EndsWith(".Array.size", StringComparison.Ordinal)))
                     {
                         if (!TryReadArraySize(patch["value"], out int size))
                             throw new InvalidOperationException("Array size must be a non-negative Int32 value.");
-                        plan.Resize(path.EndsWith(".Array.size", StringComparison.Ordinal)
-                            ? path.Substring(0, path.Length - ".Array.size".Length) : path, size);
+                        plan.Resize(
+                            path.EndsWith(".Array.size", StringComparison.Ordinal) ? path.Substring(0, path.Length - ".Array.size".Length) : path,
+                            size
+                        );
                     }
                     else if (op == "set" && (patch["value"] != null || patch["ref"] != null))
                     {
                         plan.EnsureIndices(path);
-                        if (patch["value"] != null) plan.Map(path, patch["value"], 0);
+                        if (patch["value"] != null)
+                            plan.Map(path, patch["value"], 0);
                     }
                 }
                 error = null;
@@ -412,8 +473,14 @@ namespace MCPForUnity.Editor.Tools
             private long _growth;
             private long _work;
             private long _characters;
+
             private static string Shape(string path) => Regex.Replace(path, @"\.Array\.data\[\d+\]", ".Array.data[*]");
-            public ArrayGrowthPlan(SerializedObject serialized) { _serialized = serialized; }
+
+            public ArrayGrowthPlan(SerializedObject serialized)
+            {
+                _serialized = serialized;
+            }
+
             public void Inspect()
             {
                 if (++_work > MaxGrowthInspectionWork)
@@ -422,7 +489,8 @@ namespace MCPForUnity.Editor.Tools
 
             private SerializedProperty Resolve(string path, int depth = 0)
             {
-                if (depth > 20) throw new InvalidOperationException("Array nesting exceeds 20 levels.");
+                if (depth > 20)
+                    throw new InvalidOperationException("Array nesting exceeds 20 levels.");
                 foreach (Match match in Regex.Matches(path, @"\.Array\.data\[(\d+)\]"))
                 {
                     Inspect();
@@ -444,12 +512,14 @@ namespace MCPForUnity.Editor.Tools
 
             private int Size(string path)
             {
-                if (_sizes.TryGetValue(path, out int size)) return size;
+                if (_sizes.TryGetValue(path, out int size))
+                    return size;
                 // Appended elements have unspecified content. Budget subsequent writes as if
                 // their nested arrays were empty, rather than crediting guessed copied sizes.
                 var resolved = Resolve(path);
                 return resolved == null || resolved.propertyPath != path ? 0
-                    : resolved.isArray ? resolved.arraySize : 0;
+                    : resolved.isArray ? resolved.arraySize
+                    : 0;
             }
 
             public void EnsureIndices(string path)
@@ -459,7 +529,8 @@ namespace MCPForUnity.Editor.Tools
                     if (!int.TryParse(match.Groups[1].Value, out int index) || index == int.MaxValue)
                         throw new InvalidOperationException("Array index is outside the supported Int32 range.");
                     string arrayPath = path.Substring(0, match.Index);
-                    if (index >= Size(arrayPath)) Resize(arrayPath, checked(index + 1));
+                    if (index >= Size(arrayPath))
+                        Resize(arrayPath, checked(index + 1));
                 }
             }
 
@@ -467,7 +538,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 Inspect();
                 var property = Resolve(path);
-                if (property != null && (!property.isArray || property.propertyType == SerializedPropertyType.String)) return;
+                if (property != null && (!property.isArray || property.propertyType == SerializedPropertyType.String))
+                    return;
                 int oldSize = Size(path);
                 if (size > oldSize)
                 {
@@ -481,7 +553,10 @@ namespace MCPForUnity.Editor.Tools
                         // retained prototype, not an assumption that only the last is copied.
                         int retained = Math.Min(oldSize, property?.arraySize ?? 0);
                         var sample = retained == 0 ? null : property.GetArrayElementAtIndex(0);
-                        bool compound = sample == null || sample.isArray || sample.propertyType == SerializedPropertyType.Generic
+                        bool compound =
+                            sample == null
+                            || sample.isArray
+                            || sample.propertyType == SerializedPropertyType.Generic
                             || sample.propertyType == SerializedPropertyType.ManagedReference
                             || sample.propertyType == SerializedPropertyType.String;
                         if (compound)
@@ -522,7 +597,8 @@ namespace MCPForUnity.Editor.Tools
                     {
                         copies.RemoveAll(c => c.start >= size);
                         for (int i = 0; i < copies.Count; i++)
-                            if (copies[i].end > size) copies[i] = (copies[i].start, size, copies[i].source);
+                            if (copies[i].end > size)
+                                copies[i] = (copies[i].start, size, copies[i].source);
                     }
                     string prefix = path + ".Array.data[";
                     foreach (string child in _sizes.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
@@ -535,31 +611,33 @@ namespace MCPForUnity.Editor.Tools
                 _sizes[path] = size;
                 _peakSizes[path] = Math.Max(size, _peakSizes.TryGetValue(path, out int peak) ? peak : 0);
                 string shape = Shape(path);
-                _arrayPeaks[shape] = Math.Max(Math.Max(size, property?.arraySize ?? 0),
-                    _arrayPeaks.TryGetValue(shape, out int shapePeak) ? shapePeak : 0);
+                _arrayPeaks[shape] = Math.Max(Math.Max(size, property?.arraySize ?? 0), _arrayPeaks.TryGetValue(shape, out int shapePeak) ? shapePeak : 0);
             }
 
             private long ElementCost(string path, int depth, ref long characters)
             {
                 Inspect();
-                if (depth > 20) throw new InvalidOperationException("Array nesting exceeds 20 levels.");
+                if (depth > 20)
+                    throw new InvalidOperationException("Array nesting exceeds 20 levels.");
                 var property = Resolve(path);
                 string shape = Shape(path);
                 if (property == null)
                 {
-                    if (_stringPeaks.TryGetValue(shape, out int newLength)) characters = checked(characters + newLength);
+                    if (_stringPeaks.TryGetValue(shape, out int newLength))
+                        characters = checked(characters + newLength);
                     Type type = TypeAt(path);
                     if (ElementType(type) != null)
                     {
                         int newSize = _arrayPeaks.TryGetValue(shape, out int plannedSize) ? plannedSize : 0;
-                        if (newSize == 0) return 1;
+                        if (newSize == 0)
+                            return 1;
                         long sampleCharacters = 0;
                         long sampleCost = ElementCost(path + $".Array.data[{newSize - 1}]", depth + 1, ref sampleCharacters);
                         characters = checked(characters + checked((long)newSize * sampleCharacters));
                         return checked(1 + checked((long)newSize * sampleCost));
                     }
-                    if (type == null || type.IsPrimitive || type.IsEnum || type == typeof(string)
-                        || typeof(UnityEngine.Object).IsAssignableFrom(type)) return 1;
+                    if (type == null || type.IsPrimitive || type.IsEnum || type == typeof(string) || typeof(UnityEngine.Object).IsAssignableFrom(type))
+                        return 1;
                     long newCost = 1;
                     foreach (var field in SerializedFields(type))
                         newCost = checked(newCost + ElementCost(path + "." + field.Name, depth + 1, ref characters));
@@ -569,21 +647,31 @@ namespace MCPForUnity.Editor.Tools
                 if (property.propertyType == SerializedPropertyType.String)
                 {
                     int length = property.stringValue?.Length ?? 0;
-                    if (_strings.TryGetValue(path, out int mappedLength)) length = Math.Max(length, mappedLength);
-                    if (_stringPeaks.TryGetValue(shape, out int peakLength)) length = Math.Max(length, peakLength);
+                    if (_strings.TryGetValue(path, out int mappedLength))
+                        length = Math.Max(length, mappedLength);
+                    if (_stringPeaks.TryGetValue(shape, out int peakLength))
+                        length = Math.Max(length, peakLength);
                     _stringPeaks[shape] = length;
                     characters = checked(characters + length);
                 }
                 if (property.isArray && property.propertyType != SerializedPropertyType.String)
                 {
                     int size = Math.Max(Size(path), property.arraySize);
-                    if (_peakSizes.TryGetValue(path, out int peak)) size = Math.Max(size, peak);
-                    if (_arrayPeaks.TryGetValue(shape, out int shapePeak)) size = Math.Max(size, shapePeak);
+                    if (_peakSizes.TryGetValue(path, out int peak))
+                        size = Math.Max(size, peak);
+                    if (_arrayPeaks.TryGetValue(shape, out int shapePeak))
+                        size = Math.Max(size, shapePeak);
                     _arrayPeaks[shape] = size;
-                    if (size == 0) return cost;
+                    if (size == 0)
+                        return cost;
                     var sample = property.arraySize == 0 ? null : property.GetArrayElementAtIndex(0);
-                    if (sample != null && !sample.isArray && sample.propertyType != SerializedPropertyType.Generic
-                        && sample.propertyType != SerializedPropertyType.ManagedReference && sample.propertyType != SerializedPropertyType.String)
+                    if (
+                        sample != null
+                        && !sample.isArray
+                        && sample.propertyType != SerializedPropertyType.Generic
+                        && sample.propertyType != SerializedPropertyType.ManagedReference
+                        && sample.propertyType != SerializedPropertyType.String
+                    )
                         return checked(cost + size);
                     for (int i = 0; i < size; i++)
                     {
@@ -591,7 +679,8 @@ namespace MCPForUnity.Editor.Tools
                         if (i >= property.arraySize && property.arraySize > 0)
                             elementPath = path + $".Array.data[{property.arraySize - 1}]";
                         cost = checked(cost + ElementCost(elementPath, depth + 1, ref characters));
-                        if (cost > MaxRequestArrayGrowth) return cost;
+                        if (cost > MaxRequestArrayGrowth)
+                            return cost;
                     }
                 }
                 else if (property.propertyType == SerializedPropertyType.Generic || property.propertyType == SerializedPropertyType.ManagedReference)
@@ -603,30 +692,41 @@ namespace MCPForUnity.Editor.Tools
                     {
                         string suffix = child.propertyPath.Substring(property.propertyPath.Length);
                         cost = checked(cost + ElementCost(path + suffix, depth + 1, ref characters));
-                        if (cost > MaxRequestArrayGrowth) return cost;
+                        if (cost > MaxRequestArrayGrowth)
+                            return cost;
                         next = child.Next(false);
                     }
                 }
                 return cost;
             }
 
-            private static Type ElementType(Type type)
-                => type?.IsArray == true ? type.GetElementType()
-                    : type?.IsGenericType == true && type.GetGenericTypeDefinition() == typeof(List<>)
-                        ? type.GetGenericArguments()[0] : null;
+            private static Type ElementType(Type type) =>
+                type?.IsArray == true ? type.GetElementType()
+                : type?.IsGenericType == true && type.GetGenericTypeDefinition() == typeof(List<>) ? type.GetGenericArguments()[0]
+                : null;
 
             private Type TypeAt(string path)
             {
                 Type type = _serialized.targetObject.GetType();
                 foreach (string segment in Regex.Replace(path, @"\.Array\.data\[\d+\]", ".[]").Split('.'))
                 {
-                    if (segment == "[]") { type = ElementType(type); continue; }
+                    if (segment == "[]")
+                    {
+                        type = ElementType(type);
+                        continue;
+                    }
                     System.Reflection.FieldInfo field = null;
                     for (Type declaring = type; declaring != null && field == null; declaring = declaring.BaseType)
-                        field = declaring.GetField(segment, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public
-                            | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly);
+                        field = declaring.GetField(
+                            segment,
+                            System.Reflection.BindingFlags.Instance
+                                | System.Reflection.BindingFlags.Public
+                                | System.Reflection.BindingFlags.NonPublic
+                                | System.Reflection.BindingFlags.DeclaredOnly
+                        );
                     type = field?.FieldType;
-                    if (type == null) break;
+                    if (type == null)
+                        break;
                 }
                 return type;
             }
@@ -634,14 +734,23 @@ namespace MCPForUnity.Editor.Tools
             private long TypeCost(Type type, int depth)
             {
                 Inspect();
-                if (depth > 20) throw new InvalidOperationException("Serialized type nesting exceeds 20 levels.");
-                if (type == null || type.IsPrimitive || type.IsEnum || type == typeof(string)
-                    || typeof(UnityEngine.Object).IsAssignableFrom(type) || ElementType(type) != null) return 1;
+                if (depth > 20)
+                    throw new InvalidOperationException("Serialized type nesting exceeds 20 levels.");
+                if (
+                    type == null
+                    || type.IsPrimitive
+                    || type.IsEnum
+                    || type == typeof(string)
+                    || typeof(UnityEngine.Object).IsAssignableFrom(type)
+                    || ElementType(type) != null
+                )
+                    return 1;
                 long cost = 1;
                 foreach (var field in SerializedFields(type))
                 {
                     cost = checked(cost + TypeCost(field.FieldType, depth + 1));
-                    if (cost > MaxRequestArrayGrowth) return cost;
+                    if (cost > MaxRequestArrayGrowth)
+                        return cost;
                 }
                 return cost;
             }
@@ -649,11 +758,18 @@ namespace MCPForUnity.Editor.Tools
             private IEnumerable<System.Reflection.FieldInfo> SerializedFields(Type type)
             {
                 for (Type declaring = type; declaring != null && declaring != typeof(object); declaring = declaring.BaseType)
-                    foreach (var field in declaring.GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public
-                        | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly))
+                    foreach (
+                        var field in declaring.GetFields(
+                            System.Reflection.BindingFlags.Instance
+                                | System.Reflection.BindingFlags.Public
+                                | System.Reflection.BindingFlags.NonPublic
+                                | System.Reflection.BindingFlags.DeclaredOnly
+                        )
+                    )
                     {
                         Inspect();
-                        if (field.IsStatic || field.IsDefined(typeof(NonSerializedAttribute), false)) continue;
+                        if (field.IsStatic || field.IsDefined(typeof(NonSerializedAttribute), false))
+                            continue;
                         if (field.IsPublic || field.IsDefined(typeof(SerializeField), true) || field.IsDefined(typeof(SerializeReference), true))
                             yield return field;
                     }
@@ -662,29 +778,35 @@ namespace MCPForUnity.Editor.Tools
             public void Map(string path, JToken value, int depth)
             {
                 Inspect();
-                if (depth > 20) throw new InvalidOperationException("Patch nesting exceeds 20 levels.");
+                if (depth > 20)
+                    throw new InvalidOperationException("Patch nesting exceeds 20 levels.");
                 if (path.EndsWith(".Array.size", StringComparison.Ordinal))
                 {
-                    if (!TryReadArraySize(value, out int size)) throw new InvalidOperationException("Array size must be a non-negative Int32 value.");
+                    if (!TryReadArraySize(value, out int size))
+                        throw new InvalidOperationException("Array size must be a non-negative Int32 value.");
                     Resize(path.Substring(0, path.Length - ".Array.size".Length), size);
                     return;
                 }
                 var property = Resolve(path);
                 if (property?.propertyType == SerializedPropertyType.String || (property == null && TypeAt(path) == typeof(string)))
                 {
-                    _strings[path] = Math.Max(value.Type == JTokenType.Null ? 0 : value.ToString().Length,
-                        _strings.TryGetValue(path, out int prior) ? prior : 0);
+                    _strings[path] = Math.Max(
+                        value.Type == JTokenType.Null ? 0 : value.ToString().Length,
+                        _strings.TryGetValue(path, out int prior) ? prior : 0
+                    );
                     string shape = Shape(path);
                     _stringPeaks[shape] = Math.Max(_strings[path], _stringPeaks.TryGetValue(shape, out int peak) ? peak : 0);
                 }
                 if (value is JArray array && (property == null || (property.isArray && property.propertyType != SerializedPropertyType.String)))
                 {
                     Resize(path, array.Count);
-                    for (int i = 0; i < array.Count; i++) Map(path + $".Array.data[{i}]", array[i], depth + 1);
+                    for (int i = 0; i < array.Count; i++)
+                        Map(path + $".Array.data[{i}]", array[i], depth + 1);
                 }
                 else if (value is JObject obj && (property == null || (property.propertyType == SerializedPropertyType.Generic && !property.isArray)))
                 {
-                    foreach (var child in obj) Map(path + "." + child.Key, child.Value, depth + 1);
+                    foreach (var child in obj)
+                        Map(path + "." + child.Key, child.Value, depth + 1);
                 }
             }
         }
@@ -703,18 +825,34 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (patches[i] is not JObject patchObj)
                 {
-                    results.Add(new { index = i, propertyPath = "", op = "", ok = false, message = $"Patch at index {i} must be an object." });
+                    results.Add(
+                        new
+                        {
+                            index = i,
+                            propertyPath = "",
+                            op = "",
+                            ok = false,
+                            message = $"Patch at index {i} must be an object.",
+                        }
+                    );
                     continue;
                 }
 
-                string propertyPath = patchObj["propertyPath"]?.ToString()
-                    ?? patchObj["property_path"]?.ToString()
-                    ?? patchObj["path"]?.ToString();
+                string propertyPath = patchObj["propertyPath"]?.ToString() ?? patchObj["property_path"]?.ToString() ?? patchObj["path"]?.ToString();
                 string op = (patchObj["op"]?.ToString() ?? "set").Trim();
 
                 if (string.IsNullOrWhiteSpace(propertyPath))
                 {
-                    results.Add(new { index = i, propertyPath = propertyPath ?? "", op, ok = false, message = "Missing required field: propertyPath" });
+                    results.Add(
+                        new
+                        {
+                            index = i,
+                            propertyPath = propertyPath ?? "",
+                            op,
+                            ok = false,
+                            message = "Missing required field: propertyPath",
+                        }
+                    );
                     continue;
                 }
 
@@ -723,12 +861,30 @@ namespace MCPForUnity.Editor.Tools
                 string normalizedOp = string.IsNullOrWhiteSpace(op) ? "set" : op.ToLowerInvariant();
                 if (normalizedOp != "set" && normalizedOp != "array_resize")
                 {
-                    results.Add(new { index = i, propertyPath = normalizedPath, op, ok = false, message = $"Unknown patch operation: '{op}'." });
+                    results.Add(
+                        new
+                        {
+                            index = i,
+                            propertyPath = normalizedPath,
+                            op,
+                            ok = false,
+                            message = $"Unknown patch operation: '{op}'.",
+                        }
+                    );
                     continue;
                 }
                 if (normalizedOp == "set" && patchObj["value"] == null && patchObj["ref"] == null)
                 {
-                    results.Add(new { index = i, propertyPath = normalizedPath, op, ok = false, message = "Missing required field: value or ref" });
+                    results.Add(
+                        new
+                        {
+                            index = i,
+                            propertyPath = normalizedPath,
+                            op,
+                            ok = false,
+                            message = "Missing required field: value or ref",
+                        }
+                    );
                     continue;
                 }
 
@@ -738,13 +894,31 @@ namespace MCPForUnity.Editor.Tools
                     var valueToken = patchObj["value"];
                     if (valueToken == null || valueToken.Type == JTokenType.Null)
                     {
-                        results.Add(new { index = i, propertyPath = normalizedPath, op, ok = false, message = "array_resize requires integer 'value'." });
+                        results.Add(
+                            new
+                            {
+                                index = i,
+                                propertyPath = normalizedPath,
+                                op,
+                                ok = false,
+                                message = "array_resize requires integer 'value'.",
+                            }
+                        );
                         continue;
                     }
 
                     if (!TryReadArraySize(valueToken, out int size))
                     {
-                        results.Add(new { index = i, propertyPath = normalizedPath, op, ok = false, message = "array_resize requires non-negative integer 'value'." });
+                        results.Add(
+                            new
+                            {
+                                index = i,
+                                propertyPath = normalizedPath,
+                                op,
+                                ok = false,
+                                message = "array_resize requires non-negative integer 'value'.",
+                            }
+                        );
                         continue;
                     }
 
@@ -758,23 +932,51 @@ namespace MCPForUnity.Editor.Tools
                     var arrayProp = so.FindProperty(arrayPath);
                     if (arrayProp == null)
                     {
-                        results.Add(new { index = i, propertyPath = normalizedPath, op, ok = false, message = $"Array not found: {arrayPath}" });
+                        results.Add(
+                            new
+                            {
+                                index = i,
+                                propertyPath = normalizedPath,
+                                op,
+                                ok = false,
+                                message = $"Array not found: {arrayPath}",
+                            }
+                        );
                         continue;
                     }
 
                     if (!arrayProp.isArray)
                     {
-                        results.Add(new { index = i, propertyPath = normalizedPath, op, ok = false, message = $"Property is not an array: {arrayPath}" });
+                        results.Add(
+                            new
+                            {
+                                index = i,
+                                propertyPath = normalizedPath,
+                                op,
+                                ok = false,
+                                message = $"Property is not an array: {arrayPath}",
+                            }
+                        );
                         continue;
                     }
 
-                    results.Add(new { index = i, propertyPath = normalizedPath, op, ok = true, message = $"Will resize to {size}.", currentSize = arrayProp.arraySize });
+                    results.Add(
+                        new
+                        {
+                            index = i,
+                            propertyPath = normalizedPath,
+                            op,
+                            ok = true,
+                            message = $"Will resize to {size}.",
+                            currentSize = arrayProp.arraySize,
+                        }
+                    );
                     continue;
                 }
 
                 // For set operations, check if the property exists (or can be auto-grown)
                 var prop = so.FindProperty(normalizedPath);
-                
+
                 // Check if it's an auto-growable array element path
                 bool isAutoGrowable = false;
                 if (prop == null)
@@ -792,24 +994,30 @@ namespace MCPForUnity.Editor.Tools
                             if (arrayProp.arraySize > 0)
                             {
                                 var sampleElement = arrayProp.GetArrayElementAtIndex(0);
-                                results.Add(new { 
-                                    index = i, 
-                                    propertyPath = normalizedPath, 
-                                    op, 
-                                    ok = true, 
-                                    message = $"Will auto-grow array from {arrayProp.arraySize} to {targetIndex + 1}.",
-                                    elementType = sampleElement?.propertyType.ToString() ?? "unknown"
-                                });
+                                results.Add(
+                                    new
+                                    {
+                                        index = i,
+                                        propertyPath = normalizedPath,
+                                        op,
+                                        ok = true,
+                                        message = $"Will auto-grow array from {arrayProp.arraySize} to {targetIndex + 1}.",
+                                        elementType = sampleElement?.propertyType.ToString() ?? "unknown",
+                                    }
+                                );
                             }
                             else
                             {
-                                results.Add(new { 
-                                    index = i, 
-                                    propertyPath = normalizedPath, 
-                                    op, 
-                                    ok = true, 
-                                    message = $"Will auto-grow empty array to size {targetIndex + 1}."
-                                });
+                                results.Add(
+                                    new
+                                    {
+                                        index = i,
+                                        propertyPath = normalizedPath,
+                                        op,
+                                        ok = true,
+                                        message = $"Will auto-grow empty array to size {targetIndex + 1}.",
+                                    }
+                                );
                             }
                             continue;
                         }
@@ -818,7 +1026,16 @@ namespace MCPForUnity.Editor.Tools
 
                 if (prop == null && !isAutoGrowable)
                 {
-                    results.Add(new { index = i, propertyPath = normalizedPath, op, ok = false, message = $"Property not found: {normalizedPath}" });
+                    results.Add(
+                        new
+                        {
+                            index = i,
+                            propertyPath = normalizedPath,
+                            op,
+                            ok = false,
+                            message = $"Property not found: {normalizedPath}",
+                        }
+                    );
                     continue;
                 }
 
@@ -828,7 +1045,7 @@ namespace MCPForUnity.Editor.Tools
                     var valueToken = patchObj["value"];
                     string valueValidationMsg = null;
                     bool valueFormatOk = true;
-                    
+
                     // Enhanced dry-run: validate value format for AnimationCurve and Quaternion
                     // Uses shared validators from VectorParsing
                     if (prop.propertyType == SerializedPropertyType.Integer)
@@ -847,30 +1064,36 @@ namespace MCPForUnity.Editor.Tools
                                 break;
                         }
                     }
-                    
+
                     if (valueFormatOk)
                     {
-                        results.Add(new { 
-                            index = i, 
-                            propertyPath = normalizedPath, 
-                            op, 
-                            ok = true, 
-                            message = valueValidationMsg ?? "Property found.",
-                            propertyType = prop.propertyType.ToString(),
-                            isArray = prop.isArray
-                        });
+                        results.Add(
+                            new
+                            {
+                                index = i,
+                                propertyPath = normalizedPath,
+                                op,
+                                ok = true,
+                                message = valueValidationMsg ?? "Property found.",
+                                propertyType = prop.propertyType.ToString(),
+                                isArray = prop.isArray,
+                            }
+                        );
                     }
                     else
                     {
-                        results.Add(new { 
-                            index = i, 
-                            propertyPath = normalizedPath, 
-                            op, 
-                            ok = false, 
-                            message = valueValidationMsg,
-                            propertyType = prop.propertyType.ToString(),
-                            isArray = prop.isArray
-                        });
+                        results.Add(
+                            new
+                            {
+                                index = i,
+                                propertyPath = normalizedPath,
+                                op,
+                                ok = false,
+                                message = valueValidationMsg,
+                                propertyType = prop.propertyType.ToString(),
+                                isArray = prop.isArray,
+                            }
+                        );
                     }
                 }
             }
@@ -891,17 +1114,31 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (patches[i] is not JObject patchObj)
                 {
-                    results.Add(new { propertyPath = "", op = "", ok = false, message = $"Patch at index {i} must be an object." });
+                    results.Add(
+                        new
+                        {
+                            propertyPath = "",
+                            op = "",
+                            ok = false,
+                            message = $"Patch at index {i} must be an object.",
+                        }
+                    );
                     continue;
                 }
 
-                string propertyPath = patchObj["propertyPath"]?.ToString()
-                    ?? patchObj["property_path"]?.ToString()
-                    ?? patchObj["path"]?.ToString();
+                string propertyPath = patchObj["propertyPath"]?.ToString() ?? patchObj["property_path"]?.ToString() ?? patchObj["path"]?.ToString();
                 string op = (patchObj["op"]?.ToString() ?? "set").Trim();
                 if (string.IsNullOrWhiteSpace(propertyPath))
                 {
-                    results.Add(new { propertyPath = propertyPath ?? "", op, ok = false, message = "Missing required field: propertyPath" });
+                    results.Add(
+                        new
+                        {
+                            propertyPath = propertyPath ?? "",
+                            op,
+                            ok = false,
+                            message = "Missing required field: propertyPath",
+                        }
+                    );
                     continue;
                 }
 
@@ -950,12 +1187,24 @@ namespace MCPForUnity.Editor.Tools
                     case "set":
                         return ApplySet(so, normalizedPath, patchObj, out changed);
                     default:
-                        return new { propertyPath, op, ok = false, message = $"Unknown patch operation: '{op}'." };
+                        return new
+                        {
+                            propertyPath,
+                            op,
+                            ok = false,
+                            message = $"Unknown patch operation: '{op}'.",
+                        };
                 }
             }
             catch (Exception ex)
             {
-                return new { propertyPath, op, ok = false, message = ex.Message };
+                return new
+                {
+                    propertyPath,
+                    op,
+                    ok = false,
+                    message = ex.Message,
+                };
             }
         }
 
@@ -971,30 +1220,34 @@ namespace MCPForUnity.Editor.Tools
             // Pattern: word[number] where it's not already in .Array.data[number] format
             // We need to handle cases like: myList[5], nested.list[0].field, etc.
             // But NOT: myList.Array.data[5] (already in Unity format)
-            
+
             // Replace fieldName[index] with fieldName.Array.data[index]
             // But only if it's not already in Array.data format
-            return Regex.Replace(path, @"(\w+)\[(\d+)\]", m =>
-            {
-                string fieldName = m.Groups[1].Value;
-                string index = m.Groups[2].Value;
-                
-                // Check if this match is already part of .Array.data[index] pattern
-                // by checking if the text immediately before the field name is ".Array."
-                // and the field name is "data"
-                int matchStart = m.Index;
-                if (fieldName == "data" && matchStart >= 7) // Length of ".Array."
+            return Regex.Replace(
+                path,
+                @"(\w+)\[(\d+)\]",
+                m =>
                 {
-                    string preceding = path.Substring(matchStart - 7, 7);
-                    if (preceding == ".Array.")
+                    string fieldName = m.Groups[1].Value;
+                    string index = m.Groups[2].Value;
+
+                    // Check if this match is already part of .Array.data[index] pattern
+                    // by checking if the text immediately before the field name is ".Array."
+                    // and the field name is "data"
+                    int matchStart = m.Index;
+                    if (fieldName == "data" && matchStart >= 7) // Length of ".Array."
                     {
-                        // Already in Unity format (e.g., myList.Array.data[0]), return as-is
-                        return m.Value;
+                        string preceding = path.Substring(matchStart - 7, 7);
+                        if (preceding == ".Array.")
+                        {
+                            // Already in Unity format (e.g., myList.Array.data[0]), return as-is
+                            return m.Value;
+                        }
                     }
+
+                    return $"{fieldName}.Array.data[{index}]";
                 }
-                
-                return $"{fieldName}.Array.data[{index}]";
-            });
+            );
         }
 
         /// <summary>
@@ -1008,14 +1261,16 @@ namespace MCPForUnity.Editor.Tools
         private static bool EnsureArrayCapacity(SerializedObject so, string path, out bool resized)
         {
             resized = false;
-            
+
             // Match pattern: something.Array.data[N]
             foreach (Match match in Regex.Matches(path, @"\.Array\.data\[(\d+)\]"))
             {
                 string arrayPath = path.Substring(0, match.Index);
-                if (!int.TryParse(match.Groups[1].Value, out int targetIndex) || targetIndex == int.MaxValue) return false;
+                if (!int.TryParse(match.Groups[1].Value, out int targetIndex) || targetIndex == int.MaxValue)
+                    return false;
                 var arrayProp = so.FindProperty(arrayPath);
-                if (arrayProp == null || !arrayProp.isArray) return false;
+                if (arrayProp == null || !arrayProp.isArray)
+                    return false;
                 if (arrayProp.arraySize <= targetIndex)
                 {
                     int newSize = checked(targetIndex + 1);
@@ -1034,17 +1289,29 @@ namespace MCPForUnity.Editor.Tools
         private static object ApplyArrayResize(SerializedObject so, string propertyPath, JObject patchObj, out bool changed)
         {
             changed = false;
-            
+
             // Use ParamCoercion for robust int parsing
             var valueToken = patchObj["value"];
             if (valueToken == null || valueToken.Type == JTokenType.Null)
             {
-                return new { propertyPath, op = "array_resize", ok = false, message = "array_resize requires integer 'value'." };
+                return new
+                {
+                    propertyPath,
+                    op = "array_resize",
+                    ok = false,
+                    message = "array_resize requires integer 'value'.",
+                };
             }
-            
+
             if (!TryReadArraySize(valueToken, out int newSize))
             {
-                return new { propertyPath, op = "array_resize", ok = false, message = "array_resize requires integer 'value'." };
+                return new
+                {
+                    propertyPath,
+                    op = "array_resize",
+                    ok = false,
+                    message = "array_resize requires integer 'value'.",
+                };
             }
 
             newSize = Math.Max(0, newSize);
@@ -1091,16 +1358,24 @@ namespace MCPForUnity.Editor.Tools
                         op = "array_resize",
                         ok = true,
                         resolvedPropertyType = "Array",
-                        message = $"Set array size to {newSize}."
+                        message = $"Set array size to {newSize}.",
                     };
                 }
 
-                return new { propertyPath, op = "array_resize", ok = false, message = $"Property not found: {propertyPath}" };
+                return new
+                {
+                    propertyPath,
+                    op = "array_resize",
+                    ok = false,
+                    message = $"Property not found: {propertyPath}",
+                };
             }
 
             // Unity may represent ".Array.size" as either Integer or ArraySize depending on version.
-            if ((prop.propertyType == SerializedPropertyType.Integer || prop.propertyType == SerializedPropertyType.ArraySize)
-                && propertyPath.EndsWith(".Array.size", StringComparison.Ordinal))
+            if (
+                (prop.propertyType == SerializedPropertyType.Integer || prop.propertyType == SerializedPropertyType.ArraySize)
+                && propertyPath.EndsWith(".Array.size", StringComparison.Ordinal)
+            )
             {
                 // We successfully resolved the synthetic leaf; write the size through its intValue.
                 if (prop.intValue != newSize)
@@ -1109,7 +1384,14 @@ namespace MCPForUnity.Editor.Tools
                     prop.intValue = newSize;
                     changed = true;
                 }
-                return new { propertyPath, op = "array_resize", ok = true, resolvedPropertyType = prop.propertyType.ToString(), message = $"Set array size to {newSize}." };
+                return new
+                {
+                    propertyPath,
+                    op = "array_resize",
+                    ok = true,
+                    resolvedPropertyType = prop.propertyType.ToString(),
+                    message = $"Set array size to {newSize}.",
+                };
             }
 
             if (prop.isArray)
@@ -1121,10 +1403,24 @@ namespace MCPForUnity.Editor.Tools
                     prop.arraySize = newSize;
                     changed = true;
                 }
-                return new { propertyPath, op = "array_resize", ok = true, resolvedPropertyType = "Array", message = $"Set array size to {newSize}." };
+                return new
+                {
+                    propertyPath,
+                    op = "array_resize",
+                    ok = true,
+                    resolvedPropertyType = "Array",
+                    message = $"Set array size to {newSize}.",
+                };
             }
 
-            return new { propertyPath, op = "array_resize", ok = false, resolvedPropertyType = prop.propertyType.ToString(), message = $"Property is not an array or array-size field: {propertyPath}" };
+            return new
+            {
+                propertyPath,
+                op = "array_resize",
+                ok = false,
+                resolvedPropertyType = prop.propertyType.ToString(),
+                message = $"Property is not an array or array-size field: {propertyPath}",
+            };
         }
 
         private static object ApplySet(SerializedObject so, string propertyPath, JObject patchObj, out bool changed)
@@ -1134,9 +1430,15 @@ namespace MCPForUnity.Editor.Tools
                 return ApplyArrayResize(so, propertyPath, patchObj, out changed);
             if (patchObj["value"] == null && patchObj["ref"] == null)
             {
-                return new { propertyPath, op = "set", ok = false, message = "Missing required field: value or ref" };
+                return new
+                {
+                    propertyPath,
+                    op = "set",
+                    ok = false,
+                    message = "Missing required field: value or ref",
+                };
             }
-            
+
             // Phase 1.2: Auto-resize arrays if targeting an index beyond current bounds
             if (!EnsureArrayCapacity(so, propertyPath, out bool arrayResized))
             {
@@ -1152,23 +1454,47 @@ namespace MCPForUnity.Editor.Tools
                         var arrayProp = so.FindProperty(arrayPath);
                         if (arrayProp == null)
                         {
-                            return new { propertyPath, op = "set", ok = false, message = $"Array property not found: {arrayPath}" };
+                            return new
+                            {
+                                propertyPath,
+                                op = "set",
+                                ok = false,
+                                message = $"Array property not found: {arrayPath}",
+                            };
                         }
                         if (!arrayProp.isArray)
                         {
-                            return new { propertyPath, op = "set", ok = false, message = $"Property is not an array: {arrayPath}" };
+                            return new
+                            {
+                                propertyPath,
+                                op = "set",
+                                ok = false,
+                                message = $"Property is not an array: {arrayPath}",
+                            };
                         }
                     }
-                    return new { propertyPath, op = "set", ok = false, message = $"Property not found: {propertyPath}" };
+                    return new
+                    {
+                        propertyPath,
+                        op = "set",
+                        ok = false,
+                        message = $"Property not found: {propertyPath}",
+                    };
                 }
             }
-            
+
             var prop = so.FindProperty(propertyPath);
             if (prop == null)
             {
-                return new { propertyPath, op = "set", ok = false, message = $"Property not found: {propertyPath}" };
+                return new
+                {
+                    propertyPath,
+                    op = "set",
+                    ok = false,
+                    message = $"Property not found: {propertyPath}",
+                };
             }
-            
+
             // Track if we resized - this counts as a change
             if (arrayResized)
             {
@@ -1185,31 +1511,63 @@ namespace MCPForUnity.Editor.Tools
 
                 if (resolveToken == null)
                 {
-                    return new { propertyPath, op = "set", ok = false, resolvedPropertyType = prop.propertyType.ToString(),
-                        message = "ObjectReference patch requires a 'ref' or 'value' key." };
+                    return new
+                    {
+                        propertyPath,
+                        op = "set",
+                        ok = false,
+                        resolvedPropertyType = prop.propertyType.ToString(),
+                        message = "ObjectReference patch requires a 'ref' or 'value' key.",
+                    };
                 }
 
                 if (!ComponentOps.SetObjectReference(prop, resolveToken, out string refError))
                 {
-                    return new { propertyPath, op = "set", ok = false, resolvedPropertyType = prop.propertyType.ToString(), message = refError };
+                    return new
+                    {
+                        propertyPath,
+                        op = "set",
+                        ok = false,
+                        resolvedPropertyType = prop.propertyType.ToString(),
+                        message = refError,
+                    };
                 }
 
                 changed = true;
-                string refMessage = prop.objectReferenceValue == null
-                    ? "Cleared reference."
-                    : $"Set reference to '{prop.objectReferenceValue.name}'.";
-                return new { propertyPath, op = "set", ok = true, resolvedPropertyType = prop.propertyType.ToString(), message = refMessage };
+                string refMessage = prop.objectReferenceValue == null ? "Cleared reference." : $"Set reference to '{prop.objectReferenceValue.name}'.";
+                return new
+                {
+                    propertyPath,
+                    op = "set",
+                    ok = true,
+                    resolvedPropertyType = prop.propertyType.ToString(),
+                    message = refMessage,
+                };
             }
 
             var valueToken = patchObj["value"];
             if (valueToken == null)
             {
-                return new { propertyPath, op = "set", ok = false, resolvedPropertyType = prop.propertyType.ToString(), message = "Missing required field: value" };
+                return new
+                {
+                    propertyPath,
+                    op = "set",
+                    ok = false,
+                    resolvedPropertyType = prop.propertyType.ToString(),
+                    message = "Missing required field: value",
+                };
             }
 
             bool ok = TrySetValue(prop, valueToken, out string message);
             changed = ok;
-            return new { propertyPath, op = "set", ok, resolvedPropertyType = prop.propertyType.ToString(), message };
+            return new
+            {
+                propertyPath,
+                op = "set",
+                ok,
+                resolvedPropertyType = prop.propertyType.ToString(),
+                message,
+            };
         }
 
         private static bool TrySetValue(SerializedProperty prop, JToken valueToken, out string message)
@@ -1239,7 +1597,11 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (prop.propertyPath.EndsWith(".Array.size", StringComparison.Ordinal))
                 {
-                    if (!TryReadArraySize(valueToken, out int size)) { message = "Expected non-negative Int32 array size."; return false; }
+                    if (!TryReadArraySize(valueToken, out int size))
+                    {
+                        message = "Expected non-negative Int32 array size.";
+                        return false;
+                    }
                     CheckArraySizeChange(prop.intValue, size);
                     prop.intValue = size;
                     message = "Set array size.";
@@ -1251,7 +1613,7 @@ namespace MCPForUnity.Editor.Tools
                     // Resize the array to match the JSON array
                     CheckArraySizeChange(prop.arraySize, jArray.Count);
                     prop.arraySize = jArray.Count;
-                    
+
                     // Get the SerializedObject and apply so we can access elements
                     var so = prop.serializedObject;
                     AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(so.targetObject));
@@ -1342,9 +1704,7 @@ namespace MCPForUnity.Editor.Tools
                         message = refError;
                         return false;
                     }
-                    message = prop.objectReferenceValue == null
-                        ? "Cleared reference."
-                        : $"Set reference to '{prop.objectReferenceValue.name}'.";
+                    message = prop.objectReferenceValue == null ? "Cleared reference." : $"Set reference to '{prop.objectReferenceValue.name}'.";
                     return true;
                 }
 
@@ -1469,9 +1829,10 @@ namespace MCPForUnity.Editor.Tools
                         return false;
 
                     default:
-                        message = $"Unsupported SerializedPropertyType: {prop.propertyType}. " +
-                                  "This type cannot be set via MCP patches. Consider editing the .asset file directly " +
-                                  "or using Unity's Inspector. For complex types, check if there's a supported alternative format.";
+                        message =
+                            $"Unsupported SerializedPropertyType: {prop.propertyType}. "
+                            + "This type cannot be set via MCP patches. Consider editing the .asset file directly "
+                            + "or using Unity's Inspector. For complex types, check if there's a supported alternative format.";
                         return false;
                 }
             }
@@ -1486,9 +1847,11 @@ namespace MCPForUnity.Editor.Tools
         {
             value = 0;
             message = "Expected integer value.";
-            if (token == null || token.Type == JTokenType.Null
-                || (token.Type != JTokenType.Integer && token.Type != JTokenType.String
-                    && !long.TryParse(token.ToString(), out _)))
+            if (
+                token == null
+                || token.Type == JTokenType.Null
+                || (token.Type != JTokenType.Integer && token.Type != JTokenType.String && !long.TryParse(token.ToString(), out _))
+            )
                 return false;
 
             try
@@ -1513,13 +1876,23 @@ namespace MCPForUnity.Editor.Tools
         {
             message = null;
             var names = prop.enumNames;
-            if (names == null || names.Length == 0) { message = "Enum has no names."; return false; }
+            if (names == null || names.Length == 0)
+            {
+                message = "Enum has no names.";
+                return false;
+            }
 
             if (valueToken.Type == JTokenType.Integer)
             {
                 int idx = valueToken.ReadScalar<int>();
-                if (idx < 0 || idx >= names.Length) { message = $"Enum index out of range: {idx}"; return false; }
-                prop.enumValueIndex = idx; message = "Set enum."; return true;
+                if (idx < 0 || idx >= names.Length)
+                {
+                    message = $"Enum index out of range: {idx}";
+                    return false;
+                }
+                prop.enumValueIndex = idx;
+                message = "Set enum.";
+                return true;
             }
 
             string s = valueToken.ToString();
@@ -1527,7 +1900,9 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (string.Equals(names[i], s, StringComparison.OrdinalIgnoreCase))
                 {
-                    prop.enumValueIndex = i; message = "Set enum."; return true;
+                    prop.enumValueIndex = i;
+                    message = "Set enum.";
+                    return true;
                 }
             }
             message = $"Unknown enum name '{s}'.";
@@ -1536,14 +1911,14 @@ namespace MCPForUnity.Editor.Tools
 
         /// <summary>
         /// Sets an AnimationCurve property from a JSON structure.
-        /// 
+        ///
         /// <para><b>Supported formats:</b></para>
         /// <list type="bullet">
         ///   <item>Wrapped: <c>{ "keys": [ { "time": 0, "value": 1.0 }, ... ] }</c></item>
         ///   <item>Direct array: <c>[ { "time": 0, "value": 1.0 }, ... ]</c></item>
         ///   <item>Null/empty: Sets an empty AnimationCurve</item>
         /// </list>
-        /// 
+        ///
         /// <para><b>Keyframe fields:</b></para>
         /// <list type="bullet">
         ///   <item><c>time</c> (float): Keyframe time position. <b>Default: 0</b></item>
@@ -1554,7 +1929,7 @@ namespace MCPForUnity.Editor.Tools
         ///   <item><c>inWeight</c> (float): Incoming tangent weight. <b>Default: 0</b></item>
         ///   <item><c>outWeight</c> (float): Outgoing tangent weight. <b>Default: 0</b></item>
         /// </list>
-        /// 
+        ///
         /// <para><b>Note:</b> All keyframe fields are optional. Missing fields gracefully default to 0,
         /// which produces linear interpolation when both tangents are 0.</para>
         /// </summary>
@@ -1592,8 +1967,9 @@ namespace MCPForUnity.Editor.Tools
             }
             else
             {
-                message = "AnimationCurve requires object with 'keys' or array of keyframes. " +
-                          "Expected: { \"keys\": [ { \"time\": 0, \"value\": 0, \"inSlope\": 0, \"outSlope\": 0 }, ... ] }";
+                message =
+                    "AnimationCurve requires object with 'keys' or array of keyframes. "
+                    + "Expected: { \"keys\": [ { \"time\": 0, \"value\": 0, \"inSlope\": 0, \"outSlope\": 0 }, ... ] }";
                 return false;
             }
 
@@ -1646,7 +2022,7 @@ namespace MCPForUnity.Editor.Tools
 
         /// <summary>
         /// Sets a Quaternion property from JSON.
-        /// 
+        ///
         /// <para><b>Supported formats:</b></para>
         /// <list type="bullet">
         ///   <item>Euler array: <c>[x, y, z]</c> - Euler angles in degrees</item>
@@ -1655,7 +2031,7 @@ namespace MCPForUnity.Editor.Tools
         ///   <item>Explicit euler: <c>{ "euler": [x, y, z] }</c> - Euler angles in degrees</item>
         ///   <item>Null/empty: Sets Quaternion.identity (no rotation)</item>
         /// </list>
-        /// 
+        ///
         /// <para><b>Format detection:</b></para>
         /// <list type="bullet">
         ///   <item>3-element array → Interpreted as Euler angles (degrees)</item>
@@ -1686,11 +2062,7 @@ namespace MCPForUnity.Editor.Tools
                     if (arr.Count == 3)
                     {
                         // Euler angles [x, y, z]
-                        var euler = new Vector3(
-                            arr[0].ReadScalar<float>(),
-                            arr[1].ReadScalar<float>(),
-                            arr[2].ReadScalar<float>()
-                        );
+                        var euler = new Vector3(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(), arr[2].ReadScalar<float>());
                         prop.quaternionValue = Quaternion.Euler(euler);
                         message = $"Set Quaternion from Euler({euler.x}, {euler.y}, {euler.z}).";
                         return true;
@@ -1718,11 +2090,7 @@ namespace MCPForUnity.Editor.Tools
                     // Check for explicit euler property
                     if (obj["euler"] is JArray eulerArr && eulerArr.Count == 3)
                     {
-                        var euler = new Vector3(
-                            eulerArr[0].ReadScalar<float>(),
-                            eulerArr[1].ReadScalar<float>(),
-                            eulerArr[2].ReadScalar<float>()
-                        );
+                        var euler = new Vector3(eulerArr[0].ReadScalar<float>(), eulerArr[1].ReadScalar<float>(), eulerArr[2].ReadScalar<float>());
                         prop.quaternionValue = Quaternion.Euler(euler);
                         message = $"Set Quaternion from euler: ({euler.x}, {euler.y}, {euler.z}).";
                         return true;
@@ -1757,7 +2125,14 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static bool TryResolveTarget(JToken targetToken, bool writable, out UnityEngine.Object target, out string targetPath, out string targetGuid, out object error)
+        private static bool TryResolveTarget(
+            JToken targetToken,
+            bool writable,
+            out UnityEngine.Object target,
+            out string targetPath,
+            out string targetGuid,
+            out object error
+        )
         {
             target = null;
             targetPath = null;
@@ -1785,16 +2160,35 @@ namespace MCPForUnity.Editor.Tools
 
             if (string.IsNullOrWhiteSpace(resolvedPath))
             {
-                error = new ErrorResponse(CodeTargetNotFound, new { message = "Could not resolve target path.", guid, path });
+                error = new ErrorResponse(
+                    CodeTargetNotFound,
+                    new
+                    {
+                        message = "Could not resolve target path.",
+                        guid,
+                        path,
+                    }
+                );
                 return false;
             }
 
             if (writable)
             {
-                try { resolvedPath = AssetPathUtility.GetContainedAssetPath(resolvedPath); }
+                try
+                {
+                    resolvedPath = AssetPathUtility.GetContainedAssetPath(resolvedPath);
+                }
                 catch (Exception ex)
                 {
-                    error = new ErrorResponse(CodeInvalidParams, new { message = ex.Message, guid, path });
+                    error = new ErrorResponse(
+                        CodeInvalidParams,
+                        new
+                        {
+                            message = ex.Message,
+                            guid,
+                            path,
+                        }
+                    );
                     return false;
                 }
             }
@@ -1802,7 +2196,15 @@ namespace MCPForUnity.Editor.Tools
             var obj = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(resolvedPath);
             if (obj == null)
             {
-                error = new ErrorResponse(CodeTargetNotFound, new { message = "Target asset not found.", targetPath = resolvedPath, targetGuid = guid });
+                error = new ErrorResponse(
+                    CodeTargetNotFound,
+                    new
+                    {
+                        message = "Target asset not found.",
+                        targetPath = resolvedPath,
+                        targetGuid = guid,
+                    }
+                );
                 return false;
             }
 
@@ -1861,17 +2263,17 @@ namespace MCPForUnity.Editor.Tools
             var s = SanitizeSlashes(folderPath.Trim());
 
             // Reject obvious non-project/invalid roots. We only support Assets/ (and relative paths that will be rooted under Assets/).
-            if (s.StartsWith("/", StringComparison.Ordinal) 
-                || s.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
-                || Regex.IsMatch(s, @"^[a-zA-Z]:"))
+            if (s.StartsWith("/", StringComparison.Ordinal) || s.StartsWith("file:", StringComparison.OrdinalIgnoreCase) || Regex.IsMatch(s, @"^[a-zA-Z]:"))
             {
                 error = "Folder path must be a project-relative path under Assets/.";
                 return false;
             }
 
-            if (s.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase)
+            if (
+                s.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase)
                 || s.StartsWith("ProjectSettings/", StringComparison.OrdinalIgnoreCase)
-                || s.StartsWith("Library/", StringComparison.OrdinalIgnoreCase))
+                || s.StartsWith("Library/", StringComparison.OrdinalIgnoreCase)
+            )
             {
                 error = "Folder path must be under Assets/.";
                 return false;
@@ -1894,7 +2296,7 @@ namespace MCPForUnity.Editor.Tools
             return true;
         }
 
-        // NOTE: Local TryGet* helpers have been removed. 
+        // NOTE: Local TryGet* helpers have been removed.
         // Using shared helpers instead: ParamCoercion (for int/float/bool) and VectorParsing (for Vector2/3/4, Color)
 
         private static string NormalizeAction(string raw)

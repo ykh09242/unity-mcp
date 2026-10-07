@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Cameras
 {
@@ -16,10 +16,12 @@ namespace MCPForUnity.Editor.Tools.Cameras
         internal static object SetBasicCameraTarget(JObject @params)
         {
             var go = CameraHelpers.FindTargetGameObject(@params);
-            if (go == null) return new ErrorResponse("Target Camera not found.");
+            if (go == null)
+                return new ErrorResponse("Target Camera not found.");
 
             var cam = go.GetComponent<UnityEngine.Camera>();
-            if (cam == null) return new ErrorResponse($"No Camera component on '{go.name}'.");
+            if (cam == null)
+                return new ErrorResponse($"No Camera component on '{go.name}'.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
             var lookAtToken = props["lookAt"] ?? props["look_at"] ?? props["follow"];
@@ -38,17 +40,19 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = $"Camera '{go.name}' now looking at '{target.name}'.",
-                data = new { instanceID = go.GetInstanceIDCompat() }
+                data = new { instanceID = go.GetInstanceIDCompat() },
             };
         }
 
         internal static object SetBasicCameraLens(JObject @params)
         {
             var go = CameraHelpers.FindTargetGameObject(@params);
-            if (go == null) return new ErrorResponse("Target Camera not found.");
+            if (go == null)
+                return new ErrorResponse("Target Camera not found.");
 
             var cam = go.GetComponent<UnityEngine.Camera>();
-            if (cam == null) return new ErrorResponse($"No Camera component on '{go.name}'.");
+            if (cam == null)
+                return new ErrorResponse($"No Camera component on '{go.name}'.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
             Undo.RecordObject(cam, "Set Camera Lens");
@@ -67,17 +71,19 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = $"Lens properties set on Camera '{go.name}'.",
-                data = new { instanceID = go.GetInstanceIDCompat() }
+                data = new { instanceID = go.GetInstanceIDCompat() },
             };
         }
 
         internal static object SetBasicCameraPriority(JObject @params)
         {
             var go = CameraHelpers.FindTargetGameObject(@params);
-            if (go == null) return new ErrorResponse("Target Camera not found.");
+            if (go == null)
+                return new ErrorResponse("Target Camera not found.");
 
             var cam = go.GetComponent<UnityEngine.Camera>();
-            if (cam == null) return new ErrorResponse($"No Camera component on '{go.name}'.");
+            if (cam == null)
+                return new ErrorResponse($"No Camera component on '{go.name}'.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
             float depth = ParamCoercion.CoerceFloat(props["priority"], cam.depth);
@@ -90,7 +96,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = $"Camera '{go.name}' depth set to {depth}.",
-                data = new { instanceID = go.GetInstanceIDCompat(), depth }
+                data = new { instanceID = go.GetInstanceIDCompat(), depth },
             };
         }
 
@@ -101,7 +107,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
         internal static object SetCinemachineTarget(JObject @params)
         {
             var cmCamera = CameraHelpers.FindCinemachineCamera(@params);
-            if (cmCamera == null) return new ErrorResponse("Target CinemachineCamera not found.");
+            if (cmCamera == null)
+                return new ErrorResponse("Target CinemachineCamera not found.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
 
@@ -130,7 +137,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
             }
 
             Undo.RecordObject(cmCamera, "Set Cinemachine Target");
-            foreach (var set in setters) set();
+            foreach (var set in setters)
+                set();
 
             CameraHelpers.MarkDirty(cmCamera.gameObject);
 
@@ -138,14 +146,15 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = $"Targets set on CinemachineCamera '{cmCamera.gameObject.name}'.",
-                data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat() }
+                data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat() },
             };
         }
 
         internal static object SetCinemachineLens(JObject @params)
         {
             var cmCamera = CameraHelpers.FindCinemachineCamera(@params);
-            if (cmCamera == null) return new ErrorResponse("Target CinemachineCamera not found.");
+            if (cmCamera == null)
+                return new ErrorResponse("Target CinemachineCamera not found.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
             Undo.RecordObject(cmCamera, "Set Cinemachine Lens");
@@ -169,27 +178,29 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = $"Lens properties set on CinemachineCamera '{cmCamera.gameObject.name}'.",
-                data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat() }
+                data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat() },
             };
         }
 
         internal static object SetCinemachinePriority(JObject @params)
         {
             var cmCamera = CameraHelpers.FindCinemachineCamera(@params);
-            if (cmCamera == null) return new ErrorResponse("Target CinemachineCamera not found.");
+            if (cmCamera == null)
+                return new ErrorResponse("Target CinemachineCamera not found.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
             int priority = ParamCoercion.CoerceInt(props["priority"], 10);
 
             var error = SetPriority(cmCamera, priority);
-            if (error != null) return error;
+            if (error != null)
+                return error;
             CameraHelpers.MarkDirty(cmCamera.gameObject);
 
             return new
             {
                 success = true,
                 message = $"Priority set to {priority} on CinemachineCamera '{cmCamera.gameObject.name}'.",
-                data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat(), priority }
+                data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat(), priority },
             };
         }
 
@@ -202,8 +213,12 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 var enabledProp = priorityProp.FindPropertyRelative("Enabled");
                 var valueProp = priorityProp.FindPropertyRelative("m_Value");
-                if (enabledProp == null || enabledProp.propertyType != SerializedPropertyType.Boolean
-                    || valueProp == null || valueProp.propertyType != SerializedPropertyType.Integer)
+                if (
+                    enabledProp == null
+                    || enabledProp.propertyType != SerializedPropertyType.Boolean
+                    || valueProp == null
+                    || valueProp.propertyType != SerializedPropertyType.Integer
+                )
                     return new ErrorResponse("Could not find writable Priority fields on CinemachineCamera.");
                 enabledProp.boolValue = true;
                 valueProp.intValue = priority;
@@ -223,7 +238,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
         internal static object SetBody(JObject @params)
         {
             var cmCamera = CameraHelpers.FindCinemachineCamera(@params);
-            if (cmCamera == null) return new ErrorResponse("Target CinemachineCamera not found.");
+            if (cmCamera == null)
+                return new ErrorResponse("Target CinemachineCamera not found.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
             var go = cmCamera.gameObject;
@@ -247,21 +263,23 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             // Set properties on body component
             var propertyError = SetComponentProperties(bodyComponent, props, new[] { "bodyType", "body_type" });
-            if (propertyError != null) return propertyError;
+            if (propertyError != null)
+                return propertyError;
             CameraHelpers.MarkDirty(go);
 
             return new
             {
                 success = true,
                 message = $"Body configured on CinemachineCamera '{go.name}'.",
-                data = new { instanceID = go.GetInstanceIDCompat(), body = bodyComponent.GetType().Name }
+                data = new { instanceID = go.GetInstanceIDCompat(), body = bodyComponent.GetType().Name },
             };
         }
 
         internal static object SetAim(JObject @params)
         {
             var cmCamera = CameraHelpers.FindCinemachineCamera(@params);
-            if (cmCamera == null) return new ErrorResponse("Target CinemachineCamera not found.");
+            if (cmCamera == null)
+                return new ErrorResponse("Target CinemachineCamera not found.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
             var go = cmCamera.gameObject;
@@ -283,21 +301,23 @@ namespace MCPForUnity.Editor.Tools.Cameras
             }
 
             var propertyError = SetComponentProperties(aimComponent, props, new[] { "aimType", "aim_type" });
-            if (propertyError != null) return propertyError;
+            if (propertyError != null)
+                return propertyError;
             CameraHelpers.MarkDirty(go);
 
             return new
             {
                 success = true,
                 message = $"Aim configured on CinemachineCamera '{go.name}'.",
-                data = new { instanceID = go.GetInstanceIDCompat(), aim = aimComponent.GetType().Name }
+                data = new { instanceID = go.GetInstanceIDCompat(), aim = aimComponent.GetType().Name },
             };
         }
 
         internal static object SetNoise(JObject @params)
         {
             var cmCamera = CameraHelpers.FindCinemachineCamera(@params);
-            if (cmCamera == null) return new ErrorResponse("Target CinemachineCamera not found.");
+            if (cmCamera == null)
+                return new ErrorResponse("Target CinemachineCamera not found.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
             var go = cmCamera.gameObject;
@@ -317,27 +337,26 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             Undo.RecordObject(noiseComponent, "Set Cinemachine Noise");
             var propertyError = SetComponentProperties(noiseComponent, props, Array.Empty<string>());
-            if (propertyError != null) return propertyError;
+            if (propertyError != null)
+                return propertyError;
             CameraHelpers.MarkDirty(go);
 
             return new
             {
                 success = true,
-                message = added
-                    ? $"Added noise to CinemachineCamera '{go.name}'."
-                    : $"Noise configured on CinemachineCamera '{go.name}'.",
-                data = new { instanceID = go.GetInstanceIDCompat(), added }
+                message = added ? $"Added noise to CinemachineCamera '{go.name}'." : $"Noise configured on CinemachineCamera '{go.name}'.",
+                data = new { instanceID = go.GetInstanceIDCompat(), added },
             };
         }
 
         internal static object AddExtension(JObject @params)
         {
             var cmCamera = CameraHelpers.FindCinemachineCamera(@params);
-            if (cmCamera == null) return new ErrorResponse("Target CinemachineCamera not found.");
+            if (cmCamera == null)
+                return new ErrorResponse("Target CinemachineCamera not found.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
-            string extTypeName = ParamCoercion.CoerceString(
-                props["extensionType"] ?? props["extension_type"], null);
+            string extTypeName = ParamCoercion.CoerceString(props["extensionType"] ?? props["extension_type"], null);
             if (string.IsNullOrEmpty(extTypeName))
                 return new ErrorResponse("'extensionType' property is required.");
 
@@ -354,25 +373,26 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             var ext = Undo.AddComponent(go, extType);
             var propertyError = SetComponentProperties(ext, props, new[] { "extensionType", "extension_type" });
-            if (propertyError != null) return propertyError;
+            if (propertyError != null)
+                return propertyError;
             CameraHelpers.MarkDirty(go);
 
             return new
             {
                 success = true,
                 message = $"Extension '{extTypeName}' added to CinemachineCamera '{go.name}'.",
-                data = new { instanceID = go.GetInstanceIDCompat(), extensionType = extTypeName }
+                data = new { instanceID = go.GetInstanceIDCompat(), extensionType = extTypeName },
             };
         }
 
         internal static object RemoveExtension(JObject @params)
         {
             var cmCamera = CameraHelpers.FindCinemachineCamera(@params);
-            if (cmCamera == null) return new ErrorResponse("Target CinemachineCamera not found.");
+            if (cmCamera == null)
+                return new ErrorResponse("Target CinemachineCamera not found.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
-            string extTypeName = ParamCoercion.CoerceString(
-                props["extensionType"] ?? props["extension_type"], null);
+            string extTypeName = ParamCoercion.CoerceString(props["extensionType"] ?? props["extension_type"], null);
             if (string.IsNullOrEmpty(extTypeName))
                 return new ErrorResponse("'extensionType' property is required.");
 
@@ -394,7 +414,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = $"Extension '{extTypeName}' removed from CinemachineCamera '{go.name}'.",
-                data = new { instanceID = go.GetInstanceIDCompat() }
+                data = new { instanceID = go.GetInstanceIDCompat() },
             };
         }
 
@@ -404,9 +424,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
         private static void SetFloatSubProp(SerializedProperty parent, string subPropName, JToken value)
         {
-            if (value == null || value.Type == JTokenType.Null) return;
-            var sub = parent.FindPropertyRelative(subPropName)
-                   ?? parent.FindPropertyRelative("m_" + subPropName);
+            if (value == null || value.Type == JTokenType.Null)
+                return;
+            var sub = parent.FindPropertyRelative(subPropName) ?? parent.FindPropertyRelative("m_" + subPropName);
             if (sub != null && sub.propertyType == SerializedPropertyType.Float)
                 sub.floatValue = ParamCoercion.CoerceFloat(value, sub.floatValue);
         }
@@ -414,7 +434,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
         private static Component SwapPipelineComponent(GameObject go, string stage, string newTypeName)
         {
             var newType = CameraHelpers.ResolveComponentType(newTypeName);
-            if (newType == null || !IsConcreteCinemachineType(newType, "CinemachineComponentBase")) return null;
+            if (newType == null || !IsConcreteCinemachineType(newType, "CinemachineComponentBase"))
+                return null;
 
             // Remove existing component of same pipeline stage
             var cmCamera = go.GetComponent(CameraHelpers.CinemachineCameraType);
@@ -436,22 +457,22 @@ namespace MCPForUnity.Editor.Tools.Cameras
         private static bool IsConcreteCinemachineType(Type type, string baseTypeName)
         {
             var baseType = CameraHelpers.CinemachineCameraType?.Assembly.GetType("Unity.Cinemachine." + baseTypeName);
-            return baseType != null && baseType.IsAssignableFrom(type)
-                && !type.IsAbstract && !type.ContainsGenericParameters;
+            return baseType != null && baseType.IsAssignableFrom(type) && !type.IsAbstract && !type.ContainsGenericParameters;
         }
 
         private static ErrorResponse SetComponentProperties(Component component, JObject props, string[] skipKeys)
         {
-            if (component == null || props == null) return null;
+            if (component == null || props == null)
+                return null;
 
-            var skipSet = new System.Collections.Generic.HashSet<string>(
-                skipKeys, StringComparer.OrdinalIgnoreCase);
+            var skipSet = new System.Collections.Generic.HashSet<string>(skipKeys, StringComparer.OrdinalIgnoreCase);
 
             Undo.RecordObject(component, $"Configure {component.GetType().Name}");
 
             foreach (var kv in props)
             {
-                if (skipSet.Contains(kv.Key)) continue;
+                if (skipSet.Contains(kv.Key))
+                    continue;
                 if (!ComponentOps.SetProperty(component, kv.Key, kv.Value, out string error))
                     return new ErrorResponse($"Failed to set '{kv.Key}' on {component.GetType().Name}: {error}");
             }

@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Tools
 {
@@ -20,6 +20,7 @@ namespace MCPForUnity.Editor.Tools
         private const int MaxTextureDimension = 4096;
         private const int MaxTexturePixels = 4096 * 4096;
         private const int MaxNoiseWork = 32 * 1024 * 1024;
+
         // An incompressible 4K RGBA PNG needs about 64 MiB before format overhead.
         private const int MaxEncodedImageBytes = 96 * 1024 * 1024;
         private static readonly List<string> ValidActions = new List<string>
@@ -31,7 +32,7 @@ namespace MCPForUnity.Editor.Tools
             "apply_pattern",
             "apply_gradient",
             "apply_noise",
-            "set_import_settings"
+            "set_import_settings",
         };
 
         private static ErrorResponse ValidateDimensions(int width, int height, List<string> warnings)
@@ -58,7 +59,8 @@ namespace MCPForUnity.Editor.Tools
             while (offset < bytes.Length)
             {
                 int read = stream.Read(bytes, offset, bytes.Length - offset);
-                if (read == 0) throw new ArgumentException("Image changed or was truncated while reading.");
+                if (read == 0)
+                    throw new ArgumentException("Image changed or was truncated while reading.");
                 offset += read;
             }
             if (stream.ReadByte() != -1)
@@ -68,8 +70,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static uint ReadBigEndian(byte[] bytes, int offset)
         {
-            return ((uint)bytes[offset] << 24) | ((uint)bytes[offset + 1] << 16)
-                | ((uint)bytes[offset + 2] << 8) | bytes[offset + 3];
+            return ((uint)bytes[offset] << 24) | ((uint)bytes[offset + 1] << 16) | ((uint)bytes[offset + 2] << 8) | bytes[offset + 3];
         }
 
         private static uint PngHeaderCrc(byte[] bytes, int offset)
@@ -88,12 +89,21 @@ namespace MCPForUnity.Editor.Tools
         private static void ReadImageDimensions(byte[] bytes, out int width, out int height)
         {
             width = height = 0;
-            bool png = bytes.Length >= 8 && bytes[0] == 137 && bytes[1] == 80
-                && bytes[2] == 78 && bytes[3] == 71 && bytes[4] == 13 && bytes[5] == 10
-                && bytes[6] == 26 && bytes[7] == 10;
+            bool png =
+                bytes.Length >= 8
+                && bytes[0] == 137
+                && bytes[1] == 80
+                && bytes[2] == 78
+                && bytes[3] == 71
+                && bytes[4] == 13
+                && bytes[5] == 10
+                && bytes[6] == 26
+                && bytes[7] == 10;
             if (png)
             {
-                bool header = false, data = false, end = false;
+                bool header = false,
+                    data = false,
+                    end = false;
                 int offset = 8;
                 while (offset <= bytes.Length - 12)
                 {
@@ -105,23 +115,30 @@ namespace MCPForUnity.Editor.Tools
                         throw new ArgumentException("PNG must start with IHDR.");
                     if (type == 0x49484452)
                     {
-                        if (header || length != 13) throw new ArgumentException("Invalid or repeated PNG IHDR.");
+                        if (header || length != 13)
+                            throw new ArgumentException("Invalid or repeated PNG IHDR.");
                         if (PngHeaderCrc(bytes, offset + 4) != ReadBigEndian(bytes, offset + 21))
                             throw new ArgumentException("Invalid PNG IHDR checksum.");
-                        uint w = ReadBigEndian(bytes, offset + 8), h = ReadBigEndian(bytes, offset + 12);
+                        uint w = ReadBigEndian(bytes, offset + 8),
+                            h = ReadBigEndian(bytes, offset + 12);
                         if (w == 0 || h == 0 || w > MaxTextureDimension || h > MaxTextureDimension)
                             throw new ArgumentException($"Image dimensions exceed max {MaxTextureDimension} per side or are invalid.");
-                        width = (int)w; height = (int)h;
-                        int depth = bytes[offset + 16], color = bytes[offset + 17];
-                        bool validDepth = color == 0 ? (depth == 1 || depth == 2 || depth == 4 || depth == 8 || depth == 16)
+                        width = (int)w;
+                        height = (int)h;
+                        int depth = bytes[offset + 16],
+                            color = bytes[offset + 17];
+                        bool validDepth =
+                            color == 0 ? (depth == 1 || depth == 2 || depth == 4 || depth == 8 || depth == 16)
                             : color == 3 ? (depth == 1 || depth == 2 || depth == 4 || depth == 8)
                             : (color == 2 || color == 4 || color == 6) && (depth == 8 || depth == 16);
                         if (!validDepth || bytes[offset + 18] != 0 || bytes[offset + 19] != 0 || bytes[offset + 20] > 1)
                             throw new ArgumentException("Invalid PNG image header.");
                         header = true;
                     }
-                    else if (type == 0x49444154) data = true;
-                    else if (type == 0x6163544c) throw new ArgumentException("Animated PNG inputs are not supported.");
+                    else if (type == 0x49444154)
+                        data = true;
+                    else if (type == 0x6163544c)
+                        throw new ArgumentException("Animated PNG inputs are not supported.");
                     else if (type == 0x49454e44)
                     {
                         if (length != 0 || !data || offset + 12 != bytes.Length)
@@ -131,37 +148,46 @@ namespace MCPForUnity.Editor.Tools
                     }
                     offset += (int)length + 12;
                 }
-                if (!header || !end) throw new ArgumentException("Truncated PNG image.");
+                if (!header || !end)
+                    throw new ArgumentException("Truncated PNG image.");
                 return;
             }
             if (bytes.Length < 4 || bytes[0] != 255 || bytes[1] != 216)
                 throw new ArgumentException("Image input must be PNG or JPEG.");
-            bool frame = false, scan = false, inScan = false;
+            bool frame = false,
+                scan = false,
+                inScan = false;
             int scanCount = 0;
             int position = 2;
             while (position < bytes.Length)
             {
                 if (bytes[position++] != 255)
                 {
-                    if (inScan) continue;
+                    if (inScan)
+                        continue;
                     throw new ArgumentException("Invalid JPEG marker.");
                 }
-                while (position < bytes.Length && bytes[position] == 255) position++;
-                if (position >= bytes.Length) break;
+                while (position < bytes.Length && bytes[position] == 255)
+                    position++;
+                if (position >= bytes.Length)
+                    break;
                 int marker = bytes[position++];
-                if (inScan && (marker == 0 || (marker >= 208 && marker <= 215))) continue;
+                if (inScan && (marker == 0 || (marker >= 208 && marker <= 215)))
+                    continue;
                 inScan = false;
                 if (marker == 217)
                 {
-                    if (!frame || !scan || position != bytes.Length) throw new ArgumentException("Invalid JPEG end.");
+                    if (!frame || !scan || position != bytes.Length)
+                        throw new ArgumentException("Invalid JPEG end.");
                     return;
                 }
-                if (marker == 0 || marker == 216 || marker == 1 || (marker >= 208 && marker <= 215)
-                    || position > bytes.Length - 2) throw new ArgumentException("Invalid JPEG segment.");
+                if (marker == 0 || marker == 216 || marker == 1 || (marker >= 208 && marker <= 215) || position > bytes.Length - 2)
+                    throw new ArgumentException("Invalid JPEG segment.");
                 if (marker == 220 || marker == 222 || marker == 223)
                     throw new ArgumentException("JPEG dimension redefinition and hierarchical frames are not supported.");
                 int length = (bytes[position] << 8) | bytes[position + 1];
-                if (length < 2 || length > bytes.Length - position) throw new ArgumentException("Truncated JPEG segment.");
+                if (length < 2 || length > bytes.Length - position)
+                    throw new ArgumentException("Truncated JPEG segment.");
                 bool sizeMarker = marker >= 192 && marker <= 207 && marker != 196 && marker != 200 && marker != 204;
                 if (sizeMarker)
                 {
@@ -174,8 +200,7 @@ namespace MCPForUnity.Editor.Tools
                     {
                         int entry = position + 8 + 3 * component;
                         int sampling = bytes[entry + 1];
-                        if ((sampling >> 4) < 1 || (sampling >> 4) > 4 || (sampling & 15) < 1
-                            || (sampling & 15) > 4 || bytes[entry + 2] > 3)
+                        if ((sampling >> 4) < 1 || (sampling >> 4) > 4 || (sampling & 15) < 1 || (sampling & 15) > 4 || bytes[entry + 2] > 3)
                             throw new ArgumentException("Invalid JPEG sampling or quantization table.");
                         for (int previous = 0; previous < component; previous++)
                             if (bytes[entry] == bytes[position + 8 + 3 * previous])
@@ -184,14 +209,15 @@ namespace MCPForUnity.Editor.Tools
                     height = (bytes[position + 3] << 8) | bytes[position + 4];
                     width = (bytes[position + 5] << 8) | bytes[position + 6];
                     var error = ValidateDimensions(width, height, null);
-                    if (error != null) throw new ArgumentException("JPEG dimensions exceed texture limits or are invalid.");
+                    if (error != null)
+                        throw new ArgumentException("JPEG dimensions exceed texture limits or are invalid.");
                     frame = true;
                 }
                 if (marker == 218)
                 {
-                    if (++scanCount > 64) throw new ArgumentException("JPEG contains too many scans.");
-                    if (!frame || length < 6 || length != 6 + 2 * bytes[position + 2]
-                        || bytes[position + 2] < 1 || bytes[position + 2] > 4)
+                    if (++scanCount > 64)
+                        throw new ArgumentException("JPEG contains too many scans.");
+                    if (!frame || length < 6 || length != 6 + 2 * bytes[position + 2] || bytes[position + 2] < 1 || bytes[position + 2] > 4)
                         throw new ArgumentException("Invalid JPEG scan header.");
                     scan = inScan = true;
                 }
@@ -202,7 +228,8 @@ namespace MCPForUnity.Editor.Tools
 
         private static ErrorResponse ValidatePixelPayload(JToken pixels, int width, int height)
         {
-            if (pixels?.Type != JTokenType.String) return null;
+            if (pixels?.Type != JTokenType.String)
+                return null;
             string encoded = pixels.ToString();
             int prefix = encoded.StartsWith("base64:", StringComparison.Ordinal) ? 7 : 0;
             long maxCharacters = (((long)width * height * 4 + 2) / 3) * 4;
@@ -210,7 +237,6 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("Encoded pixel data exceeds the region's RGBA byte budget.");
             return null;
         }
-
 
         public static object HandleCommand(JObject @params)
         {
@@ -223,9 +249,7 @@ namespace MCPForUnity.Editor.Tools
             if (!ValidActions.Contains(action))
             {
                 string validActionsList = string.Join(", ", ValidActions);
-                return new ErrorResponse(
-                    $"Unknown action: '{action}'. Valid actions are: {validActionsList}"
-                );
+                return new ErrorResponse($"Unknown action: '{action}'. Valid actions are: {validActionsList}");
             }
 
             string path = @params["path"]?.ToString();
@@ -290,16 +314,18 @@ namespace MCPForUnity.Editor.Tools
             {
                 var importSettingsToken = @params["importSettings"];
                 var spriteSettingsToken = @params["spriteSettings"];
-                Action<TextureImporter> applySettings = importSettingsToken != null
-                    ? PrepareTextureImporterSettings(importSettingsToken)
-                    : (asSprite || spriteSettingsToken != null ? PrepareSpriteSettings(spriteSettingsToken) : null);
+                Action<TextureImporter> applySettings =
+                    importSettingsToken != null
+                        ? PrepareTextureImporterSettings(importSettingsToken)
+                        : (asSprite || spriteSettingsToken != null ? PrepareSpriteSettings(spriteSettingsToken) : null);
                 var fillColorToken = @params["fillColor"];
                 var patternToken = @params["pattern"];
                 var pixelsToken = @params["pixels"];
                 if (!hasImage)
                 {
                     var pixelError = ValidatePixelPayload(pixelsToken, width, height);
-                    if (pixelError != null) return pixelError;
+                    if (pixelError != null)
+                        return pixelError;
                 }
 
                 if (hasImage && (fillColorToken != null || patternToken != null || pixelsToken != null))
@@ -400,7 +426,7 @@ namespace MCPForUnity.Editor.Tools
                         width,
                         height,
                         asSprite = asSprite || spriteSettingsToken != null || (importSettingsToken?["textureType"]?.ToString() == "Sprite"),
-                        warnings = warnings.Count > 0 ? warnings : null
+                        warnings = warnings.Count > 0 ? warnings : null,
                     }
                 );
                 folders.Complete();
@@ -440,14 +466,16 @@ namespace MCPForUnity.Editor.Tools
                 if (hasImportSettings)
                 {
                     var validationError = ValidateImportSettingsParams(@params);
-                    if (validationError != null) return validationError;
+                    if (validationError != null)
+                        return validationError;
                 }
 
                 Action<TextureImporter> applySettings = null;
                 if (hasImportSettings)
                 {
                     var preparationError = PrepareImportSettingsParams(@params, out applySettings);
-                    if (preparationError != null) return preparationError;
+                    if (preparationError != null)
+                        return preparationError;
                 }
 
                 // Fast path: only import settings, no pixel changes
@@ -465,11 +493,13 @@ namespace MCPForUnity.Editor.Tools
                     int w = setPixelsToken["width"]?.ReadScalar<int?>() ?? 1;
                     int h = setPixelsToken["height"]?.ReadScalar<int?>() ?? 1;
                     var regionError = ValidateDimensions(w, h, null);
-                    if (regionError != null) return regionError;
+                    if (regionError != null)
+                        return regionError;
                     var pixelsToken = setPixelsToken["pixels"];
                     var colorToken = setPixelsToken["color"];
                     var pixelError = ValidatePixelPayload(pixelsToken, w, h);
-                    if (pixelError != null) return pixelError;
+                    if (pixelError != null)
+                        return pixelError;
                     // Inspect the file before asking Unity to load a possibly uncached texture.
                     string absolutePath = GetAbsolutePath(fullPath);
                     byte[] fileData = ReadBoundedImage(absolutePath);
@@ -478,13 +508,15 @@ namespace MCPForUnity.Editor.Tools
                     if (texture == null)
                         return new ErrorResponse($"Failed to load texture at path: {fullPath}");
                     var existingDimensionError = ValidateDimensions(texture.width, texture.height, null);
-                    if (existingDimensionError != null) return existingDimensionError;
+                    if (existingDimensionError != null)
+                        return existingDimensionError;
 
                     editableTexture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
                     if (!editableTexture.LoadImage(fileData))
                         return new ErrorResponse($"Failed to decode texture at path: {fullPath}");
                     var decodedDimensionError = ValidateDimensions(editableTexture.width, editableTexture.height, null);
-                    if (decodedDimensionError != null) return decodedDimensionError;
+                    if (decodedDimensionError != null)
+                        return decodedDimensionError;
                     if (editableTexture.width != imageWidth || editableTexture.height != imageHeight)
                         return new ErrorResponse("Decoded image dimensions do not match its header.");
 
@@ -639,7 +671,7 @@ namespace MCPForUnity.Editor.Tools
                         width,
                         height,
                         gradientType,
-                        warnings = warnings.Count > 0 ? warnings : null
+                        warnings = warnings.Count > 0 ? warnings : null,
                     }
                 );
                 folders.Complete();
@@ -721,7 +753,7 @@ namespace MCPForUnity.Editor.Tools
                         height,
                         noiseScale = scale,
                         octaves,
-                        warnings = warnings.Count > 0 ? warnings : null
+                        warnings = warnings.Count > 0 ? warnings : null,
                     }
                 );
                 folders.Complete();
@@ -861,9 +893,12 @@ namespace MCPForUnity.Editor.Tools
 
         private static Color32 LerpPalette(List<Color32> palette, float t)
         {
-            if (palette.Count == 1) return palette[0];
-            if (t <= 0) return palette[0];
-            if (t >= 1) return palette[palette.Count - 1];
+            if (palette.Count == 1)
+                return palette[0];
+            if (t <= 0)
+                return palette[0];
+            if (t >= 1)
+                return palette[palette.Count - 1];
 
             float scaledT = t * (palette.Count - 1);
             int index = Mathf.FloorToInt(scaledT);
@@ -920,7 +955,8 @@ namespace MCPForUnity.Editor.Tools
             JToken asSpriteToken = @params["as_sprite"] ?? @params["spriteSettings"];
 
             bool hasImportSettings = importSettingsToken is JObject importObject && importObject.HasValues;
-            bool hasSpriteSettings = (asSpriteToken is JObject spriteObject && spriteObject.HasValues)
+            bool hasSpriteSettings =
+                (asSpriteToken is JObject spriteObject && spriteObject.HasValues)
                 || (asSpriteToken?.Type == JTokenType.Boolean && asSpriteToken.ReadScalar<bool>());
 
             return hasImportSettings || hasSpriteSettings;
@@ -947,16 +983,15 @@ namespace MCPForUnity.Editor.Tools
             if (importSettingsToken != null && asSpriteToken != null)
             {
                 return new ErrorResponse(
-                    "Cannot specify both 'import_settings' and 'as_sprite'. " +
-                    "Use 'import_settings' with textureType='Sprite' instead.");
+                    "Cannot specify both 'import_settings' and 'as_sprite'. " + "Use 'import_settings' with textureType='Sprite' instead."
+                );
             }
 
             if (importSettingsToken != null)
             {
                 apply = PrepareTextureImporterSettings(importSettingsToken);
             }
-            else if (asSpriteToken != null &&
-                     (asSpriteToken.Type == JTokenType.Boolean ? asSpriteToken.ReadScalar<bool>() : true))
+            else if (asSpriteToken != null && (asSpriteToken.Type == JTokenType.Boolean ? asSpriteToken.ReadScalar<bool>() : true))
             {
                 apply = PrepareSpriteSettings(asSpriteToken.Type == JTokenType.Object ? asSpriteToken : null);
             }
@@ -984,7 +1019,8 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 var error = PrepareImportSettingsParams(@params, out var applySettings);
-                if (error != null) return error;
+                if (error != null)
+                    return error;
                 ApplyPreparedImportSettings(fullPath, applySettings);
 
                 return new SuccessResponse($"Import settings updated for: {fullPath}", new { path = fullPath });
@@ -999,7 +1035,8 @@ namespace MCPForUnity.Editor.Tools
         // can still leave applied changes; this is not a rollback transaction.
         private static void ApplyPreparedImportSettings(string path, Action<TextureImporter> apply)
         {
-            if (apply == null) return;
+            if (apply == null)
+                return;
             var importer = AssetImporter.GetAtPath(path) as TextureImporter;
             if (importer == null)
                 throw new InvalidOperationException($"Could not get TextureImporter for {path}");
@@ -1011,7 +1048,7 @@ namespace MCPForUnity.Editor.Tools
             var setters = new List<Action<TextureImporter>>
             {
                 importer => importer.textureType = TextureImporterType.Sprite,
-                importer => importer.spriteImportMode = SpriteImportMode.Single
+                importer => importer.spriteImportMode = SpriteImportMode.Single,
             };
 
             if (spriteSettings != null && spriteSettings.Type == JTokenType.Object)
@@ -1022,10 +1059,7 @@ namespace MCPForUnity.Editor.Tools
                 var pivotToken = settings["pivot"];
                 if (pivotToken is JArray pivotArray && pivotArray.Count >= 2)
                 {
-                    var pivot = new Vector2(
-                        pivotArray[0].ReadScalar<float>(),
-                        pivotArray[1].ReadScalar<float>()
-                    );
+                    var pivot = new Vector2(pivotArray[0].ReadScalar<float>(), pivotArray[1].ReadScalar<float>());
                     setters.Add(importer => importer.spritePivot = pivot);
                 }
 
@@ -1040,7 +1074,8 @@ namespace MCPForUnity.Editor.Tools
 
             return importer =>
             {
-                foreach (var set in setters) set(importer);
+                foreach (var set in setters)
+                    set(importer);
                 importer.SaveAndReimport();
             };
         }
@@ -1243,10 +1278,7 @@ namespace MCPForUnity.Editor.Tools
             var pivotToken = settings["spritePivot"];
             if (pivotToken is JArray pivotArray && pivotArray.Count >= 2)
             {
-                var pivot = new Vector2(
-                    pivotArray[0].ReadScalar<float>(),
-                    pivotArray[1].ReadScalar<float>()
-                );
+                var pivot = new Vector2(pivotArray[0].ReadScalar<float>(), pivotArray[1].ReadScalar<float>());
                 setters.Add(importer => importer.spritePivot = pivot);
             }
 
@@ -1262,12 +1294,15 @@ namespace MCPForUnity.Editor.Tools
 
             return importer =>
             {
-                foreach (var set in setters) set(importer);
+                foreach (var set in setters)
+                    set(importer);
 
                 var importerSettings = new TextureImporterSettings();
                 importer.ReadTextureSettings(importerSettings);
-                if (meshType.HasValue) importerSettings.spriteMeshType = meshType.Value;
-                if (extrude.HasValue) importerSettings.spriteExtrude = extrude.Value;
+                if (meshType.HasValue)
+                    importerSettings.spriteMeshType = meshType.Value;
+                if (extrude.HasValue)
+                    importerSettings.spriteExtrude = extrude.Value;
                 if (meshType.HasValue || extrude.HasValue)
                     importer.SetTextureSettings(importerSettings);
 
@@ -1275,7 +1310,8 @@ namespace MCPForUnity.Editor.Tools
             };
         }
 
-        private static bool TryParseEnum<T>(string value, out T result) where T : struct
+        private static bool TryParseEnum<T>(string value, out T result)
+            where T : struct
         {
             // Try exact match first
             if (Enum.TryParse<T>(value, true, out result))

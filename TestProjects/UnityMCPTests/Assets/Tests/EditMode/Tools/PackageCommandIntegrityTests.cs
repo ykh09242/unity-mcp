@@ -8,8 +8,8 @@ using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
-using UnityEditor.SceneManagement;
 using UnityEditor.PackageManager.Requests;
+using UnityEditor.SceneManagement;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
@@ -19,10 +19,12 @@ namespace MCPForUnityTests.EditMode.Tools
     public class PackageCommandIntegrityTests
     {
         private string root;
-        private bool ownsRoot, capturedCache;
+        private bool ownsRoot,
+            capturedCache;
         private readonly List<string> ownedFiles = new List<string>();
         private readonly List<string> ownedDirectories = new List<string>();
-        private Dictionary<string, object> cache, originalCache;
+        private Dictionary<string, object> cache,
+            originalCache;
         private Queue<string> order;
         private string[] originalOrder;
 
@@ -52,11 +54,13 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             try
             {
-                if (!ownsRoot) return;
+                if (!ownsRoot)
+                    return;
                 foreach (string path in ownedFiles)
                 {
                     GuardOwnedPath(path);
-                    if (File.Exists(path)) File.Delete(path);
+                    if (File.Exists(path))
+                        File.Delete(path);
                 }
                 foreach (string path in ownedDirectories.OrderByDescending(p => p.Length))
                 {
@@ -73,9 +77,11 @@ namespace MCPForUnityTests.EditMode.Tools
                 if (capturedCache)
                 {
                     cache.Clear();
-                    foreach (var entry in originalCache) cache.Add(entry.Key, entry.Value);
+                    foreach (var entry in originalCache)
+                        cache.Add(entry.Key, entry.Value);
                     order.Clear();
-                    foreach (string id in originalOrder) order.Enqueue(id);
+                    foreach (string id in originalOrder)
+                        order.Enqueue(id);
                 }
             }
         }
@@ -116,7 +122,8 @@ namespace MCPForUnityTests.EditMode.Tools
         [Test]
         public void ValidManifestRetainsUnownedValues()
         {
-            string text = "{\"zero\":0,\"enabled\":false,\"dependencies\":{\"com.fixture\":\"1\"},\"scopedRegistries\":[{\"name\":\"Fixture\",\"url\":\"https://example.test\",\"scopes\":[\"com.fixture\"],\"custom\":null}]}";
+            string text =
+                "{\"zero\":0,\"enabled\":false,\"dependencies\":{\"com.fixture\":\"1\"},\"scopedRegistries\":[{\"name\":\"Fixture\",\"url\":\"https://example.test\",\"scopes\":[\"com.fixture\"],\"custom\":null}]}";
             string path = WriteOwned("input.json", text);
             Assert.IsTrue(JToken.DeepEquals(JObject.Parse(text), Read(path)));
         }
@@ -128,7 +135,8 @@ namespace MCPForUnityTests.EditMode.Tools
             cache.Clear();
             order.Clear();
             string id = "mcp-test-query-" + Guid.NewGuid().ToString("N");
-            object response = failure ? (object)new ErrorResponse("Owned query error")
+            object response = failure
+                ? (object)new ErrorResponse("Owned query error")
                 : new SuccessResponse("Owned query result", new { count = 0, packages = new object[0] });
             Cache(id, response);
             // Public status retry is exercised in the controlled full-source host.
@@ -142,11 +150,13 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             cache.Clear();
             order.Clear();
-            string first = null, last = null;
+            string first = null,
+                last = null;
             for (int i = 0; i < 11; i++)
             {
                 string id = "mcp-test-query-" + Guid.NewGuid().ToString("N");
-                if (first == null) first = id;
+                if (first == null)
+                    first = id;
                 last = id;
                 Cache(id, new SuccessResponse("Owned query " + i));
             }
@@ -166,8 +176,16 @@ namespace MCPForUnityTests.EditMode.Tools
             var lists = Field<Dictionary<string, ListRequest>>("PendingListRequests");
             var searches = Field<Dictionary<string, SearchRequest>>("PendingSearchRequests");
             // Null sentinels test bookkeeping without allocating native UPM requests.
-            if (search) { searches.Add(id, null); searches.Add(active, null); }
-            else { lists.Add(id, null); lists.Add(active, null); }
+            if (search)
+            {
+                searches.Add(id, null);
+                searches.Add(active, null);
+            }
+            else
+            {
+                lists.Add(id, null);
+                lists.Add(active, null);
+            }
             try
             {
                 Cache(id, new SuccessResponse("Owned terminal result"));
@@ -224,18 +242,23 @@ namespace MCPForUnityTests.EditMode.Tools
 
         private void GuardOwnedPath(string path)
         {
-            Assert.IsTrue(Path.GetFullPath(path).StartsWith(Path.GetFullPath(root) + Path.DirectorySeparatorChar,
-                StringComparison.OrdinalIgnoreCase), "Path escaped this fixture's exact owned temporary root.");
+            Assert.IsTrue(
+                Path.GetFullPath(path).StartsWith(Path.GetFullPath(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase),
+                "Path escaped this fixture's exact owned temporary root."
+            );
         }
 
         private static JObject Read(string path) => (JObject)Method("ReadRegistryManifest").Invoke(null, new object[] { path });
+
         private static object Cache(string id, object response) => Method("CacheQueryResult").Invoke(null, new[] { id, response });
+
         private static MethodInfo Method(string name)
         {
             var method = typeof(ManagePackages).GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic);
             Assert.IsNotNull(method, name);
             return method;
         }
+
         private static T Field<T>(string name)
         {
             var field = typeof(ManagePackages).GetField(name, BindingFlags.Static | BindingFlags.NonPublic);

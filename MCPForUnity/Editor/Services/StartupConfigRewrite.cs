@@ -21,34 +21,41 @@ namespace MCPForUnity.Editor.Services
 
         static StartupConfigRewrite()
         {
-            if (UnityEditorInternal.InternalEditorUtility.inBatchMode) return;
+            if (UnityEditorInternal.InternalEditorUtility.inBatchMode)
+                return;
             // AssetImportWorker subprocesses share [InitializeOnLoad] but don't host MCP and
             // shouldn't be writing client configs from a half-loaded domain (same surface as
             // issue #1134 in CommandRegistry).
-            if (IsRunningInAssetImportWorker()) return;
-            if (SessionState.GetBool(SESSION_GUARD_KEY, false)) return;
+            if (IsRunningInAssetImportWorker())
+                return;
+            if (SessionState.GetBool(SESSION_GUARD_KEY, false))
+                return;
             EditorApplication.delayCall += RunOnce;
         }
 
         private static void RunOnce()
         {
-            if (SessionState.GetBool(SESSION_GUARD_KEY, false)) return;
+            if (SessionState.GetBool(SESSION_GUARD_KEY, false))
+                return;
             SessionState.SetBool(SESSION_GUARD_KEY, true);
 
-            if (!EditorPrefs.GetBool(EditorPrefKeys.AutoRegisterEnabled, true)) return;
+            if (!EditorPrefs.GetBool(EditorPrefKeys.AutoRegisterEnabled, true))
+                return;
 
             int rewrote = 0;
             foreach (var c in McpClientRegistry.All)
             {
                 try
                 {
-                    if (!c.IsInstalled) continue;
+                    if (!c.IsInstalled)
+                        continue;
                     // Always let CheckStatus read the current state from disk before deciding —
                     // the in-memory Status can be NotConfigured on a fresh editor load even
                     // though the file already has a valid config.
                     var before = c.Status;
                     var after = c.CheckStatus(attemptAutoRewrite: true);
-                    if (before != after && after == McpStatus.Configured) rewrote++;
+                    if (before != after && after == McpStatus.Configured)
+                        rewrote++;
                 }
                 catch (System.Exception ex)
                 {
@@ -71,7 +78,8 @@ namespace MCPForUnity.Editor.Services
             {
                 var method = typeof(UnityEditor.AssetDatabase).GetMethod(
                     "IsAssetImportWorkerProcess",
-                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic
+                );
                 if (method != null && method.GetParameters().Length == 0)
                     result = method.Invoke(null, null) is bool b && b;
             }
@@ -82,8 +90,10 @@ namespace MCPForUnity.Editor.Services
                 try
                 {
                     string cmd = Environment.CommandLine ?? string.Empty;
-                    if (cmd.IndexOf("-importWorker", StringComparison.OrdinalIgnoreCase) >= 0
-                        || cmd.IndexOf("AssetImportWorker", StringComparison.OrdinalIgnoreCase) >= 0)
+                    if (
+                        cmd.IndexOf("-importWorker", StringComparison.OrdinalIgnoreCase) >= 0
+                        || cmd.IndexOf("AssetImportWorker", StringComparison.OrdinalIgnoreCase) >= 0
+                    )
                         result = true;
                 }
                 catch { }

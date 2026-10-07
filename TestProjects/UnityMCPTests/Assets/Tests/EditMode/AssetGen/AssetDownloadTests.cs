@@ -48,8 +48,17 @@ namespace MCPForUnityTests.Editor.AssetGen
             int dnsCalls = 0;
             int sends = 0;
             var downloader = new AssetDownloadTransport(
-                _ => { dnsCalls++; return Task.FromResult(new[] { PublicIp }); },
-                (_, __, ___) => { sends++; return Task.FromResult(Ok()); });
+                _ =>
+                {
+                    dnsCalls++;
+                    return Task.FromResult(new[] { PublicIp });
+                },
+                (_, __, ___) =>
+                {
+                    sends++;
+                    return Task.FromResult(Ok());
+                }
+            );
             Assert.ThrowsAsync<InvalidOperationException>(() => downloader.DownloadAsync("meshy", url, CancellationToken.None));
             Assert.That(dnsCalls, Is.Zero);
             Assert.That(sends, Is.Zero);
@@ -112,7 +121,12 @@ namespace MCPForUnityTests.Editor.AssetGen
             int sends = 0;
             var downloader = new AssetDownloadTransport(
                 _ => Task.FromResult(new[] { PublicIp, IPAddress.Parse(address) }),
-                (_, __, ___) => { sends++; return Task.FromResult(Ok()); });
+                (_, __, ___) =>
+                {
+                    sends++;
+                    return Task.FromResult(Ok());
+                }
+            );
             Assert.ThrowsAsync<InvalidOperationException>(() => downloader.DownloadAsync("meshy", MeshyUrl, CancellationToken.None));
             Assert.That(sends, Is.Zero, "A mixed answer must fail before any connection.");
         }
@@ -155,13 +169,19 @@ namespace MCPForUnityTests.Editor.AssetGen
             int lookups = 0;
             int sends = 0;
             var downloader = new AssetDownloadTransport(
-                _ => { lookups++; return Task.FromResult(new[] { PublicIp, second }); },
+                _ =>
+                {
+                    lookups++;
+                    return Task.FromResult(new[] { PublicIp, second });
+                },
                 (_, address, __) =>
                 {
-                    if (++sends == 1) throw new WebException("connection refused", WebExceptionStatus.ConnectFailure);
+                    if (++sends == 1)
+                        throw new WebException("connection refused", WebExceptionStatus.ConnectFailure);
                     Assert.That(address, Is.EqualTo(second));
                     return Task.FromResult(Ok());
-                });
+                }
+            );
             Assert.IsTrue((await downloader.DownloadAsync("meshy", MeshyUrl, CancellationToken.None)).IsSuccess);
             Assert.That(lookups, Is.EqualTo(1));
             Assert.That(sends, Is.EqualTo(2));
@@ -178,8 +198,17 @@ namespace MCPForUnityTests.Editor.AssetGen
             int sends = 0;
             int resolutions = 0;
             var downloader = new AssetDownloadTransport(
-                _ => { resolutions++; return Task.FromResult(new[] { PublicIp }); },
-                (_, __, ___) => { sends++; return Task.FromResult(Redirect(location)); });
+                _ =>
+                {
+                    resolutions++;
+                    return Task.FromResult(new[] { PublicIp });
+                },
+                (_, __, ___) =>
+                {
+                    sends++;
+                    return Task.FromResult(Redirect(location));
+                }
+            );
             Assert.ThrowsAsync<InvalidOperationException>(() => downloader.DownloadAsync("meshy", MeshyUrl, CancellationToken.None));
             Assert.That(sends, Is.EqualTo(1));
             Assert.That(resolutions, Is.EqualTo(1));
@@ -192,7 +221,13 @@ namespace MCPForUnityTests.Editor.AssetGen
             int sends = 0;
             var downloader = new AssetDownloadTransport(
                 _ => Task.FromResult(new[] { ++lookups == 1 ? PublicIp : IPAddress.Loopback }),
-                (_, address, __) => { sends++; Assert.That(address, Is.EqualTo(PublicIp)); return Task.FromResult(Redirect("/next")); });
+                (_, address, __) =>
+                {
+                    sends++;
+                    Assert.That(address, Is.EqualTo(PublicIp));
+                    return Task.FromResult(Redirect("/next"));
+                }
+            );
             Assert.ThrowsAsync<InvalidOperationException>(() => downloader.DownloadAsync("meshy", MeshyUrl, CancellationToken.None));
             Assert.That(lookups, Is.EqualTo(2));
             Assert.That(sends, Is.EqualTo(1));
@@ -221,7 +256,8 @@ namespace MCPForUnityTests.Editor.AssetGen
                     Assert.IsFalse(request.ServerCertificateValidationCallback(null, null, null, SslPolicyErrors.RemoteCertificateChainErrors));
                     request.Abort();
                     return Task.FromResult(Ok());
-                });
+                }
+            );
             HttpResult result = await downloader.DownloadAsync("meshy", MeshyUrl, CancellationToken.None);
             Assert.IsTrue(result.IsSuccess);
             CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, result.Body);
@@ -238,13 +274,19 @@ namespace MCPForUnityTests.Editor.AssetGen
             int sends = 0;
             int lookups = 0;
             var downloader = new AssetDownloadTransport(
-                _ => { lookups++; return Task.FromResult(new[] { PublicIp }); },
+                _ =>
+                {
+                    lookups++;
+                    return Task.FromResult(new[] { PublicIp });
+                },
                 (uri, _, __) =>
                 {
-                    if (++sends == 1) return Task.FromResult(new HttpResult { Status = status, RedirectLocation = "/final?Signature=next%2Fvalue" });
+                    if (++sends == 1)
+                        return Task.FromResult(new HttpResult { Status = status, RedirectLocation = "/final?Signature=next%2Fvalue" });
                     Assert.That(uri.AbsoluteUri, Is.EqualTo("https://assets.meshy.ai/final?Signature=next%2Fvalue"));
                     return Task.FromResult(Ok());
-                });
+                }
+            );
             Assert.IsTrue((await downloader.DownloadAsync("meshy", MeshyUrl, CancellationToken.None)).IsSuccess);
             Assert.That(lookups, Is.EqualTo(2));
         }
@@ -255,7 +297,12 @@ namespace MCPForUnityTests.Editor.AssetGen
             int sends = 0;
             var downloader = new AssetDownloadTransport(
                 _ => Task.FromResult(new[] { PublicIp }),
-                (_, __, ___) => { sends++; return Task.FromResult(Redirect("/loop")); });
+                (_, __, ___) =>
+                {
+                    sends++;
+                    return Task.FromResult(Redirect("/loop"));
+                }
+            );
             Assert.ThrowsAsync<InvalidOperationException>(() => downloader.DownloadAsync("meshy", MeshyUrl, CancellationToken.None));
             Assert.That(sends, Is.EqualTo(AssetDownloadTransport.MaxRedirects + 1));
         }
@@ -283,11 +330,20 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void RejectedUrl_DoesNotLeakSignedQuery()
         {
-            var error = Assert.Throws<InvalidOperationException>(() => AssetDownloadPolicy.RequireAllowedUrl("meshy", "https://evil.example/a?Signature=secret-value"));
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                AssetDownloadPolicy.RequireAllowedUrl("meshy", "https://evil.example/a?Signature=secret-value")
+            );
             StringAssert.DoesNotContain("secret-value", error.Message);
         }
 
-        private static HttpResult Ok() => new HttpResult { Status = 200, IsSuccess = true, Body = new byte[] { 1, 2, 3 } };
+        private static HttpResult Ok() =>
+            new HttpResult
+            {
+                Status = 200,
+                IsSuccess = true,
+                Body = new byte[] { 1, 2, 3 },
+            };
+
         private static HttpResult Redirect(string location) => new HttpResult { Status = 302, RedirectLocation = location };
     }
 }

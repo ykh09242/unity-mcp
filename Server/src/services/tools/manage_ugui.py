@@ -50,31 +50,54 @@ class Resolution(BaseModel):
     height: ResolutionDimension
 
 
-_RESOLUTIONS: Final = TypeAdapter(
-    Annotated[list[Resolution], Field(min_length=1, max_length=8)]
-)
-_PROPERTIES: Final = TypeAdapter(
-    dict[str, JsonValue], config=ConfigDict(allow_inf_nan=False)
-)
+_RESOLUTIONS: Final = TypeAdapter(Annotated[list[Resolution], Field(min_length=1, max_length=8)])
+_PROPERTIES: Final = TypeAdapter(dict[str, JsonValue], config=ConfigDict(allow_inf_nan=False))
 
 # Only request-level contracts shared by all supported Unity component versions.
 # Component availability and reflected enum names remain Editor validations.
-_RECT_KEYS: Final = frozenset("anchorMin anchorMax pivot anchoredPosition sizeDelta offsetMin offsetMax localScale localEulerAngles".split())
-_TEXT_KEYS: Final = frozenset("text fontSize color alignment enableAutoSizing fontSizeMin fontSizeMax raycastTarget".split())
-_CANVAS_KEYS: Final = frozenset("renderMode sortingOrder overrideSorting pixelPerfect worldCamera planeDistance scaleFactor referencePixelsPerUnit uiScaleMode referenceResolution screenMatchMode matchWidthOrHeight".split())
-_LINEAR_KEYS: Final = frozenset("padding spacing childAlignment childControlWidth childControlHeight childForceExpandWidth childForceExpandHeight childScaleWidth childScaleHeight reverseArrangement".split())
-_GRID_KEYS: Final = frozenset("padding childAlignment cellSize spacing startCorner startAxis constraint constraintCount".split())
-_ELEMENT_KEYS: Final = frozenset("ignoreLayout minWidth minHeight preferredWidth preferredHeight flexibleWidth flexibleHeight layoutPriority".split())
+_RECT_KEYS: Final = frozenset(
+    "anchorMin anchorMax pivot anchoredPosition sizeDelta offsetMin offsetMax localScale localEulerAngles".split()
+)
+_TEXT_KEYS: Final = frozenset(
+    "text fontSize color alignment enableAutoSizing fontSizeMin fontSizeMax raycastTarget".split()
+)
+_CANVAS_KEYS: Final = frozenset(
+    "renderMode sortingOrder overrideSorting pixelPerfect worldCamera planeDistance scaleFactor referencePixelsPerUnit uiScaleMode referenceResolution screenMatchMode matchWidthOrHeight".split()
+)
+_LINEAR_KEYS: Final = frozenset(
+    "padding spacing childAlignment childControlWidth childControlHeight childForceExpandWidth childForceExpandHeight childScaleWidth childScaleHeight reverseArrangement".split()
+)
+_GRID_KEYS: Final = frozenset(
+    "padding childAlignment cellSize spacing startCorner startAxis constraint constraintCount".split()
+)
+_ELEMENT_KEYS: Final = frozenset(
+    "ignoreLayout minWidth minHeight preferredWidth preferredHeight flexibleWidth flexibleHeight layoutPriority".split()
+)
 _FITTER_KEYS: Final = frozenset("horizontalFit verticalFit".split())
-_BOOL_KEYS: Final = frozenset("enableAutoSizing raycastTarget overrideSorting pixelPerfect childControlWidth childControlHeight childForceExpandWidth childForceExpandHeight childScaleWidth childScaleHeight reverseArrangement ignoreLayout".split())
-_ENUM_KEYS: Final = frozenset("alignment renderMode uiScaleMode screenMatchMode childAlignment startCorner startAxis constraint horizontalFit verticalFit".split())
+_BOOL_KEYS: Final = frozenset(
+    "enableAutoSizing raycastTarget overrideSorting pixelPerfect childControlWidth childControlHeight childForceExpandWidth childForceExpandHeight childScaleWidth childScaleHeight reverseArrangement ignoreLayout".split()
+)
+_ENUM_KEYS: Final = frozenset(
+    "alignment renderMode uiScaleMode screenMatchMode childAlignment startCorner startAxis constraint horizontalFit verticalFit".split()
+)
 _INT_KEYS: Final = frozenset({"sortingOrder", "constraintCount", "layoutPriority"})
-_POSITIVE_KEYS: Final = frozenset({"fontSize", "fontSizeMin", "fontSizeMax", "planeDistance", "scaleFactor", "referencePixelsPerUnit"})
+_POSITIVE_KEYS: Final = frozenset(
+    {
+        "fontSize",
+        "fontSizeMin",
+        "fontSizeMax",
+        "planeDistance",
+        "scaleFactor",
+        "referencePixelsPerUnit",
+    }
+)
 _FLOAT_MAX: Final = 3.4028234663852886e38
 
 
 def _finite_float(value: JsonValue) -> bool:
-    return type(value) in (int, float) and -_FLOAT_MAX <= value <= _FLOAT_MAX and math.isfinite(value)
+    return (
+        type(value) in (int, float) and -_FLOAT_MAX <= value <= _FLOAT_MAX and math.isfinite(value)
+    )
 
 
 def _float32(value: int | float) -> float:
@@ -101,7 +124,9 @@ def _vector(value: JsonValue, names: tuple[str, ...]) -> list[float] | None:
 
 
 def _create_offsets_finite(
-    props: dict[str, JsonValue], vectors: dict[str, list[float]], stretch: bool,
+    props: dict[str, JsonValue],
+    vectors: dict[str, list[float]],
+    stretch: bool,
 ) -> bool:
     """Mirror native ValidateRect's offset projection using creation defaults only."""
     size = [0.0, 0.0] if stretch else [160.0, 80.0]
@@ -125,7 +150,9 @@ def _create_offsets_finite(
     return True
 
 
-def _properties_error(action: str, element_type: str | None, props: dict[str, JsonValue]) -> str | None:
+def _properties_error(
+    action: str, element_type: str | None, props: dict[str, JsonValue]
+) -> str | None:
     """Reject request-intrinsic uGUI errors before inspecting Editor readiness."""
     kind = props.get("type")
     match action:
@@ -177,11 +204,18 @@ def _properties_error(action: str, element_type: str | None, props: dict[str, Js
                 return error + " Expected a string."
             continue
         if key == "worldCamera":
-            if value is not None and (type(value) not in (str, int) or (type(value) is int and not -(2**31) <= value < 2**31)):
+            if value is not None and (
+                type(value) not in (str, int)
+                or (type(value) is int and not -(2**31) <= value < 2**31)
+            ):
                 return error + " Expected a GameObject name/path, integer instance ID, or null."
             continue
         if key == "padding":
-            if not isinstance(value, dict) or set(value) != {"left", "right", "top", "bottom"} or any(type(item) is not int or not 0 <= item <= 100000 for item in value.values()):
+            if (
+                not isinstance(value, dict)
+                or set(value) != {"left", "right", "top", "bottom"}
+                or any(type(item) is not int or not 0 <= item <= 100000 for item in value.values())
+            ):
                 return error + " Expected left, right, top and bottom integers in 0..100000."
             continue
         if key in _INT_KEYS:
@@ -192,7 +226,11 @@ def _properties_error(action: str, element_type: str | None, props: dict[str, Js
                 return error + f" Expected an integer in {lower}..{upper}."
             continue
         names = None
-        if key in _RECT_KEYS or key in {"referenceResolution", "cellSize"} or (key == "spacing" and kind == "grid"):
+        if (
+            key in _RECT_KEYS
+            or key in {"referenceResolution", "cellSize"}
+            or (key == "spacing" and kind == "grid")
+        ):
             names = ("x", "y", "z") if key in {"localScale", "localEulerAngles"} else ("x", "y")
         if key == "color":
             names = ("r", "g", "b", "a")
@@ -219,11 +257,25 @@ def _properties_error(action: str, element_type: str | None, props: dict[str, Js
     anchor_min, anchor_max = vectors.get("anchorMin"), vectors.get("anchorMax")
     if action == "create":
         # Native creation validates the proposed values before constructing components.
-        anchor_min = anchor_min if anchor_min is not None else ([0, 0] if element_type == "panel" else [0.5, 0.5])
-        anchor_max = anchor_max if anchor_max is not None else ([1, 1] if element_type == "panel" else [0.5, 0.5])
-    if anchor_min is not None and anchor_max is not None and any(low > high for low, high in zip(anchor_min, anchor_max)):
+        anchor_min = (
+            anchor_min
+            if anchor_min is not None
+            else ([0, 0] if element_type == "panel" else [0.5, 0.5])
+        )
+        anchor_max = (
+            anchor_max
+            if anchor_max is not None
+            else ([1, 1] if element_type == "panel" else [0.5, 0.5])
+        )
+    if (
+        anchor_min is not None
+        and anchor_max is not None
+        and any(low > high for low, high in zip(anchor_min, anchor_max))
+    ):
         return "properties.anchorMin must not exceed anchorMax."
-    if ({"offsetMin", "offsetMax"} & props.keys()) and ({"sizeDelta", "anchoredPosition"} & props.keys()):
+    if ({"offsetMin", "offsetMax"} & props.keys()) and (
+        {"sizeDelta", "anchoredPosition"} & props.keys()
+    ):
         return "Use offsets or sizeDelta/anchoredPosition in one request, since these properties overlap."
     if action == "create" and not _create_offsets_finite(props, vectors, element_type == "panel"):
         return "Offsets would overflow RectTransform position or size. Use smaller finite offsets."
@@ -342,8 +394,7 @@ async def manage_ugui(
                 "message": f"{key} must be a non-empty GameObject name/path or Int32 instance ID.",
             }
     if (
-        action_lower.startswith("set_")
-        or action_lower in ("get_hierarchy", "diagnose")
+        action_lower.startswith("set_") or action_lower in ("get_hierarchy", "diagnose")
     ) and target is None:
         return {"success": False, "message": f"target is required for {action_lower}."}
     if action_lower == "create" and element_type not in get_args(ElementType):
@@ -357,8 +408,7 @@ async def manage_ugui(
             "message": "parent is required for a non-canvas element; use a RectTransform beneath a Canvas.",
         }
     if name is not None and (
-        not name.strip()
-        or any(character in name for character in "/\\\x00\r\n")
+        not name.strip() or any(character in name for character in "/\\\x00\r\n")
     ):
         return {
             "success": False,

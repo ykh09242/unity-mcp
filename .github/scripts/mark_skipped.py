@@ -82,8 +82,7 @@ def main(path: str) -> int:
             for n in nodes:
                 msg = (n.get("message") or "") + "\n" + (n.text or "")
                 if should_skip(msg):
-                    first_match_text = (
-                        n.text or "").strip() or first_match_text
+                    first_match_text = (n.text or "").strip() or first_match_text
                     to_skip = True
             if to_skip:
                 for n in nodes:
@@ -102,8 +101,7 @@ def main(path: str) -> int:
 
     if changed:
         tree.write(path, encoding="utf-8", xml_declaration=True)
-        print(
-            f"[mark_skipped] Updated {path}: converted environmental failures to skipped.")
+        print(f"[mark_skipped] Updated {path}: converted environmental failures to skipped.")
     else:
         print(f"[mark_skipped] No environmental failures detected in {path}.")
 

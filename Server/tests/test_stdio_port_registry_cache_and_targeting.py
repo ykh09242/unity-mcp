@@ -1,4 +1,5 @@
 """Inert discovery coverage for negative registry caching and target preservation."""
+
 from datetime import datetime, timedelta
 import importlib
 from pathlib import Path
@@ -13,8 +14,10 @@ def registry_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("UNITY_MCP_DISABLE_TELEMETRY", "true")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     import socket
+
     def deny_network(*args, **kwargs):
         raise AssertionError("Registry tests must not perform live network discovery")
+
     monkeypatch.setattr(socket, "create_connection", deny_network)
     module = importlib.import_module("transport.legacy.stdio_port_registry")
     clock = [0.0]
@@ -23,18 +26,30 @@ def registry_environment(monkeypatch, tmp_path):
     fallback = []
     monkeypatch.setattr(module.time, "time", lambda: clock[0])
     monkeypatch.setattr(module.config, "port_registry_ttl", 5.0)
+
     def discover():
         scans.append(clock[0])
         return list(discovered)
+
     monkeypatch.setattr(module.PortDiscovery, "discover_all_unity_instances", discover)
-    monkeypatch.setattr(module.PortDiscovery, "discover_unity_port", lambda: fallback.append(6501) or 6501)
+    monkeypatch.setattr(
+        module.PortDiscovery, "discover_unity_port", lambda: fallback.append(6501) or 6501
+    )
     return module, clock, discovered, scans, fallback
 
 
 def _instance(name, port, heartbeat=None):
     from models.models import UnityInstanceInfo
-    return UnityInstanceInfo(id=f"{name}@{name.lower()}hash", name=name, path=f"owned/{name}",
-                             hash=f"{name.lower()}hash", port=port, status="running", last_heartbeat=heartbeat)
+
+    return UnityInstanceInfo(
+        id=f"{name}@{name.lower()}hash",
+        name=name,
+        path=f"owned/{name}",
+        hash=f"{name.lower()}hash",
+        port=port,
+        status="running",
+        last_heartbeat=heartbeat,
+    )
 
 
 def test_empty_results_are_cached_from_clock_zero_until_exact_ttl(registry_environment):
@@ -81,11 +96,13 @@ def test_failed_discovery_does_not_initialize_a_negative_cache(registry_environm
     module, _, _, _, _ = registry_environment
     registry = module.StdioPortRegistry()
     attempts = []
+
     def discover():
         attempts.append(1)
         if len(attempts) == 1:
             raise OSError("owned discovery failure")
         return []
+
     monkeypatch.setattr(module.PortDiscovery, "discover_all_unity_instances", discover)
     with pytest.raises(OSError, match="owned discovery failure"):
         registry.get_instances()
@@ -146,10 +163,12 @@ def test_send_rediscovery_does_not_retarget_missing_selection(registry_environme
     monkeypatch.setattr(connection, "stdio_port_registry", module.StdioPortRegistry())
     conn = connection.UnityConnection(instance_id=selected.id)
     attempted = []
+
     def fail_connect(connect_timeout=None, deadline=None):
         attempted.append(conn.port)
         discovered[:] = [other]
         return False
+
     monkeypatch.setattr(conn, "connect", fail_connect)
     monkeypatch.setattr(connection.time, "sleep", lambda seconds: None)
     with pytest.raises(ConnectionError, match="Could not connect to Unity"):

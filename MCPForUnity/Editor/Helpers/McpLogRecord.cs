@@ -36,7 +36,8 @@ namespace MCPForUnity.Editor.Helpers
 
         internal static void Log(string commandType, JObject parameters, string type, string status, long durationMs, string error = null)
         {
-            if (!IsEnabled) return;
+            if (!IsEnabled)
+                return;
 
             try
             {
@@ -46,7 +47,7 @@ namespace MCPForUnity.Editor.Helpers
                     ["tool"] = commandType,
                     ["type"] = type,
                     ["status"] = status,
-                    ["ms"] = durationMs
+                    ["ms"] = durationMs,
                 };
 
                 // Parameters (including action) and error text can contain credentials, scripts,
@@ -63,7 +64,7 @@ namespace MCPForUnity.Editor.Helpers
                         {
                             ["ts"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
                             ["event"] = "session_start",
-                            ["unity"] = Application.unityVersion
+                            ["unity"] = Application.unityVersion,
                         };
                         RotateAndAppend(LogPath, sessionEntry.ToString(Formatting.None));
                     }
@@ -93,9 +94,11 @@ namespace MCPForUnity.Editor.Helpers
         {
             try
             {
-                if (!File.Exists(path)) return;
+                if (!File.Exists(path))
+                    return;
                 var info = new FileInfo(path);
-                if (info.Length <= MaxLogSizeBytes) return;
+                if (info.Length <= MaxLogSizeBytes)
+                    return;
 
                 var lines = File.ReadAllLines(path);
                 var half = lines.Length / 2;

@@ -1,4 +1,5 @@
 """Generation mode forwarding and failure preservation through the real MCP SDK."""
+
 import os
 import subprocess
 import sys
@@ -6,7 +7,7 @@ import textwrap
 
 
 def test_generation_modes_at_actual_sdk_boundary():
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import asyncio, importlib
         from fastmcp import FastMCP, Client
         from core.logging_decorator import log_execution
@@ -52,9 +53,12 @@ def test_generation_modes_at_actual_sdk_boundary():
             assert len(sent) == 28
             print("real SDK generation mode forwarding and failures passed")
         asyncio.run(main())
-    ''')
+    """)
     result = subprocess.run(
-        [sys.executable, "-B", "-c", code], capture_output=True, text=True, timeout=30,
+        [sys.executable, "-B", "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
         env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
     )
     assert result.returncode == 0, result.stdout + result.stderr

@@ -16,11 +16,13 @@ namespace MCPForUnity.Editor.Services.Server
         /// <inheritdoc/>
         public string NormalizeForMatch(string input)
         {
-            if (string.IsNullOrEmpty(input)) return string.Empty;
+            if (string.IsNullOrEmpty(input))
+                return string.Empty;
             var sb = new StringBuilder(input.Length);
             foreach (char c in input)
             {
-                if (char.IsWhiteSpace(c)) continue;
+                if (char.IsWhiteSpace(c))
+                    continue;
                 sb.Append(char.ToLowerInvariant(c));
             }
             return sb.ToString();
@@ -29,8 +31,14 @@ namespace MCPForUnity.Editor.Services.Server
         /// <inheritdoc/>
         public int GetCurrentProcessId()
         {
-            try { return System.Diagnostics.Process.GetCurrentProcess().Id; }
-            catch { return -1; }
+            try
+            {
+                return System.Diagnostics.Process.GetCurrentProcess().Id;
+            }
+            catch
+            {
+                return -1;
+            }
         }
 
         /// <inheritdoc/>
@@ -48,7 +56,8 @@ namespace MCPForUnity.Editor.Services.Server
 
                 // Unix: ps exits non-zero when PID is not found.
                 string psPath = "/bin/ps";
-                if (!File.Exists(psPath)) psPath = "ps";
+                if (!File.Exists(psPath))
+                    psPath = "ps";
                 ExecPath.TryRun(psPath, $"-p {pid} -o pid=", Application.dataPath, out var psStdout, out var psStderr, 2000);
                 string combined2 = ((psStdout ?? string.Empty) + "\n" + (psStderr ?? string.Empty)).Trim();
                 return !string.IsNullOrEmpty(combined2) && combined2.Any(char.IsDigit);
@@ -68,7 +77,14 @@ namespace MCPForUnity.Editor.Services.Server
                 if (Application.platform == RuntimePlatform.WindowsEditor)
                 {
                     // Windows: use wmic to get command line
-                    ExecPath.TryRun("cmd.exe", $"/c wmic process where \"ProcessId={pid}\" get CommandLine /value", Application.dataPath, out var wmicOut, out var wmicErr, 5000);
+                    ExecPath.TryRun(
+                        "cmd.exe",
+                        $"/c wmic process where \"ProcessId={pid}\" get CommandLine /value",
+                        Application.dataPath,
+                        out var wmicOut,
+                        out var wmicErr,
+                        5000
+                    );
                     string wmicCombined = ((wmicOut ?? string.Empty) + "\n" + (wmicErr ?? string.Empty));
                     if (!string.IsNullOrEmpty(wmicCombined) && wmicCombined.ToLowerInvariant().Contains("commandline="))
                     {
@@ -80,7 +96,8 @@ namespace MCPForUnity.Editor.Services.Server
 
                 // Unix: ps -p pid -ww -o args=
                 string psPath = "/bin/ps";
-                if (!File.Exists(psPath)) psPath = "ps";
+                if (!File.Exists(psPath))
+                    psPath = "ps";
 
                 bool ok = ExecPath.TryRun(psPath, $"-p {pid} -ww -o args=", Application.dataPath, out var stdout, out var stderr, 5000);
                 if (!ok && string.IsNullOrWhiteSpace(stdout))
@@ -88,7 +105,8 @@ namespace MCPForUnity.Editor.Services.Server
                     return false;
                 }
                 string combined = ((stdout ?? string.Empty) + "\n" + (stderr ?? string.Empty)).Trim();
-                if (string.IsNullOrEmpty(combined)) return false;
+                if (string.IsNullOrEmpty(combined))
+                    return false;
                 // Normalize for matching to tolerate ps wrapping/newlines.
                 argsLower = NormalizeForMatch(combined);
                 return true;
@@ -105,7 +123,8 @@ namespace MCPForUnity.Editor.Services.Server
             var results = new List<int>();
             try
             {
-                string stdout, stderr;
+                string stdout,
+                    stderr;
                 bool success;
 
                 if (Application.platform == RuntimePlatform.WindowsEditor)
@@ -146,7 +165,8 @@ namespace MCPForUnity.Editor.Services.Server
                     // lsof: only return LISTENers (avoids capturing random clients)
                     // Use /usr/sbin/lsof directly as it might not be in PATH for Unity
                     string lsofPath = "/usr/sbin/lsof";
-                    if (!File.Exists(lsofPath)) lsofPath = "lsof"; // Fallback
+                    if (!File.Exists(lsofPath))
+                        lsofPath = "lsof"; // Fallback
 
                     // -nP: avoid DNS/service name lookups; faster and less error-prone
                     success = ExecPath.TryRun(lsofPath, $"-nP -iTCP:{port} -sTCP:LISTEN -t", Application.dataPath, out stdout, out stderr);
@@ -190,18 +210,27 @@ namespace MCPForUnity.Editor.Services.Server
                     }
 
                     // Step 2: Try to get command line with wmic for better validation
-                    ExecPath.TryRun("cmd.exe", $"/c wmic process where \"ProcessId={pid}\" get CommandLine /value", Application.dataPath, out var wmicOut, out var wmicErr, 5000);
+                    ExecPath.TryRun(
+                        "cmd.exe",
+                        $"/c wmic process where \"ProcessId={pid}\" get CommandLine /value",
+                        Application.dataPath,
+                        out var wmicOut,
+                        out var wmicErr,
+                        5000
+                    );
                     string wmicCombined = ((wmicOut ?? string.Empty) + "\n" + (wmicErr ?? string.Empty)).ToLowerInvariant();
                     string wmicCompact = NormalizeForMatch(wmicOut ?? string.Empty);
 
                     // If we can see the command line, validate it's our server
                     if (!string.IsNullOrEmpty(wmicCombined) && wmicCombined.Contains("commandline="))
                     {
-                        bool mentionsMcp = wmicCompact.Contains("mcp-for-unity")
-                                           || wmicCompact.Contains("mcp_for_unity")
-                                           || wmicCompact.Contains("mcpforunity")
-                                           || wmicCompact.Contains("mcpforunityserver");
-                        bool mentionsTransport = wmicCompact.Contains("--transporthttp") || (wmicCompact.Contains("--transport") && wmicCompact.Contains("http"));
+                        bool mentionsMcp =
+                            wmicCompact.Contains("mcp-for-unity")
+                            || wmicCompact.Contains("mcp_for_unity")
+                            || wmicCompact.Contains("mcpforunity")
+                            || wmicCompact.Contains("mcpforunityserver");
+                        bool mentionsTransport =
+                            wmicCompact.Contains("--transporthttp") || (wmicCompact.Contains("--transport") && wmicCompact.Contains("http"));
                         bool mentionsUvicorn = wmicCombined.Contains("uvicorn");
 
                         if (mentionsMcp || mentionsTransport || mentionsUvicorn)
@@ -219,7 +248,8 @@ namespace MCPForUnity.Editor.Services.Server
                 // Use -ww to avoid truncating long command lines (important for reliably spotting 'mcp-for-unity').
                 // Use an absolute ps path to avoid relying on PATH inside the Unity Editor process.
                 string psPath = "/bin/ps";
-                if (!File.Exists(psPath)) psPath = "ps";
+                if (!File.Exists(psPath))
+                    psPath = "ps";
                 // Important: ExecPath.TryRun returns false when exit code != 0, but ps output can still be useful.
                 // Always parse stdout/stderr regardless of exit code to avoid false negatives.
                 ExecPath.TryRun(psPath, $"-p {pid} -ww -o comm= -o args=", Application.dataPath, out var psOut, out var psErr, 5000);
@@ -228,9 +258,7 @@ namespace MCPForUnity.Editor.Services.Server
                 string sCompact = NormalizeForMatch(raw);
                 if (!string.IsNullOrEmpty(s))
                 {
-                    bool mentionsMcp = sCompact.Contains("mcp-for-unity")
-                                       || sCompact.Contains("mcp_for_unity")
-                                       || sCompact.Contains("mcpforunity");
+                    bool mentionsMcp = sCompact.Contains("mcp-for-unity") || sCompact.Contains("mcp_for_unity") || sCompact.Contains("mcpforunity");
 
                     // If it explicitly mentions the server package/entrypoint, that is sufficient.
                     // Note: Check before Unity exclusion since "mcp-for-unity" contains "unity".

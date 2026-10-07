@@ -31,9 +31,13 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var type = vfx ? typeof(ManageVFX) : typeof(ManageAnimation);
             var normalize = type.GetMethod("NormalizeParams", BindingFlags.NonPublic | BindingFlags.Static);
-            foreach (var properties in new JToken[] {
-                JObject.Parse("{\"enabled\":false,\"speed\":0,\"value\":null,\"target\":\"nested\"}"),
-                new JValue("{\"enabled\":false,\"speed\":0,\"value\":null,\"target\":\"nested\"}") })
+            foreach (
+                var properties in new JToken[]
+                {
+                    JObject.Parse("{\"enabled\":false,\"speed\":0,\"value\":null,\"target\":\"nested\"}"),
+                    new JValue("{\"enabled\":false,\"speed\":0,\"value\":null,\"target\":\"nested\"}"),
+                }
+            )
             {
                 var parameters = new JObject { ["properties"] = properties, ["target"] = "explicit" };
                 var original = parameters.DeepClone();

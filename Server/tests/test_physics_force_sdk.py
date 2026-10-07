@@ -1,4 +1,5 @@
 """Real SDK wire controls, separate from legacy collection stubs."""
+
 import os
 import subprocess
 import sys
@@ -6,7 +7,7 @@ import textwrap
 
 
 def test_physics_force_shape_and_failure_at_actual_sdk_boundary():
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import asyncio, importlib
         from fastmcp import FastMCP, Client
         from core.logging_decorator import log_execution
@@ -36,8 +37,13 @@ def test_physics_force_shape_and_failure_at_actual_sdk_boundary():
                             assert result.structured_content=={"success":False,"error":"invalid torque","data":{"target":"123"}}
             print("real SDK physics force contracts passed")
         asyncio.run(main())
-    ''')
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30,
-                            env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"})
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "real SDK physics force contracts passed" in result.stdout

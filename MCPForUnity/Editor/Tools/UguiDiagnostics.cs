@@ -28,8 +28,9 @@ namespace MCPForUnity.Editor.Tools
             "UnityEngine.UI.AspectRatioFitter",
             "UnityEngine.UI.Text",
             "UnityEngine.UI.Image",
-            "UnityEngine.UI.RawImage"
+            "UnityEngine.UI.RawImage",
         };
+
         private sealed class Node
         {
             private string path;
@@ -95,7 +96,13 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("missing_canvas", new { message = "The target must belong to a Canvas." });
             canvas = canvas.rootCanvas;
             if (canvas.renderMode != RenderMode.ScreenSpaceOverlay)
-                return new ErrorResponse("unsupported_canvas_mode", new { message = "Resolution diagnostics currently support Screen Space Overlay. Camera and World Space require camera projection and are not evaluated as screen pixels." });
+                return new ErrorResponse(
+                    "unsupported_canvas_mode",
+                    new
+                    {
+                        message = "Resolution diagnostics currently support Screen Space Overlay. Camera and World Space require camera projection and are not evaluated as screen pixels.",
+                    }
+                );
             var sizes = new List<Vector2>();
             if (resolutions != null)
             {
@@ -104,7 +111,10 @@ namespace MCPForUnity.Editor.Tools
                 foreach (var token in resolutions)
                 {
                     if (!(token is JObject obj) || !TryDimension(obj["width"], out int width) || !TryDimension(obj["height"], out int height))
-                        return new ErrorResponse("invalid_resolutions", new { message = "Resolution width and height must be integer pixels between 64 and 8192." });
+                        return new ErrorResponse(
+                            "invalid_resolutions",
+                            new { message = "Resolution width and height must be integer pixels between 64 and 8192." }
+                        );
                     sizes.Add(new Vector2(width, height));
                 }
             }
@@ -116,7 +126,10 @@ namespace MCPForUnity.Editor.Tools
             var anyTypes = new Dictionary<string, Type>(StringComparer.Ordinal);
             var scaler = ComponentNamed(canvas.gameObject, "UnityEngine.UI.CanvasScaler", componentTypes);
             if (Enabled(scaler) && EnumValue(scaler, "uiScaleMode") == 2)
-                return new ErrorResponse("unsupported_physical_scaling", new { message = "Constant Physical Size depends on actual device DPI, which a resolution alone does not supply." });
+                return new ErrorResponse(
+                    "unsupported_physical_scaling",
+                    new { message = "Constant Physical Size depends on actual device DPI, which a resolution alone does not supply." }
+                );
             bool current = resolutions == null;
             if (current)
             {
@@ -132,10 +145,12 @@ namespace MCPForUnity.Editor.Tools
                 "Overlap and raycast-blocker reports are candidates for review; intended overlays and event routing can make overlaps valid.",
                 "Interaction order uses hierarchy order on the root Canvas; nested Canvas sorting overrides, raycaster blocking objects and input-module configuration require runtime verification.",
                 "Animations, custom scripts/layout controllers, camera/world-space projection and runtime event handlers are not simulated.",
-                "TextMeshPro uses a conservative character/font-size estimate without executing TMP callbacks or changing its font atlas; rich-text shaping, wrapping, autosizing and TMP layout contribution are not simulated."
+                "TextMeshPro uses a conservative character/font-size estimate without executing TMP callbacks or changing its font atlas; rich-text shaping, wrapping, autosizing and TMP layout contribution are not simulated.",
             };
             if (current)
-                limitations.Add("No explicit resolutions supplied: evaluated the current Canvas size (reference resolution fallback if unavailable), not a future Game View resize.");
+                limitations.Add(
+                    "No explicit resolutions supplied: evaluated the current Canvas size (reference resolution fallback if unavailable), not a future Game View resize."
+                );
             var findings = new JArray();
             var geometry = new JArray();
             var summaries = new JArray();
@@ -196,7 +211,7 @@ namespace MCPForUnity.Editor.Tools
                         {
                             Source = rect,
                             Preview = preview,
-                            Order = scanned
+                            Order = scanned,
                         };
                         bySource.Add(rect, node);
                         var graphic = graphicType == null ? null : source.GetComponent(graphicType);
@@ -213,11 +228,7 @@ namespace MCPForUnity.Editor.Tools
                         node.VisualMasks = maskable ? inheritedMasks : null;
                         if (node.RectMask || node.PointerStencilMask)
                         {
-                            pointerMasks = new MaskChain
-                            {
-                                Mask = node,
-                                Parent = inheritedMasks
-                            };
+                            pointerMasks = new MaskChain { Mask = node, Parent = inheritedMasks };
                             maskNodes.Add(node);
                         }
 
@@ -271,7 +282,9 @@ namespace MCPForUnity.Editor.Tools
                             else if (name == "TMPro.TextMeshProUGUI")
                             {
                                 node.Text = component;
-                                limitations.Add("TMP text components were omitted from preview layout providers; containers relying on TMP preferred sizes require Game View verification.");
+                                limitations.Add(
+                                    "TMP text components were omitted from preview layout providers; containers relying on TMP preferred sizes require Game View verification."
+                                );
                             }
                             else if (component is MonoBehaviour && HasLayoutInterface(component.GetType()))
                                 limitations.Add("Custom layout controllers/elements were omitted from the preview; affected geometry may differ at runtime.");
@@ -294,12 +307,14 @@ namespace MCPForUnity.Editor.Tools
                     // Advance depth-first on demand so the preview limit also bounds sibling lookups.
                     if (source.childCount > 0)
                     {
-                        branches.Push(new PreviewBranch
-                        {
-                            Source = source,
-                            Preview = clone.transform,
-                            NextChild = 1
-                        });
+                        branches.Push(
+                            new PreviewBranch
+                            {
+                                Source = source,
+                                Preview = clone.transform,
+                                NextChild = 1,
+                            }
+                        );
                         nextSource = source.GetChild(0);
                         previewParent = clone.transform;
                     }
@@ -329,7 +344,10 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 if (!bySource.ContainsKey((RectTransform)root.transform))
-                    return new ErrorResponse("preview_limit_exceeded", new { message = "Target was outside the bounded Canvas preview. Diagnose a smaller Canvas hierarchy." });
+                    return new ErrorResponse(
+                        "preview_limit_exceeded",
+                        new { message = "Target was outside the bounded Canvas preview. Diagnose a smaller Canvas hierarchy." }
+                    );
                 var previewCanvas = (RectTransform)previewRoot.transform;
                 previewCanvas.pivot = new Vector2(0.5f, 0.5f);
                 previewCanvas.localScale = Vector3.one;
@@ -355,12 +373,17 @@ namespace MCPForUnity.Editor.Tools
                 if (hasInteractions)
                 {
                     Type eventType = ResolveType("UnityEngine.EventSystems.EventSystem", componentTypes, true);
-                    bool eventSystem = eventType != null && UnityEngine.Resources.FindObjectsOfTypeAll(eventType)
-                        .OfType<Component>()
-                        .Any(c => c.gameObject.scene.IsValid()
-                            && !EditorSceneManager.IsPreviewScene(c.gameObject.scene)
-                            && c.gameObject.activeInHierarchy
-                            && Enabled(c));
+                    bool eventSystem =
+                        eventType != null
+                        && UnityEngine
+                            .Resources.FindObjectsOfTypeAll(eventType)
+                            .OfType<Component>()
+                            .Any(c =>
+                                c.gameObject.scene.IsValid()
+                                && !EditorSceneManager.IsPreviewScene(c.gameObject.scene)
+                                && c.gameObject.activeInHierarchy
+                                && Enabled(c)
+                            );
                     if (!eventSystem)
                         Add(
                             findings,
@@ -376,7 +399,11 @@ namespace MCPForUnity.Editor.Tools
                     foreach (var node in nodes.Where(n => n.PointerActive && n.Interactive && n.Raycast))
                     {
                         var ownCanvas = FindActiveCanvas(node.Source);
-                        if (ownCanvas != null && reportedCanvases.Add(ownCanvas) && !Enabled(ComponentNamed(ownCanvas.gameObject, "UnityEngine.UI.GraphicRaycaster", componentTypes)))
+                        if (
+                            ownCanvas != null
+                            && reportedCanvases.Add(ownCanvas)
+                            && !Enabled(ComponentNamed(ownCanvas.gameObject, "UnityEngine.UI.GraphicRaycaster", componentTypes))
+                        )
                             Add(
                                 findings,
                                 "missing_graphic_raycaster",
@@ -403,7 +430,7 @@ namespace MCPForUnity.Editor.Tools
                         ["width"] = size.x,
                         ["height"] = size.y,
                         ["scaleFactor"] = scale,
-                        ["mode"] = current ? "current" : "preview"
+                        ["mode"] = current ? "current" : "preview",
                     };
                     Rect canvasBounds = new Rect(Vector2.zero, size);
                     int before = findings.Count;
@@ -426,9 +453,10 @@ namespace MCPForUnity.Editor.Tools
                             mask.VisualMaskBounds = Intersect(mask.VisualMaskBounds, rawBounds);
                         if (mask.NeedsPointerMaskBounds)
                         {
-                            mask.PointerMaskBounds = mask.RectMask && mask.MaskPadding != Vector4.zero
-                                ? PaddedBounds(mask.Preview, previewCanvas, scale, size, mask.MaskPadding)
-                                : rawBounds;
+                            mask.PointerMaskBounds =
+                                mask.RectMask && mask.MaskPadding != Vector4.zero
+                                    ? PaddedBounds(mask.Preview, previewCanvas, scale, size, mask.MaskPadding)
+                                    : rawBounds;
                             if (mask.PointerStencilMask)
                                 mask.PointerMaskBounds = Intersect(mask.PointerMaskBounds, rawBounds);
                         }
@@ -451,9 +479,7 @@ namespace MCPForUnity.Editor.Tools
                             {
                                 if (!hasRectangularClip)
                                     rectangularMaskBounds = mask.UnpaddedMaskBounds;
-                                rectangularClip = hasRectangularClip
-                                    ? Intersect(rectangularClip, mask.RectangularClipBounds)
-                                    : mask.RectangularClipBounds;
+                                rectangularClip = hasRectangularClip ? Intersect(rectangularClip, mask.RectangularClipBounds) : mask.RectangularClipBounds;
                                 hasRectangularClip = true;
                             }
                             if (node.Visible && !Contains(mask.VisualMaskBounds, node.Bounds))
@@ -477,33 +503,41 @@ namespace MCPForUnity.Editor.Tools
                             // Same-object masks and stencil-only approximations do not apply this gate.
                             // Native renderer overlap can retain zero-area rects with expanded pointer padding.
                             // The nearest mask compares the clip to its own rect in root Canvas coordinates.
-                            bool rectMaskCulled = node.UsesRectMaskCulling && hasRectangularClip
-                                && (rectangularClip.width <= 0 || rectangularClip.height <= 0
+                            bool rectMaskCulled =
+                                node.UsesRectMaskCulling
+                                && hasRectangularClip
+                                && (
+                                    rectangularClip.width <= 0
+                                    || rectangularClip.height <= 0
                                     || !rectangularClip.Overlaps(rectangularMaskBounds, true)
-                                    || !rectangularClip.Overlaps(node.Bounds, true));
+                                    || !rectangularClip.Overlaps(node.Bounds, true)
+                                );
                             if (rectMaskCulled)
                                 node.RaycastBounds = new Rect();
                             else
                             {
-                                node.RaycastBounds = node.RaycastPadding == Vector4.zero
-                                    ? Intersect(node.Bounds, canvasBounds)
-                                    : Intersect(PaddedBounds(node.Preview, previewCanvas, scale, size, node.RaycastPadding), canvasBounds);
+                                node.RaycastBounds =
+                                    node.RaycastPadding == Vector4.zero
+                                        ? Intersect(node.Bounds, canvasBounds)
+                                        : Intersect(PaddedBounds(node.Preview, previewCanvas, scale, size, node.RaycastPadding), canvasBounds);
                                 for (var filter = node.PointerMasks; filter != null; filter = filter.Parent)
                                     node.RaycastBounds = Intersect(node.RaycastBounds, filter.Mask.PointerMaskBounds);
                             }
                         }
 
-                        geometry.Add(new JObject
-                        {
-                            ["path"] = node.Path,
-                            ["instanceID"] = node.Source.gameObject.GetInstanceIDCompat(),
-                            ["resolution"] = resolution.DeepClone(),
-                            ["rect"] = RectJson(node.Bounds),
-                            ["visibleRect"] = RectJson(node.HitBounds),
-                            ["raycastRect"] = node.PointerActive && node.Raycast ? RectJson(node.RaycastBounds) : null,
-                            ["active"] = node.Source.gameObject.activeInHierarchy,
-                            ["visible"] = node.Visible
-                        });
+                        geometry.Add(
+                            new JObject
+                            {
+                                ["path"] = node.Path,
+                                ["instanceID"] = node.Source.gameObject.GetInstanceIDCompat(),
+                                ["resolution"] = resolution.DeepClone(),
+                                ["rect"] = RectJson(node.Bounds),
+                                ["visibleRect"] = RectJson(node.HitBounds),
+                                ["raycastRect"] = node.PointerActive && node.Raycast ? RectJson(node.RaycastBounds) : null,
+                                ["active"] = node.Source.gameObject.activeInHierarchy,
+                                ["visible"] = node.Visible,
+                            }
+                        );
                         if (!node.Visible)
                             continue;
                         if (node.Preview.rect.width <= 0.01f || node.Preview.rect.height <= 0.01f)
@@ -543,10 +577,12 @@ namespace MCPForUnity.Editor.Tools
                             if (i == j || !second.PointerActive || !second.Raycast)
                                 continue;
                             pairs++;
-                            if ((first.Receiver != null && first.Receiver == second.Receiver)
+                            if (
+                                (first.Receiver != null && first.Receiver == second.Receiver)
                                 || !Overlaps(first.RaycastBounds, second.RaycastBounds)
                                 || first.Source.IsChildOf(second.Source)
-                                || second.Source.IsChildOf(first.Source))
+                                || second.Source.IsChildOf(first.Source)
+                            )
                                 continue;
                             if (second.Interactive && j > i)
                                 Add(
@@ -579,31 +615,36 @@ namespace MCPForUnity.Editor.Tools
                         limitations.Add("Interaction comparisons are capped at 20000 pairs per resolution; candidates may be omitted.");
                     }
 
-                    summaries.Add(new JObject
-                    {
-                        ["resolution"] = resolution,
-                        ["nodesEvaluated"] = nodes.Count,
-                        ["findingsReturned"] = findings.Count - before,
-                        ["interactionPairsChecked"] = pairs
-                    });
+                    summaries.Add(
+                        new JObject
+                        {
+                            ["resolution"] = resolution,
+                            ["nodesEvaluated"] = nodes.Count,
+                            ["findingsReturned"] = findings.Count - before,
+                            ["interactionPairsChecked"] = pairs,
+                        }
+                    );
                 }
 
-                return new SuccessResponse("uGUI diagnostics complete.", new
-                {
-                    findings,
-                    rects = geometry,
-                    resolutions = summaries,
-                    counts = new
+                return new SuccessResponse(
+                    "uGUI diagnostics complete.",
+                    new
                     {
-                        nodes = nodes.Count,
-                        findings = findings.Count,
-                        warnings = findings.Count(f => (string)f["severity"] == "warning"),
-                        candidates = findings.Count(f => (string)f["severity"] == "candidate")
-                    },
-                    truncated,
-                    limitations = limitations.OrderBy(x => x).ToArray(),
-                    evaluation = "sanitized_layout_preview"
-                });
+                        findings,
+                        rects = geometry,
+                        resolutions = summaries,
+                        counts = new
+                        {
+                            nodes = nodes.Count,
+                            findings = findings.Count,
+                            warnings = findings.Count(f => (string)f["severity"] == "warning"),
+                            candidates = findings.Count(f => (string)f["severity"] == "candidate"),
+                        },
+                        truncated,
+                        limitations = limitations.OrderBy(x => x).ToArray(),
+                        evaluation = "sanitized_layout_preview",
+                    }
+                );
             }
             catch (Exception ex)
             {
@@ -669,7 +710,10 @@ namespace MCPForUnity.Editor.Tools
         }
 
         private static bool Enabled(Component component) => component != null && (!(component is Behaviour behaviour) || behaviour.enabled);
-        private static bool HasLayoutInterface(Type type) => type.GetInterfaces().Any(t => t.FullName == "UnityEngine.UI.ILayoutController" || t.FullName == "UnityEngine.UI.ILayoutElement");
+
+        private static bool HasLayoutInterface(Type type) =>
+            type.GetInterfaces().Any(t => t.FullName == "UnityEngine.UI.ILayoutController" || t.FullName == "UnityEngine.UI.ILayoutElement");
+
         private static float Scale(Component scaler, float fallback, Vector2 size)
         {
             if (!Enabled(scaler))
@@ -679,7 +723,8 @@ namespace MCPForUnity.Editor.Tools
             if (mode == 0)
                 return Mathf.Max(0.0001f, Read(scaler, "scaleFactor", 1f));
             Vector2 reference = Read(scaler, "referenceResolution", new Vector2(800, 600));
-            float x = size.x / reference.x, y = size.y / reference.y;
+            float x = size.x / reference.x,
+                y = size.y / reference.y;
             object matchValue = scaler.GetType().GetProperty("screenMatchMode")?.GetValue(scaler);
             int match = matchValue == null ? 0 : Convert.ToInt32(matchValue);
             if (match == 1)
@@ -721,7 +766,8 @@ namespace MCPForUnity.Editor.Tools
         {
             var corners = new Vector3[4];
             rect.GetWorldCorners(corners);
-            Vector2 min = new Vector2(float.PositiveInfinity, float.PositiveInfinity), max = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
+            Vector2 min = new Vector2(float.PositiveInfinity, float.PositiveInfinity),
+                max = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
             foreach (var corner in corners)
             {
                 Vector2 point = (Vector2)canvas.InverseTransformPoint(corner) * scale + size * 0.5f;
@@ -752,13 +798,7 @@ namespace MCPForUnity.Editor.Tools
             float right = local.xMax - padding.z;
             float top = local.yMax - padding.w;
             // Native hit testing accepts reversed padded edges; transformed corners normalize their bounds.
-            var corners = new[]
-            {
-                new Vector3(left, bottom, 0),
-                new Vector3(left, top, 0),
-                new Vector3(right, top, 0),
-                new Vector3(right, bottom, 0)
-            };
+            var corners = new[] { new Vector3(left, bottom, 0), new Vector3(left, top, 0), new Vector3(right, top, 0), new Vector3(right, bottom, 0) };
             Vector2 min = new Vector2(float.PositiveInfinity, float.PositiveInfinity);
             Vector2 max = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
             foreach (var corner in corners)
@@ -880,7 +920,13 @@ namespace MCPForUnity.Editor.Tools
             return Enabled(graphic) && Read(graphic, "raycastTarget", false);
         }
 
-        private static void LayoutFindings(Node node, JArray findings, Dictionary<string, Type> componentTypes, Dictionary<string, Type> anyTypes, ref bool truncated)
+        private static void LayoutFindings(
+            Node node,
+            JArray findings,
+            Dictionary<string, Type> componentTypes,
+            Dictionary<string, Type> anyTypes,
+            ref bool truncated
+        )
         {
             if (!node.Source.gameObject.activeInHierarchy)
                 return;
@@ -945,6 +991,7 @@ namespace MCPForUnity.Editor.Tools
         }
 
         private static bool Fit(Component component, string property) => Enabled(component) && EnumValue(component, property) != 0;
+
         private static bool AspectEligible(Component component, Dictionary<string, Type> componentTypes)
         {
             if (component == null)
@@ -964,7 +1011,8 @@ namespace MCPForUnity.Editor.Tools
                 return;
             bool tmp = node.Text.GetType().FullName == "TMPro.TextMeshProUGUI";
             // Query only the legacy Text clone. TMP getters can rebuild the original text or font atlas.
-            float preferredWidth, preferredHeight;
+            float preferredWidth,
+                preferredHeight;
             if (tmp)
             {
                 string text = Read(node.Text, "text", "");
@@ -1011,25 +1059,38 @@ namespace MCPForUnity.Editor.Tools
             return string.Join("/", parts);
         }
 
-        private static JObject RectJson(Rect rect) => new JObject
-        {
-            ["x"] = rect.x,
-            ["y"] = rect.y,
-            ["width"] = rect.width,
-            ["height"] = rect.height
-        };
-        private static bool Contains(Rect outer, Rect inner) => inner.xMin >= outer.xMin - 0.5f
-            && inner.xMax <= outer.xMax + 0.5f
-            && inner.yMin >= outer.yMin - 0.5f
-            && inner.yMax <= outer.yMax + 0.5f;
+        private static JObject RectJson(Rect rect) =>
+            new JObject
+            {
+                ["x"] = rect.x,
+                ["y"] = rect.y,
+                ["width"] = rect.width,
+                ["height"] = rect.height,
+            };
+
+        private static bool Contains(Rect outer, Rect inner) =>
+            inner.xMin >= outer.xMin - 0.5f && inner.xMax <= outer.xMax + 0.5f && inner.yMin >= outer.yMin - 0.5f && inner.yMax <= outer.yMax + 0.5f;
+
         private static bool Overlaps(Rect a, Rect b) => a.width > 0 && a.height > 0 && b.width > 0 && b.height > 0 && a.Overlaps(b);
-        private static Rect Intersect(Rect a, Rect b) => new Rect(
-            Mathf.Max(a.xMin, b.xMin),
-            Mathf.Max(a.yMin, b.yMin),
-            Mathf.Max(0, Mathf.Min(a.xMax, b.xMax) - Mathf.Max(a.xMin, b.xMin)),
-            Mathf.Max(0, Mathf.Min(a.yMax, b.yMax) - Mathf.Max(a.yMin, b.yMin))
-        );
-        private static void Add(JArray findings, string code, string severity, Node node, string description, Node related, JObject resolution, ref bool truncated)
+
+        private static Rect Intersect(Rect a, Rect b) =>
+            new Rect(
+                Mathf.Max(a.xMin, b.xMin),
+                Mathf.Max(a.yMin, b.yMin),
+                Mathf.Max(0, Mathf.Min(a.xMax, b.xMax) - Mathf.Max(a.xMin, b.xMin)),
+                Mathf.Max(0, Mathf.Min(a.yMax, b.yMax) - Mathf.Max(a.yMin, b.yMin))
+            );
+
+        private static void Add(
+            JArray findings,
+            string code,
+            string severity,
+            Node node,
+            string description,
+            Node related,
+            JObject resolution,
+            ref bool truncated
+        )
         {
             if (findings.Count >= FindingLimit)
             {
@@ -1037,21 +1098,20 @@ namespace MCPForUnity.Editor.Tools
                 return;
             }
 
-            findings.Add(new JObject
-            {
-                ["code"] = code,
-                ["severity"] = severity,
-                ["status"] = severity == "candidate" ? "candidate" : "observed",
-                ["path"] = node.Path,
-                ["instanceID"] = node.Source.gameObject.GetInstanceIDCompat(),
-                ["description"] = description,
-                ["relatedTarget"] = related == null ? null : new JObject
+            findings.Add(
+                new JObject
                 {
-                    ["path"] = related.Path,
-                    ["instanceID"] = related.Source.gameObject.GetInstanceIDCompat()
-                },
-                ["resolution"] = resolution?.DeepClone()
-            });
+                    ["code"] = code,
+                    ["severity"] = severity,
+                    ["status"] = severity == "candidate" ? "candidate" : "observed",
+                    ["path"] = node.Path,
+                    ["instanceID"] = node.Source.gameObject.GetInstanceIDCompat(),
+                    ["description"] = description,
+                    ["relatedTarget"] =
+                        related == null ? null : new JObject { ["path"] = related.Path, ["instanceID"] = related.Source.gameObject.GetInstanceIDCompat() },
+                    ["resolution"] = resolution?.DeepClone(),
+                }
+            );
         }
     }
 }

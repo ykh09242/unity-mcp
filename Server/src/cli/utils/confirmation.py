@@ -4,11 +4,7 @@ import click
 
 
 def confirm_destructive_action(
-    action: str,
-    item_type: str,
-    item_name: str,
-    force: bool,
-    extra_context: str = ""
+    action: str, item_type: str, item_name: str, force: bool, extra_context: str = ""
 ) -> None:
     """Prompt user to confirm destructive action unless --force flag is set.
 

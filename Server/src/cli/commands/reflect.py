@@ -42,18 +42,27 @@ def get_member(class_name: str, member_name: str):
         unity-mcp reflect member NavMeshAgent SetDestination
     """
     config = get_config()
-    result = run_command("unity_reflect", {
-        "action": "get_member",
-        "class_name": class_name,
-        "member_name": member_name,
-    }, config)
+    result = run_command(
+        "unity_reflect",
+        {
+            "action": "get_member",
+            "class_name": class_name,
+            "member_name": member_name,
+        },
+        config,
+    )
     click.echo(format_output(result, config.format))
 
 
 @reflect.command("search")
 @click.argument("query")
-@click.option("--scope", "-s", default="unity", type=click.Choice(["unity", "packages", "project", "all"]),
-              help="Assembly scope to search.")
+@click.option(
+    "--scope",
+    "-s",
+    default="unity",
+    type=click.Choice(["unity", "packages", "project", "all"]),
+    help="Assembly scope to search.",
+)
 @handle_unity_errors
 def search(query: str, scope: str):
     """Search for Unity types by name.
@@ -64,9 +73,13 @@ def search(query: str, scope: str):
         unity-mcp reflect search Camera --scope all
     """
     config = get_config()
-    result = run_command("unity_reflect", {
-        "action": "search",
-        "query": query,
-        "scope": scope,
-    }, config)
+    result = run_command(
+        "unity_reflect",
+        {
+            "action": "search",
+            "query": query,
+            "scope": scope,
+        },
+        config,
+    )
     click.echo(format_output(result, config.format))

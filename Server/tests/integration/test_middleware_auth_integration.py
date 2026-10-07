@@ -21,8 +21,7 @@ class TestMiddlewareAuthEnforcement:
         middleware = UnityInstanceMiddleware()
 
         # Mock _resolve_user_id to return None (no API key / failed validation)
-        monkeypatch.setattr(middleware, "_resolve_user_id",
-                            AsyncMock(return_value=None))
+        monkeypatch.setattr(middleware, "_resolve_user_id", AsyncMock(return_value=None))
 
         ctx = DummyContext()
         middleware_ctx = Mock()
@@ -39,8 +38,7 @@ class TestMiddlewareAuthEnforcement:
         from transport.unity_instance_middleware import UnityInstanceMiddleware
 
         middleware = UnityInstanceMiddleware()
-        monkeypatch.setattr(middleware, "_resolve_user_id",
-                            AsyncMock(return_value="user-55"))
+        monkeypatch.setattr(middleware, "_resolve_user_id", AsyncMock(return_value="user-55"))
 
         # We need PluginHub to be configured for the session resolution path
         # But we don't need it to actually find a session for this test
@@ -74,12 +72,12 @@ class TestAutoSelectDisabledRemoteHosted:
         monkeypatch.setattr(config, "transport_mode", "http")
 
         # Re-import middleware to pick up the stubbed transport module
-        monkeypatch.delitem(
-            sys.modules, "transport.unity_instance_middleware", raising=False)
+        monkeypatch.delitem(sys.modules, "transport.unity_instance_middleware", raising=False)
         from transport.unity_instance_middleware import UnityInstanceMiddleware, PluginHub as HubRef
 
         # Configure PluginHub with one session so auto-select has something to find
         from transport.plugin_registry import PluginRegistry
+
         registry = PluginRegistry()
         await registry.register("s1", "Proj", "h1", "2022", user_id="userA")
 
@@ -116,9 +114,7 @@ class TestHttpAuthBehavior:
         async def _unused_send_fn(*_args, **_kwargs):
             raise AssertionError("send_fn should not be used in HTTP mode")
 
-        result = await unity_transport.send_with_unity_instance(
-            _unused_send_fn, None, "ping", {}
-        )
+        result = await unity_transport.send_with_unity_instance(_unused_send_fn, None, "ping", {})
 
         assert result["success"] is True
         assert result["data"] == {"ok": True}
@@ -134,9 +130,7 @@ class TestHttpAuthBehavior:
         async def _unused_send_fn(*_args, **_kwargs):
             raise AssertionError("send_fn should not be used in HTTP mode")
 
-        result = await unity_transport.send_with_unity_instance(
-            _unused_send_fn, None, "ping", {}
-        )
+        result = await unity_transport.send_with_unity_instance(_unused_send_fn, None, "ping", {})
 
         assert result["success"] is False
         assert result["error"] == "auth_required"

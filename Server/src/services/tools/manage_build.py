@@ -49,20 +49,35 @@ async def _send_build_command(
 )
 async def manage_build(
     ctx: Context,
-    action: Annotated[str, "Action: build, status, platform, settings, scenes, profiles, batch, cancel"],
-    target: Annotated[Optional[str], "Build target: windows64, osx, linux64, android, ios, webgl, uwp, tvos, visionos"] = None,
+    action: Annotated[
+        str, "Action: build, status, platform, settings, scenes, profiles, batch, cancel"
+    ],
+    target: Annotated[
+        Optional[str],
+        "Build target: windows64, osx, linux64, android, ios, webgl, uwp, tvos, visionos",
+    ] = None,
     output_path: Annotated[Optional[str], "Output path for the build"] = None,
     scenes: Annotated[Optional[str], "JSON array of scene paths, or comma-separated paths"] = None,
     development: Annotated[Optional[str], "Development build (true/false)"] = None,
-    options: Annotated[Optional[str], "JSON array of BuildOptions: clean_build, auto_run, deep_profiling, compress_lz4, strict_mode, detailed_report"] = None,
+    options: Annotated[
+        Optional[str],
+        "JSON array of BuildOptions: clean_build, auto_run, deep_profiling, compress_lz4, strict_mode, detailed_report",
+    ] = None,
     subtarget: Annotated[Optional[str], "Build subtarget: player or server"] = None,
-    scripting_backend: Annotated[Optional[str], "Scripting backend: mono or il2cpp (persistent change)"] = None,
+    scripting_backend: Annotated[
+        Optional[str], "Scripting backend: mono or il2cpp (persistent change)"
+    ] = None,
     profile: Annotated[Optional[str], "Build Profile asset path (Unity 6+ only)"] = None,
-    property: Annotated[Optional[str], "Settings property: product_name, company_name, version, bundle_id, scripting_backend, defines, architecture"] = None,
+    property: Annotated[
+        Optional[str],
+        "Settings property: product_name, company_name, version, bundle_id, scripting_backend, defines, architecture",
+    ] = None,
     value: Annotated[Optional[str], "Value to set for the property (omit to read)"] = None,
     activate: Annotated[Optional[str], "Activate a build profile (true/false)"] = None,
     targets: Annotated[Optional[str], "JSON array of targets for batch build"] = None,
-    profiles: Annotated[Optional[str], "JSON array of profile paths for batch build (Unity 6+)"] = None,
+    profiles: Annotated[
+        Optional[str], "JSON array of profile paths for batch build (Unity 6+)"
+    ] = None,
     output_dir: Annotated[Optional[str], "Base output directory for batch builds"] = None,
     job_id: Annotated[Optional[str], "Job ID for status/cancel"] = None,
 ) -> dict[str, Any]:

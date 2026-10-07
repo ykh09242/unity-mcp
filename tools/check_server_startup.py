@@ -40,13 +40,18 @@ async def check_registration():
 def main():
     os.environ["DISABLE_TELEMETRY"] = "true"
     os.environ["UNITY_MCP_TELEMETRY_ENABLED"] = "false"
-    print(json.dumps({
-        "python": sys.version.split()[0],
-        "server": version("ykh09242-unity-mcp-server"),
-        "fastmcp": version("fastmcp"),
-        "mcp": version("mcp"),
-        "griffelib": version("griffelib"),
-    }), flush=True)
+    print(
+        json.dumps(
+            {
+                "python": sys.version.split()[0],
+                "server": version("ykh09242-unity-mcp-server"),
+                "fastmcp": version("fastmcp"),
+                "mcp": version("mcp"),
+                "griffelib": version("griffelib"),
+            }
+        ),
+        flush=True,
+    )
     with TemporaryDirectory(prefix="unity-mcp-startup-") as log_dir:
         os.environ["UNITY_MCP_LOG_DIR"] = log_dir
         try:

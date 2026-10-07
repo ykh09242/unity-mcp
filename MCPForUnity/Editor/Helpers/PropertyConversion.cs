@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
-using MCPForUnity.Editor.Helpers;
 using UnityEditor;
 using UnityEngine;
 
@@ -36,9 +36,7 @@ namespace MCPForUnity.Editor.Helpers
             try
             {
                 // Use the shared Unity serializer with custom converters
-                JToken input = token is JArray && HasNullableUnityArrayTarget(targetType, null)
-                    ? NormalizeNullableUnityArrays(token, targetType)
-                    : token;
+                JToken input = token is JArray && HasNullableUnityArrayTarget(targetType, null) ? NormalizeNullableUnityArrays(token, targetType) : token;
                 return input.ToObject(targetType, UnityJsonSerializer.Instance);
             }
             catch (Exception ex)
@@ -51,24 +49,27 @@ namespace MCPForUnity.Editor.Helpers
         private static bool IsNullableUnityArrayType(Type type)
         {
             Type underlying = Nullable.GetUnderlyingType(type);
-            return underlying == typeof(Vector2) || underlying == typeof(Vector3)
-                || underlying == typeof(Vector4) || underlying == typeof(Quaternion);
+            return underlying == typeof(Vector2) || underlying == typeof(Vector3) || underlying == typeof(Vector4) || underlying == typeof(Quaternion);
         }
 
         private static bool HasNullableUnityArrayTarget(Type type, HashSet<Type> visited)
         {
-            if (IsNullableUnityArrayType(type)) return true;
+            if (IsNullableUnityArrayType(type))
+                return true;
             // Multidimensional arrays retain their existing Json.NET handling.
-            if (type.IsArray && type.GetArrayRank() != 1) return false;
+            if (type.IsArray && type.GetArrayRank() != 1)
+                return false;
             var contract = UnityJsonSerializer.Instance.ContractResolver.ResolveContract(type) as JsonArrayContract;
-            if (contract?.CollectionItemType == null) return false;
+            if (contract?.CollectionItemType == null)
+                return false;
             visited ??= new HashSet<Type>();
             return visited.Add(type) && HasNullableUnityArrayTarget(contract.CollectionItemType, visited);
         }
 
         private static JToken NormalizeNullableUnityArrays(JToken token, Type targetType)
         {
-            if (token is not JArray array) return token;
+            if (token is not JArray array)
+                return token;
             if (IsNullableUnityArrayType(targetType))
             {
                 // Reuse the existing converter's length/numeric rules, then leave
@@ -82,7 +83,8 @@ namespace MCPForUnity.Editor.Helpers
             for (int i = 0; i < array.Count; i++)
             {
                 JToken item = NormalizeNullableUnityArrays(array[i], contract.CollectionItemType);
-                if (ReferenceEquals(item, array[i])) continue;
+                if (ReferenceEquals(item, array[i]))
+                    continue;
                 normalized ??= (JArray)array.DeepClone();
                 normalized[i] = item;
             }
@@ -126,14 +128,13 @@ namespace MCPForUnity.Editor.Helpers
 
             string assetPath = AssetPathUtility.GetAssetReferencePath(token.ToString(), allowPackages: true, allowBuiltIn: true);
             UnityEngine.Object loadedAsset = AssetDatabase.LoadAssetAtPath(assetPath, targetType);
-            
+
             if (loadedAsset == null)
             {
                 McpLog.Warn($"[PropertyConversion] Could not load asset of type {targetType.Name} from path: {assetPath}");
             }
-            
+
             return loadedAsset;
         }
     }
 }
-

@@ -2,6 +2,34 @@
 # where CRLF would fail with "bad interpreter".
 *.sh text eol=lf
 
+# Authored script/config text uses LF consistently with .editorconfig.
+# These attributes do not format files or require renormalizing unrelated paths.
+/.gitattributes text eol=lf
+/.editorconfig text eol=lf
+*.py text eol=lf
+*.pyi text eol=lf
+*.cs text eol=lf
+*.csx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.scss text eol=lf
+*.html text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.bash text eol=lf
+*.ps1 text eol=lf
+*.psm1 text eol=lf
+*.psd1 text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
 # compile-check.sh reads these line by line; a CR from a core.autocrlf checkout would
 # become part of every -define: symbol and reference name.
 tools/compile-defines.txt text eol=lf

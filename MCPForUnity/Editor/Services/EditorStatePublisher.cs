@@ -28,8 +28,7 @@ namespace MCPForUnity.Editor.Services
         }
 
         /// <summary>Call on Unity's main thread after capability negotiation and registration.</summary>
-        internal static EditorStatePublisher Start(Func<JObject, CancellationToken, Task> send,
-            CancellationToken connectionToken)
+        internal static EditorStatePublisher Start(Func<JObject, CancellationToken, Task> send, CancellationToken connectionToken)
         {
             connectionToken.ThrowIfCancellationRequested();
             var publisher = new EditorStatePublisher(send, connectionToken);
@@ -38,8 +37,10 @@ namespace MCPForUnity.Editor.Services
                 var subscription = EditorStateCache.Subscribe(publisher.Observe);
                 lock (publisher._gate)
                 {
-                    if (publisher._disposed) subscription.Dispose();
-                    else publisher._subscription = subscription;
+                    if (publisher._disposed)
+                        subscription.Dispose();
+                    else
+                        publisher._subscription = subscription;
                 }
                 return publisher;
             }
@@ -54,16 +55,18 @@ namespace MCPForUnity.Editor.Services
         {
             lock (_gate)
             {
-                if (_disposed || _lifetime.IsCancellationRequested) return;
+                if (_disposed || _lifetime.IsCancellationRequested)
+                    return;
                 _pending = new JObject
                 {
                     ["type"] = "editor_state",
                     ["epoch"] = EditorStateCache.Epoch,
                     ["sequence"] = snapshot["sequence"].DeepClone(),
                     ["observed_at_unix_ms"] = snapshot["observed_at_unix_ms"].DeepClone(),
-                    ["state"] = snapshot
+                    ["state"] = snapshot,
                 };
-                if (_sending) return;
+                if (_sending)
+                    return;
                 _sending = true;
                 _ = Task.Run(DrainAsync);
             }
@@ -89,7 +92,10 @@ namespace MCPForUnity.Editor.Services
                     await _send(message, _lifetime.Token).ConfigureAwait(false);
                 }
             }
-            catch (OperationCanceledException) { Dispose(); }
+            catch (OperationCanceledException)
+            {
+                Dispose();
+            }
             catch (Exception ex)
             {
                 McpLog.Warn($"[EditorStatePublisher] State push stopped: {ex.Message}");
@@ -100,7 +106,8 @@ namespace MCPForUnity.Editor.Services
                 lock (_gate)
                 {
                     _sending = false;
-                    if (_disposed) _lifetime.Dispose();
+                    if (_disposed)
+                        _lifetime.Dispose();
                     else if (_pending != null)
                     {
                         // An observation may have arrived between the last empty
@@ -117,13 +124,15 @@ namespace MCPForUnity.Editor.Services
             IDisposable subscription;
             lock (_gate)
             {
-                if (_disposed) return;
+                if (_disposed)
+                    return;
                 _disposed = true;
                 _pending = null;
                 subscription = _subscription;
                 _subscription = null;
                 _lifetime.Cancel();
-                if (!_sending) _lifetime.Dispose();
+                if (!_sending)
+                    _lifetime.Dispose();
             }
             subscription?.Dispose();
         }

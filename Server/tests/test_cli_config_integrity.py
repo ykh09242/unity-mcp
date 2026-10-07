@@ -17,7 +17,13 @@ from cli.utils import config as config_module, connection
 from cli.utils.config import CLIConfig
 
 
-ENV_NAMES = ("UNITY_MCP_HOST", "UNITY_MCP_HTTP_PORT", "UNITY_MCP_TIMEOUT", "UNITY_MCP_FORMAT", "UNITY_MCP_INSTANCE")
+ENV_NAMES = (
+    "UNITY_MCP_HOST",
+    "UNITY_MCP_HTTP_PORT",
+    "UNITY_MCP_TIMEOUT",
+    "UNITY_MCP_FORMAT",
+    "UNITY_MCP_INSTANCE",
+)
 INVALID_VALUES = [
     ("port", "UNITY_MCP_HTTP_PORT", "0"),
     ("port", "UNITY_MCP_HTTP_PORT", "-1"),
@@ -45,7 +51,13 @@ def config_transport(monkeypatch):
     client_type = httpx.AsyncClient
 
     def respond(request):
-        trace["requests"].append({"url": str(request.url), "timeout": request.extensions["timeout"], "body": json.loads(request.content)})
+        trace["requests"].append(
+            {
+                "url": str(request.url),
+                "timeout": request.extensions["timeout"],
+                "body": json.loads(request.content),
+            }
+        )
         return httpx.Response(200, json={"success": True, "data": {"count": 0, "enabled": False}})
 
     def client():
@@ -58,13 +70,19 @@ def config_transport(monkeypatch):
 
     monkeypatch.setattr(connection.httpx, "AsyncClient", client)
     monkeypatch.setattr(connection, "_auth_headers", auth)
-    monkeypatch.setattr(import_module("cli.main"), "warn_if_remote_host", lambda config: trace["warnings"].append(config))
+    monkeypatch.setattr(
+        import_module("cli.main"),
+        "warn_if_remote_host",
+        lambda config: trace["warnings"].append(config),
+    )
     return trace
 
 
 @pytest.mark.parametrize("option,env_name,value", INVALID_VALUES)
 @pytest.mark.parametrize("source", ["option", "environment"])
-def test_invalid_settings_stop_before_configuration_or_transport(monkeypatch, config_transport, option, env_name, value, source):
+def test_invalid_settings_stop_before_configuration_or_transport(
+    monkeypatch, config_transport, option, env_name, value, source
+):
     sentinel = CLIConfig(port=9090)
     monkeypatch.setattr(config_module, "_config", sentinel)
     args = []
@@ -81,26 +99,54 @@ def test_invalid_settings_stop_before_configuration_or_transport(monkeypatch, co
 
 
 @pytest.mark.parametrize("option,env_name,value", INVALID_VALUES)
-def test_from_env_rejects_invalid_settings_with_variable_diagnostic(monkeypatch, option, env_name, value):
+def test_from_env_rejects_invalid_settings_with_variable_diagnostic(
+    monkeypatch, option, env_name, value
+):
     monkeypatch.setenv(env_name, value)
     with pytest.raises(ValueError, match=env_name):
         CLIConfig.from_env()
 
 
 @pytest.mark.parametrize("source", ["default", "environment", "option"])
-@pytest.mark.parametrize("port,timeout,output_format", [(1, 1, "text"), (65535, 3600, "json"), (9090, 60, "table")])
-def test_valid_settings_resolve_and_reach_transport(monkeypatch, config_transport, source, port, timeout, output_format):
+@pytest.mark.parametrize(
+    "port,timeout,output_format", [(1, 1, "text"), (65535, 3600, "json"), (9090, 60, "table")]
+)
+def test_valid_settings_resolve_and_reach_transport(
+    monkeypatch, config_transport, source, port, timeout, output_format
+):
     args = []
     if source == "default":
         expected = CLIConfig()
     else:
-        expected = CLIConfig(host="localhost", port=port, timeout=timeout, format=output_format, unity_instance="Project@fixture")
+        expected = CLIConfig(
+            host="localhost",
+            port=port,
+            timeout=timeout,
+            format=output_format,
+            unity_instance="Project@fixture",
+        )
         if source == "environment":
-            for name, value in zip(ENV_NAMES, (expected.host, str(port), str(timeout), output_format, expected.unity_instance)):
+            for name, value in zip(
+                ENV_NAMES,
+                (expected.host, str(port), str(timeout), output_format, expected.unity_instance),
+            ):
                 monkeypatch.setenv(name, value)
         else:
-            args = ["--host", expected.host, "--port", str(port), "--timeout", str(timeout), "--format", output_format, "--instance", expected.unity_instance]
-    result = CliRunner().invoke(cli, [*args, "raw", "fixture", '{"zero":0,"false":false,"null":null}'])
+            args = [
+                "--host",
+                expected.host,
+                "--port",
+                str(port),
+                "--timeout",
+                str(timeout),
+                "--format",
+                output_format,
+                "--instance",
+                expected.unity_instance,
+            ]
+    result = CliRunner().invoke(
+        cli, [*args, "raw", "fixture", '{"zero":0,"false":false,"null":null}']
+    )
     assert result.exit_code == 0, result.output
     assert config_module._config == expected
     request = config_transport["requests"][0]
@@ -111,23 +157,57 @@ def test_valid_settings_resolve_and_reach_transport(monkeypatch, config_transpor
         expected_body["unity_instance"] = expected.unity_instance
     assert request["body"] == expected_body
     if expected.format == "json":
-        assert json.loads(result.stdout) == {"success": True, "data": {"count": 0, "enabled": False}}
+        assert json.loads(result.stdout) == {
+            "success": True,
+            "data": {"count": 0, "enabled": False},
+        }
     assert config_transport["warnings"] == [expected] and config_transport["auth"] == [expected]
 
 
-@pytest.mark.parametrize("port,timeout,output_format", [(1, 1, "text"), (65535, 3600, "json"), (9090, 60, "table")])
+@pytest.mark.parametrize(
+    "port,timeout,output_format", [(1, 1, "text"), (65535, 3600, "json"), (9090, 60, "table")]
+)
 def test_from_env_preserves_valid_boundaries(monkeypatch, port, timeout, output_format):
-    for name, value in zip(ENV_NAMES, ("localhost", str(port), str(timeout), output_format, "Project@fixture")):
+    for name, value in zip(
+        ENV_NAMES, ("localhost", str(port), str(timeout), output_format, "Project@fixture")
+    ):
         monkeypatch.setenv(name, value)
-    assert asdict(CLIConfig.from_env()) == {"host": "localhost", "port": port, "timeout": timeout, "format": output_format, "unity_instance": "Project@fixture", "verbose": False}
+    assert asdict(CLIConfig.from_env()) == {
+        "host": "localhost",
+        "port": port,
+        "timeout": timeout,
+        "format": output_format,
+        "unity_instance": "Project@fixture",
+        "verbose": False,
+    }
 
 
 def test_explicit_options_override_even_invalid_unused_environment(monkeypatch, config_transport):
-    for name, value in zip(ENV_NAMES, ("unused.fixture.invalid", "not-an-integer", "-1", "csv", "Unused@fixture")):
+    for name, value in zip(
+        ENV_NAMES, ("unused.fixture.invalid", "not-an-integer", "-1", "csv", "Unused@fixture")
+    ):
         monkeypatch.setenv(name, value)
-    result = CliRunner().invoke(cli, ["--host", "localhost", "--port", "9090", "--timeout", "45", "--format", "json", "--instance", "Chosen@fixture", "raw", "fixture"])
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--host",
+            "localhost",
+            "--port",
+            "9090",
+            "--timeout",
+            "45",
+            "--format",
+            "json",
+            "--instance",
+            "Chosen@fixture",
+            "raw",
+            "fixture",
+        ],
+    )
     assert result.exit_code == 0, result.output
-    assert config_module._config == CLIConfig(host="localhost", port=9090, timeout=45, format="json", unity_instance="Chosen@fixture")
+    assert config_module._config == CLIConfig(
+        host="localhost", port=9090, timeout=45, format="json", unity_instance="Chosen@fixture"
+    )
     assert config_transport["requests"][0]["body"]["unity_instance"] == "Chosen@fixture"
     assert json.loads(result.stdout)["success"] is True
 
@@ -137,7 +217,9 @@ def test_partial_override_keeps_remaining_environment_settings(monkeypatch, conf
         monkeypatch.setenv(name, value)
     result = CliRunner().invoke(cli, ["--port", "9090", "raw", "fixture"])
     assert result.exit_code == 0, result.output
-    assert config_module._config == CLIConfig(host="localhost", port=9090, timeout=45, format="json", unity_instance="Env@fixture")
+    assert config_module._config == CLIConfig(
+        host="localhost", port=9090, timeout=45, format="json", unity_instance="Env@fixture"
+    )
     assert len(config_transport["requests"]) == 1
 
 
@@ -169,7 +251,7 @@ def test_failed_fallback_does_not_cache_invalid_configuration(monkeypatch):
 
 
 def test_configuration_smoke_in_fresh_process():
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import json, os
         import httpx
         from click.testing import CliRunner
@@ -194,9 +276,11 @@ def test_configuration_smoke_in_fresh_process():
         assert result.exit_code == 0 and len(requests) == 2
         assert requests[-1][0] == "http://127.0.0.1:65535/api/command" and set(requests[-1][1].values()) == {1}
         print("fresh configuration defaults/invalid/override checks passed")
-    ''')
+    """)
     env = {name: value for name, value in os.environ.items() if name not in ENV_NAMES}
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "true"
-    result = subprocess.run([sys.executable, "-B", "-c", code], env=env, capture_output=True, text=True, timeout=30)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", code], env=env, capture_output=True, text=True, timeout=30
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "fresh configuration defaults/invalid/override checks passed" in result.stdout

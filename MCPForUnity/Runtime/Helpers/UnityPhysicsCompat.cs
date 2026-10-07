@@ -46,9 +46,7 @@ namespace MCPForUnity.Runtime.Helpers
                 if (!_physics2DProbed)
                 {
                     _physics2DProbed = true;
-                    _physics2DAutoSync = typeof(Physics2D).GetProperty(
-                        "autoSyncTransforms",
-                        BindingFlags.Public | BindingFlags.Static);
+                    _physics2DAutoSync = typeof(Physics2D).GetProperty("autoSyncTransforms", BindingFlags.Public | BindingFlags.Static);
                 }
                 return _physics2DAutoSync;
             }
@@ -61,9 +59,16 @@ namespace MCPForUnity.Runtime.Helpers
         public static bool? GetPhysics2DAutoSyncTransforms()
         {
             var prop = Physics2DAutoSyncProp;
-            if (prop == null || !prop.CanRead) return null;
-            try { return (bool)prop.GetValue(null); }
-            catch { return null; }
+            if (prop == null || !prop.CanRead)
+                return null;
+            try
+            {
+                return (bool)prop.GetValue(null);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -74,7 +79,8 @@ namespace MCPForUnity.Runtime.Helpers
         public static bool TrySetPhysics2DAutoSyncTransforms(bool value)
         {
             var prop = Physics2DAutoSyncProp;
-            if (prop == null || !prop.CanWrite) return false;
+            if (prop == null || !prop.CanWrite)
+                return false;
             try
             {
                 prop.SetValue(null, value);
@@ -98,9 +104,7 @@ namespace MCPForUnity.Runtime.Helpers
                 if (!_physicsProbed)
                 {
                     _physicsProbed = true;
-                    _physicsAutoSync = typeof(Physics).GetProperty(
-                        "autoSyncTransforms",
-                        BindingFlags.Public | BindingFlags.Static);
+                    _physicsAutoSync = typeof(Physics).GetProperty("autoSyncTransforms", BindingFlags.Public | BindingFlags.Static);
                 }
                 return _physicsAutoSync;
             }
@@ -113,9 +117,16 @@ namespace MCPForUnity.Runtime.Helpers
         public static bool? GetPhysicsAutoSyncTransforms()
         {
             var prop = PhysicsAutoSyncProp;
-            if (prop == null || !prop.CanRead) return null;
-            try { return (bool)prop.GetValue(null); }
-            catch { return null; }
+            if (prop == null || !prop.CanRead)
+                return null;
+            try
+            {
+                return (bool)prop.GetValue(null);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -126,7 +137,8 @@ namespace MCPForUnity.Runtime.Helpers
         public static bool TrySetPhysicsAutoSyncTransforms(bool value)
         {
             var prop = PhysicsAutoSyncProp;
-            if (prop == null || !prop.CanWrite) return false;
+            if (prop == null || !prop.CanWrite)
+                return false;
             try
             {
                 prop.SetValue(null, value);
@@ -154,9 +166,7 @@ namespace MCPForUnity.Runtime.Helpers
                 if (!_physicsSimulationModeProbed)
                 {
                     _physicsSimulationModeProbed = true;
-                    _physicsSimulationMode = typeof(Physics).GetProperty(
-                        "simulationMode",
-                        BindingFlags.Public | BindingFlags.Static);
+                    _physicsSimulationMode = typeof(Physics).GetProperty("simulationMode", BindingFlags.Public | BindingFlags.Static);
                 }
                 return _physicsSimulationMode;
             }
@@ -169,9 +179,7 @@ namespace MCPForUnity.Runtime.Helpers
                 if (!_physicsAutoSimulationProbed)
                 {
                     _physicsAutoSimulationProbed = true;
-                    _physicsAutoSimulation = typeof(Physics).GetProperty(
-                        "autoSimulation",
-                        BindingFlags.Public | BindingFlags.Static);
+                    _physicsAutoSimulation = typeof(Physics).GetProperty("autoSimulation", BindingFlags.Public | BindingFlags.Static);
                 }
                 return _physicsAutoSimulation;
             }
@@ -186,7 +194,10 @@ namespace MCPForUnity.Runtime.Helpers
             var modeProp = PhysicsSimulationModeProp;
             if (modeProp != null && modeProp.CanRead)
             {
-                try { return ParseSimulationMode(modeProp.GetValue(null)?.ToString()); }
+                try
+                {
+                    return ParseSimulationMode(modeProp.GetValue(null)?.ToString());
+                }
                 catch { /* fall through */ }
             }
 
@@ -210,18 +221,15 @@ namespace MCPForUnity.Runtime.Helpers
         /// </summary>
         public static bool CanSetPhysicsSimulationMode(SimulationMode mode)
         {
-            if (mode != SimulationMode.FixedUpdate && mode != SimulationMode.Update
-                && mode != SimulationMode.Script)
+            if (mode != SimulationMode.FixedUpdate && mode != SimulationMode.Update && mode != SimulationMode.Script)
                 return false;
 
             var modeProp = PhysicsSimulationModeProp;
-            if (modeProp != null && modeProp.CanWrite && modeProp.PropertyType.IsEnum
-                && Enum.IsDefined(modeProp.PropertyType, mode.ToString()))
+            if (modeProp != null && modeProp.CanWrite && modeProp.PropertyType.IsEnum && Enum.IsDefined(modeProp.PropertyType, mode.ToString()))
                 return true;
 
             var autoProp = PhysicsAutoSimulationProp;
-            return autoProp != null && autoProp.CanWrite
-                && (mode == SimulationMode.FixedUpdate || mode == SimulationMode.Script);
+            return autoProp != null && autoProp.CanWrite && (mode == SimulationMode.FixedUpdate || mode == SimulationMode.Script);
         }
 
         /// <summary>
@@ -268,13 +276,18 @@ namespace MCPForUnity.Runtime.Helpers
 
         private static SimulationMode ParseSimulationMode(string s)
         {
-            if (string.IsNullOrEmpty(s)) return SimulationMode.Unknown;
+            if (string.IsNullOrEmpty(s))
+                return SimulationMode.Unknown;
             switch (s.ToLowerInvariant())
             {
-                case "fixedupdate": return SimulationMode.FixedUpdate;
-                case "update": return SimulationMode.Update;
-                case "script": return SimulationMode.Script;
-                default: return SimulationMode.Unknown;
+                case "fixedupdate":
+                    return SimulationMode.FixedUpdate;
+                case "update":
+                    return SimulationMode.Update;
+                case "script":
+                    return SimulationMode.Script;
+                default:
+                    return SimulationMode.Unknown;
             }
         }
     }

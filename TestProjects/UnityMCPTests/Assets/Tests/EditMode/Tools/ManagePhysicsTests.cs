@@ -1,10 +1,10 @@
 using System;
+using MCPForUnity.Editor.Tools.Physics;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
-using MCPForUnity.Editor.Tools.Physics;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -59,8 +59,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void HandleCommand_UnknownAction_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(
-                new JObject { ["action"] = "bogus_action" }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "bogus_action" }));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("Unknown action"));
         }
@@ -72,8 +71,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Ping_ReturnsPhysicsStatus()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(
-                new JObject { ["action"] = "ping" }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "ping" }));
             Assert.IsTrue(result.Value<bool>("success"));
             Assert.That(result["message"].ToString(), Does.Contain("Physics"));
             var data = result["data"];
@@ -93,11 +91,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void GetSettings_3D_ReturnsGravity()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "get_settings",
-                ["dimension"] = "3d"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "get_settings", ["dimension"] = "3d" }));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var data = result["data"];
             Assert.AreEqual("3d", data["dimension"].ToString());
@@ -113,10 +107,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void GetSettings_DefaultDimension_Returns3D()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "get_settings"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "get_settings" }));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual("3d", result["data"]["dimension"].ToString());
         }
@@ -124,11 +115,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void GetSettings_2D_ReturnsGravity()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "get_settings",
-                ["dimension"] = "2d"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "get_settings", ["dimension"] = "2d" }));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var data = result["data"];
             Assert.AreEqual("2d", data["dimension"].ToString());
@@ -143,11 +130,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void GetSettings_InvalidDimension_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "get_settings",
-                ["dimension"] = "4d"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "get_settings", ["dimension"] = "4d" }));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("Invalid dimension"));
         }
@@ -164,15 +147,16 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-                {
-                    ["action"] = "set_settings",
-                    ["dimension"] = "3d",
-                    ["settings"] = new JObject
-                    {
-                        ["gravity"] = new JArray(0, -20, 0)
-                    }
-                }));
+                var result = ToJObject(
+                    ManagePhysics.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "set_settings",
+                            ["dimension"] = "3d",
+                            ["settings"] = new JObject { ["gravity"] = new JArray(0, -20, 0) },
+                        }
+                    )
+                );
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 var changed = result["data"]["changed"] as JArray;
                 Assert.IsNotNull(changed);
@@ -195,15 +179,16 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-                {
-                    ["action"] = "set_settings",
-                    ["dimension"] = "3d",
-                    ["settings"] = new JObject
-                    {
-                        ["defaultSolverIterations"] = 12
-                    }
-                }));
+                var result = ToJObject(
+                    ManagePhysics.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "set_settings",
+                            ["dimension"] = "3d",
+                            ["settings"] = new JObject { ["defaultSolverIterations"] = 12 },
+                        }
+                    )
+                );
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 Assert.AreEqual(12, UnityEngine.Physics.defaultSolverIterations);
             }
@@ -216,15 +201,16 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SetSettings_3D_UnknownKey_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "set_settings",
-                ["dimension"] = "3d",
-                ["settings"] = new JObject
-                {
-                    ["nonExistentSetting"] = 42
-                }
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_settings",
+                        ["dimension"] = "3d",
+                        ["settings"] = new JObject { ["nonExistentSetting"] = 42 },
+                    }
+                )
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("Unknown"));
             Assert.That(result["error"].ToString(), Does.Contain("nonExistentSetting"));
@@ -233,15 +219,19 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SetSettings_3D_InvalidGravityArray_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "set_settings",
-                ["dimension"] = "3d",
-                ["settings"] = new JObject
-                {
-                    ["gravity"] = new JArray(0, -10)  // Only 2 elements for 3D
-                }
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_settings",
+                        ["dimension"] = "3d",
+                        ["settings"] = new JObject
+                        {
+                            ["gravity"] = new JArray(0, -10), // Only 2 elements for 3D
+                        },
+                    }
+                )
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("[x, y, z]"));
         }
@@ -249,12 +239,16 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SetSettings_EmptySettings_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "set_settings",
-                ["dimension"] = "3d",
-                ["settings"] = new JObject()
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_settings",
+                        ["dimension"] = "3d",
+                        ["settings"] = new JObject(),
+                    }
+                )
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("settings"));
         }
@@ -262,11 +256,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SetSettings_MissingSettings_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "set_settings",
-                ["dimension"] = "3d"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "set_settings", ["dimension"] = "3d" }));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("settings"));
         }
@@ -282,15 +272,16 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-                {
-                    ["action"] = "set_settings",
-                    ["dimension"] = "2d",
-                    ["settings"] = new JObject
-                    {
-                        ["gravity"] = new JArray(0, -20)
-                    }
-                }));
+                var result = ToJObject(
+                    ManagePhysics.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "set_settings",
+                            ["dimension"] = "2d",
+                            ["settings"] = new JObject { ["gravity"] = new JArray(0, -20) },
+                        }
+                    )
+                );
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 var changed = result["data"]["changed"] as JArray;
                 Assert.IsNotNull(changed);
@@ -307,15 +298,16 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SetSettings_2D_UnknownKey_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "set_settings",
-                ["dimension"] = "2d",
-                ["settings"] = new JObject
-                {
-                    ["fakeSetting"] = true
-                }
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_settings",
+                        ["dimension"] = "2d",
+                        ["settings"] = new JObject { ["fakeSetting"] = true },
+                    }
+                )
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("Unknown"));
             Assert.That(result["error"].ToString(), Does.Contain("fakeSetting"));
@@ -324,15 +316,19 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SetSettings_2D_InvalidGravityArray_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "set_settings",
-                ["dimension"] = "2d",
-                ["settings"] = new JObject
-                {
-                    ["gravity"] = new JArray(0)  // Only 1 element for 2D
-                }
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_settings",
+                        ["dimension"] = "2d",
+                        ["settings"] = new JObject
+                        {
+                            ["gravity"] = new JArray(0), // Only 1 element for 2D
+                        },
+                    }
+                )
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("[x, y]"));
         }
@@ -346,18 +342,28 @@ namespace MCPForUnityTests.Editor.Tools
         public void CreatePhysicsMaterial_InvalidFloat_DoesNotPrepareOutputFolders(string dimension, string property)
         {
             string folder = TempRoot + "/Invalid/Nested";
-            UnityEngine.TestTools.LogAssert.Expect(LogType.Error,
-                new System.Text.RegularExpressions.Regex("\\[ManagePhysics\\] Action 'create_physics_material' failed:"));
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "create_physics_material", ["name"] = "Invalid",
-                ["path"] = folder, ["dimension"] = dimension, [property] = "not-a-number",
-            }));
+            UnityEngine.TestTools.LogAssert.Expect(
+                LogType.Error,
+                new System.Text.RegularExpressions.Regex("\\[ManagePhysics\\] Action 'create_physics_material' failed:")
+            );
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create_physics_material",
+                        ["name"] = "Invalid",
+                        ["path"] = folder,
+                        ["dimension"] = dimension,
+                        [property] = "not-a-number",
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.IsFalse(AssetDatabase.IsValidFolder(TempRoot + "/Invalid"));
-            Assert.IsFalse(System.IO.Directory.Exists(System.IO.Path.Combine(
-                System.IO.Directory.GetParent(Application.dataPath).FullName, TempRoot + "/Invalid")));
+            Assert.IsFalse(
+                System.IO.Directory.Exists(System.IO.Path.Combine(System.IO.Directory.GetParent(Application.dataPath).FullName, TempRoot + "/Invalid"))
+            );
         }
 
         [TestCase("3d", false)]
@@ -368,7 +374,8 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string parent = TempRoot + "/Failed";
             string folder = parent + "/Nested";
-            if (existingFolder) EnsureFolder(folder);
+            if (existingFolder)
+                EnsureFolder(folder);
             string originalGuid = AssetDatabase.AssetPathToGUID(folder);
             bool originalIgnore = UnityEngine.TestTools.LogAssert.ignoreFailingMessages;
             JObject result;
@@ -376,13 +383,22 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 // The name's missing parent makes the native write fail after output preparation.
                 UnityEngine.TestTools.LogAssert.ignoreFailingMessages = true;
-                result = ToJObject(ManagePhysics.HandleCommand(new JObject
-                {
-                    ["action"] = "create_physics_material", ["name"] = "Missing/Mat",
-                    ["path"] = folder, ["dimension"] = dimension,
-                }));
+                result = ToJObject(
+                    ManagePhysics.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_physics_material",
+                            ["name"] = "Missing/Mat",
+                            ["path"] = folder,
+                            ["dimension"] = dimension,
+                        }
+                    )
+                );
             }
-            finally { UnityEngine.TestTools.LogAssert.ignoreFailingMessages = originalIgnore; }
+            finally
+            {
+                UnityEngine.TestTools.LogAssert.ignoreFailingMessages = originalIgnore;
+            }
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             if (existingFolder)
@@ -402,48 +418,58 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void CreatePhysicsMaterial_3D_CreatesAsset()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "create_physics_material",
-                ["name"] = "TestMat3D",
-                ["path"] = TempRoot,
-                ["dimension"] = "3d"
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create_physics_material",
+                        ["name"] = "TestMat3D",
+                        ["path"] = TempRoot,
+                        ["dimension"] = "3d",
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
             string expectedPath = TempRoot + "/TestMat3D.physicMaterial";
             Assert.AreEqual(expectedPath, result["data"]["path"].ToString());
-            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(expectedPath),
-                "Asset should exist on disk.");
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(expectedPath), "Asset should exist on disk.");
         }
 
         [Test]
         public void CreatePhysicsMaterial_2D_CreatesAsset()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "create_physics_material",
-                ["name"] = "TestMat2D",
-                ["path"] = TempRoot,
-                ["dimension"] = "2d"
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create_physics_material",
+                        ["name"] = "TestMat2D",
+                        ["path"] = TempRoot,
+                        ["dimension"] = "2d",
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
             string expectedPath = TempRoot + "/TestMat2D.physicsMaterial2D";
             Assert.AreEqual(expectedPath, result["data"]["path"].ToString());
-            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<PhysicsMaterial2D>(expectedPath),
-                "2D physics material asset should exist on disk.");
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<PhysicsMaterial2D>(expectedPath), "2D physics material asset should exist on disk.");
         }
 
         [Test]
         public void CreatePhysicsMaterial_MissingName_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "create_physics_material",
-                ["path"] = TempRoot,
-                ["dimension"] = "3d"
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create_physics_material",
+                        ["path"] = TempRoot,
+                        ["dimension"] = "3d",
+                    }
+                )
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("name"));
         }
@@ -456,28 +482,31 @@ namespace MCPForUnityTests.Editor.Tools
         public void ConfigurePhysicsMaterial_3D_UpdatesProperties()
         {
             // Create material first
-            ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "create_physics_material",
-                ["name"] = "ConfigTest3D",
-                ["path"] = TempRoot,
-                ["dimension"] = "3d",
-                ["bounciness"] = 0
-            });
+            ManagePhysics.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create_physics_material",
+                    ["name"] = "ConfigTest3D",
+                    ["path"] = TempRoot,
+                    ["dimension"] = "3d",
+                    ["bounciness"] = 0,
+                }
+            );
 
             string matPath = TempRoot + "/ConfigTest3D.physicMaterial";
 
             // Configure it
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "configure_physics_material",
-                ["path"] = matPath,
-                ["dimension"] = "3d",
-                ["properties"] = new JObject
-                {
-                    ["bounciness"] = 0.75
-                }
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "configure_physics_material",
+                        ["path"] = matPath,
+                        ["dimension"] = "3d",
+                        ["properties"] = new JObject { ["bounciness"] = 0.75 },
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
             // Verify the property changed
@@ -498,13 +527,15 @@ namespace MCPForUnityTests.Editor.Tools
         public void AssignPhysicsMaterial_ToBoxCollider()
         {
             // Create a physics material
-            ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "create_physics_material",
-                ["name"] = "AssignTest3D",
-                ["path"] = TempRoot,
-                ["dimension"] = "3d"
-            });
+            ManagePhysics.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create_physics_material",
+                    ["name"] = "AssignTest3D",
+                    ["path"] = TempRoot,
+                    ["dimension"] = "3d",
+                }
+            );
 
             string matPath = TempRoot + "/AssignTest3D.physicMaterial";
 
@@ -512,44 +543,53 @@ namespace MCPForUnityTests.Editor.Tools
             var go = new GameObject("PhysTest_BoxCollider");
             go.AddComponent<BoxCollider>();
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "assign_physics_material",
-                ["target"] = "PhysTest_BoxCollider",
-                ["material_path"] = matPath,
-                ["search_method"] = "by_name"
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "assign_physics_material",
+                        ["target"] = "PhysTest_BoxCollider",
+                        ["material_path"] = matPath,
+                        ["search_method"] = "by_name",
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
             var collider = go.GetComponent<BoxCollider>();
-            Assert.IsNotNull(collider.sharedMaterial,
-                "BoxCollider.sharedMaterial should be set after assignment.");
+            Assert.IsNotNull(collider.sharedMaterial, "BoxCollider.sharedMaterial should be set after assignment.");
         }
 
         [Test]
         public void AssignPhysicsMaterial_NoCollider_ReturnsError()
         {
             // Create a physics material
-            ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "create_physics_material",
-                ["name"] = "AssignNoCollider",
-                ["path"] = TempRoot,
-                ["dimension"] = "3d"
-            });
+            ManagePhysics.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create_physics_material",
+                    ["name"] = "AssignNoCollider",
+                    ["path"] = TempRoot,
+                    ["dimension"] = "3d",
+                }
+            );
 
             string matPath = TempRoot + "/AssignNoCollider.physicMaterial";
 
             // Create a GameObject WITHOUT any collider
             var go = new GameObject("PhysTest_NoCollider");
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "assign_physics_material",
-                ["target"] = "PhysTest_NoCollider",
-                ["material_path"] = matPath,
-                ["search_method"] = "by_name"
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "assign_physics_material",
+                        ["target"] = "PhysTest_NoCollider",
+                        ["material_path"] = matPath,
+                        ["search_method"] = "by_name",
+                    }
+                )
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("collider").IgnoreCase);
         }
@@ -563,12 +603,16 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var go = new GameObject("PhysTest_NoRB");
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "add_joint",
-                ["target"] = "PhysTest_NoRB",
-                ["joint_type"] = "hinge"
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "add_joint",
+                        ["target"] = "PhysTest_NoRB",
+                        ["joint_type"] = "hinge",
+                    }
+                )
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("Rigidbody"));
         }
@@ -579,12 +623,16 @@ namespace MCPForUnityTests.Editor.Tools
             var go = new GameObject("PhysTest_HingeAdd");
             go.AddComponent<Rigidbody>();
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "add_joint",
-                ["target"] = "PhysTest_HingeAdd",
-                ["joint_type"] = "hinge"
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "add_joint",
+                        ["target"] = "PhysTest_HingeAdd",
+                        ["joint_type"] = "hinge",
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.That(result["data"]["jointType"].ToString(), Is.EqualTo("HingeJoint"));
 
@@ -598,12 +646,16 @@ namespace MCPForUnityTests.Editor.Tools
             var go = new GameObject("PhysTest_UnknownJoint");
             go.AddComponent<Rigidbody>();
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "add_joint",
-                ["target"] = "PhysTest_UnknownJoint",
-                ["joint_type"] = "rubber_band"
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "add_joint",
+                        ["target"] = "PhysTest_UnknownJoint",
+                        ["joint_type"] = "rubber_band",
+                    }
+                )
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("Unknown"));
             Assert.That(result["error"].ToString(), Does.Contain("rubber_band"));
@@ -620,18 +672,22 @@ namespace MCPForUnityTests.Editor.Tools
             go.AddComponent<Rigidbody>();
             go.AddComponent<HingeJoint>();
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "configure_joint",
-                ["target"] = "PhysTest_HingeMotor",
-                ["joint_type"] = "hinge",
-                ["motor"] = new JObject
-                {
-                    ["targetVelocity"] = 90f,
-                    ["force"] = 50f,
-                    ["freeSpin"] = false
-                }
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "configure_joint",
+                        ["target"] = "PhysTest_HingeMotor",
+                        ["joint_type"] = "hinge",
+                        ["motor"] = new JObject
+                        {
+                            ["targetVelocity"] = 90f,
+                            ["force"] = 50f,
+                            ["freeSpin"] = false,
+                        },
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
             var hinge = go.GetComponent<HingeJoint>();
@@ -647,18 +703,22 @@ namespace MCPForUnityTests.Editor.Tools
             go.AddComponent<Rigidbody>();
             go.AddComponent<HingeJoint>();
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "configure_joint",
-                ["target"] = "PhysTest_HingeLimits",
-                ["joint_type"] = "hinge",
-                ["limits"] = new JObject
-                {
-                    ["min"] = -45f,
-                    ["max"] = 45f,
-                    ["bounciness"] = 0.5f
-                }
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "configure_joint",
+                        ["target"] = "PhysTest_HingeLimits",
+                        ["joint_type"] = "hinge",
+                        ["limits"] = new JObject
+                        {
+                            ["min"] = -45f,
+                            ["max"] = 45f,
+                            ["bounciness"] = 0.5f,
+                        },
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
             var hinge = go.GetComponent<HingeJoint>();
@@ -680,16 +740,19 @@ namespace MCPForUnityTests.Editor.Tools
             go.AddComponent<HingeJoint>();
             Assert.IsNotNull(go.GetComponent<HingeJoint>());
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "remove_joint",
-                ["target"] = "PhysTest_RemoveHinge",
-                ["joint_type"] = "hinge"
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "remove_joint",
+                        ["target"] = "PhysTest_RemoveHinge",
+                        ["joint_type"] = "hinge",
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(1, result["data"]["removedCount"].Value<int>());
-            Assert.IsNull(go.GetComponent<HingeJoint>(),
-                "HingeJoint should be removed.");
+            Assert.IsNull(go.GetComponent<HingeJoint>(), "HingeJoint should be removed.");
         }
 
         [Test]
@@ -702,17 +765,11 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(go.GetComponent<HingeJoint>());
             Assert.IsNotNull(go.GetComponent<FixedJoint>());
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "remove_joint",
-                ["target"] = "PhysTest_RemoveAll"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "remove_joint", ["target"] = "PhysTest_RemoveAll" }));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(2, result["data"]["removedCount"].Value<int>());
-            Assert.IsNull(go.GetComponent<HingeJoint>(),
-                "HingeJoint should be removed.");
-            Assert.IsNull(go.GetComponent<FixedJoint>(),
-                "FixedJoint should be removed.");
+            Assert.IsNull(go.GetComponent<HingeJoint>(), "HingeJoint should be removed.");
+            Assert.IsNull(go.GetComponent<FixedJoint>(), "FixedJoint should be removed.");
         }
 
         // =====================================================================
@@ -722,11 +779,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void GetCollisionMatrix_3D_ReturnsMatrix()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "get_collision_matrix",
-                ["dimension"] = "3d"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "get_collision_matrix", ["dimension"] = "3d" }));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var data = result["data"];
             Assert.IsNotNull(data["layers"]);
@@ -739,11 +792,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void GetCollisionMatrix_2D_ReturnsMatrix()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "get_collision_matrix",
-                ["dimension"] = "2d"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "get_collision_matrix", ["dimension"] = "2d" }));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var data = result["data"];
             Assert.IsNotNull(data["layers"]);
@@ -764,29 +813,35 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-                {
-                    ["action"] = "set_collision_matrix",
-                    ["dimension"] = "3d",
-                    ["layer_a"] = "Default",
-                    ["layer_b"] = "Default",
-                    ["collide"] = false
-                }));
+                var result = ToJObject(
+                    ManagePhysics.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "set_collision_matrix",
+                            ["dimension"] = "3d",
+                            ["layer_a"] = "Default",
+                            ["layer_b"] = "Default",
+                            ["collide"] = false,
+                        }
+                    )
+                );
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-                Assert.IsTrue(UnityEngine.Physics.GetIgnoreLayerCollision(0, 0),
-                    "Layers should be ignoring collision after setting collide=false");
+                Assert.IsTrue(UnityEngine.Physics.GetIgnoreLayerCollision(0, 0), "Layers should be ignoring collision after setting collide=false");
 
-                result = ToJObject(ManagePhysics.HandleCommand(new JObject
-                {
-                    ["action"] = "set_collision_matrix",
-                    ["dimension"] = "3d",
-                    ["layer_a"] = "Default",
-                    ["layer_b"] = "Default",
-                    ["collide"] = true
-                }));
+                result = ToJObject(
+                    ManagePhysics.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "set_collision_matrix",
+                            ["dimension"] = "3d",
+                            ["layer_a"] = "Default",
+                            ["layer_b"] = "Default",
+                            ["collide"] = true,
+                        }
+                    )
+                );
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-                Assert.IsFalse(UnityEngine.Physics.GetIgnoreLayerCollision(0, 0),
-                    "Layers should NOT be ignoring collision after setting collide=true");
+                Assert.IsFalse(UnityEngine.Physics.GetIgnoreLayerCollision(0, 0), "Layers should NOT be ignoring collision after setting collide=true");
             }
             finally
             {
@@ -797,13 +852,17 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SetCollisionMatrix_InvalidLayer_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "set_collision_matrix",
-                ["dimension"] = "3d",
-                ["layer_a"] = "NonExistentLayerXYZ",
-                ["layer_b"] = "Default"
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_collision_matrix",
+                        ["dimension"] = "3d",
+                        ["layer_a"] = "NonExistentLayerXYZ",
+                        ["layer_b"] = "Default",
+                    }
+                )
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("layer_a"));
         }
@@ -811,11 +870,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SetCollisionMatrix_MissingParams_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "set_collision_matrix",
-                ["dimension"] = "3d"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "set_collision_matrix", ["dimension"] = "3d" }));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("layer_a"));
         }
@@ -834,13 +889,17 @@ namespace MCPForUnityTests.Editor.Tools
             col.size = new Vector3(10, 10, 1);
             UnityEngine.Physics.SyncTransforms();
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "raycast",
-                ["origin"] = new JArray(500, 500, 0),
-                ["direction"] = new JArray(0, 0, 1),
-                ["max_distance"] = 100
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "raycast",
+                        ["origin"] = new JArray(500, 500, 0),
+                        ["direction"] = new JArray(0, 0, 1),
+                        ["max_distance"] = 100,
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsTrue(result["data"].Value<bool>("hit"));
             Assert.AreEqual("PhysTest_RayTarget", result["data"]["gameObject"].ToString());
@@ -849,13 +908,17 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Raycast_MissesWhenNoTarget()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "raycast",
-                ["origin"] = new JArray(0, 1000, 0),
-                ["direction"] = new JArray(0, 1, 0),
-                ["max_distance"] = 1
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "raycast",
+                        ["origin"] = new JArray(0, 1000, 0),
+                        ["direction"] = new JArray(0, 1, 0),
+                        ["max_distance"] = 1,
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsFalse(result["data"].Value<bool>("hit"));
         }
@@ -863,11 +926,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Raycast_MissingOrigin_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "raycast",
-                ["direction"] = new JArray(0, 0, 1)
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "raycast", ["direction"] = new JArray(0, 0, 1) }));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("origin"));
         }
@@ -884,13 +943,17 @@ namespace MCPForUnityTests.Editor.Tools
             go.AddComponent<SphereCollider>();
             UnityEngine.Physics.SyncTransforms();
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "overlap",
-                ["shape"] = "sphere",
-                ["position"] = new JArray(0, 0, 0),
-                ["size"] = 10
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "overlap",
+                        ["shape"] = "sphere",
+                        ["position"] = new JArray(0, 0, 0),
+                        ["size"] = 10,
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var colliders = result["data"]["colliders"] as JArray;
             Assert.IsNotNull(colliders);
@@ -900,12 +963,16 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Overlap_MissingShape_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "overlap",
-                ["position"] = new JArray(0, 0, 0),
-                ["size"] = 10
-            }));
+            var result = ToJObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "overlap",
+                        ["position"] = new JArray(0, 0, 0),
+                        ["size"] = 10,
+                    }
+                )
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("shape"));
         }
@@ -922,11 +989,7 @@ namespace MCPForUnityTests.Editor.Tools
             var mc = go.AddComponent<MeshCollider>();
             mc.convex = false;
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "validate",
-                ["target"] = "PhysTest_BadMesh"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "validate", ["target"] = "PhysTest_BadMesh" }));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var warnings = result["data"]["warnings"] as JArray;
             Assert.IsNotNull(warnings);
@@ -935,7 +998,10 @@ namespace MCPForUnityTests.Editor.Tools
             foreach (var w in warnings)
             {
                 if (w.ToString().Contains("Convex"))
-                { foundConvex = true; break; }
+                {
+                    foundConvex = true;
+                    break;
+                }
             }
             Assert.IsTrue(foundConvex, "Should detect MeshCollider without Convex.");
         }
@@ -947,11 +1013,7 @@ namespace MCPForUnityTests.Editor.Tools
             go.isStatic = false;
             go.AddComponent<BoxCollider>();
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "validate",
-                ["target"] = "PhysTest_NoRigidbody"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "validate", ["target"] = "PhysTest_NoRigidbody" }));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var warnings = result["data"]["warnings"] as JArray;
             Assert.IsNotNull(warnings);
@@ -959,7 +1021,10 @@ namespace MCPForUnityTests.Editor.Tools
             foreach (var w in warnings)
             {
                 if (w.ToString().Contains("Collider") && w.ToString().Contains("Rigidbody"))
-                { foundWarning = true; break; }
+                {
+                    foundWarning = true;
+                    break;
+                }
             }
             Assert.IsTrue(foundWarning, "Should detect Collider without Rigidbody on non-static object.");
         }
@@ -971,11 +1036,7 @@ namespace MCPForUnityTests.Editor.Tools
             go.AddComponent<Rigidbody>();
             go.AddComponent<BoxCollider>();
 
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "validate",
-                ["target"] = "PhysTest_Clean"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "validate", ["target"] = "PhysTest_Clean" }));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(1, result["data"].Value<int>("objects_scanned"));
         }
@@ -983,11 +1044,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Validate_TargetNotFound_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "validate",
-                ["target"] = "PhysTest_DoesNotExistXYZ"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "validate", ["target"] = "PhysTest_DoesNotExistXYZ" }));
             Assert.IsFalse(result.Value<bool>("success"));
         }
 
@@ -998,11 +1055,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SimulateStep_ExecutesWithoutError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "simulate_step",
-                ["steps"] = 1
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "simulate_step", ["steps"] = 1 }));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(1, result["data"].Value<int>("steps_executed"));
         }
@@ -1010,11 +1063,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SimulateStep_ClampsMax()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "simulate_step",
-                ["steps"] = 999
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "simulate_step", ["steps"] = 999 }));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(100, result["data"].Value<int>("steps_executed"));
         }
@@ -1022,11 +1071,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SimulateStep_InvalidDimension_ReturnsError()
         {
-            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "simulate_step",
-                ["dimension"] = "4d"
-            }));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "simulate_step", ["dimension"] = "4d" }));
             Assert.IsFalse(result.Value<bool>("success"));
         }
     }

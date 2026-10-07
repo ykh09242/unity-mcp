@@ -17,7 +17,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
     {
         public static AssetGenJob ImportInto(AssetGenJob job, string localFilePath)
         {
-            if (job == null) return null;
+            if (job == null)
+                return null;
             try
             {
                 if (string.IsNullOrEmpty(localFilePath))
@@ -61,9 +62,12 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             float len = clip.length;
 
             AudioImporterSampleSettings s = importer.defaultSampleSettings;
-            if (len > 30f) s.loadType = AudioClipLoadType.Streaming;              // long BGM
-            else if (len > 10f) s.loadType = AudioClipLoadType.CompressedInMemory; // medium track
-            else s.loadType = AudioClipLoadType.DecompressOnLoad;                  // short SFX one-shot
+            if (len > 30f)
+                s.loadType = AudioClipLoadType.Streaming; // long BGM
+            else if (len > 10f)
+                s.loadType = AudioClipLoadType.CompressedInMemory; // medium track
+            else
+                s.loadType = AudioClipLoadType.DecompressOnLoad; // short SFX one-shot
             importer.defaultSampleSettings = s;
 
             importer.forceToMono = false;

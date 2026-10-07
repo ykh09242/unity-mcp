@@ -54,7 +54,8 @@ namespace MCPForUnityTests.EditMode.Tools
         [TearDown]
         public void TearDown()
         {
-            if (!_captured) return;
+            if (!_captured)
+                return;
             try
             {
                 if (!string.IsNullOrEmpty(_guid))
@@ -65,7 +66,8 @@ namespace MCPForUnityTests.EditMode.Tools
             }
             finally
             {
-                if (_scene.IsValid() && _scene.isLoaded) SceneManager.SetActiveScene(_scene);
+                if (_scene.IsValid() && _scene.isLoaded)
+                    SceneManager.SetActiveScene(_scene);
                 Selection.objects = _selection ?? Array.Empty<Object>();
                 Selection.activeObject = _activeSelection;
                 _captured = false;
@@ -75,8 +77,10 @@ namespace MCPForUnityTests.EditMode.Tools
         private static JObject Send(string action, string path, string type = null, JToken properties = null)
         {
             var request = new JObject { ["action"] = action, ["path"] = path };
-            if (type != null) request["assetType"] = type;
-            if (properties != null) request["properties"] = properties;
+            if (type != null)
+                request["assetType"] = type;
+            if (properties != null)
+                request["properties"] = properties;
             return JObject.FromObject(ManageAsset.HandleCommand(request));
         }
 
@@ -186,7 +190,10 @@ namespace MCPForUnityTests.EditMode.Tools
                 LogAssert.ignoreFailingMessages = true;
                 response = Send("create", path, "PhysicsMaterial");
             }
-            finally { LogAssert.ignoreFailingMessages = previous; }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = previous;
+            }
             Assert.IsFalse((bool)response["success"], response.ToString());
             Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(path));
             Assert.IsEmpty(AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets));

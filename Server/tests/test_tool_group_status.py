@@ -10,13 +10,15 @@ def run_sdk_regression(source):
         [sys.executable, "-c", textwrap.dedent(source)],
         cwd=Path(__file__).resolve().parents[1],
         env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "1"},
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_group_status_matches_stdio_and_unity_synced_http_visibility():
-    run_sdk_regression('''
+    run_sdk_regression("""
         import asyncio, sys
         sys.path.insert(0, "src")
         from fastmcp import Client, FastMCP
@@ -59,11 +61,11 @@ def test_group_status_matches_stdio_and_unity_synced_http_visibility():
                                 reset = (await first.call_tool("manage_tools", {"action": "list_groups"})).structured_content["groups"]
                                 assert next(group for group in reset if group["name"] == "vfx")["enabled"] is True
         asyncio.run(scenario())
-    ''')
+    """)
 
 
 def test_group_status_honors_remote_tenants_project_selection_and_empty_catalogs():
-    run_sdk_regression('''
+    run_sdk_regression("""
         import asyncio, sys
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
@@ -133,4 +135,4 @@ def test_group_status_honors_remote_tenants_project_selection_and_empty_catalogs
                                 reset = (await client.call_tool("manage_tools", {"action": "list_groups"})).structured_content
                                 assert {group["name"] for group in reset["groups"] if group["enabled"]} == expected
         asyncio.run(scenario())
-    ''')
+    """)

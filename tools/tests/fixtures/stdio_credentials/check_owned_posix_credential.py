@@ -1,4 +1,5 @@
 """Actual POSIX reader with a private child HOME and owned stdin expectations."""
+
 import hmac
 import importlib.util
 import json
@@ -17,8 +18,10 @@ def main() -> int:
     home = Path.home()
     directory = home / ".unity-mcp" / "stdio-auth" / generation
     token = directory / "token"
-    modes = (stat.S_IMODE(directory.stat().st_mode) == 0o700
-             and stat.S_IMODE(token.stat().st_mode) == 0o600)
+    modes = (
+        stat.S_IMODE(directory.stat().st_mode) == 0o700
+        and stat.S_IMODE(token.stat().st_mode) == 0o600
+    )
     owners = directory.stat().st_uid == os.getuid() == token.stat().st_uid
     actual = production.read_stdio_token(generation)
     matched = isinstance(actual, str) and hmac.compare_digest(actual, expected)
@@ -38,18 +41,43 @@ def main() -> int:
         raise RuntimeError("Malformed generation reached filesystem")
 
     production.os.open = forbidden_open
-    malformed = ("", generation[:-1], generation + "0", "A" * 32, "G" * 32,
-                 "../" + generation, "MCPForUnity.Stdio:" + generation,
-                 "MCPForUnity.AssetGen:" + generation)
+    malformed = (
+        "",
+        generation[:-1],
+        generation + "0",
+        "A" * 32,
+        "G" * 32,
+        "../" + generation,
+        "MCPForUnity.Stdio:" + generation,
+        "MCPForUnity.AssetGen:" + generation,
+    )
     try:
         invalid_rejected = all(production.read_stdio_token(item) is None for item in malformed)
     finally:
         production.os.open = native_open
-    result = {"matched": matched, "private_modes": modes, "owners": owners,
-              "malformed_rejected": invalid_rejected and calls == 0, "malformed_count": len(malformed),
-              "unsafe_file_mode_rejected": unsafe_file_mode_rejected}
+    result = {
+        "matched": matched,
+        "private_modes": modes,
+        "owners": owners,
+        "malformed_rejected": invalid_rejected and calls == 0,
+        "malformed_count": len(malformed),
+        "unsafe_file_mode_rejected": unsafe_file_mode_rejected,
+    }
     print(json.dumps(result))
-    return 0 if all(result[key] for key in ("matched", "private_modes", "owners", "malformed_rejected", "unsafe_file_mode_rejected")) else 1
+    return (
+        0
+        if all(
+            result[key]
+            for key in (
+                "matched",
+                "private_modes",
+                "owners",
+                "malformed_rejected",
+                "unsafe_file_mode_rejected",
+            )
+        )
+        else 1
+    )
 
 
 if __name__ == "__main__":

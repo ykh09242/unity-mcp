@@ -33,7 +33,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             TimeSpan.FromSeconds(3),
             TimeSpan.FromSeconds(5),
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30)
+            TimeSpan.FromSeconds(30),
         };
         private static readonly TimeSpan ReconnectTailInterval = TimeSpan.FromSeconds(30);
 
@@ -84,17 +84,32 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             internal readonly string UnityVersion;
             internal readonly bool AllowCompression;
 
-            internal OwnedConnectionOptions(Uri endpoint, string launchToken, string projectName,
-                string projectHash, string projectPath, string unityVersion, bool allowCompression = false)
+            internal OwnedConnectionOptions(
+                Uri endpoint,
+                string launchToken,
+                string projectName,
+                string projectHash,
+                string projectPath,
+                string unityVersion,
+                bool allowCompression = false
+            )
             {
-                if (endpoint == null || !endpoint.IsAbsoluteUri || !endpoint.IsLoopback
+                if (
+                    endpoint == null
+                    || !endpoint.IsAbsoluteUri
+                    || !endpoint.IsLoopback
                     || (endpoint.Scheme != "ws" && endpoint.Scheme != "wss")
-                    || !string.IsNullOrEmpty(endpoint.UserInfo))
+                    || !string.IsNullOrEmpty(endpoint.UserInfo)
+                )
                     throw new ArgumentException("Owned connections require a loopback WebSocket endpoint", nameof(endpoint));
                 if (string.IsNullOrWhiteSpace(launchToken))
                     throw new ArgumentException("An owned launch token is required", nameof(launchToken));
-                if (string.IsNullOrWhiteSpace(projectName) || string.IsNullOrWhiteSpace(projectHash)
-                    || string.IsNullOrWhiteSpace(projectPath) || string.IsNullOrWhiteSpace(unityVersion))
+                if (
+                    string.IsNullOrWhiteSpace(projectName)
+                    || string.IsNullOrWhiteSpace(projectHash)
+                    || string.IsNullOrWhiteSpace(projectPath)
+                    || string.IsNullOrWhiteSpace(unityVersion)
+                )
                     throw new ArgumentException("Owned project identity must be provided explicitly");
                 Endpoint = endpoint;
                 LaunchToken = launchToken;
@@ -107,9 +122,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         }
 
         public WebSocketTransportClient(IToolDiscoveryService toolDiscoveryService = null)
-            : this(toolDiscoveryService, null)
-        {
-        }
+            : this(toolDiscoveryService, null) { }
 
         internal WebSocketTransportClient(IToolDiscoveryService toolDiscoveryService, OwnedConnectionOptions options)
         {
@@ -123,9 +136,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private Task<List<ToolMetadata>> GetEnabledToolsOnMainThreadAsync(CancellationToken token)
         {
-            return TransportCommandDispatcher.RunOnMainThreadAsync(
-                () => _toolDiscoveryService?.GetEnabledTools() ?? new List<ToolMetadata>(),
-                token);
+            return TransportCommandDispatcher.RunOnMainThreadAsync(() => _toolDiscoveryService?.GetEnabledTools() ?? new List<ToolMetadata>(), token);
         }
 
         public async Task<bool> StartAsync()
@@ -136,12 +147,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             _unityVersion = _ownedConnection?.UnityVersion ?? Application.unityVersion;
             bool remote = _ownedConnection == null && HttpEndpointUtility.IsRemoteScope();
             _useLocalAuth = !remote;
-            _apiKey = remote
-                ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty)
-                : string.Empty;
+            _apiKey = remote ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty) : string.Empty;
 
-            if (remote
-                && !HttpEndpointUtility.IsCurrentRemoteUrlAllowed(out string remoteUrlError))
+            if (remote && !HttpEndpointUtility.IsCurrentRemoteUrlAllowed(out string remoteUrlError))
             {
                 string message = remoteUrlError ?? "HTTP Remote URL is not allowed by current security settings.";
                 _state = TransportState.Disconnected(TransportDisplayName, message);
@@ -161,7 +169,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 else
                 {
-                    _projectPath = normalized;  // Fallback if path doesn't end with Assets
+                    _projectPath = normalized; // Fallback if path doesn't end with Assets
                 }
             }
 
@@ -186,7 +194,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             // State is connected but session ID might be pending until 'registered' message
             lock (_ownershipLock)
             {
-                if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || lifecycleCts.IsCancellationRequested) return false;
+                if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || lifecycleCts.IsCancellationRequested)
+                    return false;
                 _state = TransportState.Connected(TransportDisplayName, sessionId: "pending", details: _endpointUri.ToString());
                 _isConnected = true;
             }
@@ -203,7 +212,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             lock (_ownershipLock)
             {
                 lifecycleCts = _lifecycleCts;
-                if (expectedLifecycle != null && !ReferenceEquals(lifecycleCts, expectedLifecycle)) return;
+                if (expectedLifecycle != null && !ReferenceEquals(lifecycleCts, expectedLifecycle))
+                    return;
                 socket = _socket;
                 loops = CaptureConnectionLoops();
             }
@@ -285,18 +295,42 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 _isConnected = false;
                 _state = TransportState.Disconnected(TransportDisplayName);
             }
-            try { lifecycleCts?.Cancel(); } catch { }
-            try { loops.Cts?.Cancel(); } catch { }
-            if (settlement != null) _ = SettleForcedCommandsAsync(previousSettlement, loops.Commands, settlement);
+            try
+            {
+                lifecycleCts?.Cancel();
+            }
+            catch { }
+            try
+            {
+                loops.Cts?.Cancel();
+            }
+            catch { }
+            if (settlement != null)
+                _ = SettleForcedCommandsAsync(previousSettlement, loops.Commands, settlement);
             loops.Publisher?.Dispose();
-            try { socket?.Abort(); } catch { }
-            try { socket?.Dispose(); } catch { }
-            try { loops.Cts?.Dispose(); } catch { }
-            try { lifecycleCts?.Dispose(); } catch { }
+            try
+            {
+                socket?.Abort();
+            }
+            catch { }
+            try
+            {
+                socket?.Dispose();
+            }
+            catch { }
+            try
+            {
+                loops.Cts?.Dispose();
+            }
+            catch { }
+            try
+            {
+                lifecycleCts?.Dispose();
+            }
+            catch { }
         }
 
-        private async Task SettleForcedCommandsAsync(Task previous, ConnectionCommandWork commands,
-            TaskCompletionSource<bool> settlement)
+        private async Task SettleForcedCommandsAsync(Task previous, ConnectionCommandWork commands, TaskCompletionSource<bool> settlement)
         {
             try
             {
@@ -308,7 +342,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         _forcedCommandSettlement = Task.CompletedTask;
                 settlement.TrySetResult(true);
             }
-            catch (Exception ex) { settlement.TrySetException(ex); }
+            catch (Exception ex)
+            {
+                settlement.TrySetException(ex);
+            }
         }
 
         public async Task<bool> VerifyAsync()
@@ -328,7 +365,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 CancellationToken ownerToken;
                 lock (_ownershipLock)
                 {
-                    if (_connectionCts == null) return false;
+                    if (_connectionCts == null)
+                        return false;
                     ownerToken = _connectionCts.Token;
                 }
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ownerToken);
@@ -375,9 +413,17 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             lock (_ownershipLock)
             {
                 lifecycleCts = _lifecycleCts;
-                if (lifecycleCts == null || token.IsCancellationRequested) return false;
-                try { if (lifecycleCts.Token != token) return false; }
-                catch (ObjectDisposedException) { return false; }
+                if (lifecycleCts == null || token.IsCancellationRequested)
+                    return false;
+                try
+                {
+                    if (lifecycleCts.Token != token)
+                        return false;
+                }
+                catch (ObjectDisposedException)
+                {
+                    return false;
+                }
                 loops = CaptureConnectionLoops();
                 forcedSettlement = _forcedCommandSettlement;
             }
@@ -428,7 +474,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     ownsLifecycle = ReferenceEquals(_connectionCts, connectionCts) && !connectionToken.IsCancellationRequested;
                     previousSocket = ownsLifecycle ? _socket : null;
-                    if (ownsLifecycle) _socket = socket;
+                    if (ownsLifecycle)
+                        _socket = socket;
                 }
                 if (!ownsLifecycle)
                 {
@@ -476,7 +523,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             if (!string.Equals(connectedEndpoint.Host, originalEndpoint.Host, StringComparison.OrdinalIgnoreCase))
             {
                 McpLog.Warn($"[WebSocket] Connected via fallback host '{connectedEndpoint.Host}' after '{originalEndpoint.Host}' failed.");
-                if (!TryPublishConnectedEndpoint(connectionToken, connectedEndpoint)) return false;
+                if (!TryPublishConnectedEndpoint(connectionToken, connectedEndpoint))
+                    return false;
             }
 
             StartBackgroundLoops(connectionToken);
@@ -509,26 +557,38 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         }
 
         // Caller holds _ownershipLock; cancellation callbacks run only after capture.
-        private ConnectionLoops CaptureConnectionLoops() => new ConnectionLoops
-        {
-            Cts = _connectionCts, Receive = _receiveTask, KeepAlive = _keepAliveTask,
-            Registration = _registrationTask,
-            Commands = _commandWork, Publisher = _statePublisher
-        };
+        private ConnectionLoops CaptureConnectionLoops() =>
+            new ConnectionLoops
+            {
+                Cts = _connectionCts,
+                Receive = _receiveTask,
+                KeepAlive = _keepAliveTask,
+                Registration = _registrationTask,
+                Commands = _commandWork,
+                Publisher = _statePublisher,
+            };
 
         // Callers hold _ownershipLock when checking and publishing connection state.
         private bool IsCurrentConnectionToken(CancellationToken token)
         {
-            if (token.IsCancellationRequested || _connectionCts == null) return false;
-            try { return _connectionCts.Token == token; }
-            catch (ObjectDisposedException) { return false; }
+            if (token.IsCancellationRequested || _connectionCts == null)
+                return false;
+            try
+            {
+                return _connectionCts.Token == token;
+            }
+            catch (ObjectDisposedException)
+            {
+                return false;
+            }
         }
 
         private bool TryPublishConnectedEndpoint(CancellationToken token, Uri endpoint)
         {
             lock (_ownershipLock)
             {
-                if (!IsCurrentConnectionToken(token)) return false;
+                if (!IsCurrentConnectionToken(token))
+                    return false;
                 _endpointUri = endpoint;
                 return true;
             }
@@ -544,10 +604,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             var keepAliveTask = loops.KeepAlive;
             if (connectionCts != null && !connectionCts.IsCancellationRequested)
             {
-                try { connectionCts.Cancel(); } catch { }
+                try
+                {
+                    connectionCts.Cancel();
+                }
+                catch { }
             }
             loops.Publisher?.Dispose();
-            if (loops.Publisher != null) Interlocked.CompareExchange(ref _statePublisher, null, loops.Publisher);
+            if (loops.Publisher != null)
+                Interlocked.CompareExchange(ref _statePublisher, null, loops.Publisher);
             if (awaitTasks && loops.Commands != null)
             {
                 await loops.Commands.DrainAsync().ConfigureAwait(false);
@@ -555,7 +620,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             if (awaitTasks && loops.Registration != null)
             {
-                try { await loops.Registration.ConfigureAwait(false); } catch { }
+                try
+                {
+                    await loops.Registration.ConfigureAwait(false);
+                }
+                catch { }
                 _ = Interlocked.CompareExchange(ref _registrationTask, null, loops.Registration);
             }
 
@@ -563,7 +632,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 if (awaitTasks)
                 {
-                    try { await receiveTask.ConfigureAwait(false); } catch { }
+                    try
+                    {
+                        await receiveTask.ConfigureAwait(false);
+                    }
+                    catch { }
                     _ = Interlocked.CompareExchange(ref _receiveTask, null, receiveTask);
                 }
                 else if (receiveTask.IsCompleted)
@@ -576,7 +649,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 if (awaitTasks)
                 {
-                    try { await keepAliveTask.ConfigureAwait(false); } catch { }
+                    try
+                    {
+                        await keepAliveTask.ConfigureAwait(false);
+                    }
+                    catch { }
                     _ = Interlocked.CompareExchange(ref _keepAliveTask, null, keepAliveTask);
                 }
                 else if (keepAliveTask.IsCompleted)
@@ -596,9 +673,17 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             lock (_ownershipLock)
             {
-                if (token.IsCancellationRequested || _connectionCts == null) return;
-                try { if (_connectionCts.Token != token) return; }
-                catch (ObjectDisposedException) { return; }
+                if (token.IsCancellationRequested || _connectionCts == null)
+                    return;
+                try
+                {
+                    if (_connectionCts.Token != token)
+                        return;
+                }
+                catch (ObjectDisposedException)
+                {
+                    return;
+                }
                 if ((_receiveTask != null && !_receiveTask.IsCompleted) || (_keepAliveTask != null && !_keepAliveTask.IsCompleted))
                 {
                     return;
@@ -718,7 +803,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     ConnectionCommandWork work;
                     lock (_ownershipLock)
                     {
-                        if (!IsCurrentConnectionToken(token) || !_commandCancellationNegotiated) break;
+                        if (!IsCurrentConnectionToken(token) || !_commandCancellationNegotiated)
+                            break;
                         work = _commandWork;
                     }
                     work?.TryCancel(payload.Value<string>("id"));
@@ -738,7 +824,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             int? serverTimeoutSeconds = payload.Value<int?>("serverTimeout");
             lock (_ownershipLock)
             {
-                if (!IsCurrentConnectionToken(token)) return;
+                if (!IsCurrentConnectionToken(token))
+                    return;
                 if (keepAliveSeconds.HasValue && keepAliveSeconds.Value > 0)
                 {
                     _keepAliveInterval = TimeSpan.FromSeconds(keepAliveSeconds.Value);
@@ -761,7 +848,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 lock (_ownershipLock)
                 {
-                    if (!IsCurrentConnectionToken(token)) return Task.CompletedTask;
+                    if (!IsCurrentConnectionToken(token))
+                        return Task.CompletedTask;
                     _sessionId = newSessionId;
                     _largeResultNegotiated = HasCapability(payload, LargeResultWriter.Capability);
                     _compressionNegotiated = _largeResultNegotiated && HasCapability(payload, LargeResultWriter.CompressionCapability);
@@ -777,7 +865,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                 lock (_ownershipLock)
                 {
-                    if (!IsCurrentConnectionToken(token)) return Task.CompletedTask;
+                    if (!IsCurrentConnectionToken(token))
+                        return Task.CompletedTask;
                     if (_registrationTask == null || _registrationTask.IsCompleted)
                         _registrationTask = CompleteRegistrationAsync(payload, token);
                 }
@@ -792,8 +881,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 await SendRegisterToolsAsync(token).ConfigureAwait(false);
                 if (HasCapability(payload, EditorStatePublisher.Capability))
                 {
-                    var publisher = await TransportCommandDispatcher.RunOnMainThreadAsync(
-                        () => EditorStatePublisher.Start((state, sendToken) => SendStateAsync(state, token, sendToken), token), token).ConfigureAwait(false);
+                    var publisher = await TransportCommandDispatcher
+                        .RunOnMainThreadAsync(() => EditorStatePublisher.Start((state, sendToken) => SendStateAsync(state, token, sendToken), token), token)
+                        .ConfigureAwait(false);
                     lock (_ownershipLock)
                     {
                         if (IsCurrentConnectionToken(token))
@@ -801,22 +891,28 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             _statePublisher?.Dispose();
                             _statePublisher = publisher;
                         }
-                        else publisher.Dispose();
+                        else
+                            publisher.Dispose();
                     }
                 }
             }
             catch (OperationCanceledException) { }
-            catch (Exception ex) { await HandleSocketClosureAsync(ex.Message, token).ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                await HandleSocketClosureAsync(ex.Message, token).ConfigureAwait(false);
+            }
         }
 
         private void PersistSessionIdIfCurrent(string sessionId, CancellationToken token)
         {
-            if (_ownedConnection != null) return;
+            if (_ownedConnection != null)
+                return;
             try
             {
                 lock (_ownershipLock)
                 {
-                    if (!IsCurrentConnectionToken(token) || _sessionId != sessionId) return;
+                    if (!IsCurrentConnectionToken(token) || _sessionId != sessionId)
+                        return;
                     ProjectIdentityUtility.PersistSessionIdOnMainThread(sessionId);
                 }
             }
@@ -828,7 +924,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private async Task SendRegisterToolsAsync(CancellationToken token)
         {
-            if (_toolDiscoveryService == null) return;
+            if (_toolDiscoveryService == null)
+                return;
 
             token.ThrowIfCancellationRequested();
             var tools = await GetEnabledToolsOnMainThreadAsync(token).ConfigureAwait(false);
@@ -846,7 +943,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     ["requires_polling"] = tool.RequiresPolling,
                     ["poll_action"] = tool.PollAction ?? "status",
                     ["max_poll_seconds"] = tool.MaxPollSeconds,
-                    ["group"] = string.IsNullOrWhiteSpace(tool.Group) ? "core" : tool.Group
+                    ["group"] = string.IsNullOrWhiteSpace(tool.Group) ? "core" : tool.Group,
                 };
 
                 var paramsArray = new JArray();
@@ -854,25 +951,23 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     foreach (var p in tool.Parameters)
                     {
-                        paramsArray.Add(new JObject
-                        {
-                            ["name"] = p.Name,
-                            ["description"] = p.Description,
-                            ["type"] = p.Type,
-                            ["required"] = p.Required,
-                            ["default_value"] = p.DefaultValue
-                        });
+                        paramsArray.Add(
+                            new JObject
+                            {
+                                ["name"] = p.Name,
+                                ["description"] = p.Description,
+                                ["type"] = p.Type,
+                                ["required"] = p.Required,
+                                ["default_value"] = p.DefaultValue,
+                            }
+                        );
                     }
                 }
                 toolObj["parameters"] = paramsArray;
                 toolsArray.Add(toolObj);
             }
 
-            var payload = new JObject
-            {
-                ["type"] = "register_tools",
-                ["tools"] = toolsArray
-            };
+            var payload = new JObject { ["type"] = "register_tools", ["tools"] = toolsArray };
 
             await SendJsonAsync(payload, token).ConfigureAwait(false);
             McpLog.Info($"[WebSocket] Sent {tools.Count} tools registration", false);
@@ -891,7 +986,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 CancellationToken token;
                 lock (_ownershipLock)
                 {
-                    if (_connectionCts == null) return;
+                    if (_connectionCts == null)
+                        return;
                     token = _connectionCts.Token;
                 }
                 await SendRegisterToolsAsync(token).ConfigureAwait(false);
@@ -923,14 +1019,22 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             ConnectionCommandWork work;
             lock (_ownershipLock)
             {
-                if (!IsCurrentConnectionToken(token)) return;
+                if (!IsCurrentConnectionToken(token))
+                    return;
                 work = _commandWork;
             }
-            if (work == null) return;
+            if (work == null)
+                return;
             var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
             deadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, Math.Min(int.MaxValue / 1000, timeoutSeconds))));
             var command = new Command { type = commandName, @params = parameters };
-            var request = new QueuedCommand { Id = commandId, Command = command, TimeoutSeconds = timeoutSeconds, Deadline = deadline };
+            var request = new QueuedCommand
+            {
+                Id = commandId,
+                Command = command,
+                TimeoutSeconds = timeoutSeconds,
+                Deadline = deadline,
+            };
             string rejection = work.TryStart(commandId, previous => ExecuteQueuedCommandAsync(previous, request, token), request.Cancel);
             if (rejection != null)
             {
@@ -947,6 +1051,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             public CancellationTokenSource Deadline;
             private int _cancelRequested;
             public bool CancelRequested => Volatile.Read(ref _cancelRequested) != 0;
+
             public void Cancel()
             {
                 Interlocked.Exchange(ref _cancelRequested, 1);
@@ -970,11 +1075,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 catch (OperationCanceledException)
                 {
                     token.ThrowIfCancellationRequested();
-                    response = new { status = "error", error = request.CancelRequested
-                        ? $"Command '{request.Command.type}' canceled"
-                        : $"Command '{request.Command.type}' timed out after {request.TimeoutSeconds} seconds" };
+                    response = new
+                    {
+                        status = "error",
+                        error = request.CancelRequested
+                            ? $"Command '{request.Command.type}' canceled"
+                            : $"Command '{request.Command.type}' timed out after {request.TimeoutSeconds} seconds",
+                    };
                 }
-                catch (Exception ex) { response = new { status = "error", error = ex.Message }; }
+                catch (Exception ex)
+                {
+                    response = new { status = "error", error = ex.Message };
+                }
                 await SendCommandResultAsync(request.Id, response, token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { }
@@ -988,7 +1100,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     // Response delivery may be canceled; mutation settlement must remain truthful.
                     await previous.ConfigureAwait(false);
-                    if (operation != null) await operation.Completion.ConfigureAwait(false);
+                    if (operation != null)
+                        await operation.Completion.ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { }
                 request.Deadline.Dispose();
@@ -997,25 +1110,44 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private Task SendCommandResultAsync(string id, object result, CancellationToken token)
         {
-            var responseJson = new LargeResultWriter.PreparedJson(JsonConvert.SerializeObject(new { type = "command_result", id, result }));
+            var responseJson = new LargeResultWriter.PreparedJson(
+                JsonConvert.SerializeObject(
+                    new
+                    {
+                        type = "command_result",
+                        id,
+                        result,
+                    }
+                )
+            );
             bool negotiated;
             bool compressionNegotiated;
             lock (_ownershipLock)
             {
                 token.ThrowIfCancellationRequested();
-                if (!IsCurrentConnectionToken(token)) throw new OperationCanceledException(token);
+                if (!IsCurrentConnectionToken(token))
+                    throw new OperationCanceledException(token);
                 negotiated = _largeResultNegotiated;
                 compressionNegotiated = _compressionNegotiated;
             }
             if (responseJson.ByteCount > LargeResultWriter.MaxResultBytes)
-                responseJson = new LargeResultWriter.PreparedJson(JsonConvert.SerializeObject(new { type = "command_result", id,
-                    result = new { status = "error", error = "Command result exceeds the transport size limit" } }));
+                responseJson = new LargeResultWriter.PreparedJson(
+                    JsonConvert.SerializeObject(
+                        new
+                        {
+                            type = "command_result",
+                            id,
+                            result = new { status = "error", error = "Command result exceeds the transport size limit" },
+                        }
+                    )
+                );
             // Legacy integrations can use opaque IDs; they retain text responses.
-            if (!Guid.TryParseExact(id, "D", out var parsedId) || parsedId.ToString("D") != id) negotiated = false;
-            bool allowCompression = _ownedConnection?.AllowCompression ?? string.Equals(
-                Environment.GetEnvironmentVariable("UNITY_MCP_RESULT_COMPRESSION"), "gzip", StringComparison.OrdinalIgnoreCase);
-            return LargeResultWriter.SendPreparedJsonAsync(id, responseJson, negotiated, SendFrameAsync, token,
-                compressionNegotiated, allowCompression);
+            if (!Guid.TryParseExact(id, "D", out var parsedId) || parsedId.ToString("D") != id)
+                negotiated = false;
+            bool allowCompression =
+                _ownedConnection?.AllowCompression
+                ?? string.Equals(Environment.GetEnvironmentVariable("UNITY_MCP_RESULT_COMPRESSION"), "gzip", StringComparison.OrdinalIgnoreCase);
+            return LargeResultWriter.SendPreparedJsonAsync(id, responseJson, negotiated, SendFrameAsync, token, compressionNegotiated, allowCompression);
         }
 
         private async Task KeepAliveLoopAsync(CancellationToken token)
@@ -1054,8 +1186,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 ["project_hash"] = _projectHash,
                 ["unity_version"] = _unityVersion,
                 ["project_path"] = _projectPath,
-                ["capabilities"] = new JArray(EditorStatePublisher.Capability, LargeResultWriter.Capability,
-                    ConnectionCommandWork.CancellationCapability, LargeResultWriter.CompressionCapability)
+                ["capabilities"] = new JArray(
+                    EditorStatePublisher.Capability,
+                    LargeResultWriter.Capability,
+                    ConnectionCommandWork.CancellationCapability,
+                    LargeResultWriter.CompressionCapability
+                ),
             };
 
             await SendJsonAsync(registerPayload, token).ConfigureAwait(false);
@@ -1066,7 +1202,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             var payload = new JObject
             {
                 ["type"] = "pong",
-                ["session_id"] = _sessionId  // Include session ID for server-side tracking
+                ["session_id"] = _sessionId, // Include session ID for server-side tracking
             };
             return SendJsonAsync(payload, token);
         }
@@ -1080,26 +1216,32 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private static bool HasCapability(JObject payload, string capability)
         {
-            if (payload["capabilities"] is not JArray capabilities) return false;
+            if (payload["capabilities"] is not JArray capabilities)
+                return false;
             foreach (var value in capabilities)
-                if (value.Type == JTokenType.String && value.Value<string>() == capability) return true;
+                if (value.Type == JTokenType.String && value.Value<string>() == capability)
+                    return true;
             return false;
         }
 
-        private Task SendStateAsync(JObject payload, CancellationToken ownerToken, CancellationToken sendToken)
-            => SendOwnedFrameAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(payload.ToString(Formatting.None))),
-                WebSocketMessageType.Text, ownerToken, sendToken);
+        private Task SendStateAsync(JObject payload, CancellationToken ownerToken, CancellationToken sendToken) =>
+            SendOwnedFrameAsync(
+                new ArraySegment<byte>(Encoding.UTF8.GetBytes(payload.ToString(Formatting.None))),
+                WebSocketMessageType.Text,
+                ownerToken,
+                sendToken
+            );
 
-        private Task SendFrameAsync(ArraySegment<byte> buffer, WebSocketMessageType type, CancellationToken token)
-            => SendOwnedFrameAsync(buffer, type, token, token);
+        private Task SendFrameAsync(ArraySegment<byte> buffer, WebSocketMessageType type, CancellationToken token) =>
+            SendOwnedFrameAsync(buffer, type, token, token);
 
-        private async Task SendOwnedFrameAsync(ArraySegment<byte> buffer, WebSocketMessageType type,
-            CancellationToken ownerToken, CancellationToken token)
+        private async Task SendOwnedFrameAsync(ArraySegment<byte> buffer, WebSocketMessageType type, CancellationToken ownerToken, CancellationToken token)
         {
             ClientWebSocket socket;
             lock (_ownershipLock)
             {
-                if (!IsCurrentConnectionToken(ownerToken)) throw new OperationCanceledException(ownerToken);
+                if (!IsCurrentConnectionToken(ownerToken))
+                    throw new OperationCanceledException(ownerToken);
                 socket = _socket ?? throw new InvalidOperationException("WebSocket is not initialised");
             }
 
@@ -1131,15 +1273,20 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 var connectionCts = _connectionCts;
                 lifecycleCts = _lifecycleCts;
-                if (connectionToken.IsCancellationRequested || connectionCts == null ||
-                    lifecycleCts == null || lifecycleCts.IsCancellationRequested) return;
+                if (connectionToken.IsCancellationRequested || connectionCts == null || lifecycleCts == null || lifecycleCts.IsCancellationRequested)
+                    return;
                 try
                 {
-                    if (connectionCts.Token != connectionToken) return;
+                    if (connectionCts.Token != connectionToken)
+                        return;
                     lifecycleToken = lifecycleCts.Token;
                 }
-                catch (ObjectDisposedException) { return; }
-                if (Interlocked.CompareExchange(ref _isReconnectingFlag, 1, 0) != 0) return;
+                catch (ObjectDisposedException)
+                {
+                    return;
+                }
+                if (Interlocked.CompareExchange(ref _isReconnectingFlag, 1, 0) != 0)
+                    return;
                 _isConnected = false;
                 _state = TransportState.Disconnected(TransportDisplayName, reason ?? "Connection closed");
                 loops = CaptureConnectionLoops();
@@ -1167,11 +1314,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             try
             {
-                if (token.IsCancellationRequested) return;
+                if (token.IsCancellationRequested)
+                    return;
                 ConnectionLoops loops;
                 lock (_ownershipLock)
                 {
-                    if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || token.IsCancellationRequested) return;
+                    if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || token.IsCancellationRequested)
+                        return;
                     loops = CaptureConnectionLoops();
                 }
                 await StopCapturedConnectionLoopsAsync(loops).ConfigureAwait(false);
@@ -1185,15 +1334,22 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                     if (delay > TimeSpan.Zero)
                     {
-                        try { await Task.Delay(delay, token).ConfigureAwait(false); }
-                        catch (OperationCanceledException) { return; }
+                        try
+                        {
+                            await Task.Delay(delay, token).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            return;
+                        }
                     }
 
                     if (await EstablishConnectionAsync(token).ConfigureAwait(false))
                     {
                         lock (_ownershipLock)
                         {
-                            if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || token.IsCancellationRequested) return;
+                            if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || token.IsCancellationRequested)
+                                return;
                             _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
                             _isConnected = true;
                         }
@@ -1207,19 +1363,27 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 McpLog.Warn($"[WebSocket] Initial reconnect schedule exhausted. Retrying every {ReconnectTailInterval.TotalSeconds}s until cancelled.");
                 lock (_ownershipLock)
                 {
-                    if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || token.IsCancellationRequested) return;
+                    if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || token.IsCancellationRequested)
+                        return;
                     _state = _state.WithError($"Server unreachable – retrying every {ReconnectTailInterval.TotalSeconds} s");
                 }
                 while (!token.IsCancellationRequested)
                 {
-                    try { await Task.Delay(ReconnectTailInterval, token).ConfigureAwait(false); }
-                    catch (OperationCanceledException) { return; }
+                    try
+                    {
+                        await Task.Delay(ReconnectTailInterval, token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
 
                     if (await EstablishConnectionAsync(token).ConfigureAwait(false))
                     {
                         lock (_ownershipLock)
                         {
-                            if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || token.IsCancellationRequested) return;
+                            if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || token.IsCancellationRequested)
+                                return;
                             _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
                             _isConnected = true;
                         }
@@ -1261,7 +1425,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 Scheme = httpUri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws",
                 Host = host,
-                Path = httpUri.AbsolutePath.TrimEnd('/') + "/hub/plugin"
+                Path = httpUri.AbsolutePath.TrimEnd('/') + "/hub/plugin",
             };
 
             return builder.Uri;

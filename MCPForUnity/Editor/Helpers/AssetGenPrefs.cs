@@ -44,19 +44,17 @@ namespace MCPForUnity.Editor.Helpers
         /// means "use the catalog default for this provider". Per-provider (not per-type) so
         /// disjoint provider model lists (Tripo vs Meshy, fal vs OpenRouter) never clobber each other.
         /// </summary>
-        public static string GetSelectedModel(string kind, string providerId)
-            => string.IsNullOrEmpty(providerId)
-                ? string.Empty
-                : EditorPrefs.GetString(ModelKey(kind, providerId), string.Empty);
+        public static string GetSelectedModel(string kind, string providerId) =>
+            string.IsNullOrEmpty(providerId) ? string.Empty : EditorPrefs.GetString(ModelKey(kind, providerId), string.Empty);
 
         public static void SetSelectedModel(string kind, string providerId, string value)
         {
-            if (string.IsNullOrEmpty(providerId)) return;
+            if (string.IsNullOrEmpty(providerId))
+                return;
             SetOrDelete(ModelKey(kind, providerId), value);
         }
 
-        private static string ModelKey(string kind, string providerId)
-            => EditorPrefKeys.AssetGenSelectedModelPrefix + kind + "." + providerId;
+        private static string ModelKey(string kind, string providerId) => EditorPrefKeys.AssetGenSelectedModelPrefix + kind + "." + providerId;
 
         public static string DefaultFormat
         {
@@ -83,19 +81,21 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         public static bool IsProviderEnabled(string providerId) =>
-            !string.IsNullOrEmpty(providerId)
-            && EditorPrefs.GetBool(EditorPrefKeys.AssetGenProviderEnabledPrefix + providerId, false);
+            !string.IsNullOrEmpty(providerId) && EditorPrefs.GetBool(EditorPrefKeys.AssetGenProviderEnabledPrefix + providerId, false);
 
         public static void SetProviderEnabled(string providerId, bool enabled)
         {
-            if (string.IsNullOrEmpty(providerId)) return;
+            if (string.IsNullOrEmpty(providerId))
+                return;
             EditorPrefs.SetBool(EditorPrefKeys.AssetGenProviderEnabledPrefix + providerId, enabled);
         }
 
         private static void SetOrDelete(string key, string value)
         {
-            if (string.IsNullOrWhiteSpace(value)) EditorPrefs.DeleteKey(key);
-            else EditorPrefs.SetString(key, value.Trim());
+            if (string.IsNullOrWhiteSpace(value))
+                EditorPrefs.DeleteKey(key);
+            else
+                EditorPrefs.SetString(key, value.Trim());
         }
     }
 }

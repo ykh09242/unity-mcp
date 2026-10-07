@@ -19,8 +19,14 @@ def stage_license(tmp_path: Path, value: str) -> subprocess.CompletedProcess[str
     if not bash or not Path(bash).is_file():
         pytest.skip("bash unavailable")
     config = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    script = next(step["run"] for step in config["jobs"]["nl-suite"]["steps"] if step.get("id") == "ulf")
-    environment = {name: os.environ[name] for name in ("PATH", "SYSTEMROOT", "TEMP", "TMP") if name in os.environ}
+    script = next(
+        step["run"] for step in config["jobs"]["nl-suite"]["steps"] if step.get("id") == "ulf"
+    )
+    environment = {
+        name: os.environ[name]
+        for name in ("PATH", "SYSTEMROOT", "TEMP", "TMP")
+        if name in os.environ
+    }
     environment.update(
         RUNNER_TEMP=(tmp_path / "runner temp").as_posix(),
         GITHUB_OUTPUT=(tmp_path / "outputs").as_posix(),

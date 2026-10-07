@@ -1,10 +1,10 @@
 using System;
 using System.Reflection;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Tools;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -16,10 +16,16 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(int.MinValue)]
         public void HandleCommand_Get_RejectsNonPositiveCount(int count)
         {
-            var result = ToJObject(ReadConsole.HandleCommand(new JObject
-            {
-                ["action"] = "get", ["types"] = new JArray("all"), ["count"] = count
-            }));
+            var result = ToJObject(
+                ReadConsole.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "get",
+                        ["types"] = new JArray("all"),
+                        ["count"] = count,
+                    }
+                )
+            );
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("'count' must be greater than zero", result.Value<string>("error"));
         }
@@ -30,12 +36,21 @@ namespace MCPForUnityTests.Editor.Tools
             // Arrange
             // Ensure there's something to clear
             Debug.Log("Log to clear");
-            
+
             // Verify content exists before clear
-            var getBefore = ToJObject(ReadConsole.HandleCommand(new JObject { ["action"] = "get", ["types"] = new JArray { "error", "warning", "log" }, ["count"] = 10 }));
+            var getBefore = ToJObject(
+                ReadConsole.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "get",
+                        ["types"] = new JArray { "error", "warning", "log" },
+                        ["count"] = 10,
+                    }
+                )
+            );
             Assert.IsTrue(getBefore.Value<bool>("success"), getBefore.ToString());
             var entriesBefore = getBefore["data"] as JArray;
-            
+
             // Ideally we'd assert count > 0, but other tests/system logs might affect this.
             // Just ensuring the call doesn't fail is a baseline, but let's try to be stricter if possible.
             // Since we just logged, there should be at least one entry.
@@ -46,9 +61,18 @@ namespace MCPForUnityTests.Editor.Tools
 
             // Assert
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-            
+
             // Verify clear effect
-            var getAfter = ToJObject(ReadConsole.HandleCommand(new JObject { ["action"] = "get", ["types"] = new JArray { "error", "warning", "log" }, ["count"] = 10 }));
+            var getAfter = ToJObject(
+                ReadConsole.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "get",
+                        ["types"] = new JArray { "error", "warning", "log" },
+                        ["count"] = 10,
+                    }
+                )
+            );
             Assert.IsTrue(getAfter.Value<bool>("success"), getAfter.ToString());
             var entriesAfter = getAfter["data"] as JArray;
             Assert.IsTrue(entriesAfter == null || entriesAfter.Count == 0, "Console should be empty after clear.");
@@ -60,13 +84,13 @@ namespace MCPForUnityTests.Editor.Tools
             // Arrange
             string uniqueMessage = $"Test Log Message {Guid.NewGuid()}";
             Debug.Log(uniqueMessage);
-            
+
             var paramsObj = new JObject
             {
                 ["action"] = "get",
                 ["types"] = new JArray { "error", "warning", "log" },
                 ["format"] = "detailed",
-                ["count"] = 1000 // Fetch enough to likely catch our message
+                ["count"] = 1000, // Fetch enough to likely catch our message
             };
 
             // Act
@@ -104,7 +128,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "get",
                 ["types"] = new JArray { "error", "warning", "log" },
                 ["format"] = "detailed",
-                ["count"] = 1000
+                ["count"] = 1000,
             };
 
             var result = ToJObject(ReadConsole.HandleCommand(paramsObj));
@@ -132,13 +156,15 @@ namespace MCPForUnityTests.Editor.Tools
         public void SplitMessageAndStackTrace_StripsNativeFrames()
         {
             // A Debug.Log entry with Stack Trace Logging set to Full (issue #1433).
-            string message = string.Join("\n",
+            string message = string.Join(
+                "\n",
                 "[CloudSaveManager] Status: Ready - Cloud save ready",
                 "0x00007ffd387f224e (Unity) StackWalker::ShowCallstack",
                 "0x00007ffd3a025909 (Unity) PlatformStacktrace::GetStacktrace",
                 "0x00007ffd387a2caf (Unity) DebugStringToFile",
                 "0x0000022bc5e78bc8 (Mono JIT Code) UnityEngine.Debug:Log (object)",
-                "CloudSaveManager:Start () (at Assets/Scripts/CloudSaveManager.cs:12)");
+                "CloudSaveManager:Start () (at Assets/Scripts/CloudSaveManager.cs:12)"
+            );
 
             var (body, stackTrace) = ReadConsole.SplitMessageAndStackTrace(message);
 
@@ -203,17 +229,16 @@ namespace MCPForUnityTests.Editor.Tools
         private const int ConsoleFlagLogLevelLog = 1 << 7;
         private const int ConsoleFlagLogLevelWarning = 1 << 8;
 
-        private static Type LogEntriesType =>
-            typeof(EditorApplication).Assembly.GetType("UnityEditor.LogEntries");
+        private static Type LogEntriesType => typeof(EditorApplication).Assembly.GetType("UnityEditor.LogEntries");
 
-        private static PropertyInfo ConsoleFlagsProperty => LogEntriesType.GetProperty(
-            "consoleFlags", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        private static PropertyInfo ConsoleFlagsProperty =>
+            LogEntriesType.GetProperty("consoleFlags", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
 
-        private static MethodInfo SetFilteringTextMethod => LogEntriesType.GetMethod(
-            "SetFilteringText", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        private static MethodInfo SetFilteringTextMethod =>
+            LogEntriesType.GetMethod("SetFilteringText", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
 
-        private static MethodInfo GetFilteringTextMethod => LogEntriesType.GetMethod(
-            "GetFilteringText", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        private static MethodInfo GetFilteringTextMethod =>
+            LogEntriesType.GetMethod("GetFilteringText", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
 
         private static int ConsoleFlags
         {
@@ -229,23 +254,29 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static JArray GetAllEntries()
         {
-            var result = ToJObject(ReadConsole.HandleCommand(new JObject
-            {
-                ["action"] = "get",
-                ["types"] = new JArray { "error", "warning", "log" },
-                ["format"] = "detailed",
-                ["count"] = 1000
-            }));
+            var result = ToJObject(
+                ReadConsole.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "get",
+                        ["types"] = new JArray { "error", "warning", "log" },
+                        ["format"] = "detailed",
+                        ["count"] = 1000,
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             return result["data"] as JArray;
         }
 
         private static bool ContainsMessage(JArray entries, string needle)
         {
-            if (entries == null) return false;
+            if (entries == null)
+                return false;
             foreach (var entry in entries)
             {
-                if (entry["message"]?.ToString().Contains(needle) == true) return true;
+                if (entry["message"]?.ToString().Contains(needle) == true)
+                    return true;
             }
             return false;
         }
@@ -264,13 +295,8 @@ namespace MCPForUnityTests.Editor.Tools
 
                 var entries = GetAllEntries();
 
-                Assert.IsTrue(
-                    ContainsMessage(entries, uniqueMessage),
-                    "read_console must return entries hidden by the Console window's search query.");
-                Assert.AreEqual(
-                    unrelatedQuery,
-                    FilteringText,
-                    "read_console must leave the user's console search query untouched.");
+                Assert.IsTrue(ContainsMessage(entries, uniqueMessage), "read_console must return entries hidden by the Console window's search query.");
+                Assert.AreEqual(unrelatedQuery, FilteringText, "read_console must leave the user's console search query untouched.");
             }
             finally
             {
@@ -292,13 +318,8 @@ namespace MCPForUnityTests.Editor.Tools
 
                 var entries = GetAllEntries();
 
-                Assert.IsTrue(
-                    ContainsMessage(entries, uniqueMessage),
-                    "read_console must return entries hidden by the Console window's severity toggles.");
-                Assert.AreEqual(
-                    hiddenFlags,
-                    ConsoleFlags,
-                    "read_console must restore the Console window's severity toggles.");
+                Assert.IsTrue(ContainsMessage(entries, uniqueMessage), "read_console must return entries hidden by the Console window's severity toggles.");
+                Assert.AreEqual(hiddenFlags, ConsoleFlags, "read_console must restore the Console window's severity toggles.");
             }
             finally
             {

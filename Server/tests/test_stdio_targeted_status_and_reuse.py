@@ -9,7 +9,7 @@ import textwrap
 import pytest
 
 
-COMMON = '''
+COMMON = """
 import json
 import os
 from pathlib import Path
@@ -94,7 +94,7 @@ def assert_lock_excludes_other_thread(lock):
     if isinstance(outcomes[0], BaseException):
         raise outcomes[0]
     assert outcomes == [False], "Socket close did not hold the I/O lock"
-'''
+"""
 
 
 def _run(source, tmp_path):
@@ -106,24 +106,31 @@ def _run(source, tmp_path):
     env.pop("UNITY_MCP_DEFAULT_INSTANCE", None)
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(COMMON) + textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1], env=env,
-        capture_output=True, text=True, timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("instance_id,statuses,blocked", [
-    ("Selected@aaaa1111", {"bbbb2222": True}, False),
-    ("aaaa1111", {"aaaa1111": False, "bbbb2222": True}, False),
-    ("aaaa1111", {"aaaa1111": True, "bbbb2222": False}, True),
-    ("Selected@aaaa1111", {"aaaa1111": True, "bbbb2222": False}, True),
-    ("Selected@aaaa1111", {"aaaa1111": False, "bbbb2222": True}, False),
-    ("Parent@Selected@aaaa1111", {"aaaa1111": False, "bbbb2222": True}, False),
-    (None, {"aaaa1111": False, "bbbb2222": True}, True),
-    (None, {"aaaa1111": True, "bbbb2222": False}, False),
-])
+@pytest.mark.parametrize(
+    "instance_id,statuses,blocked",
+    [
+        ("Selected@aaaa1111", {"bbbb2222": True}, False),
+        ("aaaa1111", {"aaaa1111": False, "bbbb2222": True}, False),
+        ("aaaa1111", {"aaaa1111": True, "bbbb2222": False}, True),
+        ("Selected@aaaa1111", {"aaaa1111": True, "bbbb2222": False}, True),
+        ("Selected@aaaa1111", {"aaaa1111": False, "bbbb2222": True}, False),
+        ("Parent@Selected@aaaa1111", {"aaaa1111": False, "bbbb2222": True}, False),
+        (None, {"aaaa1111": False, "bbbb2222": True}, True),
+        (None, {"aaaa1111": True, "bbbb2222": False}, False),
+    ],
+)
 def test_preflight_uses_selected_status_only(tmp_path, instance_id, statuses, blocked):
-    _run(f'''
+    _run(
+        f"""
         for index, (hash_id, reloading) in enumerate({statuses!r}.items()):
             path = home / ".unity-mcp" / f"unity-mcp-status-{{hash_id}}.json"
             path.write_text(json.dumps({{"reloading": reloading}}), encoding="utf-8")
@@ -142,12 +149,15 @@ def test_preflight_uses_selected_status_only(tmp_path, instance_id, statuses, bl
             assert result == {{"endpoint": 1111}}
             assert not old.closed and conn.sock is old and not created
             assert old.requests == [{{"type": "fixture_query", "params": {{"zero": 0}}}}]
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
 
 
 @pytest.mark.parametrize("changed", [False, True])
 def test_cached_port_change_reconnects_with_framing(tmp_path, changed):
-    _run(f'''
+    _run(
+        f"""
         pool = module.UnityConnectionPool()
         target = UnityInstanceInfo(id="Selected@aaaa1111", name="Selected", hash="aaaa1111",
                                    path="owned-fixture/Assets", port={2222 if changed else 1111}, status="running")
@@ -172,11 +182,14 @@ def test_cached_port_change_reconnects_with_framing(tmp_path, changed):
             assert old.requests == [] and conn.sock is created[0][1]
         else:
             assert not created and conn.sock is old
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
 
 
 def test_close_lock_assertion_rejects_unlocked_rlock(tmp_path):
-    _run('''
+    _run(
+        """
         lock = threading.RLock()
         try:
             assert_lock_excludes_other_thread(lock)
@@ -186,11 +199,14 @@ def test_close_lock_assertion_rejects_unlocked_rlock(tmp_path):
             raise AssertionError("Unlocked I/O lock was accepted")
         with lock:
             assert_lock_excludes_other_thread(lock)
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
 
 
 def test_expired_deadline_stops_before_socket_io(tmp_path):
-    _run('''
+    _run(
+        """
         conn = module.UnityConnection(port=1111, instance_id="Selected@aaaa1111")
         old = FramedSocket(1111)
         conn.sock, conn.use_framing = old, True
@@ -201,4 +217,6 @@ def test_expired_deadline_stops_before_socket_io(tmp_path):
         else:
             raise AssertionError("deadline must be honored")
         assert not created and not old.requests and not old.closed
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )

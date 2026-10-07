@@ -75,8 +75,7 @@ namespace MCPForUnity.Editor.Helpers
             // Last resort: TypeCache (fast index)
             if (requiredBaseType != null)
             {
-                var tc = TypeCache.GetTypesDerivedFrom(requiredBaseType)
-                                  .Where(t => NamesMatch(t, typeName));
+                var tc = TypeCache.GetTypesDerivedFrom(requiredBaseType).Where(t => NamesMatch(t, typeName));
                 candidates = DisambiguateByIdentity(PreferPlayer(tc).ToList());
                 if (candidates.Count == 1)
                 {
@@ -93,8 +92,9 @@ namespace MCPForUnity.Editor.Helpers
             }
 #endif
 
-            error = $"Type '{typeName}' not found in loaded runtime assemblies. " +
-                    "Use a fully-qualified name (Namespace.TypeName) and ensure the script compiled.";
+            error =
+                $"Type '{typeName}' not found in loaded runtime assemblies. "
+                + "Use a fully-qualified name (Namespace.TypeName) and ensure the script compiled.";
             type = null;
             return false;
         }
@@ -133,19 +133,22 @@ namespace MCPForUnity.Editor.Helpers
 
         private static bool PassesConstraint(Type type, Type requiredBaseType)
         {
-            if (type == null) return false;
-            if (requiredBaseType == null) return true;
+            if (type == null)
+                return false;
+            if (requiredBaseType == null)
+                return true;
             return requiredBaseType.IsAssignableFrom(type);
         }
 
         private static bool NamesMatch(Type t, string query) =>
-            t.Name.Equals(query, StringComparison.Ordinal) ||
-            (t.FullName?.Equals(query, StringComparison.Ordinal) ?? false);
+            t.Name.Equals(query, StringComparison.Ordinal) || (t.FullName?.Equals(query, StringComparison.Ordinal) ?? false);
 
         private static void Cache(Type t, string query, Type requiredBaseType)
         {
-            if (t == null) return;
-            if (t.FullName != null) CacheByFqn[t.FullName] = t;
+            if (t == null)
+                return;
+            if (t.FullName != null)
+                CacheByFqn[t.FullName] = t;
             // Qualified and constrained lookups do not establish short-name uniqueness.
             if (requiredBaseType == null && query == t.Name)
                 CacheByName[query] = t;
@@ -158,9 +161,7 @@ namespace MCPForUnity.Editor.Helpers
 
 #if UNITY_EDITOR
             // Names of Player (runtime) script assemblies
-            var playerAsmNames = new HashSet<string>(
-                CompilationPipeline.GetAssemblies(AssembliesType.Player).Select(a => a.name),
-                StringComparer.Ordinal);
+            var playerAsmNames = new HashSet<string>(CompilationPipeline.GetAssemblies(AssembliesType.Player).Select(a => a.name), StringComparer.Ordinal);
 
             var playerAsms = loaded.Where(a => playerAsmNames.Contains(a.GetName().Name));
             var editorAsms = loaded.Except(playerAsms);
@@ -173,12 +174,8 @@ namespace MCPForUnity.Editor.Helpers
                 ? (t => t.Name.Equals(query, StringComparison.Ordinal))
                 : (t => t.FullName?.Equals(query, StringComparison.Ordinal) ?? false);
 
-            var fromPlayer = playerAsms.SelectMany(SafeGetTypes)
-                                       .Where(t => PassesConstraint(t, requiredBaseType))
-                                       .Where(match);
-            var fromEditor = editorAsms.SelectMany(SafeGetTypes)
-                                       .Where(t => PassesConstraint(t, requiredBaseType))
-                                       .Where(match);
+            var fromPlayer = playerAsms.SelectMany(SafeGetTypes).Where(t => PassesConstraint(t, requiredBaseType)).Where(match);
+            var fromEditor = editorAsms.SelectMany(SafeGetTypes).Where(t => PassesConstraint(t, requiredBaseType)).Where(match);
 
             // Prefer Player over Editor
             var candidates = fromPlayer.ToList();
@@ -201,23 +198,24 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         private static List<Type> DisambiguateByIdentity(List<Type> candidates)
         {
-            if (candidates.Count <= 1) return candidates;
+            if (candidates.Count <= 1)
+                return candidates;
 
             // 1. De-dupe by FullName (keep first occurrence; Player-preferred ordering preserved).
-            var deduped = candidates
-                .GroupBy(t => t.FullName ?? t.Name, StringComparer.Ordinal)
-                .Select(g => g.First())
-                .ToList();
-            if (deduped.Count <= 1) return deduped;
+            var deduped = candidates.GroupBy(t => t.FullName ?? t.Name, StringComparer.Ordinal).Select(g => g.First()).ToList();
+            if (deduped.Count <= 1)
+                return deduped;
 
             // 2. Prefer a single public type.
             var publicTypes = deduped.Where(t => t.IsPublic || t.IsNestedPublic).ToList();
-            if (publicTypes.Count == 1) return publicTypes;
+            if (publicTypes.Count == 1)
+                return publicTypes;
             var pool = publicTypes.Count > 1 ? publicTypes : deduped;
 
             // 3. Prefer a single core/BCL type.
             var coreTypes = pool.Where(IsCoreBclType).ToList();
-            if (coreTypes.Count == 1) return coreTypes;
+            if (coreTypes.Count == 1)
+                return coreTypes;
 
             return pool;
         }
@@ -225,7 +223,8 @@ namespace MCPForUnity.Editor.Helpers
         private static bool IsCoreBclType(Type t)
         {
             string asmName = t.Assembly.GetName().Name;
-            if (string.IsNullOrEmpty(asmName)) return false;
+            if (string.IsNullOrEmpty(asmName))
+                return false;
             return asmName.Equals("mscorlib", StringComparison.Ordinal)
                 || asmName.Equals("netstandard", StringComparison.Ordinal)
                 || asmName.Equals("System.Private.CoreLib", StringComparison.Ordinal)
@@ -235,17 +234,24 @@ namespace MCPForUnity.Editor.Helpers
 
         private static IEnumerable<Type> SafeGetTypes(System.Reflection.Assembly assembly)
         {
-            try { return assembly.GetTypes(); }
-            catch (ReflectionTypeLoadException rtle) { return rtle.Types.Where(t => t != null); }
-            catch { return Enumerable.Empty<Type>(); }
+            try
+            {
+                return assembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException rtle)
+            {
+                return rtle.Types.Where(t => t != null);
+            }
+            catch
+            {
+                return Enumerable.Empty<Type>();
+            }
         }
 
         private static IEnumerable<Type> PreferPlayer(IEnumerable<Type> types)
         {
 #if UNITY_EDITOR
-            var playerAsmNames = new HashSet<string>(
-                CompilationPipeline.GetAssemblies(AssembliesType.Player).Select(a => a.name),
-                StringComparer.Ordinal);
+            var playerAsmNames = new HashSet<string>(CompilationPipeline.GetAssemblies(AssembliesType.Player).Select(a => a.name), StringComparer.Ordinal);
 
             var list = types.ToList();
             var fromPlayer = list.Where(t => playerAsmNames.Contains(t.Assembly.GetName().Name)).ToList();
@@ -258,9 +264,9 @@ namespace MCPForUnity.Editor.Helpers
         private static string FormatAmbiguityError(string query, List<Type> candidates)
         {
             var names = string.Join(", ", candidates.Take(5).Select(t => t.FullName));
-            if (candidates.Count > 5) names += $" ... ({candidates.Count - 5} more)";
+            if (candidates.Count > 5)
+                names += $" ... ({candidates.Count - 5} more)";
             return $"Ambiguous type reference '{query}'. Found {candidates.Count} matches: [{names}]. Use a fully-qualified name.";
         }
     }
 }
-

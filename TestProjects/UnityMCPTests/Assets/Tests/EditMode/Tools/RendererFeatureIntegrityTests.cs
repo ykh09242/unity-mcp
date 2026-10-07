@@ -34,8 +34,7 @@ namespace MCPForUnityTests.EditMode.Tools
 
         private static void RemoveSlot(RendererFeatureIntegritySlots slots, int index)
         {
-            var method = typeof(RendererFeatureOps).GetMethod("RemoveSerializedFeatureSlot",
-                BindingFlags.Static | BindingFlags.NonPublic);
+            var method = typeof(RendererFeatureOps).GetMethod("RemoveSerializedFeatureSlot", BindingFlags.Static | BindingFlags.NonPublic);
             Assert.IsNotNull(method, "The production deletion helper must be available.");
             using (var serialized = new SerializedObject(slots))
             {

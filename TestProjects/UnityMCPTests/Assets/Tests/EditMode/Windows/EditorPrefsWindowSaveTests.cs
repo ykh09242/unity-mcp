@@ -39,7 +39,8 @@ namespace MCPForUnityTests.Editor.Windows
             SetField("resultCount", new Label());
             SetField("emptyState", new Label());
             var itemTemplate = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
-                AssetPathUtility.GetMcpPackageRootPath() + "/Editor/Windows/EditorPrefs/EditorPrefItem.uxml");
+                AssetPathUtility.GetMcpPackageRootPath() + "/Editor/Windows/EditorPrefs/EditorPrefItem.uxml"
+            );
             Assert.IsNotNull(itemTemplate);
             SetField("itemTemplate", itemTemplate);
             typeof(EditorPrefsWindow).GetField("showSaveError", InstanceFlags)?.SetValue(window, (Action<string>)errors.Add);
@@ -48,8 +49,10 @@ namespace MCPForUnityTests.Editor.Windows
         [TearDown]
         public void TearDown()
         {
-            foreach (string key in keys) EditorPrefs.DeleteKey(key);
-            if (window != null) UnityEngine.Object.DestroyImmediate(window);
+            foreach (string key in keys)
+                EditorPrefs.DeleteKey(key);
+            if (window != null)
+                UnityEngine.Object.DestroyImmediate(window);
             typeof(EditorConfigurationCache).GetField("_instance", StaticFlags).SetValue(null, previousCache);
         }
 
@@ -136,8 +139,10 @@ namespace MCPForUnityTests.Editor.Windows
             }
             finally
             {
-                if (existed) WriteStoredValue(key, type, previous.ToString());
-                else EditorPrefs.DeleteKey(key);
+                if (existed)
+                    WriteStoredValue(key, type, previous.ToString());
+                else
+                    EditorPrefs.DeleteKey(key);
             }
         }
 
@@ -176,10 +181,18 @@ namespace MCPForUnityTests.Editor.Windows
                 Assert.IsTrue(secondRow.ClassListContains("pref-hidden"));
                 switch (requestedType)
                 {
-                    case EditorPrefType.String: Assert.AreEqual(savedValue, EditorPrefs.GetString(first.Key)); break;
-                    case EditorPrefType.Int: Assert.AreEqual(42, EditorPrefs.GetInt(first.Key)); break;
-                    case EditorPrefType.Float: Assert.AreEqual(1.25f, EditorPrefs.GetFloat(first.Key)); break;
-                    case EditorPrefType.Bool: Assert.IsTrue(EditorPrefs.GetBool(first.Key)); break;
+                    case EditorPrefType.String:
+                        Assert.AreEqual(savedValue, EditorPrefs.GetString(first.Key));
+                        break;
+                    case EditorPrefType.Int:
+                        Assert.AreEqual(42, EditorPrefs.GetInt(first.Key));
+                        break;
+                    case EditorPrefType.Float:
+                        Assert.AreEqual(1.25f, EditorPrefs.GetFloat(first.Key));
+                        break;
+                    case EditorPrefType.Bool:
+                        Assert.IsTrue(EditorPrefs.GetBool(first.Key));
+                        break;
                 }
                 Assert.AreEqual("saved B", EditorPrefs.GetString(second.Key));
                 Assert.AreEqual(0, errors.Count);
@@ -214,15 +227,20 @@ namespace MCPForUnityTests.Editor.Windows
 
                 Invoke("SavePref", item, saved, type);
 
-                object expected = type == EditorPrefType.Bool ? (object)bool.Parse(saved) : type == EditorPrefType.Int ? int.Parse(saved) : saved;
+                object expected =
+                    type == EditorPrefType.Bool ? (object)bool.Parse(saved)
+                    : type == EditorPrefType.Int ? int.Parse(saved)
+                    : saved;
                 Assert.AreEqual(expected, ReadStoredValue(key, type));
                 Assert.AreEqual(expected, typeof(EditorConfigurationCache).GetProperty(propertyName).GetValue(cache));
                 CollectionAssert.AreEqual(new[] { propertyName }, notifications);
             }
             finally
             {
-                if (existed) WriteStoredValue(key, type, previous.ToString());
-                else EditorPrefs.DeleteKey(key);
+                if (existed)
+                    WriteStoredValue(key, type, previous.ToString());
+                else
+                    EditorPrefs.DeleteKey(key);
             }
         }
 
@@ -247,8 +265,10 @@ namespace MCPForUnityTests.Editor.Windows
             }
             finally
             {
-                if (existed) EditorPrefs.SetBool(EditorPrefKeys.DebugLogs, previous);
-                else EditorPrefs.DeleteKey(EditorPrefKeys.DebugLogs);
+                if (existed)
+                    EditorPrefs.SetBool(EditorPrefKeys.DebugLogs, previous);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.DebugLogs);
             }
         }
 
@@ -273,9 +293,12 @@ namespace MCPForUnityTests.Editor.Windows
         {
             switch (type)
             {
-                case EditorPrefType.Bool: return EditorPrefs.GetBool(key);
-                case EditorPrefType.Int: return EditorPrefs.GetInt(key);
-                default: return EditorPrefs.GetString(key);
+                case EditorPrefType.Bool:
+                    return EditorPrefs.GetBool(key);
+                case EditorPrefType.Int:
+                    return EditorPrefs.GetInt(key);
+                default:
+                    return EditorPrefs.GetString(key);
             }
         }
 
@@ -283,9 +306,15 @@ namespace MCPForUnityTests.Editor.Windows
         {
             switch (type)
             {
-                case EditorPrefType.Bool: EditorPrefs.SetBool(key, bool.Parse(value)); break;
-                case EditorPrefType.Int: EditorPrefs.SetInt(key, int.Parse(value)); break;
-                default: EditorPrefs.SetString(key, value); break;
+                case EditorPrefType.Bool:
+                    EditorPrefs.SetBool(key, bool.Parse(value));
+                    break;
+                case EditorPrefType.Int:
+                    EditorPrefs.SetInt(key, int.Parse(value));
+                    break;
+                default:
+                    EditorPrefs.SetString(key, value);
+                    break;
             }
         }
 
@@ -299,8 +328,14 @@ namespace MCPForUnityTests.Editor.Windows
         private EditorPrefItem AddItem(string value, EditorPrefType type, string key = null)
         {
             key = key ?? NewKey();
-            if (type == EditorPrefType.String) EditorPrefs.SetString(key, value);
-            var item = new EditorPrefItem { Key = key, Value = value, Type = type };
+            if (type == EditorPrefType.String)
+                EditorPrefs.SetString(key, value);
+            var item = new EditorPrefItem
+            {
+                Key = key,
+                Value = value,
+                Type = type,
+            };
             var row = (VisualElement)Invoke("CreateItemUI", item);
             Rows.Add(key, row);
             ((List<EditorPrefItem>)GetField("currentPrefs")).Add(item);
@@ -309,7 +344,9 @@ namespace MCPForUnityTests.Editor.Windows
         }
 
         private object GetField(string name) => typeof(EditorPrefsWindow).GetField(name, InstanceFlags).GetValue(window);
+
         private void SetField(string name, object value) => typeof(EditorPrefsWindow).GetField(name, InstanceFlags).SetValue(window, value);
+
         private object Invoke(string name, params object[] arguments) => typeof(EditorPrefsWindow).GetMethod(name, InstanceFlags).Invoke(window, arguments);
     }
 }

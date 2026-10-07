@@ -11,7 +11,7 @@ namespace MCPForUnity.Editor.Services
     public class EditorPrefsWindowService
     {
         private static EditorPrefsWindowService _instance;
-        
+
         /// <summary>
         /// Get the singleton instance
         /// </summary>
@@ -26,7 +26,7 @@ namespace MCPForUnity.Editor.Services
                 return _instance;
             }
         }
-        
+
         /// <summary>
         /// Initialize the service
         /// </summary>
@@ -37,12 +37,12 @@ namespace MCPForUnity.Editor.Services
                 _instance = new EditorPrefsWindowService();
             }
         }
-        
+
         private EditorPrefsWindowService()
         {
             // Private constructor for singleton
         }
-        
+
         /// <summary>
         /// Show the EditorPrefs window
         /// </summary>

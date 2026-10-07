@@ -20,7 +20,8 @@ namespace MCPForUnity.Editor.Security
         private const int Iterations = 200_000;
         private readonly string _dir;
 
-        public EncryptedFileKeyStore() : this(DefaultDir()) { }
+        public EncryptedFileKeyStore()
+            : this(DefaultDir()) { }
 
         /// <summary>Test seam: point the store at a throwaway directory.</summary>
         internal EncryptedFileKeyStore(string storageDir)
@@ -43,15 +44,16 @@ namespace MCPForUnity.Editor.Security
 
         private string KeyFile(string providerId) => Path.Combine(_dir, "key_" + providerId + ".bin");
 
-        public bool Has(string providerId)
-            => !string.IsNullOrEmpty(providerId) && File.Exists(KeyFile(providerId));
+        public bool Has(string providerId) => !string.IsNullOrEmpty(providerId) && File.Exists(KeyFile(providerId));
 
         public bool TryGet(string providerId, out string apiKey)
         {
             apiKey = null;
-            if (string.IsNullOrEmpty(providerId)) return false;
+            if (string.IsNullOrEmpty(providerId))
+                return false;
             string path = KeyFile(providerId);
-            if (!File.Exists(path)) return false;
+            if (!File.Exists(path))
+                return false;
             try
             {
                 byte[] blob = Convert.FromBase64String(File.ReadAllText(path).Trim());
@@ -66,8 +68,13 @@ namespace MCPForUnity.Editor.Security
 
         public void Set(string providerId, string apiKey)
         {
-            if (string.IsNullOrEmpty(providerId)) return;
-            if (string.IsNullOrEmpty(apiKey)) { Delete(providerId); return; }
+            if (string.IsNullOrEmpty(providerId))
+                return;
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                Delete(providerId);
+                return;
+            }
             byte[] blob = Encrypt(Encoding.UTF8.GetBytes(apiKey));
             string path = KeyFile(providerId);
             File.WriteAllText(path, Convert.ToBase64String(blob));
@@ -76,11 +83,13 @@ namespace MCPForUnity.Editor.Security
 
         public void Delete(string providerId)
         {
-            if (string.IsNullOrEmpty(providerId)) return;
+            if (string.IsNullOrEmpty(providerId))
+                return;
             try
             {
                 string path = KeyFile(providerId);
-                if (File.Exists(path)) File.Delete(path);
+                if (File.Exists(path))
+                    File.Delete(path);
             }
             catch { /* best effort */ }
         }
@@ -109,7 +118,10 @@ namespace MCPForUnity.Editor.Security
             byte[] ct;
             using (var aes = Aes.Create())
             {
-                aes.Key = encKey; aes.IV = iv; aes.Mode = CipherMode.CBC; aes.Padding = PaddingMode.PKCS7;
+                aes.Key = encKey;
+                aes.IV = iv;
+                aes.Mode = CipherMode.CBC;
+                aes.Padding = PaddingMode.PKCS7;
                 using (var enc = aes.CreateEncryptor())
                     ct = enc.TransformFinalBlock(plaintext, 0, plaintext.Length);
             }
@@ -121,7 +133,8 @@ namespace MCPForUnity.Editor.Security
 
         private byte[] Decrypt(byte[] blob)
         {
-            if (blob.Length < 48) throw new CryptographicException("ciphertext too short");
+            if (blob.Length < 48)
+                throw new CryptographicException("ciphertext too short");
             DeriveKeys(out byte[] encKey, out byte[] macKey);
             byte[] iv = new byte[16];
             byte[] mac = new byte[32];
@@ -137,7 +150,10 @@ namespace MCPForUnity.Editor.Security
             }
             using (var aes = Aes.Create())
             {
-                aes.Key = encKey; aes.IV = iv; aes.Mode = CipherMode.CBC; aes.Padding = PaddingMode.PKCS7;
+                aes.Key = encKey;
+                aes.IV = iv;
+                aes.Mode = CipherMode.CBC;
+                aes.Padding = PaddingMode.PKCS7;
                 using (var dec = aes.CreateDecryptor())
                     return dec.TransformFinalBlock(ct, 0, ct.Length);
             }
@@ -150,7 +166,8 @@ namespace MCPForUnity.Editor.Security
             if (File.Exists(path))
             {
                 byte[] existing = File.ReadAllBytes(path);
-                if (existing.Length == len) return existing;
+                if (existing.Length == len)
+                    return existing;
             }
             byte[] fresh = RandomBytes(len);
             File.WriteAllBytes(path, fresh);
@@ -163,7 +180,8 @@ namespace MCPForUnity.Editor.Security
             try
             {
                 string id = SystemInfo.deviceUniqueIdentifier;
-                if (!string.IsNullOrEmpty(id) && id != SystemInfo.unsupportedIdentifier) return id;
+                if (!string.IsNullOrEmpty(id) && id != SystemInfo.unsupportedIdentifier)
+                    return id;
             }
             catch { /* not in a Unity runtime context */ }
             return Environment.MachineName ?? "unknown-machine";
@@ -172,14 +190,16 @@ namespace MCPForUnity.Editor.Security
         private static byte[] RandomBytes(int n)
         {
             byte[] b = new byte[n];
-            using (var rng = RandomNumberGenerator.Create()) rng.GetBytes(b);
+            using (var rng = RandomNumberGenerator.Create())
+                rng.GetBytes(b);
             return b;
         }
 
         private static byte[] Concat(params byte[][] parts)
         {
             int total = 0;
-            foreach (byte[] p in parts) total += p.Length;
+            foreach (byte[] p in parts)
+                total += p.Length;
             byte[] result = new byte[total];
             int offset = 0;
             foreach (byte[] p in parts)
@@ -192,9 +212,11 @@ namespace MCPForUnity.Editor.Security
 
         private static bool FixedTimeEquals(byte[] a, byte[] b)
         {
-            if (a == null || b == null || a.Length != b.Length) return false;
+            if (a == null || b == null || a.Length != b.Length)
+                return false;
             int diff = 0;
-            for (int i = 0; i < a.Length; i++) diff |= a[i] ^ b[i];
+            for (int i = 0; i < a.Length; i++)
+                diff |= a[i] ^ b[i];
             return diff == 0;
         }
 
@@ -202,7 +224,8 @@ namespace MCPForUnity.Editor.Security
         {
             try
             {
-                if (Application.platform == RuntimePlatform.WindowsEditor) return;
+                if (Application.platform == RuntimePlatform.WindowsEditor)
+                    return;
                 var psi = new System.Diagnostics.ProcessStartInfo("/bin/chmod")
                 {
                     UseShellExecute = false,
@@ -212,7 +235,8 @@ namespace MCPForUnity.Editor.Security
                 };
                 psi.ArgumentList.Add(mode);
                 psi.ArgumentList.Add(path);
-                using (var p = System.Diagnostics.Process.Start(psi)) p?.WaitForExit(2000);
+                using (var p = System.Diagnostics.Process.Start(psi))
+                    p?.WaitForExit(2000);
             }
             catch { /* hardening is best-effort */ }
         }

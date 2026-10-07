@@ -7,6 +7,7 @@ checks. Code is compiled in-memory via Roslyn or CodeDom — no script files cre
 WARNING: This tool runs arbitrary code in the Unity Editor process.
 Safety checks block known dangerous patterns but are NOT a security sandbox.
 """
+
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -45,7 +46,8 @@ async def execute_code(
         str,
         "C# code to execute (for 'execute' action). Must be a valid method body. "
         "Access UnityEngine and UnityEditor namespaces. Use 'return' to send data back.",
-    ] | None = None,
+    ]
+    | None = None,
     safety_checks: Annotated[
         bool,
         Field(
@@ -78,13 +80,19 @@ async def execute_code(
 
     if action == "execute":
         if code is None:
-            return {"success": False, "message": "Parameter 'code' is required for 'execute' action."}
+            return {
+                "success": False,
+                "message": "Parameter 'code' is required for 'execute' action.",
+            }
         params_dict["code"] = code
         params_dict["safety_checks"] = safety_checks
         params_dict["compiler"] = compiler
     elif action == "replay":
         if index is None:
-            return {"success": False, "message": "Parameter 'index' is required for 'replay' action."}
+            return {
+                "success": False,
+                "message": "Parameter 'index' is required for 'replay' action.",
+            }
         params_dict["index"] = index
     elif action == "get_history":
         params_dict["limit"] = max(1, min(limit, 50))

@@ -1,4 +1,5 @@
 """Public search contracts with only outbound Unity/HTTP controlled."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -6,17 +7,22 @@ import sys
 
 
 def _run(program, tmp_path):
-    env = {**os.environ, 'APPDATA': str(tmp_path), 'XDG_DATA_HOME': str(tmp_path),
-           'UNITY_MCP_DISABLE_TELEMETRY': 'true',
-           'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')}
-    env.pop('PYTEST_CURRENT_TEST', None)
-    result = subprocess.run([sys.executable, '-B', '-c', program], env=env,
-                            capture_output=True, text=True, timeout=90)
+    env = {
+        **os.environ,
+        "APPDATA": str(tmp_path),
+        "XDG_DATA_HOME": str(tmp_path),
+        "UNITY_MCP_DISABLE_TELEMETRY": "true",
+        "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+    }
+    env.pop("PYTEST_CURRENT_TEST", None)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", program], env=env, capture_output=True, text=True, timeout=90
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
 
-CLI_PROGRAM = r'''
+CLI_PROGRAM = r"""
 import copy
 import json
 import shlex
@@ -82,10 +88,10 @@ result = runner.invoke(cli, shlex.split(example)[1:])
 print('DOCUMENTED_EXAMPLE', json.dumps({'command': example, 'exit': result.exit_code, 'requests': requests[before:]}))
 print('CLI_SUMMARY', json.dumps({'checks': checks, 'failures': failures, 'requests': len(requests)}))
 assert not failures, failures
-'''
+"""
 
 
-SDK_PROGRAM = r'''
+SDK_PROGRAM = r"""
 import copy
 import json
 import anyio
@@ -177,18 +183,18 @@ async def main():
     print('SDK_SUMMARY', json.dumps({'checks': checks, 'failures': failures, 'requests': len(requests)}))
     assert not failures, failures
 anyio.run(main)
-'''
+"""
 
 
 def test_search_top_level_cli_contracts(tmp_path):
-    assert 'CLI_SUMMARY' in _run(CLI_PROGRAM, tmp_path)
+    assert "CLI_SUMMARY" in _run(CLI_PROGRAM, tmp_path)
 
 
 def test_search_registered_sdk_contracts(tmp_path):
-    assert 'SDK_SUMMARY' in _run(SDK_PROGRAM, tmp_path)
+    assert "SDK_SUMMARY" in _run(SDK_PROGRAM, tmp_path)
 
 
-FILE_PROGRAM = r'''
+FILE_PROGRAM = r"""
 import base64
 import copy
 import json
@@ -247,8 +253,8 @@ async def main():
     print('FILE_SUMMARY', json.dumps({'checks': checks, 'failures': failures, 'requests': len(requests)}))
     assert not failures, failures
 anyio.run(main)
-'''
+"""
 
 
 def test_file_search_registered_sdk_contracts(tmp_path):
-    assert 'FILE_SUMMARY' in _run(FILE_PROGRAM, tmp_path)
+    assert "FILE_SUMMARY" in _run(FILE_PROGRAM, tmp_path)

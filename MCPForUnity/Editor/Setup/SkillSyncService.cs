@@ -6,9 +6,9 @@ using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using MCPForUnity.Runtime.Helpers;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Setup
 {
@@ -94,9 +94,7 @@ namespace MCPForUnity.Editor.Setup
             var commitChanged = !string.Equals(lastSyncedCommit, snapshot.CommitSha, StringComparison.Ordinal);
 
             log?.Invoke($"Remote Commit: {ShortCommit(lastSyncedCommit)} -> {ShortCommit(snapshot.CommitSha)}");
-            log?.Invoke(commitChanged
-                ? $"Commit: detected newer commit on {branch}."
-                : $"Commit: no new commit on {branch} since last sync.");
+            log?.Invoke(commitChanged ? $"Commit: detected newer commit on {branch}." : $"Commit: no new commit on {branch} since last sync.");
             log?.Invoke($"Plan => Added:{plan.Added.Count} Updated:{plan.Updated.Count} Deleted:{plan.Deleted.Count}");
             LogPlanDetails(plan, log);
 
@@ -118,7 +116,7 @@ namespace MCPForUnity.Editor.Setup
                 Added = plan.Added.Count,
                 Updated = plan.Updated.Count,
                 Deleted = plan.Deleted.Count,
-                CommitSha = snapshot.CommitSha
+                CommitSha = snapshot.CommitSha,
             };
         }
 
@@ -202,8 +200,9 @@ namespace MCPForUnity.Editor.Setup
             if (treeResponse.truncated)
             {
                 throw new InvalidOperationException(
-                    "GitHub returned a truncated directory tree (incomplete snapshot). " +
-                    "Sync was aborted to prevent accidental deletion of valid local files.");
+                    "GitHub returned a truncated directory tree (incomplete snapshot). "
+                        + "Sync was aborted to prevent accidental deletion of valid local files."
+                );
             }
 
             var normalizedSubdir = NormalizeRemotePath(subdir);
@@ -224,15 +223,12 @@ namespace MCPForUnity.Editor.Setup
                     continue;
                 }
 
-                if (!string.IsNullOrEmpty(subdirPrefix) &&
-                    !remotePath.StartsWith(subdirPrefix, StringComparison.Ordinal))
+                if (!string.IsNullOrEmpty(subdirPrefix) && !remotePath.StartsWith(subdirPrefix, StringComparison.Ordinal))
                 {
                     continue;
                 }
 
-                var relativePath = string.IsNullOrEmpty(subdirPrefix)
-                    ? remotePath
-                    : remotePath.Substring(subdirPrefix.Length);
+                var relativePath = string.IsNullOrEmpty(subdirPrefix) ? remotePath : remotePath.Substring(subdirPrefix.Length);
                 if (string.IsNullOrWhiteSpace(relativePath) || string.IsNullOrWhiteSpace(entry.sha))
                 {
                     continue;
@@ -287,19 +283,16 @@ namespace MCPForUnity.Editor.Setup
 
         private static string BuildRawFileUrl(GitHubRepoInfo repoInfo, string commitSha, string remoteFilePath)
         {
-            var encodedPath = string.Join("/",
-                NormalizeRemotePath(remoteFilePath)
-                    .Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(Uri.EscapeDataString));
+            var encodedPath = string.Join(
+                "/",
+                NormalizeRemotePath(remoteFilePath).Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries).Select(Uri.EscapeDataString)
+            );
             return $"https://raw.githubusercontent.com/{Uri.EscapeDataString(repoInfo.Owner)}/{Uri.EscapeDataString(repoInfo.Repo)}/{Uri.EscapeDataString(commitSha)}/{encodedPath}";
         }
 
         internal static HttpClient CreateGitHubClient()
         {
-            var client = new HttpClient
-            {
-                Timeout = TimeSpan.FromSeconds(60)
-            };
+            var client = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
             client.DefaultRequestHeaders.UserAgent.ParseAdd("UnityMcpSkillSync/1.0");
             client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
             return client;
@@ -361,10 +354,12 @@ namespace MCPForUnity.Editor.Setup
 
             foreach (var segment in segments)
             {
-                if (string.IsNullOrWhiteSpace(segment) ||
-                    string.Equals(segment, ".", StringComparison.Ordinal) ||
-                    string.Equals(segment, "..", StringComparison.Ordinal) ||
-                    segment.IndexOf(':') >= 0)
+                if (
+                    string.IsNullOrWhiteSpace(segment)
+                    || string.Equals(segment, ".", StringComparison.Ordinal)
+                    || string.Equals(segment, "..", StringComparison.Ordinal)
+                    || segment.IndexOf(':') >= 0
+                )
                 {
                     return false;
                 }
@@ -446,19 +441,48 @@ namespace MCPForUnity.Editor.Setup
             return plan;
         }
 
-        private static void ApplyPlan(GitHubRepoInfo repoInfo, string commitSha, string remoteSubdir, string targetRoot, SyncPlan plan, Dictionary<string, string> remoteFiles, StringComparison pathComparison, Action<string> log)
+        private static void ApplyPlan(
+            GitHubRepoInfo repoInfo,
+            string commitSha,
+            string remoteSubdir,
+            string targetRoot,
+            SyncPlan plan,
+            Dictionary<string, string> remoteFiles,
+            StringComparison pathComparison,
+            Action<string> log
+        )
         {
             using var client = CreateGitHubClient();
-            ApplyBoundedPlan(targetRoot, plan, remoteFiles, pathComparison,
-                (relativePath, limit) => DownloadBytes(client, BuildRawFileUrl(repoInfo, commitSha, CombineRemotePath(remoteSubdir, relativePath)), limit), log);
+            ApplyBoundedPlan(
+                targetRoot,
+                plan,
+                remoteFiles,
+                pathComparison,
+                (relativePath, limit) => DownloadBytes(client, BuildRawFileUrl(repoInfo, commitSha, CombineRemotePath(remoteSubdir, relativePath)), limit),
+                log
+            );
         }
 
-        internal static void ApplyPlan(string targetRoot, SyncPlan plan, Dictionary<string, string> remoteFiles, StringComparison pathComparison, Func<string, byte[]> download, Action<string> log)
+        internal static void ApplyPlan(
+            string targetRoot,
+            SyncPlan plan,
+            Dictionary<string, string> remoteFiles,
+            StringComparison pathComparison,
+            Func<string, byte[]> download,
+            Action<string> log
+        )
         {
             ApplyBoundedPlan(targetRoot, plan, remoteFiles, pathComparison, (path, limit) => download(path), log);
         }
 
-        internal static void ApplyBoundedPlan(string targetRoot, SyncPlan plan, Dictionary<string, string> remoteFiles, StringComparison pathComparison, Func<string, long, byte[]> download, Action<string> log)
+        internal static void ApplyBoundedPlan(
+            string targetRoot,
+            SyncPlan plan,
+            Dictionary<string, string> remoteFiles,
+            StringComparison pathComparison,
+            Func<string, long, byte[]> download,
+            Action<string> log
+        )
         {
             SkillSyncDownload.RequireFileCount((long)plan.Added.Count + plan.Updated.Count);
             SkillSyncDownload.RequireFileCount(remoteFiles.Count);
@@ -476,7 +500,9 @@ namespace MCPForUnity.Editor.Setup
                 var downloadedHash = ComputeGitBlobSha1(bytes);
                 if (!string.Equals(downloadedHash, remoteFiles[relativePath], StringComparison.Ordinal))
                 {
-                    throw new InvalidOperationException($"File hash mismatch: {relativePath} ({ShortHash(downloadedHash)} != {ShortHash(remoteFiles[relativePath])})");
+                    throw new InvalidOperationException(
+                        $"File hash mismatch: {relativePath} ({ShortHash(downloadedHash)} != {ShortHash(remoteFiles[relativePath])})"
+                    );
                 }
                 downloadedFiles[relativePath] = bytes;
             }
@@ -488,14 +514,18 @@ namespace MCPForUnity.Editor.Setup
             // All downloads are verified first so a download failure preserves the old files.
             foreach (var relativePath in plan.Deleted)
             {
-                if (!changedPaths.Any(changed => relativePath.StartsWith(changed + "/", pathComparison)
-                    || changed.StartsWith(relativePath + "/", pathComparison)))
+                if (
+                    !changedPaths.Any(changed =>
+                        relativePath.StartsWith(changed + "/", pathComparison) || changed.StartsWith(relativePath + "/", pathComparison)
+                    )
+                )
                 {
                     continue;
                 }
 
                 var obsoleteFile = ResolvePathUnderRoot(targetRoot, relativePath, pathComparison);
-                if (File.Exists(obsoleteFile)) File.Delete(ResolvePathUnderRoot(targetRoot, relativePath, pathComparison));
+                if (File.Exists(obsoleteFile))
+                    File.Delete(ResolvePathUnderRoot(targetRoot, relativePath, pathComparison));
             }
 
             foreach (var relativePath in changedPaths)
@@ -592,7 +622,8 @@ namespace MCPForUnity.Editor.Setup
             var normalizedRoot = ValidateUnlinkedPath(root);
             foreach (var entry in EnumerateContainedEntries(normalizedRoot))
             {
-                if (entry.directory) continue;
+                if (entry.directory)
+                    continue;
                 var relativePath = Path.GetRelativePath(normalizedRoot, entry.path).Replace('\\', '/');
                 if (string.Equals(relativePath, SyncOwnershipMarker, StringComparison.OrdinalIgnoreCase))
                 {
@@ -609,7 +640,8 @@ namespace MCPForUnity.Editor.Setup
         private static IEnumerable<(string path, bool directory)> EnumerateContainedEntries(string root)
         {
             root = ValidateUnlinkedPath(root);
-            if (!Directory.Exists(root)) yield break;
+            if (!Directory.Exists(root))
+                yield break;
             var pending = new Stack<(string path, int depth)>();
             pending.Push((root, 0));
             int count = 0;
@@ -644,7 +676,8 @@ namespace MCPForUnity.Editor.Setup
             string installPath,
             ICollection<string> localRelativePaths,
             ICollection<string> remoteRelativePaths,
-            StringComparer pathComparer)
+            StringComparer pathComparer
+        )
         {
             ListFiles(installPath);
             var comparison = pathComparer.Equals("a", "A") ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
@@ -657,8 +690,8 @@ namespace MCPForUnity.Editor.Setup
             if (localRelativePaths.Count > 0 && !CanAdoptLegacyManagedRoot(localRelativePaths, remoteRelativePaths, pathComparer))
             {
                 throw new InvalidOperationException(
-                    "Install Dir contains unmanaged files. " +
-                    "Please choose an empty folder or an existing unity-mcp-skill folder.");
+                    "Install Dir contains unmanaged files. " + "Please choose an empty folder or an existing unity-mcp-skill folder."
+                );
             }
 
             // Write the marker only after verified content has been applied.
@@ -667,7 +700,8 @@ namespace MCPForUnity.Editor.Setup
         private static bool CanAdoptLegacyManagedRoot(
             ICollection<string> localRelativePaths,
             ICollection<string> remoteRelativePaths,
-            StringComparer pathComparer)
+            StringComparer pathComparer
+        )
         {
             if (localRelativePaths.Count == 0)
             {
@@ -726,9 +760,7 @@ namespace MCPForUnity.Editor.Setup
 
         internal static StringComparer GetPathComparer(StringComparison pathComparison)
         {
-            return pathComparison == StringComparison.Ordinal
-                ? StringComparer.Ordinal
-                : StringComparer.OrdinalIgnoreCase;
+            return pathComparison == StringComparison.Ordinal ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
         }
 
         private static bool IsCaseSensitiveFileSystem(string root)
@@ -751,8 +783,11 @@ namespace MCPForUnity.Editor.Setup
 
         private static void RemoveEmptyDirectories(string root)
         {
-            var directories = EnumerateContainedEntries(root).Where(entry => entry.directory)
-                .Select(entry => entry.path).OrderByDescending(path => path.Length).ToArray();
+            var directories = EnumerateContainedEntries(root)
+                .Where(entry => entry.directory)
+                .Select(entry => entry.path)
+                .OrderByDescending(path => path.Length)
+                .ToArray();
             foreach (var directory in directories)
             {
                 ValidateUnlinkedPath(root);

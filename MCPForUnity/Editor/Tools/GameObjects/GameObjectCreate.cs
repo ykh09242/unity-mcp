@@ -77,7 +77,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     else if (guids.Length > 1)
                     {
                         string foundPaths = string.Join(", ", guids.Select(g => AssetPathUtility.GetAssetPathFromGuid(g, allowPackages: true)));
-                        return new ErrorResponse($"Multiple prefabs found matching name '{prefabNameOnly}': {foundPaths}. Please provide a more specific path.");
+                        return new ErrorResponse(
+                            $"Multiple prefabs found matching name '{prefabNameOnly}': {foundPaths}. Please provide a more specific path."
+                        );
                     }
                     else
                     {
@@ -87,7 +89,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 }
                 else if (prefabPath.Contains("/") && string.IsNullOrEmpty(extension))
                 {
-                    McpLog.Warn($"[ManageGameObject.Create] Provided prefabPath '{prefabPath}' has no extension. Assuming it's a prefab and appending .prefab.");
+                    McpLog.Warn(
+                        $"[ManageGameObject.Create] Provided prefabPath '{prefabPath}' has no extension. Assuming it's a prefab and appending .prefab."
+                    );
                     prefabPath += ".prefab";
                 }
                 else if (!prefabPath.Contains("/") && !string.IsNullOrEmpty(extension) && !extension.Equals(".prefab", StringComparison.OrdinalIgnoreCase))
@@ -128,7 +132,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
                         if (newGo == null)
                         {
-                            McpLog.Error($"[ManageGameObject.Create] Failed to instantiate prefab at '{prefabPath}', asset might be corrupted or not a GameObject.");
+                            McpLog.Error(
+                                $"[ManageGameObject.Create] Failed to instantiate prefab at '{prefabPath}', asset might be corrupted or not a GameObject."
+                            );
                             return new ErrorResponse($"Failed to instantiate prefab at '{prefabPath}'.");
                         }
                         if (!string.IsNullOrEmpty(name))
@@ -172,7 +178,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     }
                     catch (ArgumentException)
                     {
-                        return new ErrorResponse($"Invalid primitive type: '{primitiveType}'. Valid types: {string.Join(", ", Enum.GetNames(typeof(PrimitiveType)))}");
+                        return new ErrorResponse(
+                            $"Invalid primitive type: '{primitiveType}'. Valid types: {string.Join(", ", Enum.GetNames(typeof(PrimitiveType)))}"
+                        );
                     }
                     catch (Exception e)
                     {
@@ -221,9 +229,12 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             Vector3? rotation = VectorParsing.ParseVector3(@params["rotation"]);
             Vector3? scale = VectorParsing.ParseVector3(@params["scale"]);
 
-            if (position.HasValue) newGo.transform.localPosition = position.Value;
-            if (rotation.HasValue) newGo.transform.localEulerAngles = rotation.Value;
-            if (scale.HasValue) newGo.transform.localScale = scale.Value;
+            if (position.HasValue)
+                newGo.transform.localPosition = position.Value;
+            if (rotation.HasValue)
+                newGo.transform.localEulerAngles = rotation.Value;
+            if (scale.HasValue)
+                newGo.transform.localScale = scale.Value;
 
             // Set Tag
             if (!string.IsNullOrEmpty(tag))
@@ -304,8 +315,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             // Set Component Properties (same "componentProperties" argument 'modify' consumes,
             // applied here so it also works at creation time)
-            var componentPropertiesError = GameObjectComponentHelpers.ApplyComponentProperties(
-                newGo, @params["componentProperties"] as JObject, out _);
+            var componentPropertiesError = GameObjectComponentHelpers.ApplyComponentProperties(newGo, @params["componentProperties"] as JObject, out _);
             if (componentPropertiesError != null)
             {
                 UnityEngine.Object.DestroyImmediate(newGo);

@@ -34,7 +34,9 @@ def test_tool_registry_supports_server_only_and_alias_targets():
 
     registered_tools = get_registered_tools()
     server_only = next(item for item in registered_tools if item["name"] == "_server_only_tool")
-    alias_tool = next(item for item in registered_tools if item["name"] == "_manage_script_alias_tool")
+    alias_tool = next(
+        item for item in registered_tools if item["name"] == "_manage_script_alias_tool"
+    )
 
     assert server_only["unity_target"] is None
     assert alias_tool["unity_target"] == "manage_script"
@@ -46,7 +48,9 @@ def test_tool_registry_does_not_leak_unity_target_into_tool_kwargs():
         return None
 
     registered_tools = get_registered_tools()
-    tool_info = next(item for item in registered_tools if item["name"] == "_non_leaking_target_tool")
+    tool_info = next(
+        item for item in registered_tools if item["name"] == "_non_leaking_target_tool"
+    )
     assert tool_info["unity_target"] == "manage_script"
     assert "unity_target" not in tool_info["kwargs"]
     assert tool_info["kwargs"]["annotations"] == {"title": "x"}
@@ -54,11 +58,13 @@ def test_tool_registry_does_not_leak_unity_target_into_tool_kwargs():
 
 def test_tool_registry_rejects_invalid_unity_target_values():
     with pytest.raises(ValueError, match="Invalid unity_target"):
+
         @mcp_for_unity_tool(unity_target="")
         def _invalid_empty_target_tool():
             return None
 
     with pytest.raises(ValueError, match="Invalid unity_target"):
+
         @mcp_for_unity_tool(unity_target=123)  # type: ignore[arg-type]
         def _invalid_non_string_target_tool():
             return None

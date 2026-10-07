@@ -47,7 +47,9 @@ async def unity_reflect(
     class_name: Annotated[Optional[str], "Fully qualified or simple C# class name."] = None,
     member_name: Annotated[Optional[str], "Method, property, or field name to inspect."] = None,
     query: Annotated[Optional[str], "Search query for type name search."] = None,
-    scope: Annotated[Optional[str], "Assembly scope for search: unity, packages, project, all."] = None,
+    scope: Annotated[
+        Optional[str], "Assembly scope for search: unity, packages, project, all."
+    ] = None,
 ) -> dict[str, Any]:
     action_lower = action.lower()
     if action_lower not in ALL_ACTIONS:

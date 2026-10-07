@@ -1,4 +1,5 @@
 """Real SDK shader CRUD/encoding and animation value contracts in fresh processes."""
+
 import os
 import subprocess
 import sys
@@ -6,7 +7,7 @@ import textwrap
 
 
 def test_shader_and_animation_at_actual_sdk_and_transport_boundary(tmp_path):
-    code = textwrap.dedent(r'''
+    code = textwrap.dedent(r"""
         import base64
         import copy
         import anyio
@@ -105,8 +106,15 @@ def test_shader_and_animation_at_actual_sdk_and_transport_boundary(tmp_path):
             print(f"actual shader/animation SDK checks={checks} failures={len(failures)}")
             assert not failures, failures
         anyio.run(main)
-    ''')
-    env = {**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true", "APPDATA": str(tmp_path), "XDG_DATA_HOME": str(tmp_path)}
-    result = subprocess.run([sys.executable, "-B", "-c", code], env=env, capture_output=True, text=True, timeout=60)
+    """)
+    env = {
+        **os.environ,
+        "UNITY_MCP_DISABLE_TELEMETRY": "true",
+        "APPDATA": str(tmp_path),
+        "XDG_DATA_HOME": str(tmp_path),
+    }
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", code], env=env, capture_output=True, text=True, timeout=60
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "actual shader/animation SDK checks=" in result.stdout

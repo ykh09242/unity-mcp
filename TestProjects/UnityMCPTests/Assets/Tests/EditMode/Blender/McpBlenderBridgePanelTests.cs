@@ -28,7 +28,9 @@ namespace MCPForUnityTests.Editor.Blender
         private static readonly Color Green = new Color(0.4f, 0.8f, 0.4f);
         private static readonly Color Gray = new Color(0.7f, 0.7f, 0.7f);
 
-        private string savedHost, savedFork, savedAddons;
+        private string savedHost,
+            savedFork,
+            savedAddons;
         private int? savedPort;
         private string root;
 
@@ -53,15 +55,20 @@ namespace MCPForUnityTests.Editor.Blender
             Restore(EditorPrefKeys.BlenderHost, savedHost);
             Restore(EditorPrefKeys.BlenderForkPath, savedFork);
             Restore(EditorPrefKeys.BlenderAddonsDir, savedAddons);
-            if (savedPort.HasValue) EditorPrefs.SetInt(EditorPrefKeys.BlenderPort, savedPort.Value);
-            else EditorPrefs.DeleteKey(EditorPrefKeys.BlenderPort);
-            if (Directory.Exists(root)) Directory.Delete(root, true);
+            if (savedPort.HasValue)
+                EditorPrefs.SetInt(EditorPrefKeys.BlenderPort, savedPort.Value);
+            else
+                EditorPrefs.DeleteKey(EditorPrefKeys.BlenderPort);
+            if (Directory.Exists(root))
+                Directory.Delete(root, true);
         }
 
         private static void Restore(string key, string value)
         {
-            if (value == null) EditorPrefs.DeleteKey(key);
-            else EditorPrefs.SetString(key, value);
+            if (value == null)
+                EditorPrefs.DeleteKey(key);
+            else
+                EditorPrefs.SetString(key, value);
         }
 
         /// <summary>A local port nothing listens on, so a probe fails fast instead of finding a real Blender.</summary>
@@ -159,8 +166,14 @@ namespace MCPForUnityTests.Editor.Blender
             while (true)
             {
                 TcpClient client;
-                try { client = await listener.AcceptTcpClientAsync(); }
-                catch (Exception) { return; } // listener stopped
+                try
+                {
+                    client = await listener.AcceptTcpClientAsync();
+                }
+                catch (Exception)
+                {
+                    return;
+                } // listener stopped
                 using (client)
                 {
                     try
@@ -191,7 +204,8 @@ namespace MCPForUnityTests.Editor.Blender
                 Assert.IsTrue(block.Q<Button>("blender-import-button").enabledSelf, "An automatic probe must not disable the action buttons.");
 
                 DateTime deadline = DateTime.UtcNow.AddSeconds(15);
-                while (!status.text.StartsWith("Blender reachable") && DateTime.UtcNow < deadline) yield return null;
+                while (!status.text.StartsWith("Blender reachable") && DateTime.UtcNow < deadline)
+                    yield return null;
                 Assert.AreEqual($"Blender reachable at 127.0.0.1:{port}", status.text, "The panel never reported the fake addon as reachable.");
                 Assert.IsTrue(block.Q<VisualElement>("blender-status-dot").ClassListContains("valid"));
             }
@@ -209,7 +223,8 @@ namespace MCPForUnityTests.Editor.Blender
             VisualElement dot = block.Q<VisualElement>("blender-status-dot");
 
             DateTime deadline = DateTime.UtcNow.AddSeconds(15);
-            while (!dot.ClassListContains("invalid") && DateTime.UtcNow < deadline) yield return null;
+            while (!dot.ClassListContains("invalid") && DateTime.UtcNow < deadline)
+                yield return null;
             Assert.IsTrue(dot.ClassListContains("invalid"), $"The probe never failed; status: {status.text}");
             StringAssert.Contains("not reachable", status.text);
         }

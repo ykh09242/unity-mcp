@@ -19,7 +19,7 @@ namespace MCPForUnity.Editor.Dependencies
         {
             new WindowsPlatformDetector(),
             new MacOSPlatformDetector(),
-            new LinuxPlatformDetector()
+            new LinuxPlatformDetector(),
         };
 
         private static IPlatformDetector _currentDetector;

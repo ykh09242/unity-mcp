@@ -18,6 +18,7 @@ Exit codes:
     1  a step failed an assertion (real bridge regression)
     2  no Unity bridge reachable (setup problem, not a contract failure)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -153,21 +154,53 @@ def build_steps() -> list[Step]:
         )
 
     return [
-        Step("read_console_baseline", "read_console",
-             {"action": "get", "count": "5", "include_stacktrace": False}, check_console),
-        Step("create_empty_gameobject", "manage_gameobject",
-             {"action": "create", "name": GO_EMPTY}, check_create_empty),
-        Step("find_created_gameobject", "find_gameobjects",
-             {"searchMethod": "by_name", "searchTerm": GO_EMPTY}, check_found),
-        Step("create_primitive_with_component", "manage_gameobject",
-             {"action": "create", "name": GO_CUBE, "primitiveType": "Cube",
-              "componentsToAdd": ["Rigidbody"]}, check_create_cube),
-        Step("delete_cube", "manage_gameobject",
-             {"action": "delete", "target": GO_CUBE, "searchMethod": "by_name"}, check_delete),
-        Step("delete_empty", "manage_gameobject",
-             {"action": "delete", "target": GO_EMPTY, "searchMethod": "by_name"}, check_delete),
-        Step("verify_cleanup", "find_gameobjects",
-             {"searchMethod": "by_name", "searchTerm": GO_EMPTY}, check_gone),
+        Step(
+            "read_console_baseline",
+            "read_console",
+            {"action": "get", "count": "5", "include_stacktrace": False},
+            check_console,
+        ),
+        Step(
+            "create_empty_gameobject",
+            "manage_gameobject",
+            {"action": "create", "name": GO_EMPTY},
+            check_create_empty,
+        ),
+        Step(
+            "find_created_gameobject",
+            "find_gameobjects",
+            {"searchMethod": "by_name", "searchTerm": GO_EMPTY},
+            check_found,
+        ),
+        Step(
+            "create_primitive_with_component",
+            "manage_gameobject",
+            {
+                "action": "create",
+                "name": GO_CUBE,
+                "primitiveType": "Cube",
+                "componentsToAdd": ["Rigidbody"],
+            },
+            check_create_cube,
+        ),
+        Step(
+            "delete_cube",
+            "manage_gameobject",
+            {"action": "delete", "target": GO_CUBE, "searchMethod": "by_name"},
+            check_delete,
+        ),
+        Step(
+            "delete_empty",
+            "manage_gameobject",
+            {"action": "delete", "target": GO_EMPTY, "searchMethod": "by_name"},
+            check_delete,
+        ),
+        Step(
+            "verify_cleanup",
+            "find_gameobjects",
+            {"searchMethod": "by_name", "searchTerm": GO_EMPTY},
+            check_gone,
+        ),
     ]
 
 
@@ -177,9 +210,12 @@ def run(instance_id: str | None, max_retries: int, retry_ms: int) -> list[StepRe
         t0 = time.time()
         try:
             resp = send_command_with_retry(
-                step.command, step.params,
-                instance_id=instance_id, max_retries=max_retries,
-                retry_ms=retry_ms, retry_on_reload=step.retry_on_reload,
+                step.command,
+                step.params,
+                instance_id=instance_id,
+                max_retries=max_retries,
+                retry_ms=retry_ms,
+                retry_on_reload=step.retry_on_reload,
             )
         except Exception as exc:  # connection refused, timeout, etc.
             elapsed = time.time() - t0
@@ -200,11 +236,16 @@ def run(instance_id: str | None, max_retries: int, retry_ms: int) -> list[StepRe
 
 def write_junit(path: Path, results: list[StepResult]) -> None:
     import xml.sax.saxutils as sx
+
     failures = sum(0 if r.passed else 1 for r in results)
     total_time = sum(r.elapsed_s for r in results)
     cases = []
     for r in results:
-        body = "" if r.passed else f"<failure message={sx.quoteattr(r.detail)}>{sx.escape(r.detail)}</failure>"
+        body = (
+            ""
+            if r.passed
+            else f"<failure message={sx.quoteattr(r.detail)}>{sx.escape(r.detail)}</failure>"
+        )
         cases.append(
             f'  <testcase classname="UnityMCP.E2E.Bridge" name={sx.quoteattr(r.name)} '
             f'time="{r.elapsed_s:.3f}">{body}</testcase>'
@@ -222,12 +263,18 @@ def write_junit(path: Path, results: list[StepResult]) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Deterministic Unity bridge E2E smoke test")
-    ap.add_argument("--instance", default=os.environ.get("UNITY_MCP_DEFAULT_INSTANCE") or None,
-                    help="Unity instance id (name, hash, name@hash). Default: env or auto-discover.")
+    ap.add_argument(
+        "--instance",
+        default=os.environ.get("UNITY_MCP_DEFAULT_INSTANCE") or None,
+        help="Unity instance id (name, hash, name@hash). Default: env or auto-discover.",
+    )
     ap.add_argument("--max-retries", type=int, default=8, help="Reload retries per command")
     ap.add_argument("--retry-ms", type=int, default=250, help="Delay between reload retries (ms)")
-    ap.add_argument("--junit", default=os.environ.get("E2E_JUNIT_OUT"),
-                    help="Optional path to write a JUnit XML report")
+    ap.add_argument(
+        "--junit",
+        default=os.environ.get("E2E_JUNIT_OUT"),
+        help="Optional path to write a JUnit XML report",
+    )
     args = ap.parse_args()
 
     instance = args.instance.strip() if isinstance(args.instance, str) else None
@@ -237,8 +284,11 @@ def main() -> int:
         results = run(instance, args.max_retries, args.retry_ms)
     except BridgeUnavailable as exc:
         print(f"::error::No Unity bridge reachable: {exc}", flush=True)
-        print("Is a Unity Editor running with the MCP bridge active? "
-              "(set UNITY_MCP_STATUS_DIR / UNITY_MCP_DEFAULT_INSTANCE for CI)", flush=True)
+        print(
+            "Is a Unity Editor running with the MCP bridge active? "
+            "(set UNITY_MCP_STATUS_DIR / UNITY_MCP_DEFAULT_INSTANCE for CI)",
+            flush=True,
+        )
         return 2
 
     if args.junit:
@@ -247,7 +297,10 @@ def main() -> int:
     failed = [r for r in results if not r.passed]
     for r in results:
         status = "PASS" if r.passed else "FAIL"
-        print(f"  [{status}] {r.name} ({r.elapsed_s:.2f}s){'' if r.passed else ' -- ' + r.detail}", flush=True)
+        print(
+            f"  [{status}] {r.name} ({r.elapsed_s:.2f}s){'' if r.passed else ' -- ' + r.detail}",
+            flush=True,
+        )
     print(f"== {len(results) - len(failed)}/{len(results)} passed ==", flush=True)
     return 1 if failed else 0
 

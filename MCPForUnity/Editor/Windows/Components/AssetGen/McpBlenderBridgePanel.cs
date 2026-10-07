@@ -76,19 +76,25 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         /// <summary>Sets tooltips and populates the fields from prefs.</summary>
         private void InitializeUI()
         {
-            if (hostField != null) hostField.tooltip = "Host the BlenderMCP addon socket listens on (Blender's N panel > BlenderMCP).";
-            if (portField != null) portField.tooltip = $"Addon socket port. Default {BlenderBridgePrefs.DefaultPort}.";
+            if (hostField != null)
+                hostField.tooltip = "Host the BlenderMCP addon socket listens on (Blender's N panel > BlenderMCP).";
+            if (portField != null)
+                portField.tooltip = $"Addon socket port. Default {BlenderBridgePrefs.DefaultPort}.";
             if (testButton != null)
-                testButton.tooltip = "Check the addon socket again now (the panel also checks it when it opens). Blender must be running with the addon connected.";
+                testButton.tooltip =
+                    "Check the addon socket again now (the panel also checks it when it opens). Blender must be running with the addon connected.";
             if (forkField != null)
                 forkField.tooltip = "Folder of your blender-mcp checkout (the one containing addon.py). Enables Sync Addon and Check Updates.";
             if (addonsField != null)
                 addonsField.tooltip = "Blender's user addons folder. Leave empty to auto-detect the newest Blender version's scripts/addons.";
-            if (syncButton != null) syncButton.tooltip = "Copy the checkout's addon.py into Blender's addons folder (backs up the old file).";
-            if (updatesButton != null) updatesButton.tooltip = "git fetch the checkout and report how far behind its remotes it is.";
+            if (syncButton != null)
+                syncButton.tooltip = "Copy the checkout's addon.py into Blender's addons folder (backs up the old file).";
+            if (updatesButton != null)
+                updatesButton.tooltip = "git fetch the checkout and report how far behind its remotes it is.";
             if (importButton != null)
-                importButton.tooltip = "Export the objects selected in Blender as GLB, import them under Assets/ and place them in the open scene. " +
-                                       "Needs Blender running with the BlenderMCP addon connected; with nothing selected in Blender it reports an error.";
+                importButton.tooltip =
+                    "Export the objects selected in Blender as GLB, import them under Assets/ and place them in the open scene. "
+                    + "Needs Blender running with the BlenderMCP addon connected; with nothing selected in Blender it reports an error.";
 
             SyncFromPrefs();
         }
@@ -101,7 +107,8 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                 string before = BlenderBridgePrefs.Host;
                 BlenderBridgePrefs.Host = hostField.text;
                 hostField.SetValueWithoutNotify(BlenderBridgePrefs.Host);
-                if (BlenderBridgePrefs.Host != before) ProbeConnection();
+                if (BlenderBridgePrefs.Host != before)
+                    ProbeConnection();
             });
 
             // A TextField rather than IntegerField: the latter is editor-only (UnityEditor.UIElements) on the
@@ -110,29 +117,45 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             portField?.RegisterCallback<FocusOutEvent>(_ =>
             {
                 int before = BlenderBridgePrefs.Port;
-                if (int.TryParse(portField.text?.Trim(), out int port)) BlenderBridgePrefs.Port = port;
+                if (int.TryParse(portField.text?.Trim(), out int port))
+                    BlenderBridgePrefs.Port = port;
                 portField.SetValueWithoutNotify(BlenderBridgePrefs.Port.ToString());
-                if (BlenderBridgePrefs.Port != before) ProbeConnection();
+                if (BlenderBridgePrefs.Port != before)
+                    ProbeConnection();
             });
 
             forkField?.RegisterCallback<FocusOutEvent>(_ => SetForkPath(forkField.text));
-            if (forkSelectButton != null) forkSelectButton.clicked += OnSelectFork;
-            if (forkClearButton != null) forkClearButton.clicked += () => SetForkPath(string.Empty);
+            if (forkSelectButton != null)
+                forkSelectButton.clicked += OnSelectFork;
+            if (forkClearButton != null)
+                forkClearButton.clicked += () => SetForkPath(string.Empty);
 
             addonsField?.RegisterCallback<FocusOutEvent>(_ => SetAddonsDir(addonsField.text));
-            if (addonsSelectButton != null) addonsSelectButton.clicked += OnSelectAddonsDir;
-            if (addonsClearButton != null) addonsClearButton.clicked += () => SetAddonsDir(string.Empty);
+            if (addonsSelectButton != null)
+                addonsSelectButton.clicked += OnSelectAddonsDir;
+            if (addonsClearButton != null)
+                addonsClearButton.clicked += () => SetAddonsDir(string.Empty);
 
-            if (testButton != null) testButton.clicked += ProbeConnection;
-            if (syncButton != null) syncButton.clicked += async () =>
-            {
-                await RunActionAsync(new JObject { ["action"] = "sync_addon" });
-                UpdateAddonStatus();
-            };
-            if (updatesButton != null) updatesButton.clicked += async () =>
-                await RunActionAsync(new JObject { ["action"] = "check_updates" });
-            if (importButton != null) importButton.clicked += async () =>
-                await RunActionAsync(new JObject { ["action"] = "import_model", ["selection_only"] = true, ["format"] = "glb" });
+            if (testButton != null)
+                testButton.clicked += ProbeConnection;
+            if (syncButton != null)
+                syncButton.clicked += async () =>
+                {
+                    await RunActionAsync(new JObject { ["action"] = "sync_addon" });
+                    UpdateAddonStatus();
+                };
+            if (updatesButton != null)
+                updatesButton.clicked += async () => await RunActionAsync(new JObject { ["action"] = "check_updates" });
+            if (importButton != null)
+                importButton.clicked += async () =>
+                    await RunActionAsync(
+                        new JObject
+                        {
+                            ["action"] = "import_model",
+                            ["selection_only"] = true,
+                            ["format"] = "glb",
+                        }
+                    );
         }
 
         /// <summary>Re-reads prefs and the on-disk addon state, then re-checks the socket in the background.</summary>
@@ -160,8 +183,11 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             string normalized = BlenderBridgePrefs.NormalizePath(path);
             if (!string.IsNullOrEmpty(normalized) && !BlenderBridgePrefs.IsValidForkPath(normalized))
             {
-                EditorUtility.DisplayDialog("Invalid blender-mcp checkout",
-                    $"No {BlenderBridgePrefs.AddonFileName} found in:\n{normalized}\n\nPick the folder that contains addon.py.", "OK");
+                EditorUtility.DisplayDialog(
+                    "Invalid blender-mcp checkout",
+                    $"No {BlenderBridgePrefs.AddonFileName} found in:\n{normalized}\n\nPick the folder that contains addon.py.",
+                    "OK"
+                );
                 forkField?.SetValueWithoutNotify(BlenderBridgePrefs.ForkPath);
                 return;
             }
@@ -172,9 +198,9 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         /// <summary>Opens a folder picker for the checkout.</summary>
         private void OnSelectFork()
         {
-            string picked = EditorUtility.OpenFolderPanel("Select blender-mcp checkout (folder containing addon.py)",
-                BlenderBridgePrefs.ForkPath, "");
-            if (!string.IsNullOrEmpty(picked)) SetForkPath(picked);
+            string picked = EditorUtility.OpenFolderPanel("Select blender-mcp checkout (folder containing addon.py)", BlenderBridgePrefs.ForkPath, "");
+            if (!string.IsNullOrEmpty(picked))
+                SetForkPath(picked);
         }
 
         /// <summary>Validates and persists the addons folder override.</summary>
@@ -194,9 +220,13 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         /// <summary>Opens a folder picker for the addons folder.</summary>
         private void OnSelectAddonsDir()
         {
-            string picked = EditorUtility.OpenFolderPanel("Select Blender user addons folder (…/scripts/addons)",
-                BlenderBridgePrefs.ResolveAddonsDir() ?? "", "");
-            if (!string.IsNullOrEmpty(picked)) SetAddonsDir(picked);
+            string picked = EditorUtility.OpenFolderPanel(
+                "Select Blender user addons folder (…/scripts/addons)",
+                BlenderBridgePrefs.ResolveAddonsDir() ?? "",
+                ""
+            );
+            if (!string.IsNullOrEmpty(picked))
+                SetAddonsDir(picked);
         }
 
         /// <summary>
@@ -205,7 +235,8 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         /// </summary>
         private void UpdateAddonStatus()
         {
-            if (addonsResolvedLabel == null) return;
+            if (addonsResolvedLabel == null)
+                return;
 
             string dir = BlenderBridgePrefs.ResolveAddonsDir();
             bool configured = BlenderBridgePrefs.IsForkConfigured;
@@ -213,9 +244,12 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             string text;
             bool ok = false;
 
-            if (string.IsNullOrEmpty(dir)) text = $"Addons folder: not found · {notInstalled}";
-            else if (!Directory.Exists(dir)) text = $"Addons folder: {dir} (not created yet) · {notInstalled}";
-            else if (!File.Exists(BlenderBridgePrefs.InstalledAddonPath)) text = $"Addons folder: {dir} · {notInstalled}";
+            if (string.IsNullOrEmpty(dir))
+                text = $"Addons folder: not found · {notInstalled}";
+            else if (!Directory.Exists(dir))
+                text = $"Addons folder: {dir} (not created yet) · {notInstalled}";
+            else if (!File.Exists(BlenderBridgePrefs.InstalledAddonPath))
+                text = $"Addons folder: {dir} · {notInstalled}";
             else
             {
                 text = $"Addons folder: {dir} · BlenderMCP addon: installed";
@@ -226,7 +260,11 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                     {
                         if (BlenderBridgeTool.FileMd5(BlenderBridgePrefs.ForkAddonPath) == BlenderBridgeTool.FileMd5(BlenderBridgePrefs.InstalledAddonPath))
                             text += " · in sync with checkout ✓";
-                        else { text += " · differs from checkout (Sync Addon)"; ok = false; }
+                        else
+                        {
+                            text += " · differs from checkout (Sync Addon)";
+                            ok = false;
+                        }
                     }
                     catch (Exception e)
                     {
@@ -264,10 +302,13 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                     SetConnectionStatus(null, $"Checking Blender at {endpoint}…");
                     var (ok, error) = await BlenderSocketClient.ProbeAsync(endpoint);
                     error = MCPForUnity.Editor.Security.SecretRedactor.Scrub(error);
-                    if (probeQueued) continue;
-                    if (ok) SetConnectionStatus(true, $"Blender reachable at {endpoint}");
+                    if (probeQueued)
+                        continue;
+                    if (ok)
+                        SetConnectionStatus(true, $"Blender reachable at {endpoint}");
                     // The actionable socket error leads; detection can miss portable installs, so it is only a hint.
-                    else SetConnectionStatus(false, BlenderDetection.IsInstalled() ? error : error + " (Blender app not detected on this machine.)");
+                    else
+                        SetConnectionStatus(false, BlenderDetection.IsInstalled() ? error : error + " (Blender app not detected on this machine.)");
                 } while (probeQueued);
             }
             finally
@@ -284,19 +325,24 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                 statusLabel.text = Truncate(text, 240);
                 statusLabel.tooltip = text;
             }
-            if (statusDot == null) return;
+            if (statusDot == null)
+                return;
             statusDot.RemoveFromClassList("valid");
             statusDot.RemoveFromClassList("invalid");
             statusDot.RemoveFromClassList("warning");
-            if (ok == true) statusDot.AddToClassList("valid");
-            else if (ok == false) statusDot.AddToClassList("invalid");
-            else statusDot.AddToClassList("warning");
+            if (ok == true)
+                statusDot.AddToClassList("valid");
+            else if (ok == false)
+                statusDot.AddToClassList("invalid");
+            else
+                statusDot.AddToClassList("warning");
         }
 
         /// <summary>Runs one bridge action without blocking the editor and reports its message.</summary>
         private async Task<JObject> RunActionAsync(JObject parameters)
         {
-            if (busy) return null;
+            if (busy)
+                return null;
             SetBusy(true);
             SetActionStatus($"Running {parameters["action"]}…", false);
             JObject json;
@@ -318,8 +364,10 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             SetActionStatus(message ?? (ok ? "done" : "failed"), !ok);
 
             string details = json.ToString(Formatting.Indented);
-            if (ok) McpLog.Info($"[Blender Bridge] {parameters["action"]}: {message}\n{details}");
-            else McpLog.Warn($"[Blender Bridge] {parameters["action"]} failed: {message}\n{details}");
+            if (ok)
+                McpLog.Info($"[Blender Bridge] {parameters["action"]}: {message}\n{details}");
+            else
+                McpLog.Warn($"[Blender Bridge] {parameters["action"]} failed: {message}\n{details}");
             return json;
         }
 
@@ -343,16 +391,20 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         /// <summary>Writes the last action's outcome under the buttons, red on error.</summary>
         private void SetActionStatus(string text, bool isError)
         {
-            if (actionStatusLabel == null) return;
+            if (actionStatusLabel == null)
+                return;
             actionStatusLabel.text = Truncate(text, 240);
-            if (isError) actionStatusLabel.style.color = new StyleColor(new Color(0.85f, 0.2f, 0.2f));
-            else actionStatusLabel.style.color = StyleKeyword.Null;
+            if (isError)
+                actionStatusLabel.style.color = new StyleColor(new Color(0.85f, 0.2f, 0.2f));
+            else
+                actionStatusLabel.style.color = StyleKeyword.Null;
         }
 
         /// <summary>Caps a message for the status labels.</summary>
         private static string Truncate(string s, int max)
         {
-            if (string.IsNullOrEmpty(s)) return string.Empty;
+            if (string.IsNullOrEmpty(s))
+                return string.Empty;
             return s.Length <= max ? s : s.Substring(0, max) + "…";
         }
     }

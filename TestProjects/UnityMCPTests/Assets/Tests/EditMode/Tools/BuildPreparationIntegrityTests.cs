@@ -40,16 +40,30 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("platform")]
         public void UnknownTargetRejectsEvenWithProfile(string action)
         {
-            Reject(new JObject { ["action"] = action, ["target"] = "not-a-platform",
-                ["profile"] = "Assets/__McpMissingBuildProfile_" + Guid.NewGuid().ToString("N") + ".asset" }, "Unknown");
+            Reject(
+                new JObject
+                {
+                    ["action"] = action,
+                    ["target"] = "not-a-platform",
+                    ["profile"] = "Assets/__McpMissingBuildProfile_" + Guid.NewGuid().ToString("N") + ".asset",
+                },
+                "Unknown"
+            );
         }
 
         [TestCase("bad")]
         [TestCase("0")]
         public void InvalidBackendRejectsBeforeProfileOrSettings(string backend)
         {
-            Reject(new JObject { ["action"] = "build", ["scripting_backend"] = backend,
-                ["profile"] = "Assets/__McpMissingBuildProfile_" + Guid.NewGuid().ToString("N") + ".asset" }, "Unknown scripting_backend");
+            Reject(
+                new JObject
+                {
+                    ["action"] = "build",
+                    ["scripting_backend"] = backend,
+                    ["profile"] = "Assets/__McpMissingBuildProfile_" + Guid.NewGuid().ToString("N") + ".asset",
+                },
+                "Unknown scripting_backend"
+            );
         }
 
         [Test]
@@ -58,8 +72,15 @@ namespace MCPForUnityTests.EditMode.Tools
         [Test]
         public void BatchWithBothSelectorsCreatesNoJobs()
         {
-            Reject(new JObject { ["action"] = "batch", ["targets"] = new JArray("android"),
-                ["profiles"] = new JArray("Assets/Unused.asset") }, "not both");
+            Reject(
+                new JObject
+                {
+                    ["action"] = "batch",
+                    ["targets"] = new JArray("android"),
+                    ["profiles"] = new JArray("Assets/Unused.asset"),
+                },
+                "not both"
+            );
         }
 
         [Test]
@@ -83,7 +104,8 @@ namespace MCPForUnityTests.EditMode.Tools
                 request["profile"] = path;
                 request["scripting_backend"] = "mono";
             }
-            else request["profiles"] = new JArray(path);
+            else
+                request["profiles"] = new JArray(path);
             Reject(request, action == "build" ? "Build profile not found" : "Profile not found");
             Assert.IsFalse(File.Exists(fullPath));
         }
@@ -100,21 +122,33 @@ namespace MCPForUnityTests.EditMode.Tools
 
         private static string Snapshot()
         {
-            var jobs = Store("_buildJobs").Values.Cast<BuildJob>()
-                .OrderBy(j => j.JobId).Select(j => JObject.FromObject(j.ToStatusResponse())).ToArray();
-            var batches = Store("_batchJobs").Values.Cast<BatchJob>()
-                .OrderBy(j => j.JobId).Select(j => JObject.FromObject(j.ToStatusResponse())).ToArray();
-            var scenes = EditorBuildSettings.scenes.Select(s => new { s.path, s.enabled, guid = s.guid.ToString() }).ToArray();
-            return JObject.FromObject(new
-            {
-                target = EditorUserBuildSettings.activeBuildTarget.ToString(),
-                subtarget = EditorUserBuildSettings.standaloneBuildSubtarget.ToString(),
-                PlayerSettings.productName, scenes, jobs, batches,
-                last = BuildJobStore.LastCompletedJob?.JobId
-            }).ToString(Newtonsoft.Json.Formatting.None);
+            var jobs = Store("_buildJobs").Values.Cast<BuildJob>().OrderBy(j => j.JobId).Select(j => JObject.FromObject(j.ToStatusResponse())).ToArray();
+            var batches = Store("_batchJobs").Values.Cast<BatchJob>().OrderBy(j => j.JobId).Select(j => JObject.FromObject(j.ToStatusResponse())).ToArray();
+            var scenes = EditorBuildSettings
+                .scenes.Select(s => new
+                {
+                    s.path,
+                    s.enabled,
+                    guid = s.guid.ToString(),
+                })
+                .ToArray();
+            return JObject
+                .FromObject(
+                    new
+                    {
+                        target = EditorUserBuildSettings.activeBuildTarget.ToString(),
+                        subtarget = EditorUserBuildSettings.standaloneBuildSubtarget.ToString(),
+                        PlayerSettings.productName,
+                        scenes,
+                        jobs,
+                        batches,
+                        last = BuildJobStore.LastCompletedJob?.JobId,
+                    }
+                )
+                .ToString(Newtonsoft.Json.Formatting.None);
         }
 
-        private static IDictionary Store(string name) => (IDictionary)typeof(BuildJobStore)
-            .GetField(name, BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+        private static IDictionary Store(string name) =>
+            (IDictionary)typeof(BuildJobStore).GetField(name, BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
     }
 }

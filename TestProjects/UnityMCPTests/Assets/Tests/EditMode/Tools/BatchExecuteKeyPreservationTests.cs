@@ -1,11 +1,11 @@
-using NUnit.Framework;
-using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
-using UnityEngine.Events;
-using UnityEditor;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
 using TestNamespace;
+using UnityEditor;
+using UnityEngine;
+using UnityEngine.Events;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -56,11 +56,14 @@ namespace MCPForUnityTests.Editor.Tools
                             ["search_method"] = "by_name",
                             ["component_type"] = "UnityEventTestComponent",
                             ["property"] = "onSimpleEvent",
-                            ["value"] = JObject.Parse(@"{
+                            ["value"] = JObject.Parse(
+                                @"{
                                 ""m_PersistentCalls"": {
                                     ""m_Calls"": [
                                         {
-                                            ""m_Target"": { ""instanceID"": " + targetId + @" },
+                                            ""m_Target"": { ""instanceID"": "
+                                    + targetId
+                                    + @" },
                                             ""m_TargetAssemblyTypeName"": ""UnityEngine.GameObject, UnityEngine"",
                                             ""m_MethodName"": ""SetActive"",
                                             ""m_Mode"": 6,
@@ -69,10 +72,11 @@ namespace MCPForUnityTests.Editor.Tools
                                         }
                                     ]
                                 }
-                            }")
-                        }
-                    }
-                }
+                            }"
+                            ),
+                        },
+                    },
+                },
             };
 
             var result = BatchExecute.HandleCommand(batchParams).GetAwaiter().GetResult();
@@ -86,8 +90,7 @@ namespace MCPForUnityTests.Editor.Tools
             var callsProp = so.FindProperty("onSimpleEvent.m_PersistentCalls.m_Calls");
             Assert.IsNotNull(callsProp, "m_Calls property should exist");
             Assert.AreEqual(1, callsProp.arraySize, "Should have 1 persistent call");
-            Assert.AreEqual("SetActive",
-                callsProp.GetArrayElementAtIndex(0).FindPropertyRelative("m_MethodName").stringValue);
+            Assert.AreEqual("SetActive", callsProp.GetArrayElementAtIndex(0).FindPropertyRelative("m_MethodName").stringValue);
         }
 
         [Test]
@@ -110,17 +113,16 @@ namespace MCPForUnityTests.Editor.Tools
                             ["search_method"] = "by_name",
                             ["component_type"] = "AudioSource",
                             ["property"] = "volume",
-                            ["value"] = 0.42f
-                        }
-                    }
-                }
+                            ["value"] = 0.42f,
+                        },
+                    },
+                },
             };
 
             var result = BatchExecute.HandleCommand(batchParams).GetAwaiter().GetResult();
             var resultObj = JObject.FromObject(result);
 
-            Assert.IsTrue(resultObj.Value<bool>("success"),
-                $"Batch with snake_case top-level keys should succeed: {resultObj}");
+            Assert.IsTrue(resultObj.Value<bool>("success"), $"Batch with snake_case top-level keys should succeed: {resultObj}");
             Assert.AreEqual(0.42f, testGo.GetComponent<AudioSource>().volume, 0.001f);
         }
 
@@ -143,10 +145,10 @@ namespace MCPForUnityTests.Editor.Tools
                             {
                                 ["action"] = "create",
                                 ["name"] = goName,
-                                ["primitive_type"] = "Cube"
-                            }
-                        }
-                    }
+                                ["primitive_type"] = "Cube",
+                            },
+                        },
+                    },
                 };
 
                 var result = BatchExecute.HandleCommand(batchParams).GetAwaiter().GetResult();

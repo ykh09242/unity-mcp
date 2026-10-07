@@ -22,15 +22,18 @@ def test_beta_release_side_effects_are_upstream_only(job: str) -> None:
     assert condition == f"{UPSTREAM_ONLY} && github.actor != 'github-actions[bot]'"
 
 
-@pytest.mark.parametrize("name,job", [
-    ("release.yml", "bump"),
-    ("release.yml", "sync_beta"),
-    ("release.yml", "publish_docker"),
-    ("release.yml", "publish_pypi"),
-    ("release.yml", "publish_mcpb"),
-    ("sync-releases.yml", "sync"),
-    ("stats.yml", "stats"),
-])
+@pytest.mark.parametrize(
+    "name,job",
+    [
+        ("release.yml", "bump"),
+        ("release.yml", "sync_beta"),
+        ("release.yml", "publish_docker"),
+        ("release.yml", "publish_pypi"),
+        ("release.yml", "publish_mcpb"),
+        ("sync-releases.yml", "sync"),
+        ("stats.yml", "stats"),
+    ],
+)
 def test_legacy_publication_and_adoption_jobs_exclude_forks(name: str, job: str) -> None:
     # Given: inherited automation owns upstream release identities and metrics.
     definition = workflow(name)["jobs"][job]
@@ -67,12 +70,15 @@ def test_beta_python_release_gate_excludes_duplicate_fork_runs() -> None:
     assert release["uses"] == fork["uses"] == "./.github/workflows/python-tests.yml"
 
 
-@pytest.mark.parametrize("path", [
-    "Server/src/main.py",
-    "Server/uv.lock",
-    "MCPForUnity/Editor/Tools/ReadConsole.cs",
-    "MCPForUnity/package.json",
-])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "Server/src/main.py",
+        "Server/uv.lock",
+        "MCPForUnity/Editor/Tools/ReadConsole.cs",
+        "MCPForUnity/package.json",
+    ],
+)
 def test_fork_beta_product_changes_select_python_validation(path: str) -> None:
     # Given: a product-only beta push, with no tooling change to trigger the old wrapper.
     # When: the fork Python entry point's real branch and path filters are applied.
@@ -120,11 +126,14 @@ def push_selects(workflow_name: str, branch: str, path: str) -> bool:
     return any(fnmatchcase(path, pattern) for pattern in push["paths"])
 
 
-@pytest.mark.parametrize("path", [
-    "MCPForUnity/Editor/Tools/ManageBuild.cs",
-    "tools/compile-check.sh",
-    ".github/workflows/compile-check.yml",
-])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "MCPForUnity/Editor/Tools/ManageBuild.cs",
+        "tools/compile-check.sh",
+        ".github/workflows/compile-check.yml",
+    ],
+)
 def test_beta_pushes_select_license_free_compilation(path: str) -> None:
     # Given: a beta push touching C# or the compiler check itself.
     # When: GitHub evaluates the compile workflow's branch and path filters.
@@ -134,16 +143,19 @@ def test_beta_pushes_select_license_free_compilation(path: str) -> None:
     assert workflow("compile-check.yml")["permissions"] == {"contents": "read"}
 
 
-@pytest.mark.parametrize("path", [
-    "tools/tests/test_generate_docs_reference.py",
-    "mcp_source.py",
-    ".github/scripts/mark_skipped.py",
-    ".github/workflows/python-tests.yml",
-    ".github/workflows/fork-beta-tools.yml",
-    ".github/workflows/docs-deploy.yml",
-    ".github/actions/publish-docker/action.yml",
-    ".github/actionlint.yaml",
-])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "tools/tests/test_generate_docs_reference.py",
+        "mcp_source.py",
+        ".github/scripts/mark_skipped.py",
+        ".github/workflows/python-tests.yml",
+        ".github/workflows/fork-beta-tools.yml",
+        ".github/workflows/docs-deploy.yml",
+        ".github/actions/publish-docker/action.yml",
+        ".github/actionlint.yaml",
+    ],
+)
 def test_fork_beta_tools_pushes_select_reusable_python_validation(path: str) -> None:
     # Given: a fork beta push with tooling or its validation configuration changed.
     wrapper = ROOT / ".github" / "workflows" / "fork-beta-tools.yml"
@@ -161,10 +173,16 @@ def test_fork_beta_tools_pushes_select_reusable_python_validation(path: str) -> 
     assert "secrets" not in job
 
 
-@pytest.mark.parametrize("path", [
-    ".github/workflows/release.yml", ".github/actions/publish-pypi/action.yml",
-    ".github/actionlint.yaml", ".github/scripts/mark_skipped.py", "mcp_source.py",
-])
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/workflows/release.yml",
+        ".github/actions/publish-pypi/action.yml",
+        ".github/actionlint.yaml",
+        ".github/scripts/mark_skipped.py",
+        "mcp_source.py",
+    ],
+)
 def test_ci_policy_changes_select_python_push_and_pull_request_validation(path: str) -> None:
     assert push_selects("python-tests.yml", "feature-policy", path)
     config = workflow("python-tests.yml")
@@ -186,12 +204,17 @@ def test_reusable_python_validation_includes_hermetic_tool_tests() -> None:
 def test_server_bootstrap_covers_default_windows_paths_and_offline_cache() -> None:
     job = workflow("python-tests.yml")["jobs"]["server_bootstrap"]
     assert set(job["strategy"]["matrix"]["os"]) == {
-        "windows-latest", "ubuntu-latest", "macos-latest",
+        "windows-latest",
+        "ubuntu-latest",
+        "macos-latest",
     }
     assert job["timeout-minutes"] <= 10
     steps = {step["name"]: step for step in job["steps"]}
     assert steps["Checkout source metadata"]["with"]["persist-credentials"] is False
-    assert "tools/check_server_startup.py" in steps["Checkout source metadata"]["with"]["sparse-checkout"]
+    assert (
+        "tools/check_server_startup.py"
+        in steps["Checkout source metadata"]["with"]["sparse-checkout"]
+    )
     assert steps["Install uv"]["with"]["python-version"] == "3.11"
     probe = steps["Verify cold and offline server bootstrap"]
     assert probe["shell"] == "pwsh"
@@ -217,10 +240,13 @@ def test_python_lint_is_a_blocking_step_with_locked_dependencies() -> None:
     assert lint["if"] == "matrix.python-version != '3.11'"
 
 
-@pytest.mark.parametrize("step_name", [
-    "Run tests with coverage",
-    "Run local harness unit tests (hermetic, no Unity)",
-])
+@pytest.mark.parametrize(
+    "step_name",
+    [
+        "Run tests with coverage",
+        "Run local harness unit tests (hermetic, no Unity)",
+    ],
+)
 def test_python_validation_treats_warnings_as_errors(step_name: str) -> None:
     steps = workflow("python-tests.yml")["jobs"]["test"]["steps"]
     command = next(step["run"] for step in steps if step["name"] == step_name)
@@ -249,7 +275,11 @@ def test_python_validation_selects_minimum_and_current_interpreters() -> None:
     assert any(version.startswith("3.14.") for version in versions)
     assert "${{ matrix.python-version }}" in job["name"]
     assert 'uv python install "${{ matrix.python-version }}"' in steps["Set up Python"]["run"]
-    for name in ("Install dependencies", "Run tests with coverage", "Run local harness unit tests (hermetic, no Unity)"):
+    for name in (
+        "Install dependencies",
+        "Run tests with coverage",
+        "Run local harness unit tests (hermetic, no Unity)",
+    ):
         assert '--python "${{ matrix.python-version }}"' in steps[name]["run"]
     assert "${{ matrix.python-version }}" in steps["Upload test results"]["with"]["name"]
     assert "${{ matrix.python-version }}" in steps["Upload coverage reports"]["with"]["name"]
@@ -260,13 +290,20 @@ def test_python_validation_selects_minimum_and_current_interpreters() -> None:
     assert not candidate.get("continue-on-error", False)
 
 
-@pytest.mark.parametrize("path", sorted((ROOT / ".github" / "workflows").glob("*.yml")), ids=lambda path: path.name)
+@pytest.mark.parametrize(
+    "path", sorted((ROOT / ".github" / "workflows").glob("*.yml")), ids=lambda path: path.name
+)
 def test_external_workflow_actions_use_immutable_commits(path: Path) -> None:
     # Given: workflow actions are validated as parsed YAML, not by text substitution.
     config = workflow(path.name)
     # When: every action invocation is examined, including reusable jobs.
     references = [job["uses"] for job in config["jobs"].values() if "uses" in job]
-    references += [step["uses"] for job in config["jobs"].values() for step in job.get("steps", []) if "uses" in step]
+    references += [
+        step["uses"]
+        for job in config["jobs"].values()
+        for step in job.get("steps", [])
+        if "uses" in step
+    ]
     # Then: external actions cannot silently follow mutable tags or release branches.
     for reference in references:
         if reference.startswith("./"):
@@ -274,10 +311,16 @@ def test_external_workflow_actions_use_immutable_commits(path: Path) -> None:
         action, ref = reference.rsplit("@", 1)
         assert action and re.fullmatch(r"[0-9a-f]{40}", ref), reference
         text = path.read_text(encoding="utf-8")
-        assert re.search(re.escape(reference) + r"\s+# (?:v\d+\.\d+\.\d+|RELEASE \(\d{4}-\d{2}-\d{2}\))", text), reference
+        assert re.search(
+            re.escape(reference) + r"\s+# (?:v\d+\.\d+\.\d+|RELEASE \(\d{4}-\d{2}-\d{2}\))", text
+        ), reference
 
 
-@pytest.mark.parametrize("path", sorted((ROOT / ".github" / "actions").rglob("action.y*ml")), ids=lambda path: path.parent.name)
+@pytest.mark.parametrize(
+    "path",
+    sorted((ROOT / ".github" / "actions").rglob("action.y*ml")),
+    ids=lambda path: path.parent.name,
+)
 def test_local_action_dependencies_use_immutable_commits(path: Path) -> None:
     # Given: all local action definitions, including currently unused composites.
     text = path.read_text(encoding="utf-8")
@@ -291,14 +334,17 @@ def test_local_action_dependencies_use_immutable_commits(path: Path) -> None:
             assert re.search(re.escape(reference) + r"\s+# v\d+\.\d+\.\d+", text), reference
 
 
-@pytest.mark.parametrize("name,enabled", [
-    ("beta-release.yml", True),
-    ("release.yml", True),
-    ("python-tests.yml", False),
-    ("docs-generate.yml", False),
-    ("e2e-bridge.yml", False),
-    ("claude-nl-suite.yml", False),
-])
+@pytest.mark.parametrize(
+    "name,enabled",
+    [
+        ("beta-release.yml", True),
+        ("release.yml", True),
+        ("python-tests.yml", False),
+        ("docs-generate.yml", False),
+        ("e2e-bridge.yml", False),
+        ("claude-nl-suite.yml", False),
+    ],
+)
 def test_uv_action_upgrades_preserve_explicit_cache_policy(name: str, enabled: bool) -> None:
     # Given: action major upgrades can change cache defaults.
     steps = [step for job in workflow(name)["jobs"].values() for step in job.get("steps", [])]
@@ -309,7 +355,9 @@ def test_uv_action_upgrades_preserve_explicit_cache_policy(name: str, enabled: b
     assert all(step["with"]["enable-cache"] is enabled for step in installs)
 
 
-@pytest.mark.parametrize("name,job", [("claude-nl-suite.yml", "nl-suite"), ("e2e-bridge.yml", "e2e-bridge")])
+@pytest.mark.parametrize(
+    "name,job", [("claude-nl-suite.yml", "nl-suite"), ("e2e-bridge.yml", "e2e-bridge")]
+)
 def test_latest_manual_runner_preserves_unity_compatibility_fixture(name: str, job: str) -> None:
     # Given: the manual Unity harnesses use a compatibility image independent of the host.
     config = workflow(name)
@@ -318,8 +366,8 @@ def test_latest_manual_runner_preserves_unity_compatibility_fixture(name: str, j
     # Then: the minimum Unity fixture is preserved, including disk-backed cache mounts.
     assert config["env"]["UNITY_IMAGE"] == "unityci/editor:ubuntu-2021.3.45f2-linux-il2cpp-3"
     commands = "\n".join(step.get("run", "") for step in config["jobs"][job]["steps"])
-    assert '$RUNNER_TEMP/unity-config:/root/.config/unity3d' in commands
-    assert '$RUNNER_TEMP/unity-cache:/root/.cache/unity3d' in commands
+    assert "$RUNNER_TEMP/unity-config:/root/.config/unity3d" in commands
+    assert "$RUNNER_TEMP/unity-cache:/root/.cache/unity3d" in commands
 
 
 def test_actionlint_accepts_only_the_verified_new_runner_label() -> None:

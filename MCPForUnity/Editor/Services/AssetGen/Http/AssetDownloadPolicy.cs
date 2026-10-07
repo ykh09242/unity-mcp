@@ -12,15 +12,22 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
         // Never allow shared storage suffixes such as amazonaws.com or arbitrary provider URLs.
         internal static Uri RequireAllowedUrl(string provider, string url)
         {
-            if (string.IsNullOrWhiteSpace(url) || url.IndexOf('\\') >= 0
+            if (
+                string.IsNullOrWhiteSpace(url)
+                || url.IndexOf('\\') >= 0
                 || !Uri.TryCreate(url, UriKind.Absolute, out Uri uri)
-                || uri.Scheme != Uri.UriSchemeHttps || uri.Port != 443
-                || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0
+                || uri.Scheme != Uri.UriSchemeHttps
+                || uri.Port != 443
+                || uri.UserInfo.Length != 0
+                || uri.Fragment.Length != 0
                 || uri.HostNameType != UriHostNameType.Dns
-                || !IsAllowedHost(provider, uri.IdnHost))
+                || !IsAllowedHost(provider, uri.IdnHost)
+            )
             {
                 // URLs can contain signed credentials. Do not include them in errors or logs.
-                throw new InvalidOperationException("Refusing provider download: expected an HTTPS URL on an approved artifact host, port 443, without userinfo or a fragment.");
+                throw new InvalidOperationException(
+                    "Refusing provider download: expected an HTTPS URL on an approved artifact host, port 443, without userinfo or a fragment."
+                );
             }
             return uri;
         }
@@ -34,8 +41,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 case "meshy":
                     return EqualsHost(host, "assets.meshy.ai");
                 case "fal":
-                    return EqualsHost(host, "fal.media")
-                        || host.EndsWith(".fal.media", StringComparison.OrdinalIgnoreCase);
+                    return EqualsHost(host, "fal.media") || host.EndsWith(".fal.media", StringComparison.OrdinalIgnoreCase);
                 case "sketchfab":
                     return EqualsHost(host, "sketchfab-prod-media.s3.amazonaws.com");
                 // OpenRouter documents inline base64 results; there is no documented download CDN.
@@ -44,8 +50,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
             }
         }
 
-        private static bool EqualsHost(string actual, string expected)
-            => string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
+        private static bool EqualsHost(string actual, string expected) => string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
 
         internal static void RequirePublicAddresses(IPAddress[] addresses)
         {
@@ -59,12 +64,18 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
 
         internal static bool IsPublicAddress(IPAddress address)
         {
-            if (address == null) return false;
-            if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+            if (address == null)
+                return false;
+            if (address.IsIPv4MappedToIPv6)
+                address = address.MapToIPv4();
             byte[] b = address.GetAddressBytes();
             if (address.AddressFamily == AddressFamily.InterNetwork)
             {
-                return !(b[0] == 0 || b[0] == 10 || b[0] == 127 || b[0] >= 224
+                return !(
+                    b[0] == 0
+                    || b[0] == 10
+                    || b[0] == 127
+                    || b[0] >= 224
                     || (b[0] == 100 && b[1] >= 64 && b[1] <= 127)
                     || (b[0] == 169 && b[1] == 254)
                     || (b[0] == 172 && b[1] >= 16 && b[1] <= 31)
@@ -75,7 +86,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                     || (b[0] == 198 && b[1] == 51 && b[2] == 100)
                     || (b[0] == 203 && b[1] == 0 && b[2] == 113)
                     // Azure's platform virtual IP is not a public Internet service.
-                    || (b[0] == 168 && b[1] == 63 && b[2] == 129 && b[3] == 16));
+                    || (b[0] == 168 && b[1] == 63 && b[2] == 129 && b[3] == 16)
+                );
             }
             if (address.AddressFamily != AddressFamily.InterNetworkV6 || address.ScopeId != 0)
                 return false;

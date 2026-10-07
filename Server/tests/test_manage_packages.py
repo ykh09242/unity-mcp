@@ -14,6 +14,7 @@ from services.tools.manage_packages import ALL_ACTIONS
 # Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def runner():
     """Return a Click CLI test runner."""
@@ -50,17 +51,20 @@ def cli_runner(runner, mock_config, mock_success):
             params = mock_run.call_args.args[1]
             assert params["action"] == "list_packages"
     """
+
     def _invoke(args):
         with patch("cli.commands.packages.get_config", return_value=mock_config):
             with patch("cli.commands.packages.run_command", return_value=mock_success) as mock_run:
                 result = runner.invoke(packages, args)
                 return result, mock_run
+
     return _invoke
 
 
 # =============================================================================
 # Action Lists
 # =============================================================================
+
 
 class TestActionLists:
     """Verify action list completeness and consistency."""
@@ -92,6 +96,7 @@ class TestActionLists:
 # =============================================================================
 # Tool Validation (Python-side, no Unity)
 # =============================================================================
+
 
 class TestManagePackagesToolValidation:
     """Test action validation in the manage_packages tool function."""
@@ -154,6 +159,7 @@ class TestManagePackagesToolValidation:
 # =============================================================================
 # CLI Command Parameter Building
 # =============================================================================
+
 
 class TestPackagesQueryCLICommands:
     """Verify query CLI commands build correct parameter dicts."""
@@ -270,12 +276,18 @@ class TestRegistryCLICommands:
 
     def test_add_registry_builds_correct_params(self, cli_runner):
         """packages add-registry must send name, url, and all scopes."""
-        result, mock_run = cli_runner([
-            "add-registry", "OpenUPM",
-            "--url", "https://package.openupm.com",
-            "--scope", "com.cysharp",
-            "--scope", "com.neuecc",
-        ])
+        result, mock_run = cli_runner(
+            [
+                "add-registry",
+                "OpenUPM",
+                "--url",
+                "https://package.openupm.com",
+                "--scope",
+                "com.cysharp",
+                "--scope",
+                "com.neuecc",
+            ]
+        )
         assert result.exit_code == 0
         params = mock_run.call_args.args[1]
         assert params["action"] == "add_registry"
@@ -285,11 +297,16 @@ class TestRegistryCLICommands:
 
     def test_add_registry_with_single_scope(self, cli_runner):
         """packages add-registry with one --scope must produce a single-element scopes list."""
-        result, mock_run = cli_runner([
-            "add-registry", "MyReg",
-            "--url", "https://registry.example.com",
-            "--scope", "com.example",
-        ])
+        result, mock_run = cli_runner(
+            [
+                "add-registry",
+                "MyReg",
+                "--url",
+                "https://registry.example.com",
+                "--scope",
+                "com.example",
+            ]
+        )
         assert result.exit_code == 0
         params = mock_run.call_args.args[1]
         assert params["scopes"] == ["com.example"]

@@ -1,8 +1,8 @@
 using System;
 using System.IO;
 using System.Reflection;
-using System.Text;
 using System.Security.Cryptography;
+using System.Text;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -32,8 +32,10 @@ namespace MCPForUnityTests.Editor.Tools
             target = Path.Combine(tempRoot, "Fixture.txt");
             assetPath = "Assets/__McpScriptLifecycleIntegrity_" + suffix;
             physicalAssetPath = Path.Combine(Application.dataPath, Path.GetFileName(assetPath));
-            Assert.IsFalse(File.Exists(physicalAssetPath) || Directory.Exists(physicalAssetPath)
-                || File.Exists(physicalAssetPath + ".meta"), "Asset path collision.");
+            Assert.IsFalse(
+                File.Exists(physicalAssetPath) || Directory.Exists(physicalAssetPath) || File.Exists(physicalAssetPath + ".meta"),
+                "Asset path collision."
+            );
         }
 
         [TearDown]
@@ -48,18 +50,22 @@ namespace MCPForUnityTests.Editor.Tools
                 if (known)
                 {
                     foreach (string entry in entries)
-                        if (File.Exists(entry)) File.Delete(entry);
+                        if (File.Exists(entry))
+                            File.Delete(entry);
                         else if (Directory.Exists(entry) && Directory.GetFileSystemEntries(entry).Length == 0)
                             Directory.Delete(entry);
-                    if (Directory.GetFileSystemEntries(tempRoot).Length == 0) Directory.Delete(tempRoot);
+                    if (Directory.GetFileSystemEntries(tempRoot).Length == 0)
+                        Directory.Delete(tempRoot);
                 }
-                else TestContext.WriteLine("Retaining unexpected proof artifacts: " + tempRoot);
+                else
+                    TestContext.WriteLine("Retaining unexpected proof artifacts: " + tempRoot);
             }
             if (observedOwnedAssetDirectory && Directory.Exists(physicalAssetPath))
             {
                 if (Directory.GetFileSystemEntries(physicalAssetPath).Length == 0)
                     Directory.Delete(physicalAssetPath);
-                else TestContext.WriteLine("Retaining unexpected rejected-request artifacts: " + physicalAssetPath);
+                else
+                    TestContext.WriteLine("Retaining unexpected rejected-request artifacts: " + physicalAssetPath);
             }
         }
 
@@ -68,7 +74,8 @@ namespace MCPForUnityTests.Editor.Tools
         public void WriterPreservesUnrelatedSidecarsAndExactUtf8(bool overwrite)
         {
             const string contents = "// 😀 café\r\nclass Fixture {}\r\n";
-            if (overwrite) File.WriteAllText(target, "old");
+            if (overwrite)
+                File.WriteAllText(target, "old");
             File.WriteAllText(target + ".tmp", "unrelated tmp");
             File.WriteAllText(target + ".bak", "unrelated backup");
 
@@ -119,15 +126,22 @@ namespace MCPForUnityTests.Editor.Tools
             JObject response;
             try
             {
-                response = JObject.FromObject(ManageScript.HandleCommand(new JObject
-                {
-                    ["action"] = action,
-                    ["name"] = "Fixture",
-                    ["path"] = assetPath,
-                    ["contents"] = action == "create" ? "class Fixture {" : "class Fixture {}"
-                }));
+                response = JObject.FromObject(
+                    ManageScript.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = action,
+                            ["name"] = "Fixture",
+                            ["path"] = assetPath,
+                            ["contents"] = action == "create" ? "class Fixture {" : "class Fixture {}",
+                        }
+                    )
+                );
             }
-            finally { observedOwnedAssetDirectory = Directory.Exists(physicalAssetPath); }
+            finally
+            {
+                observedOwnedAssetDirectory = Directory.Exists(physicalAssetPath);
+            }
 
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.IsFalse(Directory.Exists(physicalAssetPath));
@@ -164,13 +178,26 @@ namespace MCPForUnityTests.Editor.Tools
             Encoding encoding;
             switch (kind)
             {
-                case "utf8": encoding = new UTF8Encoding(false); break;
-                case "utf8_bom": encoding = new UTF8Encoding(true); break;
-                case "utf16le": encoding = new UnicodeEncoding(false, true); break;
-                case "utf16be": encoding = new UnicodeEncoding(true, true); break;
-                case "utf32le": encoding = new UTF32Encoding(false, true); break;
-                case "utf32be": encoding = new UTF32Encoding(true, true); break;
-                default: throw new ArgumentException("Unknown test encoding.", nameof(kind));
+                case "utf8":
+                    encoding = new UTF8Encoding(false);
+                    break;
+                case "utf8_bom":
+                    encoding = new UTF8Encoding(true);
+                    break;
+                case "utf16le":
+                    encoding = new UnicodeEncoding(false, true);
+                    break;
+                case "utf16be":
+                    encoding = new UnicodeEncoding(true, true);
+                    break;
+                case "utf32le":
+                    encoding = new UTF32Encoding(false, true);
+                    break;
+                case "utf32be":
+                    encoding = new UTF32Encoding(true, true);
+                    break;
+                default:
+                    throw new ArgumentException("Unknown test encoding.", nameof(kind));
             }
             byte[] preamble = encoding.GetPreamble();
             string text = (preamble.Length > 0 ? "\uFEFF" : "") + "// 한글 😀 intentional \uFFFD\r\nclass Fixture {}\r\n";
@@ -187,7 +214,10 @@ namespace MCPForUnityTests.Editor.Tools
             MethodInfo hash = typeof(ManageScript).GetMethod("ComputeSha256", BindingFlags.Static | BindingFlags.NonPublic);
             Assert.IsNotNull(hash);
             using (var sha = SHA256.Create())
-                Assert.AreEqual(BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(text))).Replace("-", "").ToLowerInvariant(), hash.Invoke(null, new object[] { (string)response["data"]["contents"] }));
+                Assert.AreEqual(
+                    BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(text))).Replace("-", "").ToLowerInvariant(),
+                    hash.Invoke(null, new object[] { (string)response["data"]["contents"] })
+                );
             CollectionAssert.AreEqual(original, File.ReadAllBytes(target));
 
             File.WriteAllBytes(target, preamble);

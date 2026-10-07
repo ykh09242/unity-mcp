@@ -63,21 +63,25 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (!captured) return;
+            if (!captured)
+                return;
             try
             {
                 foreach (GameObject go in ownedObjects)
                 {
-                    if (go == null) continue;
+                    if (go == null)
+                        continue;
                     Assert.AreEqual(ownedScene, go.scene);
                     foreach (Component component in go.GetComponents<Component>())
-                        if (component != null) Undo.ClearUndo(component);
+                        if (component != null)
+                            Undo.ClearUndo(component);
                     Undo.ClearUndo(go);
                     UnityEngine.Object.DestroyImmediate(go);
                 }
                 foreach (UnityEngine.Object obj in ownedTransients)
                 {
-                    if (obj == null || AssetDatabase.Contains(obj)) continue;
+                    if (obj == null || AssetDatabase.Contains(obj))
+                        continue;
                     Undo.ClearUndo(obj);
                     UnityEngine.Object.DestroyImmediate(obj);
                 }
@@ -96,7 +100,8 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                if (originalScene.IsValid() && originalScene.isLoaded) SceneManager.SetActiveScene(originalScene);
+                if (originalScene.IsValid() && originalScene.isLoaded)
+                    SceneManager.SetActiveScene(originalScene);
                 Selection.objects = originalSelection;
                 Selection.activeObject = originalActiveSelection;
                 captured = false;
@@ -118,7 +123,8 @@ namespace MCPForUnityTests.Editor.Tools
             string guid = AssetDatabase.AssetPathToGUID(path);
             byte[] bytes = File.ReadAllBytes(FullPath(path));
             var request = new JObject { [action == "volume_create" ? "profile_path" : "path"] = path };
-            if (action == "volume_create") request["name"] = UniqueName();
+            if (action == "volume_create")
+                request["name"] = UniqueName();
             var response = Send(action, request);
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.AreSame(old, AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path));
@@ -160,11 +166,17 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string path = assetRoot + "/Borrowed.asset";
             UnityEngine.Object profile = NewProfile(path);
-            var response = Send("volume_create", new JObject
-            {
-                ["name"] = UniqueName(), ["profile_path"] = path,
-                ["is_global"] = false, ["weight"] = 0, ["priority"] = 0
-            });
+            var response = Send(
+                "volume_create",
+                new JObject
+                {
+                    ["name"] = UniqueName(),
+                    ["profile_path"] = path,
+                    ["is_global"] = false,
+                    ["weight"] = 0,
+                    ["priority"] = 0,
+                }
+            );
             Component volume = ReturnedVolume(response);
             Assert.AreSame(profile, Member(volume, "sharedProfile"));
             Assert.AreEqual(false, Member(volume, "isGlobal"));
@@ -176,13 +188,18 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void EmbeddedProfileDefaultsAndUnsupportedEffectsRemainAccepted()
         {
-            var response = Send("volume_create", new JObject
-            {
-                ["name"] = UniqueName(), ["effects"] = new JArray
+            var response = Send(
+                "volume_create",
+                new JObject
                 {
-                    new JObject { ["type"] = "__MissingVolumeEffect_" + Guid.NewGuid().ToString("N") }, new JObject()
+                    ["name"] = UniqueName(),
+                    ["effects"] = new JArray
+                    {
+                        new JObject { ["type"] = "__MissingVolumeEffect_" + Guid.NewGuid().ToString("N") },
+                        new JObject(),
+                    },
                 }
-            });
+            );
             Component volume = ReturnedVolume(response);
             var profile = (UnityEngine.Object)Member(volume, "sharedProfile");
             Assert.IsNotNull(profile);
@@ -201,21 +218,22 @@ namespace MCPForUnityTests.Editor.Tools
             UnityEngine.Object profile;
             if (action == "volume_create")
             {
-                var response = Send(action, new JObject
-                {
-                    ["name"] = UniqueName(), ["profile_path"] = path,
-                    ["effects"] = new JArray { new JObject { ["type"] = effect.Name } }
-                });
+                var response = Send(
+                    action,
+                    new JObject
+                    {
+                        ["name"] = UniqueName(),
+                        ["profile_path"] = path,
+                        ["effects"] = new JArray { new JObject { ["type"] = effect.Name } },
+                    }
+                );
                 profile = (UnityEngine.Object)Member(ReturnedVolume(response), "sharedProfile");
             }
             else
             {
                 profile = NewProfile(path);
                 Component volume = OwnedVolume(profile);
-                var response = Send(action, new JObject
-                {
-                    ["target"] = volume.gameObject.GetInstanceIDCompat().ToString(), ["effect"] = effect.Name
-                });
+                var response = Send(action, new JObject { ["target"] = volume.gameObject.GetInstanceIDCompat().ToString(), ["effect"] = effect.Name });
                 Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             }
             Assert.IsTrue(AssetDatabase.Contains(profile));
@@ -236,11 +254,15 @@ namespace MCPForUnityTests.Editor.Tools
             AssetDatabase.AddObjectToAsset(component, profile);
             string name = UniqueName();
             LogAssert.Expect(LogType.Error, new Regex("\\[ManageGraphics\\] Action 'volume_create' failed:"));
-            var response = Send("volume_create", new JObject
-            {
-                ["name"] = name, ["profile_path"] = path,
-                ["effects"] = new JArray { new JObject { ["type"] = effect.Name } }
-            });
+            var response = Send(
+                "volume_create",
+                new JObject
+                {
+                    ["name"] = name,
+                    ["profile_path"] = path,
+                    ["effects"] = new JArray { new JObject { ["type"] = effect.Name } },
+                }
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.IsFalse(ownedScene.GetRootGameObjects().Any(go => go.name == name));
             Assert.AreSame(profile, AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path));
@@ -302,19 +324,26 @@ namespace MCPForUnityTests.Editor.Tools
         {
             request["action"] = action;
             string name = request.Value<string>("name");
-            try { return JObject.FromObject(ManageGraphics.HandleCommand(request)); }
+            try
+            {
+                return JObject.FromObject(ManageGraphics.HandleCommand(request));
+            }
             finally
             {
                 foreach (GameObject go in ownedScene.GetRootGameObjects())
                 {
-                    if (name == null || go.name != name) continue;
-                    if (!ownedObjects.Contains(go)) ownedObjects.Add(go);
+                    if (name == null || go.name != name)
+                        continue;
+                    if (!ownedObjects.Contains(go))
+                        ownedObjects.Add(go);
                     Component volume = go.GetComponent(GraphicsHelpers.VolumeType);
                     if (volume != null && Member(volume, "sharedProfile") is UnityEngine.Object profile && !AssetDatabase.Contains(profile))
                     {
                         foreach (UnityEngine.Object component in Components(profile))
-                            if (component != null && !ownedTransients.Contains(component)) ownedTransients.Add(component);
-                        if (!ownedTransients.Contains(profile)) ownedTransients.Add(profile);
+                            if (component != null && !ownedTransients.Contains(component))
+                                ownedTransients.Add(component);
+                        if (!ownedTransients.Contains(profile))
+                            ownedTransients.Add(profile);
                     }
                 }
             }
@@ -354,19 +383,23 @@ namespace MCPForUnityTests.Editor.Tools
         private static Type RequireEffect()
         {
             Type type = GraphicsHelpers.ResolveVolumeComponentType("Bloom");
-            if (type == null) Assert.Ignore("No installed Bloom effect type is available.");
+            if (type == null)
+                Assert.Ignore("No installed Bloom effect type is available.");
             return type;
         }
 
         private static UnityEngine.Object AddNativeEffect(UnityEngine.Object profile, Type effect) =>
-            (UnityEngine.Object)GraphicsHelpers.VolumeProfileType.GetMethod("Add", new[] { typeof(Type), typeof(bool) })
-                .Invoke(profile, new object[] { effect, true });
+            (UnityEngine.Object)
+                GraphicsHelpers.VolumeProfileType.GetMethod("Add", new[] { typeof(Type), typeof(bool) }).Invoke(profile, new object[] { effect, true });
 
         private static IList Components(object profile) => (IList)Member(profile, "components");
+
         private static MethodInfo CleanupHelper() => typeof(VolumeOps).GetMethod("DestroyTransientProfile", BindingFlags.NonPublic | BindingFlags.Static);
+
         private static object Member(object obj, string name) => obj.GetType().GetProperty(name)?.GetValue(obj) ?? obj.GetType().GetField(name)?.GetValue(obj);
+
         private static string FullPath(string path) => Path.Combine(Application.dataPath, path.Substring(7).Replace('/', Path.DirectorySeparatorChar));
+
         private static string UniqueName() => "__McpVolumeIntegrity_" + Guid.NewGuid().ToString("N");
     }
-
 }

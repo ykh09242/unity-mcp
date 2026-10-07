@@ -31,31 +31,21 @@ def script():
 
 @script.command("create")
 @click.argument("name")
+@click.option("--path", "-p", default="Assets/Scripts", help="Directory to create the script in.")
 @click.option(
-    "--path", "-p",
-    default="Assets/Scripts",
-    help="Directory to create the script in."
-)
-@click.option(
-    "--type", "-t",
+    "--type",
+    "-t",
     "script_type",
-    type=click.Choice(["MonoBehaviour", "ScriptableObject",
-                      "Editor", "EditorWindow", "Plain"]),
+    type=click.Choice(["MonoBehaviour", "ScriptableObject", "Editor", "EditorWindow", "Plain"]),
     default="MonoBehaviour",
-    help="Type of script to create."
+    help="Type of script to create.",
 )
-@click.option(
-    "--namespace", "-n",
-    default=None,
-    help="Namespace for the script."
-)
-@click.option(
-    "--contents", "-c",
-    default=None,
-    help="Full script contents (overrides template)."
-)
+@click.option("--namespace", "-n", default=None, help="Namespace for the script.")
+@click.option("--contents", "-c", default=None, help="Full script contents (overrides template).")
 @handle_unity_errors
-def create(name: str, path: str, script_type: str, namespace: Optional[str], contents: Optional[str]):
+def create(
+    name: str, path: str, script_type: str, namespace: Optional[str], contents: Optional[str]
+):
     """Create a new C# script.
 
     \b
@@ -88,16 +78,14 @@ def create(name: str, path: str, script_type: str, namespace: Optional[str], con
 @script.command("read")
 @click.argument("path")
 @click.option(
-    "--start-line", "-s",
+    "--start-line",
+    "-s",
     default=None,
     type=click.IntRange(min=1),
-    help="Starting line number (1-based)."
+    help="Starting line number (1-based).",
 )
 @click.option(
-    "--line-count", "-n",
-    default=None,
-    type=click.IntRange(min=1),
-    help="Number of lines to read."
+    "--line-count", "-n", default=None, type=click.IntRange(min=1), help="Number of lines to read."
 )
 @handle_unity_errors
 def read(path: str, start_line: Optional[int], line_count: Optional[int]):
@@ -148,11 +136,7 @@ def read(path: str, start_line: Optional[int], line_count: Optional[int]):
 
 @script.command("delete")
 @click.argument("path")
-@click.option(
-    "--force", "-f",
-    is_flag=True,
-    help="Skip confirmation prompt."
-)
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt.")
 @handle_unity_errors
 def delete(path: str, force: bool):
     """Delete a C# script.
@@ -182,9 +166,10 @@ def delete(path: str, force: bool):
 @script.command("edit")
 @click.argument("path")
 @click.option(
-    "--edits", "-e",
+    "--edits",
+    "-e",
     required=True,
-    help='Edits as JSON array of {startLine, startCol, endLine, endCol, newText}.'
+    help="Edits as JSON array of {startLine, startCol, endLine, endCol, newText}.",
 )
 @handle_unity_errors
 def edit(path: str, edits: str):
@@ -200,14 +185,22 @@ def edit(path: str, edits: str):
     name, directory = _split_script_path(path)
 
     # Unity refuses an edit that does not name the version of the file it changes.
-    sha_result = run_command("manage_script", {"action": "get_sha", "name": name, "path": directory}, config)
+    sha_result = run_command(
+        "manage_script", {"action": "get_sha", "name": name, "path": directory}, config
+    )
     data = sha_result.get("data")
     sha = data.get("sha256") if isinstance(data, dict) else None
-    if not isinstance(sha, str) or len(sha) != 64 or any(c not in "0123456789abcdefABCDEF" for c in sha):
-        raise UnityCommandError({
-            "success": False,
-            "error": "SHA lookup did not return a valid SHA-256; no edits were applied.",
-        })
+    if (
+        not isinstance(sha, str)
+        or len(sha) != 64
+        or any(c not in "0123456789abcdefABCDEF" for c in sha)
+    ):
+        raise UnityCommandError(
+            {
+                "success": False,
+                "error": "SHA lookup did not return a valid SHA-256; no edits were applied.",
+            }
+        )
 
     params: dict[str, Any] = {
         "action": "apply_text_edits",
@@ -226,10 +219,11 @@ def edit(path: str, edits: str):
 @script.command("validate")
 @click.argument("path")
 @click.option(
-    "--level", "-l",
+    "--level",
+    "-l",
     type=click.Choice(["basic", "standard"]),
     default="basic",
-    help="Validation level."
+    help="Validation level.",
 )
 @handle_unity_errors
 def validate(path: str, level: str):

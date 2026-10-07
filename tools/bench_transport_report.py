@@ -1,4 +1,5 @@
 """Typed benchmark observations and conservative distribution summaries."""
+
 from __future__ import annotations
 
 import hashlib
@@ -49,8 +50,12 @@ def distribution(values: list[float]) -> dict[str, JsonValue]:
     if not values:
         raise ValueError("A distribution requires observations")
     ordered = sorted(values)
-    return {"count": len(values), "min": ordered[0], "max": ordered[-1],
-            **{f"p{p}": ordered[max(0, math.ceil(len(ordered) * p / 100) - 1)] for p in (50, 95, 99)}}
+    return {
+        "count": len(values),
+        "min": ordered[0],
+        "max": ordered[-1],
+        **{f"p{p}": ordered[max(0, math.ceil(len(ordered) * p / 100) - 1)] for p in (50, 95, 99)},
+    }
 
 
 def attach_stages(observations: list[Observation], directory: Path) -> list[Observation]:
@@ -76,24 +81,43 @@ def attach_stages(observations: list[Observation], directory: Path) -> list[Obse
         residual = item.client_total_ms - queue_ms - work_ms - serialization_ms
         if residual < -0.1:
             raise ValueError("Overlapping or mismatched stage observations")
-        attached.append(item.model_copy(update={"queue_ms": queue_ms,
-                         "synthetic_unity_work_ms": work_ms,
-                         "peer_serialization_ms": serialization_ms,
-                         "wire_response_framework_ms": max(0.0, residual),
-                         "peer_response_bytes": sum(timing.response_bytes for timing in timings)}))
+        attached.append(
+            item.model_copy(
+                update={
+                    "queue_ms": queue_ms,
+                    "synthetic_unity_work_ms": work_ms,
+                    "peer_serialization_ms": serialization_ms,
+                    "wire_response_framework_ms": max(0.0, residual),
+                    "peer_response_bytes": sum(timing.response_bytes for timing in timings),
+                }
+            )
+        )
     return attached
 
 
 def summarize(observations: list[Observation]) -> dict[str, JsonValue]:
-    fields = ("client_total_ms", "queue_ms", "synthetic_unity_work_ms", "peer_serialization_ms", "wire_response_framework_ms")
+    fields = (
+        "client_total_ms",
+        "queue_ms",
+        "synthetic_unity_work_ms",
+        "peer_serialization_ms",
+        "wire_response_framework_ms",
+    )
     grouped: dict[str, list[Observation]] = defaultdict(list)
     for item in observations:
         if item.phase == "warm":
             grouped[item.workload].append(item)
-    return {name: {"samples": len(items), "output_sha256": sorted({item.output_sha256 for item in items}),
-                   "output_bytes": items[0].output_bytes,
-                   "stages_ms": {field: distribution([getattr(item, field) for item in items]) for field in fields}}
-            for name, items in grouped.items()}
+    return {
+        name: {
+            "samples": len(items),
+            "output_sha256": sorted({item.output_sha256 for item in items}),
+            "output_bytes": items[0].output_bytes,
+            "stages_ms": {
+                field: distribution([getattr(item, field) for item in items]) for field in fields
+            },
+        }
+        for name, items in grouped.items()
+    }
 
 
 def parse_output(text: str) -> JsonValue:
@@ -111,4 +135,8 @@ def equivalent_outputs(groups: list[list[Observation]]) -> bool:
         workloads.append({item.workload for item in group})
         for item in group:
             hashes[item.workload].add(item.output_sha256)
-    return bool(groups) and all(names == workloads[0] for names in workloads) and all(len(values) == 1 for values in hashes.values())
+    return (
+        bool(groups)
+        and all(names == workloads[0] for names in workloads)
+        and all(len(values) == 1 for values in hashes.values())
+    )

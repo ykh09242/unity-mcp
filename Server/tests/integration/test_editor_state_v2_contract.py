@@ -24,7 +24,9 @@ async def test_editor_state_v2_is_registered_and_has_contract_fields(monkeypatch
         "This is required so clients can poll readiness/staleness and avoid tool loops."
     )
 
-    async def fake_send_with_unity_instance(send_fn, unity_instance, command_type, params, **kwargs):
+    async def fake_send_with_unity_instance(
+        send_fn, unity_instance, command_type, params, **kwargs
+    ):
         # Minimal stub payload for v2 resource tests. The server layer should enrich with staleness/advice.
         assert command_type == "get_editor_state"
         return {
@@ -40,6 +42,7 @@ async def test_editor_state_v2_is_registered_and_has_contract_fields(monkeypatch
 
     # Patch transport so the resource can be invoked without Unity running.
     import transport.unity_transport as unity_transport
+
     monkeypatch.setattr(unity_transport, "send_with_unity_instance", fake_send_with_unity_instance)
 
     result = await state_res["func"](DummyContext())
@@ -55,5 +58,3 @@ async def test_editor_state_v2_is_registered_and_has_contract_fields(monkeypatch
     assert "sequence" in data
     assert "advice" in data
     assert "staleness" in data
-
-

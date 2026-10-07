@@ -1,6 +1,7 @@
 """
 Tests for JSON string parameter parsing in manage_asset tool.
 """
+
 import pytest
 import json
 from unittest.mock import AsyncMock
@@ -13,14 +14,20 @@ class TestManageAssetJsonParsing:
     """Test JSON string parameter parsing functionality."""
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("properties", ['{"broken":', '[1, 2]', '[object Object]'])
-    async def test_invalid_properties_rejected_before_editor_preflight(self, monkeypatch, properties):
+    @pytest.mark.parametrize("properties", ['{"broken":', "[1, 2]", "[object Object]"])
+    async def test_invalid_properties_rejected_before_editor_preflight(
+        self, monkeypatch, properties
+    ):
         preflight = AsyncMock(return_value=None)
         send = AsyncMock(return_value={"success": True})
         monkeypatch.setattr("services.tools.manage_asset.preflight", preflight)
         monkeypatch.setattr("services.tools.manage_asset.send_with_unity_instance", send)
         response = await manage_asset(
-            DummyContext(), "create", "Assets/Test.mat", asset_type="Material", properties=properties,
+            DummyContext(),
+            "create",
+            "Assets/Test.mat",
+            asset_type="Material",
+            properties=properties,
         )
         assert response["success"] is False
         preflight.assert_not_awaited()
@@ -34,9 +41,13 @@ class TestManageAssetJsonParsing:
 
         # Patch Unity transport
         async def fake_async(cmd, params, **kwargs):
-            return {"success": True, "message": "Asset created successfully", "data": {"path": "Assets/Test.mat"}}
-        monkeypatch.setattr(
-            "services.tools.manage_asset.async_send_command_with_retry", fake_async)
+            return {
+                "success": True,
+                "message": "Asset created successfully",
+                "data": {"path": "Assets/Test.mat"},
+            }
+
+        monkeypatch.setattr("services.tools.manage_asset.async_send_command_with_retry", fake_async)
 
         # Test with JSON string properties
         result = await manage_asset(
@@ -44,7 +55,7 @@ class TestManageAssetJsonParsing:
             action="create",
             path="Assets/Test.mat",
             asset_type="Material",
-            properties='{"shader": "Universal Render Pipeline/Lit", "color": [0, 0, 1, 1]}'
+            properties='{"shader": "Universal Render Pipeline/Lit", "color": [0, 0, 1, 1]}',
         )
 
         # Verify the result - JSON string was successfully parsed and passed to Unity
@@ -58,8 +69,8 @@ class TestManageAssetJsonParsing:
 
         async def fake_async(cmd, params, **kwargs):
             return {"success": True, "message": "Asset created successfully"}
-        monkeypatch.setattr(
-            "services.tools.manage_asset.async_send_command_with_retry", fake_async)
+
+        monkeypatch.setattr("services.tools.manage_asset.async_send_command_with_retry", fake_async)
 
         # Test with invalid JSON string
         result = await manage_asset(
@@ -67,7 +78,7 @@ class TestManageAssetJsonParsing:
             action="create",
             path="Assets/Test.mat",
             asset_type="Material",
-            properties='{"invalid": json, "missing": quotes}'
+            properties='{"invalid": json, "missing": quotes}',
         )
 
         # Verify behavior: parsing fails with a clear error
@@ -81,19 +92,18 @@ class TestManageAssetJsonParsing:
 
         async def fake_async(cmd, params, **kwargs):
             return {"success": True, "message": "Asset created successfully"}
-        monkeypatch.setattr(
-            "services.tools.manage_asset.async_send_command_with_retry", fake_async)
+
+        monkeypatch.setattr("services.tools.manage_asset.async_send_command_with_retry", fake_async)
 
         # Test with dict properties
-        properties_dict = {
-            "shader": "Universal Render Pipeline/Lit", "color": [0, 0, 1, 1]}
+        properties_dict = {"shader": "Universal Render Pipeline/Lit", "color": [0, 0, 1, 1]}
 
         result = await manage_asset(
             ctx=ctx,
             action="create",
             path="Assets/Test.mat",
             asset_type="Material",
-            properties=properties_dict
+            properties=properties_dict,
         )
 
         # Verify no JSON parsing was attempted (allow initial Processing log)
@@ -107,16 +117,12 @@ class TestManageAssetJsonParsing:
 
         async def fake_async(cmd, params, **kwargs):
             return {"success": True, "message": "Asset created successfully"}
-        monkeypatch.setattr(
-            "services.tools.manage_asset.async_send_command_with_retry", fake_async)
+
+        monkeypatch.setattr("services.tools.manage_asset.async_send_command_with_retry", fake_async)
 
         # Test with None properties
         result = await manage_asset(
-            ctx=ctx,
-            action="create",
-            path="Assets/Test.mat",
-            asset_type="Material",
-            properties=None
+            ctx=ctx, action="create", path="Assets/Test.mat", asset_type="Material", properties=None
         )
 
         # Verify no JSON parsing was attempted (allow initial Processing log)
@@ -136,6 +142,7 @@ class TestManageGameObjectJsonParsing:
 
         async def fake_send(_cmd, params, **_kwargs):
             return {"success": True, "message": "GameObject created successfully"}
+
         monkeypatch.setattr(
             "services.tools.manage_gameobject.async_send_command_with_retry",
             fake_send,
@@ -146,34 +153,35 @@ class TestManageGameObjectJsonParsing:
             ctx=ctx,
             action="create",
             name="TestObject",
-            component_properties='{"MeshRenderer": {"material": "Assets/Materials/BlueMaterial.mat"}}'
+            component_properties='{"MeshRenderer": {"material": "Assets/Materials/BlueMaterial.mat"}}',
         )
 
         # Verify the result
         assert result["success"] is True
 
-        
     @pytest.mark.asyncio
     async def test_component_properties_parsing_verification(self, monkeypatch):
         """Test that component_properties are actually parsed to dict before sending."""
         from services.tools.manage_gameobject import manage_gameobject
+
         ctx = DummyContext()
-        
+
         captured_params = {}
+
         async def fake_send(_cmd, params, **_kwargs):
             captured_params.update(params)
             return {"success": True, "message": "GameObject created successfully"}
-            
+
         monkeypatch.setattr(
             "services.tools.manage_gameobject.async_send_command_with_retry",
             fake_send,
         )
-        
+
         await manage_gameobject(
             ctx=ctx,
             action="create",
             name="TestObject",
-            component_properties='{"MeshRenderer": {"material": "Assets/Materials/BlueMaterial.mat"}}'
+            component_properties='{"MeshRenderer": {"material": "Assets/Materials/BlueMaterial.mat"}}',
         )
-        
+
         assert isinstance(captured_params.get("componentProperties"), dict)

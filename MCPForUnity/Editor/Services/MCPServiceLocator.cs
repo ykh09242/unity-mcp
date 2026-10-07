@@ -39,7 +39,8 @@ namespace MCPForUnity.Editor.Services
         /// </summary>
         /// <typeparam name="T">The service interface type</typeparam>
         /// <param name="implementation">The implementation to register</param>
-        public static void Register<T>(T implementation) where T : class
+        public static void Register<T>(T implementation)
+            where T : class
         {
             if (implementation is IBridgeControlService b)
                 _bridgeService = b;

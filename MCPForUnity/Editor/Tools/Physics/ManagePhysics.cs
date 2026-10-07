@@ -1,6 +1,6 @@
 using System;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Tools.Physics
 {
@@ -87,21 +87,19 @@ namespace MCPForUnity.Editor.Tools.Physics
                     default:
                         return new ErrorResponse(
                             $"Unknown action: '{action}'. Valid actions: ping, "
-                            + "get_settings, set_settings, "
-                            + "get_collision_matrix, set_collision_matrix, "
-                            + "create_physics_material, configure_physics_material, assign_physics_material, "
-                            + "add_joint, configure_joint, remove_joint, "
-                            + "raycast, raycast_all, linecast, shapecast, overlap, "
-                            + "apply_force, get_rigidbody, configure_rigidbody, validate, simulate_step.");
+                                + "get_settings, set_settings, "
+                                + "get_collision_matrix, set_collision_matrix, "
+                                + "create_physics_material, configure_physics_material, assign_physics_material, "
+                                + "add_joint, configure_joint, remove_joint, "
+                                + "raycast, raycast_all, linecast, shapecast, overlap, "
+                                + "apply_force, get_rigidbody, configure_rigidbody, validate, simulate_step."
+                        );
                 }
             }
             catch (Exception ex)
             {
                 McpLog.Error($"[ManagePhysics] Action '{action}' failed: {ex}");
-                return new ErrorResponse(
-                    $"Error in action '{action}': {ex.Message}",
-                    new { stackTrace = ex.StackTrace }
-                );
+                return new ErrorResponse($"Error in action '{action}': {ex.Message}", new { stackTrace = ex.StackTrace });
             }
         }
     }

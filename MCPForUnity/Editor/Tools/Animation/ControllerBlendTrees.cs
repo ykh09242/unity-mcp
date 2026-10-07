@@ -1,6 +1,6 @@
 using System;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -53,7 +53,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 name = stateName,
                 blendType = BlendTreeType.Simple1D,
                 blendParameter = blendParameter,
-                hideFlags = HideFlags.HideInHierarchy
+                hideFlags = HideFlags.HideInHierarchy,
             };
 
             AssetDatabase.AddObjectToAsset(blendTree, controller);
@@ -72,8 +72,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     stateName,
                     layerIndex,
                     blendParameter,
-                    blendType = "Simple1D"
-                }
+                    blendType = "Simple1D",
+                },
             };
         }
 
@@ -102,15 +102,15 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             int layerIndex = @params["layerIndex"]?.ReadScalar<int?>() ?? 0;
             var blendTypeToken = @params["blendType"];
-            string blendTypeStr = blendTypeToken == null || blendTypeToken.Type == JTokenType.Null
-                ? "simpledirectional2d" : blendTypeToken.ToString().ToLowerInvariant();
+            string blendTypeStr =
+                blendTypeToken == null || blendTypeToken.Type == JTokenType.Null ? "simpledirectional2d" : blendTypeToken.ToString().ToLowerInvariant();
 
             BlendTreeType? requestedBlendType = blendTypeStr switch
             {
                 "simpledirectional2d" => BlendTreeType.SimpleDirectional2D,
                 "freeformdirectional2d" => BlendTreeType.FreeformDirectional2D,
                 "freeformcartesian2d" => BlendTreeType.FreeformCartesian2D,
-                _ => null
+                _ => null,
             };
             if (!requestedBlendType.HasValue)
                 return new { success = false, message = "'blendType' must be SimpleDirectional2D, FreeformDirectional2D, or FreeformCartesian2D" };
@@ -137,7 +137,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 blendType = blendType,
                 blendParameter = blendParameterX,
                 blendParameterY = blendParameterY,
-                hideFlags = HideFlags.HideInHierarchy
+                hideFlags = HideFlags.HideInHierarchy,
             };
 
             AssetDatabase.AddObjectToAsset(blendTree, controller);
@@ -157,8 +157,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     layerIndex,
                     blendParameterX,
                     blendParameterY,
-                    blendType = blendType.ToString()
-                }
+                    blendType = blendType.ToString(),
+                },
             };
         }
 
@@ -238,23 +238,24 @@ namespace MCPForUnity.Editor.Tools.Animation
                         stateName,
                         clipPath,
                         threshold,
-                        childCount = blendTree.children.Length
-                    }
+                        childCount = blendTree.children.Length,
+                    },
                 };
             }
             else
             {
-                if (blendTree.blendType != BlendTreeType.SimpleDirectional2D &&
-                    blendTree.blendType != BlendTreeType.FreeformDirectional2D &&
-                    blendTree.blendType != BlendTreeType.FreeformCartesian2D)
+                if (
+                    blendTree.blendType != BlendTreeType.SimpleDirectional2D
+                    && blendTree.blendType != BlendTreeType.FreeformDirectional2D
+                    && blendTree.blendType != BlendTreeType.FreeformCartesian2D
+                )
                     return new { success = false, message = $"Adding children is not supported for blend tree type '{blendTree.blendType}'" };
 
                 JToken positionToken = @params["position"];
                 if (positionToken == null || !(positionToken is JArray posArray) || posArray.Count < 2)
                     return new { success = false, message = "'position' is required for 2D blend trees as [x, y]" };
 
-                if (!TryGetFiniteFloat(posArray[0], out float posX) ||
-                    !TryGetFiniteFloat(posArray[1], out float posY))
+                if (!TryGetFiniteFloat(posArray[0], out float posX) || !TryGetFiniteFloat(posArray[1], out float posY))
                     return new { success = false, message = "'position' must contain finite numbers for 2D blend trees" };
                 Vector2 position = new Vector2(posX, posY);
 
@@ -276,8 +277,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                         stateName,
                         clipPath,
                         position = new { x = posX, y = posY },
-                        childCount = blendTree.children.Length
-                    }
+                        childCount = blendTree.children.Length,
+                    },
                 };
             }
         }
@@ -285,16 +286,14 @@ namespace MCPForUnity.Editor.Tools.Animation
         private static bool TryGetFiniteFloat(JToken token, out float value)
         {
             value = 0;
-            if (token == null || (token.Type != JTokenType.Integer &&
-                token.Type != JTokenType.Float && token.Type != JTokenType.String))
+            if (token == null || (token.Type != JTokenType.Integer && token.Type != JTokenType.Float && token.Type != JTokenType.String))
                 return false;
             try
             {
                 value = token.ReadScalar<float>();
                 return !float.IsNaN(value) && !float.IsInfinity(value);
             }
-            catch (Exception ex) when (ex is FormatException || ex is OverflowException ||
-                ex is ArgumentException || ex is Newtonsoft.Json.JsonException)
+            catch (Exception ex) when (ex is FormatException || ex is OverflowException || ex is ArgumentException || ex is Newtonsoft.Json.JsonException)
             {
                 return false;
             }

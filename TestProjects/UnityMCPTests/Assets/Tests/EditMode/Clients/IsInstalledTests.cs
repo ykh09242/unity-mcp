@@ -23,13 +23,11 @@ namespace MCPForUnityTests.Editor.Clients
             string parent = Path.GetDirectoryName(cursor.GetConfigPath());
             if (parent == null || !Directory.Exists(parent))
             {
-                Assert.IsFalse(cursor.IsInstalled,
-                    "Cursor parent dir does not exist on this machine, IsInstalled must be false");
+                Assert.IsFalse(cursor.IsInstalled, "Cursor parent dir does not exist on this machine, IsInstalled must be false");
             }
             else
             {
-                Assert.IsTrue(cursor.IsInstalled,
-                    "Cursor parent dir exists, IsInstalled must be true");
+                Assert.IsTrue(cursor.IsInstalled, "Cursor parent dir exists, IsInstalled must be true");
             }
         }
 
@@ -52,8 +50,11 @@ namespace MCPForUnityTests.Editor.Clients
         public void PiConfigurator_PresenceIsAgentDirBased()
         {
             var pi = new PiConfigurator();
-            Assert.AreEqual(Directory.Exists(PiAgentDirectory()), pi.IsInstalled,
-                "Pi detection must follow Pi's agent directory, honouring PI_CODING_AGENT_DIR");
+            Assert.AreEqual(
+                Directory.Exists(PiAgentDirectory()),
+                pi.IsInstalled,
+                "Pi detection must follow Pi's agent directory, honouring PI_CODING_AGENT_DIR"
+            );
         }
 
         /// <summary>
@@ -75,8 +76,7 @@ namespace MCPForUnityTests.Editor.Clients
             if (Directory.Exists(PiAgentDirectory()))
                 Assert.Pass("Pi is installed on this machine -- the over-report case needs a host without it");
 
-            Assert.IsFalse(pi.IsInstalled,
-                "the shared MCP config tree is not evidence of a Pi install; detection must key on Pi's agent dir");
+            Assert.IsFalse(pi.IsInstalled, "the shared MCP config tree is not evidence of a Pi install; detection must key on Pi's agent dir");
         }
 
         private static string PiAgentDirectory()

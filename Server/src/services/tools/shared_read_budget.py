@@ -1,4 +1,5 @@
 """Charge shared snapshots/copies when the source transport has no reservations."""
+
 from __future__ import annotations
 
 import threading
@@ -27,8 +28,11 @@ class SharedReadBudget:
     def reserve(self, owner: ResponseOwner, charge: int) -> bool:
         """Admit a source or detached copy before storing/allocating its snapshot."""
         with self._lock:
-            if (owner.released or self._count >= self.max_entries
-                    or charge > self.max_bytes - self._bytes):
+            if (
+                owner.released
+                or self._count >= self.max_entries
+                or charge > self.max_bytes - self._bytes
+            ):
                 return False
             key = uuid4().hex
             self.entries[key] = charge

@@ -18,15 +18,36 @@ namespace MCPForUnity.Editor.Tools.Build
 
             switch (name.ToLowerInvariant())
             {
-                case "windows64": target = BuildTarget.StandaloneWindows64; return true;
-                case "windows": case "windows32": target = BuildTarget.StandaloneWindows; return true;
-                case "osx": case "macos": target = BuildTarget.StandaloneOSX; return true;
-                case "linux64": case "linux": target = BuildTarget.StandaloneLinux64; return true;
-                case "android": target = BuildTarget.Android; return true;
-                case "ios": target = BuildTarget.iOS; return true;
-                case "webgl": target = BuildTarget.WebGL; return true;
-                case "uwp": target = BuildTarget.WSAPlayer; return true;
-                case "tvos": target = BuildTarget.tvOS; return true;
+                case "windows64":
+                    target = BuildTarget.StandaloneWindows64;
+                    return true;
+                case "windows":
+                case "windows32":
+                    target = BuildTarget.StandaloneWindows;
+                    return true;
+                case "osx":
+                case "macos":
+                    target = BuildTarget.StandaloneOSX;
+                    return true;
+                case "linux64":
+                case "linux":
+                    target = BuildTarget.StandaloneLinux64;
+                    return true;
+                case "android":
+                    target = BuildTarget.Android;
+                    return true;
+                case "ios":
+                    target = BuildTarget.iOS;
+                    return true;
+                case "webgl":
+                    target = BuildTarget.WebGL;
+                    return true;
+                case "uwp":
+                    target = BuildTarget.WSAPlayer;
+                    return true;
+                case "tvos":
+                    target = BuildTarget.tvOS;
+                    return true;
                 default:
                     if (TryParseDefinedBuildTarget(name, out target))
                     {
@@ -47,14 +68,18 @@ namespace MCPForUnity.Editor.Tools.Build
                 case BuildTarget.StandaloneOSX:
                 case BuildTarget.StandaloneLinux64:
                     return BuildTargetGroup.Standalone;
-                case BuildTarget.iOS: return BuildTargetGroup.iOS;
-                case BuildTarget.Android: return BuildTargetGroup.Android;
-                case BuildTarget.WebGL: return BuildTargetGroup.WebGL;
-                case BuildTarget.WSAPlayer: return BuildTargetGroup.WSA;
-                case BuildTarget.tvOS: return BuildTargetGroup.tvOS;
+                case BuildTarget.iOS:
+                    return BuildTargetGroup.iOS;
+                case BuildTarget.Android:
+                    return BuildTargetGroup.Android;
+                case BuildTarget.WebGL:
+                    return BuildTargetGroup.WebGL;
+                case BuildTarget.WSAPlayer:
+                    return BuildTargetGroup.WSA;
+                case BuildTarget.tvOS:
+                    return BuildTargetGroup.tvOS;
                 default:
-                    if (IsVisionOSTarget(target)
-                        && Enum.TryParse(VisionOSName, true, out BuildTargetGroup visionOSGroup))
+                    if (IsVisionOSTarget(target) && Enum.TryParse(VisionOSName, true, out BuildTargetGroup visionOSGroup))
                     {
                         return visionOSGroup;
                     }
@@ -63,12 +88,12 @@ namespace MCPForUnity.Editor.Tools.Build
             }
         }
 
-        public static NamedBuildTarget GetNamedBuildTarget(BuildTarget target,
-            StandaloneBuildSubtarget subtarget = StandaloneBuildSubtarget.Player)
+        public static NamedBuildTarget GetNamedBuildTarget(BuildTarget target, StandaloneBuildSubtarget subtarget = StandaloneBuildSubtarget.Player)
         {
             var group = GetTargetGroup(target);
             return group == BuildTargetGroup.Standalone && subtarget == StandaloneBuildSubtarget.Server
-                ? NamedBuildTarget.Server : NamedBuildTarget.FromBuildTargetGroup(group);
+                ? NamedBuildTarget.Server
+                : NamedBuildTarget.FromBuildTargetGroup(group);
         }
 
         public static string TryResolveNamedBuildTarget(string name, out NamedBuildTarget namedTarget)
@@ -127,8 +152,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 return false;
             }
 
-            return Enum.TryParse(name, true, out target)
-                && Enum.IsDefined(typeof(BuildTarget), target);
+            return Enum.TryParse(name, true, out target) && Enum.IsDefined(typeof(BuildTarget), target);
         }
 
         public static string GetDefaultOutputPath(BuildTarget target, string productName)
@@ -144,9 +168,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 case BuildTarget.StandaloneLinux64:
                     return $"{basePath}/{productName}.x86_64";
                 case BuildTarget.Android:
-                    return EditorUserBuildSettings.buildAppBundle
-                        ? $"{basePath}/{productName}.aab"
-                        : $"{basePath}/{productName}.apk";
+                    return EditorUserBuildSettings.buildAppBundle ? $"{basePath}/{productName}.aab" : $"{basePath}/{productName}.apk";
                 case BuildTarget.iOS:
                 case BuildTarget.WebGL:
                     return $"{basePath}/{productName}";

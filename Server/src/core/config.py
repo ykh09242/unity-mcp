@@ -47,12 +47,12 @@ class ServerConfig:
 
     # API key authentication (required when http_remote_hosted=True)
     api_key_validation_url: str | None = None  # POST endpoint to validate keys
-    api_key_login_url: str | None = None       # URL for users to get/manage keys
+    api_key_login_url: str | None = None  # URL for users to get/manage keys
     # Cache TTL in seconds (5 min default)
     api_key_cache_ttl: float = 300.0
     # Optional service token for authenticating to the validation endpoint
     api_key_service_token_header: str | None = None  # e.g. "X-Service-Token"
-    api_key_service_token: str | None = None         # The token value
+    api_key_service_token: str | None = None  # The token value
 
     # Connection settings
     # Socket receive timeout for a single Unity command (seconds). Raised from the

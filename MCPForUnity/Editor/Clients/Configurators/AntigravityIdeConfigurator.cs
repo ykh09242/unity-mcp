@@ -16,17 +16,34 @@ namespace MCPForUnity.Editor.Clients.Configurators
     /// </summary>
     public class AntigravityIdeConfigurator : JsonFileMcpConfigurator
     {
-        public AntigravityIdeConfigurator() : base(new McpClient
-        {
-            name = "Antigravity IDE",
-            windowsConfigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "antigravity-ide", "mcp_config.json"),
-            macConfigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "antigravity-ide", "mcp_config.json"),
-            linuxConfigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "antigravity-ide", "mcp_config.json"),
-            HttpUrlProperty = "serverUrl",
-            DefaultUnityFields = { { "disabled", false } },
-            StripEnvWhenNotRequired = true
-        })
-        { }
+        public AntigravityIdeConfigurator()
+            : base(
+                new McpClient
+                {
+                    name = "Antigravity IDE",
+                    windowsConfigPath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        ".gemini",
+                        "antigravity-ide",
+                        "mcp_config.json"
+                    ),
+                    macConfigPath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        ".gemini",
+                        "antigravity-ide",
+                        "mcp_config.json"
+                    ),
+                    linuxConfigPath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        ".gemini",
+                        "antigravity-ide",
+                        "mcp_config.json"
+                    ),
+                    HttpUrlProperty = "serverUrl",
+                    DefaultUnityFields = { { "disabled", false } },
+                    StripEnvWhenNotRequired = true,
+                }
+            ) { }
 
         // ~/.gemini/antigravity-ide/ is created by the IDE on first launch and holds both
         // its runtime state (annotations/, brain/, conversations/, ...) and its mcp_config.json
@@ -41,12 +58,13 @@ namespace MCPForUnity.Editor.Clients.Configurators
             }
         }
 
-        public override IList<string> GetInstallationSteps() => new List<string>
-        {
-            "Open Antigravity IDE",
-            "Click the more_horiz menu in the Agent pane > MCP Servers",
-            "Select 'Install' for Unity MCP or use the Configure button above",
-            "Restart Antigravity IDE if necessary"
-        };
+        public override IList<string> GetInstallationSteps() =>
+            new List<string>
+            {
+                "Open Antigravity IDE",
+                "Click the more_horiz menu in the Agent pane > MCP Servers",
+                "Select 'Install' for Unity MCP or use the Configure button above",
+                "Restart Antigravity IDE if necessary",
+            };
     }
 }

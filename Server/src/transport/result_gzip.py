@@ -1,4 +1,5 @@
 """Single-member bounded gzip inflation into the already reserved result buffer."""
+
 from typing import Final, Protocol
 import zlib
 
@@ -37,7 +38,7 @@ class GzipResultDecoder:
                 output = self._inflater.decompress(incoming, limit)
                 if len(output) > remaining:
                     raise GzipResultError("decoded_result_size_exceeded")
-                memoryview(self._destination)[self._offset:self._offset + len(output)] = output
+                memoryview(self._destination)[self._offset : self._offset + len(output)] = output
                 self._offset += len(output)
                 if self._inflater.unused_data:
                     raise GzipResultError("gzip_trailing_data")

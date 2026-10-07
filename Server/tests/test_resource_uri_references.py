@@ -5,6 +5,7 @@ A resource's name and its URI are deliberately different (`editor_state` vs
 name. Any instruction, description or tool-result hint that mentions a resource
 by name alone sends the reader to build `mcpforunity://<name>`, which 404s.
 """
+
 import os
 import re
 import typing
@@ -29,6 +30,7 @@ def build_instructions():
     """Import `main` without leaking the env vars it sets at import time."""
     before = dict(os.environ)
     from main import _build_instructions
+
     os.environ.clear()
     os.environ.update(before)
     return _build_instructions
@@ -41,8 +43,7 @@ def resource_uris_by_name() -> dict[str, str]:
     Single-word names (`tests`, `cameras`, `volumes`) are ordinary English and
     would match prose that is not referring to the resource at all.
     """
-    list(discover_modules(Path(resources_pkg.__file__).parent,
-                          resources_pkg.__package__))
+    list(discover_modules(Path(resources_pkg.__file__).parent, resources_pkg.__package__))
     registered = get_registered_resources()
     assert registered, "no resources registered — discovery failed"
     return {r["name"]: r["uri"] for r in registered if "_" in r["name"]}
@@ -72,9 +73,7 @@ def test_server_instructions_reference_resources_by_uri(
     assert not offenders, "\n".join(offenders)
 
 
-def test_resource_descriptions_reference_resources_by_uri(
-    resource_uris_by_name: dict[str, str]
-):
+def test_resource_descriptions_reference_resources_by_uri(resource_uris_by_name: dict[str, str]):
     offenders = []
     for resource in get_registered_resources():
         offenders += _offenders(
@@ -85,9 +84,7 @@ def test_resource_descriptions_reference_resources_by_uri(
     assert not offenders, "\n".join(offenders)
 
 
-def test_tool_descriptions_reference_resources_by_uri(
-    resource_uris_by_name: dict[str, str]
-):
+def test_tool_descriptions_reference_resources_by_uri(resource_uris_by_name: dict[str, str]):
     list(discover_modules(Path(tools_pkg.__file__).parent, tools_pkg.__package__))
     registered = get_registered_tools()
     assert registered, "no tools registered — discovery failed"
@@ -101,21 +98,21 @@ def test_tool_descriptions_reference_resources_by_uri(
             f"tool '{name}' description",
             resource_uris_by_name,
         )
-        offenders += _offenders(
-            func.__doc__, f"tool '{name}' docstring", resource_uris_by_name)
+        offenders += _offenders(func.__doc__, f"tool '{name}' docstring", resource_uris_by_name)
 
         hints = typing.get_type_hints(func, include_extras=True)
         for param, hint in hints.items():
             for meta in getattr(hint, "__metadata__", ()):
                 if isinstance(meta, str):
                     offenders += _offenders(
-                        meta, f"tool '{name}' parameter '{param}'", resource_uris_by_name)
+                        meta, f"tool '{name}' parameter '{param}'", resource_uris_by_name
+                    )
 
     assert not offenders, "\n".join(offenders)
 
 
 def test_unity_tool_result_strings_reference_resources_by_uri(
-    resource_uris_by_name: dict[str, str]
+    resource_uris_by_name: dict[str, str],
 ):
     """Hints Unity returns in tool payloads are read by the same agents.
 
@@ -140,9 +137,7 @@ def test_unity_tool_result_strings_reference_resources_by_uri(
     assert not offenders, "\n".join(offenders)
 
 
-def test_agent_facing_markdown_references_resources_by_uri(
-    resource_uris_by_name: dict[str, str]
-):
+def test_agent_facing_markdown_references_resources_by_uri(resource_uris_by_name: dict[str, str]):
     """Docs that tell a reader to go read a resource must give its URI.
 
     Scoped to the surfaces that issue that instruction: the skill agents load,
@@ -153,8 +148,7 @@ def test_agent_facing_markdown_references_resources_by_uri(
     telling anyone to construct a URI.
     """
     targets = [REPO_ROOT / "unity-mcp-skill" / "SKILL.md"]
-    targets += sorted((REPO_ROOT / "website" / "docs" /
-                       "reference" / "tools").rglob("*.md"))
+    targets += sorted((REPO_ROOT / "website" / "docs" / "reference" / "tools").rglob("*.md"))
     assert len(targets) > 1, "expected the skill and the tool reference pages"
 
     offenders = []

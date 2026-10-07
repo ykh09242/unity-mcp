@@ -1,0 +1,49 @@
+root = true
+
+[*]
+charset = utf-8
+indent_style = space
+indent_size = 4
+max_line_length = 100
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{cs,csx}]
+max_line_length = 160
+# CSharpier uses the common whitespace settings; these Roslyn settings also
+# keep manual/editor C# edits consistent with its Allman layout.
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = true
+csharp_new_line_before_members_in_anonymous_types = true
+csharp_preserve_single_line_statements = false
+csharp_preserve_single_line_blocks = true
+
+[*.{py,pyi}]
+indent_size = 4
+max_line_length = 100
+
+[*.{js,jsx,mjs,cjs,ts,tsx,json,css,scss,html,yml,yaml}]
+indent_size = 2
+
+[*.{sh,bash}]
+indent_size = 2
+end_of_line = lf
+
+[*.{ps1,psm1,psd1}]
+indent_size = 4
+
+[*.{bat,cmd}]
+# Keep native Windows command scripts compatible with cmd.exe.
+indent_size = 2
+end_of_line = crlf
+
+[*.{md,mdx}]
+# Two trailing spaces may encode a Markdown hard break.
+trim_trailing_whitespace = false
+
+[Makefile]
+indent_style = tab

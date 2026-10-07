@@ -1,4 +1,5 @@
 """CLI script commands must match Unity's manage_script endpoint."""
+
 import importlib
 import json
 from unittest.mock import Mock
@@ -28,7 +29,8 @@ def test_windows_script_path_routes_to_requested_file(command_sender, command, e
     # Then: Unity receives its supported locator/action.
     assert result.exit_code == 0, result.output
     assert command_sender.call_args.args[:2] == (
-        "manage_script", {"action": expected_action, "name": "Foo", "path": "Assets/Scripts"},
+        "manage_script",
+        {"action": expected_action, "name": "Foo", "path": "Assets/Scripts"},
     )
 
 
@@ -40,19 +42,31 @@ def test_edit_uses_unity_manage_script_action(command_sender):
         {"success": True, "data": {"editsApplied": 1}},
     ]
     # When: the CLI executes an edit.
-    result = CliRunner().invoke(script_cli.script, ["edit", "Assets/Scripts/Foo.cs", "--edits", json.dumps(edits)])
+    result = CliRunner().invoke(
+        script_cli.script, ["edit", "Assets/Scripts/Foo.cs", "--edits", json.dumps(edits)]
+    )
     # Then: it calls the real Unity command, not the Python-only MCP wrapper name.
     assert result.exit_code == 0, result.output
     assert command_sender.call_args.args[:2] == (
-        "manage_script", {"action": "apply_text_edits", "name": "Foo", "path": "Assets/Scripts", "edits": edits, "precondition_sha256": "a" * 64},
+        "manage_script",
+        {
+            "action": "apply_text_edits",
+            "name": "Foo",
+            "path": "Assets/Scripts",
+            "edits": edits,
+            "precondition_sha256": "a" * 64,
+        },
     )
     assert command_sender.call_count == 2
     assert command_sender.call_args_list[0].args[:2] == (
-        "manage_script", {"action": "get_sha", "name": "Foo", "path": "Assets/Scripts"},
+        "manage_script",
+        {"action": "get_sha", "name": "Foo", "path": "Assets/Scripts"},
     )
 
 
-@pytest.mark.parametrize("data", [None, "unexpected", {}, {"sha256": False}, {"sha256": "not-a-hash"}])
+@pytest.mark.parametrize(
+    "data", [None, "unexpected", {}, {"sha256": False}, {"sha256": "not-a-hash"}]
+)
 def test_edit_rejects_missing_or_invalid_sha_without_mutating(command_sender, data):
     command_sender.return_value = {"success": True, "data": data}
     result = CliRunner().invoke(script_cli.script, ["edit", "Assets/Foo.cs", "--edits", "[]"])
@@ -76,26 +90,34 @@ def test_edit_keeps_failed_sha_lookup_and_does_not_mutate(command_sender):
 def test_validate_uses_unity_manage_script_action(command_sender):
     # Given: a script path and standard validation.
     # When: the CLI executes validation.
-    result = CliRunner().invoke(script_cli.script, ["validate", "Assets/Scripts/Foo.cs", "--level", "standard"])
+    result = CliRunner().invoke(
+        script_cli.script, ["validate", "Assets/Scripts/Foo.cs", "--level", "standard"]
+    )
     # Then: the supported Unity action gets the name/directory locator.
     assert result.exit_code == 0, result.output
     assert command_sender.call_args.args[:2] == (
-        "manage_script", {"action": "validate", "name": "Foo", "path": "Assets/Scripts", "level": "standard"},
+        "manage_script",
+        {"action": "validate", "name": "Foo", "path": "Assets/Scripts", "level": "standard"},
     )
 
 
 def test_read_respects_requested_line_window(command_sender):
     # Given: Unity's read action returns the full source.
     # When: the CLI requests only the second line.
-    result = CliRunner().invoke(script_cli.script, ["read", "Assets/Foo.cs", "--start-line", "2", "--line-count", "1"])
+    result = CliRunner().invoke(
+        script_cli.script, ["read", "Assets/Foo.cs", "--start-line", "2", "--line-count", "1"]
+    )
     # Then: output contains precisely the requested window, with no ignored wire fields.
     assert result.exit_code == 0, result.output
     import json
+
     assert json.loads(result.output)["data"]["contents"] == "second\n"
     assert command_sender.call_args.args[1] == {"action": "read", "name": "Foo", "path": "Assets"}
 
 
-@pytest.mark.parametrize("option,value", [("--start-line", "0"), ("--start-line", "-1"), ("--line-count", "0")])
+@pytest.mark.parametrize(
+    "option,value", [("--start-line", "0"), ("--start-line", "-1"), ("--line-count", "0")]
+)
 def test_read_rejects_nonpositive_line_bounds(command_sender, option, value):
     # Given: a line bound that cannot name a 1-based window.
     # When: Click parses it.

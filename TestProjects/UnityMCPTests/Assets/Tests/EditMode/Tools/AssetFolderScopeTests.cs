@@ -118,7 +118,10 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsTrue(AssetDatabase.IsValidFolder(existing));
                 Assert.IsEmpty(AssetDatabase.AssetPathToGUID(pending, AssetPathToGUIDOptions.OnlyExistingAssets));
             }
-            finally { AssetDatabase.AllowAutoRefresh(); }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+            }
         }
 
         [Test]
@@ -138,7 +141,6 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual("Existing data.", File.ReadAllText(FullPath(blocking)));
         }
 
-        private static string FullPath(string path) =>
-            Path.Combine(Application.dataPath, path.Substring("Assets/".Length));
+        private static string FullPath(string path) => Path.Combine(Application.dataPath, path.Substring("Assets/".Length));
     }
 }

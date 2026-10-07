@@ -15,14 +15,19 @@ namespace MCPForUnity.Editor.Setup
 
         private static readonly (string packageId, string version, string dllPath, string dllName)[] NuGetEntries =
         {
-            ("microsoft.codeanalysis.common",         "4.12.0", "lib/netstandard2.0/Microsoft.CodeAnalysis.dll",                   "Microsoft.CodeAnalysis.dll"),
-            ("microsoft.codeanalysis.csharp",         "4.12.0", "lib/netstandard2.0/Microsoft.CodeAnalysis.CSharp.dll",            "Microsoft.CodeAnalysis.CSharp.dll"),
-            ("system.collections.immutable",          "8.0.0",  "lib/netstandard2.0/System.Collections.Immutable.dll",             "System.Collections.Immutable.dll"),
-            ("system.reflection.metadata",            "8.0.0",  "lib/netstandard2.0/System.Reflection.Metadata.dll",               "System.Reflection.Metadata.dll"),
+            ("microsoft.codeanalysis.common", "4.12.0", "lib/netstandard2.0/Microsoft.CodeAnalysis.dll", "Microsoft.CodeAnalysis.dll"),
+            ("microsoft.codeanalysis.csharp", "4.12.0", "lib/netstandard2.0/Microsoft.CodeAnalysis.CSharp.dll", "Microsoft.CodeAnalysis.CSharp.dll"),
+            ("system.collections.immutable", "8.0.0", "lib/netstandard2.0/System.Collections.Immutable.dll", "System.Collections.Immutable.dll"),
+            ("system.reflection.metadata", "8.0.0", "lib/netstandard2.0/System.Reflection.Metadata.dll", "System.Reflection.Metadata.dll"),
             // Transitive dep of Microsoft.CodeAnalysis.* on netstandard2.0. Without it, Roslyn's StringTable
             // static cctor throws FileNotFoundException for v6.0.0.0 and every Roslyn entry point fails to
             // initialize. Unity ships a v4.x of this assembly which does NOT satisfy the v6 reference.
-            ("system.runtime.compilerservices.unsafe","6.0.0",  "lib/netstandard2.0/System.Runtime.CompilerServices.Unsafe.dll",   "System.Runtime.CompilerServices.Unsafe.dll"),
+            (
+                "system.runtime.compilerservices.unsafe",
+                "6.0.0",
+                "lib/netstandard2.0/System.Runtime.CompilerServices.Unsafe.dll",
+                "System.Runtime.CompilerServices.Unsafe.dll"
+            ),
         };
 
         public static bool IsInstalled()
@@ -61,10 +66,14 @@ namespace MCPForUnity.Editor.Setup
         {
             if (IsInstalled() && interactive)
             {
-                if (!EditorUtility.DisplayDialog(
+                if (
+                    !EditorUtility.DisplayDialog(
                         "Roslyn Already Installed",
                         $"Roslyn DLLs are already present in Assets/{PluginsRelPath}.\nReinstall?",
-                        "Reinstall", "Cancel"))
+                        "Reinstall",
+                        "Cancel"
+                    )
+                )
                     return;
             }
 
@@ -80,14 +89,10 @@ namespace MCPForUnity.Editor.Setup
 
                     if (interactive)
                     {
-                        EditorUtility.DisplayProgressBar(
-                            "Installing Roslyn",
-                            $"Downloading {packageId} v{pkgVersion}...",
-                            (float)i / NuGetEntries.Length);
+                        EditorUtility.DisplayProgressBar("Installing Roslyn", $"Downloading {packageId} v{pkgVersion}...", (float)i / NuGetEntries.Length);
                     }
 
-                    string url =
-                        $"https://api.nuget.org/v3-flatcontainer/{packageId}/{pkgVersion}/{packageId}.{pkgVersion}.nupkg";
+                    string url = $"https://api.nuget.org/v3-flatcontainer/{packageId}/{pkgVersion}/{packageId}.{pkgVersion}.nupkg";
 
                     using (var request = UnityWebRequest.Get(url))
                     {
@@ -128,26 +133,28 @@ namespace MCPForUnity.Editor.Setup
                     EditorUtility.ClearProgressBar();
                     EditorUtility.DisplayDialog(
                         "Roslyn Installed",
-                        $"Roslyn DLLs and dependencies installed to Assets/{PluginsRelPath}/.\n\n" +
-                        "The runtime_compilation tool is now available via MCP.",
-                        "OK");
+                        $"Roslyn DLLs and dependencies installed to Assets/{PluginsRelPath}/.\n\n" + "The runtime_compilation tool is now available via MCP.",
+                        "OK"
+                    );
                 }
 
                 Debug.Log($"[MCP] Roslyn installation complete ({NuGetEntries.Length} DLLs). runtime_compilation is now available.");
             }
             catch (Exception e)
             {
-                if (interactive) EditorUtility.ClearProgressBar();
+                if (interactive)
+                    EditorUtility.ClearProgressBar();
                 Debug.LogError($"[MCP] Failed to install Roslyn: {e}");
 
                 if (interactive)
                 {
                     EditorUtility.DisplayDialog(
                         "Installation Failed",
-                        $"Could not download Roslyn DLLs:\n{e.Message}\n\n" +
-                        "You can manually download Microsoft.CodeAnalysis.CSharp from NuGet " +
-                        "and place the DLLs in Assets/Plugins/Roslyn/.",
-                        "OK");
+                        $"Could not download Roslyn DLLs:\n{e.Message}\n\n"
+                            + "You can manually download Microsoft.CodeAnalysis.CSharp from NuGet "
+                            + "and place the DLLs in Assets/Plugins/Roslyn/.",
+                        "OK"
+                    );
                 }
             }
         }

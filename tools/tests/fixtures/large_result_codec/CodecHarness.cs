@@ -22,12 +22,20 @@ internal static class CodecHarness
         _frames++;
         if (_socket != null)
         {
-            if (_rate > 0) await Task.Delay(TimeSpan.FromSeconds((double)value.Count / (_rate * 1024)), token);
+            if (_rate > 0)
+                await Task.Delay(TimeSpan.FromSeconds((double)value.Count / (_rate * 1024)), token);
             await _socket.SendAsync(value, kind, true, token);
         }
-        if (_trace == null) return;
-        byte[] header = { (byte)(kind == WebSocketMessageType.Binary ? 1 : 0),
-            (byte)(value.Count >> 24), (byte)(value.Count >> 16), (byte)(value.Count >> 8), (byte)value.Count };
+        if (_trace == null)
+            return;
+        byte[] header =
+        {
+            (byte)(kind == WebSocketMessageType.Binary ? 1 : 0),
+            (byte)(value.Count >> 24),
+            (byte)(value.Count >> 16),
+            (byte)(value.Count >> 8),
+            (byte)value.Count,
+        };
         await _trace.WriteAsync(header, 0, header.Length, token);
         await _trace.WriteAsync(value.Array, value.Offset, value.Count, token);
     }
@@ -77,8 +85,19 @@ internal static class CodecHarness
             if (_socket != null)
                 await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "owned test", CancellationToken.None);
         }
-        Console.WriteLine(JsonSerializer.Serialize(new { bytes = source.Length, wire_bytes = wire,
-            frames, encode_ms = times, allocated_bytes = allocations, owned_wire_ms = wireTime }));
+        Console.WriteLine(
+            JsonSerializer.Serialize(
+                new
+                {
+                    bytes = source.Length,
+                    wire_bytes = wire,
+                    frames,
+                    encode_ms = times,
+                    allocated_bytes = allocations,
+                    owned_wire_ms = wireTime,
+                }
+            )
+        );
         return 0;
     }
 
@@ -90,8 +109,15 @@ internal static class CodecHarness
         if (mode == "bytes")
             return LargeResultWriter.SendAsync(id, source, true, SendAsync, CancellationToken.None);
 #if CURRENT_CODEC
-        return LargeResultWriter.SendJsonAsync(id, text, mode != "legacy", SendAsync, CancellationToken.None,
-            mode == "gzip_json" || mode == "gzip_negotiated_only", mode == "gzip_json" || mode == "gzip_policy_only");
+        return LargeResultWriter.SendJsonAsync(
+            id,
+            text,
+            mode != "legacy",
+            SendAsync,
+            CancellationToken.None,
+            mode == "gzip_json" || mode == "gzip_negotiated_only",
+            mode == "gzip_json" || mode == "gzip_policy_only"
+        );
 #else
         return LargeResultWriter.SendAsync(id, Encoding.UTF8.GetBytes(text), mode != "legacy", SendAsync, CancellationToken.None);
 #endif

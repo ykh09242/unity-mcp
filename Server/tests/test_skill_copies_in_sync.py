@@ -5,6 +5,7 @@ button mirrors that subtree from GitHub (SkillSyncService.SkillSubdir). `unity-m
 the repo root is the copy users download by hand. Edits landed in one copy only, until the
 installed skill linked two reference files it did not ship.
 """
+
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -25,9 +26,16 @@ def test_skill_copies_are_identical():
     public, installed = _files(PUBLIC), _files(INSTALLED)
     assert public, f"no skill files under {PUBLIC}"
 
-    problems = [f"only in unity-mcp-skill/: {name}" for name in sorted(public.keys() - installed.keys())]
-    problems += [f"only in .claude/skills/unity-mcp-skill/: {name}"
-                 for name in sorted(installed.keys() - public.keys())]
-    problems += [f"differs between the copies: {name}"
-                 for name in sorted(public.keys() & installed.keys()) if public[name] != installed[name]]
+    problems = [
+        f"only in unity-mcp-skill/: {name}" for name in sorted(public.keys() - installed.keys())
+    ]
+    problems += [
+        f"only in .claude/skills/unity-mcp-skill/: {name}"
+        for name in sorted(installed.keys() - public.keys())
+    ]
+    problems += [
+        f"differs between the copies: {name}"
+        for name in sorted(public.keys() & installed.keys())
+        if public[name] != installed[name]
+    ]
     assert not problems, "\n".join(problems)

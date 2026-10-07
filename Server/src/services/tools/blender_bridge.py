@@ -7,6 +7,7 @@ socket itself, exports/imports through the shared model pipeline, and places the
 open scene. No API keys and no file bytes cross the MCP bridge. Socket host/port and the
 blender-mcp checkout path are configured in Window > Unity MCP (ykh09242) > Generative > Blender Bridge.
 """
+
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -57,34 +58,87 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 async def blender_bridge(
     ctx: Context,
     action: Annotated[
-        Literal["status", "scene_info", "object_info", "screenshot", "run_python",
-                "import_model", "compare_screenshot", "setup_bloom", "check_updates", "sync_addon"],
+        Literal[
+            "status",
+            "scene_info",
+            "object_info",
+            "screenshot",
+            "run_python",
+            "import_model",
+            "compare_screenshot",
+            "setup_bloom",
+            "check_updates",
+            "sync_addon",
+        ],
         "Operation to perform.",
     ],
-    object_name: Annotated[str, "object_info: name of the Blender object to inspect."] | None = None,
+    object_name: Annotated[str, "object_info: name of the Blender object to inspect."]
+    | None = None,
     object_names: Annotated[
-        list[str], "import_model: Blender objects to export (children included). Omit for selection_only or the whole scene."
-    ] | None = None,
-    selection_only: Annotated[bool, "import_model: export only what is currently selected in Blender."] | None = None,
-    format: Annotated[Literal["glb", "fbx"], "import_model: export format (default glb)."] | None = None,  # noqa: A002
-    name: Annotated[str, "import_model: asset and GameObject name (defaults to the single exported object)."] | None = None,
-    target_size: Annotated[float, "import_model: final size in meters of the largest dimension; 0 keeps the imported scale."] | None = None,
-    position: Annotated[list[float], "import_model: world position [x, y, z] for the placed instance."] | None = None,
-    place_in_scene: Annotated[bool, "import_model: instantiate the imported asset into the open scene (default true)."] | None = None,
-    apply_modifiers: Annotated[bool, "import_model: bake modifiers on export (default true; false for skinned meshes / shape keys)."] | None = None,
-    output_folder: Annotated[str, "import_model / screenshot: destination folder under Assets/."] | None = None,
+        list[str],
+        "import_model: Blender objects to export (children included). Omit for selection_only or the whole scene.",
+    ]
+    | None = None,
+    selection_only: Annotated[
+        bool, "import_model: export only what is currently selected in Blender."
+    ]
+    | None = None,
+    format: Annotated[Literal["glb", "fbx"], "import_model: export format (default glb)."]
+    | None = None,  # noqa: A002
+    name: Annotated[
+        str, "import_model: asset and GameObject name (defaults to the single exported object)."
+    ]
+    | None = None,
+    target_size: Annotated[
+        float,
+        "import_model: final size in meters of the largest dimension; 0 keeps the imported scale.",
+    ]
+    | None = None,
+    position: Annotated[
+        list[float], "import_model: world position [x, y, z] for the placed instance."
+    ]
+    | None = None,
+    place_in_scene: Annotated[
+        bool, "import_model: instantiate the imported asset into the open scene (default true)."
+    ]
+    | None = None,
+    apply_modifiers: Annotated[
+        bool,
+        "import_model: bake modifiers on export (default true; false for skinned meshes / shape keys).",
+    ]
+    | None = None,
+    output_folder: Annotated[str, "import_model / screenshot: destination folder under Assets/."]
+    | None = None,
     animation_type: Annotated[
         Literal["none", "generic", "humanoid", "legacy"],
         "import_model, FBX only: rig/animation import mode (FBX imports zero clips unless set).",
-    ] | None = None,
-    auto_animate: Annotated[bool, "import_model: create a looping AnimatorController for imported clips (default true)."] | None = None,
-    save_prefab: Annotated[bool, "import_model: save the placed instance as a prefab next to the asset."] | None = None,
-    ensure_bloom: Annotated[bool, "import_model: add a Bloom volume when the model has emissive materials."] | None = None,
-    game_object: Annotated[str, "compare_screenshot: name of the placed GameObject to frame in Unity."] | None = None,
+    ]
+    | None = None,
+    auto_animate: Annotated[
+        bool, "import_model: create a looping AnimatorController for imported clips (default true)."
+    ]
+    | None = None,
+    save_prefab: Annotated[
+        bool, "import_model: save the placed instance as a prefab next to the asset."
+    ]
+    | None = None,
+    ensure_bloom: Annotated[
+        bool, "import_model: add a Bloom volume when the model has emissive materials."
+    ]
+    | None = None,
+    game_object: Annotated[
+        str, "compare_screenshot: name of the placed GameObject to frame in Unity."
+    ]
+    | None = None,
     code: Annotated[str, "run_python: Python source to execute inside Blender."] | None = None,
-    max_size: Annotated[int, "screenshot: max pixels on the longest side (default 1000)."] | None = None,
-    force: Annotated[bool, "sync_addon: overwrite even when the installed addon already matches."] | None = None,
-    timeout_seconds: Annotated[int, "Seconds to wait for Blender (default 180; big exports can be slow)."] | None = None,
+    max_size: Annotated[int, "screenshot: max pixels on the longest side (default 1000)."]
+    | None = None,
+    force: Annotated[bool, "sync_addon: overwrite even when the installed addon already matches."]
+    | None = None,
+    timeout_seconds: Annotated[
+        int, "Seconds to wait for Blender (default 180; big exports can be slow)."
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     """Forward one Blender Bridge action to the Unity Editor and return its response."""
     unity_instance = await get_unity_instance_from_context(ctx)

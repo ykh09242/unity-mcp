@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Helpers
 {
@@ -26,7 +26,7 @@ namespace MCPForUnity.Editor.Helpers
             ByLayer,
             ByComponent,
             ByPath,
-            ById
+            ById,
         }
 
         /// <summary>
@@ -45,7 +45,7 @@ namespace MCPForUnity.Editor.Helpers
                 "by_component" => SearchMethod.ByComponent,
                 "by_path" => SearchMethod.ByPath,
                 "by_id" => SearchMethod.ById,
-                _ => SearchMethod.ByName
+                _ => SearchMethod.ByName,
             };
         }
 
@@ -204,7 +204,8 @@ namespace MCPForUnity.Editor.Helpers
 
                 // Preserve Unity's first match for single-target callers. Multi-result
                 // searches also collect active matches in other loaded scenes.
-                var additionalIds = UnityFindObjectsCompat.FindAll<GameObject>()
+                var additionalIds = UnityFindObjectsCompat
+                    .FindAll<GameObject>()
                     .Where(go => go != found && MatchesPath(go, path))
                     .Select(go => go.GetInstanceIDCompat())
                     .OrderBy(id => id);
@@ -390,4 +391,3 @@ namespace MCPForUnity.Editor.Helpers
         }
     }
 }
-

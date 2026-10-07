@@ -1,4 +1,5 @@
 """Compare one synthetic credential using the actual production Windows reader."""
+
 import hmac
 import importlib.util
 import os
@@ -33,20 +34,31 @@ def main() -> int:
         return actual_native_reader(candidate)
 
     production._read_windows_token = only_owned_generation
-    malformed = ("", generation[:-1], generation + "0", "A" * 32, "G" * 32,
-                 "../" + generation, "MCPForUnity.Stdio:" + generation,
-                 "MCPForUnity.AssetGen:" + generation)
+    malformed = (
+        "",
+        generation[:-1],
+        generation + "0",
+        "A" * 32,
+        "G" * 32,
+        "../" + generation,
+        "MCPForUnity.Stdio:" + generation,
+        "MCPForUnity.AssetGen:" + generation,
+    )
     for candidate in malformed:
         if production.read_stdio_token(candidate) is not None or native_calls != 0:
             print("FAIL: malformed generation rejection")
             return 1
     actual = production.read_stdio_token(generation)
-    matched = isinstance(actual, str) and hmac.compare_digest(actual, expected) and native_calls == 1
+    matched = (
+        isinstance(actual, str) and hmac.compare_digest(actual, expected) and native_calls == 1
+    )
     actual = expected = None
     if not matched:
         print("FAIL: production native credential match")
         return 1
-    print("PASS: production Python reader matched; malformed generations rejected before native access")
+    print(
+        "PASS: production Python reader matched; malformed generations rejected before native access"
+    )
     return 0
 
 

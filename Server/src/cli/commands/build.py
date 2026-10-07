@@ -18,13 +18,20 @@ def build():
 @click.option("--target", "-t", help="Build target: windows64, osx, linux64, android, ios, webgl")
 @click.option("--output", "-o", "output_path", help="Output path")
 @click.option("--development", "-d", is_flag=True, help="Development build")
-@click.option("--backend", "scripting_backend", type=click.Choice(["mono", "il2cpp"]), help="Scripting backend")
+@click.option(
+    "--backend",
+    "scripting_backend",
+    type=click.Choice(["mono", "il2cpp"]),
+    help="Scripting backend",
+)
 @click.option("--subtarget", type=click.Choice(["player", "server"]), help="Build subtarget")
 @click.option("--profile", help="Build Profile asset path (Unity 6+)")
 @click.option("--clean", is_flag=True, help="Clean build cache")
 @click.option("--auto-run", is_flag=True, help="Auto-run after build")
 @handle_unity_errors
-def run_build(target, output_path, development, scripting_backend, subtarget, profile, clean, auto_run):
+def run_build(
+    target, output_path, development, scripting_backend, subtarget, profile, clean, auto_run
+):
     """Trigger a player build.
 
     \b
@@ -148,10 +155,7 @@ def scenes(scene_paths: Optional[str]):
     config = get_config()
     params = {"action": "scenes"}
     if scene_paths:
-        scene_list = [
-            {"path": p.strip(), "enabled": True}
-            for p in scene_paths.split(",")
-        ]
+        scene_list = [{"path": p.strip(), "enabled": True} for p in scene_paths.split(",")]
         params["scenes"] = scene_list
     result = run_command("manage_build", params, config)
     click.echo(format_output(result, config.format))

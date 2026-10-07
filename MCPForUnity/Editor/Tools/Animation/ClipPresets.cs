@@ -1,7 +1,7 @@
 using System;
 using System.IO;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -9,7 +9,24 @@ namespace MCPForUnity.Editor.Tools.Animation
 {
     internal static class ClipPresets
     {
-        private static readonly string[] ValidPresets = { "bounce", "rotate", "pulse", "fade", "shake", "hover", "spin", "sway", "bob", "wiggle", "blink", "slide_in", "elastic", "grow", "shrink" };
+        private static readonly string[] ValidPresets =
+        {
+            "bounce",
+            "rotate",
+            "pulse",
+            "fade",
+            "shake",
+            "hover",
+            "spin",
+            "sway",
+            "bob",
+            "wiggle",
+            "blink",
+            "slide_in",
+            "elastic",
+            "grow",
+            "shrink",
+        };
 
         public static object CreatePreset(JObject @params)
         {
@@ -51,11 +68,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             var offsetToken = @params["offset"];
             if (offsetToken is JArray offsetArray && offsetArray.Count >= 3)
             {
-                offset = new Vector3(
-                    offsetArray[0].ReadScalar<float>(),
-                    offsetArray[1].ReadScalar<float>(),
-                    offsetArray[2].ReadScalar<float>()
-                );
+                offset = new Vector3(offsetArray[0].ReadScalar<float>(), offsetArray[1].ReadScalar<float>(), offsetArray[2].ReadScalar<float>());
             }
 
             var existing = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(clipPath);
@@ -145,9 +158,14 @@ namespace MCPForUnity.Editor.Tools.Animation
                         duration,
                         amplitude,
                         isLooping = loop,
-                        offset = new { x = offset.x, y = offset.y, z = offset.z },
-                        curveCount = AnimationUtility.GetCurveBindings(clip).Length
-                    }
+                        offset = new
+                        {
+                            x = offset.x,
+                            y = offset.y,
+                            z = offset.z,
+                        },
+                        curveCount = AnimationUtility.GetCurveBindings(clip).Length,
+                    },
                 };
             }
             finally
@@ -174,10 +192,7 @@ namespace MCPForUnity.Editor.Tools.Animation
         private static void ApplyRotate(AnimationClip clip, float duration, float amplitude)
         {
             // localEulerAngles.y full 360 rotation (amplitude acts as multiplier)
-            var curve = new AnimationCurve(
-                new Keyframe(0f, 0f),
-                new Keyframe(duration, 360f * amplitude)
-            );
+            var curve = new AnimationCurve(new Keyframe(0f, 0f), new Keyframe(duration, 360f * amplitude));
             // Linear tangents for smooth rotation
             var keys = curve.keys;
             keys[0].outTangent = 360f * amplitude / duration;
@@ -191,11 +206,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             // localScale uniform scale up/down
             float peak = 1f + amplitude * 0.5f;
             float half = duration * 0.5f;
-            var curve = new AnimationCurve(
-                new Keyframe(0f, 1f),
-                new Keyframe(half, peak),
-                new Keyframe(duration, 1f)
-            );
+            var curve = new AnimationCurve(new Keyframe(0f, 1f), new Keyframe(half, peak), new Keyframe(duration, 1f));
             SetTransformCurve(clip, "localScale.x", curve);
             SetTransformCurve(clip, "localScale.y", curve);
             SetTransformCurve(clip, "localScale.z", curve);
@@ -204,10 +215,7 @@ namespace MCPForUnity.Editor.Tools.Animation
         private static void ApplyFade(AnimationClip clip, float duration)
         {
             // CanvasGroup alpha 1 -> 0
-            var curve = new AnimationCurve(
-                new Keyframe(0f, 1f),
-                new Keyframe(duration, 0f)
-            );
+            var curve = new AnimationCurve(new Keyframe(0f, 1f), new Keyframe(duration, 0f));
             var binding = EditorCurveBinding.FloatCurve("", typeof(CanvasGroup), "m_Alpha");
             AnimationUtility.SetEditorCurve(clip, binding, curve);
         }
@@ -255,10 +263,7 @@ namespace MCPForUnity.Editor.Tools.Animation
         private static void ApplySpin(AnimationClip clip, float duration, float amplitude)
         {
             // localEulerAngles.z continuous rotation
-            var curve = new AnimationCurve(
-                new Keyframe(0f, 0f),
-                new Keyframe(duration, 360f * amplitude)
-            );
+            var curve = new AnimationCurve(new Keyframe(0f, 0f), new Keyframe(duration, 360f * amplitude));
             var keys = curve.keys;
             keys[0].outTangent = 360f * amplitude / duration;
             keys[1].inTangent = 360f * amplitude / duration;
@@ -317,11 +322,7 @@ namespace MCPForUnity.Editor.Tools.Animation
         {
             // localScale uniform scale to near-zero and back
             float mid = duration * 0.5f;
-            var curve = new AnimationCurve(
-                new Keyframe(0f, 1f),
-                new Keyframe(mid, 0.05f),
-                new Keyframe(duration, 1f)
-            );
+            var curve = new AnimationCurve(new Keyframe(0f, 1f), new Keyframe(mid, 0.05f), new Keyframe(duration, 1f));
             SetTransformCurve(clip, "localScale.x", curve);
             SetTransformCurve(clip, "localScale.y", curve);
             SetTransformCurve(clip, "localScale.z", curve);
@@ -330,10 +331,7 @@ namespace MCPForUnity.Editor.Tools.Animation
         private static void ApplySlideIn(AnimationClip clip, float duration, float amplitude, Vector3 offset)
         {
             // localPosition.x slide from offset-amplitude to offset (linear)
-            var curve = new AnimationCurve(
-                new Keyframe(0f, offset.x - amplitude),
-                new Keyframe(duration, offset.x)
-            );
+            var curve = new AnimationCurve(new Keyframe(0f, offset.x - amplitude), new Keyframe(duration, offset.x));
             // Set linear tangents for smooth slide
             var keys = curve.keys;
             keys[0].outTangent = amplitude / duration;
@@ -348,12 +346,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             float third = duration / 3f;
             float peak = 1f + amplitude * 1.2f;
             float settle = 1f + amplitude * 0.8f;
-            var curve = new AnimationCurve(
-                new Keyframe(0f, 1f),
-                new Keyframe(third, peak),
-                new Keyframe(third * 2f, settle),
-                new Keyframe(duration, 1f)
-            );
+            var curve = new AnimationCurve(new Keyframe(0f, 1f), new Keyframe(third, peak), new Keyframe(third * 2f, settle), new Keyframe(duration, 1f));
             SetTransformCurve(clip, "localScale.x", curve);
             SetTransformCurve(clip, "localScale.y", curve);
             SetTransformCurve(clip, "localScale.z", curve);
@@ -364,10 +357,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             // localScale uniform from a reduced value up to 1.0
             float clamped = Mathf.Max(0f, amplitude);
             float start = Mathf.Clamp01(1f - clamped);
-            var curve = new AnimationCurve(
-                new Keyframe(0f, start),
-                new Keyframe(duration, 1f)
-            );
+            var curve = new AnimationCurve(new Keyframe(0f, start), new Keyframe(duration, 1f));
             SetTransformCurve(clip, "localScale.x", curve);
             SetTransformCurve(clip, "localScale.y", curve);
             SetTransformCurve(clip, "localScale.z", curve);
@@ -378,10 +368,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             // localScale uniform from 1.0 down to a reduced value
             float clamped = Mathf.Max(0f, amplitude);
             float end = Mathf.Clamp01(1f - clamped);
-            var curve = new AnimationCurve(
-                new Keyframe(0f, 1f),
-                new Keyframe(duration, end)
-            );
+            var curve = new AnimationCurve(new Keyframe(0f, 1f), new Keyframe(duration, end));
             SetTransformCurve(clip, "localScale.x", curve);
             SetTransformCurve(clip, "localScale.y", curve);
             SetTransformCurve(clip, "localScale.z", curve);

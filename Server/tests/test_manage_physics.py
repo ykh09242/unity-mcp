@@ -29,9 +29,7 @@ def mock_unity(monkeypatch):
 
 
 def test_unknown_action(mock_unity):
-    result = asyncio.run(
-        manage_physics(SimpleNamespace(), action="nonexistent")
-    )
+    result = asyncio.run(manage_physics(SimpleNamespace(), action="nonexistent"))
     assert result["success"] is False
     assert "Unknown" in result["message"]
 
@@ -44,9 +42,7 @@ def test_ping_forwards(mock_unity):
 
 
 def test_get_settings_forwards_dimension(mock_unity):
-    result = asyncio.run(
-        manage_physics(SimpleNamespace(), action="get_settings", dimension="2d")
-    )
+    result = asyncio.run(manage_physics(SimpleNamespace(), action="get_settings", dimension="2d"))
     assert mock_unity["params"]["dimension"] == "2d"
 
 
@@ -261,9 +257,7 @@ def test_get_rigidbody_forwards(mock_unity):
 
 
 def test_none_params_not_forwarded(mock_unity):
-    result = asyncio.run(
-        manage_physics(SimpleNamespace(), action="ping")
-    )
+    result = asyncio.run(manage_physics(SimpleNamespace(), action="ping"))
     # Only 'action' should be in params, no None values
     assert "dimension" not in mock_unity["params"]
     assert "target" not in mock_unity["params"]

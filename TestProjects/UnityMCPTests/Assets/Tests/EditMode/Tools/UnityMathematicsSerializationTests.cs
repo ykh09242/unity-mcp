@@ -15,7 +15,12 @@ namespace Unity.Mathematics
         public float y;
         public float z;
 
-        public float3(float x, float y, float z) { this.x = x; this.y = y; this.z = z; }
+        public float3(float x, float y, float z)
+        {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
 
         public float3 xyz => new float3(x, y, z);
         public float3 yzx => new float3(y, z, x);
@@ -29,7 +34,11 @@ namespace Unity.Mathematics
         public float x;
         public float y;
 
-        public float2(float x, float y) { this.x = x; this.y = y; }
+        public float2(float x, float y)
+        {
+            this.x = x;
+            this.y = y;
+        }
 
         public float2 yx => new float2(y, x);
         public float3 xyx => new float3(x, y, x);
@@ -42,7 +51,13 @@ namespace Unity.Mathematics
         public float z;
         public float w;
 
-        public float4(float x, float y, float z, float w) { this.x = x; this.y = y; this.z = z; this.w = w; }
+        public float4(float x, float y, float z, float w)
+        {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.w = w;
+        }
 
         public float4 wzyx => new float4(w, z, y, x);
         public float3 xyz => new float3(x, y, z);
@@ -52,7 +67,10 @@ namespace Unity.Mathematics
     {
         public float4 value;
 
-        public quaternion(float x, float y, float z, float w) { value = new float4(x, y, z, w); }
+        public quaternion(float x, float y, float z, float w)
+        {
+            value = new float4(x, y, z, w);
+        }
     }
 }
 

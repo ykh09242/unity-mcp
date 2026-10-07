@@ -27,6 +27,7 @@ logger = logging.getLogger("mcp-for-unity-server")
 
 class PortDiscovery:
     """Handles port discovery from Unity Bridge registry"""
+
     REGISTRY_FILE = "unity-mcp-port.json"  # legacy single-project file
     DEFAULT_PORT = 6400
     CONNECT_TIMEOUT = 0.3  # seconds, keep this snappy during discovery
@@ -57,8 +58,7 @@ class PortDiscovery:
             except FileNotFoundError:
                 # Unity can remove a registry file between enumeration and stat.
                 continue
-        hashed = [path for path, _ in sorted(
-            candidates, key=lambda entry: entry[1], reverse=True)]
+        hashed = [path for path, _ in sorted(candidates, key=lambda entry: entry[1], reverse=True)]
         legacy = PortDiscovery.get_registry_path()
         if legacy.exists():
             # Put legacy at the end so hashed, per-project files win
@@ -85,7 +85,7 @@ class PortDiscovery:
                     # 2. Send framed ping command
                     # Frame format: 8-byte length header (big-endian uint64) + payload
                     payload = b"ping"
-                    header = struct.pack('>Q', len(payload))
+                    header = struct.pack(">Q", len(payload))
                     s.sendall(header + payload)
 
                     # 3. Receive framed response
@@ -103,7 +103,7 @@ class PortDiscovery:
                     if response_header is None:
                         return False
 
-                    response_length = struct.unpack('>Q', response_header)[0]
+                    response_length = struct.unpack(">Q", response_header)[0]
                     if response_length > 10000:  # Sanity check
                         return False
 
@@ -123,14 +123,13 @@ class PortDiscovery:
         try:
             base = PortDiscovery.get_registry_dir()
             status_files = sorted(
-                (Path(p)
-                 for p in glob.glob(str(base / "unity-mcp-status-*.json"))),
+                (Path(p) for p in glob.glob(str(base / "unity-mcp-status-*.json"))),
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )
             if not status_files:
                 return None
-            with status_files[0].open('r') as f:
+            with status_files[0].open("r") as f:
                 return json.load(f)
         except Exception:
             return None
@@ -148,7 +147,7 @@ class PortDiscovery:
         # Prefer the latest heartbeat status if it points to a responsive port
         status = PortDiscovery._read_latest_status()
         if status:
-            port = status.get('unity_port')
+            port = status.get("unity_port")
             if isinstance(port, int) and PortDiscovery._try_probe_unity_mcp(port):
                 logger.info(f"Using Unity port from status: {port}")
                 return port
@@ -159,27 +158,24 @@ class PortDiscovery:
 
         for path in candidates:
             try:
-                with open(path, 'r') as f:
+                with open(path, "r") as f:
                     cfg = json.load(f)
-                unity_port = cfg.get('unity_port')
+                unity_port = cfg.get("unity_port")
                 if isinstance(unity_port, int):
                     if first_seen_port is None:
                         first_seen_port = unity_port
                     if PortDiscovery._try_probe_unity_mcp(unity_port):
-                        logger.info(
-                            f"Using Unity port from {path.name}: {unity_port}")
+                        logger.info(f"Using Unity port from {path.name}: {unity_port}")
                         return unity_port
             except Exception as e:
                 logger.warning(f"Could not read port registry {path}: {e}")
 
         if first_seen_port is not None:
-            logger.info(
-                f"No responsive port found; using first seen value {first_seen_port}")
+            logger.info(f"No responsive port found; using first seen value {first_seen_port}")
             return first_seen_port
 
         # Fallback to default port
-        logger.info(
-            f"No port registry found; using default port {PortDiscovery.DEFAULT_PORT}")
+        logger.info(f"No port registry found; using default port {PortDiscovery.DEFAULT_PORT}")
         return PortDiscovery.DEFAULT_PORT
 
     @staticmethod
@@ -197,11 +193,10 @@ class PortDiscovery:
             return None
         for path in candidates:
             try:
-                with open(path, 'r') as f:
+                with open(path, "r") as f:
                     return json.load(f)
             except Exception as e:
-                logger.warning(
-                    f"Could not read port configuration {path}: {e}")
+                logger.warning(f"Could not read port configuration {path}: {e}")
         return None
 
     @staticmethod
@@ -217,9 +212,9 @@ class PortDiscovery:
 
         try:
             # Remove trailing /Assets or \Assets
-            path = project_path.rstrip('/\\')
-            if path.endswith('Assets'):
-                path = path[:-6].rstrip('/\\')
+            path = project_path.rstrip("/\\")
+            if path.endswith("Assets"):
+                path = path[:-6].rstrip("/\\")
 
             # Get the last directory name
             name = os.path.basename(path)
@@ -246,7 +241,7 @@ class PortDiscovery:
             try:
                 path = Path(filename)
                 modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
-                with path.open('r') as stream:
+                with path.open("r") as stream:
                     data = json.load(stream)
                 if isinstance(data, dict):
                     entries.append((path, data, modified))
@@ -265,19 +260,24 @@ class PortDiscovery:
         entries = PortDiscovery._read_status_entries()
         target_ports = set()
         for path, data, _ in entries:
-            hash_value = path.name.replace('unity-mcp-status-', '').replace('.json', '')
-            name = PortDiscovery._extract_project_name(data.get('project_path', ''))
-            port = data.get('unity_port')
+            hash_value = path.name.replace("unity-mcp-status-", "").replace(".json", "")
+            name = PortDiscovery._extract_project_name(data.get("project_path", ""))
+            port = data.get("unity_port")
             if f"{name}@{hash_value}" == instance_id and isinstance(port, int):
                 target_ports.add(port)
-        competing_entries = [entry for entry in entries
-                             if isinstance(entry[1].get('unity_port'), int)
-                             and entry[1]['unity_port'] in target_ports]
+        competing_entries = [
+            entry
+            for entry in entries
+            if isinstance(entry[1].get("unity_port"), int)
+            and entry[1]["unity_port"] in target_ports
+        ]
         instances = PortDiscovery._discover_status_entries(competing_entries)
         return next((instance for instance in instances if instance.id == instance_id), None)
 
     @staticmethod
-    def _discover_status_entries(entries: list[tuple[Path, dict, datetime]]) -> list[UnityInstanceInfo]:
+    def _discover_status_entries(
+        entries: list[tuple[Path, dict, datetime]],
+    ) -> list[UnityInstanceInfo]:
         """Apply the same liveness, reload and metadata precedence to any scan."""
         instances_by_port: dict[int, tuple[UnityInstanceInfo, datetime]] = {}
         # A scan is one liveness snapshot: legacy/duplicate status files for a
@@ -287,23 +287,22 @@ class PortDiscovery:
             try:
                 # Extract hash from filename: unity-mcp-status-{hash}.json
                 filename = status_path.name
-                hash_value = filename.replace(
-                    'unity-mcp-status-', '').replace('.json', '')
+                hash_value = filename.replace("unity-mcp-status-", "").replace(".json", "")
 
                 # Extract information
-                project_path = data.get('project_path', '')
-                project_name = PortDiscovery._extract_project_name(
-                    project_path)
-                port = data.get('unity_port')
-                is_reloading = data.get('reloading', False)
+                project_path = data.get("project_path", "")
+                project_name = PortDiscovery._extract_project_name(project_path)
+                port = data.get("unity_port")
+                is_reloading = data.get("reloading", False)
 
                 # Parse last_heartbeat
                 last_heartbeat = None
-                heartbeat_str = data.get('last_heartbeat')
+                heartbeat_str = data.get("last_heartbeat")
                 if heartbeat_str:
                     try:
                         last_heartbeat = datetime.fromisoformat(
-                            heartbeat_str.replace('Z', '+00:00')).astimezone(timezone.utc)
+                            heartbeat_str.replace("Z", "+00:00")
+                        ).astimezone(timezone.utc)
                     except Exception:
                         pass
 
@@ -323,7 +322,8 @@ class PortDiscovery:
                         pass  # keep it, status="reloading"
                     else:
                         logger.debug(
-                            f"Instance {project_name}@{hash_value} has heartbeat but port {port} not responding")
+                            f"Instance {project_name}@{hash_value} has heartbeat but port {port} not responding"
+                        )
                         continue
 
                 freshness = last_heartbeat or file_mtime
@@ -333,7 +333,8 @@ class PortDiscovery:
                     _, existing_time = existing
                     if existing_time >= freshness:
                         logger.debug(
-                            f"Skipping stale status entry {status_path.name} in favor of more recent data for port {port}")
+                            f"Skipping stale status entry {status_path.name} in favor of more recent data for port {port}"
+                        )
                         continue
 
                 # Create instance info
@@ -346,22 +347,23 @@ class PortDiscovery:
                     status="reloading" if is_reloading else "running",
                     last_heartbeat=last_heartbeat,
                     # May not be available in current version
-                    unity_version=data.get('unity_version'),
-                    project_scoped_tools=data.get('project_scoped_tools', False),
+                    unity_version=data.get("unity_version"),
+                    project_scoped_tools=data.get("project_scoped_tools", False),
                 )
 
                 instances_by_port[port] = (instance, freshness)
-                logger.debug(
-                    f"Discovered Unity instance: {instance.id} on port {instance.port}")
+                logger.debug(f"Discovered Unity instance: {instance.id} on port {instance.port}")
 
             except Exception as e:
-                logger.debug(
-                    f"Failed to parse status file {status_path}: {e}")
+                logger.debug(f"Failed to parse status file {status_path}: {e}")
                 continue
 
-        deduped_instances = [entry[0] for entry in sorted(
-            instances_by_port.values(), key=lambda item: item[1], reverse=True)]
+        deduped_instances = [
+            entry[0]
+            for entry in sorted(instances_by_port.values(), key=lambda item: item[1], reverse=True)
+        ]
 
         logger.info(
-            f"Discovered {len(deduped_instances)} Unity instances (after de-duplication by port)")
+            f"Discovered {len(deduped_instances)} Unity instances (after de-duplication by port)"
+        )
         return deduped_instances

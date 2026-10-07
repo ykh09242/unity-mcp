@@ -72,7 +72,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     newPosition = new[] { targetGo.transform.position.x, targetGo.transform.position.y, targetGo.transform.position.z },
                     direction = direction,
                     distance = distance,
-                    gameObject = Helpers.GameObjectSerializer.GetGameObjectData(targetGo)
+                    gameObject = Helpers.GameObjectSerializer.GetGameObjectData(targetGo),
                 }
             );
         }
@@ -83,15 +83,21 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             {
                 switch (direction)
                 {
-                    case "right": return Vector3.right;
-                    case "left": return Vector3.left;
-                    case "up": return Vector3.up;
-                    case "down": return Vector3.down;
+                    case "right":
+                        return Vector3.right;
+                    case "left":
+                        return Vector3.left;
+                    case "up":
+                        return Vector3.up;
+                    case "down":
+                        return Vector3.down;
                     case "forward":
-                    case "front": return Vector3.forward;
+                    case "front":
+                        return Vector3.forward;
                     case "back":
                     case "backward":
-                    case "behind": return Vector3.back;
+                    case "behind":
+                        return Vector3.back;
                     default:
                         McpLog.Warn($"[ManageGameObject.MoveRelative] Unknown direction '{direction}', defaulting to forward.");
                         return Vector3.forward;
@@ -100,15 +106,21 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             switch (direction)
             {
-                case "right": return referenceTransform.right;
-                case "left": return -referenceTransform.right;
-                case "up": return referenceTransform.up;
-                case "down": return -referenceTransform.up;
+                case "right":
+                    return referenceTransform.right;
+                case "left":
+                    return -referenceTransform.right;
+                case "up":
+                    return referenceTransform.up;
+                case "down":
+                    return -referenceTransform.up;
                 case "forward":
-                case "front": return referenceTransform.forward;
+                case "front":
+                    return referenceTransform.forward;
                 case "back":
                 case "backward":
-                case "behind": return -referenceTransform.forward;
+                case "behind":
+                    return -referenceTransform.forward;
                 default:
                     McpLog.Warn($"[ManageGameObject.MoveRelative] Unknown direction '{direction}', defaulting to forward.");
                     return referenceTransform.forward;

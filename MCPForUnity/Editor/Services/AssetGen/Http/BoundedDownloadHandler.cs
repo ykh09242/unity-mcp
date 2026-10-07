@@ -12,15 +12,18 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
         private readonly MemoryStream _body = new MemoryStream();
         internal bool LimitExceeded { get; private set; }
 
-        internal BoundedDownloadHandler(int limit = MaxResponseBytes) : base(new byte[64 * 1024])
+        internal BoundedDownloadHandler(int limit = MaxResponseBytes)
+            : base(new byte[64 * 1024])
         {
-            if (limit <= 0) throw new ArgumentOutOfRangeException(nameof(limit));
+            if (limit <= 0)
+                throw new ArgumentOutOfRangeException(nameof(limit));
             _limit = limit;
         }
 
         protected override void ReceiveContentLengthHeader(ulong length)
         {
-            if (length > (ulong)_limit) LimitExceeded = true;
+            if (length > (ulong)_limit)
+                LimitExceeded = true;
         }
 
         protected override bool ReceiveData(byte[] data, int dataLength)
@@ -30,13 +33,15 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 LimitExceeded = true;
                 return false;
             }
-            if (data != null && dataLength > 0) _body.Write(data, 0, dataLength);
+            if (data != null && dataLength > 0)
+                _body.Write(data, 0, dataLength);
             return true;
         }
 
         internal byte[] GetBody()
         {
-            if (LimitExceeded) throw new IOException("Provider API response exceeds the 32 MiB limit.");
+            if (LimitExceeded)
+                throw new IOException("Provider API response exceeds the 32 MiB limit.");
             return _body.ToArray();
         }
 

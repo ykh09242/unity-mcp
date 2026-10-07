@@ -45,9 +45,9 @@ async def preflight(
     # Load canonical editor state (server enriches advice + staleness).
     try:
         from services.resources.editor_state import get_editor_state_authoritative
+
         state_resp = await get_editor_state_authoritative(ctx)
-        state = state_resp.model_dump() if hasattr(
-            state_resp, "model_dump") else state_resp
+        state = state_resp.model_dump() if hasattr(state_resp, "model_dump") else state_resp
     except Exception:
         # If we cannot determine readiness, fall back to proceeding (tools already contain retry logic).
         return None
@@ -72,16 +72,32 @@ async def preflight(
         if isinstance(assets, dict) and assets.get("external_changes_dirty") is True:
             try:
                 from services.tools.refresh_unity import refresh_unity
+
                 # Refresh imports changed scripts itself. An explicit compile also
                 # reloads the domain for ordinary asset changes or already-imported edits.
-                refreshed = await refresh_unity(ctx, mode="if_dirty", scope="all", compile="none", wait_for_ready=True)
-                refresh_result = refreshed.model_dump() if hasattr(refreshed, "model_dump") else refreshed
+                refreshed = await refresh_unity(
+                    ctx, mode="if_dirty", scope="all", compile="none", wait_for_ready=True
+                )
+                refresh_result = (
+                    refreshed.model_dump() if hasattr(refreshed, "model_dump") else refreshed
+                )
                 if isinstance(refresh_result, dict) and refresh_result.get("success") is False:
                     return MCPResponse(**refresh_result)
-                if not isinstance(refresh_result, dict) or refresh_result.get("success") is not True:
-                    return MCPResponse(success=False, error="refresh_failed", message="Preflight refresh did not confirm success.")
+                if (
+                    not isinstance(refresh_result, dict)
+                    or refresh_result.get("success") is not True
+                ):
+                    return MCPResponse(
+                        success=False,
+                        error="refresh_failed",
+                        message="Preflight refresh did not confirm success.",
+                    )
             except Exception as exc:
-                return MCPResponse(success=False, error="refresh_failed", message=f"Preflight refresh failed: {exc}")
+                return MCPResponse(
+                    success=False,
+                    error="refresh_failed",
+                    message=f"Preflight refresh failed: {exc}",
+                )
 
     # Compilation: optionally wait for a bounded time.
     if wait_for_no_compile:
@@ -92,12 +108,12 @@ async def preflight(
                 tests = data.get("tests")
                 if isinstance(tests, dict) and tests.get("is_running") is True:
                     return _busy("tests_running", 5000)
-            compilation = data.get("compilation") if isinstance(
-                data, dict) else None
-            is_compiling = isinstance(compilation, dict) and compilation.get(
-                "is_compiling") is True
-            is_domain_reload_pending = isinstance(compilation, dict) and compilation.get(
-                "is_domain_reload_pending") is True
+            compilation = data.get("compilation") if isinstance(data, dict) else None
+            is_compiling = isinstance(compilation, dict) and compilation.get("is_compiling") is True
+            is_domain_reload_pending = (
+                isinstance(compilation, dict)
+                and compilation.get("is_domain_reload_pending") is True
+            )
             if not is_compiling and not is_domain_reload_pending:
                 break
             if time.monotonic() >= deadline:
@@ -107,9 +123,9 @@ async def preflight(
             # Refresh state for the next loop iteration.
             try:
                 from services.resources.editor_state import get_editor_state_authoritative
+
                 state_resp = await get_editor_state_authoritative(ctx)
-                state = state_resp.model_dump() if hasattr(
-                    state_resp, "model_dump") else state_resp
+                state = state_resp.model_dump() if hasattr(state_resp, "model_dump") else state_resp
                 data = state.get("data") if isinstance(state, dict) else None
                 if not isinstance(data, dict):
                     return None

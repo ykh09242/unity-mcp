@@ -12,15 +12,16 @@ namespace MCPForUnityTests.Editor.AssetGen
     /// </summary>
     public class ModelImportPipelineTests
     {
-        private static AssetGenJob Job(string format) => new AssetGenJob
-        {
-            JobId = "test",
-            Kind = "model",
-            Provider = "tripo",
-            State = AssetGenJobState.Importing,
-            Format = format,
-            TargetSize = 1f,
-        };
+        private static AssetGenJob Job(string format) =>
+            new AssetGenJob
+            {
+                JobId = "test",
+                Kind = "model",
+                Provider = "tripo",
+                State = AssetGenJobState.Importing,
+                Format = format,
+                TargetSize = 1f,
+            };
 
         [Test]
         public void Glb_WithoutGltfast_FailsWithActionableMessage()

@@ -1,10 +1,10 @@
 using System;
 using System.IO;
 using System.Linq;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
 // TextureImporter.spritesheet is obsolete as of Unity 6, but the replacement
 // (ISpriteEditorDataProvider) needs the 2D Sprite package for the same result.
 #pragma warning disable CS0618
@@ -51,14 +51,18 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             if (cursor < 0 || cursor > totalSlices)
                 return diagnostics.Fail("BAD_PARAM", $"'cursor' must be between 0 and {totalSlices}; got {cursor}.");
 
-            var existingSlices = spriteMetadata.Skip(cursor).Take(pageSize).Select(s => new
-            {
-                name   = s.name,
-                x      = (int)s.rect.x,
-                y      = (int)s.rect.y,
-                width  = (int)s.rect.width,
-                height = (int)s.rect.height,
-            }).ToArray();
+            var existingSlices = spriteMetadata
+                .Skip(cursor)
+                .Take(pageSize)
+                .Select(s => new
+                {
+                    name = s.name,
+                    x = (int)s.rect.x,
+                    y = (int)s.rect.y,
+                    width = (int)s.rect.width,
+                    height = (int)s.rect.height,
+                })
+                .ToArray();
 
             int nextIndex = cursor + existingSlices.Length;
             int? nextCursor = nextIndex < totalSlices ? nextIndex : (int?)null;
@@ -76,8 +80,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             {
                 // First page only: repeating it would multiply what paging exists to cap.
                 imageOmittedReason =
-                    "The image is returned only on the first page. Request this path with " +
-                    "cursor 0 (or omit cursor) if the image itself is needed.";
+                    "The image is returned only on the first page. Request this path with " + "cursor 0 (or omit cursor) if the image itself is needed.";
             }
             else
             {
@@ -104,22 +107,23 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                         // TIFF source used to go out as image/png, and a client that checks
                         // the image fails the whole request rather than this one block.
                         string ext = Path.GetExtension(path).ToLowerInvariant();
-                        string mime = ext == ".png" ? "image/png"
-                                    : (ext == ".jpg" || ext == ".jpeg") ? "image/jpeg"
-                                    : null;
+                        string mime =
+                            ext == ".png" ? "image/png"
+                            : (ext == ".jpg" || ext == ".jpeg") ? "image/jpeg"
+                            : null;
                         if (mime == null)
                         {
                             imageOmittedReason =
-                                $"The source is a '{ext}' file; only PNG and JPEG sources are sent inline. " +
-                                "Read the file directly if the image itself is needed.";
+                                $"The source is a '{ext}' file; only PNG and JPEG sources are sent inline. "
+                                + "Read the file directly if the image itself is needed.";
                         }
                         // Image inputs commonly refuse anything over 8000 px on a side, and the
                         // inline image is the source file, so this is checked on source pixels.
                         else if (w > MaxInlineSide || h > MaxInlineSide)
                         {
                             imageOmittedReason =
-                                $"The {w}x{h} source is over {MaxInlineSide} px on a side, which image " +
-                                "inputs commonly refuse. Read the file directly if the image itself is needed.";
+                                $"The {w}x{h} source is over {MaxInlineSide} px on a side, which image "
+                                + "inputs commonly refuse. Read the file directly if the image itself is needed.";
                         }
                         else
                         {
@@ -129,9 +133,9 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                             if (encoded > MaxInlinePayloadBytes)
                             {
                                 imageOmittedReason =
-                                    $"The {size}-byte source encodes to {encoded} base64 bytes, above the " +
-                                    $"{MaxInlinePayloadBytes}-byte inline limit. Read the file directly if the " +
-                                    "image itself is needed.";
+                                    $"The {size}-byte source encodes to {encoded} base64 bytes, above the "
+                                    + $"{MaxInlinePayloadBytes}-byte inline limit. Read the file directly if the "
+                                    + "image itself is needed.";
                             }
                             else
                             {
@@ -145,24 +149,23 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     // A swallowed failure and a deliberate omission are different answers.
                     // Type over the bridge, not message: messages carry the path that threw.
                     McpLog.Warn($"[Sprite2D] get_info could not read '{path}': {ex}");
-                    imageOmittedReason =
-                        $"The image could not be read ({ex.GetType().Name}); the Unity console has the detail.";
+                    imageOmittedReason = $"The image could not be read ({ex.GetType().Name}); the Unity console has the detail.";
                 }
             }
 
             return new
             {
-                success       = true,
+                success = true,
                 path,
-                width         = w,
-                height        = h,
-                sprite_mode   = importer.spriteImportMode.ToString(),
+                width = w,
+                height = h,
+                sprite_mode = importer.spriteImportMode.ToString(),
                 pixels_per_unit = importer.spritePixelsPerUnit,
-                filter_mode   = importer.filterMode.ToString(),
-                slice_count   = totalSlices,
-                slices        = existingSlices,
-                next_cursor   = nextCursor,
-                image_base64  = imageBase64,
+                filter_mode = importer.filterMode.ToString(),
+                slice_count = totalSlices,
+                slices = existingSlices,
+                next_cursor = nextCursor,
+                image_base64 = imageBase64,
                 image_omitted_reason = imageOmittedReason,
             };
         }
@@ -178,11 +181,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             public ImporterSnapshot(TextureImporter importer)
             {
-                textureType      = importer.textureType;
-                npotScale        = importer.npotScale;
+                textureType = importer.textureType;
+                npotScale = importer.npotScale;
                 spriteImportMode = importer.spriteImportMode;
-                spritesheet      = importer.spritesheet.ToArray();
-                filterMode       = importer.filterMode;
+                spritesheet = importer.spritesheet.ToArray();
+                filterMode = importer.filterMode;
             }
 
             /// <summary>The frame names the sheet had before this call, in sheet order.</summary>
@@ -191,12 +194,33 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             public void Restore(TextureImporter importer)
             {
                 bool changed = false;
-                if (importer.textureType != textureType) { importer.textureType = textureType; changed = true; }
-                if (importer.npotScale != npotScale) { importer.npotScale = npotScale; changed = true; }
-                if (importer.spriteImportMode != spriteImportMode) { importer.spriteImportMode = spriteImportMode; changed = true; }
-                if (!importer.spritesheet.SequenceEqual(spritesheet)) { importer.spritesheet = spritesheet; changed = true; }
-                if (importer.filterMode != filterMode) { importer.filterMode = filterMode; changed = true; }
-                if (!changed) return;
+                if (importer.textureType != textureType)
+                {
+                    importer.textureType = textureType;
+                    changed = true;
+                }
+                if (importer.npotScale != npotScale)
+                {
+                    importer.npotScale = npotScale;
+                    changed = true;
+                }
+                if (importer.spriteImportMode != spriteImportMode)
+                {
+                    importer.spriteImportMode = spriteImportMode;
+                    changed = true;
+                }
+                if (!importer.spritesheet.SequenceEqual(spritesheet))
+                {
+                    importer.spritesheet = spritesheet;
+                    changed = true;
+                }
+                if (importer.filterMode != filterMode)
+                {
+                    importer.filterMode = filterMode;
+                    changed = true;
+                }
+                if (!changed)
+                    return;
                 EditorUtility.SetDirty(importer);
                 importer.SaveAndReimport();
             }
@@ -215,11 +239,16 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             // Checked before the conversion below: a refused request used to leave the texture
             // already turned into a Sprite. Sequential rather than chained with ||, because a
             // short-circuited call leaves its out parameter unassigned.
-            int rows = 0, frameW = 0, frameH = 0;
+            int rows = 0,
+                frameW = 0,
+                frameH = 0;
             bool gridOk = SpriteParams.TryReadWholeNumber(@params, "cols", 0, out int cols, out string gridError);
-            if (gridOk) gridOk = SpriteParams.TryReadWholeNumber(@params, "rows", 0, out rows, out gridError);
-            if (gridOk) gridOk = SpriteParams.TryReadWholeNumber(@params, "frame_width", 0, out frameW, out gridError);
-            if (gridOk) gridOk = SpriteParams.TryReadWholeNumber(@params, "frame_height", 0, out frameH, out gridError);
+            if (gridOk)
+                gridOk = SpriteParams.TryReadWholeNumber(@params, "rows", 0, out rows, out gridError);
+            if (gridOk)
+                gridOk = SpriteParams.TryReadWholeNumber(@params, "frame_width", 0, out frameW, out gridError);
+            if (gridOk)
+                gridOk = SpriteParams.TryReadWholeNumber(@params, "frame_height", 0, out frameH, out gridError);
             if (!gridOk)
                 return diagnostics.Fail("BAD_PARAM", gridError);
 
@@ -247,12 +276,17 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             {
                 switch (filterToken.ToString().ToLowerInvariant())
                 {
-                    case "point":     filterMode = FilterMode.Point; break;
-                    case "bilinear":  filterMode = FilterMode.Bilinear; break;
-                    case "trilinear": filterMode = FilterMode.Trilinear; break;
+                    case "point":
+                        filterMode = FilterMode.Point;
+                        break;
+                    case "bilinear":
+                        filterMode = FilterMode.Bilinear;
+                        break;
+                    case "trilinear":
+                        filterMode = FilterMode.Trilinear;
+                        break;
                     default:
-                        return diagnostics.Fail("BAD_PARAM",
-                            $"'filter_mode' must be point, bilinear or trilinear; got '{filterToken}'.");
+                        return diagnostics.Fail("BAD_PARAM", $"'filter_mode' must be point, bilinear or trilinear; got '{filterToken}'.");
                 }
             }
 
@@ -264,15 +298,30 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             catch
             {
                 // A restore that throws must not replace the exception that caused it.
-                try { snapshot.Restore(importer); }
-                catch (Exception restoreError) { McpLog.Error($"[ManageSprite] Could not restore the import settings of '{path}': {restoreError.Message}"); }
+                try
+                {
+                    snapshot.Restore(importer);
+                }
+                catch (Exception restoreError)
+                {
+                    McpLog.Error($"[ManageSprite] Could not restore the import settings of '{path}': {restoreError.Message}");
+                }
                 throw;
             }
         }
 
-        private static object SliceTexture(JObject @params, SpriteDiagnosticBuilder diagnostics, string path,
-                                           TextureImporter importer, ImporterSnapshot snapshot,
-                                           int cols, int rows, int frameW, int frameH, FilterMode filterMode)
+        private static object SliceTexture(
+            JObject @params,
+            SpriteDiagnosticBuilder diagnostics,
+            string path,
+            TextureImporter importer,
+            ImporterSnapshot snapshot,
+            int cols,
+            int rows,
+            int frameW,
+            int frameH,
+            FilterMode filterMode
+        )
         {
             // Sprite rects are in source pixels; texture.width/height is the imported size,
             // which Max Size shrinks. Measured on 6000.6.4f1: a 4096x256 sheet at the default
@@ -280,22 +329,28 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             // gave 8 sprites over the left half of the sheet, each half a frame, as a success.
             importer.GetSourceTextureWidthAndHeight(out int texW, out int texH);
 
-            if (frameW <= 0) frameW = texW / cols;
-            if (frameH <= 0) frameH = texH / rows;
-            if (cols  <= 0) cols   = texW / frameW;
-            if (rows  <= 0) rows   = texH / frameH;
+            if (frameW <= 0)
+                frameW = texW / cols;
+            if (frameH <= 0)
+                frameH = texH / rows;
+            if (cols <= 0)
+                cols = texW / frameW;
+            if (rows <= 0)
+                rows = texH / frameH;
 
             // Three ways to fail, only the first obvious. An oversized frame yields a non-zero
             // grid whose rects land outside the texture (measured: frame_height=4096 on a 16px
             // sheet, dropped silently, success). Integer division can drive a derived frame size
             // to zero (measured: 64 zero-width sprites, success). The product is long because
             // two large caller values wrap in 32-bit arithmetic and slip under the comparison.
-            if (frameW <= 0 || frameH <= 0
-                || (long)cols * frameW > texW || (long)rows * frameH > texH)
+            if (frameW <= 0 || frameH <= 0 || (long)cols * frameW > texW || (long)rows * frameH > texH)
             {
-                return diagnostics.Fail("SLICE_OUT_OF_BOUNDS",
+                return diagnostics.Fail(
+                    "SLICE_OUT_OF_BOUNDS",
                     $"A {cols}x{rows} grid of {frameW}x{frameH} frames does not fit inside the {texW}x{texH} texture, so some frames would fall outside it.",
-                    "Reduce frame_width/frame_height, or cols/rows", "Confirm the texture dimensions with get_info");
+                    "Reduce frame_width/frame_height, or cols/rows",
+                    "Confirm the texture dimensions with get_info"
+                );
             }
 
             // Fitting is not covering: the guard above only refuses a grid that is too BIG.
@@ -306,9 +361,12 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             int uncoveredW = texW - cols * frameW;
             int uncoveredH = texH - rows * frameH;
             if (uncoveredW > 0 || uncoveredH > 0)
-                diagnostics.AddWarning("SLICE_GRID_REMAINDER",
+                diagnostics.AddWarning(
+                    "SLICE_GRID_REMAINDER",
                     $"The grid covers {cols * frameW}x{rows * frameH} of a {texW}x{texH} texture, leaving {uncoveredW}px on the right and {uncoveredH}px at the bottom unused.",
-                    "Deliberate if the sheet has a margin or a separator", "Otherwise check cols/rows against the texture size with get_info");
+                    "Deliberate if the sheet has a margin or a separator",
+                    "Otherwise check cols/rows against the texture size with get_info"
+                );
 
             // Every frame is allocated and reimported in one call, so this is a precaution
             // rather than a reproduction; far above any real sheet, it catches a cols/rows typo.
@@ -316,20 +374,25 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             long totalFrames = (long)cols * rows;
             if (totalFrames > MaxFrames)
             {
-                return diagnostics.Fail("SLICE_TOO_MANY_FRAMES",
+                return diagnostics.Fail(
+                    "SLICE_TOO_MANY_FRAMES",
                     $"The grid works out to {totalFrames} frames, above the {MaxFrames}-frame limit.",
-                    "Increase frame_width/frame_height", "Slice the sheet in smaller pieces");
+                    "Increase frame_width/frame_height",
+                    "Slice the sheet in smaller pieces"
+                );
             }
 
             if (totalFrames == 0)
             {
-                return diagnostics.Fail("SLICE_EMPTY",
+                return diagnostics.Fail(
+                    "SLICE_EMPTY",
                     $"A {cols}x{rows} grid works out to 0 frames - cols/rows or the frame size is wrong.",
-                    "Check the cols and rows values", "Confirm the texture dimensions with get_info");
+                    "Check the cols and rows values",
+                    "Confirm the texture dimensions with get_info"
+                );
             }
 
-            string baseName = @params["base_name"]?.ToString()
-                ?? Path.GetFileNameWithoutExtension(path);
+            string baseName = @params["base_name"]?.ToString() ?? Path.GetFileNameWithoutExtension(path);
 
             var metas = new SpriteMetaData[(int)totalFrames];
             for (int r = 0; r < rows; r++)
@@ -339,9 +402,9 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     int i = r * cols + c;
                     metas[i] = new SpriteMetaData
                     {
-                        name      = $"{baseName}_{i}",
-                        rect      = new Rect(c * frameW, texH - (r + 1) * frameH, frameW, frameH),
-                        pivot     = new Vector2(0.5f, 0.5f),
+                        name = $"{baseName}_{i}",
+                        rect = new Rect(c * frameW, texH - (r + 1) * frameH, frameW, frameH),
+                        pivot = new Vector2(0.5f, 0.5f),
                         alignment = 0,
                     };
                 }
@@ -349,11 +412,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             // Source dimensions do not require conversion first. Apply the validated grid and
             // disable NPOT scaling together so Unity only imports once and can emit all sprites.
-            importer.textureType      = TextureImporterType.Sprite;
-            importer.npotScale        = TextureImporterNPOTScale.None;
+            importer.textureType = TextureImporterType.Sprite;
+            importer.npotScale = TextureImporterNPOTScale.None;
             importer.spriteImportMode = SpriteImportMode.Multiple;
-            importer.spritesheet      = metas;
-            importer.filterMode       = filterMode;
+            importer.spritesheet = metas;
+            importer.filterMode = filterMode;
             // Assigning spritesheet on an already-Multiple importer does not mark it dirty, so
             // SaveAndReimport would restore the old grid - measured, a second slice did nothing.
             EditorUtility.SetDirty(importer);
@@ -370,10 +433,12 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             if (generated != totalFrames)
             {
                 snapshot.Restore(importer);
-                return diagnostics.Fail("SLICE_NOT_GENERATED",
+                return diagnostics.Fail(
+                    "SLICE_NOT_GENERATED",
                     $"Unity accepted a {cols}x{rows} grid but generated {generated} of {totalFrames} sprites for '{path}'.",
                     "Check the Unity console for the import error",
-                    "Confirm the texture's import settings allow sprite generation");
+                    "Confirm the texture's import settings allow sprite generation"
+                );
             }
 
             // A sprite's ID follows its name, so a re-slice keeps only the frames whose names the
@@ -386,24 +451,26 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             if (removed.Length > 0)
             {
                 const int MaxNamesListed = 10;
-                string names = string.Join(", ", removed.Take(MaxNamesListed))
-                             + (removed.Length > MaxNamesListed ? $" and {removed.Length - MaxNamesListed} more" : "");
-                diagnostics.AddWarning("SLICE_REMOVED_FRAMES",
+                string names =
+                    string.Join(", ", removed.Take(MaxNamesListed)) + (removed.Length > MaxNamesListed ? $" and {removed.Length - MaxNamesListed} more" : "");
+                diagnostics.AddWarning(
+                    "SLICE_REMOVED_FRAMES",
                     $"This slice removed {removed.Length} of the {before.Length} frames the sheet had ({names}); animation clips that used them lose those frames.",
                     "If the frames are still needed, slice again with the previous grid and base_name; clips pick them up again by name",
-                    "Otherwise rebuild the clips that used them: setup_clips or full_setup, with overwrite=true");
+                    "Otherwise rebuild the clips that used them: setup_clips or full_setup, with overwrite=true"
+                );
             }
 
             return new
             {
-                success      = true,
+                success = true,
                 path,
                 cols,
                 rows,
-                frame_width  = frameW,
+                frame_width = frameW,
                 frame_height = frameH,
                 total_frames = totalFrames,
-                diagnostics  = diagnostics.Build(),
+                diagnostics = diagnostics.Build(),
             };
         }
     }

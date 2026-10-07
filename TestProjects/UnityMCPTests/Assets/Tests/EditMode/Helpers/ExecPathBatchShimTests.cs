@@ -27,7 +27,12 @@ namespace MCPForUnityTests.Editor.Helpers
         [TearDown]
         public void TearDown()
         {
-            try { if (Directory.Exists(_tempRoot)) Directory.Delete(_tempRoot, true); } catch { }
+            try
+            {
+                if (Directory.Exists(_tempRoot))
+                    Directory.Delete(_tempRoot, true);
+            }
+            catch { }
         }
 
         private static void RequireWindows()

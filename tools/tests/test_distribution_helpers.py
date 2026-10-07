@@ -47,7 +47,10 @@ def test_bundle_stages_selected_files_and_replaces_output(bundle_fixture, monkey
         assert manifest["icon"] == "icon.png"
         assert (build / manifest["icon"]).read_bytes() == icon.read_bytes()
         assert {path.name for path in build.iterdir()} == {
-            "manifest.json", "icon.png", "LICENSE", "README.md"
+            "manifest.json",
+            "icon.png",
+            "LICENSE",
+            "README.md",
         }
         Path(command[-1]).write_bytes(manifest["version"].encode())
         return SimpleNamespace(stdout="packed")
@@ -129,16 +132,29 @@ def asset_fixture(tmp_path):
 
 
 def run_asset(helper, monkeypatch, repo, project, *args, url="https://example.test/mcp"):
-    monkeypatch.setattr(sys, "argv", [
-        "prepare", "--repo-root", str(repo), "--asset-project", str(project),
-        "--remote-url", url, *args,
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare",
+            "--repo-root",
+            str(repo),
+            "--asset-project",
+            str(project),
+            "--remote-url",
+            url,
+            *args,
+        ],
+    )
     return helper.main()
 
 
 def snapshot(path):
-    return {item.relative_to(path).as_posix(): item.read_bytes()
-            for item in path.rglob("*") if item.is_file()}
+    return {
+        item.relative_to(path).as_posix(): item.read_bytes()
+        for item in path.rglob("*")
+        if item.is_file()
+    }
 
 
 @pytest.mark.parametrize("defect", ["missing_file", "missing_pattern", "duplicate_pattern"])
@@ -217,7 +233,9 @@ def test_asset_copy_failure_preserves_existing_destination(asset_fixture, monkey
     assert (source / "Editor/Helpers/HttpEndpointUtility.cs").is_file()
 
 
-def test_asset_final_copy_failure_preserves_or_replaces_complete_package(asset_fixture, monkeypatch):
+def test_asset_final_copy_failure_preserves_or_replaces_complete_package(
+    asset_fixture, monkeypatch
+):
     helper, repo, source, project, destination = asset_fixture
     source_before = snapshot(source)
     before = snapshot(destination)
@@ -234,10 +252,12 @@ def test_asset_final_copy_failure_preserves_or_replaces_complete_package(asset_f
     except OSError:
         assert snapshot(destination) == before
     else:
-        prepared = {name: content.replace(b"\r\n", b"\n")
-                    for name, content in snapshot(destination).items()}
-        expected = {name: content.replace(b"\r\n", b"\n")
-                    for name, content in source_before.items()}
+        prepared = {
+            name: content.replace(b"\r\n", b"\n") for name, content in snapshot(destination).items()
+        }
+        expected = {
+            name: content.replace(b"\r\n", b"\n") for name, content in source_before.items()
+        }
         expected["Editor/Setup/SetupWindowService.cs"] = b"class Setup {}\n"
         expected["Editor/Helpers/HttpEndpointUtility.cs"] = (
             b'private const string DefaultRemoteBaseUrl = "https://example.test/mcp";\n'
@@ -250,7 +270,9 @@ def test_asset_final_copy_failure_preserves_or_replaces_complete_package(asset_f
 
 
 @pytest.mark.parametrize("has_previous", [True, False])
-def test_asset_install_failure_restores_existing_destination(asset_fixture, monkeypatch, has_previous):
+def test_asset_install_failure_restores_existing_destination(
+    asset_fixture, monkeypatch, has_previous
+):
     helper, repo, source, project, destination = asset_fixture
     if not has_previous:
         (destination / "old.txt").unlink()

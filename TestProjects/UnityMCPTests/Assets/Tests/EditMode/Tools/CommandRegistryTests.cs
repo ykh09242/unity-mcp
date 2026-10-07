@@ -8,9 +8,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Resources;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
-using MCPForUnity.Editor.Tools;
 using UnityEngine;
 using UnityEngine.TestTools;
 
@@ -30,10 +30,13 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var unknown = "nonexistent_command_that_should_not_exist";
 
-            Assert.Throws<InvalidOperationException>(() =>
-            {
-                CommandRegistry.GetHandler(unknown);
-            }, "Should throw InvalidOperationException for unknown handler");
+            Assert.Throws<InvalidOperationException>(
+                () =>
+                {
+                    CommandRegistry.GetHandler(unknown);
+                },
+                "Should throw InvalidOperationException for unknown handler"
+            );
         }
 
         [TestCase(false, false, false)]
@@ -49,13 +52,11 @@ namespace MCPForUnityTests.Editor.Tools
             string command = "registry_order_test_" + Guid.NewGuid().ToString("N");
             string assemblyPrefix = "RegistryOrder" + Guid.NewGuid().ToString("N");
             var first = EmitHandler(assemblyPrefix + "A", "RegistryOrder.AHandler", command, resource, "sync");
-            var last = EmitHandler(assemblyPrefix + "B", fullNameTie ? first.FullName : "RegistryOrder.BHandler",
-                command, resource, "sync");
+            var last = EmitHandler(assemblyPrefix + "B", fullNameTie ? first.FullName : "RegistryOrder.BHandler", command, resource, "sync");
             var input = reverse ? new[] { last, first } : new[] { first, last };
             try
             {
-                var registerTypes = typeof(CommandRegistry).GetMethod("RegisterCommandTypes",
-                    BindingFlags.Static | BindingFlags.NonPublic);
+                var registerTypes = typeof(CommandRegistry).GetMethod("RegisterCommandTypes", BindingFlags.Static | BindingFlags.NonPublic);
                 Assert.IsNotNull(registerTypes, "Registration must expose the production enumeration path for this regression.");
                 Assert.AreEqual(2, registerTypes.Invoke(null, new object[] { input, resource }));
                 var metadataOrder = ToolDiscoveryService.InRegistrationOrder(input).ToArray();
@@ -63,26 +64,27 @@ namespace MCPForUnityTests.Editor.Tools
                 object metadata;
                 if (resource)
                 {
-                    var method = typeof(ResourceDiscoveryService).GetMethod("ExtractResourceMetadata",
-                        BindingFlags.Instance | BindingFlags.NonPublic);
-                    metadata = method.Invoke(new ResourceDiscoveryService(), new object[]
-                    {
-                        metadataOrder.Last(), metadataOrder.Last().GetCustomAttribute<McpForUnityResourceAttribute>()
-                    });
+                    var method = typeof(ResourceDiscoveryService).GetMethod("ExtractResourceMetadata", BindingFlags.Instance | BindingFlags.NonPublic);
+                    metadata = method.Invoke(
+                        new ResourceDiscoveryService(),
+                        new object[] { metadataOrder.Last(), metadataOrder.Last().GetCustomAttribute<McpForUnityResourceAttribute>() }
+                    );
                 }
                 else
                 {
-                    var method = typeof(ToolDiscoveryService).GetMethod("ExtractToolMetadata",
-                        BindingFlags.Instance | BindingFlags.NonPublic);
-                    metadata = method.Invoke(new ToolDiscoveryService(), new object[]
-                    {
-                        metadataOrder.Last(), metadataOrder.Last().GetCustomAttribute<McpForUnityToolAttribute>()
-                    });
+                    var method = typeof(ToolDiscoveryService).GetMethod("ExtractToolMetadata", BindingFlags.Instance | BindingFlags.NonPublic);
+                    metadata = method.Invoke(
+                        new ToolDiscoveryService(),
+                        new object[] { metadataOrder.Last(), metadataOrder.Last().GetCustomAttribute<McpForUnityToolAttribute>() }
+                    );
                 }
                 string metadataAssembly = (string)metadata.GetType().GetProperty("AssemblyName").GetValue(metadata);
                 Assert.AreEqual(metadataAssembly, CommandRegistry.GetHandler(command)(new JObject()));
             }
-            finally { RemoveTestHandler(command); }
+            finally
+            {
+                RemoveTestHandler(command);
+            }
         }
 
         [TestCase(false, "ambiguous")]
@@ -117,8 +119,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsTrue(RegisterTestHandler(async, resource));
                 Assert.Throws<InvalidOperationException>(() => CommandRegistry.GetHandler(prefix));
                 Assert.AreEqual(sync.Assembly.GetName().Name, CommandRegistry.GetHandler(prefix + "_sync")(new JObject()));
-                Assert.AreEqual(async.Assembly.GetName().Name,
-                    CommandRegistry.InvokeCommandAsync(prefix + "_async", new JObject()).GetAwaiter().GetResult());
+                Assert.AreEqual(async.Assembly.GetName().Name, CommandRegistry.InvokeCommandAsync(prefix + "_async", new JObject()).GetAwaiter().GetResult());
             }
             finally
             {
@@ -149,8 +150,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void Registration_PreservesSupportedSyncAndAsyncSignatures(bool resource, string signature)
         {
             string command = "registry_signature_test_" + Guid.NewGuid().ToString("N");
-            Type type = EmitHandler("RegistrySignature" + Guid.NewGuid().ToString("N"),
-                "RegistrySignature.Handler", command, resource, signature);
+            Type type = EmitHandler("RegistrySignature" + Guid.NewGuid().ToString("N"), "RegistrySignature.Handler", command, resource, signature);
             try
             {
                 Assert.IsTrue(RegisterTestHandler(type, resource));
@@ -162,7 +162,10 @@ namespace MCPForUnityTests.Editor.Tools
                 else
                     Assert.IsNotNull(CommandRegistry.GetHandler(command));
             }
-            finally { RemoveTestHandler(command); }
+            finally
+            {
+                RemoveTestHandler(command);
+            }
         }
 
         [TestCase(false, false)]
@@ -172,8 +175,13 @@ namespace MCPForUnityTests.Editor.Tools
         public void Registration_AsyncFailureAndCancellationRemainErrors(bool resource, bool canceled)
         {
             string command = "registry_failure_test_" + Guid.NewGuid().ToString("N");
-            Type type = EmitHandler("RegistryFailure" + Guid.NewGuid().ToString("N"),
-                "RegistryFailure.Handler", command, resource, canceled ? "asyncCanceled" : "asyncFault");
+            Type type = EmitHandler(
+                "RegistryFailure" + Guid.NewGuid().ToString("N"),
+                "RegistryFailure.Handler",
+                command,
+                resource,
+                canceled ? "asyncCanceled" : "asyncFault"
+            );
             try
             {
                 Assert.IsTrue(RegisterTestHandler(type, resource));
@@ -187,7 +195,10 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsTrue(completion.Task.IsCompleted);
                 Assert.AreEqual("error", JObject.Parse(completion.Task.Result)["status"].Value<string>());
             }
-            finally { RemoveTestHandler(command); }
+            finally
+            {
+                RemoveTestHandler(command);
+            }
         }
 
         private static Type EmitHandler(string assemblyName, string fullName, string command, bool resource, string signature)
@@ -195,19 +206,19 @@ namespace MCPForUnityTests.Editor.Tools
             var assembly = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName(assemblyName), AssemblyBuilderAccess.Run);
             var type = assembly.DefineDynamicModule(assemblyName).DefineType(fullName, TypeAttributes.Public);
             Type attribute = resource ? typeof(McpForUnityResourceAttribute) : typeof(McpForUnityToolAttribute);
-            type.SetCustomAttribute(new CustomAttributeBuilder(attribute.GetConstructor(new[] { typeof(string) }),
-                new object[] { command }));
+            type.SetCustomAttribute(new CustomAttributeBuilder(attribute.GetConstructor(new[] { typeof(string) }), new object[] { command }));
             if (signature != "missing")
             {
-                Type returnType = signature is "asyncTask" or "asyncCompleted" or "asyncStateMachine" or "asyncBaseWithValue" ? typeof(Task) :
-                    signature == "asyncDerived" ? typeof(DerivedResultTask) :
-                    signature == "asyncReference" ? typeof(Task<string>) :
-                    signature is "asyncObject" or "genericAsync" or "asyncFault" or "asyncCanceled" ? typeof(Task<object>) :
-                    signature == "syncReference" ? typeof(string) :
-                    signature == "valueReturn" ? typeof(int) :
-                    signature == "voidReturn" ? typeof(void) : typeof(object);
-                DefineHandlerMethod(type, returnType, assemblyName, signature,
-                    signature is "genericAsync" or "genericSync");
+                Type returnType =
+                    signature is "asyncTask" or "asyncCompleted" or "asyncStateMachine" or "asyncBaseWithValue" ? typeof(Task)
+                    : signature == "asyncDerived" ? typeof(DerivedResultTask)
+                    : signature == "asyncReference" ? typeof(Task<string>)
+                    : signature is "asyncObject" or "genericAsync" or "asyncFault" or "asyncCanceled" ? typeof(Task<object>)
+                    : signature == "syncReference" ? typeof(string)
+                    : signature == "valueReturn" ? typeof(int)
+                    : signature == "voidReturn" ? typeof(void)
+                    : typeof(object);
+                DefineHandlerMethod(type, returnType, assemblyName, signature, signature is "genericAsync" or "genericSync");
                 if (signature == "ambiguous")
                     DefineHandlerMethod(type, returnType, assemblyName, signature, true);
             }
@@ -217,10 +228,11 @@ namespace MCPForUnityTests.Editor.Tools
         private static void DefineHandlerMethod(TypeBuilder type, Type returnType, string result, string signature, bool generic)
         {
             var flags = MethodAttributes.Public;
-            if (signature != "instance") flags |= MethodAttributes.Static;
-            var method = type.DefineMethod("HandleCommand", flags, returnType,
-                new[] { signature == "wrongParameter" ? typeof(string) : typeof(JObject) });
-            if (generic) method.DefineGenericParameters("T");
+            if (signature != "instance")
+                flags |= MethodAttributes.Static;
+            var method = type.DefineMethod("HandleCommand", flags, returnType, new[] { signature == "wrongParameter" ? typeof(string) : typeof(JObject) });
+            if (generic)
+                method.DefineGenericParameters("T");
             var il = method.GetILGenerator();
             if (returnType == typeof(Task))
             {
@@ -243,8 +255,10 @@ namespace MCPForUnityTests.Editor.Tools
                 il.Emit(OpCodes.Ldstr, result);
                 if (signature is "asyncFault" or "asyncCanceled" or "asyncDerived")
                 {
-                    string factory = signature == "asyncFault" ? nameof(CreateFaultedTask) :
-                        signature == "asyncCanceled" ? nameof(CreateCanceledTask) : nameof(CreateDerivedResultTask);
+                    string factory =
+                        signature == "asyncFault" ? nameof(CreateFaultedTask)
+                        : signature == "asyncCanceled" ? nameof(CreateCanceledTask)
+                        : nameof(CreateDerivedResultTask);
                     il.Emit(OpCodes.Call, typeof(CommandRegistryTests).GetMethod(factory));
                 }
                 else if (typeof(Task).IsAssignableFrom(returnType))
@@ -263,16 +277,21 @@ namespace MCPForUnityTests.Editor.Tools
             return task;
         }
 
-        public static async Task CreateCompletedAsyncTask() { await Task.CompletedTask; }
+        public static async Task CreateCompletedAsyncTask()
+        {
+            await Task.CompletedTask;
+        }
+
         public static Task CreateBaseTaskWithValue(string value) => Task.FromResult(value);
-        public static Task<object> CreateFaultedTask(string message) =>
-            Task.FromException<object>(new InvalidOperationException(message));
-        public static Task<object> CreateCanceledTask(string unused) =>
-            Task.FromCanceled<object>(new CancellationToken(true));
+
+        public static Task<object> CreateFaultedTask(string message) => Task.FromException<object>(new InvalidOperationException(message));
+
+        public static Task<object> CreateCanceledTask(string unused) => Task.FromCanceled<object>(new CancellationToken(true));
 
         public class DerivedResultTask : Task<string>
         {
-            public DerivedResultTask(string value) : base(() => value) { }
+            public DerivedResultTask(string value)
+                : base(() => value) { }
         }
 
         public static DerivedResultTask CreateDerivedResultTask(string value)
@@ -285,8 +304,14 @@ namespace MCPForUnityTests.Editor.Tools
         private static bool RegisterTestHandler(Type type, bool resource)
         {
             var method = typeof(CommandRegistry).GetMethod("RegisterCommandType", BindingFlags.Static | BindingFlags.NonPublic);
-            try { return (bool)method.Invoke(null, new object[] { type, resource }); }
-            catch (TargetInvocationException ex) { throw ex.InnerException ?? ex; }
+            try
+            {
+                return (bool)method.Invoke(null, new object[] { type, resource });
+            }
+            catch (TargetInvocationException ex)
+            {
+                throw ex.InnerException ?? ex;
+            }
         }
 
         private static void RemoveTestHandler(string command)
@@ -310,7 +335,7 @@ namespace MCPForUnityTests.Editor.Tools
                 "manage_ugui",
                 "read_console",
                 "execute_menu_item",
-                "manage_prefabs"
+                "manage_prefabs",
             };
 
             foreach (var toolName in expectedTools)
@@ -333,16 +358,13 @@ namespace MCPForUnityTests.Editor.Tools
             // and batch_execute (InvokeCommandAsync) must both wait for that Task instead of
             // answering with the Task object itself.
             const string name = "__test_sync_handler_returns_task";
-            var handlers = (IDictionary)typeof(CommandRegistry)
-                .GetField("_handlers", BindingFlags.NonPublic | BindingFlags.Static)
-                .GetValue(null);
+            var handlers = (IDictionary)typeof(CommandRegistry).GetField("_handlers", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
             var pending = new TaskCompletionSource<object>();
             handlers[name] = new HandlerInfo(name, _ => pending.Task, null);
             try
             {
                 var tcs = new TaskCompletionSource<string>();
-                Assert.IsNull(CommandRegistry.ExecuteCommand(name, new JObject(), tcs),
-                    "the answer must come through the completion source, after the task");
+                Assert.IsNull(CommandRegistry.ExecuteCommand(name, new JObject(), tcs), "the answer must come through the completion source, after the task");
                 Assert.AreSame(pending.Task, CommandRegistry.InvokeCommandAsync(name, new JObject()));
                 Assert.IsFalse(tcs.Task.IsCompleted, "the command answered before its task finished");
 

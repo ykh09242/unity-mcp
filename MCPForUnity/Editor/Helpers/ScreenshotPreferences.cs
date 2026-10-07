@@ -40,9 +40,11 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static string Resolve(string callerOverride)
         {
-            if (!string.IsNullOrWhiteSpace(callerOverride)) return callerOverride.Trim();
+            if (!string.IsNullOrWhiteSpace(callerOverride))
+                return callerOverride.Trim();
             string pref = DefaultFolder;
-            if (!string.IsNullOrWhiteSpace(pref)) return pref;
+            if (!string.IsNullOrWhiteSpace(pref))
+                return pref;
             return ScreenshotUtility.DefaultFolder;
         }
     }

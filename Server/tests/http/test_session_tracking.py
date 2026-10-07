@@ -22,7 +22,9 @@ class ToolChangeHandler(MessageHandler):
 
 
 @pytest.mark.asyncio
-async def test_catalog_notification_reaches_live_connection_and_cleans_up(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_catalog_notification_reaches_live_connection_and_cleans_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     connections: WeakSet[Connection] = WeakSet()
     monkeypatch.setattr("transport.plugin_hub._active_mcp_sessions", connections)
     server = FastMCP("catalog-notification")

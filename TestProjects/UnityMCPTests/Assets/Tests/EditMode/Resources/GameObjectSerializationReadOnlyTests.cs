@@ -4,12 +4,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
 using Object = UnityEngine.Object;
 
@@ -57,8 +57,7 @@ namespace MCPForUnityTests.Editor.Resources
         }
 
         [Test]
-        public void PlainNullDateValue_RemainsNull()
-            => Assert.IsNull(ConvertPlainValue(JValue.CreateNull()));
+        public void PlainNullDateValue_RemainsNull() => Assert.IsNull(ConvertPlainValue(JValue.CreateNull()));
 
         [TestCase(0)]
         [TestCase(9)]
@@ -153,9 +152,12 @@ namespace MCPForUnityTests.Editor.Resources
                 if (filter != null && filter.sharedMesh != null && filter.sharedMesh != mesh)
                     Object.DestroyImmediate(filter.sharedMesh);
                 Object.DestroyImmediate(go);
-                if (first != null) Object.DestroyImmediate(first);
-                if (second != null) Object.DestroyImmediate(second);
-                if (mesh != null) Object.DestroyImmediate(mesh);
+                if (first != null)
+                    Object.DestroyImmediate(first);
+                if (second != null)
+                    Object.DestroyImmediate(second);
+                if (mesh != null)
+                    Object.DestroyImmediate(mesh);
             }
         }
 

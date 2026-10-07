@@ -7,18 +7,23 @@ from services.tools.manage_scene import manage_scene
 def _get_decorator_module():
     # Import the telemetry_decorator module from the MCP for Unity server src
     import sys
+
     # Tests can now import directly from parent package
     # Remove any previously stubbed module to force real import
     sys.modules.pop("core.telemetry_decorator", None)
     mod = importlib.import_module("core.telemetry_decorator")
     # Ensure attributes exist for monkeypatch targets even if not exported
     if not hasattr(mod, "record_tool_usage"):
+
         def _noop_record_tool_usage(*a, **k):
             pass
+
         mod.record_tool_usage = _noop_record_tool_usage
     if not hasattr(mod, "record_milestone"):
+
         def _noop_record_milestone(*a, **k):
             pass
+
         mod.record_milestone = _noop_record_milestone
     if not hasattr(mod, "_decorator_log_count"):
         mod._decorator_log_count = 0

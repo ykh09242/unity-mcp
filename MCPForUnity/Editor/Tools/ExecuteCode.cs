@@ -43,8 +43,7 @@ namespace MCPForUnity.Editor.Tools
         // domain reload (see issue #1351). Cache the compiled output keyed on the wrapped
         // source so repeated calls reuse one assembly.
         private const int MaxCompiledCacheEntries = 64;
-        private static readonly Dictionary<string, CompiledSnippet> _compiledCache =
-            new Dictionary<string, CompiledSnippet>(StringComparer.Ordinal);
+        private static readonly Dictionary<string, CompiledSnippet> _compiledCache = new Dictionary<string, CompiledSnippet>(StringComparer.Ordinal);
         private static readonly LinkedList<string> _compiledCacheOrder = new LinkedList<string>();
 
         private readonly struct CompiledSnippet
@@ -133,7 +132,8 @@ namespace MCPForUnity.Editor.Tools
                     return HandleReplay(@params);
                 default:
                     return new ErrorResponse(
-                        $"Unknown action: '{action}'. Valid actions: {ActionExecute}, {ActionGetHistory}, {ActionClearHistory}, {ActionReplay}");
+                        $"Unknown action: '{action}'. Valid actions: {ActionExecute}, {ActionGetHistory}, {ActionClearHistory}, {ActionReplay}"
+                    );
             }
         }
 
@@ -154,8 +154,7 @@ namespace MCPForUnity.Editor.Tools
             var compilerToken = @params["compiler"];
             if (compilerToken != null && compilerToken.Type != JTokenType.Null && compilerToken.Type != JTokenType.String)
                 return new ErrorResponse("Invalid parameter 'compiler': expected String.");
-            string compiler = compilerToken == null || compilerToken.Type == JTokenType.Null
-                ? "auto" : compilerToken.Value<string>().ToLowerInvariant();
+            string compiler = compilerToken == null || compilerToken.Type == JTokenType.Null ? "auto" : compilerToken.Value<string>().ToLowerInvariant();
             if (compiler != "auto" && compiler != "roslyn" && compiler != "codedom")
                 return new ErrorResponse("Invalid compiler. Valid options: auto, roslyn, codedom.");
 
@@ -194,23 +193,29 @@ namespace MCPForUnity.Editor.Tools
                 return new SuccessResponse("No execution history.", new { total = 0, entries = new object[0] });
 
             var entries = _history.Skip(Math.Max(0, _history.Count - limit)).ToList();
-            return new SuccessResponse($"Returning {entries.Count} of {_history.Count} history entries.", new
-            {
-                total = _history.Count,
-                entries = entries.Select((e, i) => new
+            return new SuccessResponse(
+                $"Returning {entries.Count} of {_history.Count} history entries.",
+                new
                 {
-                    index = _history.Count - entries.Count + i,
-                    codePreview = e.code.Length > MaxHistoryCodePreview
-                        ? e.code.Substring(0, MaxHistoryCodePreview) + "..."
-                        : e.code,
-                    e.success,
-                    e.resultPreview,
-                    e.elapsedMs,
-                    e.timestamp,
-                    e.safetyChecksEnabled,
-                    e.compiler,
-                }).ToList(),
-            });
+                    total = _history.Count,
+                    entries = entries
+                        .Select(
+                            (e, i) =>
+                                new
+                                {
+                                    index = _history.Count - entries.Count + i,
+                                    codePreview = e.code.Length > MaxHistoryCodePreview ? e.code.Substring(0, MaxHistoryCodePreview) + "..." : e.code,
+                                    e.success,
+                                    e.resultPreview,
+                                    e.elapsedMs,
+                                    e.timestamp,
+                                    e.safetyChecksEnabled,
+                                    e.compiler,
+                                }
+                        )
+                        .ToList(),
+                }
+            );
         }
 
         private static object HandleClearHistory()
@@ -231,13 +236,15 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Invalid history index. Valid range: 0-{_history.Count - 1}");
 
             var entry = _history[index.Value];
-            var replayParams = JObject.FromObject(new
-            {
-                action = ActionExecute,
-                code = entry.code,
-                safety_checks = entry.safetyChecksEnabled,
-                compiler = entry.compiler ?? "auto",
-            });
+            var replayParams = JObject.FromObject(
+                new
+                {
+                    action = ActionExecute,
+                    code = entry.code,
+                    safety_checks = entry.safetyChecksEnabled,
+                    compiler = entry.compiler ?? "auto",
+                }
+            );
             return HandleExecute(replayParams);
         }
 
@@ -350,12 +357,18 @@ namespace MCPForUnity.Editor.Tools
             }
 
             if (executionError != null)
-                return new ErrorResponse($"Runtime error: {executionError.Message}",
-                    new { exceptionType = executionError.GetType().Name, stackTrace = executionError.StackTrace, compiler = compilerUsed });
+                return new ErrorResponse(
+                    $"Runtime error: {executionError.Message}",
+                    new
+                    {
+                        exceptionType = executionError.GetType().Name,
+                        stackTrace = executionError.StackTrace,
+                        compiler = compilerUsed,
+                    }
+                );
 
             if (result != null)
-                return new SuccessResponse("Code executed successfully.",
-                    new { result = SerializeResult(result), compiler = compilerUsed });
+                return new SuccessResponse("Code executed successfully.", new { result = SerializeResult(result), compiler = compilerUsed });
 
             return new SuccessResponse("Code executed successfully.", new { compiler = compilerUsed });
         }
@@ -437,14 +450,22 @@ namespace MCPForUnity.Editor.Tools
                     }
                     finally
                     {
-                        try { if (File.Exists(outputAssemblyPath)) File.Delete(outputAssemblyPath); }
+                        try
+                        {
+                            if (File.Exists(outputAssemblyPath))
+                                File.Delete(outputAssemblyPath);
+                        }
                         catch { /* best effort cleanup */ }
                     }
                 }
             }
             finally
             {
-                try { if (File.Exists(responseFilePath)) File.Delete(responseFilePath); }
+                try
+                {
+                    if (File.Exists(responseFilePath))
+                        File.Delete(responseFilePath);
+                }
                 catch { /* best effort */ }
             }
         }
@@ -466,12 +487,10 @@ namespace MCPForUnity.Editor.Tools
             if (useCache && _cachedCodeDomAssemblyPaths != null)
                 return _cachedCodeDomAssemblyPaths;
 
-            var hasNetstandard = allPaths.Any(p =>
-                string.Equals(Path.GetFileNameWithoutExtension(p), "netstandard", StringComparison.OrdinalIgnoreCase));
+            var hasNetstandard = allPaths.Any(p => string.Equals(Path.GetFileNameWithoutExtension(p), "netstandard", StringComparison.OrdinalIgnoreCase));
 
             var filtered = hasNetstandard
-                ? allPaths.Where(p =>
-                    !_codedomDuplicateAssemblies.Contains(Path.GetFileNameWithoutExtension(p))).ToArray()
+                ? allPaths.Where(p => !_codedomDuplicateAssemblies.Contains(Path.GetFileNameWithoutExtension(p))).ToArray()
                 : allPaths;
 
             var result = DeduplicateAssemblyPathsForCodeDom(filtered);
@@ -497,9 +516,7 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
 
-            var groups = candidates
-                .GroupBy(candidate => candidate.AssemblyName.Name, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+            var groups = candidates.GroupBy(candidate => candidate.AssemblyName.Name, StringComparer.OrdinalIgnoreCase).ToArray();
 
             if (groups.All(group => group.Count() == 1))
                 return paths;
@@ -526,7 +543,8 @@ namespace MCPForUnity.Editor.Tools
 
             foreach (var assembly in UnityAssembliesCompat.GetLoadedAssemblies())
             {
-                if (assembly.IsDynamic) continue;
+                if (assembly.IsDynamic)
+                    continue;
 
                 AssemblyName[] referencedAssemblies;
                 try
@@ -613,10 +631,13 @@ namespace MCPForUnity.Editor.Tools
             {
                 try
                 {
-                    if (assembly.IsDynamic) continue;
+                    if (assembly.IsDynamic)
+                        continue;
                     var location = assembly.Location;
-                    if (string.IsNullOrEmpty(location)) continue;
-                    if (!File.Exists(location)) continue;
+                    if (string.IsNullOrEmpty(location))
+                        continue;
+                    if (!File.Exists(location))
+                        continue;
                     paths.Add(location);
                 }
                 catch (NotSupportedException)
@@ -653,16 +674,18 @@ namespace MCPForUnity.Editor.Tools
             if (preview != null && preview.Length > 200)
                 preview = preview.Substring(0, 200) + "...";
 
-            _history.Add(new HistoryEntry
-            {
-                code = code,
-                success = result is SuccessResponse,
-                resultPreview = preview,
-                elapsedMs = Math.Round(elapsedMs, 1),
-                timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                safetyChecksEnabled = safetyChecks,
-                compiler = compiler,
-            });
+            _history.Add(
+                new HistoryEntry
+                {
+                    code = code,
+                    success = result is SuccessResponse,
+                    resultPreview = preview,
+                    elapsedMs = Math.Round(elapsedMs, 1),
+                    timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    safetyChecksEnabled = safetyChecks,
+                    compiler = compiler,
+                }
+            );
 
             while (_history.Count > MaxHistoryEntries)
                 _history.RemoveAt(0);
@@ -670,7 +693,8 @@ namespace MCPForUnity.Editor.Tools
 
         private static object SerializeResult(object result)
         {
-            if (result == null) return null;
+            if (result == null)
+                return null;
 
             var type = result.GetType();
             if (type.IsPrimitive || result is string || result is decimal)
@@ -763,14 +787,23 @@ namespace MCPForUnity.Editor.Tools
                 _outputKindEnum = Type.GetType("Microsoft.CodeAnalysis.OutputKind, Microsoft.CodeAnalysis");
                 _languageVersionEnum = Type.GetType("Microsoft.CodeAnalysis.CSharp.LanguageVersion, Microsoft.CodeAnalysis.CSharp");
 
-                if (_syntaxTreeType == null || _compilationType == null || _compilationOptionsType == null ||
-                    _parseOptionsType == null || _metadataReferenceType == null || _outputKindEnum == null ||
-                    _languageVersionEnum == null)
+                if (
+                    _syntaxTreeType == null
+                    || _compilationType == null
+                    || _compilationOptionsType == null
+                    || _parseOptionsType == null
+                    || _metadataReferenceType == null
+                    || _outputKindEnum == null
+                    || _languageVersionEnum == null
+                )
                     return false;
 
                 // CSharpSyntaxTree.ParseText(string, CSharpParseOptions, string, Encoding, CancellationToken)
                 var syntaxTreeBase = Type.GetType("Microsoft.CodeAnalysis.SyntaxTree, Microsoft.CodeAnalysis");
-                _parseText = _syntaxTreeType.GetMethod("ParseText", new[] { typeof(string), _parseOptionsType, typeof(string), typeof(Encoding), typeof(System.Threading.CancellationToken) });
+                _parseText = _syntaxTreeType.GetMethod(
+                    "ParseText",
+                    new[] { typeof(string), _parseOptionsType, typeof(string), typeof(Encoding), typeof(System.Threading.CancellationToken) }
+                );
                 if (_parseText == null)
                     return false;
 
@@ -778,21 +811,25 @@ namespace MCPForUnity.Editor.Tools
                 var metadataRefBase = _metadataReferenceType;
                 var syntaxTreeEnumerable = typeof(IEnumerable<>).MakeGenericType(syntaxTreeBase);
                 var metadataRefEnumerable = typeof(IEnumerable<>).MakeGenericType(metadataRefBase);
-                _createCompilation = _compilationType.GetMethod("Create", new[] { typeof(string), syntaxTreeEnumerable, metadataRefEnumerable, _compilationOptionsType });
+                _createCompilation = _compilationType.GetMethod(
+                    "Create",
+                    new[] { typeof(string), syntaxTreeEnumerable, metadataRefEnumerable, _compilationOptionsType }
+                );
                 if (_createCompilation == null)
                     return false;
 
                 // MetadataReference.CreateFromFile(string, MetadataReferenceProperties, DocumentationProvider)
-                _createFromFile = _metadataReferenceType.GetMethods(BindingFlags.Public | BindingFlags.Static)
-                    .FirstOrDefault(m => m.Name == "CreateFromFile");
+                _createFromFile = _metadataReferenceType.GetMethods(BindingFlags.Public | BindingFlags.Static).FirstOrDefault(m => m.Name == "CreateFromFile");
                 if (_createFromFile == null)
                     return false;
 
                 // Emit has no single-param overload; the simplest is
                 // Emit(Stream, Stream, Stream, Stream, IEnumerable<ResourceDescription>, EmitOptions, CancellationToken)
                 var compilationBase = Type.GetType("Microsoft.CodeAnalysis.Compilation, Microsoft.CodeAnalysis");
-                if (compilationBase == null) return false;
-                _emit = compilationBase.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                if (compilationBase == null)
+                    return false;
+                _emit = compilationBase
+                    .GetMethods(BindingFlags.Public | BindingFlags.Instance)
                     .Where(m => m.Name == "Emit")
                     .OrderBy(m => m.GetParameters().Length)
                     .FirstOrDefault();
@@ -890,7 +927,8 @@ namespace MCPForUnity.Editor.Tools
                         {
                             var sevProp = diag.GetType().GetProperty("Severity");
                             var severity = sevProp.GetValue(diag);
-                            if (!severity.Equals(severityError)) continue;
+                            if (!severity.Equals(severityError))
+                                continue;
 
                             var locProp = diag.GetType().GetProperty("Location");
                             var loc = locProp.GetValue(diag);
@@ -921,7 +959,8 @@ namespace MCPForUnity.Editor.Tools
                 // useful (e.g. a missing transitive dep manifests as the generic "Exception has been
                 // thrown by the target of an invocation.").
                 Exception root = e;
-                while (root.InnerException != null) root = root.InnerException;
+                while (root.InnerException != null)
+                    root = root.InnerException;
                 errors.Add($"Roslyn compilation error: {root.GetType().Name}: {root.Message}");
                 return null;
             }

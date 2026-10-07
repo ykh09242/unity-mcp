@@ -1,11 +1,11 @@
 using System;
 using System.Text.RegularExpressions;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
-using Newtonsoft.Json.Linq;
-using MCPForUnity.Editor.Tools;
-using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -48,7 +48,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = testGameObject.name,
                 ["componentType"] = "AudioSource",
                 ["property"] = "spatialBlend",
-                ["value"] = JArray.Parse("[0, 0]")  // Array for float = error
+                ["value"] = JArray.Parse("[0, 0]"), // Array for float = error
             };
 
             var result = ManageComponents.HandleCommand(setPropertyParams);

@@ -9,17 +9,26 @@ namespace MCPForUnityTests.Editor.AssetGen
     {
         private const string Resp = "https://queue.fal.run/fal-ai/flux-2/requests/r1";
 
-        private static HttpResult Json(string body) => new HttpResult { Status = 200, IsSuccess = true, Text = body };
+        private static HttpResult Json(string body) =>
+            new HttpResult
+            {
+                Status = 200,
+                IsSuccess = true,
+                Text = body,
+            };
 
-        private static ImageGenRequest Req() => new ImageGenRequest { Provider = "fal", Mode = "text", Prompt = "a cat" };
+        private static ImageGenRequest Req() =>
+            new ImageGenRequest
+            {
+                Provider = "fal",
+                Mode = "text",
+                Prompt = "a cat",
+            };
 
         [Test]
         public void Submit_PostsModelEndpoint_WithKeyHeader_ReturnsResponseUrl()
         {
-            var fake = new FakeHttpTransport
-            {
-                Handler = spec => Json("{\"request_id\":\"r1\",\"response_url\":\"" + Resp + "\"}")
-            };
+            var fake = new FakeHttpTransport { Handler = spec => Json("{\"request_id\":\"r1\",\"response_url\":\"" + Resp + "\"}") };
             var adapter = new FalAdapter();
 
             string pid = adapter.SubmitAsync(Req(), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
@@ -35,12 +44,16 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void Submit_WithDimensions_IncludesImageSize()
         {
-            var fake = new FakeHttpTransport
-            {
-                Handler = spec => Json("{\"request_id\":\"r1\",\"response_url\":\"" + Resp + "\"}")
-            };
+            var fake = new FakeHttpTransport { Handler = spec => Json("{\"request_id\":\"r1\",\"response_url\":\"" + Resp + "\"}") };
             var adapter = new FalAdapter();
-            var req = new ImageGenRequest { Provider = "fal", Mode = "text", Prompt = "a cat", Width = 512, Height = 768 };
+            var req = new ImageGenRequest
+            {
+                Provider = "fal",
+                Mode = "text",
+                Prompt = "a cat",
+                Width = 512,
+                Height = 768,
+            };
 
             adapter.SubmitAsync(req, "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -55,7 +68,13 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var fake = new FakeHttpTransport { Handler = _ => Json("{\"response_url\":\"" + Resp + "\"}") };
             var adapter = new FalAdapter();
-            var req = new ImageGenRequest { Provider = "fal", Mode = "image", Prompt = "make it night", ImageUrl = "https://ex.com/in.png" };
+            var req = new ImageGenRequest
+            {
+                Provider = "fal",
+                Mode = "image",
+                Prompt = "make it night",
+                ImageUrl = "https://ex.com/in.png",
+            };
 
             adapter.SubmitAsync(req, "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -73,9 +92,10 @@ namespace MCPForUnityTests.Editor.AssetGen
             {
                 Handler = spec =>
                 {
-                    if (spec.Url.EndsWith("/status")) return Json("{\"status\":\"COMPLETED\"}");
+                    if (spec.Url.EndsWith("/status"))
+                        return Json("{\"status\":\"COMPLETED\"}");
                     return Json("{\"images\":[{\"url\":\"https://cdn.example.com/img.png\"}]}");
-                }
+                },
             };
             var adapter = new FalAdapter();
 
@@ -90,7 +110,15 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var fake = new FakeHttpTransport { Handler = _ => Json("{\"response_url\":\"" + Resp + "\"}") };
             var adapter = new FalAdapter();
-            var req = new ImageGenRequest { Provider = "fal", Mode = "image", Prompt = "edit", ImageUrl = "https://ex.com/in.png", Width = 512, Height = 512 };
+            var req = new ImageGenRequest
+            {
+                Provider = "fal",
+                Mode = "image",
+                Prompt = "edit",
+                ImageUrl = "https://ex.com/in.png",
+                Width = 512,
+                Height = 512,
+            };
 
             adapter.SubmitAsync(req, "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -103,7 +131,13 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var fake = new FakeHttpTransport { Handler = _ => Json("{\"request_id\":\"r1\"}") }; // no response_url
             var adapter = new FalAdapter();
-            var req = new ImageGenRequest { Provider = "fal", Mode = "image", Prompt = "edit", ImageUrl = "https://ex.com/in.png" };
+            var req = new ImageGenRequest
+            {
+                Provider = "fal",
+                Mode = "image",
+                Prompt = "edit",
+                ImageUrl = "https://ex.com/in.png",
+            };
 
             string pid = adapter.SubmitAsync(req, "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -143,8 +177,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             var adapter = new FalAdapter();
 
             Assert.Throws<System.Exception>(() =>
-                adapter.PollAsync("https://attacker.example/harvest", "falkey123", fake, CancellationToken.None)
-                       .GetAwaiter().GetResult());
+                adapter.PollAsync("https://attacker.example/harvest", "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult()
+            );
             Assert.IsEmpty(fake.RecordedRequests, "no request (and no key) may be sent to a foreign host");
         }
 
@@ -155,8 +189,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var fake = new FakeHttpTransport { Handler = _ => Json("{\"response_url\":\"https://evil.example/x\"}") };
             var adapter = new FalAdapter();
 
-            Assert.Throws<System.Exception>(() =>
-                adapter.SubmitAsync(Req(), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult());
+            Assert.Throws<System.Exception>(() => adapter.SubmitAsync(Req(), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult());
         }
     }
 }

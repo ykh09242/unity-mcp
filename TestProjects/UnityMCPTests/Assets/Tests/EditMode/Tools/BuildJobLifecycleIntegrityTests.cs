@@ -20,13 +20,10 @@ namespace MCPForUnityTests.EditMode.Tools
         private bool capturedStore;
 
         private static Dictionary<string, BuildJob> Jobs =>
-            (Dictionary<string, BuildJob>)typeof(BuildJobStore).GetField("_buildJobs",
-                BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            (Dictionary<string, BuildJob>)typeof(BuildJobStore).GetField("_buildJobs", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
         private static Dictionary<string, BatchJob> Batches =>
-            (Dictionary<string, BatchJob>)typeof(BuildJobStore).GetField("_batchJobs",
-                BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
-        private static readonly FieldInfo LastCompleted = typeof(BuildJobStore).GetField("_lastCompletedJob",
-            BindingFlags.Static | BindingFlags.NonPublic);
+            (Dictionary<string, BatchJob>)typeof(BuildJobStore).GetField("_batchJobs", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+        private static readonly FieldInfo LastCompleted = typeof(BuildJobStore).GetField("_lastCompletedJob", BindingFlags.Static | BindingFlags.NonPublic);
 
         private static bool IsRunnerCallback(EditorApplication.CallbackFunction callback)
         {
@@ -42,14 +39,20 @@ namespace MCPForUnityTests.EditMode.Tools
             ownedCallbacks.Clear();
             originalJobs.Clear();
             originalBatches.Clear();
-            foreach (var callback in CurrentCallbacks()) originalCallbacks.Add(callback);
-            if (BuildPipeline.isBuildingPlayer || originalCallbacks.Any(IsRunnerCallback)
+            foreach (var callback in CurrentCallbacks())
+                originalCallbacks.Add(callback);
+            if (
+                BuildPipeline.isBuildingPlayer
+                || originalCallbacks.Any(IsRunnerCallback)
                 || Jobs.Values.Any(job => job.State == BuildJobState.Pending || job.State == BuildJobState.Building)
-                || Batches.Values.Any(batch => batch.State == BuildJobState.Pending || batch.State == BuildJobState.Building))
+                || Batches.Values.Any(batch => batch.State == BuildJobState.Pending || batch.State == BuildJobState.Building)
+            )
                 Assert.Ignore("An unowned build or runner callback is active.");
 
-            foreach (var pair in Jobs) originalJobs.Add(pair.Key, pair.Value);
-            foreach (var pair in Batches) originalBatches.Add(pair.Key, pair.Value);
+            foreach (var pair in Jobs)
+                originalJobs.Add(pair.Key, pair.Value);
+            foreach (var pair in Batches)
+                originalBatches.Add(pair.Key, pair.Value);
             originalLastCompleted = BuildJobStore.LastCompletedJob;
             capturedStore = true;
             Jobs.Clear();
@@ -63,7 +66,8 @@ namespace MCPForUnityTests.EditMode.Tools
             try
             {
                 CaptureCallbacks();
-                foreach (var callback in ownedCallbacks) EditorApplication.update -= callback;
+                foreach (var callback in ownedCallbacks)
+                    EditorApplication.update -= callback;
             }
             finally
             {
@@ -71,8 +75,10 @@ namespace MCPForUnityTests.EditMode.Tools
                 {
                     Jobs.Clear();
                     Batches.Clear();
-                    foreach (var pair in originalJobs) Jobs.Add(pair.Key, pair.Value);
-                    foreach (var pair in originalBatches) Batches.Add(pair.Key, pair.Value);
+                    foreach (var pair in originalJobs)
+                        Jobs.Add(pair.Key, pair.Value);
+                    foreach (var pair in originalBatches)
+                        Batches.Add(pair.Key, pair.Value);
                     LastCompleted.SetValue(null, originalLastCompleted);
                 }
                 capturedStore = false;
@@ -95,7 +101,8 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             foreach (var callback in CurrentCallbacks())
             {
-                if (originalCallbacks.Contains(callback)) continue;
+                if (originalCallbacks.Contains(callback))
+                    continue;
                 if (IsRunnerCallback(callback))
                     ownedCallbacks.Add(callback);
             }
@@ -172,10 +179,14 @@ namespace MCPForUnityTests.EditMode.Tools
             batch.Children.Add(child);
             try
             {
-                Assert.DoesNotThrow(() => BuildRunner.ScheduleNextBatchBuild(batch,
-                    index => throw new InvalidOperationException("controlled preparation failure")));
+                Assert.DoesNotThrow(() =>
+                    BuildRunner.ScheduleNextBatchBuild(batch, index => throw new InvalidOperationException("controlled preparation failure"))
+                );
             }
-            finally { CaptureCallbacks(); }
+            finally
+            {
+                CaptureCallbacks();
+            }
             Assert.AreEqual(BuildJobState.Failed, child.State);
             Assert.AreEqual(default(DateTime), child.StartedAt);
             Assert.IsTrue(child.CompletedAt.HasValue);
@@ -193,15 +204,22 @@ namespace MCPForUnityTests.EditMode.Tools
         public void CreatorFailuresAdvanceWithoutRecursivePreparation()
         {
             var batch = new BatchJob("local-chain") { State = BuildJobState.Building };
-            for (int i = 0; i < 3; i++) batch.Children.Add(Child());
+            for (int i = 0; i < 3; i++)
+                batch.Children.Add(Child());
             int calls = 0;
             Func<int, BuildJob> prepare = index =>
             {
                 calls++;
                 throw new InvalidOperationException("controlled preparation failure");
             };
-            try { Assert.DoesNotThrow(() => BuildRunner.ScheduleNextBatchBuild(batch, prepare)); }
-            finally { CaptureCallbacks(); }
+            try
+            {
+                Assert.DoesNotThrow(() => BuildRunner.ScheduleNextBatchBuild(batch, prepare));
+            }
+            finally
+            {
+                CaptureCallbacks();
+            }
             Assert.AreEqual(1, calls);
             AdvanceOwnedCallbacks();
             Assert.AreEqual(2, calls);
@@ -281,7 +299,8 @@ namespace MCPForUnityTests.EditMode.Tools
             BuildJobStore.AddBuildJob(old);
             BuildJobStore.AddBuildJob(anchor);
             BuildJobStore.AddBatchJob(batch);
-            for (int i = 0; i < 51; i++) BuildJobStore.AddBuildJob(Child());
+            for (int i = 0; i < 51; i++)
+                BuildJobStore.AddBuildJob(Child());
             BuildJobStore.SetLastCompleted(anchor);
             Assert.IsNull(BuildJobStore.GetBuildJob(old.JobId));
             Assert.AreSame(anchor, BuildJobStore.GetBuildJob(anchor.JobId));
@@ -301,7 +320,8 @@ namespace MCPForUnityTests.EditMode.Tools
             batch.Children.Add(old);
             BuildJobStore.AddBuildJob(old);
             BuildJobStore.AddBatchJob(batch);
-            for (int i = 0; i < 51; i++) BuildJobStore.AddBuildJob(Child());
+            for (int i = 0; i < 51; i++)
+                BuildJobStore.AddBuildJob(Child());
             BuildJob latest = Child();
             latest.State = BuildJobState.Succeeded;
             BuildJobStore.AddBuildJob(latest);

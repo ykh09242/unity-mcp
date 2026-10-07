@@ -5,10 +5,10 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Resources.Scene;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Tools.GameObjects;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
 using static MCPForUnityTests.Editor.TestUtilities;
 using Debug = UnityEngine.Debug;
@@ -62,11 +62,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             for (int i = 0; i < SMALL_BATCH; i++)
             {
-                var result = ToJObject(ManageGameObject.HandleCommand(new JObject
-                {
-                    ["action"] = "create",
-                    ["name"] = $"BulkTest_{i}"
-                }));
+                var result = ToJObject(ManageGameObject.HandleCommand(new JObject { ["action"] = "create", ["name"] = $"BulkTest_{i}" }));
 
                 Assert.IsTrue(result["success"]?.Value<bool>() ?? false, $"Failed to create object {i}");
 
@@ -75,7 +71,8 @@ namespace MCPForUnityTests.Editor.Tools
                 if (instanceId != 0)
                 {
                     var go = GameObjectLookup.FindById(instanceId);
-                    if (go != null) _createdObjects.Add(go);
+                    if (go != null)
+                        _createdObjects.Add(go);
                 }
             }
 
@@ -92,11 +89,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             for (int i = 0; i < MEDIUM_BATCH; i++)
             {
-                var result = ToJObject(ManageGameObject.HandleCommand(new JObject
-                {
-                    ["action"] = "create",
-                    ["name"] = $"MediumBulk_{i}"
-                }));
+                var result = ToJObject(ManageGameObject.HandleCommand(new JObject { ["action"] = "create", ["name"] = $"MediumBulk_{i}" }));
 
                 Assert.IsTrue(result["success"]?.Value<bool>() ?? false, $"Failed to create object {i}");
 
@@ -104,7 +97,8 @@ namespace MCPForUnityTests.Editor.Tools
                 if (instanceId != 0)
                 {
                     var go = GameObjectLookup.FindById(instanceId);
-                    if (go != null) _createdObjects.Add(go);
+                    if (go != null)
+                        _createdObjects.Add(go);
                 }
             }
 
@@ -128,12 +122,16 @@ namespace MCPForUnityTests.Editor.Tools
             }
 
             // Find by searching for a specific object first
-            var firstResult = ToJObject(FindGameObjects.HandleCommand(new JObject
-            {
-                ["searchTerm"] = "Searchable_000",
-                ["searchMethod"] = "by_name",
-                ["pageSize"] = 10
-            }));
+            var firstResult = ToJObject(
+                FindGameObjects.HandleCommand(
+                    new JObject
+                    {
+                        ["searchTerm"] = "Searchable_000",
+                        ["searchMethod"] = "by_name",
+                        ["pageSize"] = 10,
+                    }
+                )
+            );
 
             Assert.IsTrue(firstResult["success"]?.Value<bool>() ?? false, "Should find specific named object");
             var firstData = firstResult["data"] as JObject;
@@ -144,12 +142,16 @@ namespace MCPForUnityTests.Editor.Tools
             Debug.Log($"[FindGameObjects] Found object by exact name. Testing pagination with a unique marker component.");
 
             // Now test pagination by searching for only the objects created by this test
-            var result = ToJObject(FindGameObjects.HandleCommand(new JObject
-            {
-                ["searchTerm"] = typeof(GameObjectAPIStressTestMarker).FullName,
-                ["searchMethod"] = "by_component",
-                ["pageSize"] = 25
-            }));
+            var result = ToJObject(
+                FindGameObjects.HandleCommand(
+                    new JObject
+                    {
+                        ["searchTerm"] = typeof(GameObjectAPIStressTestMarker).FullName,
+                        ["searchMethod"] = "by_component",
+                        ["pageSize"] = 25,
+                    }
+                )
+            );
 
             Assert.IsTrue(result["success"]?.Value<bool>() ?? false);
             var data = result["data"] as JObject;
@@ -196,13 +198,17 @@ namespace MCPForUnityTests.Editor.Tools
             // Search by the unique marker component and check our created objects
             while (true)
             {
-                var result = ToJObject(FindGameObjects.HandleCommand(new JObject
-                {
-                    ["searchTerm"] = typeof(GameObjectAPIStressTestMarker).FullName,
-                    ["searchMethod"] = "by_component",
-                    ["pageSize"] = pageSize,
-                    ["cursor"] = cursor
-                }));
+                var result = ToJObject(
+                    FindGameObjects.HandleCommand(
+                        new JObject
+                        {
+                            ["searchTerm"] = typeof(GameObjectAPIStressTestMarker).FullName,
+                            ["searchMethod"] = "by_component",
+                            ["pageSize"] = pageSize,
+                            ["cursor"] = cursor,
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result["success"]?.Value<bool>() ?? false);
                 var data = result["data"] as JObject;
@@ -219,12 +225,14 @@ namespace MCPForUnityTests.Editor.Tools
                 pageCount++;
 
                 bool hasMore = data["hasMore"]?.Value<bool>() ?? false;
-                if (!hasMore) break;
+                if (!hasMore)
+                    break;
 
                 cursor = data["nextCursor"]?.Value<int>() ?? cursor + pageSize;
 
                 // Safety limit
-                if (pageCount > 50) break;
+                if (pageCount > 50)
+                    break;
             }
 
             Assert.AreEqual(MEDIUM_BATCH, foundFromCreated, $"Should find all {MEDIUM_BATCH} created objects across pages");
@@ -240,25 +248,23 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var go = CreateTestObject("ComponentHost");
 
-            string[] componentTypeNames = new[]
-            {
-                "BoxCollider",
-                "Rigidbody",
-                "Light",
-                "Camera"
-            };
+            string[] componentTypeNames = new[] { "BoxCollider", "Rigidbody", "Light", "Camera" };
 
             var sw = Stopwatch.StartNew();
 
             foreach (var compType in componentTypeNames)
             {
-                var result = ToJObject(ManageComponents.HandleCommand(new JObject
-                {
-                    ["action"] = "add",
-                    ["target"] = go.GetInstanceIDCompat().ToString(),
-                    ["searchMethod"] = "by_id",
-                    ["componentType"] = compType  // Correct parameter name
-                }));
+                var result = ToJObject(
+                    ManageComponents.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "add",
+                            ["target"] = go.GetInstanceIDCompat().ToString(),
+                            ["searchMethod"] = "by_id",
+                            ["componentType"] = compType, // Correct parameter name
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result["success"]?.Value<bool>() ?? false, $"Failed to add {compType}: {result["message"]}");
             }
@@ -288,12 +294,16 @@ namespace MCPForUnityTests.Editor.Tools
             var sw = Stopwatch.StartNew();
 
             // Use the resource handler for getting components
-            var result = ToJObject(GameObjectComponentsResource.HandleCommand(new JObject
-            {
-                ["instanceID"] = go.GetInstanceIDCompat(),
-                ["includeProperties"] = true,
-                ["pageSize"] = 50
-            }));
+            var result = ToJObject(
+                GameObjectComponentsResource.HandleCommand(
+                    new JObject
+                    {
+                        ["instanceID"] = go.GetInstanceIDCompat(),
+                        ["includeProperties"] = true,
+                        ["pageSize"] = 50,
+                    }
+                )
+            );
 
             sw.Stop();
 
@@ -313,21 +323,25 @@ namespace MCPForUnityTests.Editor.Tools
             var go = CreateTestObject("RigidbodyTest");
             go.AddComponent<Rigidbody>();
 
-            var result = ToJObject(ManageComponents.HandleCommand(new JObject
-            {
-                ["action"] = "set_property",
-                ["target"] = go.GetInstanceIDCompat().ToString(),
-                ["searchMethod"] = "by_id",
-                ["componentType"] = "Rigidbody",  // Correct parameter name
-                ["properties"] = new JObject       // Correct parameter name
-                {
-                    ["mass"] = 10.5f,
-                    ["drag"] = 0.5f,
-                    ["angularDrag"] = 0.1f,
-                    ["useGravity"] = false,
-                    ["isKinematic"] = true
-                }
-            }));
+            var result = ToJObject(
+                ManageComponents.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_property",
+                        ["target"] = go.GetInstanceIDCompat().ToString(),
+                        ["searchMethod"] = "by_id",
+                        ["componentType"] = "Rigidbody", // Correct parameter name
+                        ["properties"] = new JObject // Correct parameter name
+                        {
+                            ["mass"] = 10.5f,
+                            ["drag"] = 0.5f,
+                            ["angularDrag"] = 0.1f,
+                            ["useGravity"] = false,
+                            ["isKinematic"] = true,
+                        },
+                    }
+                )
+            );
 
             Assert.IsTrue(result["success"]?.Value<bool>() ?? false, $"Set property failed: {result["message"]}");
 
@@ -366,11 +380,11 @@ namespace MCPForUnityTests.Editor.Tools
             target.transform.SetParent(current.transform);
 
             // Find by path
-            var result = ToJObject(FindGameObjects.HandleCommand(new JObject
-            {
-                ["searchTerm"] = "DeepRoot/Level1/Level2/Level3/Level4/Level5/DeepTarget",
-                ["searchMethod"] = "by_path"
-            }));
+            var result = ToJObject(
+                FindGameObjects.HandleCommand(
+                    new JObject { ["searchTerm"] = "DeepRoot/Level1/Level2/Level3/Level4/Level5/DeepTarget", ["searchMethod"] = "by_path" }
+                )
+            );
 
             Assert.IsTrue(result["success"]?.Value<bool>() ?? false);
             var data = result["data"] as JObject;
@@ -390,12 +404,16 @@ namespace MCPForUnityTests.Editor.Tools
                 CreateTestObject($"HierarchyItem_{i:D3}");
             }
 
-            var result = ToJObject(ManageScene.HandleCommand(new JObject
-            {
-                ["action"] = "get_hierarchy",
-                ["pageSize"] = 20,
-                ["maxNodes"] = 100
-            }));
+            var result = ToJObject(
+                ManageScene.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "get_hierarchy",
+                        ["pageSize"] = 20,
+                        ["maxNodes"] = 100,
+                    }
+                )
+            );
 
             Assert.IsTrue(result["success"]?.Value<bool>() ?? false);
             var data = result["data"] as JObject;
@@ -438,10 +456,7 @@ namespace MCPForUnityTests.Editor.Tools
             var sw = Stopwatch.StartNew();
 
             // Call the resource directly (no action param needed)
-            var result = ToJObject(GameObjectResource.HandleCommand(new JObject
-            {
-                ["instanceID"] = go.GetInstanceIDCompat()
-            }));
+            var result = ToJObject(GameObjectResource.HandleCommand(new JObject { ["instanceID"] = go.GetInstanceIDCompat() }));
 
             sw.Stop();
 
@@ -485,11 +500,9 @@ namespace MCPForUnityTests.Editor.Tools
             var sw = Stopwatch.StartNew();
 
             // Use the components resource handler
-            var result = ToJObject(GameObjectComponentsResource.HandleCommand(new JObject
-            {
-                ["instanceID"] = go.GetInstanceIDCompat(),
-                ["includeProperties"] = true
-            }));
+            var result = ToJObject(
+                GameObjectComponentsResource.HandleCommand(new JObject { ["instanceID"] = go.GetInstanceIDCompat(), ["includeProperties"] = true })
+            );
 
             sw.Stop();
 
@@ -532,34 +545,38 @@ namespace MCPForUnityTests.Editor.Tools
             for (int i = 0; i < SMALL_BATCH; i++)
             {
                 // Create
-                var createResult = ToJObject(ManageGameObject.HandleCommand(new JObject
-                {
-                    ["action"] = "create",
-                    ["name"] = $"RapidFire_{i}"
-                }));
+                var createResult = ToJObject(ManageGameObject.HandleCommand(new JObject { ["action"] = "create", ["name"] = $"RapidFire_{i}" }));
                 Assert.IsTrue(createResult["success"]?.Value<bool>() ?? false, $"Create failed: {createResult["message"]}");
 
                 int instanceId = createResult["data"]?["instanceID"]?.Value<int>() ?? 0;
                 Assert.AreNotEqual(0, instanceId, "Instance ID should not be 0");
 
                 // Modify - use layer 0 (Default) to avoid layer name issues
-                var modifyResult = ToJObject(ManageGameObject.HandleCommand(new JObject
-                {
-                    ["action"] = "modify",
-                    ["target"] = instanceId.ToString(),
-                    ["searchMethod"] = "by_id",
-                    ["name"] = $"RapidFire_Modified_{i}",  // Use name modification instead
-                    ["setActive"] = true
-                }));
+                var modifyResult = ToJObject(
+                    ManageGameObject.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify",
+                            ["target"] = instanceId.ToString(),
+                            ["searchMethod"] = "by_id",
+                            ["name"] = $"RapidFire_Modified_{i}", // Use name modification instead
+                            ["setActive"] = true,
+                        }
+                    )
+                );
                 Assert.IsTrue(modifyResult["success"]?.Value<bool>() ?? false, $"Modify failed: {modifyResult["message"]}");
 
                 // Delete
-                var deleteResult = ToJObject(ManageGameObject.HandleCommand(new JObject
-                {
-                    ["action"] = "delete",
-                    ["target"] = instanceId.ToString(),
-                    ["searchMethod"] = "by_id"
-                }));
+                var deleteResult = ToJObject(
+                    ManageGameObject.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "delete",
+                            ["target"] = instanceId.ToString(),
+                            ["searchMethod"] = "by_id",
+                        }
+                    )
+                );
                 Assert.IsTrue(deleteResult["success"]?.Value<bool>() ?? false, $"Delete failed: {deleteResult["message"]}");
             }
 
@@ -576,4 +593,3 @@ namespace MCPForUnityTests.Editor.Tools
     /// </summary>
     public sealed class GameObjectAPIStressTestMarker : MonoBehaviour { }
 }
-

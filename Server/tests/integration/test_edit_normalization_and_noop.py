@@ -18,6 +18,7 @@ async def test_normalizes_lsp_and_index_ranges(monkeypatch, source_line, expecte
 
     # Patch the send_command_with_retry function at the module level where it's imported
     import transport.legacy.unity_connection
+
     monkeypatch.setattr(
         transport.legacy.unity_connection,
         "async_send_command_with_retry",
@@ -26,10 +27,12 @@ async def test_normalizes_lsp_and_index_ranges(monkeypatch, source_line, expecte
     # No need to patch tools.manage_script; it calls unity_connection.send_command_with_retry
 
     # LSP-style
-    edits = [{
-        "range": {"start": {"line": 10, "character": 2}, "end": {"line": 10, "character": 2}},
-        "newText": "// lsp\n"
-    }]
+    edits = [
+        {
+            "range": {"start": {"line": 10, "character": 2}, "end": {"line": 10, "character": 2}},
+            "newText": "// lsp\n",
+        }
+    ]
     response = await apply(
         DummyContext(),
         uri="mcpforunity://path/Assets/Scripts/F.cs",
@@ -41,8 +44,11 @@ async def test_normalizes_lsp_and_index_ranges(monkeypatch, source_line, expecte
     e = p["edits"][0]
     assert p["action"] == "apply_text_edits"
     assert e == {
-        "startLine": 11, "startCol": expected_column,
-        "endLine": 11, "endCol": expected_column, "newText": "// lsp\n",
+        "startLine": 11,
+        "startCol": expected_column,
+        "endLine": 11,
+        "endCol": expected_column,
+        "newText": "// lsp\n",
     }
 
     # Index pair
@@ -70,9 +76,15 @@ async def test_normalizes_lsp_and_index_ranges(monkeypatch, source_line, expecte
     )
     assert response["success"] is True
     assert calls[-1]["action"] == "apply_text_edits"
-    assert calls[-1]["edits"] == [{
-        "startLine": 1, "startCol": 1, "endLine": 1, "endCol": 1, "newText": "// idx\n",
-    }]
+    assert calls[-1]["edits"] == [
+        {
+            "startLine": 1,
+            "startCol": 1,
+            "endLine": 1,
+            "endCol": 1,
+            "newText": "// idx\n",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -86,8 +98,10 @@ async def test_noop_evidence_shape(monkeypatch):
             "success": True,
             "data": {"no_op": True, "evidence": {"reason": "identical_content"}},
         }
+
     # Patch the send_command_with_retry function at the module level where it's imported
     import transport.legacy.unity_connection
+
     monkeypatch.setattr(
         transport.legacy.unity_connection,
         "async_send_command_with_retry",
@@ -98,9 +112,7 @@ async def test_noop_evidence_shape(monkeypatch):
     resp = await apply(
         DummyContext(),
         uri="mcpforunity://path/Assets/Scripts/F.cs",
-        edits=[
-            {"startLine": 1, "startCol": 1, "endLine": 1, "endCol": 1, "newText": ""}
-        ],
+        edits=[{"startLine": 1, "startCol": 1, "endLine": 1, "endCol": 1, "newText": ""}],
         precondition_sha256="x",
     )
     assert resp["success"] is True
@@ -125,6 +137,7 @@ async def test_atomic_multi_span_and_relaxed(monkeypatch):
 
     # Patch the send_command_with_retry function at the module level where it's imported
     import transport.legacy.unity_connection
+
     monkeypatch.setattr(
         transport.legacy.unity_connection,
         "async_send_command_with_retry",
@@ -133,8 +146,7 @@ async def test_atomic_multi_span_and_relaxed(monkeypatch):
 
     edits = [
         {"startLine": 2, "startCol": 14, "endLine": 2, "endCol": 15, "newText": "3"},
-        {"startLine": 3, "startCol": 2, "endLine": 3,
-            "endCol": 2, "newText": "// tail\n"}
+        {"startLine": 3, "startCol": 2, "endLine": 3, "endCol": 2, "newText": "// tail\n"},
     ]
     resp = await apply_text(
         DummyContext(),

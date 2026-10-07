@@ -39,7 +39,9 @@ namespace MCPForUnity.Editor.Services.Server
                 return false;
             }
 
-            string uvxPath, fromUrl, packageName;
+            string uvxPath,
+                fromUrl,
+                packageName;
             try
             {
                 (uvxPath, fromUrl, packageName) = AssetPathUtility.GetUvxCommandParts();
@@ -56,10 +58,7 @@ namespace MCPForUnity.Editor.Services.Server
             }
 
             string devFlags = AssetPathUtility.GetUvxDevFlags();
-            bool projectScopedTools = EditorPrefs.GetBool(
-                EditorPrefKeys.ProjectScopedToolsLocalHttp,
-                true
-            );
+            bool projectScopedTools = EditorPrefs.GetBool(EditorPrefKeys.ProjectScopedToolsLocalHttp, true);
             string scopedFlag = projectScopedTools ? " --project-scoped-tools" : string.Empty;
 
             // Use the same source resolver as JSON and TOML client configs.
@@ -85,9 +84,7 @@ namespace MCPForUnity.Editor.Services.Server
             string extension = Path.GetExtension(uvxPath);
             string uvFileName = "uv" + extension;
 
-            return string.IsNullOrEmpty(directory)
-                ? uvFileName
-                : Path.Combine(directory, uvFileName);
+            return string.IsNullOrEmpty(directory) ? uvFileName : Path.Combine(directory, uvFileName);
         }
 
         /// <inheritdoc/>
@@ -95,23 +92,12 @@ namespace MCPForUnity.Editor.Services.Server
         {
             if (Application.platform == RuntimePlatform.OSXEditor)
             {
-                return string.Join(Path.PathSeparator.ToString(), new[]
-                {
-                    "/opt/homebrew/bin",
-                    "/usr/local/bin",
-                    "/usr/bin",
-                    "/bin"
-                });
+                return string.Join(Path.PathSeparator.ToString(), new[] { "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin" });
             }
 
             if (Application.platform == RuntimePlatform.LinuxEditor)
             {
-                return string.Join(Path.PathSeparator.ToString(), new[]
-                {
-                    "/usr/local/bin",
-                    "/usr/bin",
-                    "/bin"
-                });
+                return string.Join(Path.PathSeparator.ToString(), new[] { "/usr/local/bin", "/usr/bin", "/bin" });
             }
 
             if (Application.platform == RuntimePlatform.WindowsEditor)
@@ -119,11 +105,16 @@ namespace MCPForUnity.Editor.Services.Server
                 string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
 
-                return string.Join(Path.PathSeparator.ToString(), new[]
-                {
-                    !string.IsNullOrEmpty(localAppData) ? Path.Combine(localAppData, "Programs", "uv") : null,
-                    !string.IsNullOrEmpty(programFiles) ? Path.Combine(programFiles, "uv") : null
-                }.Where(p => !string.IsNullOrEmpty(p)).ToArray());
+                return string.Join(
+                    Path.PathSeparator.ToString(),
+                    new[]
+                    {
+                        !string.IsNullOrEmpty(localAppData) ? Path.Combine(localAppData, "Programs", "uv") : null,
+                        !string.IsNullOrEmpty(programFiles) ? Path.Combine(programFiles, "uv") : null,
+                    }
+                        .Where(p => !string.IsNullOrEmpty(p))
+                        .ToArray()
+                );
             }
 
             return null;
@@ -132,9 +123,9 @@ namespace MCPForUnity.Editor.Services.Server
         /// <inheritdoc/>
         public string QuoteIfNeeded(string input)
         {
-            if (string.IsNullOrEmpty(input)) return input;
+            if (string.IsNullOrEmpty(input))
+                return input;
             return input.IndexOf(' ') >= 0 ? $"\"{input}\"" : input;
         }
-
     }
 }

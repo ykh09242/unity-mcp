@@ -58,9 +58,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private static bool isStarting = false;
         private static double nextStartAt = 0.0f;
         private static double nextHeartbeatAt = 0.0f;
+
         // EditorApplication.timeSinceStartup of the first AddressAlreadyInUse on the configured
         // port; 0 when the port binds cleanly. Drives the same-port retry window (#1173).
         private static double _portBusySince = 0.0;
+
         // If the port has been continuously busy longer than this, _portBusySince is treated as a
         // stale leftover from an abandoned retry and a fresh window is started (#1173).
         private const double PortBusyStaleResetSeconds = 60.0;
@@ -70,6 +72,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private static int currentUnityPort = 6400;
         private static bool isAutoConnectMode = false;
         private const ulong MaxFrameBytes = 64UL * 1024 * 1024;
+
         // Command/frame I/O timeout for the stdio bridge TCP hop. Previously a
         // hardcoded 30s const, which cut off long-running tool calls mid-execution
         // (the client would then reconnect and re-send, causing the bridge to
@@ -86,9 +89,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             try
             {
                 string raw = Environment.GetEnvironmentVariable("UNITY_MCP_STDIO_COMMAND_TIMEOUT_MS");
-                if (!string.IsNullOrWhiteSpace(raw)
-                    && int.TryParse(raw.Trim(), out int ms)
-                    && ms > 0)
+                if (!string.IsNullOrWhiteSpace(raw) && int.TryParse(raw.Trim(), out int ms) && ms > 0)
                 {
                     return ms;
                 }
@@ -102,22 +103,35 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             try
             {
                 JObject command = JObject.Parse(payload);
-                if (command["type"]?.Type != JTokenType.String
-                    || !string.Equals((string)command["type"], "blender_bridge", StringComparison.Ordinal))
+                if (command["type"]?.Type != JTokenType.String || !string.Equals((string)command["type"], "blender_bridge", StringComparison.Ordinal))
                     return defaultTimeoutMs;
                 var parameters = new ToolParams(command["params"] as JObject ?? new JObject());
                 int seconds = Math.Max(5, Math.Min(3600, parameters.GetInt("timeout_seconds", 180) ?? 180));
                 return Math.Max(defaultTimeoutMs, seconds * 1000 + 30000);
             }
-            catch (JsonException) { return defaultTimeoutMs; }
+            catch (JsonException)
+            {
+                return defaultTimeoutMs;
+            }
         }
 
-        private static void IoInfo(string s) { McpLog.Info(s, always: false); }
+        private static void IoInfo(string s)
+        {
+            McpLog.Info(s, always: false);
+        }
 
         private static bool IsDebugEnabled()
         {
-            if (ownedEndpoint) return false;
-            try { return EditorPrefs.GetBool(EditorPrefKeys.DebugLogs, false); } catch { return false; }
+            if (ownedEndpoint)
+                return false;
+            try
+            {
+                return EditorPrefs.GetBool(EditorPrefKeys.DebugLogs, false);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static void LogBreadcrumb(string stage)
@@ -129,7 +143,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         }
 
         public static bool IsRunning => isRunning;
+
         public static int GetCurrentPort() => currentUnityPort;
+
         public static bool IsAutoConnectMode() => isAutoConnectMode;
 
         public static void StartAutoConnect()
@@ -164,16 +180,20 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 return true;
             }
 
-            string fullPath = Path.Combine(
-                Application.dataPath,
-                path.StartsWith("Assets/") ? path[7..] : path
-            );
+            string fullPath = Path.Combine(Application.dataPath, path.StartsWith("Assets/") ? path[7..] : path);
             return Directory.Exists(fullPath);
         }
 
         static StdioBridgeHost()
         {
-            try { mainThreadId = Thread.CurrentThread.ManagedThreadId; } catch { mainThreadId = 0; }
+            try
+            {
+                mainThreadId = Thread.CurrentThread.ManagedThreadId;
+            }
+            catch
+            {
+                mainThreadId = 0;
+            }
 
             if (Application.isBatchMode && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH")))
             {
@@ -297,7 +317,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         /// </summary>
         internal static int QueuedCommandCount
         {
-            get { lock (lockObj) { return commandQueue.Count; } }
+            get
+            {
+                lock (lockObj)
+                {
+                    return commandQueue.Count;
+                }
+            }
         }
 
         /// <summary>
@@ -306,11 +332,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         /// alone is not enough: a single connection handles one command at a time, so two
         /// identical payloads on the same connection are sequential and genuinely distinct.
         /// </summary>
-        internal static bool IsBrokerResend(
-            string queuedCommandJson, object queuedOwner, string incomingCommandJson, object incomingOwner)
+        internal static bool IsBrokerResend(string queuedCommandJson, object queuedOwner, string incomingCommandJson, object incomingOwner)
         {
-            if (queuedOwner == null || incomingOwner == null) return false;
-            if (ReferenceEquals(queuedOwner, incomingOwner)) return false;
+            if (queuedOwner == null || incomingOwner == null)
+                return false;
+            if (ReferenceEquals(queuedOwner, incomingOwner))
+                return false;
             return string.Equals(queuedCommandJson, incomingCommandJson, StringComparison.Ordinal);
         }
 
@@ -332,13 +359,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private static bool IsCompiling() => EditorStateCache.GetActualIsCompiling();
 
-        public static void Start()
-            => StartBridge(null, null);
+        public static void Start() => StartBridge(null, null);
 
         /// <summary>Owned ephemeral QA endpoint; no discovery files or EditorPrefs access.</summary>
         internal static void StartOwned(int port, string token)
         {
-            if (port < 0 || port > 65535 || token == null) throw new ArgumentException("Invalid owned endpoint");
+            if (port < 0 || port > 65535 || token == null)
+                throw new ArgumentException("Invalid owned endpoint");
             StartBridge(port, token);
         }
 
@@ -392,12 +419,21 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         double now = EditorApplication.timeSinceStartup;
                         // Start a fresh window on the first conflict, or if a stale timestamp
                         // survived a long idle gap (a real reload + retry resolves in seconds).
-                        if (_portBusySince <= 0.0 || (now - _portBusySince) > PortBusyStaleResetSeconds) _portBusySince = now;
+                        if (_portBusySince <= 0.0 || (now - _portBusySince) > PortBusyStaleResetSeconds)
+                            _portBusySince = now;
 
                         if (!PortManager.ShouldAbandonBusyPort(now - _portBusySince))
                         {
-                            try { listener?.Stop(); } catch { }
-                            try { listener?.Server?.Dispose(); } catch { }
+                            try
+                            {
+                                listener?.Stop();
+                            }
+                            catch { }
+                            try
+                            {
+                                listener?.Server?.Dispose();
+                            }
+                            catch { }
                             listener = null;
                             McpLog.Warn($"Port {currentUnityPort} not released yet after reload; retrying same port.");
                             WriteHeartbeat(true, "port_busy");
@@ -423,7 +459,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         }
                         catch { }
 
-                        McpLog.Warn($"Port {oldPort} still occupied after {PortManager.BusyPortFallbackWindowSeconds:0.#}s; falling back to port {currentUnityPort} (clients follow via the status file).");
+                        McpLog.Warn(
+                            $"Port {oldPort} still occupied after {PortManager.BusyPortFallbackWindowSeconds:0.#}s; falling back to port {currentUnityPort} (clients follow via the status file)."
+                        );
 
                         listener = CreateConfiguredListener(currentUnityPort);
                         listener.Start();
@@ -445,8 +483,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         _processCommandsHooked = true;
                         EditorApplication.update += ProcessCommands;
                     }
-                    try { EditorApplication.quitting -= Stop; } catch { }
-                    try { EditorApplication.quitting += Stop; } catch { }
+                    try
+                    {
+                        EditorApplication.quitting -= Stop;
+                    }
+                    catch { }
+                    try
+                    {
+                        EditorApplication.quitting += Stop;
+                    }
+                    catch { }
                     heartbeatSeq++;
                     WriteHeartbeat(false, "ready");
                     nextHeartbeatAt = EditorApplication.timeSinceStartup + 0.5f;
@@ -473,15 +519,17 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             // causing connections to land on a worker that can't process commands.
             // The ExclusiveAddressUse flag prevents this; port-busy conflicts are
             // handled by the retry/fallback logic in Start() and the reload handler.
-            try { newListener.Server.ExclusiveAddressUse = true; } catch { }
+            try
+            {
+                newListener.Server.ExclusiveAddressUse = true;
+            }
+            catch { }
 #endif
             try
             {
                 newListener.Server.LingerState = new LingerOption(true, 0);
             }
-            catch (Exception)
-            {
-            }
+            catch (Exception) { }
             return newListener;
         }
 
@@ -501,10 +549,22 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                     var cancel = cts;
                     cts = null;
-                    try { cancel?.Cancel(); } catch { }
+                    try
+                    {
+                        cancel?.Cancel();
+                    }
+                    catch { }
 
-                    try { listener?.Stop(); } catch { }
-                    try { listener?.Server?.Dispose(); } catch { }
+                    try
+                    {
+                        listener?.Stop();
+                    }
+                    catch { }
+                    try
+                    {
+                        listener?.Server?.Dispose();
+                    }
+                    catch { }
                     listener = null;
 
                     toWait = listenerTask;
@@ -525,7 +585,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             foreach (var c in toClose)
             {
-                try { c.Close(); } catch { }
+                try
+                {
+                    c.Close();
+                }
+                catch { }
             }
             authentication?.Dispose();
             authentication = null;
@@ -533,17 +597,26 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             if (toWait != null)
             {
                 // CTS is already cancelled; give the listener task a brief moment to exit.
-                try { toWait.Wait(500); } catch { }
+                try
+                {
+                    toWait.Wait(500);
+                }
+                catch { }
             }
 
             // ProcessCommands stays permanently hooked (guarded by _processCommandsHooked)
             // to eliminate the registration gap between Stop and Start during domain reload.
             // ProcessCommands already exits early when !isRunning.
-            try { EditorApplication.quitting -= Stop; } catch { }
+            try
+            {
+                EditorApplication.quitting -= Stop;
+            }
+            catch { }
 
             try
             {
-                if (ownedEndpoint) return;
+                if (ownedEndpoint)
+                    return;
                 string dir = Environment.GetEnvironmentVariable("UNITY_MCP_STATUS_DIR");
                 if (string.IsNullOrWhiteSpace(dir))
                 {
@@ -553,15 +626,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 if (File.Exists(statusFile))
                 {
                     File.Delete(statusFile);
-                    if (IsDebugEnabled()) McpLog.Info($"Deleted status file: {statusFile}");
+                    if (IsDebugEnabled())
+                        McpLog.Info($"Deleted status file: {statusFile}");
                 }
             }
             catch (Exception ex)
             {
-                if (IsDebugEnabled()) McpLog.Warn($"Failed to delete status file: {ex.Message}");
+                if (IsDebugEnabled())
+                    McpLog.Warn($"Failed to delete status file: {ex.Message}");
             }
 
-            if (IsDebugEnabled()) McpLog.Info("StdioBridgeHost stopped.");
+            if (IsDebugEnabled())
+                McpLog.Info("StdioBridgeHost stopped.");
         }
 
         private static async Task ListenerLoopAsync(CancellationToken token)
@@ -571,11 +647,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 try
                 {
                     TcpClient client = await listener.AcceptTcpClientAsync();
-                    client.Client.SetSocketOption(
-                        SocketOptionLevel.Socket,
-                        SocketOptionName.KeepAlive,
-                        true
-                    );
+                    client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
 
                     // Keep the socket receive timeout at least as long as the command
                     // timeout so it never fires before a long-running tool call completes.
@@ -593,7 +665,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     // so it always disposes/removes this accepted socket.
                     _ = Task.Run(async () =>
                     {
-                        try { await HandleClientAsync(client, token).ConfigureAwait(false); }
+                        try
+                        {
+                            await HandleClientAsync(client, token).ConfigureAwait(false);
+                        }
                         catch (ObjectDisposedException) { }
                         catch (InvalidOperationException) { }
                         finally
@@ -622,7 +697,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     if (isRunning && !token.IsCancellationRequested)
                     {
-                        if (IsDebugEnabled()) McpLog.Error($"Listener error: {ex.Message}");
+                        if (IsDebugEnabled())
+                            McpLog.Error($"Listener error: {ex.Message}");
                     }
                 }
             }
@@ -655,17 +731,20 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             return;
                         lock (clientsLock)
                         {
-                            if (token.IsCancellationRequested || launch != authentication) return;
+                            if (token.IsCancellationRequested || launch != authentication)
+                                return;
                             authenticatingClients.Remove(client);
                             staleClients = activeClients.ToArray();
                             activeClients.Clear();
                             activeClients.Add(client);
                         }
-                        if (IsDebugEnabled()) McpLog.Info("Authenticated stdio client admitted", always: false);
+                        if (IsDebugEnabled())
+                            McpLog.Info("Authenticated stdio client admitted", always: false);
                     }
                     catch (Exception ex)
                     {
-                        if (IsDebugEnabled()) McpLog.Warn($"Stdio authentication refused ({ex.GetType().Name})");
+                        if (IsDebugEnabled())
+                            McpLog.Warn($"Stdio authentication refused ({ex.GetType().Name})");
                         return;
                     }
 
@@ -677,7 +756,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         McpLog.Info($"Closing {staleClients.Length} stale client(s) after new connection", always: false);
                         foreach (var stale in staleClients)
                         {
-                            try { stale.Close(); } catch { }
+                            try
+                            {
+                                stale.Close();
+                            }
+                            catch { }
                         }
                     }
 
@@ -701,9 +784,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                             if (commandText.Trim() == "ping")
                             {
-                                byte[] pingResponseBytes = System.Text.Encoding.UTF8.GetBytes(
-                                    "{\"status\":\"success\",\"result\":{\"message\":\"pong\"}}"
-                                );
+                                byte[] pingResponseBytes = System.Text.Encoding.UTF8.GetBytes("{\"status\":\"success\",\"result\":{\"message\":\"pong\"}}");
                                 await WriteFrameAsync(stream, pingResponseBytes);
                                 continue;
                             }
@@ -722,8 +803,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                 if (inFlight != null)
                                 {
                                     pending = inFlight.Tcs;
-                                    McpLog.Warn("Suppressed duplicate command resent on a new connection; "
-                                                + "awaiting the in-flight result instead of running it twice.");
+                                    McpLog.Warn(
+                                        "Suppressed duplicate command resent on a new connection; "
+                                            + "awaiting the in-flight result instead of running it twice."
+                                    );
                                 }
                                 else
                                 {
@@ -733,16 +816,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                     }
                                     else
                                     {
-                                    commandQueue[commandId] = new QueuedCommand
-                                    {
-                                        CommandJson = commandText,
-                                        Tcs = tcs,
-                                        IsExecuting = false,
-                                        EnqueuedAtMs = _uptime.ElapsedMilliseconds,
-                                        TimeoutMs = commandTimeoutMs,
-                                        Owner = client,
-                                        OwnerCancellation = commandLifetime.Token
-                                    };
+                                        commandQueue[commandId] = new QueuedCommand
+                                        {
+                                            CommandJson = commandText,
+                                            Tcs = tcs,
+                                            IsExecuting = false,
+                                            EnqueuedAtMs = _uptime.ElapsedMilliseconds,
+                                            TimeoutMs = commandTimeoutMs,
+                                            Owner = client,
+                                            OwnerCancellation = commandLifetime.Token,
+                                        };
                                     }
                                 }
                             }
@@ -750,7 +833,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             // Force Unity's main loop to iterate even when backgrounded,
                             // so ProcessCommands fires and picks up the queued command.
                             // This mirrors what HTTP does via TransportCommandDispatcher.RequestMainThreadPump().
-                            try { EditorApplication.QueuePlayerLoopUpdate(); } catch { }
+                            try
+                            {
+                                EditorApplication.QueuePlayerLoopUpdate();
+                            }
+                            catch { }
 
                             string response;
                             using var watchLifetime = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
@@ -770,33 +857,30 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                 {
                                     int timeouts = Interlocked.Increment(ref _consecutiveTimeouts);
                                     McpLog.Warn($"Command TCS timed out ({timeouts} consecutive)");
-                                    var timeoutResponse = new
-                                    {
-                                        status = "error",
-                                        error = $"Command processing timed out after {commandTimeoutMs} ms",
-                                    };
+                                    var timeoutResponse = new { status = "error", error = $"Command processing timed out after {commandTimeoutMs} ms" };
                                     response = JsonConvert.SerializeObject(timeoutResponse);
                                 }
                             }
                             catch (Exception ex)
                             {
-                                var errorResponse = new
-                                {
-                                    status = "error",
-                                    error = ex.Message,
-                                };
+                                var errorResponse = new { status = "error", error = ex.Message };
                                 response = JsonConvert.SerializeObject(errorResponse);
                             }
                             finally
                             {
-                                if (!pending.Task.IsCompleted) commandLifetime.Cancel();
+                                if (!pending.Task.IsCompleted)
+                                    commandLifetime.Cancel();
                                 watchLifetime.Cancel();
                                 await disconnectWatch.ConfigureAwait(false);
                             }
 
                             if (IsDebugEnabled())
                             {
-                                try { McpLog.Info("[MCP] sending framed response", always: false); } catch { }
+                                try
+                                {
+                                    McpLog.Info("[MCP] sending framed response", always: false);
+                                }
+                                catch { }
                             }
                             byte[] responseBytes;
                             try
@@ -829,7 +913,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                 || ex is ObjectDisposedException;
                             if (isBenign)
                             {
-                                if (IsDebugEnabled()) McpLog.Info($"Client handler: {msg}", always: false);
+                                if (IsDebugEnabled())
+                                    McpLog.Info($"Client handler: {msg}", always: false);
                             }
                             else
                             {
@@ -844,8 +929,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     connectionLifetime.Cancel();
                     lock (lockObj)
                     {
-                        var abandoned = commandQueue.Where(item => ReferenceEquals(item.Value.Owner, client)
-                            && !item.Value.IsExecuting).Select(item => item.Key).ToArray();
+                        var abandoned = commandQueue
+                            .Where(item => ReferenceEquals(item.Value.Owner, client) && !item.Value.IsExecuting)
+                            .Select(item => item.Key)
+                            .ToArray();
                         foreach (var id in abandoned)
                         {
                             commandQueue[id].Tcs.TrySetCanceled(connectionLifetime.Token);
@@ -858,14 +945,21 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         authenticatingClients.Remove(client);
                     }
                     int remaining;
-                    lock (clientsLock) { remaining = activeClients.Count; }
+                    lock (clientsLock)
+                    {
+                        remaining = activeClients.Count;
+                    }
                     McpLog.Info($"Client handler exited (remaining clients: {remaining})", always: false);
                 }
             }
         }
 
-        private static async Task WatchPendingDisconnectAsync(TcpClient client, Task pending,
-            CancellationTokenSource connectionLifetime, CancellationToken watchStop)
+        private static async Task WatchPendingDisconnectAsync(
+            TcpClient client,
+            Task pending,
+            CancellationTokenSource connectionLifetime,
+            CancellationToken watchStop
+        )
         {
             // No frame reader runs while a command result is pending. Polling only
             // in this interval avoids racing a reader that just consumed bytes.
@@ -880,8 +974,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         return;
                     }
                 }
-                catch (SocketException) { connectionLifetime.Cancel(); return; }
-                catch (ObjectDisposedException) { connectionLifetime.Cancel(); return; }
+                catch (SocketException)
+                {
+                    connectionLifetime.Cancel();
+                    return;
+                }
+                catch (ObjectDisposedException)
+                {
+                    connectionLifetime.Cancel();
+                    return;
+                }
                 await Task.WhenAny(pending, Task.Delay(50, watchStop)).ConfigureAwait(false);
             }
         }
@@ -895,9 +997,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             while (offset < count)
             {
                 int remaining = count - offset;
-                int remainingTimeout = timeoutMs <= 0
-                    ? Timeout.Infinite
-                    : timeoutMs - (int)stopwatch.ElapsedMilliseconds;
+                int remainingTimeout = timeoutMs <= 0 ? Timeout.Infinite : timeoutMs - (int)stopwatch.ElapsedMilliseconds;
 
                 if (remainingTimeout != Timeout.Infinite && remainingTimeout <= 0)
                 {
@@ -911,7 +1011,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 using var abortRead = cts.Token.Register(() =>
                 {
-                    try { stream.Dispose(); } catch { }
+                    try
+                    {
+                        stream.Dispose();
+                    }
+                    catch { }
                 });
 
                 try
@@ -945,7 +1049,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             // Closing this connection's stream also releases an in-flight write.
             using var abortWrite = cts.Token.Register(() =>
             {
-                try { stream.Dispose(); } catch { }
+                try
+                {
+                    stream.Dispose();
+                }
+                catch { }
             });
             await WriteFrameAsync(stream, payload, cts.Token).ConfigureAwait(false);
             // A disposed Mono socket can report a partially sent buffer as success.
@@ -994,15 +1102,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private static ulong ReadUInt64BigEndian(byte[] buffer)
         {
-            if (buffer == null || buffer.Length < 8) return 0UL;
+            if (buffer == null || buffer.Length < 8)
+                return 0UL;
             return ((ulong)buffer[0] << 56)
-                 | ((ulong)buffer[1] << 48)
-                 | ((ulong)buffer[2] << 40)
-                 | ((ulong)buffer[3] << 32)
-                 | ((ulong)buffer[4] << 24)
-                 | ((ulong)buffer[5] << 16)
-                 | ((ulong)buffer[6] << 8)
-                 | buffer[7];
+                | ((ulong)buffer[1] << 48)
+                | ((ulong)buffer[2] << 40)
+                | ((ulong)buffer[3] << 32)
+                | ((ulong)buffer[4] << 24)
+                | ((ulong)buffer[5] << 16)
+                | ((ulong)buffer[6] << 8)
+                | buffer[7];
         }
 
         private static void WriteUInt64BigEndian(byte[] dest, ulong value)
@@ -1023,8 +1132,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private static void ProcessCommands()
         {
-            if (!isRunning) return;
-            if (Interlocked.Exchange(ref processingCommands, 1) == 1) return;
+            if (!isRunning)
+                return;
+            if (Interlocked.Exchange(ref processingCommands, 1) == 1)
+                return;
             try
             {
                 double now = EditorApplication.timeSinceStartup;
@@ -1038,10 +1149,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 lock (lockObj)
                 {
                     // Avoid cancellation-scan allocations on idle editor updates.
-                    if (commandQueue.Count == 0) return;
+                    if (commandQueue.Count == 0)
+                        return;
 
-                    var canceled = commandQueue.Where(item => !item.Value.IsExecuting
-                        && item.Value.OwnerCancellation.IsCancellationRequested).Select(item => item.Key).ToArray();
+                    var canceled = commandQueue
+                        .Where(item => !item.Value.IsExecuting && item.Value.OwnerCancellation.IsCancellationRequested)
+                        .Select(item => item.Key)
+                        .ToArray();
                     foreach (var id in canceled)
                     {
                         commandQueue[id].Tcs.TrySetCanceled(commandQueue[id].OwnerCancellation);
@@ -1058,14 +1172,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         // A timeout cancels the response, not a legacy handler's
                         // execution. Keep later mutations behind actual settlement,
                         // including requests from a replacement connection.
-                        if (kvp.Value.IsExecuting) return;
+                        if (kvp.Value.IsExecuting)
+                            return;
                     }
 
                     work = new List<(string, QueuedCommand)>(commandQueue.Count);
                     foreach (var kvp in commandQueue)
                     {
                         var queued = kvp.Value;
-                        if (queued.IsExecuting) continue;
+                        if (queued.IsExecuting)
+                            continue;
                         queued.IsExecuting = true;
                         work.Add((kvp.Key, queued));
                         break;
@@ -1081,26 +1197,24 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                     if (string.IsNullOrWhiteSpace(commandText))
                     {
-                        var emptyResponse = new
-                        {
-                            status = "error",
-                            error = "Empty command received",
-                        };
+                        var emptyResponse = new { status = "error", error = "Empty command received" };
                         tcs.SetResult(JsonConvert.SerializeObject(emptyResponse));
-                        lock (lockObj) { commandQueue.Remove(id); }
+                        lock (lockObj)
+                        {
+                            commandQueue.Remove(id);
+                        }
                         continue;
                     }
 
                     commandText = commandText.Trim();
                     if (commandText == "ping")
                     {
-                        var pingResponse = new
-                        {
-                            status = "success",
-                            result = new { message = "pong" },
-                        };
+                        var pingResponse = new { status = "success", result = new { message = "pong" } };
                         tcs.SetResult(JsonConvert.SerializeObject(pingResponse));
-                        lock (lockObj) { commandQueue.Remove(id); }
+                        lock (lockObj)
+                        {
+                            commandQueue.Remove(id);
+                        }
                         continue;
                     }
 
@@ -1110,12 +1224,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         {
                             status = "error",
                             error = "Invalid JSON format",
-                            receivedText = commandText.Length > 50
-                                ? commandText[..50] + "..."
-                                : commandText,
+                            receivedText = commandText.Length > 50 ? commandText[..50] + "..." : commandText,
                         };
                         tcs.SetResult(JsonConvert.SerializeObject(invalidJsonResponse));
-                        lock (lockObj) { commandQueue.Remove(id); }
+                        lock (lockObj)
+                        {
+                            commandQueue.Remove(id);
+                        }
                         continue;
                     }
 
@@ -1147,11 +1262,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 catch (OperationCanceledException)
                 {
-                    var timeoutResponse = new
-                    {
-                        status = "error",
-                        error = $"Command processing timed out after {commandTimeoutMs} ms",
-                    };
+                    var timeoutResponse = new { status = "error", error = $"Command processing timed out after {commandTimeoutMs} ms" };
                     completionSource.TrySetResult(JsonConvert.SerializeObject(timeoutResponse));
                 }
                 catch (Exception ex)
@@ -1161,9 +1272,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     {
                         status = "error",
                         error = ex.Message,
-                        receivedText = payload?.Length > 50
-                            ? payload[..50] + "..."
-                            : payload,
+                        receivedText = payload?.Length > 50 ? payload[..50] + "..." : payload,
                     };
                     completionSource.TrySetResult(JsonConvert.SerializeObject(response));
                 }
@@ -1171,8 +1280,14 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     if (operation != null)
                     {
-                        try { await operation.Completion.ConfigureAwait(true); }
-                        catch (Exception ex) { McpLog.Warn($"Stdio command settlement: {ex.GetType().Name}"); }
+                        try
+                        {
+                            await operation.Completion.ConfigureAwait(true);
+                        }
+                        catch (Exception ex)
+                        {
+                            McpLog.Warn($"Stdio command settlement: {ex.GetType().Name}");
+                        }
                     }
                     lock (lockObj)
                     {
@@ -1186,13 +1301,20 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private static object InvokeOnMainThreadWithTimeout(Func<object> func, int timeoutMs)
         {
-            if (func == null) return null;
+            if (func == null)
+                return null;
             try
             {
                 if (mainThreadId == 0)
                 {
-                    try { return func(); }
-                    catch (Exception ex) { throw new InvalidOperationException($"Main thread handler error: {ex.Message}", ex); }
+                    try
+                    {
+                        return func();
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new InvalidOperationException($"Main thread handler error: {ex.Message}", ex);
+                    }
                 }
                 try
                 {
@@ -1218,7 +1340,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     }
                     finally
                     {
-                        try { tcs.TrySetResult(true); } catch { }
+                        try
+                        {
+                            tcs.TrySetResult(true);
+                        }
+                        catch { }
                     }
                 };
 
@@ -1247,11 +1373,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
 
             text = text.Trim();
-            if (
-                (text.StartsWith("{") && text.EndsWith("}"))
-                ||
-                (text.StartsWith("[") && text.EndsWith("]"))
-            )
+            if ((text.StartsWith("{") && text.EndsWith("}")) || (text.StartsWith("[") && text.EndsWith("]")))
             {
                 try
                 {
@@ -1267,10 +1389,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             return false;
         }
 
-
         public static void WriteHeartbeat(bool reloading, string reason = null)
         {
-            if (ownedEndpoint) return;
+            if (ownedEndpoint)
+                return;
             try
             {
                 string dir = Environment.GetEnvironmentVariable("UNITY_MCP_STATUS_DIR");
@@ -1316,13 +1438,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     project_name = projectName,
                     unity_version = Application.unityVersion,
                     last_heartbeat = DateTime.UtcNow.ToString("O"),
-                    project_scoped_tools = projectScopedTools
+                    project_scoped_tools = projectScopedTools,
                 };
                 File.WriteAllText(filePath, JsonConvert.SerializeObject(payload), new System.Text.UTF8Encoding(false));
             }
-            catch (Exception)
-            {
-            }
+            catch (Exception) { }
         }
 
         private static string ComputeProjectHash(string input)

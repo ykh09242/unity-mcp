@@ -1,13 +1,13 @@
 using System;
 using System.IO;
 using System.Linq;
+using MCPForUnity.Editor.Tools.Animation;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
-using MCPForUnity.Editor.Tools.Animation;
-using MCPForUnity.Runtime.Helpers;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -99,11 +99,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = new GameObject("AnimTest_NoAnimator");
             try
             {
-                var paramsObj = new JObject
-                {
-                    ["action"] = "animator_get_info",
-                    ["target"] = "AnimTest_NoAnimator"
-                };
+                var paramsObj = new JObject { ["action"] = "animator_get_info", ["target"] = "AnimTest_NoAnimator" };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsFalse(result.Value<bool>("success"));
                 Assert.That(result["message"].ToString(), Does.Contain("No Animator"));
@@ -121,11 +117,7 @@ namespace MCPForUnityTests.Editor.Tools
             go.AddComponent<Animator>();
             try
             {
-                var paramsObj = new JObject
-                {
-                    ["action"] = "animator_get_info",
-                    ["target"] = "AnimTest_WithAnimator"
-                };
+                var paramsObj = new JObject { ["action"] = "animator_get_info", ["target"] = "AnimTest_WithAnimator" };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 var data = result["data"] as JObject;
@@ -155,19 +147,18 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 Assert.IsNull(root.GetComponent<Animator>());
 
-                var paramsObj = new JObject
-                {
-                    ["action"] = "animator_get_info",
-                    ["target"] = "AnimTest_ChildRoot"
-                };
+                var paramsObj = new JObject { ["action"] = "animator_get_info", ["target"] = "AnimTest_ChildRoot" };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
                 var data = result["data"] as JObject;
                 Assert.IsNotNull(data);
                 Assert.AreEqual("AnimTest_ChildRoot", data["gameObject"].ToString());
-                Assert.AreEqual("AnimTest_ChildModel", data["animatorGameObject"].ToString(),
-                    "Response must name the GameObject that actually carries the Animator");
+                Assert.AreEqual(
+                    "AnimTest_ChildModel",
+                    data["animatorGameObject"].ToString(),
+                    "Response must name the GameObject that actually carries the Animator"
+                );
             }
             finally
             {
@@ -185,11 +176,7 @@ namespace MCPForUnityTests.Editor.Tools
             model.SetActive(false);
             try
             {
-                var paramsObj = new JObject
-                {
-                    ["action"] = "animator_get_info",
-                    ["target"] = "AnimTest_InactiveRoot"
-                };
+                var paramsObj = new JObject { ["action"] = "animator_get_info", ["target"] = "AnimTest_InactiveRoot" };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 Assert.AreEqual("AnimTest_InactiveModel", result["data"]["animatorGameObject"].ToString());
@@ -213,7 +200,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "animator_set_speed",
                     ["target"] = "AnimTest_ChildSpeedRoot",
-                    ["speed"] = 2.5f
+                    ["speed"] = 2.5f,
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -241,7 +228,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "animator_set_speed",
                     ["target"] = "AnimTest_AmbigRoot",
-                    ["speed"] = 2.5f
+                    ["speed"] = 2.5f,
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsFalse(result.Value<bool>("success"), result.ToString());
@@ -271,12 +258,15 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "animator_set_speed",
                     ["target"] = "AnimTest_AttribRoot",
-                    ["speed"] = 2f
+                    ["speed"] = 2f,
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-                Assert.That(result["message"].ToString(), Does.Contain("AnimTest_AttribModel"),
-                    "A retargeted control response must name the object it actually changed");
+                Assert.That(
+                    result["message"].ToString(),
+                    Does.Contain("AnimTest_AttribModel"),
+                    "A retargeted control response must name the object it actually changed"
+                );
             }
             finally
             {
@@ -294,15 +284,14 @@ namespace MCPForUnityTests.Editor.Tools
             child.AddComponent<Animator>();
             try
             {
-                var paramsObj = new JObject
-                {
-                    ["action"] = "animator_get_info",
-                    ["target"] = "AnimTest_PriorityRoot"
-                };
+                var paramsObj = new JObject { ["action"] = "animator_get_info", ["target"] = "AnimTest_PriorityRoot" };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-                Assert.AreEqual("AnimTest_PriorityRoot", result["data"]["animatorGameObject"].ToString(),
-                    "An Animator on the exact target wins over any descendant");
+                Assert.AreEqual(
+                    "AnimTest_PriorityRoot",
+                    result["data"]["animatorGameObject"].ToString(),
+                    "An Animator on the exact target wins over any descendant"
+                );
             }
             finally
             {
@@ -322,11 +311,7 @@ namespace MCPForUnityTests.Editor.Tools
             b.AddComponent<Animator>();
             try
             {
-                var paramsObj = new JObject
-                {
-                    ["action"] = "animator_get_info",
-                    ["target"] = "AnimTest_AmbigReadRoot"
-                };
+                var paramsObj = new JObject { ["action"] = "animator_get_info", ["target"] = "AnimTest_AmbigReadRoot" };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsFalse(result.Value<bool>("success"), result.ToString());
 
@@ -368,7 +353,7 @@ namespace MCPForUnityTests.Editor.Tools
                     ["parameterName"] = "Speed",
                     ["value"] = 1f,
                     ["speed"] = 2f,
-                    ["enabled"] = false
+                    ["enabled"] = false,
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsFalse(result.Value<bool>("success"), $"{action} must refuse an ambiguous target: {result}");
@@ -399,13 +384,16 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "animator_set_enabled",
                     ["target"] = "AnimTest_EnabledRoot",
-                    ["enabled"] = false
+                    ["enabled"] = false,
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 Assert.IsFalse(animator.enabled);
-                Assert.That(result["message"].ToString(), Does.Contain("AnimTest_EnabledModel"),
-                    "A retargeted control response must name the object it actually changed");
+                Assert.That(
+                    result["message"].ToString(),
+                    Does.Contain("AnimTest_EnabledModel"),
+                    "A retargeted control response must name the object it actually changed"
+                );
             }
             finally
             {
@@ -434,12 +422,15 @@ namespace MCPForUnityTests.Editor.Tools
                     ["target"] = "AnimTest_ParamRoot",
                     ["parameterName"] = "Speed",
                     ["parameterType"] = "float",
-                    ["value"] = 3f
+                    ["value"] = 3f,
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-                Assert.That(result["message"].ToString(), Does.Contain("AnimTest_ParamModel"),
-                    "A retargeted parameter write must disclose the Animator it resolved");
+                Assert.That(
+                    result["message"].ToString(),
+                    Does.Contain("AnimTest_ParamModel"),
+                    "A retargeted parameter write must disclose the Animator it resolved"
+                );
             }
             finally
             {
@@ -464,15 +455,13 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "controller_assign",
                     ["target"] = "AnimTest_AssignRoot",
-                    ["controllerPath"] = controllerPath
+                    ["controllerPath"] = controllerPath,
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
-                Assert.IsNotNull(root.GetComponent<Animator>(),
-                    "Assign must add an Animator to the named target, not reuse a descendant's");
-                Assert.IsNull(childAnimator.runtimeAnimatorController,
-                    "The child Animator must be left untouched");
+                Assert.IsNotNull(root.GetComponent<Animator>(), "Assign must add an Animator to the named target, not reuse a descendant's");
+                Assert.IsNull(childAnimator.runtimeAnimatorController, "The child Animator must be left untouched");
             }
             finally
             {
@@ -495,7 +484,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "animator_set_speed",
                     ["target"] = "AnimTest_Speed",
-                    ["speed"] = 2.5f
+                    ["speed"] = 2.5f,
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -519,7 +508,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "animator_set_enabled",
                     ["target"] = "AnimTest_Enabled",
-                    ["enabled"] = false
+                    ["enabled"] = false,
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -542,10 +531,16 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string folder = $"{TempRoot}/Created/Nested";
             string path = $"{folder}/Created.{extension}";
-            var result = ToJObject(ManageAnimation.HandleCommand(new JObject
-            {
-                ["action"] = action, [pathKey] = path, ["preset"] = "bounce",
-            }));
+            var result = ToJObject(
+                ManageAnimation.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        [pathKey] = path,
+                        ["preset"] = "bounce",
+                    }
+                )
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsTrue(AssetDatabase.IsValidFolder(folder));
@@ -563,7 +558,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "clip_create",
                 ["clipPath"] = clipPath,
                 ["length"] = 2.0f,
-                ["loop"] = true
+                ["loop"] = true,
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -587,11 +582,7 @@ namespace MCPForUnityTests.Editor.Tools
             AssetDatabase.SaveAssets();
 
             // Try to create again
-            var paramsObj = new JObject
-            {
-                ["action"] = "clip_create",
-                ["clipPath"] = clipPath,
-            };
+            var paramsObj = new JObject { ["action"] = "clip_create", ["clipPath"] = clipPath };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["message"].ToString(), Does.Contain("already exists"));
@@ -623,11 +614,7 @@ namespace MCPForUnityTests.Editor.Tools
             AssetDatabase.CreateAsset(clip, clipPath);
             AssetDatabase.SaveAssets();
 
-            var paramsObj = new JObject
-            {
-                ["action"] = "clip_get_info",
-                ["clipPath"] = clipPath
-            };
+            var paramsObj = new JObject { ["action"] = "clip_get_info", ["clipPath"] = clipPath };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
@@ -641,11 +628,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void ClipGetInfo_NotFound_ReturnsError()
         {
-            var paramsObj = new JObject
-            {
-                ["action"] = "clip_get_info",
-                ["clipPath"] = "Assets/Nonexistent.anim"
-            };
+            var paramsObj = new JObject { ["action"] = "clip_get_info", ["clipPath"] = "Assets/Nonexistent.anim" };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["message"].ToString(), Does.Contain("not found"));
@@ -669,11 +652,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["clipPath"] = clipPath,
                 ["propertyPath"] = "localPosition.y",
                 ["type"] = "Transform",
-                ["keys"] = new JArray(
-                    new JArray(0f, 0f),
-                    new JArray(0.5f, 2f),
-                    new JArray(1f, 0f)
-                )
+                ["keys"] = new JArray(new JArray(0f, 0f), new JArray(0.5f, 2f), new JArray(1f, 0f)),
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -709,10 +688,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["clipPath"] = clipPath,
                 ["propertyPath"] = "localPosition.x",
                 ["type"] = "Transform",
-                ["keys"] = new JArray(
-                    new JArray(0f, 5f),
-                    new JArray(2f, 10f)
-                )
+                ["keys"] = new JArray(new JArray(0f, 5f), new JArray(2f, 10f)),
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -739,9 +715,15 @@ namespace MCPForUnityTests.Editor.Tools
                 ["propertyPath"] = "localPosition.z",
                 ["type"] = "Transform",
                 ["keys"] = new JArray(
-                    new JObject { ["time"] = 0f, ["value"] = 0f, ["inTangent"] = 0f, ["outTangent"] = 1f },
+                    new JObject
+                    {
+                        ["time"] = 0f,
+                        ["value"] = 0f,
+                        ["inTangent"] = 0f,
+                        ["outTangent"] = 1f,
+                    },
                     new JObject { ["time"] = 1f, ["value"] = 5f }
-                )
+                ),
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -797,7 +779,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "clip_assign",
                     ["target"] = "AnimTest_Assign",
-                    ["clipPath"] = clipPath
+                    ["clipPath"] = clipPath,
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -822,7 +804,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "clip_assign",
                     ["target"] = "AnimTest_AssignMissing",
-                    ["clipPath"] = "Assets/Nonexistent.anim"
+                    ["clipPath"] = "Assets/Nonexistent.anim",
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsFalse(result.Value<bool>("success"));
@@ -847,7 +829,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "clip_create",
                 ["clip_path"] = clipPath,
-                ["length"] = 1.0f
+                ["length"] = 1.0f,
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -868,8 +850,8 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["clipPath"] = clipPath,
                     ["length"] = 1.5f,
-                    ["loop"] = true
-                }
+                    ["loop"] = true,
+                },
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -902,11 +884,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string controllerPath = $"{TempRoot}/TestController_{Guid.NewGuid():N}.controller";
 
-            var paramsObj = new JObject
-            {
-                ["action"] = "controller_create",
-                ["controllerPath"] = controllerPath
-            };
+            var paramsObj = new JObject { ["action"] = "controller_create", ["controllerPath"] = controllerPath };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
@@ -922,11 +900,7 @@ namespace MCPForUnityTests.Editor.Tools
             var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
             AssetDatabase.SaveAssets();
 
-            var paramsObj = new JObject
-            {
-                ["action"] = "controller_create",
-                ["controllerPath"] = controllerPath
-            };
+            var paramsObj = new JObject { ["action"] = "controller_create", ["controllerPath"] = controllerPath };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["message"].ToString(), Does.Contain("already exists"));
@@ -956,7 +930,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "controller_add_state",
                 ["controllerPath"] = controllerPath,
-                ["stateName"] = "Walk"
+                ["stateName"] = "Walk",
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -978,7 +952,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "controller_add_state",
                 ["controllerPath"] = controllerPath,
-                ["stateName"] = "Idle"
+                ["stateName"] = "Idle",
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"));
@@ -1001,7 +975,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "controller_add_state",
                 ["controllerPath"] = controllerPath,
                 ["stateName"] = "Run",
-                ["clipPath"] = clipPath
+                ["clipPath"] = clipPath,
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -1032,7 +1006,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["fromState"] = "Idle",
                 ["toState"] = "Walk",
                 ["hasExitTime"] = false,
-                ["duration"] = 0.1f
+                ["duration"] = 0.1f,
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -1066,9 +1040,9 @@ namespace MCPForUnityTests.Editor.Tools
                     {
                         ["parameter"] = "Speed",
                         ["mode"] = "greater",
-                        ["threshold"] = 0.1f
+                        ["threshold"] = 0.1f,
                     }
-                )
+                ),
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -1092,7 +1066,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "controller_add_transition",
                 ["controllerPath"] = controllerPath,
                 ["fromState"] = "Idle",
-                ["toState"] = "Nonexistent"
+                ["toState"] = "Nonexistent",
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"));
@@ -1116,7 +1090,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["controllerPath"] = controllerPath,
                 ["parameterName"] = "Speed",
                 ["parameterType"] = "float",
-                ["defaultValue"] = 1.5f
+                ["defaultValue"] = 1.5f,
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -1141,7 +1115,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "controller_add_parameter",
                 ["controllerPath"] = controllerPath,
                 ["parameterName"] = "Speed",
-                ["parameterType"] = "float"
+                ["parameterType"] = "float",
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"));
@@ -1163,7 +1137,7 @@ namespace MCPForUnityTests.Editor.Tools
                     ["action"] = "controller_add_parameter",
                     ["controllerPath"] = controllerPath,
                     ["parameterName"] = $"Param_{t}",
-                    ["parameterType"] = t
+                    ["parameterType"] = t,
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), $"Failed for type {t}: {result}");
@@ -1188,11 +1162,7 @@ namespace MCPForUnityTests.Editor.Tools
             sm.AddState("Walk");
             AssetDatabase.SaveAssets();
 
-            var paramsObj = new JObject
-            {
-                ["action"] = "controller_get_info",
-                ["controllerPath"] = controllerPath
-            };
+            var paramsObj = new JObject { ["action"] = "controller_get_info", ["controllerPath"] = controllerPath };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
@@ -1209,11 +1179,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void ControllerGetInfo_NotFound_ReturnsError()
         {
-            var paramsObj = new JObject
-            {
-                ["action"] = "controller_get_info",
-                ["controllerPath"] = "Assets/Nonexistent.controller"
-            };
+            var paramsObj = new JObject { ["action"] = "controller_get_info", ["controllerPath"] = "Assets/Nonexistent.controller" };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"));
         }
@@ -1238,7 +1204,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "controller_assign",
                     ["controllerPath"] = controllerPath,
-                    ["target"] = "AnimTest_ControllerAssign"
+                    ["target"] = "AnimTest_ControllerAssign",
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -1273,7 +1239,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["keys"] = new JArray(
                     new JObject { ["time"] = 0f, ["value"] = new JArray(0f, 1f, -10f) },
                     new JObject { ["time"] = 1f, ["value"] = new JArray(2f, 1f, -10f) }
-                )
+                ),
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -1302,9 +1268,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "clip_set_vector_curve",
                 ["clipPath"] = clipPath,
-                ["keys"] = new JArray(
-                    new JObject { ["time"] = 0f, ["value"] = new JArray(0f, 0f, 0f) }
-                )
+                ["keys"] = new JArray(new JObject { ["time"] = 0f, ["value"] = new JArray(0f, 0f, 0f) }),
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"));
@@ -1326,7 +1290,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["property"] = "localPosition",
                 ["keys"] = new JArray(
                     new JObject { ["time"] = 0f, ["value"] = new JArray(0f, 1f) } // Only 2 elements
-                )
+                ),
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"));
@@ -1348,7 +1312,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["preset"] = "bounce",
                 ["duration"] = 2.0f,
                 ["amplitude"] = 0.5f,
-                ["loop"] = true
+                ["loop"] = true,
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -1371,7 +1335,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "clip_create_preset",
                     ["clipPath"] = clipPath,
-                    ["preset"] = preset
+                    ["preset"] = preset,
                 };
                 var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
                 Assert.IsTrue(result.Value<bool>("success"), $"Preset '{preset}' failed: {result}");
@@ -1389,7 +1353,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "clip_create_preset",
                 ["clipPath"] = clipPath,
-                ["preset"] = "nonexistent"
+                ["preset"] = "nonexistent",
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"));
@@ -1400,11 +1364,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void ClipCreatePreset_MissingPreset_ReturnsError()
         {
             string clipPath = $"{TempRoot}/NoPreset_{Guid.NewGuid():N}.anim";
-            var paramsObj = new JObject
-            {
-                ["action"] = "clip_create_preset",
-                ["clipPath"] = clipPath
-            };
+            var paramsObj = new JObject { ["action"] = "clip_create_preset", ["clipPath"] = clipPath };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["message"].ToString(), Does.Contain("preset"));
@@ -1422,7 +1382,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "clip_create_preset",
                 ["clipPath"] = clipPath,
-                ["preset"] = "bounce"
+                ["preset"] = "bounce",
             };
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"));

@@ -20,6 +20,7 @@ from services.tools.manage_animation import (
 # Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def runner():
     return CliRunner()
@@ -45,6 +46,7 @@ def mock_success():
 # Action Lists
 # =============================================================================
 
+
 class TestActionLists:
     """Verify action list completeness and consistency."""
 
@@ -67,29 +69,53 @@ class TestActionLists:
         assert len(ALL_ACTIONS) == len(set(ALL_ACTIONS))
 
     def test_expected_animator_actions_present(self):
-        expected = {"animator_get_info", "animator_play", "animator_crossfade",
-                    "animator_set_parameter", "animator_get_parameter",
-                    "animator_set_speed", "animator_set_enabled"}
+        expected = {
+            "animator_get_info",
+            "animator_play",
+            "animator_crossfade",
+            "animator_set_parameter",
+            "animator_get_parameter",
+            "animator_set_speed",
+            "animator_set_enabled",
+        }
         assert expected.issubset(set(ANIMATOR_ACTIONS))
 
     def test_expected_controller_actions_present(self):
-        expected = {"controller_create", "controller_add_state", "controller_add_transition",
-                    "controller_add_parameter", "controller_get_info", "controller_assign",
-                    "controller_add_layer", "controller_remove_layer", "controller_set_layer_weight",
-                    "controller_create_blend_tree_1d", "controller_create_blend_tree_2d", "controller_add_blend_tree_child"}
+        expected = {
+            "controller_create",
+            "controller_add_state",
+            "controller_add_transition",
+            "controller_add_parameter",
+            "controller_get_info",
+            "controller_assign",
+            "controller_add_layer",
+            "controller_remove_layer",
+            "controller_set_layer_weight",
+            "controller_create_blend_tree_1d",
+            "controller_create_blend_tree_2d",
+            "controller_add_blend_tree_child",
+        }
         assert expected.issubset(set(CONTROLLER_ACTIONS))
 
     def test_expected_clip_actions_present(self):
-        expected = {"clip_create", "clip_get_info", "clip_add_curve",
-                    "clip_set_curve", "clip_set_vector_curve",
-                    "clip_create_preset", "clip_assign",
-                    "clip_add_event", "clip_remove_event"}
+        expected = {
+            "clip_create",
+            "clip_get_info",
+            "clip_add_curve",
+            "clip_set_curve",
+            "clip_set_vector_curve",
+            "clip_create_preset",
+            "clip_assign",
+            "clip_add_event",
+            "clip_remove_event",
+        }
         assert expected.issubset(set(CLIP_ACTIONS))
 
 
 # =============================================================================
 # Tool Validation (Python-side, no Unity)
 # =============================================================================
+
 
 class TestManageAnimationToolValidation:
     """Test action validation in the manage_animation tool function."""
@@ -151,6 +177,7 @@ class TestManageAnimationToolValidation:
 # CLI Command Parameter Building
 # =============================================================================
 
+
 def _get_params(mock_run):
     """Helper to extract the params dict from a mock run_command call."""
     return mock_run.call_args[0][1]
@@ -206,7 +233,9 @@ class TestAnimatorCLICommands:
         """With no message the CLI cannot know whether the target or a descendant played,
         so the fallback must not claim one."""
         with patch("cli.commands.animation.get_config", return_value=mock_config):
-            with patch("cli.commands.animation.run_command", return_value={"success": True, "data": {}}):
+            with patch(
+                "cli.commands.animation.run_command", return_value={"success": True, "data": {}}
+            ):
                 result = runner.invoke(animation, ["animator", "play", "Wrapper", "Walk"])
 
                 assert "Playing state 'Walk'" in result.output
@@ -224,7 +253,9 @@ class TestAnimatorCLICommands:
     def test_animator_crossfade_builds_correct_params(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, ["animator", "crossfade", "Player", "Run", "--duration", "0.5"])
+                runner.invoke(
+                    animation, ["animator", "crossfade", "Player", "Run", "--duration", "0.5"]
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "animator_crossfade"
@@ -246,7 +277,10 @@ class TestAnimatorCLICommands:
     def test_animator_set_parameter_with_type(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, ["animator", "set-parameter", "Player", "IsRunning", "true", "--type", "bool"])
+                runner.invoke(
+                    animation,
+                    ["animator", "set-parameter", "Player", "IsRunning", "true", "--type", "bool"],
+                )
 
                 params = _get_params(mock_run)
                 assert params["properties"]["parameterName"] == "IsRunning"
@@ -286,7 +320,10 @@ class TestClipCLICommands:
     def test_clip_create_builds_correct_params(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, ["clip", "create", "Assets/Anim/Walk.anim", "--length", "2.0", "--loop"])
+                runner.invoke(
+                    animation,
+                    ["clip", "create", "Assets/Anim/Walk.anim", "--length", "2.0", "--loop"],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "clip_create"
@@ -306,12 +343,20 @@ class TestClipCLICommands:
     def test_clip_add_curve_parses_keys(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "clip", "add-curve", "Assets/Anim/Bounce.anim",
-                    "--property", "localPosition.y",
-                    "--type", "Transform",
-                    "--keys", "[[0,0],[0.5,2],[1,0]]",
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "clip",
+                        "add-curve",
+                        "Assets/Anim/Bounce.anim",
+                        "--property",
+                        "localPosition.y",
+                        "--type",
+                        "Transform",
+                        "--keys",
+                        "[[0,0],[0.5,2],[1,0]]",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "clip_add_curve"
@@ -338,10 +383,16 @@ class TestRawCommand:
     def test_raw_with_target_and_params(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "raw", "animator_play", "Player",
-                    "--params", '{"stateName": "Walk"}',
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "raw",
+                        "animator_play",
+                        "Player",
+                        "--params",
+                        '{"stateName": "Walk"}',
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "animator_play"
@@ -351,11 +402,17 @@ class TestRawCommand:
     def test_raw_with_clip_path(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "raw", "clip_create",
-                    "--clip-path", "Assets/Anim/Test.anim",
-                    "--params", '{"length": 2.0}',
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "raw",
+                        "clip_create",
+                        "--clip-path",
+                        "Assets/Anim/Test.anim",
+                        "--params",
+                        '{"length": 2.0}',
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "clip_create"
@@ -366,6 +423,7 @@ class TestRawCommand:
 # =============================================================================
 # Controller CLI Commands
 # =============================================================================
+
 
 class TestControllerCLICommands:
     """Verify controller CLI commands build correct parameter dicts."""
@@ -382,11 +440,19 @@ class TestControllerCLICommands:
     def test_controller_add_state_builds_correct_params(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "add-state", "Assets/Anim/Player.controller", "Walk",
-                    "--clip-path", "Assets/Anim/Walk.anim",
-                    "--speed", "1.5",
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "add-state",
+                        "Assets/Anim/Player.controller",
+                        "Walk",
+                        "--clip-path",
+                        "Assets/Anim/Walk.anim",
+                        "--speed",
+                        "1.5",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "controller_add_state"
@@ -398,23 +464,40 @@ class TestControllerCLICommands:
     def test_controller_add_state_with_default(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "add-state", "Assets/Anim/Player.controller", "Idle",
-                    "--is-default",
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "add-state",
+                        "Assets/Anim/Player.controller",
+                        "Idle",
+                        "--is-default",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["properties"]["isDefault"] is True
 
-    def test_controller_add_transition_builds_correct_params(self, runner, mock_config, mock_success):
+    def test_controller_add_transition_builds_correct_params(
+        self, runner, mock_config, mock_success
+    ):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "add-transition", "Assets/Anim/Player.controller",
-                    "Idle", "Walk",
-                    "--no-exit-time", "--duration", "0.25",
-                    "--conditions", '[{"parameter":"Speed","mode":"greater","threshold":0.1}]',
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "add-transition",
+                        "Assets/Anim/Player.controller",
+                        "Idle",
+                        "Walk",
+                        "--no-exit-time",
+                        "--duration",
+                        "0.25",
+                        "--conditions",
+                        '[{"parameter":"Speed","mode":"greater","threshold":0.1}]',
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "controller_add_transition"
@@ -426,13 +509,24 @@ class TestControllerCLICommands:
                 assert len(params["properties"]["conditions"]) == 1
                 assert params["properties"]["conditions"][0]["parameter"] == "Speed"
 
-    def test_controller_add_parameter_builds_correct_params(self, runner, mock_config, mock_success):
+    def test_controller_add_parameter_builds_correct_params(
+        self, runner, mock_config, mock_success
+    ):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "add-parameter", "Assets/Anim/Player.controller",
-                    "Speed", "--type", "float", "--default-value", "0.0",
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "add-parameter",
+                        "Assets/Anim/Player.controller",
+                        "Speed",
+                        "--type",
+                        "float",
+                        "--default-value",
+                        "0.0",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "controller_add_parameter"
@@ -444,10 +538,17 @@ class TestControllerCLICommands:
     def test_controller_add_parameter_trigger(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "add-parameter", "Assets/Anim/Player.controller",
-                    "Jump", "--type", "trigger",
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "add-parameter",
+                        "Assets/Anim/Player.controller",
+                        "Jump",
+                        "--type",
+                        "trigger",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["properties"]["parameterType"] == "trigger"
@@ -464,9 +565,15 @@ class TestControllerCLICommands:
     def test_controller_assign_builds_correct_params(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "assign", "Assets/Anim/Player.controller", "Player",
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "assign",
+                        "Assets/Anim/Player.controller",
+                        "Player",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "controller_assign"
@@ -476,10 +583,17 @@ class TestControllerCLICommands:
     def test_controller_assign_with_search_method(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "assign", "Assets/Anim/Player.controller", "Player",
-                    "--search-method", "by_name",
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "assign",
+                        "Assets/Anim/Player.controller",
+                        "Player",
+                        "--search-method",
+                        "by_name",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["searchMethod"] == "by_name"
@@ -489,17 +603,25 @@ class TestControllerCLICommands:
 # Vector Curve and Preset CLI Commands
 # =============================================================================
 
+
 class TestVectorCurveAndPresetCLICommands:
     """Verify vector curve and preset CLI commands build correct parameter dicts."""
 
     def test_clip_set_vector_curve_builds_correct_params(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "clip", "set-vector-curve", "Assets/Anim/Move.anim",
-                    "--property", "localPosition",
-                    "--keys", '[{"time":0,"value":[0,1,-10]},{"time":1,"value":[2,1,-10]}]',
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "clip",
+                        "set-vector-curve",
+                        "Assets/Anim/Move.anim",
+                        "--property",
+                        "localPosition",
+                        "--keys",
+                        '[{"time":0,"value":[0,1,-10]},{"time":1,"value":[2,1,-10]}]',
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "clip_set_vector_curve"
@@ -513,12 +635,20 @@ class TestVectorCurveAndPresetCLICommands:
     def test_clip_set_vector_curve_with_type(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "clip", "set-vector-curve", "Assets/Anim/Scale.anim",
-                    "--property", "localScale",
-                    "--type", "Transform",
-                    "--keys", '[{"time":0,"value":[1,1,1]},{"time":1,"value":[2,2,2]}]',
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "clip",
+                        "set-vector-curve",
+                        "Assets/Anim/Scale.anim",
+                        "--property",
+                        "localScale",
+                        "--type",
+                        "Transform",
+                        "--keys",
+                        '[{"time":0,"value":[1,1,1]},{"time":1,"value":[2,2,2]}]',
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["properties"]["type"] == "Transform"
@@ -526,10 +656,19 @@ class TestVectorCurveAndPresetCLICommands:
     def test_clip_create_preset_builds_correct_params(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "clip", "create-preset", "Assets/Anim/Bounce.anim", "bounce",
-                    "--duration", "2.0", "--amplitude", "0.5",
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "clip",
+                        "create-preset",
+                        "Assets/Anim/Bounce.anim",
+                        "bounce",
+                        "--duration",
+                        "2.0",
+                        "--amplitude",
+                        "0.5",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "clip_create_preset"
@@ -541,33 +680,74 @@ class TestVectorCurveAndPresetCLICommands:
     def test_clip_create_preset_no_loop(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "clip", "create-preset", "Assets/Anim/Spin.anim", "spin", "--no-loop",
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "clip",
+                        "create-preset",
+                        "Assets/Anim/Spin.anim",
+                        "spin",
+                        "--no-loop",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["properties"]["loop"] is False
 
     def test_clip_create_preset_all_presets_accepted(self, runner, mock_config, mock_success):
         """Verify all preset names are accepted by the CLI."""
-        presets = ["bounce", "rotate", "pulse", "fade", "shake", "hover", "spin",
-                   "sway", "bob", "wiggle", "blink", "slide_in", "elastic"]
+        presets = [
+            "bounce",
+            "rotate",
+            "pulse",
+            "fade",
+            "shake",
+            "hover",
+            "spin",
+            "sway",
+            "bob",
+            "wiggle",
+            "blink",
+            "slide_in",
+            "elastic",
+        ]
         for preset in presets:
             with patch("cli.commands.animation.get_config", return_value=mock_config):
-                with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                    result = runner.invoke(animation, [
-                        "clip", "create-preset", f"Assets/Anim/{preset}.anim", preset,
-                    ])
+                with patch(
+                    "cli.commands.animation.run_command", return_value=mock_success
+                ) as mock_run:
+                    result = runner.invoke(
+                        animation,
+                        [
+                            "clip",
+                            "create-preset",
+                            f"Assets/Anim/{preset}.anim",
+                            preset,
+                        ],
+                    )
                     assert result.exit_code == 0, f"Preset '{preset}' failed: {result.output}"
 
     def test_clip_add_event_builds_correct_params(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "clip", "add-event", "Assets/Anim/Attack.anim",
-                    "--function", "OnAttackHit", "--time", "0.5",
-                    "--string-param", "sword", "--float-param", "10.5", "--int-param", "2"
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "clip",
+                        "add-event",
+                        "Assets/Anim/Attack.anim",
+                        "--function",
+                        "OnAttackHit",
+                        "--time",
+                        "0.5",
+                        "--string-param",
+                        "sword",
+                        "--float-param",
+                        "10.5",
+                        "--int-param",
+                        "2",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "clip_add_event"
@@ -581,10 +761,10 @@ class TestVectorCurveAndPresetCLICommands:
     def test_clip_remove_event_by_index(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "clip", "remove-event", "Assets/Anim/Attack.anim",
-                    "--event-index", "0"
-                ])
+                runner.invoke(
+                    animation,
+                    ["clip", "remove-event", "Assets/Anim/Attack.anim", "--event-index", "0"],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "clip_remove_event"
@@ -593,10 +773,18 @@ class TestVectorCurveAndPresetCLICommands:
     def test_clip_remove_event_by_function(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "clip", "remove-event", "Assets/Anim/Attack.anim",
-                    "--function", "OnAttackHit", "--time", "0.5"
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "clip",
+                        "remove-event",
+                        "Assets/Anim/Attack.anim",
+                        "--function",
+                        "OnAttackHit",
+                        "--time",
+                        "0.5",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "clip_remove_event"
@@ -610,10 +798,19 @@ class TestLayerCLICommands:
     def test_controller_add_layer_builds_correct_params(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "add-layer", "Assets/Anim/Player.controller", "UpperBody",
-                    "--weight", "0.8", "--blending-mode", "additive"
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "add-layer",
+                        "Assets/Anim/Player.controller",
+                        "UpperBody",
+                        "--weight",
+                        "0.8",
+                        "--blending-mode",
+                        "additive",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "controller_add_layer"
@@ -624,10 +821,16 @@ class TestLayerCLICommands:
     def test_controller_remove_layer_by_index(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "remove-layer", "Assets/Anim/Player.controller",
-                    "--layer-index", "1"
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "remove-layer",
+                        "Assets/Anim/Player.controller",
+                        "--layer-index",
+                        "1",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "controller_remove_layer"
@@ -636,10 +839,17 @@ class TestLayerCLICommands:
     def test_controller_set_layer_weight(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "set-layer-weight", "Assets/Anim/Player.controller", "0.5",
-                    "--layer-name", "UpperBody"
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "set-layer-weight",
+                        "Assets/Anim/Player.controller",
+                        "0.5",
+                        "--layer-name",
+                        "UpperBody",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "controller_set_layer_weight"
@@ -650,13 +860,24 @@ class TestLayerCLICommands:
 class TestBlendTreeCLICommands:
     """Test blend tree CLI commands."""
 
-    def test_controller_create_blend_tree_1d_builds_correct_params(self, runner, mock_config, mock_success):
+    def test_controller_create_blend_tree_1d_builds_correct_params(
+        self, runner, mock_config, mock_success
+    ):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "create-blend-tree-1d", "Assets/Anim/Player.controller", "Locomotion",
-                    "--blend-param", "Speed", "--layer-index", "0"
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "create-blend-tree-1d",
+                        "Assets/Anim/Player.controller",
+                        "Locomotion",
+                        "--blend-param",
+                        "Speed",
+                        "--layer-index",
+                        "0",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "controller_create_blend_tree_1d"
@@ -664,14 +885,26 @@ class TestBlendTreeCLICommands:
                 assert params["properties"]["blendParameter"] == "Speed"
                 assert params["properties"]["layerIndex"] == 0
 
-    def test_controller_create_blend_tree_2d_builds_correct_params(self, runner, mock_config, mock_success):
+    def test_controller_create_blend_tree_2d_builds_correct_params(
+        self, runner, mock_config, mock_success
+    ):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "create-blend-tree-2d", "Assets/Anim/Player.controller", "Movement",
-                    "--blend-param-x", "VelocityX", "--blend-param-y", "VelocityZ",
-                    "--blend-type", "freeformdirectional2d"
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "create-blend-tree-2d",
+                        "Assets/Anim/Player.controller",
+                        "Movement",
+                        "--blend-param-x",
+                        "VelocityX",
+                        "--blend-param-y",
+                        "VelocityZ",
+                        "--blend-type",
+                        "freeformdirectional2d",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "controller_create_blend_tree_2d"
@@ -683,10 +916,19 @@ class TestBlendTreeCLICommands:
     def test_controller_add_blend_tree_child_1d(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "add-blend-tree-child", "Assets/Anim/Player.controller", "Locomotion",
-                    "--clip-path", "Assets/Anim/Walk.anim", "--threshold", "1.0"
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "add-blend-tree-child",
+                        "Assets/Anim/Player.controller",
+                        "Locomotion",
+                        "--clip-path",
+                        "Assets/Anim/Walk.anim",
+                        "--threshold",
+                        "1.0",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "controller_add_blend_tree_child"
@@ -698,10 +940,20 @@ class TestBlendTreeCLICommands:
     def test_controller_add_blend_tree_child_2d(self, runner, mock_config, mock_success):
         with patch("cli.commands.animation.get_config", return_value=mock_config):
             with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
-                runner.invoke(animation, [
-                    "controller", "add-blend-tree-child", "Assets/Anim/Player.controller", "Movement",
-                    "--clip-path", "Assets/Anim/WalkForward.anim", "--position", "0", "1"
-                ])
+                runner.invoke(
+                    animation,
+                    [
+                        "controller",
+                        "add-blend-tree-child",
+                        "Assets/Anim/Player.controller",
+                        "Movement",
+                        "--clip-path",
+                        "Assets/Anim/WalkForward.anim",
+                        "--position",
+                        "0",
+                        "1",
+                    ],
+                )
 
                 params = _get_params(mock_run)
                 assert params["action"] == "controller_add_blend_tree_child"

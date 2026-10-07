@@ -30,7 +30,7 @@ namespace MCPForUnity.Editor.Services
     {
         public string Name { get; set; }
         public string Description { get; set; }
-        public string Type { get; set; }  // "string", "int", "bool", "float", etc.
+        public string Type { get; set; } // "string", "int", "bool", "float", etc.
         public bool Required { get; set; }
         public string DefaultValue { get; set; }
     }

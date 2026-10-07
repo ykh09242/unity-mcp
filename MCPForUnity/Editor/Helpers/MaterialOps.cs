@@ -23,14 +23,14 @@ namespace MCPForUnity.Editor.Helpers
             // Helper for case-insensitive lookup
             JToken GetValue(string key)
             {
-                return properties.Properties()
-                    .FirstOrDefault(p => string.Equals(p.Name, key, StringComparison.OrdinalIgnoreCase))?.Value;
+                return properties.Properties().FirstOrDefault(p => string.Equals(p.Name, key, StringComparison.OrdinalIgnoreCase))?.Value;
             }
 
             // Reject unsafe texture references before applying any material properties.
             foreach (var property in properties.Properties())
             {
-                if (string.Equals(property.Name, "shader", StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.Equals(property.Name, "shader", StringComparison.OrdinalIgnoreCase))
+                    continue;
                 JToken referenceToken = property.Value;
                 if (referenceToken.Type == JTokenType.String && referenceToken.ToString().TrimStart().StartsWith("{"))
                     referenceToken = JToken.Parse(referenceToken.ToString());
@@ -42,7 +42,8 @@ namespace MCPForUnity.Editor.Helpers
                     if (!string.IsNullOrEmpty(path))
                         AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true);
                     string guid = reference["guid"]?.ToString();
-                    if (!string.IsNullOrEmpty(guid)) AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: true, allowBuiltIn: true);
+                    if (!string.IsNullOrEmpty(guid))
+                        AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: true, allowBuiltIn: true);
                     if (reference["instanceID"] != null || reference["entityID"] != null)
                         reference.ToObject<UnityEngine.Object>(serializer);
                 }
@@ -100,8 +101,7 @@ namespace MCPForUnity.Editor.Helpers
             if (floatToken is JObject floatProps)
             {
                 string propName = floatProps["name"]?.ToString();
-                if (!string.IsNullOrEmpty(propName) &&
-                   (floatProps["value"]?.Type == JTokenType.Float || floatProps["value"]?.Type == JTokenType.Integer))
+                if (!string.IsNullOrEmpty(propName) && (floatProps["value"]?.Type == JTokenType.Float || floatProps["value"]?.Type == JTokenType.Integer))
                 {
                     try
                     {
@@ -110,9 +110,11 @@ namespace MCPForUnity.Editor.Helpers
                         if (mat.HasProperty(propName) && propertyIndex >= 0)
                         {
                             var type = mat.shader.GetPropertyType(propertyIndex);
-                            bool changed = type == UnityEngine.Rendering.ShaderPropertyType.Int
-                                ? mat.GetInteger(propName) != floatProps["value"].ReadScalar<decimal>()
-                                : (type == UnityEngine.Rendering.ShaderPropertyType.Float || type == UnityEngine.Rendering.ShaderPropertyType.Range) && mat.GetFloat(propName) != newVal;
+                            bool changed =
+                                type == UnityEngine.Rendering.ShaderPropertyType.Int
+                                    ? mat.GetInteger(propName) != floatProps["value"].ReadScalar<decimal>()
+                                    : (type == UnityEngine.Rendering.ShaderPropertyType.Float || type == UnityEngine.Rendering.ShaderPropertyType.Range)
+                                        && mat.GetFloat(propName) != newVal;
                             if (changed)
                                 modified |= TrySetShaderProperty(mat, propName, floatProps["value"], serializer);
                         }
@@ -142,8 +144,12 @@ namespace MCPForUnity.Editor.Helpers
                         string targetProp = ResolvePropertyName(mat, candidateName);
 
                         int propertyIndex = mat.shader.FindPropertyIndex(targetProp);
-                        if (!string.IsNullOrEmpty(targetProp) && mat.HasProperty(targetProp) && propertyIndex >= 0 &&
-                            mat.shader.GetPropertyType(propertyIndex) == UnityEngine.Rendering.ShaderPropertyType.Texture)
+                        if (
+                            !string.IsNullOrEmpty(targetProp)
+                            && mat.HasProperty(targetProp)
+                            && propertyIndex >= 0
+                            && mat.shader.GetPropertyType(propertyIndex) == UnityEngine.Rendering.ShaderPropertyType.Texture
+                        )
                         {
                             if (mat.GetTexture(targetProp) != newTex)
                             {
@@ -160,7 +166,8 @@ namespace MCPForUnity.Editor.Helpers
 
             foreach (var prop in properties.Properties())
             {
-                if (reservedKeys.Contains(prop.Name)) continue;
+                if (reservedKeys.Contains(prop.Name))
+                    continue;
                 string shaderProp = ResolvePropertyName(mat, prop.Name);
                 JToken v = prop.Value;
 
@@ -178,26 +185,48 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static string ResolvePropertyName(Material mat, string name)
         {
-            if (mat == null || string.IsNullOrEmpty(name)) return name;
+            if (mat == null || string.IsNullOrEmpty(name))
+                return name;
             string[] candidates;
             var lower = name.ToLowerInvariant();
             switch (lower)
             {
-                case "_color": candidates = new[] { "_Color", "_BaseColor" }; break;
-                case "_basecolor": candidates = new[] { "_BaseColor", "_Color" }; break;
-                case "_maintex": candidates = new[] { "_MainTex", "_BaseMap" }; break;
-                case "_basemap": candidates = new[] { "_BaseMap", "_MainTex" }; break;
-                case "_glossiness": candidates = new[] { "_Glossiness", "_Smoothness" }; break;
-                case "_smoothness": candidates = new[] { "_Smoothness", "_Glossiness" }; break;
+                case "_color":
+                    candidates = new[] { "_Color", "_BaseColor" };
+                    break;
+                case "_basecolor":
+                    candidates = new[] { "_BaseColor", "_Color" };
+                    break;
+                case "_maintex":
+                    candidates = new[] { "_MainTex", "_BaseMap" };
+                    break;
+                case "_basemap":
+                    candidates = new[] { "_BaseMap", "_MainTex" };
+                    break;
+                case "_glossiness":
+                    candidates = new[] { "_Glossiness", "_Smoothness" };
+                    break;
+                case "_smoothness":
+                    candidates = new[] { "_Smoothness", "_Glossiness" };
+                    break;
                 // Friendly names → shader property names
-                case "metallic": candidates = new[] { "_Metallic" }; break;
-                case "smoothness": candidates = new[] { "_Smoothness", "_Glossiness" }; break;
-                case "albedo": candidates = new[] { "_BaseMap", "_MainTex" }; break;
-                default: candidates = new[] { name }; break; // keep original as-is
+                case "metallic":
+                    candidates = new[] { "_Metallic" };
+                    break;
+                case "smoothness":
+                    candidates = new[] { "_Smoothness", "_Glossiness" };
+                    break;
+                case "albedo":
+                    candidates = new[] { "_BaseMap", "_MainTex" };
+                    break;
+                default:
+                    candidates = new[] { name };
+                    break; // keep original as-is
             }
             foreach (var candidate in candidates)
             {
-                if (mat.HasProperty(candidate)) return candidate;
+                if (mat.HasProperty(candidate))
+                    return candidate;
             }
             return name;
         }
@@ -205,7 +234,8 @@ namespace MCPForUnity.Editor.Helpers
         private static bool ApplyStructuredColor(Material material, string propertyName, Color color, JArray value, JsonSerializer serializer)
         {
             int index = material.shader.FindPropertyIndex(propertyName);
-            if (index < 0 || !material.HasProperty(propertyName)) return false;
+            if (index < 0 || !material.HasProperty(propertyName))
+                return false;
             var type = material.shader.GetPropertyType(index);
             if (type == UnityEngine.Rendering.ShaderPropertyType.Color)
                 return material.GetColor(propertyName) != color && TrySetShaderProperty(material, propertyName, value, serializer);
@@ -213,8 +243,8 @@ namespace MCPForUnity.Editor.Helpers
             {
                 // Structured color retains its alpha default even when targeting a vector property.
                 var vector = new Vector4(color.r, color.g, color.b, color.a);
-                return material.GetVector(propertyName) != vector && TrySetShaderProperty(material, propertyName,
-                    new JArray(vector.x, vector.y, vector.z, vector.w), serializer);
+                return material.GetVector(propertyName) != vector
+                    && TrySetShaderProperty(material, propertyName, new JArray(vector.x, vector.y, vector.z, vector.w), serializer);
             }
             return false;
         }
@@ -288,7 +318,8 @@ namespace MCPForUnity.Editor.Helpers
                             apply = () => material.SetVector(propertyName, pair);
                             return true;
                         }
-                        if (value is not JArray && value is not JObject) return false;
+                        if (value is not JArray && value is not JObject)
+                            return false;
                         Color color = ParseColor(value, serializer);
                         apply = () => material.SetColor(propertyName, color);
                         return true;
@@ -296,18 +327,26 @@ namespace MCPForUnity.Editor.Helpers
                         Vector4 vector;
                         if (value is JArray array)
                         {
-                            if (array.Count == 2) vector = array.ToObject<Vector2>(serializer);
-                            else if (array.Count == 3) vector = array.ToObject<Vector3>(serializer);
-                            else if (array.Count == 4) vector = array.ToObject<Vector4>(serializer);
-                            else return false;
+                            if (array.Count == 2)
+                                vector = array.ToObject<Vector2>(serializer);
+                            else if (array.Count == 3)
+                                vector = array.ToObject<Vector3>(serializer);
+                            else if (array.Count == 4)
+                                vector = array.ToObject<Vector4>(serializer);
+                            else
+                                return false;
                         }
                         else if (value is JObject obj)
                         {
-                            if (obj["w"] != null) vector = obj.ToObject<Vector4>(serializer);
-                            else if (obj["z"] != null) vector = obj.ToObject<Vector3>(serializer);
-                            else vector = obj.ToObject<Vector2>(serializer);
+                            if (obj["w"] != null)
+                                vector = obj.ToObject<Vector4>(serializer);
+                            else if (obj["z"] != null)
+                                vector = obj.ToObject<Vector3>(serializer);
+                            else
+                                vector = obj.ToObject<Vector2>(serializer);
                         }
-                        else return false;
+                        else
+                            return false;
                         apply = () => material.SetVector(propertyName, vector);
                         return true;
                     case UnityEngine.Rendering.ShaderPropertyType.Float:
@@ -332,11 +371,14 @@ namespace MCPForUnity.Editor.Helpers
                         {
                             string path = value.ToString();
                             if (!string.IsNullOrEmpty(path) && path.Contains("/"))
-                                texture = AssetDatabase.LoadAssetAtPath<Texture>(AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true));
+                                texture = AssetDatabase.LoadAssetAtPath<Texture>(
+                                    AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true)
+                                );
                         }
                         else if (value is JObject)
                             texture = value.ToObject<Texture>(serializer);
-                        if (texture == null) return false;
+                        if (texture == null)
+                            return false;
                         apply = () => material.SetTexture(propertyName, texture);
                         return true;
                     default:
@@ -381,12 +423,7 @@ namespace MCPForUnity.Editor.Helpers
                 }
                 else if (jArray.Count == 3)
                 {
-                    return new Color(
-                        jArray[0].ReadScalar<float>(),
-                        jArray[1].ReadScalar<float>(),
-                        jArray[2].ReadScalar<float>(),
-                        1f
-                    );
+                    return new Color(jArray[0].ReadScalar<float>(), jArray[1].ReadScalar<float>(), jArray[2].ReadScalar<float>(), 1f);
                 }
                 else
                 {

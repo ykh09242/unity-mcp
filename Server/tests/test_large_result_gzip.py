@@ -1,4 +1,5 @@
 """Production C# incremental encoding and strict bounded gzip interoperability."""
+
 import gzip
 import importlib.util
 import json
@@ -10,8 +11,12 @@ import tracemalloc
 import pytest
 
 from transport.large_result_assembler import (
-    CHUNK_PAYLOAD_BYTES, COMPRESSION_THRESHOLD_BYTES, MAX_RESULT_BYTES,
-    MAGIC, LargeResultAssembler, LargeResultProtocolError,
+    CHUNK_PAYLOAD_BYTES,
+    COMPRESSION_THRESHOLD_BYTES,
+    MAX_RESULT_BYTES,
+    MAGIC,
+    LargeResultAssembler,
+    LargeResultProtocolError,
 )
 from transport.result_gzip import GZIP_WORKING_BYTES
 
@@ -33,8 +38,13 @@ def emit(harness, tmp_path, payload, mode):
     path = tmp_path / "owned.json"
     trace = tmp_path / "owned.frames"
     path.write_bytes(payload)
-    subprocess.run([executable[0], str(executable[1]), str(path), str(trace), mode],
-                   check=True, capture_output=True, text=True, timeout=20)
+    subprocess.run(
+        [executable[0], str(executable[1]), str(path), str(trace), mode],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
     return list(module.read_frames(trace))
 
 
@@ -50,22 +60,37 @@ def assembly(compressed_budget=True, maximum=64 * 1024 * 1024):
         ledger[owner, cid] = decoded + working
         return True
 
-    assembler = LargeResultAssembler(lambda owner, cid: (owner, cid) in pending,
-        reserve, lambda owner, cid: ledger.pop((owner, cid)), max_total_bytes=maximum,
-        reserve_compressed=reserve_gzip if compressed_budget else None)
+    assembler = LargeResultAssembler(
+        lambda owner, cid: (owner, cid) in pending,
+        reserve,
+        lambda owner, cid: ledger.pop((owner, cid)),
+        max_total_bytes=maximum,
+        reserve_compressed=reserve_gzip if compressed_budget else None,
+    )
     return assembler, ledger, pending
 
 
 def binary_frames(data):
-    return [MAGIC + CID.encode() + offset.to_bytes(4, "big") + data[offset:offset + CHUNK_PAYLOAD_BYTES]
-            for offset in range(0, len(data), CHUNK_PAYLOAD_BYTES)]
+    return [
+        MAGIC
+        + CID.encode()
+        + offset.to_bytes(4, "big")
+        + data[offset : offset + CHUNK_PAYLOAD_BYTES]
+        for offset in range(0, len(data), CHUNK_PAYLOAD_BYTES)
+    ]
 
 
 def consume(records):
     assembler, ledger, _ = assembly()
     start = json.loads(records[0][1])
-    assembler.begin("owned", CID, start["total_bytes"], start["chunk_count"],
-                    encoding=start.get("encoding", "identity"), decoded_bytes=start.get("decoded_bytes"))
+    assembler.begin(
+        "owned",
+        CID,
+        start["total_bytes"],
+        start["chunk_count"],
+        encoding=start.get("encoding", "identity"),
+        decoded_bytes=start.get("decoded_bytes"),
+    )
     result = None
     for _, frame in records[1:]:
         result = assembler.feed("owned", frame)
@@ -74,10 +99,23 @@ def consume(records):
     return result.payload
 
 
-def test_actual_csharp_gzip_reconstructs_identical_json_and_numeric_unicode_values(harness, tmp_path):
-    payload = json.dumps({"type": "command_result", "id": CID, "result": {
-        "large_integer": 9007199254740993, "negative_zero": -0.0, "unicode": "한글😀",
-        "escaped_surrogate": "\ud800", "body": "repeated-json" * 100000}}, ensure_ascii=True).encode()
+def test_actual_csharp_gzip_reconstructs_identical_json_and_numeric_unicode_values(
+    harness, tmp_path
+):
+    payload = json.dumps(
+        {
+            "type": "command_result",
+            "id": CID,
+            "result": {
+                "large_integer": 9007199254740993,
+                "negative_zero": -0.0,
+                "unicode": "한글😀",
+                "escaped_surrogate": "\ud800",
+                "body": "repeated-json" * 100000,
+            },
+        },
+        ensure_ascii=True,
+    ).encode()
     records = emit(harness, tmp_path, payload, "gzip_json")
     start = json.loads(records[0][1])
     assert start["encoding"] == "gzip"
@@ -102,9 +140,13 @@ def test_legacy_peer_keeps_single_original_text_bytes(harness, tmp_path):
     assert emit(harness, tmp_path, payload, "legacy") == [(0, payload)]
 
 
-def test_incremental_utf8_matches_native_encoder_at_surrogate_and_frame_boundaries(harness, tmp_path):
+def test_incremental_utf8_matches_native_encoder_at_surrogate_and_frame_boundaries(
+    harness, tmp_path
+):
     # The C# fixture creates paired and standalone UTF-16 surrogates exactly at its encoding block boundary.
-    assert emit(harness, tmp_path, b"{}", "edges_string") == emit(harness, tmp_path, b"{}", "edges_bytes")
+    assert emit(harness, tmp_path, b"{}", "edges_string") == emit(
+        harness, tmp_path, b"{}", "edges_bytes"
+    )
 
 
 def test_small_or_low_gain_payload_does_not_use_gzip(harness, tmp_path):
@@ -114,11 +156,16 @@ def test_small_or_low_gain_payload_does_not_use_gzip(harness, tmp_path):
     # Owned random bytes exercise low-gain rejection without any application data.
     rng = random.Random(708)
     import base64
-    low_gain = json.dumps({"body": base64.b64encode(rng.randbytes(COMPRESSION_THRESHOLD_BYTES)).decode()}).encode()
+
+    low_gain = json.dumps(
+        {"body": base64.b64encode(rng.randbytes(COMPRESSION_THRESHOLD_BYTES)).decode()}
+    ).encode()
     assert consume(emit(harness, tmp_path, low_gain, "gzip_json")) == low_gain
 
 
-@pytest.mark.parametrize("mutation", ["truncated", "crc", "trailing", "second_member", "bomb", "decoded_short"])
+@pytest.mark.parametrize(
+    "mutation", ["truncated", "crc", "trailing", "second_member", "bomb", "decoded_short"]
+)
 def test_malformed_gzip_or_advertised_size_releases_reservation(mutation):
     raw = b"x" * COMPRESSION_THRESHOLD_BYTES
     encoded = gzip.compress(raw, mtime=0)
@@ -135,7 +182,9 @@ def test_malformed_gzip_or_advertised_size_releases_reservation(mutation):
     declared = len(raw) + (1 if mutation == "decoded_short" else 0)
     assembler, ledger, _ = assembly()
     chunks = binary_frames(encoded)
-    assembler.begin("owned", CID, len(encoded), len(chunks), encoding="gzip", decoded_bytes=declared)
+    assembler.begin(
+        "owned", CID, len(encoded), len(chunks), encoding="gzip", decoded_bytes=declared
+    )
     with pytest.raises(LargeResultProtocolError, match="compression"):
         for frame in chunks:
             assembler.feed("owned", frame)
@@ -146,17 +195,29 @@ def test_malformed_gzip_or_advertised_size_releases_reservation(mutation):
 def test_gzip_cannot_allocate_without_explicit_peak_reservation():
     assembler, ledger, _ = assembly(compressed_budget=False)
     with pytest.raises(LargeResultProtocolError, match="capacity"):
-        assembler.begin("owned", CID, 100, 1, encoding="gzip", decoded_bytes=COMPRESSION_THRESHOLD_BYTES)
+        assembler.begin(
+            "owned", CID, 100, 1, encoding="gzip", decoded_bytes=COMPRESSION_THRESHOLD_BYTES
+        )
     assert ledger == {}
     assert assembler.retained_bytes == 0
 
 
-@pytest.mark.parametrize("encoding,decoded", [("br", COMPRESSION_THRESHOLD_BYTES),
-    ("gzip", MAX_RESULT_BYTES + 1), ("gzip", True), ("gzip", None), ("identity", COMPRESSION_THRESHOLD_BYTES)])
+@pytest.mark.parametrize(
+    "encoding,decoded",
+    [
+        ("br", COMPRESSION_THRESHOLD_BYTES),
+        ("gzip", MAX_RESULT_BYTES + 1),
+        ("gzip", True),
+        ("gzip", None),
+        ("identity", COMPRESSION_THRESHOLD_BYTES),
+    ],
+)
 def test_invalid_compression_metadata_is_rejected_before_reservation(encoding, decoded):
     assembler, ledger, _ = assembly()
     with pytest.raises(LargeResultProtocolError):
-        assembler.begin("owned", CID, COMPRESSION_THRESHOLD_BYTES, 17, encoding=encoding, decoded_bytes=decoded)
+        assembler.begin(
+            "owned", CID, COMPRESSION_THRESHOLD_BYTES, 17, encoding=encoding, decoded_bytes=decoded
+        )
     assert ledger == {}
 
 
@@ -167,7 +228,14 @@ def test_decompression_bomb_has_bounded_peak_beyond_admitted_buffer():
     chunks = binary_frames(encoded)
     tracemalloc.start()
     try:
-        assembler.begin("owned", CID, len(encoded), len(chunks), encoding="gzip", decoded_bytes=COMPRESSION_THRESHOLD_BYTES)
+        assembler.begin(
+            "owned",
+            CID,
+            len(encoded),
+            len(chunks),
+            encoding="gzip",
+            decoded_bytes=COMPRESSION_THRESHOLD_BYTES,
+        )
         with pytest.raises(LargeResultProtocolError):
             for frame in chunks:
                 assembler.feed("owned", frame)
@@ -180,11 +248,14 @@ def test_decompression_bomb_has_bounded_peak_beyond_admitted_buffer():
 
 def test_gzip_owner_invalidation_discards_partial_decoded_allocation():
     import os
+
     raw = os.urandom(COMPRESSION_THRESHOLD_BYTES)
     encoded = gzip.compress(raw, mtime=0)
     assembler, ledger, pending = assembly()
     chunks = binary_frames(encoded)
-    assembler.begin("owned", CID, len(encoded), len(chunks), encoding="gzip", decoded_bytes=len(raw))
+    assembler.begin(
+        "owned", CID, len(encoded), len(chunks), encoding="gzip", decoded_bytes=len(raw)
+    )
     assert assembler.feed("owned", chunks[0]) is None
     pending.clear()
     assert assembler.feed("owned", chunks[1]) is None

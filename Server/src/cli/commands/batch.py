@@ -44,7 +44,7 @@ def batch_run(file: str, parallel: bool, fail_fast: bool):
     config = get_config()
 
     try:
-        with open(file, 'r', encoding='utf-8') as f:
+        with open(file, "r", encoding="utf-8") as f:
             commands = json.load(f)
     except UnicodeDecodeError as e:
         print_error(f"JSON file must be UTF-8 encoded: {e}")
@@ -83,8 +83,7 @@ def batch_run(file: str, parallel: bool, fail_fast: bool):
         failed = len(results) - succeeded
 
         if failed == 0:
-            print_success(
-                f"All {succeeded} commands completed successfully")
+            print_success(f"All {succeeded} commands completed successfully")
         else:
             print_info(f"{succeeded} succeeded, {failed} failed")
 
@@ -135,42 +134,31 @@ def batch_template(output: Optional[str]):
         unity-mcp batch template -o my_batch.json
     """
     template = [
-        {
-            "tool": "manage_scene",
-            "params": {"action": "get_active"}
-        },
+        {"tool": "manage_scene", "params": {"action": "get_active"}},
         {
             "tool": "manage_gameobject",
             "params": {
                 "action": "create",
                 "name": "BatchCube",
                 "primitiveType": "Cube",
-                "position": [0, 1, 0]
-            }
+                "position": [0, 1, 0],
+            },
         },
         {
             "tool": "manage_components",
-            "params": {
-                "action": "add",
-                "target": "BatchCube",
-                "componentType": "Rigidbody"
-            }
+            "params": {"action": "add", "target": "BatchCube", "componentType": "Rigidbody"},
         },
         {
             "tool": "manage_gameobject",
-            "params": {
-                "action": "modify",
-                "target": "BatchCube",
-                "position": [0, 5, 0]
-            }
-        }
+            "params": {"action": "modify", "target": "BatchCube", "position": [0, 5, 0]},
+        },
     ]
 
     json_output = json.dumps(template, indent=2)
 
     if output:
         try:
-            with open(output, 'w', encoding='utf-8') as f:
+            with open(output, "w", encoding="utf-8") as f:
                 f.write(json_output)
         except OSError as e:
             print_error(f"Error writing template file: {e}")

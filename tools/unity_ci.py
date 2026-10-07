@@ -67,9 +67,13 @@ def _parse_download(details, pattern: str) -> EditorDownload:
 
 
 def _parse_image(image, version: str, suffix: str) -> str:
-    pattern = r"unityci/editor:ubuntu-" + re.escape(version) + "-" + suffix + r"@sha256:[a-f0-9]{64}"
+    pattern = (
+        r"unityci/editor:ubuntu-" + re.escape(version) + "-" + suffix + r"@sha256:[a-f0-9]{64}"
+    )
     if not isinstance(image, str) or not re.fullmatch(pattern, image):
-        raise ValueError("Stable images must match the exact Unity version, purpose and GameCI digest pin")
+        raise ValueError(
+            "Stable images must match the exact Unity version, purpose and GameCI digest pin"
+        )
     return image
 
 
@@ -92,7 +96,9 @@ def load_manifest(path: Path) -> Manifest:
         if not isinstance(row, dict):
             raise ValueError("Unity version row must be an object")
         version = row.get("id")
-        if not isinstance(version, str) or not re.fullmatch(r"[0-9]{4}\.[0-9]+\.[0-9]+[abfp][0-9]+", version):
+        if not isinstance(version, str) or not re.fullmatch(
+            r"[0-9]{4}\.[0-9]+\.[0-9]+[abfp][0-9]+", version
+        ):
             raise ValueError("Invalid Unity version id")
         if version in ids:
             raise ValueError("Duplicate Unity version id")
@@ -104,37 +110,61 @@ def load_manifest(path: Path) -> Manifest:
             raise ValueError("Invalid Unity release channel")
         stage = re.search(r"([abfp])\d+$", version).group(1)
         expected_stage = {"beta": "b", "alpha": "a"}.get(channel)
-        if (expected_stage and stage != expected_stage) or (not expected_stage and stage not in "fp"):
+        if (expected_stage and stage != expected_stage) or (
+            not expected_stage and stage not in "fp"
+        ):
             raise ValueError("Unity version id does not match its release channel")
         if ("image" in row) == ("editorDownload" in row):
             raise ValueError("Unity version must declare exactly one image provider")
         image, download, test_image = None, None, None
         modules = []
         if expected_stage:
-            pattern = (r"https://download\.unity3d\.com/download_unity/[a-f0-9]{12}/"
-                       r"LinuxEditorInstaller/Unity-" + re.escape(version) + r"\.tar\.xz")
+            pattern = (
+                r"https://download\.unity3d\.com/download_unity/[a-f0-9]{12}/"
+                r"LinuxEditorInstaller/Unity-" + re.escape(version) + r"\.tar\.xz"
+            )
             download = _parse_download(row.get("editorDownload"), pattern)
             if "testImage" in row:
-                raise ValueError("Preview test images require official module archives, not a public image")
+                raise ValueError(
+                    "Preview test images require official module archives, not a public image"
+                )
             if "testModules" in row:
                 module_rows = row["testModules"]
                 if not isinstance(module_rows, list) or len(module_rows) != 2:
-                    raise ValueError("Preview tests require both Linux IL2CPP and Linux Server archives")
+                    raise ValueError(
+                        "Preview tests require both Linux IL2CPP and Linux Server archives"
+                    )
                 names = set()
-                prefix = download.url.split("/LinuxEditorInstaller/")[0] + "/LinuxEditorTargetInstaller/"
+                prefix = (
+                    download.url.split("/LinuxEditorInstaller/")[0] + "/LinuxEditorTargetInstaller/"
+                )
                 for module in module_rows:
                     if not isinstance(module, dict):
                         raise ValueError("Preview test module must be an object")
                     name = module.get("name")
-                    if not isinstance(name, str) or name not in {"linux-il2cpp", "linux-server"} or name in names:
-                        raise ValueError("Preview test modules must be distinct Linux IL2CPP and Linux Server archives")
+                    if (
+                        not isinstance(name, str)
+                        or name not in {"linux-il2cpp", "linux-server"}
+                        or name in names
+                    ):
+                        raise ValueError(
+                            "Preview test modules must be distinct Linux IL2CPP and Linux Server archives"
+                        )
                     names.add(name)
                     destination = module.get("destination")
                     if destination != "Editor/Data/PlaybackEngines/LinuxStandaloneSupport":
-                        raise ValueError("Preview module destination must match the official Linux support path")
+                        raise ValueError(
+                            "Preview module destination must match the official Linux support path"
+                        )
                     target = "IL2CPP" if name == "linux-il2cpp" else "Server"
-                    pattern = (re.escape(prefix) + "UnitySetup-Linux-" + target
-                               + "-Support-for-Editor-" + re.escape(version) + r"\.tar\.xz")
+                    pattern = (
+                        re.escape(prefix)
+                        + "UnitySetup-Linux-"
+                        + target
+                        + "-Support-for-Editor-"
+                        + re.escape(version)
+                        + r"\.tar\.xz"
+                    )
                     modules.append(TestModule(name, _parse_download(module, pattern), destination))
         else:
             image = _parse_image(row.get("image"), version, "base-3")
@@ -149,7 +179,9 @@ def load_manifest(path: Path) -> Manifest:
     return Manifest(default, base, tuple(versions))
 
 
-def prepare(manifest: Manifest, version: str, output: Path | None = None, *, purpose: str = "compile") -> str:
+def prepare(
+    manifest: Manifest, version: str, output: Path | None = None, *, purpose: str = "compile"
+) -> str:
     """Resolve a public image or build a preview; publish only after success."""
     if purpose not in {"compile", "tests"}:
         raise ValueError("Unity image purpose must be compile or tests")
@@ -157,7 +189,9 @@ def prepare(manifest: Manifest, version: str, output: Path | None = None, *, pur
     if row is None:
         raise ValueError("Requested Unity version is not in the manifest")
     image = row.test_image if purpose == "tests" else row.image
-    if purpose == "tests" and (row.download is None and image is None or row.download is not None and not row.test_modules):
+    if purpose == "tests" and (
+        row.download is None and image is None or row.download is not None and not row.test_modules
+    ):
         raise ValueError("Unity version has no verified test image provider")
     if row.download is not None:
         image = f"unity-mcp-editor:{row.id}" + ("-tests" if purpose == "tests" else "")
@@ -175,8 +209,11 @@ def prepare(manifest: Manifest, version: str, output: Path | None = None, *, pur
             args.extend(["--build-arg", f"MODULE_DESTINATION={row.test_modules[0].destination}"])
             for module in row.test_modules:
                 prefix = "IL2CPP" if module.name == "linux-il2cpp" else "SERVER"
-                for name, value in (("URL", module.archive.url), ("MD5", module.archive.md5),
-                                    ("SIZE", str(module.archive.size))):
+                for name, value in (
+                    ("URL", module.archive.url),
+                    ("MD5", module.archive.md5),
+                    ("SIZE", str(module.archive.size)),
+                ):
                     args.extend(["--build-arg", f"{prefix}_{name}={value}"])
         args.append(str(Path(__file__).resolve().parent / "unity-ci"))
         # Keep stdout a single image reference for callers capturing the CLI.
@@ -203,10 +240,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manifest = load_manifest(args.manifest)
         if args.command == "matrix":
-            print(json.dumps([{"version": row.id, "channel": row.channel} for row in manifest.versions]))
+            print(
+                json.dumps(
+                    [{"version": row.id, "channel": row.channel} for row in manifest.versions]
+                )
+            )
         else:
             output = os.environ.get("GITHUB_OUTPUT")
-            print(prepare(manifest, args.version, Path(output) if output else None, purpose=args.purpose))
+            print(
+                prepare(
+                    manifest, args.version, Path(output) if output else None, purpose=args.purpose
+                )
+            )
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         print(f"Unity CI preparation failed: {exc}", file=sys.stderr)
         return 1

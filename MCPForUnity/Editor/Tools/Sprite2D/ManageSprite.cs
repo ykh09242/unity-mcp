@@ -1,16 +1,12 @@
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Tools.Sprite2D
 {
     [McpForUnityTool("manage_sprite", AutoRegister = false, Group = "animation")]
     public static class ManageSprite
     {
-        private static readonly string[] ValidActions =
-        {
-            "get_info", "slice_sheet", "setup_clips",
-            "setup_controller", "full_setup"
-        };
+        private static readonly string[] ValidActions = { "get_info", "slice_sheet", "setup_clips", "setup_controller", "full_setup" };
 
         public static object HandleCommand(JObject @params)
         {
@@ -18,8 +14,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             string action = @params["action"]?.ToString()?.ToLowerInvariant();
             if (string.IsNullOrEmpty(action))
-                return diagnostics.Fail("BAD_PARAM",
-                    "'action' is required. Valid: " + string.Join(", ", ValidActions));
+                return diagnostics.Fail("BAD_PARAM", "'action' is required. Valid: " + string.Join(", ", ValidActions));
 
             try
             {
@@ -41,8 +36,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                         return SpriteFullSetup.Run(@params, diagnostics);
 
                     default:
-                        return diagnostics.Fail("BAD_PARAM",
-                            $"Unknown action '{action}'. Valid: " + string.Join(", ", ValidActions));
+                        return diagnostics.Fail("BAD_PARAM", $"Unknown action '{action}'. Valid: " + string.Join(", ", ValidActions));
                 }
             }
             catch (System.Exception e)

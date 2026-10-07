@@ -1,7 +1,7 @@
-using NUnit.Framework;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
+using NUnit.Framework;
 using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Services
@@ -60,20 +60,16 @@ namespace MCPForUnityTests.Editor.Services
             MCPServiceLocator.Register(_savedManager);
         }
 
-        private static bool LatchSet =>
-            SessionState.GetBool(HttpAutoStartHandler.SessionInitKey, false);
+        private static bool LatchSet => SessionState.GetBool(HttpAutoStartHandler.SessionInitKey, false);
 
-        private static bool ConnectPendingSet =>
-            SessionState.GetBool(HttpAutoStartHandler.ConnectPendingKey, false);
+        private static bool ConnectPendingSet => SessionState.GetBool(HttpAutoStartHandler.ConnectPendingKey, false);
 
         [Test]
         public void TickCore_EditorBusy_Defers()
         {
             EditorPrefs.SetBool(EditorPrefKeys.AutoStartOnLoad, true);
 
-            Assert.AreEqual(
-                HttpAutoStartHandler.TickDecision.DeferBusy,
-                HttpAutoStartHandler.TickCore(editorBusy: true));
+            Assert.AreEqual(HttpAutoStartHandler.TickDecision.DeferBusy, HttpAutoStartHandler.TickCore(editorBusy: true));
             Assert.IsFalse(LatchSet);
         }
 
@@ -83,9 +79,7 @@ namespace MCPForUnityTests.Editor.Services
             EditorPrefs.SetBool(EditorPrefKeys.AutoStartOnLoad, true);
             SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, true);
 
-            Assert.AreEqual(
-                HttpAutoStartHandler.TickDecision.DeferToResume,
-                HttpAutoStartHandler.TickCore(editorBusy: false));
+            Assert.AreEqual(HttpAutoStartHandler.TickDecision.DeferToResume, HttpAutoStartHandler.TickCore(editorBusy: false));
             Assert.IsFalse(LatchSet);
         }
 
@@ -96,17 +90,13 @@ namespace MCPForUnityTests.Editor.Services
             // tick alive when the only possible outcome is Skip.
             SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, true);
 
-            Assert.AreEqual(
-                HttpAutoStartHandler.TickDecision.Skip,
-                HttpAutoStartHandler.TickCore(editorBusy: false));
+            Assert.AreEqual(HttpAutoStartHandler.TickDecision.Skip, HttpAutoStartHandler.TickCore(editorBusy: false));
         }
 
         [Test]
         public void TickCore_AutoStartDisabled_SkipsWithoutLatch()
         {
-            Assert.AreEqual(
-                HttpAutoStartHandler.TickDecision.Skip,
-                HttpAutoStartHandler.TickCore(editorBusy: false));
+            Assert.AreEqual(HttpAutoStartHandler.TickDecision.Skip, HttpAutoStartHandler.TickCore(editorBusy: false));
             Assert.IsFalse(LatchSet, "no latch when disabled — the pref is re-read on the next domain load");
         }
 
@@ -115,9 +105,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             EditorPrefs.SetBool(EditorPrefKeys.AutoStartOnLoad, true);
 
-            Assert.AreEqual(
-                HttpAutoStartHandler.TickDecision.ShouldStart,
-                HttpAutoStartHandler.TickCore(editorBusy: false));
+            Assert.AreEqual(HttpAutoStartHandler.TickDecision.ShouldStart, HttpAutoStartHandler.TickCore(editorBusy: false));
             Assert.IsFalse(LatchSet, "the caller latches only after the start work actually dispatches");
         }
 
@@ -127,9 +115,7 @@ namespace MCPForUnityTests.Editor.Services
             EditorPrefs.SetBool(EditorPrefKeys.AutoStartOnLoad, true);
             SessionState.SetBool(HttpAutoStartHandler.SessionInitKey, true);
 
-            Assert.AreEqual(
-                HttpAutoStartHandler.TickDecision.Skip,
-                HttpAutoStartHandler.TickCore(editorBusy: false));
+            Assert.AreEqual(HttpAutoStartHandler.TickDecision.Skip, HttpAutoStartHandler.TickCore(editorBusy: false));
         }
 
         [Test]
@@ -141,7 +127,8 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(
                 HttpAutoStartHandler.TickDecision.ShouldReconnect,
                 HttpAutoStartHandler.TickCore(editorBusy: false),
-                "a reload that killed the in-flight connect should finish connect-only, never re-spawn");
+                "a reload that killed the in-flight connect should finish connect-only, never re-spawn"
+            );
         }
 
         [Test]
@@ -154,7 +141,8 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(
                 HttpAutoStartHandler.TickDecision.DeferToResume,
                 HttpAutoStartHandler.TickCore(editorBusy: false),
-                "the reload handler owns bridge revival while a resume is pending");
+                "the reload handler owns bridge revival while a resume is pending"
+            );
         }
 
         [Test]

@@ -27,66 +27,88 @@ from services.tools.preflight import preflight
 )
 async def manage_scene(
     ctx: Context,
-    action: Annotated[Literal[
-        "create",
-        "load",
-        "save",
-        "get_hierarchy",
-        "get_active",
-        "get_build_settings",
-        "scene_view_frame",
-        "close_scene",
-        "set_active_scene",
-        "get_loaded_scenes",
-        "move_to_scene",
-        "validate",
-    ], "Perform CRUD operations on Unity scenes and control the Scene View camera."],
+    action: Annotated[
+        Literal[
+            "create",
+            "load",
+            "save",
+            "get_hierarchy",
+            "get_active",
+            "get_build_settings",
+            "scene_view_frame",
+            "close_scene",
+            "set_active_scene",
+            "get_loaded_scenes",
+            "move_to_scene",
+            "validate",
+        ],
+        "Perform CRUD operations on Unity scenes and control the Scene View camera.",
+    ],
     name: Annotated[str, "Scene name."] | None = None,
-    path: Annotated[str, "Scene path, under Assets/ or Packages/. A bare path is treated as relative to Assets/."] | None = None,
-    build_index: Annotated[int | str,
-                           "Unity build index (quote as string, e.g., '0')."] | None = None,
+    path: Annotated[
+        str,
+        "Scene path, under Assets/ or Packages/. A bare path is treated as relative to Assets/.",
+    ]
+    | None = None,
+    build_index: Annotated[int | str, "Unity build index (quote as string, e.g., '0')."]
+    | None = None,
     # --- scene_view_frame params ---
-    scene_view_target: Annotated[str | int,
-                                 "GameObject reference for scene_view_frame (name, path, or instance ID)."] | None = None,
+    scene_view_target: Annotated[
+        str | int, "GameObject reference for scene_view_frame (name, path, or instance ID)."
+    ]
+    | None = None,
     # --- get_hierarchy paging/safety ---
-    parent: Annotated[str | int,
-                      "Optional parent GameObject reference (name/path/instanceID) to list direct children."] | None = None,
-    page_size: Annotated[int | str,
-                         "Page size for get_hierarchy paging."] | None = None,
-    cursor: Annotated[int | str,
-                      "Opaque cursor for paging (offset)."] | None = None,
-    max_nodes: Annotated[int | str,
-                         "Hard cap on returned nodes per request (safety)."] | None = None,
-    max_depth: Annotated[int | str,
-                         "Accepted for forward-compatibility; current paging returns a single level."] | None = None,
-    max_children_per_node: Annotated[int | str,
-                                     "Child paging hint (safety)."] | None = None,
-    include_transform: Annotated[bool | str,
-                                 "If true, include local transform in node summaries."] | None = None,
+    parent: Annotated[
+        str | int,
+        "Optional parent GameObject reference (name/path/instanceID) to list direct children.",
+    ]
+    | None = None,
+    page_size: Annotated[int | str, "Page size for get_hierarchy paging."] | None = None,
+    cursor: Annotated[int | str, "Opaque cursor for paging (offset)."] | None = None,
+    max_nodes: Annotated[int | str, "Hard cap on returned nodes per request (safety)."]
+    | None = None,
+    max_depth: Annotated[
+        int | str, "Accepted for forward-compatibility; current paging returns a single level."
+    ]
+    | None = None,
+    max_children_per_node: Annotated[int | str, "Child paging hint (safety)."] | None = None,
+    include_transform: Annotated[bool | str, "If true, include local transform in node summaries."]
+    | None = None,
     # --- Multi-scene editing params ---
-    scene_name: Annotated[str,
-                          "Scene name for multi-scene operations."] | None = None,
-    scene_path: Annotated[str,
-                          "Full scene path (e.g. 'Assets/Scenes/Level2.unity')."] | None = None,
-    target: Annotated[str | int,
-                      "GameObject reference (name, path, or instanceID) for move_to_scene."] | None = None,
-    remove_scene: Annotated[bool | str,
-                            "For close_scene: true to fully remove, false to just unload."] | None = None,
-    additive: Annotated[bool | str,
-                        "For load: true to open scene additively (keeps current scene)."] | None = None,
+    scene_name: Annotated[str, "Scene name for multi-scene operations."] | None = None,
+    scene_path: Annotated[str, "Full scene path (e.g. 'Assets/Scenes/Level2.unity')."]
+    | None = None,
+    target: Annotated[
+        str | int, "GameObject reference (name, path, or instanceID) for move_to_scene."
+    ]
+    | None = None,
+    remove_scene: Annotated[
+        bool | str, "For close_scene: true to fully remove, false to just unload."
+    ]
+    | None = None,
+    additive: Annotated[
+        bool | str, "For load: true to open scene additively (keeps current scene)."
+    ]
+    | None = None,
     # --- Scene template ---
-    template: Annotated[str,
-                        "For create: scene template ('empty', 'default', '3d_basic', '2d_basic'). Omit for empty scene."] | None = None,
+    template: Annotated[
+        str,
+        "For create: scene template ('empty', 'default', '3d_basic', '2d_basic'). Omit for empty scene.",
+    ]
+    | None = None,
     # --- Scene validation ---
-    auto_repair: Annotated[bool | str,
-                           "For validate: true to auto-fix missing scripts (undoable)."] | None = None,
+    auto_repair: Annotated[bool | str, "For validate: true to auto-fix missing scripts (undoable)."]
+    | None = None,
 ) -> dict[str, Any]:
     try:
         integer_options: dict[str, int | None] = {}
         for field, raw_value in (
-            ("build_index", build_index), ("page_size", page_size),
-            ("cursor", cursor), ("max_nodes", max_nodes),
-            ("max_depth", max_depth), ("max_children_per_node", max_children_per_node),
+            ("build_index", build_index),
+            ("page_size", page_size),
+            ("cursor", cursor),
+            ("max_nodes", max_nodes),
+            ("max_depth", max_depth),
+            ("max_children_per_node", max_children_per_node),
         ):
             try:
                 integer_options[field] = coerce_int(raw_value, default=None)
@@ -94,8 +116,10 @@ async def manage_scene(
                 return {"success": False, "message": f"{field}: {exc}"}
         boolean_options: dict[str, bool | None] = {}
         for field, raw_value in (
-            ("additive", additive), ("remove_scene", remove_scene),
-            ("auto_repair", auto_repair), ("include_transform", include_transform),
+            ("additive", additive),
+            ("remove_scene", remove_scene),
+            ("auto_repair", auto_repair),
+            ("include_transform", include_transform),
         ):
             try:
                 boolean_options[field] = coerce_bool(raw_value, default=None)
@@ -113,11 +137,19 @@ async def manage_scene(
             if not name:
                 return {"success": False, "message": "name is required for create."}
             if template and template.lower() not in ("empty", "default", "3d_basic", "2d_basic"):
-                return {"success": False, "message": "Unknown template; use empty, default, 3d_basic, or 2d_basic."}
+                return {
+                    "success": False,
+                    "message": "Unknown template; use empty, default, 3d_basic, or 2d_basic.",
+                }
         if action == "load" and not name and not path and coerced_build_index is None:
             return {"success": False, "message": "load requires name, path, or build_index."}
-        if (action == "load" and not name and not path
-                and coerced_build_index is not None and coerced_build_index < 0):
+        if (
+            action == "load"
+            and not name
+            and not path
+            and coerced_build_index is not None
+            and coerced_build_index < 0
+        ):
             return {"success": False, "message": "build_index must be nonnegative."}
         if action in ("close_scene", "set_active_scene", "move_to_scene"):
             selected_name = scene_name if scene_name is not None else name
@@ -181,13 +213,21 @@ async def manage_scene(
         gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
         if gate is not None:
             return gate.model_dump()
-        response = await send_with_unity_instance(async_send_command_with_retry, unity_instance, "manage_scene", params)
+        response = await send_with_unity_instance(
+            async_send_command_with_retry, unity_instance, "manage_scene", params
+        )
 
         # Preserve structured failure data; unwrap success into a friendlier shape
         if isinstance(response, dict) and response.get("success"):
-            friendly = {"success": True, "message": response.get("message", "Scene operation successful."), "data": response.get("data")}
+            friendly = {
+                "success": True,
+                "message": response.get("message", "Scene operation successful."),
+                "data": response.get("data"),
+            }
             return friendly
-        return response if isinstance(response, dict) else {"success": False, "message": str(response)}
+        return (
+            response if isinstance(response, dict) else {"success": False, "message": str(response)}
+        )
 
     except Exception as e:
         return {"success": False, "message": f"Python error managing scene: {str(e)}"}

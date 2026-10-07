@@ -3,6 +3,7 @@ tool_groups resource – exposes available tool groups and their metadata.
 
 URI: mcpforunity://tool-groups
 """
+
 from typing import Any
 
 from fastmcp import Context
@@ -29,13 +30,15 @@ async def get_tool_groups(ctx: Context) -> dict[str, Any]:
     groups = []
     for name in sorted(TOOL_GROUPS.keys()):
         tools = group_tools.get(name, [])
-        groups.append({
-            "name": name,
-            "description": TOOL_GROUPS[name],
-            "default_enabled": name in DEFAULT_ENABLED_GROUPS,
-            "tools": tools,
-            "tool_count": len(tools),
-        })
+        groups.append(
+            {
+                "name": name,
+                "description": TOOL_GROUPS[name],
+                "default_enabled": name in DEFAULT_ENABLED_GROUPS,
+                "tools": tools,
+                "tool_count": len(tools),
+            }
+        )
     return {
         "groups": groups,
         "total_groups": len(groups),

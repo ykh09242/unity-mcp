@@ -1,4 +1,5 @@
 """Runner ownership/exit regressions; fake process handles, never a real Editor."""
+
 from contextlib import redirect_stdout
 import io
 import json
@@ -40,7 +41,9 @@ class OwnedFakeProcess:
 
 class UnityEditorTransportRunnerTests(unittest.TestCase):
     def setUp(self):
-        parent = (qa.ROOT / "reports/CS-20261006-mcp-usability/phase7/editor-qa/runner-unit").resolve()
+        parent = (
+            qa.ROOT / "reports/CS-20261006-mcp-usability/phase7/editor-qa/runner-unit"
+        ).resolve()
         self.assertTrue(parent.is_relative_to(qa.ROOT.resolve()))
         parent.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(prefix="held-process-", dir=parent)
@@ -49,10 +52,18 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
         self.project.mkdir()
         self.editor = self.output / "fake-editor.exe"
         self.editor.write_bytes(b"")
-        (self.output / "preparation.json").write_text(json.dumps({"projectAbsolute": str(self.project)}))
-        self.args = SimpleNamespace(output=str(self.output), editor=self.editor, isolation_verified=True,
-                                    label="fake", filter="OwnedFixture", timeout=1,
-                                    stdio_command_timeout_ms=None)
+        (self.output / "preparation.json").write_text(
+            json.dumps({"projectAbsolute": str(self.project)})
+        )
+        self.args = SimpleNamespace(
+            output=str(self.output),
+            editor=self.editor,
+            isolation_verified=True,
+            label="fake",
+            filter="OwnedFixture",
+            timeout=1,
+            stdio_command_timeout_ms=None,
+        )
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -60,13 +71,17 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
     def passed_xml(self):
         (self.output / "fake-results.xml").write_text(
             '<test-run result="Passed" total="1" passed="1" failed="0" skipped="0">'
-            '<test-case fullname="OwnedFixture.Criterion" result="Passed"/></test-run>')
+            '<test-case fullname="OwnedFixture.Criterion" result="Passed"/></test-run>'
+        )
 
     def record(self):
         return json.loads((self.output / "fake-launch.json").read_text())
 
     def run_fake(self, process):
-        with patch.object(qa.subprocess, "Popen", return_value=process) as popen, redirect_stdout(io.StringIO()):
+        with (
+            patch.object(qa.subprocess, "Popen", return_value=process) as popen,
+            redirect_stdout(io.StringIO()),
+        ):
             result = qa.launch(self.args)
         self.assertEqual(1, popen.call_count)
         return result
@@ -97,7 +112,9 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
         self.assertEqual(0, process.killed)
 
     def test_timeout_kills_only_held_process_when_terminate_wait_times_out(self):
-        process = OwnedFakeProcess([subprocess.TimeoutExpired("owned", 1), subprocess.TimeoutExpired("owned", 10), -1])
+        process = OwnedFakeProcess(
+            [subprocess.TimeoutExpired("owned", 1), subprocess.TimeoutExpired("owned", 10), -1]
+        )
         self.assertEqual(3, self.run_fake(process))
         self.assertEqual(1, process.terminated)
         self.assertEqual(1, process.killed)
@@ -129,8 +146,17 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
         self.passed_xml()
         self.args.stdio_command_timeout_ms = 1000
         process = OwnedFakeProcess([0])
-        with patch.dict(qa.os.environ, {"UNITY_MCP_ALLOW_BATCH": "do-not-forward", "UNITY_MCP_STDIO_COMMAND_TIMEOUT_MS": "9000"}):
-            with patch.object(qa.subprocess, "Popen", return_value=process) as popen, redirect_stdout(io.StringIO()):
+        with patch.dict(
+            qa.os.environ,
+            {
+                "UNITY_MCP_ALLOW_BATCH": "do-not-forward",
+                "UNITY_MCP_STDIO_COMMAND_TIMEOUT_MS": "9000",
+            },
+        ):
+            with (
+                patch.object(qa.subprocess, "Popen", return_value=process) as popen,
+                redirect_stdout(io.StringIO()),
+            ):
                 self.assertEqual(0, qa.launch(self.args))
             child = popen.call_args.kwargs["env"]
             self.assertNotIn("UNITY_MCP_ALLOW_BATCH", child)
@@ -143,7 +169,10 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
         self.passed_xml()
         process = OwnedFakeProcess([0])
         with patch.dict(qa.os.environ, {"UNITY_MCP_OWNED_TRANSPORT_TESTS": "disabled"}):
-            with patch.object(qa.subprocess, "Popen", return_value=process) as popen, redirect_stdout(io.StringIO()):
+            with (
+                patch.object(qa.subprocess, "Popen", return_value=process) as popen,
+                redirect_stdout(io.StringIO()),
+            ):
                 self.assertEqual(0, qa.launch(self.args))
             self.assertEqual("1", popen.call_args.kwargs["env"]["UNITY_MCP_OWNED_TRANSPORT_TESTS"])
             self.assertEqual("disabled", qa.os.environ["UNITY_MCP_OWNED_TRANSPORT_TESTS"])

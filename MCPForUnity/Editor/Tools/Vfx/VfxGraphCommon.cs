@@ -1,6 +1,5 @@
 using Newtonsoft.Json.Linq;
 using UnityEngine;
-
 #if UNITY_VFX_GRAPH
 using UnityEngine.VFX;
 #endif

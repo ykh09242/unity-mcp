@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 
-@pytest.mark.parametrize("count,expected", [("all", None), ("*", None), (" ALL ", None), (None, 10), ("5", 5), (0, 0)])
+@pytest.mark.parametrize(
+    "count,expected", [("all", None), ("*", None), (" ALL ", None), (None, 10), ("5", 5), (0, 0)]
+)
 def test_console_explicit_all_and_default_count(monkeypatch, count, expected):
     module = importlib.import_module("services.tools.read_console")
     send = AsyncMock(return_value={"success": True, "data": []})

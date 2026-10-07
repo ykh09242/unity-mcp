@@ -30,12 +30,14 @@ class ExecuteCommandMessage(BaseModel):
 
 class PingMessage(BaseModel):
     """Server-initiated ping to detect dead connections."""
+
     type: str = "ping"
 
 
 class CancelCommandMessage(BaseModel):
     type: str = "cancel"
     id: str = Field(max_length=36)
+
 
 # Incoming (Plugin -> Server)
 
@@ -51,8 +53,12 @@ class RegisterMessage(BaseModel):
     @field_validator("project_name", "project_hash")
     @classmethod
     def reject_log_control_characters(cls, value: str) -> str:
-        if any(ord(char) < 32 or 0x7F <= ord(char) <= 0x9F or char in "\u2028\u2029" for char in value):
-            raise ValueError("Project identifiers must not contain control characters or line separators")
+        if any(
+            ord(char) < 32 or 0x7F <= ord(char) <= 0x9F or char in "\u2028\u2029" for char in value
+        ):
+            raise ValueError(
+                "Project identifiers must not contain control characters or line separators"
+            )
         return value
 
 
@@ -79,6 +85,7 @@ class ResultStartMessage(BaseModel):
     chunk_count: StrictInt
     encoding: Literal["identity", "gzip"] = "identity"
     decoded_bytes: StrictInt | None = None
+
 
 # Session Info (API response)
 

@@ -19,7 +19,8 @@ namespace MCPForUnity.Editor.Setup
 
         internal static byte[] ReadBytes(HttpClient client, string url, long maxBytes, CancellationToken cancellation = default)
         {
-            if (maxBytes < 0 || maxBytes > MaxBlobBytes) throw new ArgumentOutOfRangeException(nameof(maxBytes));
+            if (maxBytes < 0 || maxBytes > MaxBlobBytes)
+                throw new ArgumentOutOfRangeException(nameof(maxBytes));
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             timeout.CancelAfter(TimeSpan.FromSeconds(60));
             var token = timeout.Token;
@@ -35,7 +36,8 @@ namespace MCPForUnity.Editor.Setup
 
         internal static byte[] ReadBounded(Stream stream, long maxBytes, CancellationToken cancellation)
         {
-            if (maxBytes < 0 || maxBytes > MaxBlobBytes) throw new ArgumentOutOfRangeException(nameof(maxBytes));
+            if (maxBytes < 0 || maxBytes > MaxBlobBytes)
+                throw new ArgumentOutOfRangeException(nameof(maxBytes));
             using var output = new MemoryStream();
             byte[] buffer = new byte[BufferBytes];
             while (true)
@@ -43,9 +45,11 @@ namespace MCPForUnity.Editor.Setup
                 cancellation.ThrowIfCancellationRequested();
                 int count = (int)Math.Min(buffer.Length, maxBytes - output.Length + 1);
                 int read = stream.ReadAsync(buffer, 0, count, cancellation).GetAwaiter().GetResult();
-                if (read == 0) break;
+                if (read == 0)
+                    break;
                 long required = output.Length + read;
-                if (required > maxBytes) throw new IOException("Skill sync response exceeds its byte budget.");
+                if (required > maxBytes)
+                    throw new IOException("Skill sync response exceeds its byte budget.");
                 if (required > output.Capacity)
                     output.Capacity = (int)Math.Min(maxBytes, Math.Max(required, Math.Max(4096L, output.Capacity * 2L)));
                 output.Write(buffer, 0, read);
@@ -62,25 +66,35 @@ namespace MCPForUnity.Editor.Setup
             int entries = 0;
             while (reader.Read())
             {
-                if (reader.TokenType == JsonToken.PropertyName && reader.Depth == 1
-                    && string.Equals((string)reader.Value, "tree", StringComparison.OrdinalIgnoreCase))
+                if (
+                    reader.TokenType == JsonToken.PropertyName
+                    && reader.Depth == 1
+                    && string.Equals((string)reader.Value, "tree", StringComparison.OrdinalIgnoreCase)
+                )
                 {
                     if ((string)reader.Value != "tree")
                         throw new IOException("GitHub tree metadata uses a noncanonical tree property.");
-                    if (treeSeen) throw new IOException("GitHub tree metadata contains duplicate tree properties.");
+                    if (treeSeen)
+                        throw new IOException("GitHub tree metadata contains duplicate tree properties.");
                     treeSeen = true;
                 }
-                if (reader.Depth == 2 && reader.Path.StartsWith("tree[", StringComparison.Ordinal)
-                    && reader.TokenType != JsonToken.EndObject && reader.TokenType != JsonToken.EndArray)
+                if (
+                    reader.Depth == 2
+                    && reader.Path.StartsWith("tree[", StringComparison.Ordinal)
+                    && reader.TokenType != JsonToken.EndObject
+                    && reader.TokenType != JsonToken.EndArray
+                )
                 {
-                    if (++entries > entryLimit) throw new IOException("GitHub tree exceeds the entry limit.");
+                    if (++entries > entryLimit)
+                        throw new IOException("GitHub tree exceeds the entry limit.");
                 }
             }
         }
 
         internal static void RequireFileCount(long count)
         {
-            if (count < 0 || count > MaxFiles) throw new IOException("Skill sync exceeds the 4096-file limit.");
+            if (count < 0 || count > MaxFiles)
+                throw new IOException("Skill sync exceeds the 4096-file limit.");
         }
 
         internal sealed class ByteBudget
@@ -88,6 +102,7 @@ namespace MCPForUnity.Editor.Setup
             private long _used;
             internal long Remaining => MaxStagedBytes - _used;
             internal long NextBlobLimit => Math.Min(MaxBlobBytes, Remaining);
+
             internal void Admit(long bytes)
             {
                 if (bytes < 0 || bytes > MaxBlobBytes || bytes > Remaining)

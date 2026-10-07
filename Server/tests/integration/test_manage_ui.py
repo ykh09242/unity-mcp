@@ -42,12 +42,14 @@ class TestManageUIPathValidation:
 
         monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
 
-        resp = run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="create",
-            path="NotAssets/UI/Test.uxml",
-            contents=SAMPLE_UXML,
-        ))
+        resp = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="create",
+                path="NotAssets/UI/Test.uxml",
+                contents=SAMPLE_UXML,
+            )
+        )
 
         assert resp["success"] is False
         assert "Assets/" in resp["message"]
@@ -58,12 +60,14 @@ class TestManageUIPathValidation:
 
         monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
 
-        resp = run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="create",
-            path="Assets/../etc/passwd.uxml",
-            contents=SAMPLE_UXML,
-        ))
+        resp = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="create",
+                path="Assets/../etc/passwd.uxml",
+                contents=SAMPLE_UXML,
+            )
+        )
 
         assert resp["success"] is False
         # Path normalization resolves ".." so it either fails traversal or Assets/ check
@@ -75,12 +79,14 @@ class TestManageUIPathValidation:
 
         monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
 
-        resp = run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="create",
-            path="Assets/UI/Test.cs",
-            contents="some content",
-        ))
+        resp = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="create",
+                path="Assets/UI/Test.cs",
+                contents="some content",
+            )
+        )
 
         assert resp["success"] is False
         assert ".uxml or .uss" in resp["message"]
@@ -94,12 +100,14 @@ class TestManageUIPathValidation:
 
         monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
 
-        resp = run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="create",
-            path="Assets/UI/Menu.uxml",
-            contents=SAMPLE_UXML,
-        ))
+        resp = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="create",
+                path="Assets/UI/Menu.uxml",
+                contents=SAMPLE_UXML,
+            )
+        )
 
         assert resp["success"] is True
         assert captured["params"]["path"] == "Assets/UI/Menu.uxml"
@@ -113,12 +121,14 @@ class TestManageUIPathValidation:
 
         monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
 
-        resp = run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="create",
-            path="Assets/UI/Styles.uss",
-            contents=SAMPLE_USS,
-        ))
+        resp = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="create",
+                path="Assets/UI/Styles.uss",
+                contents=SAMPLE_USS,
+            )
+        )
 
         assert resp["success"] is True
         assert captured["params"]["path"] == "Assets/UI/Styles.uss"
@@ -136,12 +146,14 @@ class TestManageUIContentsEncoding:
 
         monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
 
-        run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="create",
-            path="Assets/UI/Test.uxml",
-            contents=SAMPLE_UXML,
-        ))
+        run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="create",
+                path="Assets/UI/Test.uxml",
+                contents=SAMPLE_UXML,
+            )
+        )
 
         params = captured["params"]
         assert params["contentsEncoded"] is True
@@ -159,12 +171,14 @@ class TestManageUIContentsEncoding:
 
         monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
 
-        run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="update",
-            path="Assets/UI/Test.uss",
-            contents=SAMPLE_USS,
-        ))
+        run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="update",
+                path="Assets/UI/Test.uss",
+                contents=SAMPLE_USS,
+            )
+        )
 
         params = captured["params"]
         assert params["contentsEncoded"] is True
@@ -185,11 +199,13 @@ class TestManageUIActionRouting:
 
         monkeypatch.setattr(manage_ui_mod, "send_with_unity_instance", fake_send)
 
-        run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="read",
-            path="Assets/UI/Test.uxml",
-        ))
+        run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="read",
+                path="Assets/UI/Test.uxml",
+            )
+        )
 
         assert captured["cmd"] == "manage_ui"
         assert captured["params"]["action"] == "read"
@@ -203,12 +219,14 @@ class TestManageUIActionRouting:
 
         monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
 
-        run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="create",
-            path="Assets/UI/Test.uxml",
-            contents=SAMPLE_UXML,
-        ))
+        run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="create",
+                path="Assets/UI/Test.uxml",
+                contents=SAMPLE_UXML,
+            )
+        )
 
         assert captured["cmd"] == "manage_ui"
 
@@ -221,14 +239,16 @@ class TestManageUIActionRouting:
 
         monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
 
-        run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="attach_ui_document",
-            target="MyCanvas",
-            source_asset="Assets/UI/Menu.uxml",
-            panel_settings="Assets/UI/PanelSettings.asset",
-            sort_order=5,
-        ))
+        run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="attach_ui_document",
+                target="MyCanvas",
+                source_asset="Assets/UI/Menu.uxml",
+                panel_settings="Assets/UI/PanelSettings.asset",
+                sort_order=5,
+            )
+        )
 
         params = captured["params"]
         assert params["action"] == "attach_ui_document"
@@ -246,13 +266,15 @@ class TestManageUIActionRouting:
 
         monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
 
-        run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="create_panel_settings",
-            path="Assets/UI/MyPanel.asset",
-            scale_mode="ScaleWithScreenSize",
-            reference_resolution={"width": 1920, "height": 1080},
-        ))
+        run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="create_panel_settings",
+                path="Assets/UI/MyPanel.asset",
+                scale_mode="ScaleWithScreenSize",
+                reference_resolution={"width": 1920, "height": 1080},
+            )
+        )
 
         params = captured["params"]
         assert params["action"] == "create_panel_settings"
@@ -268,12 +290,14 @@ class TestManageUIActionRouting:
 
         monkeypatch.setattr(manage_ui_mod, "send_with_unity_instance", fake_send)
 
-        run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="get_visual_tree",
-            target="UIRoot",
-            max_depth=5,
-        ))
+        run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="get_visual_tree",
+                target="UIRoot",
+                max_depth=5,
+            )
+        )
 
         params = captured["params"]
         assert params["action"] == "get_visual_tree"
@@ -289,10 +313,12 @@ class TestManageUIActionRouting:
 
         monkeypatch.setattr(manage_ui_mod, "send_with_unity_instance", fake_send)
 
-        resp = run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="ping",
-        ))
+        resp = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="ping",
+            )
+        )
 
         assert resp["success"] is True
         assert captured["params"]["action"] == "ping"
@@ -310,12 +336,14 @@ class TestManageUINoneRemoval:
 
         monkeypatch.setattr(manage_ui_mod, "send_with_unity_instance", fake_send)
 
-        run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="read",
-            path="Assets/UI/Test.uxml",
-            # All other params are None
-        ))
+        run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="read",
+                path="Assets/UI/Test.uxml",
+                # All other params are None
+            )
+        )
 
         params = captured["params"]
         assert "target" not in params
@@ -340,16 +368,18 @@ class TestManageUIReadResponse:
                     "contents": SAMPLE_UXML,
                     "encodedContents": encoded,
                     "contentsEncoded": True,
-                }
+                },
             }
 
         monkeypatch.setattr(manage_ui_mod, "send_with_unity_instance", fake_send)
 
-        resp = run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(),
-            action="read",
-            path="Assets/UI/Test.uxml",
-        ))
+        resp = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="read",
+                path="Assets/UI/Test.uxml",
+            )
+        )
 
         assert resp["success"] is True
         data = resp["data"]
@@ -366,17 +396,26 @@ class TestManageUIRenderUI:
 
         async def fake_send(_ctx, _instance, _cmd, params, **kwargs):
             captured["params"] = params
-            return {"success": True, "message": "Rendered",
-                    "data": {"path": "Assets/Screenshots/test.png"}}
+            return {
+                "success": True,
+                "message": "Rendered",
+                "data": {"path": "Assets/Screenshots/test.png"},
+            }
 
         monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
 
-        resp = run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(), action="render_ui",
-            target="UIRoot", width=1280, height=720,
-            include_image=True, max_resolution=480,
-            screenshot_file_name="my-preview",
-        ))
+        resp = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="render_ui",
+                target="UIRoot",
+                width=1280,
+                height=720,
+                include_image=True,
+                max_resolution=480,
+                screenshot_file_name="my-preview",
+            )
+        )
         assert resp["success"] is True
         p = captured["params"]
         assert p["action"] == "render_ui"
@@ -395,8 +434,7 @@ class TestManageUIRenderUI:
             return {"success": True, "message": "ok"}
 
         monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
-        run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(), action="render_ui", target="X"))
+        run_async(manage_ui_mod.manage_ui(ctx=DummyContext(), action="render_ui", target="X"))
         p = captured["params"]
         for k in ("width", "height", "include_image", "max_resolution", "file_name"):
             assert k not in p
@@ -414,11 +452,14 @@ class TestManageUILinkStylesheet:
 
         monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
 
-        resp = run_async(manage_ui_mod.manage_ui(
-            ctx=DummyContext(), action="link_stylesheet",
-            path="Assets/UI/Menu.uxml",
-            stylesheet="Assets/UI/Styles.uss",
-        ))
+        resp = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="link_stylesheet",
+                path="Assets/UI/Menu.uxml",
+                stylesheet="Assets/UI/Styles.uss",
+            )
+        )
         assert resp["success"] is True
         p = captured["params"]
         assert p["action"] == "link_stylesheet"

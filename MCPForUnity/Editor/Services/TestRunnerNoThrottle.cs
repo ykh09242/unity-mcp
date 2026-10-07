@@ -14,13 +14,13 @@ namespace MCPForUnity.Editor.Services
 {
     /// <summary>
     /// Automatically sets the editor to "No Throttling" mode during test runs.
-    /// 
+    ///
     /// This helps prevent background stalls for normal tests. However, tests that trigger
     /// script compilation mid-run may still stall because:
     /// - Internal Unity coroutine waits rely on editor ticks
     /// - OS-level throttling affects the main thread when Unity is backgrounded
     /// - No amount of internal nudging can overcome OS thread scheduling
-    /// 
+    ///
     /// The MCP workflow is unaffected because socket messages provide external stimulus
     /// that wakes Unity's main thread.
     /// </summary>
@@ -63,12 +63,19 @@ namespace MCPForUnity.Editor.Services
         #region State Persistence
 
         private static bool IsTestRunActive() => SessionState.GetBool(SessionKey_TestRunActive, false);
+
         private static void SetTestRunActive(bool active) => SessionState.SetBool(SessionKey_TestRunActive, active);
+
         private static bool AreSettingsCaptured() => SessionState.GetBool(SessionKey_SettingsCaptured, false);
+
         private static void SetSettingsCaptured(bool captured) => SessionState.SetBool(SessionKey_SettingsCaptured, captured);
+
         private static int GetPrevIdleTime() => SessionState.GetInt(SessionKey_PrevIdleTime, 4);
+
         private static void SetPrevIdleTime(int value) => SessionState.SetInt(SessionKey_PrevIdleTime, value);
+
         private static int GetPrevInteractionMode() => SessionState.GetInt(SessionKey_PrevInteractionMode, 0);
+
         private static void SetPrevInteractionMode(int value) => SessionState.SetInt(SessionKey_PrevInteractionMode, value);
 
         #endregion
@@ -103,7 +110,8 @@ namespace MCPForUnity.Editor.Services
 
         internal static void RestoreThrottling()
         {
-            if (!AreSettingsCaptured()) return;
+            if (!AreSettingsCaptured())
+                return;
 
             EditorPrefs.SetInt(ApplicationIdleTimeKey, GetPrevIdleTime());
             EditorPrefs.SetInt(InteractionModeKey, GetPrevInteractionMode());
@@ -118,10 +126,7 @@ namespace MCPForUnity.Editor.Services
         {
             try
             {
-                var method = typeof(EditorApplication).GetMethod(
-                    "UpdateInteractionModeSettings",
-                    BindingFlags.Static | BindingFlags.NonPublic
-                );
+                var method = typeof(EditorApplication).GetMethod("UpdateInteractionModeSettings", BindingFlags.Static | BindingFlags.NonPublic);
                 method?.Invoke(null, null);
             }
             catch
@@ -150,6 +155,7 @@ namespace MCPForUnity.Editor.Services
             }
 
             public void TestStarted(ITestAdaptor test) { }
+
             public void TestFinished(ITestResultAdaptor result) { }
         }
     }

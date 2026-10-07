@@ -1,4 +1,5 @@
 """Public contracts for hosted requests crossing host-local boundaries."""
+
 import asyncio
 import json
 import os
@@ -16,14 +17,22 @@ def _install_baseline_overlay():
     if not baseline:
         return
     import importlib.util
-    modules = {"services.resources.editor_state": "editor_state.py",
-               "services.state.external_changes_scanner": "external_changes_scanner.py",
-               "services.tools.run_tests": "run_tests.py", "utils.focus_nudge": "focus_nudge.py"}
+
+    modules = {
+        "services.resources.editor_state": "editor_state.py",
+        "services.state.external_changes_scanner": "external_changes_scanner.py",
+        "services.tools.run_tests": "run_tests.py",
+        "utils.focus_nudge": "focus_nudge.py",
+    }
+
     class BaselineFinder:
         def find_spec(self, fullname, path=None, target=None):
             if fullname in modules:
-                return importlib.util.spec_from_file_location(fullname, Path(baseline) / modules[fullname])
+                return importlib.util.spec_from_file_location(
+                    fullname, Path(baseline) / modules[fullname]
+                )
             return None
+
     sys.meta_path.insert(0, BaselineFinder())
 
 
@@ -32,8 +41,12 @@ def _run_sdk_child(request, tmp_path):
     if os.environ.get("MCP_HOST_BOUNDARY_CHILD") == "1":
         return False
     node_id = str(Path(__file__).resolve()) + "::" + request.node.nodeid.split("::", 1)[1]
-    result = subprocess.run([sys.executable, "-B", __file__, node_id, str(tmp_path / "sdk-child")],
-                            capture_output=True, text=True, timeout=30)
+    result = subprocess.run(
+        [sys.executable, "-B", __file__, node_id, str(tmp_path / "sdk-child")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     return True
 
@@ -41,7 +54,9 @@ def _run_sdk_child(request, tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("wait", [None, 1])
 @pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
-async def test_remote_editor_and_jobs_never_touch_host(monkeypatch, tmp_path, wait, protocol, request):
+async def test_remote_editor_and_jobs_never_touch_host(
+    monkeypatch, tmp_path, wait, protocol, request
+):
     if _run_sdk_child(request, tmp_path):
         return
     from fastmcp import Client, FastMCP
@@ -69,9 +84,23 @@ async def test_remote_editor_and_jobs_never_touch_host(monkeypatch, tmp_path, wa
             counts["project"] += 1
             return {"success": True, "data": {"projectRoot": str(tmp_path)}}
         if command == "get_editor_state":
-            return {"success": True, "data": {"unity": {"instance_id": "Tenant@varied"}, "assets": {"external_changes_dirty": True}}}
+            return {
+                "success": True,
+                "data": {
+                    "unity": {"instance_id": "Tenant@varied"},
+                    "assets": {"external_changes_dirty": True},
+                },
+            }
         assert command == "get_test_job"
-        return {"success": True, "data": {"job_id": "fixture-job", "status": "running", "last_update_unix_ms": 1, "progress": {"editor_is_focused": False}}}
+        return {
+            "success": True,
+            "data": {
+                "job_id": "fixture-job",
+                "status": "running",
+                "last_update_unix_ms": 1,
+                "progress": {"editor_is_focused": False},
+            },
+        }
 
     def scan(instance):
         counts["scan"] += 1
@@ -85,9 +114,13 @@ async def test_remote_editor_and_jobs_never_touch_host(monkeypatch, tmp_path, wa
         return False
 
     monkeypatch.setattr(PluginHub, "send_command_for_instance", send)
+
     async def authenticated():
         return "fixture-user"
-    monkeypatch.setattr(editor_state.unity_transport, "_resolve_user_id_from_request", authenticated)
+
+    monkeypatch.setattr(
+        editor_state.unity_transport, "_resolve_user_id_from_request", authenticated
+    )
     monkeypatch.setattr(editor_state.external_changes_scanner, "set_project_root", root)
     monkeypatch.setattr(editor_state.external_changes_scanner, "update_and_get", scan)
     monkeypatch.setattr(run_tests, "nudge_unity_focus", focus)
@@ -100,7 +133,9 @@ async def test_remote_editor_and_jobs_never_touch_host(monkeypatch, tmp_path, wa
         response = json.loads(result[0].text)
         assert response["success"] is True, response
         native_dirty = response["data"]["assets"]["external_changes_dirty"]
-        result = await client.call_tool("get_test_job", {"job_id": "fixture-job", "wait_timeout": wait})
+        result = await client.call_tool(
+            "get_test_job", {"job_id": "fixture-job", "wait_timeout": wait}
+        )
         assert json.loads(result.content[0].text)["success"] is True
     if run_tests._background_tasks:
         await asyncio.gather(*run_tests._background_tasks)
@@ -146,20 +181,31 @@ async def test_local_resource_uses_selected_root_and_key(monkeypatch, tmp_path, 
     scanner = ExternalChangesScanner(scan_interval_ms=0)
     monkeypatch.setattr(editor_state, "external_changes_scanner", scanner)
     selected = []
+
     async def session_id(project_hash):
         selected.append(project_hash)
         return "fixture-session"
+
     async def session(session_id):
         return SimpleNamespace(project_path=str(root))
-    monkeypatch.setattr(PluginHub, "_registry", SimpleNamespace(get_session_id_by_hash=session_id, get_session=session))
+
+    monkeypatch.setattr(
+        PluginHub,
+        "_registry",
+        SimpleNamespace(get_session_id_by_hash=session_id, get_session=session),
+    )
+
     async def send(instance, command, params, **kwargs):
         assert command == "get_editor_state"
         return {"success": True, "data": {"unity": {"instance_id": "Forged@" + str(len(selected))}}}
+
     monkeypatch.setattr(PluginHub, "send_command_for_instance", send)
+
     class Selected(Middleware):
         async def on_read_resource(self, context, call_next):
             await context.fastmcp_context.set_state("unity_instance", "Selected@fixture")
             return await call_next(context)
+
     app = FastMCP("selected-local-contract")
     app.add_middleware(Selected())
     app.resource("mcpforunity://editor/state")(_serialize_pydantic(editor_state.get_editor_state))
@@ -177,6 +223,7 @@ async def test_local_resource_uses_selected_root_and_key(monkeypatch, tmp_path, 
 def test_scanner_lru_and_ttl_are_bounded(monkeypatch, tmp_path):
     from core.config import config
     from services.state import external_changes_scanner as module
+
     monkeypatch.setattr(config, "http_remote_hosted", False)
     now = [1000]
     monkeypatch.setattr(module, "_now_unix_ms", lambda: now[0])
@@ -192,6 +239,7 @@ def test_scanner_lru_and_ttl_are_bounded(monkeypatch, tmp_path):
 def test_scanner_enumeration_budget_counts_hidden_entries(monkeypatch, tmp_path):
     from core.config import config
     from services.state import external_changes_scanner as module
+
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     (tmp_path / "Assets").mkdir()
@@ -201,17 +249,22 @@ def test_scanner_enumeration_budget_counts_hidden_entries(monkeypatch, tmp_path)
     scanner.set_project_root("selected", str(tmp_path))
     seen = []
     original = module.os.scandir
+
     class Counted:
         def __init__(self, path):
             self.source = original(path)
+
         def __enter__(self):
             return self
+
         def __exit__(self, *args):
             self.source.close()
+
         def __iter__(self):
             for entry in self.source:
                 seen.append(entry.name)
                 yield entry
+
     monkeypatch.setattr(module.os, "scandir", Counted)
     scanner.update_and_get("selected")
     assert 0 < len(seen) <= 5
@@ -222,16 +275,19 @@ async def test_scanner_cancellation_stops_worker_without_overlap(monkeypatch, tm
     import threading
     from core.config import config
     from services.state.external_changes_scanner import ExternalChangesScanner
+
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     scanner = ExternalChangesScanner(scan_interval_ms=0)
     scanner.set_project_root("selected", str(tmp_path))
     started, exited = threading.Event(), threading.Event()
+
     def scan(roots):
         started.set()
         assert scanner._active_stop.wait(timeout=2)
         exited.set()
         return None
+
     monkeypatch.setattr(scanner, "_scan_paths_max_mtime_ns", scan)
     task = asyncio.create_task(scanner.update_and_get_async("selected"))
     assert await asyncio.to_thread(started.wait, 2)
@@ -246,11 +302,16 @@ async def test_scanner_cancellation_stops_worker_without_overlap(monkeypatch, tm
 def test_manifest_read_and_retained_package_roots_are_bounded(monkeypatch, tmp_path):
     from core.config import config
     from services.state.external_changes_scanner import ExternalChangesScanner
+
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     (tmp_path / "Packages").mkdir()
     manifest = tmp_path / "Packages" / "manifest.json"
-    manifest.write_text(json.dumps({"dependencies": {str(index): "file:../Package" + str(index) for index in range(4)}}))
+    manifest.write_text(
+        json.dumps(
+            {"dependencies": {str(index): "file:../Package" + str(index) for index in range(4)}}
+        )
+    )
     scanner = ExternalChangesScanner(scan_interval_ms=0, max_extra_roots=2)
     scanner.set_project_root("selected", str(tmp_path))
     scanner.update_and_get("selected")
@@ -259,10 +320,12 @@ def test_manifest_read_and_retained_package_roots_are_bounded(monkeypatch, tmp_p
     smaller.set_project_root("selected", str(tmp_path))
     original_open = type(manifest).open
     reads = []
+
     def counted(path, *args, **kwargs):
         if path == manifest:
             reads.append(path)
         return original_open(path, *args, **kwargs)
+
     monkeypatch.setattr(type(manifest), "open", counted)
     smaller.update_and_get("selected")
     assert reads == []
@@ -278,21 +341,37 @@ async def test_local_public_job_still_schedules_nudge(monkeypatch, tmp_path, req
     from core.config import config
     from services.tools import run_tests
     from transport.plugin_hub import PluginHub
+
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "transport_mode", "http")
+
     async def send(instance, command, params, **kwargs):
-        return {"success": True, "data": {"job_id": "fixture-job", "status": "running", "last_update_unix_ms": 1, "progress": {"editor_is_focused": False}}}
+        return {
+            "success": True,
+            "data": {
+                "job_id": "fixture-job",
+                "status": "running",
+                "last_update_unix_ms": 1,
+                "progress": {"editor_is_focused": False},
+            },
+        }
+
     async def project(instance, user_id=None):
         return str(tmp_path)
+
     nudges = []
     release = asyncio.Event()
+
     async def focus(**kwargs):
         nudges.append(kwargs)
         await release.wait()
         return True
+
     monkeypatch.setattr(PluginHub, "send_command_for_instance", send)
     monkeypatch.setattr(run_tests, "_get_unity_project_path", project)
-    monkeypatch.setattr(run_tests, "get_unity_instance_from_context", AsyncMock(return_value="Selected@fixture"))
+    monkeypatch.setattr(
+        run_tests, "get_unity_instance_from_context", AsyncMock(return_value="Selected@fixture")
+    )
     monkeypatch.setattr(run_tests, "nudge_unity_focus", focus)
     app = FastMCP("local-focus-contract")
     app.tool(name="get_test_job")(run_tests.get_test_job)
@@ -304,8 +383,13 @@ async def test_local_public_job_still_schedules_nudge(monkeypatch, tmp_path, req
     release.set()
     if run_tests._background_tasks:
         await asyncio.gather(*run_tests._background_tasks)
-    assert nudges == [{"unity_project_path": str(tmp_path), "force": True,
-                       "focus_duration_s": run_tests.focus_nudge._DEFAULT_FOCUS_DURATION_S}]
+    assert nudges == [
+        {
+            "unity_project_path": str(tmp_path),
+            "force": True,
+            "focus_duration_s": run_tests.focus_nudge._DEFAULT_FOCUS_DURATION_S,
+        }
+    ]
 
 
 def test_remote_scanner_guard_precedes_state_and_filesystem(monkeypatch):
@@ -315,7 +399,9 @@ def test_remote_scanner_guard_precedes_state_and_filesystem(monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", True)
     scanner = module.ExternalChangesScanner(scan_interval_ms=0)
     calls = []
-    monkeypatch.setattr(scanner, "_get_state", lambda *args: calls.append("state") or module.ExternalChangesState())
+    monkeypatch.setattr(
+        scanner, "_get_state", lambda *args: calls.append("state") or module.ExternalChangesState()
+    )
     scanner.set_project_root("Tenant@fixture", "C:/fixture")
     scanner.clear_dirty("Tenant@fixture")
     assert scanner.update_and_get("Tenant@fixture")["external_changes_dirty"] is False
@@ -325,30 +411,61 @@ def test_remote_scanner_guard_precedes_state_and_filesystem(monkeypatch):
 
 if __name__ == "__main__":
     import socket
+
     owned = Path(sys.argv[2]).resolve()
     owned.mkdir(parents=True, exist_ok=True)
     for key in list(os.environ):
         if key.startswith("UNITY_MCP_"):
             os.environ.pop(key)
-    for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "TEMP", "TMP", "UNITY_MCP_LOG_DIR", "UNITY_MCP_STATUS_DIR"):
+    for key in (
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "XDG_DATA_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+        "TEMP",
+        "TMP",
+        "UNITY_MCP_LOG_DIR",
+        "UNITY_MCP_STATUS_DIR",
+    ):
         os.environ[key] = str(owned)
     os.environ["DISABLE_TELEMETRY"] = "1"
     os.environ["UNITY_MCP_SKIP_STARTUP_CONNECT"] = "1"
     os.environ["MCP_HOST_BOUNDARY_CHILD"] = "1"
     Path.home = classmethod(lambda cls: owned)
+
     def denied(*args, **kwargs):
         raise AssertionError("Application networking prohibited")
+
     def socketpair_only(original):
         def guarded(*args, **kwargs):
             caller = sys._getframe(1)
-            if caller.f_code.co_name in ("_socketpair", "_fallback_socketpair", "socketpair") and Path(caller.f_code.co_filename) == Path(socket.__file__):
+            if caller.f_code.co_name in (
+                "_socketpair",
+                "_fallback_socketpair",
+                "socketpair",
+            ) and Path(caller.f_code.co_filename) == Path(socket.__file__):
                 return original(*args, **kwargs)
             return denied(*args, **kwargs)
+
         return guarded
+
     for name in ("connect", "connect_ex", "bind"):
         setattr(socket.socket, name, socketpair_only(getattr(socket.socket, name)))
-    for name in ("create_connection", "getaddrinfo", "gethostbyname", "gethostbyname_ex", "gethostbyaddr"):
+    for name in (
+        "create_connection",
+        "getaddrinfo",
+        "gethostbyname",
+        "gethostbyname_ex",
+        "gethostbyaddr",
+    ):
         setattr(socket, name, denied)
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
     _install_baseline_overlay()
-    raise SystemExit(pytest.main(["-q", "-p", "no:cacheprovider", "--basetemp", str(owned / "pytest"), sys.argv[1]]))
+    raise SystemExit(
+        pytest.main(
+            ["-q", "-p", "no:cacheprovider", "--basetemp", str(owned / "pytest"), sys.argv[1]]
+        )
+    )

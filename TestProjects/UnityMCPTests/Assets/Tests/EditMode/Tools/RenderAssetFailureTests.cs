@@ -55,10 +55,12 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (_go != null) Object.DestroyImmediate(_go);
+            if (_go != null)
+                Object.DestroyImmediate(_go);
             if (!string.IsNullOrEmpty(_generatedMaterialPath) && File.Exists(AbsolutePath(_generatedMaterialPath)))
                 AssetDatabase.DeleteAsset(_generatedMaterialPath);
-            if (!string.IsNullOrEmpty(_root)) AssetDatabase.DeleteAsset(_root);
+            if (!string.IsNullOrEmpty(_root))
+                AssetDatabase.DeleteAsset(_root);
         }
 
         private static string AbsolutePath(string assetPath)
@@ -68,12 +70,19 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject SetRendererColor(string mode, int slot)
         {
-            return JObject.FromObject(ManageMaterial.HandleCommand(new JObject
-            {
-                ["action"] = "set_renderer_color", ["target"] = _go.GetInstanceIDCompat(),
-                ["searchMethod"] = "by_id", ["mode"] = mode, ["slot"] = slot,
-                ["color"] = new JArray(1, 0, 0, 1)
-            }));
+            return JObject.FromObject(
+                ManageMaterial.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_renderer_color",
+                        ["target"] = _go.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["mode"] = mode,
+                        ["slot"] = slot,
+                        ["color"] = new JArray(1, 0, 0, 1),
+                    }
+                )
+            );
         }
 
         [TestCase("instance", 2)]
@@ -123,7 +132,8 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 Material temporary = renderer.sharedMaterial;
                 renderer.sharedMaterials = new Material[0];
-                if (temporary != null && !EditorUtility.IsPersistent(temporary)) Object.DestroyImmediate(temporary);
+                if (temporary != null && !EditorUtility.IsPersistent(temporary))
+                    Object.DestroyImmediate(temporary);
             }
         }
 
@@ -131,11 +141,17 @@ namespace MCPForUnityTests.Editor.Tools
         public void MissingShaderUpdateCreatesNoDirectory()
         {
             string directory = _root + "/MissingParent/Nested";
-            var response = JObject.FromObject(ManageShader.HandleCommand(new JObject
-            {
-                ["action"] = "update", ["path"] = directory, ["name"] = "Missing",
-                ["contents"] = "sentinel"
-            }));
+            var response = JObject.FromObject(
+                ManageShader.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "update",
+                        ["path"] = directory,
+                        ["name"] = "Missing",
+                        ["contents"] = "sentinel",
+                    }
+                )
+            );
 
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             StringAssert.Contains("not found", response.ToString().ToLowerInvariant());
@@ -155,7 +171,9 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 parameters["setPixels"] = new JObject
                 {
-                    ["width"] = 2, ["height"] = 2, ["pixels"] = "base64:!invalid"
+                    ["width"] = 2,
+                    ["height"] = 2,
+                    ["pixels"] = "base64:!invalid",
                 };
             }
             else
@@ -169,17 +187,21 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 var response = JObject.FromObject(ManageTexture.HandleCommand(parameters));
-                leaked = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>()
-                    .Where(texture => !before.Contains(texture) && !EditorUtility.IsPersistent(texture)).ToArray();
+                leaked = UnityEngine
+                    .Resources.FindObjectsOfTypeAll<Texture2D>()
+                    .Where(texture => !before.Contains(texture) && !EditorUtility.IsPersistent(texture))
+                    .ToArray();
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 Assert.IsEmpty(leaked, "Rejected pixel data must release its editable texture.");
                 CollectionAssert.AreEqual(original, File.ReadAllBytes(AbsolutePath(_texturePath)));
-                if (!modify) Assert.IsFalse(File.Exists(AbsolutePath(path)));
+                if (!modify)
+                    Assert.IsFalse(File.Exists(AbsolutePath(path)));
             }
             finally
             {
                 if (leaked != null)
-                    foreach (Texture2D texture in leaked) Object.DestroyImmediate(texture);
+                    foreach (Texture2D texture in leaked)
+                        Object.DestroyImmediate(texture);
             }
         }
 
@@ -191,8 +213,10 @@ namespace MCPForUnityTests.Editor.Tools
             File.WriteAllText(AbsolutePath(path), "sentinel");
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
             var parameters = new JObject { ["action"] = "set_import_settings", ["path"] = path };
-            if (sprite) parameters["as_sprite"] = true;
-            else parameters["import_settings"] = new JObject { ["isReadable"] = true };
+            if (sprite)
+                parameters["as_sprite"] = true;
+            else
+                parameters["import_settings"] = new JObject { ["isReadable"] = true };
 
             var response = JObject.FromObject(ManageTexture.HandleCommand(parameters));
 
@@ -210,14 +234,19 @@ namespace MCPForUnityTests.Editor.Tools
             string missingPath = _root + "/Missing.png";
             LogAssert.Expect(LogType.Error, new Regex("\\[ManageAsset\\] Action 'modify' failed.*Texture not found", RegexOptions.Singleline));
 
-            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
-            {
-                ["action"] = "modify", ["path"] = _root + "/Source.mat",
-                ["properties"] = new JObject
-                {
-                    ["texture"] = new JObject { ["name"] = property, ["path"] = missingPath }
-                }
-            }));
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = _root + "/Source.mat",
+                        ["properties"] = new JObject
+                        {
+                            ["texture"] = new JObject { ["name"] = property, ["path"] = missingPath },
+                        },
+                    }
+                )
+            );
 
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             StringAssert.Contains(missingPath, response.ToString());
@@ -230,7 +259,7 @@ namespace MCPForUnityTests.Editor.Tools
             string property = MaterialOps.ResolvePropertyName(_material, "_BaseMap");
             var properties = new JObject
             {
-                ["texture"] = new JObject { ["name"] = property, ["path"] = _texturePath }
+                ["texture"] = new JObject { ["name"] = property, ["path"] = _texturePath },
             };
             Assert.IsTrue(MaterialOps.ApplyProperties(_material, properties, UnityJsonSerializer.Instance));
             Texture assigned = _material.GetTexture(property);

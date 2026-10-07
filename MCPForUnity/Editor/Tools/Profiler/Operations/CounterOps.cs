@@ -28,15 +28,16 @@ namespace MCPForUnity.Editor.Tools.Profiler
             // Get counter names: explicit list or discover all in category
             var counterNames = GetRequestedCounters(p, category);
             if (counterNames.Count == 0)
-                return new SuccessResponse($"No counters found in category '{categoryName}'.", new
-                {
-                    category = categoryName,
-                    counters = new Dictionary<string, object>()
-                });
+                return new SuccessResponse(
+                    $"No counters found in category '{categoryName}'.",
+                    new { category = categoryName, counters = new Dictionary<string, object>() }
+                );
 
             string collision = GetCounterKeyCollision(counterNames);
             if (collision != null)
-                return new ErrorResponse($"Counter name '{collision}' conflicts with another counter's '_valid' or '_unit' metadata key. Query these counters separately.");
+                return new ErrorResponse(
+                    $"Counter name '{collision}' conflicts with another counter's '_valid' or '_unit' metadata key. Query these counters separately."
+                );
 
             // Start recorders
             var recorders = new List<ProfilerRecorder>();
@@ -71,11 +72,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     recorder.Dispose();
             }
 
-            return new SuccessResponse($"Captured {counterNames.Count} counter(s) from '{categoryName}'.", new
-            {
-                category = categoryName,
-                counters = data,
-            });
+            return new SuccessResponse($"Captured {counterNames.Count} counter(s) from '{categoryName}'.", new { category = categoryName, counters = data });
         }
 
         private static List<string> GetRequestedCounters(ToolParams p, ProfilerCategory category)
@@ -99,8 +96,10 @@ namespace MCPForUnity.Editor.Tools.Profiler
             var names = new HashSet<string>(counterNames, StringComparer.Ordinal);
             foreach (string name in counterNames)
             {
-                if (names.Contains(name + "_valid")) return name + "_valid";
-                if (names.Contains(name + "_unit")) return name + "_unit";
+                if (names.Contains(name + "_valid"))
+                    return name + "_valid";
+                if (names.Contains(name + "_unit"))
+                    return name + "_unit";
             }
             return null;
         }
@@ -112,25 +111,45 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
             void Tick()
             {
-                if (--remaining > 0) return;
+                if (--remaining > 0)
+                    return;
                 EditorApplication.update -= Tick;
                 tcs.TrySetResult(true);
             }
 
             EditorApplication.update += Tick;
-            try { EditorApplication.QueuePlayerLoopUpdate(); } catch { /* throttled editor */ }
+            try
+            {
+                EditorApplication.QueuePlayerLoopUpdate();
+            }
+            catch { /* throttled editor */ }
             return tcs.Task;
         }
 
         private static readonly string[] ValidCategories = new[]
         {
-            "Render", "Scripts", "Memory", "Physics",
+            "Render",
+            "Scripts",
+            "Memory",
+            "Physics",
 #if UNITY_2022_2_OR_NEWER
             "Physics2D",
 #endif
             "Animation",
-            "Audio", "Lighting", "Network", "Gui", "UI", "Ai", "Video",
-            "Loading", "Input", "Vr", "Internal", "Particles", "FileIO", "VirtualTexturing"
+            "Audio",
+            "Lighting",
+            "Network",
+            "Gui",
+            "UI",
+            "Ai",
+            "Video",
+            "Loading",
+            "Input",
+            "Vr",
+            "Internal",
+            "Particles",
+            "FileIO",
+            "VirtualTexturing",
         };
 
         internal static ProfilerCategory? ResolveCategory(string name, out string error)
@@ -138,27 +157,47 @@ namespace MCPForUnity.Editor.Tools.Profiler
             error = null;
             switch (name.ToLowerInvariant())
             {
-                case "render": return ProfilerCategory.Render;
-                case "scripts": return ProfilerCategory.Scripts;
-                case "memory": return ProfilerCategory.Memory;
-                case "physics": return ProfilerCategory.Physics;
+                case "render":
+                    return ProfilerCategory.Render;
+                case "scripts":
+                    return ProfilerCategory.Scripts;
+                case "memory":
+                    return ProfilerCategory.Memory;
+                case "physics":
+                    return ProfilerCategory.Physics;
 #if UNITY_2022_2_OR_NEWER
-                case "physics2d": return ProfilerCategory.Physics2D;
+                case "physics2d":
+                    return ProfilerCategory.Physics2D;
 #endif
-                case "animation": return ProfilerCategory.Animation;
-                case "audio": return ProfilerCategory.Audio;
-                case "lighting": return ProfilerCategory.Lighting;
-                case "network": return ProfilerCategory.Network;
-                case "gui": case "ui": return ProfilerCategory.Gui;
-                case "ai": return ProfilerCategory.Ai;
-                case "video": return ProfilerCategory.Video;
-                case "loading": return ProfilerCategory.Loading;
-                case "input": return ProfilerCategory.Input;
-                case "vr": return ProfilerCategory.Vr;
-                case "internal": return ProfilerCategory.Internal;
-                case "particles": return ProfilerCategory.Particles;
-                case "fileio": return ProfilerCategory.FileIO;
-                case "virtualtexturing": return ProfilerCategory.VirtualTexturing;
+                case "animation":
+                    return ProfilerCategory.Animation;
+                case "audio":
+                    return ProfilerCategory.Audio;
+                case "lighting":
+                    return ProfilerCategory.Lighting;
+                case "network":
+                    return ProfilerCategory.Network;
+                case "gui":
+                case "ui":
+                    return ProfilerCategory.Gui;
+                case "ai":
+                    return ProfilerCategory.Ai;
+                case "video":
+                    return ProfilerCategory.Video;
+                case "loading":
+                    return ProfilerCategory.Loading;
+                case "input":
+                    return ProfilerCategory.Input;
+                case "vr":
+                    return ProfilerCategory.Vr;
+                case "internal":
+                    return ProfilerCategory.Internal;
+                case "particles":
+                    return ProfilerCategory.Particles;
+                case "fileio":
+                    return ProfilerCategory.FileIO;
+                case "virtualtexturing":
+                    return ProfilerCategory.VirtualTexturing;
                 default:
                     error = $"Unknown category '{name}'. Valid: {string.Join(", ", ValidCategories)}";
                     return null;

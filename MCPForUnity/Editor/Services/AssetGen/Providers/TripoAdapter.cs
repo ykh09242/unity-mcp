@@ -18,6 +18,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
     public sealed class TripoAdapter : IModelProviderAdapter
     {
         private const string TaskEndpoint = "https://api.tripo3d.ai/v2/openapi/task";
+
         // Current recommended Tripo model (v3.1). Premium alternative: P1-20260311.
         // internal so the model catalog references it directly (single source of truth, drift-guarded).
         internal const string ModelVersion = "v3.1-20260211";
@@ -26,14 +27,18 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         public async Task<string> SubmitAsync(ModelGenRequest req, string apiKey, IHttpTransport http, CancellationToken ct)
         {
-            if (req == null) throw new ArgumentNullException(nameof(req));
-            if (http == null) throw new ArgumentNullException(nameof(http));
+            if (req == null)
+                throw new ArgumentNullException(nameof(req));
+            if (http == null)
+                throw new ArgumentNullException(nameof(http));
 
             // Tripo rejects base64 data URIs and needs a multipart upload→token flow for local files,
             // which isn't wired yet — fail clearly rather than silently falling back to text mode.
             bool imageMode = string.Equals(req.Mode, "image", StringComparison.OrdinalIgnoreCase);
             if (imageMode && string.IsNullOrEmpty(req.ImageUrl))
-                throw new Exception("Tripo image input requires a hosted 'image_url'; local 'image_path' upload is not yet supported for Tripo (use Meshy for local-image→3D, or host the image).");
+                throw new Exception(
+                    "Tripo image input requires a hosted 'image_url'; local 'image_path' upload is not yet supported for Tripo (use Meshy for local-image→3D, or host the image)."
+                );
 
             JObject body;
             bool image = imageMode && !string.IsNullOrEmpty(req.ImageUrl);
@@ -43,11 +48,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 {
                     ["type"] = "image_to_model",
                     ["model_version"] = string.IsNullOrEmpty(req.Model) ? ModelVersion : req.Model,
-                    ["file"] = new JObject
-                    {
-                        ["type"] = "url",
-                        ["url"] = req.ImageUrl
-                    }
+                    ["file"] = new JObject { ["type"] = "url", ["url"] = req.ImageUrl },
                 };
             }
             else
@@ -56,7 +57,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 {
                     ["type"] = "text_to_model",
                     ["prompt"] = req.Prompt ?? string.Empty,
-                    ["model_version"] = string.IsNullOrEmpty(req.Model) ? ModelVersion : req.Model
+                    ["model_version"] = string.IsNullOrEmpty(req.Model) ? ModelVersion : req.Model,
                 };
             }
 
@@ -65,7 +66,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 Method = "POST",
                 Url = TaskEndpoint,
                 ContentType = "application/json",
-                Body = Encoding.UTF8.GetBytes(body.ToString(Formatting.None))
+                Body = Encoding.UTF8.GetBytes(body.ToString(Formatting.None)),
             };
             spec.Headers["Authorization"] = "Bearer " + apiKey;
 
@@ -75,22 +76,19 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             string taskId = json["data"]?["task_id"]?.ToString();
             if (string.IsNullOrEmpty(taskId))
             {
-                throw new Exception(SecretRedactor.Scrub(
-                    "Tripo submit returned no task_id: " + ProviderHttp.Truncate(res?.Text), apiKey));
+                throw new Exception(SecretRedactor.Scrub("Tripo submit returned no task_id: " + ProviderHttp.Truncate(res?.Text), apiKey));
             }
             return taskId;
         }
 
         public async Task<ProviderPollResult> PollAsync(string providerJobId, string apiKey, IHttpTransport http, CancellationToken ct)
         {
-            if (string.IsNullOrEmpty(providerJobId)) throw new ArgumentNullException(nameof(providerJobId));
-            if (http == null) throw new ArgumentNullException(nameof(http));
+            if (string.IsNullOrEmpty(providerJobId))
+                throw new ArgumentNullException(nameof(providerJobId));
+            if (http == null)
+                throw new ArgumentNullException(nameof(http));
 
-            var spec = new HttpRequestSpec
-            {
-                Method = "GET",
-                Url = TaskEndpoint + "/" + providerJobId
-            };
+            var spec = new HttpRequestSpec { Method = "GET", Url = TaskEndpoint + "/" + providerJobId };
             spec.Headers["Authorization"] = "Bearer " + apiKey;
 
             HttpResult res = await http.SendAsync(spec, ct);
@@ -117,10 +115,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             }
             else if (result.State == ProviderPollState.Failed)
             {
-                string err = data["error"]?.ToString()
-                             ?? data["message"]?.ToString()
-                             ?? json["message"]?.ToString()
-                             ?? "Tripo task failed.";
+                string err = data["error"]?.ToString() ?? data["message"]?.ToString() ?? json["message"]?.ToString() ?? "Tripo task failed.";
                 result.Error = SecretRedactor.Scrub(err, apiKey);
             }
 
@@ -161,17 +156,18 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             JObject resultObj = data["result"] as JObject;
 
             return UrlOf(output?["pbr_model"])
-                   ?? UrlOf(resultObj?["pbr_model"])
-                   ?? UrlOf(output?["model"])
-                   ?? UrlOf(resultObj?["model"])
-                   ?? UrlOf(output?["base_model"])
-                   ?? UrlOf(resultObj?["base_model"]);
+                ?? UrlOf(resultObj?["pbr_model"])
+                ?? UrlOf(output?["model"])
+                ?? UrlOf(resultObj?["model"])
+                ?? UrlOf(output?["base_model"])
+                ?? UrlOf(resultObj?["base_model"]);
         }
 
         /// <summary>A field may be a plain URL string or an object carrying a "url" property.</summary>
         private static string UrlOf(JToken token)
         {
-            if (token == null || token.Type == JTokenType.Null) return null;
+            if (token == null || token.Type == JTokenType.Null)
+                return null;
             if (token.Type == JTokenType.String)
             {
                 string s = token.ToString();
@@ -196,7 +192,10 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             JObject json = null;
             if (!string.IsNullOrEmpty(text))
             {
-                try { json = JObject.Parse(text); }
+                try
+                {
+                    json = JObject.Parse(text);
+                }
                 catch { /* non-JSON body; handled below */ }
             }
 
@@ -206,16 +205,20 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             JToken codeTok = json?["code"];
             if (codeTok != null && codeTok.Type != JTokenType.Null)
             {
-                try { code = codeTok.Value<int>(); } catch { code = -1; }
+                try
+                {
+                    code = codeTok.Value<int>();
+                }
+                catch
+                {
+                    code = -1;
+                }
             }
 
             if (!httpOk || code != 0)
             {
-                string detail = json?["message"]?.ToString()
-                                ?? json?["error"]?.ToString()
-                                ?? ProviderHttp.Truncate(text);
-                throw new Exception(SecretRedactor.Scrub(
-                    $"Tripo {phase} failed (status={res?.Status}, code={code}): {detail}", apiKey));
+                string detail = json?["message"]?.ToString() ?? json?["error"]?.ToString() ?? ProviderHttp.Truncate(text);
+                throw new Exception(SecretRedactor.Scrub($"Tripo {phase} failed (status={res?.Status}, code={code}): {detail}", apiKey));
             }
 
             return json ?? new JObject();

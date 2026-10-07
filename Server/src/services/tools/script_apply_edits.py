@@ -17,8 +17,13 @@ from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools import bounded_regex
 from services.tools.manage_script import (
-    _edit_integer, _lsp_position_to_line_col, _normalize_edit_coordinates,
-    _normalize_script_options, _script_lines_and_starts, _split_uri, _validate_text_edit_shape,
+    _edit_integer,
+    _lsp_position_to_line_col,
+    _normalize_edit_coordinates,
+    _normalize_script_options,
+    _script_lines_and_starts,
+    _split_uri,
+    _validate_text_edit_shape,
     _validate_script_name,
 )
 from services.tools.refresh_unity import send_mutation, verify_edit_by_sha
@@ -33,7 +38,9 @@ _REGEX_WORKERS = BoundedSemaphore(2)
 _RegexResult = TypeVar("_RegexResult")
 
 
-async def _run_regex_work(budget: bounded_regex.WorkBudget, work: Callable[[], _RegexResult]) -> _RegexResult:
+async def _run_regex_work(
+    budget: bounded_regex.WorkBudget, work: Callable[[], _RegexResult]
+) -> _RegexResult:
     """Keep queued/running script regex work bounded until the worker exits."""
     budget.check()
     if not _REGEX_WORKERS.acquire(blocking=False):
@@ -57,7 +64,9 @@ async def _run_regex_work(budget: bounded_regex.WorkBudget, work: Callable[[], _
         return await asyncio.shield(future)
     except asyncio.CancelledError:
         budget.cancelled.set()
-        future.add_done_callback(lambda finished: finished.exception() if not finished.cancelled() else None)
+        future.add_done_callback(
+            lambda finished: finished.exception() if not finished.cancelled() else None
+        )
         raise
 
 
@@ -83,13 +92,13 @@ def _iter_csharp_tokens(text: str):
     dollar_run_end = 0
     while i < end:
         c = text[i]
-        nxt = text[i + 1] if i + 1 < end else '\0'
+        nxt = text[i + 1] if i + 1 < end else "\0"
 
         # Single-line comment
-        if c == '/' and nxt == '/':
+        if c == "/" and nxt == "/":
             yield (i, c, False, 0)
             i += 1
-            while i < end and text[i] != '\n':
+            while i < end and text[i] != "\n":
                 yield (i, text[i], False, 0)
                 i += 1
             if i < end:
@@ -98,14 +107,14 @@ def _iter_csharp_tokens(text: str):
             continue
 
         # Multi-line comment
-        if c == '/' and nxt == '*':
+        if c == "/" and nxt == "*":
             yield (i, c, False, 0)
             i += 1
             yield (i, text[i], False, 0)
             i += 1
             while i + 1 < end:
                 yield (i, text[i], False, 0)
-                if text[i] == '*' and text[i + 1] == '/':
+                if text[i] == "*" and text[i + 1] == "/":
                     i += 1
                     yield (i, text[i], False, 0)
                     i += 1
@@ -119,16 +128,20 @@ def _iter_csharp_tokens(text: str):
 
         # Interpolated raw string: $"""...""" or $$"""...""" etc. (C# 11)
         # Must check BEFORE regular $" and BEFORE plain """
-        if c == '$' and i >= dollar_run_end:
+        if c == "$" and i >= dollar_run_end:
             dollar_count = 1
-            while i + dollar_count < end and text[i + dollar_count] == '$':
+            while i + dollar_count < end and text[i + dollar_count] == "$":
                 dollar_count += 1
             after_dollars = i + dollar_count
             # A non-raw dollar run still reaches the ordinary lexer below;
             # avoid probing the same remaining run again at every character.
             dollar_run_end = after_dollars
-            if (after_dollars + 2 < end and text[after_dollars] == '"'
-                    and text[after_dollars + 1] == '"' and text[after_dollars + 2] == '"'):
+            if (
+                after_dollars + 2 < end
+                and text[after_dollars] == '"'
+                and text[after_dollars + 1] == '"'
+                and text[after_dollars + 2] == '"'
+            ):
                 q = 3
                 while after_dollars + q < end and text[after_dollars + q] == '"':
                     q += 1
@@ -142,11 +155,11 @@ def _iter_csharp_tokens(text: str):
                     ch = text[i]
                     if interp_depth > 0:
                         # Inside interpolation hole — code
-                        if ch == '{':
+                        if ch == "{":
                             interp_depth += 1
                             yield (i, ch, True, interp_depth)
                             i += 1
-                        elif ch == '}':
+                        elif ch == "}":
                             yield (i, ch, True, interp_depth)
                             interp_depth -= 1
                             i += 1
@@ -155,7 +168,7 @@ def _iter_csharp_tokens(text: str):
                             i += 1
                             while i < end:
                                 yield (i, text[i], False, interp_depth)
-                                if text[i] == '\\':
+                                if text[i] == "\\":
                                     i += 1
                                     if i < end:
                                         yield (i, text[i], False, interp_depth)
@@ -165,18 +178,18 @@ def _iter_csharp_tokens(text: str):
                                     i += 1
                                     break
                                 i += 1
-                        elif ch == '/' and i + 1 < end and text[i + 1] == '/':
+                        elif ch == "/" and i + 1 < end and text[i + 1] == "/":
                             yield (i, ch, False, interp_depth)
                             i += 1
-                            while i < end and text[i] != '\n':
+                            while i < end and text[i] != "\n":
                                 yield (i, text[i], False, interp_depth)
                                 i += 1
-                        elif ch == '/' and i + 1 < end and text[i + 1] == '*':
+                        elif ch == "/" and i + 1 < end and text[i + 1] == "*":
                             yield (i, ch, False, interp_depth)
                             i += 1
                             yield (i, text[i], False, interp_depth)
                             i += 1
-                            while i + 1 < end and not (text[i] == '*' and text[i + 1] == '/'):
+                            while i + 1 < end and not (text[i] == "*" and text[i + 1] == "/"):
                                 yield (i, text[i], False, interp_depth)
                                 i += 1
                             if i + 1 < end:
@@ -204,9 +217,9 @@ def _iter_csharp_tokens(text: str):
                             i += 1
                         continue
                     # Check for interpolation hole: dollar_count consecutive {'s
-                    if ch == '{':
+                    if ch == "{":
                         bc = 1
-                        while i + bc < end and text[i + bc] == '{':
+                        while i + bc < end and text[i + bc] == "{":
                             bc += 1
                         if bc >= dollar_count:
                             for _ in range(dollar_count):
@@ -219,9 +232,9 @@ def _iter_csharp_tokens(text: str):
                                 i += 1
                         continue
                     # Closing braces — literal at depth 0
-                    if ch == '}':
+                    if ch == "}":
                         bc = 1
-                        while i + bc < end and text[i + bc] == '}':
+                        while i + bc < end and text[i + bc] == "}":
                             bc += 1
                         for _ in range(bc):
                             yield (i, text[i], False, 0)
@@ -253,11 +266,13 @@ def _iter_csharp_tokens(text: str):
             continue
 
         # Interpolated string: $"..." or $@"..." or @$"..."
-        if (c == '$' and nxt == '"') or \
-           (c == '$' and nxt == '@' and i + 2 < end and text[i + 2] == '"') or \
-           (c == '@' and nxt == '$' and i + 2 < end and text[i + 2] == '"'):
-            is_verbatim = (nxt == '@') or (c == '@')
-            prefix_len = 2 if (c == '$' and nxt == '"') else 3
+        if (
+            (c == "$" and nxt == '"')
+            or (c == "$" and nxt == "@" and i + 2 < end and text[i + 2] == '"')
+            or (c == "@" and nxt == "$" and i + 2 < end and text[i + 2] == '"')
+        ):
+            is_verbatim = (nxt == "@") or (c == "@")
+            prefix_len = 2 if (c == "$" and nxt == '"') else 3
             for _ in range(prefix_len):
                 yield (i, text[i], False, 0)
                 i += 1
@@ -266,11 +281,11 @@ def _iter_csharp_tokens(text: str):
                 ch = text[i]
                 if interp_depth > 0:
                     # Inside interpolation hole — this is code
-                    if ch == '{':
+                    if ch == "{":
                         interp_depth += 1
                         yield (i, ch, True, interp_depth)
                         i += 1
-                    elif ch == '}':
+                    elif ch == "}":
                         yield (i, ch, True, interp_depth)
                         interp_depth -= 1
                         i += 1
@@ -280,7 +295,7 @@ def _iter_csharp_tokens(text: str):
                         i += 1
                         while i < end:
                             yield (i, text[i], False, interp_depth)
-                            if text[i] == '\\':
+                            if text[i] == "\\":
                                 i += 1
                                 if i < end:
                                     yield (i, text[i], False, interp_depth)
@@ -290,18 +305,18 @@ def _iter_csharp_tokens(text: str):
                                 i += 1
                                 break
                             i += 1
-                    elif ch == '/' and i + 1 < end and text[i + 1] == '/':
+                    elif ch == "/" and i + 1 < end and text[i + 1] == "/":
                         yield (i, ch, False, interp_depth)
                         i += 1
-                        while i < end and text[i] != '\n':
+                        while i < end and text[i] != "\n":
                             yield (i, text[i], False, interp_depth)
                             i += 1
-                    elif ch == '/' and i + 1 < end and text[i + 1] == '*':
+                    elif ch == "/" and i + 1 < end and text[i + 1] == "*":
                         yield (i, ch, False, interp_depth)
                         i += 1
                         yield (i, text[i], False, interp_depth)
                         i += 1
-                        while i + 1 < end and not (text[i] == '*' and text[i + 1] == '/'):
+                        while i + 1 < end and not (text[i] == "*" and text[i + 1] == "/"):
                             yield (i, text[i], False, interp_depth)
                             i += 1
                         if i + 1 < end:
@@ -314,8 +329,8 @@ def _iter_csharp_tokens(text: str):
                         i += 1
                     continue
                 # interp_depth == 0: inside string content
-                if ch == '{':
-                    if i + 1 < end and text[i + 1] == '{':
+                if ch == "{":
+                    if i + 1 < end and text[i + 1] == "{":
                         yield (i, ch, False, 0)
                         i += 1
                         yield (i, text[i], False, 0)
@@ -325,8 +340,8 @@ def _iter_csharp_tokens(text: str):
                     yield (i, ch, True, interp_depth)
                     i += 1
                     continue
-                if ch == '}':
-                    if i + 1 < end and text[i + 1] == '}':
+                if ch == "}":
+                    if i + 1 < end and text[i + 1] == "}":
                         yield (i, ch, False, 0)
                         i += 1
                         yield (i, text[i], False, 0)
@@ -345,7 +360,7 @@ def _iter_csharp_tokens(text: str):
                     yield (i, ch, False, 0)
                     i += 1
                     break
-                if not is_verbatim and ch == '\\':
+                if not is_verbatim and ch == "\\":
                     yield (i, ch, False, 0)
                     i += 1
                     if i < end:
@@ -357,7 +372,7 @@ def _iter_csharp_tokens(text: str):
             continue
 
         # Verbatim string: @"..."
-        if c == '@' and nxt == '"':
+        if c == "@" and nxt == '"':
             yield (i, c, False, 0)
             i += 1
             yield (i, text[i], False, 0)
@@ -381,7 +396,7 @@ def _iter_csharp_tokens(text: str):
             i += 1
             while i < end:
                 yield (i, text[i], False, 0)
-                if text[i] == '\\':
+                if text[i] == "\\":
                     i += 1
                     if i < end:
                         yield (i, text[i], False, 0)
@@ -394,18 +409,18 @@ def _iter_csharp_tokens(text: str):
             continue
 
         # Char literal: '...'
-        if c == '\'':
+        if c == "'":
             yield (i, c, False, 0)
             i += 1
             while i < end:
                 yield (i, text[i], False, 0)
-                if text[i] == '\\':
+                if text[i] == "\\":
                     i += 1
                     if i < end:
                         yield (i, text[i], False, 0)
                         i += 1
                     continue
-                if text[i] == '\'':
+                if text[i] == "'":
                     i += 1
                     break
                 i += 1
@@ -446,11 +461,7 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
         edit = _normalize_edit_scalars(raw_edit)
         budget.consume(len(text))
         op = (
-            (edit.get("op")
-             or edit.get("operation")
-             or edit.get("type")
-             or edit.get("mode")
-             or "")
+            (edit.get("op") or edit.get("operation") or edit.get("type") or edit.get("mode") or "")
             .strip()
             .lower()
         )
@@ -473,12 +484,20 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
             anchor = edit.get("anchor", "")
             position = (edit.get("position") or "before").lower()
             insert_text = edit.get("text", "")
-            flags = re.MULTILINE | (
-                re.IGNORECASE if edit.get("ignore_case") else 0)
+            flags = re.MULTILINE | (re.IGNORECASE if edit.get("ignore_case") else 0)
 
             # Find the best match using improved heuristics
-            match = await _run_regex_work(budget, partial(_find_best_anchor_match,
-                anchor, text, flags, edit.get("prefer_last", True), budget=budget))
+            match = await _run_regex_work(
+                budget,
+                partial(
+                    _find_best_anchor_match,
+                    anchor,
+                    text,
+                    flags,
+                    edit.get("prefer_last", True),
+                    budget=budget,
+                ),
+            )
             if not match:
                 if edit.get("allow_noop", True):
                     continue
@@ -495,14 +514,20 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
             budget.consume(len(replacement))
             lines = text.splitlines(keepends=True)
             max_line = len(lines) + 1  # 1-based, exclusive end
-            if (start_line < 1 or end_line < start_line or end_line > max_line
-                    or start_col < 1 or end_col < 1):
+            if (
+                start_line < 1
+                or end_line < start_line
+                or end_line > max_line
+                or start_col < 1
+                or end_col < 1
+            ):
                 raise RuntimeError("replace_range out of bounds")
 
             def index_of(line: int, col: int, source_lines: list[str]) -> int:
                 if line <= len(source_lines):
                     return sum(len(l) for l in source_lines[: line - 1]) + (col - 1)
                 return sum(len(l) for l in source_lines)
+
             a = index_of(start_line, start_col, lines)
             b = index_of(end_line, end_col, lines)
             text = text[:a] + replacement + text[b:]
@@ -516,12 +541,17 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
             flags = re.MULTILINE
             if edit.get("ignore_case"):
                 flags |= re.IGNORECASE
-            text = await _run_regex_work(budget, partial(bounded_regex.substitute,
-                pattern, repl_py, text, count, flags, budget=budget))
+            text = await _run_regex_work(
+                budget,
+                partial(
+                    bounded_regex.substitute, pattern, repl_py, text, count, flags, budget=budget
+                ),
+            )
         else:
             allowed = "anchor_insert, prepend, append, replace_range, regex_replace"
             raise RuntimeError(
-                f"unknown edit op: {op}; allowed: {allowed}. Use 'op' (aliases accepted: type/mode/operation).")
+                f"unknown edit op: {op}; allowed: {allowed}. Use 'op' (aliases accepted: type/mode/operation)."
+            )
     budget.consume(len(text))
     return text
 
@@ -532,7 +562,9 @@ class _TextEditError(ValueError):
         self.code = code
 
 
-async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed: bool = False) -> list[dict[str, Any]]:
+async def _text_edit_spans(
+    contents: str, edits: list[dict[str, Any]], *, mixed: bool = False
+) -> list[dict[str, Any]]:
     """Build literal edits against the original buffer for write and preview."""
     budget = bounded_regex.WorkBudget()
     budget.consume(len(contents))
@@ -550,12 +582,20 @@ async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed:
         edit = _normalize_edit_scalars(raw_edit)
         budget.check()
         op = edit.get("op", "")
-        payload = next((edit[field] for field in ("text", "insert", "content", "replacement")
-                        if edit.get(field) is not None), "")
+        payload = next(
+            (
+                edit[field]
+                for field in ("text", "insert", "content", "replacement")
+                if edit.get(field) is not None
+            ),
+            "",
+        )
         if op == "replace_range":
             fields = ("startLine", "startCol", "endLine", "endCol")
             if not all(field in edit for field in fields):
-                raise _TextEditError("missing_field", "replace_range requires startLine/startCol/endLine/endCol")
+                raise _TextEditError(
+                    "missing_field", "replace_range requires startLine/startCol/endLine/endCol"
+                )
             span = {field: _edit_integer(edit[field], field) for field in fields}
         elif op in ("prepend", "append"):
             line, col = line_col(0 if op == "prepend" else len(contents))
@@ -563,6 +603,7 @@ async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed:
         elif op == "regex_replace":
             pattern = edit.get("pattern") or ""
             flags = re.MULTILINE | (re.IGNORECASE if edit.get("ignore_case") else 0)
+
             # Preserve each existing write route's selection: mixed first match;
             # pure text uses the established best/last anchor selection.
             def select_and_expand(pattern: str, flags: int, replacement: str):
@@ -592,14 +633,20 @@ async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed:
 
             try:
                 match, payload = await _run_regex_work(
-                    budget, partial(select_and_expand, pattern, flags, payload))
+                    budget, partial(select_and_expand, pattern, flags, payload)
+                )
             except Exception as exc:
                 raise _TextEditError("bad_regex", f"Invalid regex pattern: {exc}") from exc
             if not match:
                 continue
             start_line, start_col = line_col(match.start())
             end_line, end_col = line_col(match.end())
-            span = {"startLine": start_line, "startCol": start_col, "endLine": end_line, "endCol": end_col}
+            span = {
+                "startLine": start_line,
+                "startCol": start_col,
+                "endLine": end_line,
+                "endCol": end_col,
+            }
         else:
             raise _TextEditError("unsupported_op", f"Unsupported text edit op: {op}")
         budget.consume(len(payload))
@@ -636,7 +683,14 @@ def _preview_text_spans(contents: str, spans: list[dict[str, Any]]) -> str:
     return text
 
 
-def _find_best_anchor_match(pattern: str, text: str, flags: int, prefer_last: bool = True, *, budget: bounded_regex.WorkBudget | None = None):
+def _find_best_anchor_match(
+    pattern: str,
+    text: str,
+    flags: int,
+    prefer_last: bool = True,
+    *,
+    budget: bounded_regex.WorkBudget | None = None,
+):
     """
     Find the best anchor match using improved heuristics.
 
@@ -649,7 +703,7 @@ def _find_best_anchor_match(pattern: str, text: str, flags: int, prefer_last: bo
 
     Args:
         pattern: Regex pattern to search for
-        text: Text to search in  
+        text: Text to search in
         flags: Regex flags
         prefer_last: If True, prefer the last match over the first
 
@@ -668,8 +722,7 @@ def _find_best_anchor_match(pattern: str, text: str, flags: int, prefer_last: bo
         return matches[0]
 
     # For patterns that look like they're trying to match closing braces at end of lines
-    is_closing_brace_pattern = '}' in pattern and (
-        '$' in pattern or pattern.endswith(r'\s*'))
+    is_closing_brace_pattern = "}" in pattern and ("$" in pattern or pattern.endswith(r"\s*"))
 
     if is_closing_brace_pattern and prefer_last:
         # Use heuristics to find the best closing brace match
@@ -679,7 +732,9 @@ def _find_best_anchor_match(pattern: str, text: str, flags: int, prefer_last: bo
     return matches[-1] if prefer_last else matches[0]
 
 
-def _brace_depth_at_positions(text: str, positions: set[int], budget: bounded_regex.WorkBudget | None = None) -> dict[int, int]:
+def _brace_depth_at_positions(
+    text: str, positions: set[int], budget: bounded_regex.WorkBudget | None = None
+) -> dict[int, int]:
     """Compute the brace depth just before each requested position.
 
     For every ``}`` in real code at a position in *positions*, stores the
@@ -696,9 +751,9 @@ def _brace_depth_at_positions(text: str, positions: set[int], budget: bounded_re
             budget.check()
         if not is_code:
             continue
-        if c == '{':
+        if c == "{":
             depth += 1
-        elif c == '}':
+        elif c == "}":
             if pos in positions:
                 depths[pos] = depth
             depth = max(0, depth - 1)
@@ -706,7 +761,9 @@ def _brace_depth_at_positions(text: str, positions: set[int], budget: bounded_re
     return depths
 
 
-def _find_best_closing_brace_match(matches, text: str, *, budget: bounded_regex.WorkBudget | None = None):
+def _find_best_closing_brace_match(
+    matches, text: str, *, budget: bounded_regex.WorkBudget | None = None
+):
     """
     Find the best closing brace match using brace-depth analysis.
 
@@ -731,7 +788,7 @@ def _find_best_closing_brace_match(matches, text: str, *, budget: bounded_regex.
     brace_positions: dict[int, object] = {}  # brace_pos → match
     for m in matches:
         budget.consume(m.end() - m.start() + 1)
-        offset = text.find('}', m.start(), m.end())
+        offset = text.find("}", m.start(), m.end())
         if offset >= 0:
             brace_positions[offset] = m
 
@@ -743,7 +800,7 @@ def _find_best_closing_brace_match(matches, text: str, *, budget: bounded_regex.
 
     # Score: prefer shallowest depth (outermost brace), then latest position
     best_match = None
-    best_key = (float('inf'), -1)  # (depth, -position) — lower is better
+    best_key = (float("inf"), -1)  # (depth, -position) — lower is better
     for pos, m in brace_positions.items():
         budget.consume(1)
         if pos not in depths:
@@ -767,8 +824,10 @@ def _extract_code_after(keyword: str, request: str) -> str:
     # Deprecated with NL removal; retained as no-op for compatibility
     idx = request.lower().find(keyword)
     if idx >= 0:
-        return request[idx + len(keyword):].strip()
+        return request[idx + len(keyword) :].strip()
     return ""
+
+
 # Removed _is_structurally_balanced - validation now handled by C# side using Unity's compiler services
 
 
@@ -804,7 +863,9 @@ def _normalize_script_locator(name: str, path: str) -> tuple[str, str]:
     return _split_uri(candidate)
 
 
-def _with_norm(resp: dict[str, Any] | Any, edits: list[dict[str, Any]], routing: str | None = None) -> dict[str, Any] | Any:
+def _with_norm(
+    resp: dict[str, Any] | Any, edits: list[dict[str, Any]], routing: str | None = None
+) -> dict[str, Any] | Any:
     if not isinstance(resp, dict):
         return resp
     data = resp.setdefault("data", {})
@@ -814,10 +875,17 @@ def _with_norm(resp: dict[str, Any] | Any, edits: list[dict[str, Any]], routing:
     return resp
 
 
-def _err(code: str, message: str, *, expected: dict[str, Any] | None = None, rewrite: dict[str, Any] | None = None,
-         normalized: list[dict[str, Any]] | None = None, routing: str | None = None, extra: dict[str, Any] | None = None) -> dict[str, Any]:
-    payload: dict[str, Any] = {"success": False,
-                               "code": code, "message": message}
+def _err(
+    code: str,
+    message: str,
+    *,
+    expected: dict[str, Any] | None = None,
+    rewrite: dict[str, Any] | None = None,
+    normalized: list[dict[str, Any]] | None = None,
+    routing: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"success": False, "code": code, "message": message}
     data: dict[str, Any] = {}
     if expected:
         data["expected"] = expected
@@ -834,15 +902,21 @@ def _err(code: str, message: str, *, expected: dict[str, Any] | None = None, rew
     return payload
 
 
-def _prepared_handoff(response: Any, unity_instance: str | None, expected_path: str) -> dict[str, Any]:
+def _prepared_handoff(
+    response: Any, unity_instance: str | None, expected_path: str
+) -> dict[str, Any]:
     """Verify a complete Unity snapshot; local native eligibility remains unproven."""
     if isinstance(response, dict) and not response.get("success"):
         return response
     try:
         data = dict(response["data"])
-        if (data.get("preview") is not True or data.get("complete") is not True
-                or data.get("truncated") is not False or data.get("editsApplied") != 0
-                or data.get("scheduledRefresh") is not False):
+        if (
+            data.get("preview") is not True
+            or data.get("complete") is not True
+            or data.get("truncated") is not False
+            or data.get("editsApplied") != 0
+            or data.get("scheduledRefresh") is not False
+        ):
             raise ValueError("Response is not a complete read-only preparation")
         original, candidate = data["original_contents"], data["new_contents"]
         if not isinstance(original, str) or not isinstance(candidate, str):
@@ -852,42 +926,94 @@ def _prepared_handoff(response: Any, unity_instance: str | None, expected_path: 
         candidate_bytes = candidate.encode("utf-8")
         candidate_sha = hashlib.sha256(candidate_bytes).hexdigest()
         if len(original_bytes) + len(candidate_bytes) > 1024 * 1024:
-            raise ValueError("Complete original/candidate exceeds the 1 MiB preparation payload limit")
-        if (data.get("original_sha256") != original_sha or data.get("sha256") != original_sha
-                or data.get("candidate_sha256") != candidate_sha
-                or data.get("candidate_bytes_sha256") != candidate_sha
-                or data.get("encoding") != "utf-8" or data.get("bom") is not False):
+            raise ValueError(
+                "Complete original/candidate exceeds the 1 MiB preparation payload limit"
+            )
+        if (
+            data.get("original_sha256") != original_sha
+            or data.get("sha256") != original_sha
+            or data.get("candidate_sha256") != candidate_sha
+            or data.get("candidate_bytes_sha256") != candidate_sha
+            or data.get("encoding") != "utf-8"
+            or data.get("bom") is not False
+        ):
             raise ValueError("Candidate contents, hashes or encoding are inconsistent")
-        path_type = PureWindowsPath if PureWindowsPath(data["absolute_path"]).drive else PurePosixPath
+        path_type = (
+            PureWindowsPath if PureWindowsPath(data["absolute_path"]).drive else PurePosixPath
+        )
         absolute = path_type(data["absolute_path"])
         root = path_type(data["project_root"])
         relative = path_type(data["path"])
-        if (not absolute.is_absolute() or not root.is_absolute() or relative.is_absolute()
-                or ".." in relative.parts or ".." in root.parts or ".." in absolute.parts
-                or not relative.parts or path_type(relative.parts[0]) != path_type("Assets")
-                or absolute != root / relative or relative != path_type(expected_path)):
+        if (
+            not absolute.is_absolute()
+            or not root.is_absolute()
+            or relative.is_absolute()
+            or ".." in relative.parts
+            or ".." in root.parts
+            or ".." in absolute.parts
+            or not relative.parts
+            or path_type(relative.parts[0]) != path_type("Assets")
+            or absolute != root / relative
+            or relative != path_type(expected_path)
+        ):
             raise ValueError("Unity target identity does not match the requested Assets path")
         no_op = original == candidate
         if data.get("no_op") is not no_op:
             raise ValueError("No-op flag does not match the complete candidate")
         prepared_count = data.get("editsPrepared")
-        if type(prepared_count) is not int or prepared_count < 0 or (prepared_count == 0) is not no_op:
+        if (
+            type(prepared_count) is not int
+            or prepared_count < 0
+            or (prepared_count == 0) is not no_op
+        ):
             raise ValueError("Prepared edit count does not match the no-op status")
         import difflib
         from itertools import islice
-        diff = list(islice(difflib.unified_diff(original.splitlines(keepends=True), candidate.splitlines(keepends=True), fromfile="before", tofile="after", n=3), 2001))
+
+        diff = list(
+            islice(
+                difflib.unified_diff(
+                    original.splitlines(keepends=True),
+                    candidate.splitlines(keepends=True),
+                    fromfile="before",
+                    tofile="after",
+                    n=3,
+                ),
+                2001,
+            )
+        )
         data["diff_truncated"] = len(diff) > 2000
-        data["diff"] = "".join(diff[:2000]) + ("... (diff truncated) ..." if data["diff_truncated"] else "")
+        data["diff"] = "".join(diff[:2000]) + (
+            "... (diff truncated) ..." if data["diff_truncated"] else ""
+        )
         data["unity_instance"] = unity_instance
-        status = "not_needed" if no_op else "unavailable_remote" if config.http_remote_hosted else "verification_required"
+        status = (
+            "not_needed"
+            if no_op
+            else "unavailable_remote"
+            if config.http_remote_hosted
+            else "verification_required"
+        )
         data["native_apply"] = {
             "status": status,
-            "requirements": ["same local Unity host and permitted workspace", "original logical SHA matches immediately before writing", "native tool preserves exact candidate bytes", "candidate raw byte SHA matches before Unity validation/refresh"],
+            "requirements": [
+                "same local Unity host and permitted workspace",
+                "original logical SHA matches immediately before writing",
+                "native tool preserves exact candidate bytes",
+                "candidate raw byte SHA matches before Unity validation/refresh",
+            ],
             "fallback": "Use the original edit request without options.preview for a direct Unity edit when native application cannot preserve exact bytes or local provenance is unproven.",
         }
-        return {**response, "message": "Prepared only; no changes applied or refresh scheduled.", "data": data}
+        return {
+            **response,
+            "message": "Prepared only; no changes applied or refresh scheduled.",
+            "data": data,
+        }
     except (KeyError, TypeError, ValueError, UnicodeError) as exc:
-        return _err("invalid_preview", f"No usable native proposal: {exc}; no changes were applied.")
+        return _err(
+            "invalid_preview", f"No usable native proposal: {exc}; no changes were applied."
+        )
+
 
 @mcp_for_unity_tool(
     name="script_apply_edits",
@@ -955,13 +1081,13 @@ async def script_apply_edits(
     ctx: Context,
     name: Annotated[str, "Name of the script to edit"],
     path: Annotated[str, "Path to the script to edit under Assets/ directory"],
-    edits: Annotated[Union[list[dict[str, Any]], str], "List of edits to apply to the script (JSON list or stringified JSON)"],
-    options: Annotated[dict[str, Any],
-                       "Options for the script edit"] | None = None,
-    script_type: Annotated[str,
-                           "Type of the script to edit"] = "MonoBehaviour",
-    namespace: Annotated[str,
-                         "Namespace of the script to edit"] | None = None,
+    edits: Annotated[
+        Union[list[dict[str, Any]], str],
+        "List of edits to apply to the script (JSON list or stringified JSON)",
+    ],
+    options: Annotated[dict[str, Any], "Options for the script edit"] | None = None,
+    script_type: Annotated[str, "Type of the script to edit"] = "MonoBehaviour",
+    namespace: Annotated[str, "Namespace of the script to edit"] | None = None,
 ) -> dict[str, Any]:
     try:
         options = _normalize_script_options(options)
@@ -972,7 +1098,10 @@ async def script_apply_edits(
     # Parse edits if they came as a stringified JSON
     edits = parse_json_payload(edits)
     if not isinstance(edits, list):
-        return {"success": False, "message": f"Edits must be a list or JSON string of a list, got {type(edits)}"}
+        return {
+            "success": False,
+            "message": f"Edits must be a list or JSON string of a list, got {type(edits)}",
+        }
     if not edits:
         return _err("missing_field", "At least one edit is required")
     if not all(isinstance(edit, dict) for edit in edits):
@@ -990,9 +1119,14 @@ async def script_apply_edits(
     def _unwrap_and_alias(edit: dict[str, Any]) -> dict[str, Any]:
         # Unwrap single-key wrappers like {"replace_method": {...}}
         for wrapper_key in (
-            "replace_method", "insert_method", "delete_method",
-            "replace_class", "delete_class",
-            "anchor_insert", "anchor_replace", "anchor_delete",
+            "replace_method",
+            "insert_method",
+            "delete_method",
+            "replace_class",
+            "delete_class",
+            "anchor_insert",
+            "anchor_replace",
+            "anchor_delete",
         ):
             if wrapper_key in edit and isinstance(edit[wrapper_key], dict):
                 inner = dict(edit[wrapper_key])
@@ -1001,8 +1135,11 @@ async def script_apply_edits(
                 break
 
         e = dict(edit)
-        op = (e.get("op") or e.get("operation") or e.get(
-            "type") or e.get("mode") or "").strip().lower()
+        op = (
+            (e.get("op") or e.get("operation") or e.get("type") or e.get("mode") or "")
+            .strip()
+            .lower()
+        )
         if op:
             e["op"] = op
 
@@ -1077,11 +1214,20 @@ async def script_apply_edits(
             e = _normalize_edit_scalars(e)
         except (ValueError, TypeError, AttributeError) as exc:
             return _err("invalid_range", str(exc))
-        op = (e.get("op") or e.get("operation") or e.get(
-            "type") or e.get("mode") or "").strip().lower()
+        op = (
+            (e.get("op") or e.get("operation") or e.get("type") or e.get("mode") or "")
+            .strip()
+            .lower()
+        )
 
         # Default className to script name if missing on structured method/class ops
-        if op in ("replace_class", "delete_class", "replace_method", "delete_method", "insert_method") and not e.get("className"):
+        if op in (
+            "replace_class",
+            "delete_class",
+            "replace_method",
+            "delete_method",
+            "insert_method",
+        ) and not e.get("className"):
             e["className"] = name
 
         # Map common aliases for text ops
@@ -1098,9 +1244,10 @@ async def script_apply_edits(
             if "text" in e:
                 e["replacement"] = e.get("text", "")
             elif "insert" in e or "content" in e:
-                e["replacement"] = e.get(
-                    "insert") or e.get("content") or ""
-        if op == "anchor_insert" and not (e.get("text") or e.get("insert") or e.get("content") or e.get("replacement")):
+                e["replacement"] = e.get("insert") or e.get("content") or ""
+        if op == "anchor_insert" and not (
+            e.get("text") or e.get("insert") or e.get("content") or e.get("replacement")
+        ):
             e["op"] = "anchor_delete"
             normalized_edits.append(e)
             continue
@@ -1110,16 +1257,30 @@ async def script_apply_edits(
     normalized_for_echo = edits
 
     # Validate required fields and produce machine-parsable hints
-    def error_with_hint(message: str, expected: dict[str, Any], suggestion: dict[str, Any]) -> dict[str, Any]:
-        return _err("missing_field", message, expected=expected, rewrite=suggestion, normalized=normalized_for_echo)
+    def error_with_hint(
+        message: str, expected: dict[str, Any], suggestion: dict[str, Any]
+    ) -> dict[str, Any]:
+        return _err(
+            "missing_field",
+            message,
+            expected=expected,
+            rewrite=suggestion,
+            normalized=normalized_for_echo,
+        )
 
     for e in edits or []:
         op = e.get("op", "")
         # Text edits are evaluated in Python. Validate their shape and regex
         # syntax before reading the document; structured anchors use .NET regex.
         if op in ("prepend", "append", "replace_range", "regex_replace"):
-            payload = next((e[field] for field in ("text", "insert", "content", "replacement")
-                            if e.get(field) is not None), "")
+            payload = next(
+                (
+                    e[field]
+                    for field in ("text", "insert", "content", "replacement")
+                    if e.get(field) is not None
+                ),
+                "",
+            )
             if not isinstance(payload, str):
                 return _err("missing_field", "Text edit payload must be a string")
             if op == "replace_range":
@@ -1143,94 +1304,134 @@ async def script_apply_edits(
             if not e.get("methodName"):
                 return error_with_hint(
                     "replace_method requires 'methodName'.",
-                    {"op": "replace_method", "required": [
-                        "className", "methodName", "replacement"]},
-                    {"edits[0].methodName": "HasTarget"}
+                    {
+                        "op": "replace_method",
+                        "required": ["className", "methodName", "replacement"],
+                    },
+                    {"edits[0].methodName": "HasTarget"},
                 )
             if not (e.get("replacement") or e.get("text")):
                 return error_with_hint(
                     "replace_method requires 'replacement' (inline or base64).",
-                    {"op": "replace_method", "required": [
-                        "className", "methodName", "replacement"]},
-                    {"edits[0].replacement": "public bool X(){ return true; }"}
+                    {
+                        "op": "replace_method",
+                        "required": ["className", "methodName", "replacement"],
+                    },
+                    {"edits[0].replacement": "public bool X(){ return true; }"},
                 )
         elif op == "insert_method":
             if not (e.get("replacement") or e.get("text")):
                 return error_with_hint(
                     "insert_method requires a non-empty 'replacement'.",
-                    {"op": "insert_method", "required": ["className", "replacement"], "position": {
-                        "after_requires": "afterMethodName", "before_requires": "beforeMethodName"}},
-                    {"edits[0].replacement": "public void PrintSeries(){ Debug.Log(\"1,2,3\"); }"}
+                    {
+                        "op": "insert_method",
+                        "required": ["className", "replacement"],
+                        "position": {
+                            "after_requires": "afterMethodName",
+                            "before_requires": "beforeMethodName",
+                        },
+                    },
+                    {"edits[0].replacement": 'public void PrintSeries(){ Debug.Log("1,2,3"); }'},
                 )
             pos = (e.get("position") or "").lower()
             if pos == "after" and not e.get("afterMethodName"):
                 return error_with_hint(
                     "insert_method with position='after' requires 'afterMethodName'.",
-                    {"op": "insert_method", "position": {
-                        "after_requires": "afterMethodName"}},
-                    {"edits[0].afterMethodName": "GetCurrentTarget"}
+                    {"op": "insert_method", "position": {"after_requires": "afterMethodName"}},
+                    {"edits[0].afterMethodName": "GetCurrentTarget"},
                 )
             if pos == "before" and not e.get("beforeMethodName"):
                 return error_with_hint(
                     "insert_method with position='before' requires 'beforeMethodName'.",
-                    {"op": "insert_method", "position": {
-                        "before_requires": "beforeMethodName"}},
-                    {"edits[0].beforeMethodName": "GetCurrentTarget"}
+                    {"op": "insert_method", "position": {"before_requires": "beforeMethodName"}},
+                    {"edits[0].beforeMethodName": "GetCurrentTarget"},
                 )
         elif op == "delete_method":
             if not e.get("methodName"):
                 return error_with_hint(
                     "delete_method requires 'methodName'.",
-                    {"op": "delete_method", "required": [
-                        "className", "methodName"]},
-                    {"edits[0].methodName": "PrintSeries"}
+                    {"op": "delete_method", "required": ["className", "methodName"]},
+                    {"edits[0].methodName": "PrintSeries"},
                 )
         elif op in ("anchor_insert", "anchor_replace", "anchor_delete"):
             if not e.get("anchor"):
                 return error_with_hint(
                     f"{op} requires 'anchor' (regex).",
                     {"op": op, "required": ["anchor"]},
-                    {"edits[0].anchor": "(?m)^\\s*public\\s+bool\\s+HasTarget\\s*\\("}
+                    {"edits[0].anchor": "(?m)^\\s*public\\s+bool\\s+HasTarget\\s*\\("},
                 )
-            if op in ("anchor_insert", "anchor_replace") and not (e.get("text") or e.get("replacement")):
+            if op in ("anchor_insert", "anchor_replace") and not (
+                e.get("text") or e.get("replacement")
+            ):
                 return error_with_hint(
                     f"{op} requires 'text'.",
                     {"op": op, "required": ["anchor", "text"]},
-                    {"edits[0].text": "/* comment */\n"}
+                    {"edits[0].text": "/* comment */\n"},
                 )
 
     # Decide routing: structured vs text vs mixed
-    STRUCT = {"replace_class", "delete_class", "replace_method", "delete_method",
-              "insert_method", "anchor_delete", "anchor_replace", "anchor_insert"}
+    STRUCT = {
+        "replace_class",
+        "delete_class",
+        "replace_method",
+        "delete_method",
+        "insert_method",
+        "anchor_delete",
+        "anchor_replace",
+        "anchor_insert",
+    }
     TEXT = {"prepend", "append", "replace_range", "regex_replace"}
     ops_set = {(e.get("op") or "").lower() for e in edits or []}
     unsupported = ops_set - STRUCT - TEXT
     if unsupported:
-        return _err("unsupported_op", f"Unsupported edit op: {', '.join(sorted(unsupported))}", normalized=normalized_for_echo)
+        return _err(
+            "unsupported_op",
+            f"Unsupported edit op: {', '.join(sorted(unsupported))}",
+            normalized=normalized_for_echo,
+        )
     all_struct = ops_set.issubset(STRUCT)
     all_text = ops_set.issubset(TEXT)
     mixed = not (all_struct or all_text)
     preview = options.get("preview", False)
     if preview and mixed:
-        return _err("unsupported_preview", "Mixed text/structured preview is unsupported; no changes were made.")
+        return _err(
+            "unsupported_preview",
+            "Mixed text/structured preview is unsupported; no changes were made.",
+        )
 
     unity_instance = await get_unity_instance_from_context(ctx)
 
     # If everything is structured (method/class/anchor ops), forward directly to Unity's structured editor.
     if all_struct:
         if preview:
-            response = await send_with_unity_instance(async_send_command_with_retry, unity_instance, "manage_script", {
-                "action": "preview_edit", "name": name, "path": path,
-                "namespace": namespace, "scriptType": script_type,
-                "edits": edits, "options": dict(options or {}),
-            })
+            response = await send_with_unity_instance(
+                async_send_command_with_retry,
+                unity_instance,
+                "manage_script",
+                {
+                    "action": "preview_edit",
+                    "name": name,
+                    "path": path,
+                    "namespace": namespace,
+                    "scriptType": script_type,
+                    "edits": edits,
+                    "options": dict(options or {}),
+                },
+            )
             prepared = _prepared_handoff(response, unity_instance, f"{path}/{name}.cs")
-            return _with_norm(prepared, normalized_for_echo, routing="structured/preview") if prepared.get("success") else prepared
+            return (
+                _with_norm(prepared, normalized_for_echo, routing="structured/preview")
+                if prepared.get("success")
+                else prepared
+            )
         # Get pre-edit SHA for disconnect verification
         pre_sha = None
         try:
-            sha_resp = await send_with_unity_instance(async_send_command_with_retry, unity_instance,
-                "manage_script", {"action": "get_sha", "name": name, "path": path},
+            sha_resp = await send_with_unity_instance(
+                async_send_command_with_retry,
+                unity_instance,
+                "manage_script",
+                {"action": "get_sha", "name": name, "path": path},
             )
             if isinstance(sha_resp, dict) and sha_resp.get("success"):
                 pre_sha = (sha_resp.get("data") or {}).get("sha256")
@@ -1254,26 +1455,41 @@ async def script_apply_edits(
                 return {"success": True, "message": "Edit applied (verified after domain reload)."}
             return None
 
-        resp_struct = await send_mutation(ctx, unity_instance, "manage_script", params_struct, verify_after_disconnect=_verify)
-        return _with_norm(resp_struct if isinstance(resp_struct, dict) else {"success": False, "message": str(resp_struct)}, normalized_for_echo, routing="structured")
+        resp_struct = await send_mutation(
+            ctx, unity_instance, "manage_script", params_struct, verify_after_disconnect=_verify
+        )
+        return _with_norm(
+            resp_struct
+            if isinstance(resp_struct, dict)
+            else {"success": False, "message": str(resp_struct)},
+            normalized_for_echo,
+            routing="structured",
+        )
 
     # 1) read from Unity
-    read_resp = await send_with_unity_instance(async_send_command_with_retry, unity_instance, "manage_script", {
-        "action": "read",
-        "name": name,
-        "path": path,
-        "namespace": namespace,
-        "scriptType": script_type,
-    })
+    read_resp = await send_with_unity_instance(
+        async_send_command_with_retry,
+        unity_instance,
+        "manage_script",
+        {
+            "action": "read",
+            "name": name,
+            "path": path,
+            "namespace": namespace,
+            "scriptType": script_type,
+        },
+    )
     if not isinstance(read_resp, dict) or not read_resp.get("success"):
-        return read_resp if isinstance(read_resp, dict) else {"success": False, "message": str(read_resp)}
+        return (
+            read_resp
+            if isinstance(read_resp, dict)
+            else {"success": False, "message": str(read_resp)}
+        )
 
-    data = read_resp.get("data") or read_resp.get(
-        "result", {}).get("data") or {}
+    data = read_resp.get("data") or read_resp.get("result", {}).get("data") or {}
     contents = data.get("contents")
     if contents is None and data.get("contentsEncoded") and data.get("encodedContents"):
-        contents = base64.b64decode(
-            data["encodedContents"]).decode("utf-8")
+        contents = base64.b64decode(data["encodedContents"]).decode("utf-8")
     if contents is None:
         return {"success": False, "message": "No contents returned from Unity read."}
 
@@ -1283,8 +1499,12 @@ async def script_apply_edits(
         try:
             for edit in lsp_edits:
                 rng = edit.pop("range")
-                edit["startLine"], edit["startCol"] = _lsp_position_to_line_col(source_lines, rng.get("start", {}))
-                edit["endLine"], edit["endCol"] = _lsp_position_to_line_col(source_lines, rng.get("end", {}))
+                edit["startLine"], edit["startCol"] = _lsp_position_to_line_col(
+                    source_lines, rng.get("start", {})
+                )
+                edit["endLine"], edit["endCol"] = _lsp_position_to_line_col(
+                    source_lines, rng.get("end", {})
+                )
         except (ValueError, TypeError, OverflowError) as exc:
             return _err("invalid_range", str(exc))
 
@@ -1297,41 +1517,87 @@ async def script_apply_edits(
     except _TextEditError as exc:
         return _with_norm(_err(exc.code, str(exc)), normalized_for_echo, routing=routing)
     except Exception as exc:
-        return _with_norm(_err("conversion_failed", f"Text edit conversion failed: {exc}"), normalized_for_echo, routing=routing)
+        return _with_norm(
+            _err("conversion_failed", f"Text edit conversion failed: {exc}"),
+            normalized_for_echo,
+            routing=routing,
+        )
 
     if preview:
-        response = await send_with_unity_instance(async_send_command_with_retry, unity_instance, "manage_script", {
-            "action": "preview_text_edits", "name": name, "path": path,
-            "edits": at_edits, "precondition_sha256": hashlib.sha256(contents.encode("utf-8")).hexdigest(),
-            "options": {**dict(options or {}), "preview": True, "applyMode": "atomic" if len(at_edits) > 1 else (options or {}).get("applyMode", "sequential")},
-        })
+        response = await send_with_unity_instance(
+            async_send_command_with_retry,
+            unity_instance,
+            "manage_script",
+            {
+                "action": "preview_text_edits",
+                "name": name,
+                "path": path,
+                "edits": at_edits,
+                "precondition_sha256": hashlib.sha256(contents.encode("utf-8")).hexdigest(),
+                "options": {
+                    **dict(options or {}),
+                    "preview": True,
+                    "applyMode": "atomic"
+                    if len(at_edits) > 1
+                    else (options or {}).get("applyMode", "sequential"),
+                },
+            },
+        )
         prepared = _prepared_handoff(response, unity_instance, f"{path}/{name}.cs")
-        return _with_norm(prepared, normalized_for_echo, routing="text/preview") if prepared.get("success") else prepared
+        return (
+            _with_norm(prepared, normalized_for_echo, routing="text/preview")
+            if prepared.get("success")
+            else prepared
+        )
 
     if not at_edits and not mixed:
-        return _with_norm(_err("no_spans", "No applicable text edit spans computed (anchor not found or zero-length)."), normalized_for_echo, routing=routing)
+        return _with_norm(
+            _err(
+                "no_spans",
+                "No applicable text edit spans computed (anchor not found or zero-length).",
+            ),
+            normalized_for_echo,
+            routing=routing,
+        )
 
     sha = hashlib.sha256(contents.encode("utf-8")).hexdigest()
     if at_edits:
         params_text: dict[str, Any] = {
-            "action": "apply_text_edits", "name": name, "path": path,
-            "namespace": namespace, "scriptType": script_type,
-            "edits": at_edits, "precondition_sha256": sha,
+            "action": "apply_text_edits",
+            "name": name,
+            "path": path,
+            "namespace": namespace,
+            "scriptType": script_type,
+            "edits": at_edits,
+            "precondition_sha256": sha,
             "options": {
                 "refresh": (options or {}).get("refresh", "debounced"),
                 "validate": (options or {}).get("validate", "standard"),
-                "applyMode": "atomic" if len(at_edits) > 1 else (options or {}).get("applyMode", "sequential"),
+                "applyMode": "atomic"
+                if len(at_edits) > 1
+                else (options or {}).get("applyMode", "sequential"),
             },
         }
 
         async def _verify_text():
             if await verify_edit_by_sha(unity_instance, name, path, sha):
-                return {"success": True, "message": "Text edits applied (verified after domain reload)."}
+                return {
+                    "success": True,
+                    "message": "Text edits applied (verified after domain reload).",
+                }
             return None
 
-        response = await send_mutation(ctx, unity_instance, "manage_script", params_text, verify_after_disconnect=_verify_text)
+        response = await send_mutation(
+            ctx, unity_instance, "manage_script", params_text, verify_after_disconnect=_verify_text
+        )
         if not (isinstance(response, dict) and response.get("success")):
-            return _with_norm(response if isinstance(response, dict) else {"success": False, "message": str(response)}, normalized_for_echo, routing=routing)
+            return _with_norm(
+                response
+                if isinstance(response, dict)
+                else {"success": False, "message": str(response)},
+                normalized_for_echo,
+                routing=routing,
+            )
         if not mixed:
             return _with_norm(response, normalized_for_echo, routing=routing)
         # The structural phase must not verify against changes from the text phase.
@@ -1340,11 +1606,21 @@ async def script_apply_edits(
         if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", sha):
             sha = None
             try:
-                sha_response = await send_with_unity_instance(async_send_command_with_retry, unity_instance,
-                    "manage_script", {"action": "get_sha", "name": name, "path": path})
-                sha_data = sha_response.get("data") if isinstance(sha_response, dict) and sha_response.get("success") else None
+                sha_response = await send_with_unity_instance(
+                    async_send_command_with_retry,
+                    unity_instance,
+                    "manage_script",
+                    {"action": "get_sha", "name": name, "path": path},
+                )
+                sha_data = (
+                    sha_response.get("data")
+                    if isinstance(sha_response, dict) and sha_response.get("success")
+                    else None
+                )
                 candidate_sha = sha_data.get("sha256") if isinstance(sha_data, dict) else None
-                if isinstance(candidate_sha, str) and re.fullmatch(r"[0-9a-fA-F]{64}", candidate_sha):
+                if isinstance(candidate_sha, str) and re.fullmatch(
+                    r"[0-9a-fA-F]{64}", candidate_sha
+                ):
                     sha = candidate_sha
             except Exception:
                 pass
@@ -1355,9 +1631,13 @@ async def script_apply_edits(
         opts2 = dict(options or {})
         opts2.setdefault("refresh", "debounced")
         params_struct: dict[str, Any] = {
-            "action": "edit", "name": name, "path": path,
-            "namespace": namespace, "scriptType": script_type,
-            "edits": struct_edits, "options": opts2,
+            "action": "edit",
+            "name": name,
+            "path": path,
+            "namespace": namespace,
+            "scriptType": script_type,
+            "edits": struct_edits,
+            "options": opts2,
         }
 
         async def _verify_struct():
@@ -1365,7 +1645,23 @@ async def script_apply_edits(
                 return {"success": True, "message": "Edit applied (verified after domain reload)."}
             return None
 
-        response = await send_mutation(ctx, unity_instance, "manage_script", params_struct, verify_after_disconnect=_verify_struct)
-        return _with_norm(response if isinstance(response, dict) else {"success": False, "message": str(response)}, normalized_for_echo, routing=routing)
+        response = await send_mutation(
+            ctx,
+            unity_instance,
+            "manage_script",
+            params_struct,
+            verify_after_disconnect=_verify_struct,
+        )
+        return _with_norm(
+            response
+            if isinstance(response, dict)
+            else {"success": False, "message": str(response)},
+            normalized_for_echo,
+            routing=routing,
+        )
 
-    return _with_norm({"success": True, "message": "Applied text edits (no structured ops)"}, normalized_for_echo, routing=routing)
+    return _with_norm(
+        {"success": True, "message": "Applied text edits (no structured ops)"},
+        normalized_for_echo,
+        routing=routing,
+    )

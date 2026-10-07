@@ -29,10 +29,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 var component = testObject.AddComponent<FusionUnsafeTypeComponent>();
                 component.bufferList.Add(new Fusion.NetworkBehaviourBuffer { Value = 1 });
-                component.nestedChangedLookup["changed"] = new List<Fusion.Changed<int>>
-                {
-                    new Fusion.Changed<int> { Value = 2 }
-                };
+                component.nestedChangedLookup["changed"] = new List<Fusion.Changed<int>> { new Fusion.Changed<int> { Value = 2 } };
                 component.ChangedListProperty.Add(new Fusion.Changed<int> { Value = 3 });
 
                 var result = GameObjectSerializer.GetComponentData(component) as Dictionary<string, object>;
@@ -45,9 +42,18 @@ namespace MCPForUnityTests.Editor.Tools
 
                 Assert.IsTrue(properties.ContainsKey(nameof(FusionUnsafeTypeComponent.safeValue)), "Safe fields should still serialize.");
                 Assert.IsFalse(properties.ContainsKey(nameof(FusionUnsafeTypeComponent.directBuffer)), "Direct Fusion buffer fields should be skipped.");
-                Assert.IsFalse(properties.ContainsKey(nameof(FusionUnsafeTypeComponent.bufferList)), "Collections containing Fusion buffer types should be skipped.");
-                Assert.IsFalse(properties.ContainsKey(nameof(FusionUnsafeTypeComponent.nestedChangedLookup)), "Nested generic containers containing Fusion Changed<T> should be skipped.");
-                Assert.IsFalse(properties.ContainsKey(nameof(FusionUnsafeTypeComponent.ChangedListProperty)), "Properties returning collections of Fusion Changed<T> should be skipped.");
+                Assert.IsFalse(
+                    properties.ContainsKey(nameof(FusionUnsafeTypeComponent.bufferList)),
+                    "Collections containing Fusion buffer types should be skipped."
+                );
+                Assert.IsFalse(
+                    properties.ContainsKey(nameof(FusionUnsafeTypeComponent.nestedChangedLookup)),
+                    "Nested generic containers containing Fusion Changed<T> should be skipped."
+                );
+                Assert.IsFalse(
+                    properties.ContainsKey(nameof(FusionUnsafeTypeComponent.ChangedListProperty)),
+                    "Properties returning collections of Fusion Changed<T> should be skipped."
+                );
             }
             finally
             {

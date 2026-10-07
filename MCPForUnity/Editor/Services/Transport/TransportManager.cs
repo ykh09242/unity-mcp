@@ -21,14 +21,10 @@ namespace MCPForUnity.Editor.Services.Transport
 
         public TransportManager()
         {
-            Configure(
-                () => new WebSocketTransportClient(MCPServiceLocator.ToolDiscovery),
-                () => new StdioTransportClient());
+            Configure(() => new WebSocketTransportClient(MCPServiceLocator.ToolDiscovery), () => new StdioTransportClient());
         }
 
-        public void Configure(
-            Func<IMcpTransportClient> webSocketFactory,
-            Func<IMcpTransportClient> stdioFactory)
+        public void Configure(Func<IMcpTransportClient> webSocketFactory, Func<IMcpTransportClient> stdioFactory)
         {
             _webSocketFactory = webSocketFactory ?? throw new ArgumentNullException(nameof(webSocketFactory));
             _stdioFactory = stdioFactory ?? throw new ArgumentNullException(nameof(stdioFactory));
@@ -62,8 +58,10 @@ namespace MCPForUnity.Editor.Services.Transport
             }
 
             Task<bool> started = StartCoreAsync(mode);
-            if (mode == TransportMode.Http) _httpStartTask = started;
-            else _stdioStartTask = started;
+            if (mode == TransportMode.Http)
+                _httpStartTask = started;
+            else
+                _stdioStartTask = started;
             return started;
         }
 
@@ -94,10 +92,20 @@ namespace MCPForUnity.Editor.Services.Transport
         {
             async Task StopClient(IMcpTransportClient client, TransportMode clientMode)
             {
-                if (client == null) return;
-                try { await client.StopAsync(); }
-                catch (Exception ex) { McpLog.Warn($"Error while stopping transport {client.TransportName}: {ex.Message}"); }
-                finally { UpdateState(clientMode, TransportState.Disconnected(client.TransportName)); }
+                if (client == null)
+                    return;
+                try
+                {
+                    await client.StopAsync();
+                }
+                catch (Exception ex)
+                {
+                    McpLog.Warn($"Error while stopping transport {client.TransportName}: {ex.Message}");
+                }
+                finally
+                {
+                    UpdateState(clientMode, TransportState.Disconnected(client.TransportName));
+                }
             }
 
             if (mode == null)
@@ -158,9 +166,7 @@ namespace MCPForUnity.Editor.Services.Transport
             bool portChanged = client.IsConnected && live?.Port != _stdioState.Port;
             if (connectivityChanged || portChanged)
             {
-                _stdioState = live ?? (client.IsConnected
-                    ? TransportState.Connected(client.TransportName)
-                    : TransportState.Disconnected(client.TransportName));
+                _stdioState = live ?? (client.IsConnected ? TransportState.Connected(client.TransportName) : TransportState.Disconnected(client.TransportName));
             }
             return _stdioState;
         }
@@ -235,6 +241,6 @@ namespace MCPForUnity.Editor.Services.Transport
     public enum TransportMode
     {
         Http,
-        Stdio
+        Stdio,
     }
 }

@@ -50,7 +50,8 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (!captured) return;
+            if (!captured)
+                return;
             try
             {
                 if (ownedScene.IsValid() && ownedScene.isLoaded)
@@ -58,20 +59,24 @@ namespace MCPForUnityTests.Editor.Tools
                     Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
                     foreach (GameObject go in ownedObjects)
                     {
-                        if (go == null) continue;
+                        if (go == null)
+                            continue;
                         Assert.AreEqual(ownedScene, go.scene);
                         foreach (Component component in go.GetComponents<Component>())
-                            if (component != null) Undo.ClearUndo(component);
+                            if (component != null)
+                                Undo.ClearUndo(component);
                         Undo.ClearUndo(go);
                         UnityEngine.Object.DestroyImmediate(go);
                     }
                     foreach (LightingSettings settings in ownedSettings)
                     {
-                        if (settings == null) continue;
+                        if (settings == null)
+                            continue;
                         // Only a previously absent, nonpersistent result of our invalid request is owned.
                         Assert.IsFalse(AssetDatabase.Contains(settings));
                         Lightmapping.TryGetLightingSettings(out var assigned);
-                        if (assigned == settings) Lightmapping.lightingSettings = originalOwnedSceneSettings;
+                        if (assigned == settings)
+                            Lightmapping.lightingSettings = originalOwnedSceneSettings;
                         Undo.ClearUndo(settings);
                         UnityEngine.Object.DestroyImmediate(settings);
                     }
@@ -81,7 +86,8 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                if (originalScene.IsValid() && originalScene.isLoaded) SceneManager.SetActiveScene(originalScene);
+                if (originalScene.IsValid() && originalScene.isLoaded)
+                    SceneManager.SetActiveScene(originalScene);
                 Selection.objects = originalSelection;
                 Selection.activeObject = originalActiveSelection;
                 captured = false;
@@ -97,7 +103,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 "unknown" => new JObject { ["unknown"] = 1 },
                 "lightmapper" => new JObject { ["lightmapper"] = "bad" },
-                _ => new JObject { ["mixedBakeMode"] = "bad", ["lightmapCompression"] = "bad" }
+                _ => new JObject { ["mixedBakeMode"] = "bad", ["lightmapCompression"] = "bad" },
             };
             Lightmapping.TryGetLightingSettings(out var before);
             if (before != null)
@@ -111,8 +117,7 @@ namespace MCPForUnityTests.Editor.Tools
             finally
             {
                 // Capture a regressed allocation before any assertion, for exact teardown cleanup.
-                if (Lightmapping.TryGetLightingSettings(out var after) && after != null
-                    && !inventory.Contains(after) && !AssetDatabase.Contains(after))
+                if (Lightmapping.TryGetLightingSettings(out var after) && after != null && !inventory.Contains(after) && !AssetDatabase.Contains(after))
                     ownedSettings.Add(after);
             }
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
@@ -126,10 +131,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void MalformedOrEmptySettingsRetainIdentity(bool array)
         {
             Lightmapping.TryGetLightingSettings(out var before);
-            var response = Send("bake_set_settings", new JObject
-            {
-                ["settings"] = array ? (JToken)new JArray() : new JObject()
-            });
+            var response = Send("bake_set_settings", new JObject { ["settings"] = array ? (JToken)new JArray() : new JObject() });
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Lightmapping.TryGetLightingSettings(out var after);
             Assert.AreSame(before, after);
@@ -149,11 +151,16 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(2f)]
         public void LightProbeGridPreservesZeroSpacingAndNumericForms(float spacing)
         {
-            var response = Send("bake_create_light_probe_group", new JObject
-            {
-                ["name"] = UniqueName(), ["position"] = new JArray(0, -1, "2", 99),
-                ["grid_size"] = new JArray(2, 1, 2), ["spacing"] = spacing
-            });
+            var response = Send(
+                "bake_create_light_probe_group",
+                new JObject
+                {
+                    ["name"] = UniqueName(),
+                    ["position"] = new JArray(0, -1, "2", 99),
+                    ["grid_size"] = new JArray(2, 1, 2),
+                    ["spacing"] = spacing,
+                }
+            );
             GameObject go = ReturnedObject(response);
             Assert.AreEqual(new Vector3(0, -1, 2), go.transform.position);
             Vector3[] positions = go.GetComponent<LightProbeGroup>().probePositions;
@@ -167,10 +174,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string name = UniqueName();
             LogAssert.Expect(LogType.Error, new Regex("\\[ManageGraphics\\] Action 'bake_create_light_probe_group' failed:"));
-            var response = Send("bake_create_light_probe_group", new JObject
-            {
-                ["name"] = name, ["grid_size"] = new JArray(2, "bad", 3)
-            });
+            var response = Send("bake_create_light_probe_group", new JObject { ["name"] = name, ["grid_size"] = new JArray(2, "bad", 3) });
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.IsFalse(ownedScene.GetRootGameObjects().Any(go => go.name == name));
         }
@@ -178,12 +182,19 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void ReflectionProbeCreationPreservesFalseAndSize()
         {
-            var response = Send("bake_create_reflection_probe", new JObject
-            {
-                ["name"] = UniqueName(), ["position"] = new JArray(0, -1, 2),
-                ["size"] = new JArray(4, 5, 6), ["resolution"] = 256,
-                ["mode"] = "cUsToM", ["hdr"] = false, ["box_projection"] = false
-            });
+            var response = Send(
+                "bake_create_reflection_probe",
+                new JObject
+                {
+                    ["name"] = UniqueName(),
+                    ["position"] = new JArray(0, -1, 2),
+                    ["size"] = new JArray(4, 5, 6),
+                    ["resolution"] = 256,
+                    ["mode"] = "cUsToM",
+                    ["hdr"] = false,
+                    ["box_projection"] = false,
+                }
+            );
             GameObject go = ReturnedObject(response);
             ReflectionProbe probe = go.GetComponent<ReflectionProbe>();
             Assert.AreEqual(ReflectionProbeMode.Custom, probe.mode);
@@ -211,16 +222,14 @@ namespace MCPForUnityTests.Editor.Tools
             LightProbeGroup group = OwnedGroup();
             Vector3[] before = group.probePositions;
             int beforeDirty = EditorUtility.GetDirtyCount(group);
-            JArray positions = kind == "empty" ? new JArray() : new JArray
-            {
-                new JArray(9, 9, 9), kind == "short" ? new JArray(1, 2) : new JArray(1, 2, "bad")
-            };
+            JArray positions =
+                kind == "empty" ? new JArray() : new JArray { new JArray(9, 9, 9), kind == "short" ? new JArray(1, 2) : new JArray(1, 2, "bad") };
             if (kind == "number")
                 LogAssert.Expect(LogType.Error, new Regex("\\[ManageGraphics\\] Action 'bake_set_probe_positions' failed:"));
-            var response = Send("bake_set_probe_positions", new JObject
-            {
-                ["target"] = group.gameObject.GetInstanceIDCompat().ToString(), ["positions"] = positions
-            });
+            var response = Send(
+                "bake_set_probe_positions",
+                new JObject { ["target"] = group.gameObject.GetInstanceIDCompat().ToString(), ["positions"] = positions }
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             CollectionAssert.AreEqual(before, group.probePositions);
             Assert.AreEqual(beforeDirty, EditorUtility.GetDirtyCount(group));
@@ -230,11 +239,14 @@ namespace MCPForUnityTests.Editor.Tools
         public void ValidPositionsUseExactOwnedIdAndPreserveNumericForms()
         {
             LightProbeGroup group = OwnedGroup();
-            var response = Send("bake_set_probe_positions", new JObject
-            {
-                ["target"] = group.gameObject.GetInstanceIDCompat().ToString(),
-                ["positions"] = new JArray { new JArray(0, -1, "2", 99) }
-            });
+            var response = Send(
+                "bake_set_probe_positions",
+                new JObject
+                {
+                    ["target"] = group.gameObject.GetInstanceIDCompat().ToString(),
+                    ["positions"] = new JArray { new JArray(0, -1, "2", 99) },
+                }
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             CollectionAssert.AreEqual(new[] { new Vector3(0, -1, 2) }, group.probePositions);
         }
@@ -243,7 +255,10 @@ namespace MCPForUnityTests.Editor.Tools
         {
             fields["action"] = action;
             string requestedName = fields.Value<string>("name");
-            try { return JObject.FromObject(ManageGraphics.HandleCommand(fields)); }
+            try
+            {
+                return JObject.FromObject(ManageGraphics.HandleCommand(fields));
+            }
             finally
             {
                 // Capture only this uniquely named request result before assertions.

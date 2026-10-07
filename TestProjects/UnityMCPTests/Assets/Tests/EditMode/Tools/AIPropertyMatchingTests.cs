@@ -1,7 +1,7 @@
 using System.Collections.Generic;
+using MCPForUnity.Editor.Tools;
 using NUnit.Framework;
 using UnityEngine;
-using MCPForUnity.Editor.Tools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -23,7 +23,7 @@ namespace MCPForUnityTests.Editor.Tools
                 "isEnabled",
                 "mass",
                 "velocity",
-                "transform"
+                "transform",
             };
         }
 

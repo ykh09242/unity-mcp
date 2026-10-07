@@ -10,19 +10,34 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 
 # All possible actions grouped by category
 SHAPE_ACTIONS = [
-    "create_shape", "create_poly_shape",
+    "create_shape",
+    "create_poly_shape",
 ]
 
 MESH_ACTIONS = [
-    "extrude_faces", "extrude_edges", "bevel_edges", "subdivide",
-    "delete_faces", "bridge_edges", "connect_elements", "detach_faces",
-    "flip_normals", "merge_faces", "combine_meshes", "merge_objects",
-    "duplicate_and_flip", "create_polygon",
+    "extrude_faces",
+    "extrude_edges",
+    "bevel_edges",
+    "subdivide",
+    "delete_faces",
+    "bridge_edges",
+    "connect_elements",
+    "detach_faces",
+    "flip_normals",
+    "merge_faces",
+    "combine_meshes",
+    "merge_objects",
+    "duplicate_and_flip",
+    "create_polygon",
 ]
 
 VERTEX_ACTIONS = [
-    "merge_vertices", "weld_vertices", "split_vertices", "move_vertices",
-    "insert_vertex", "append_vertices_to_edge",
+    "merge_vertices",
+    "weld_vertices",
+    "split_vertices",
+    "move_vertices",
+    "insert_vertex",
+    "append_vertices_to_edge",
 ]
 
 SELECTION_ACTIONS = [
@@ -30,11 +45,14 @@ SELECTION_ACTIONS = [
 ]
 
 UV_MATERIAL_ACTIONS = [
-    "set_face_material", "set_face_color", "set_face_uvs",
+    "set_face_material",
+    "set_face_color",
+    "set_face_uvs",
 ]
 
 QUERY_ACTIONS = [
-    "get_mesh_info", "convert_to_probuilder",
+    "get_mesh_info",
+    "convert_to_probuilder",
 ]
 
 SMOOTHING_ACTIONS = ["set_smoothing", "auto_smooth"]
@@ -42,9 +60,17 @@ SMOOTHING_ACTIONS = ["set_smoothing", "auto_smooth"]
 UTILITY_ACTIONS = ["center_pivot", "freeze_transform", "set_pivot", "validate_mesh", "repair_mesh"]
 
 ALL_ACTIONS = (
-    ["ping"] + SHAPE_ACTIONS + MESH_ACTIONS + VERTEX_ACTIONS + SELECTION_ACTIONS
-    + UV_MATERIAL_ACTIONS + QUERY_ACTIONS + SMOOTHING_ACTIONS + UTILITY_ACTIONS
+    ["ping"]
+    + SHAPE_ACTIONS
+    + MESH_ACTIONS
+    + VERTEX_ACTIONS
+    + SELECTION_ACTIONS
+    + UV_MATERIAL_ACTIONS
+    + QUERY_ACTIONS
+    + SMOOTHING_ACTIONS
+    + UTILITY_ACTIONS
 )
+
 
 @mcp_for_unity_tool(
     group="probuilder",

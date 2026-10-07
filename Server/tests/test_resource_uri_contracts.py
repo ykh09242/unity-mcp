@@ -11,13 +11,15 @@ def run_sdk_regression(source):
         [sys.executable, "-c", textwrap.dedent(source)],
         cwd=Path(__file__).resolve().parents[1],
         env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "1"},
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_component_resource_uri_exposes_declared_options_and_keeps_old_route():
-    run_sdk_regression('''
+    run_sdk_regression("""
         import asyncio, json, sys
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
@@ -64,4 +66,4 @@ def test_component_resource_uri_exposes_declared_options_and_keeps_old_route():
                     assert invalid["success"] is False
                     assert gameobject.send_with_unity_instance.await_count == before
         asyncio.run(scenario())
-    ''')
+    """)

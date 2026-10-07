@@ -1,4 +1,5 @@
 """Malformed CLI input keeps human diagnostics off machine-readable stdout."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -7,7 +8,7 @@ import sys
 import pytest
 
 
-PROGRAM = r'''
+PROGRAM = r"""
 import copy
 import json
 import os
@@ -81,17 +82,32 @@ result = CliRunner().invoke(cli, ["status"])
 assert result.exit_code == 0 and result.stderr == "" and "ℹ️  No Unity instances currently connected" in result.stdout
 print(json.dumps({"format": sys.argv[1], "calls": 9, "failures": failures}))
 assert not failures, failures
-'''
+"""
 
 
 @pytest.mark.parametrize("output_format", ["json", "text", "table"])
 def test_input_diagnostics_do_not_pollute_stdout(tmp_path, output_format):
     env = {key: value for key, value in os.environ.items() if not key.startswith("UNITY_MCP_")}
-    for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME", "TEMP", "TMP", "UNITY_MCP_LOG_DIR", "UNITY_MCP_STATUS_DIR"):
+    for key in (
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "XDG_DATA_HOME",
+        "TEMP",
+        "TMP",
+        "UNITY_MCP_LOG_DIR",
+        "UNITY_MCP_STATUS_DIR",
+    ):
         env[key] = str(tmp_path)
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "true"
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
     env.pop("PYTEST_CURRENT_TEST", None)
-    result = subprocess.run([sys.executable, "-B", "-c", PROGRAM, output_format], env=env,
-                            capture_output=True, text=True, timeout=30)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", PROGRAM, output_format],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     assert result.returncode == 0, result.stdout + result.stderr

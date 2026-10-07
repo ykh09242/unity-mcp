@@ -29,9 +29,12 @@ namespace MCPForUnity.Editor.Helpers
             try
             {
                 return DetectIn(CandidatePaths(), File.Exists)
-                       || HasStorePackage(StorePackagesRoot(), root => Directory.EnumerateDirectories(root, StorePackagePrefix + "*"));
+                    || HasStorePackage(StorePackagesRoot(), root => Directory.EnumerateDirectories(root, StorePackagePrefix + "*"));
             }
-            catch { return false; }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>
@@ -41,13 +44,21 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         internal static bool HasStorePackage(string packagesRoot, Func<string, IEnumerable<string>> listDirectories)
         {
-            if (string.IsNullOrEmpty(packagesRoot) || listDirectories == null) return false;
+            if (string.IsNullOrEmpty(packagesRoot) || listDirectories == null)
+                return false;
             List<string> dirs;
-            try { dirs = listDirectories(packagesRoot)?.ToList(); }
-            catch { return false; }
+            try
+            {
+                dirs = listDirectories(packagesRoot)?.ToList();
+            }
+            catch
+            {
+                return false;
+            }
             foreach (string d in dirs ?? new List<string>())
             {
-                if (string.IsNullOrEmpty(d)) continue;
+                if (string.IsNullOrEmpty(d))
+                    continue;
                 if (Path.GetFileName(d.TrimEnd('/', '\\')).StartsWith(StorePackagePrefix, StringComparison.OrdinalIgnoreCase))
                     return true;
             }
@@ -57,7 +68,8 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>%LOCALAPPDATA%/Packages on Windows, where each Store app keeps a per-user data folder; null elsewhere.</summary>
         internal static string StorePackagesRoot()
         {
-            if (Application.platform != RuntimePlatform.WindowsEditor) return null;
+            if (Application.platform != RuntimePlatform.WindowsEditor)
+                return null;
             string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             return string.IsNullOrEmpty(local) ? null : Path.Combine(local, "Packages");
         }
@@ -65,9 +77,11 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>Pure core: true if <paramref name="exists"/> reports any candidate present. Testable.</summary>
         internal static bool DetectIn(IEnumerable<string> candidates, Func<string, bool> exists)
         {
-            if (candidates == null || exists == null) return false;
+            if (candidates == null || exists == null)
+                return false;
             foreach (string c in candidates)
-                if (!string.IsNullOrEmpty(c) && exists(c)) return true;
+                if (!string.IsNullOrEmpty(c) && exists(c))
+                    return true;
             return false;
         }
 
@@ -85,7 +99,8 @@ namespace MCPForUnity.Editor.Helpers
             // PATH entries: <dir>/blender(.exe)
             string pathVar = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
             foreach (string dir in pathVar.Split(win ? ';' : ':'))
-                if (!string.IsNullOrWhiteSpace(dir)) list.Add(Path.Combine(dir.Trim(), exeName));
+                if (!string.IsNullOrWhiteSpace(dir))
+                    list.Add(Path.Combine(dir.Trim(), exeName));
 
             switch (Application.platform)
             {
@@ -98,13 +113,10 @@ namespace MCPForUnity.Editor.Helpers
                     }
                     break;
                 case RuntimePlatform.WindowsEditor:
-                    foreach (string pf in new[]
-                             {
-                                 Environment.GetEnvironmentVariable("ProgramFiles"),
-                                 Environment.GetEnvironmentVariable("ProgramFiles(x86)")
-                             })
+                    foreach (string pf in new[] { Environment.GetEnvironmentVariable("ProgramFiles"), Environment.GetEnvironmentVariable("ProgramFiles(x86)") })
                     {
-                        if (string.IsNullOrEmpty(pf)) continue;
+                        if (string.IsNullOrEmpty(pf))
+                            continue;
                         list.Add(Path.Combine(pf, "Steam", "steamapps", "common", "Blender", "blender.exe"));
                         string foundation = Path.Combine(pf, "Blender Foundation");
                         // Blender installs under a version subdir (Blender X.Y); enumerate them.
@@ -156,8 +168,10 @@ namespace MCPForUnity.Editor.Helpers
                 case RuntimePlatform.LinuxEditor:
                     string xdg = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
                     string linuxHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                    if (!string.IsNullOrEmpty(xdg)) list.Add(Path.Combine(xdg, "blender"));
-                    else if (!string.IsNullOrEmpty(linuxHome)) list.Add(Path.Combine(linuxHome, ".config", "blender"));
+                    if (!string.IsNullOrEmpty(xdg))
+                        list.Add(Path.Combine(xdg, "blender"));
+                    else if (!string.IsNullOrEmpty(linuxHome))
+                        list.Add(Path.Combine(linuxHome, ".config", "blender"));
                     break;
             }
             return list;
@@ -171,11 +185,13 @@ namespace MCPForUnity.Editor.Helpers
             {
                 try
                 {
-                    if (!Directory.Exists(root)) continue;
+                    if (!Directory.Exists(root))
+                        continue;
                     foreach (string d in Directory.GetDirectories(root))
                     {
                         Version v = ParseVersion(Path.GetFileName(d));
-                        if (v != null) found.Add((v, Path.Combine(d, "scripts", "addons")));
+                        if (v != null)
+                            found.Add((v, Path.Combine(d, "scripts", "addons")));
                     }
                 }
                 catch { /* unreadable dir; ignore */ }
@@ -186,18 +202,26 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>Newest user addons dir that already contains <paramref name="fileName"/>, else the newest one, else null.</summary>
         internal static string FindUserAddonsDir(string fileName)
         {
-            try { return PickAddonsDir(UserAddonsDirs(), File.Exists, fileName); }
-            catch { return null; }
+            try
+            {
+                return PickAddonsDir(UserAddonsDirs(), File.Exists, fileName);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>Pure core of <see cref="FindUserAddonsDir"/>. Testable.</summary>
         internal static string PickAddonsDir(IEnumerable<string> dirsNewestFirst, Func<string, bool> fileExists, string fileName)
         {
-            if (dirsNewestFirst == null) return null;
+            if (dirsNewestFirst == null)
+                return null;
             string first = null;
             foreach (string d in dirsNewestFirst)
             {
-                if (string.IsNullOrEmpty(d)) continue;
+                if (string.IsNullOrEmpty(d))
+                    continue;
                 first ??= d;
                 if (!string.IsNullOrEmpty(fileName) && fileExists != null && fileExists(d.TrimEnd('/') + "/" + fileName))
                     return d;
@@ -208,7 +232,8 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>Parses a Blender version folder name ("4.2", "5.2") into a comparable Version; null if it is not one.</summary>
         internal static Version ParseVersion(string name)
         {
-            if (string.IsNullOrEmpty(name)) return null;
+            if (string.IsNullOrEmpty(name))
+                return null;
             return Version.TryParse(name.Contains('.') ? name : name + ".0", out Version v) ? v : null;
         }
     }

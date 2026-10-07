@@ -1,13 +1,13 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools.Sprite2D;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Editor.Tools.Sprite2D;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -49,8 +49,7 @@ namespace MCPForUnityTests.Editor.Tools
             tex.Apply();
 
             string assetPath = $"{TempRoot}/{name}.png";
-            string sysPath = Path.Combine(
-                Directory.GetParent(Application.dataPath).FullName, assetPath);
+            string sysPath = Path.Combine(Directory.GetParent(Application.dataPath).FullName, assetPath);
             File.WriteAllBytes(sysPath, tex.EncodeToPNG());
             Object.DestroyImmediate(tex);
 
@@ -58,11 +57,9 @@ namespace MCPForUnityTests.Editor.Tools
 
             // Only the asset's existence: the texture is still Default-type here, and that
             // import rescales a non-power-of-two sheet. Slice() asserts the frame count.
-            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath),
-                $"fixture: {assetPath} did not import");
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath), $"fixture: {assetPath} did not import");
             return assetPath;
         }
-
 
         /// <summary>
         /// A square PNG of incompressible noise, used to exceed the inline-image ceiling.
@@ -72,7 +69,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var tex = new Texture2D(side, side, TextureFormat.RGBA32, false);
             var pixels = new Color32[side * side];
-            uint state = 0x13579BDFu;   // fixed seed: the file size must not vary between runs
+            uint state = 0x13579BDFu; // fixed seed: the file size must not vary between runs
             for (int i = 0; i < pixels.Length; i++)
             {
                 state = state * 1664525u + 1013904223u;
@@ -82,16 +79,14 @@ namespace MCPForUnityTests.Editor.Tools
             tex.Apply();
 
             string assetPath = $"{TempRoot}/{name}.png";
-            string sysPath = Path.Combine(
-                Directory.GetParent(Application.dataPath).FullName, assetPath);
+            string sysPath = Path.Combine(Directory.GetParent(Application.dataPath).FullName, assetPath);
             File.WriteAllBytes(sysPath, tex.EncodeToPNG());
             Object.DestroyImmediate(tex);
 
             // Asserts which side of SpriteImportSetup's 4 MB ceiling this landed on rather
             // than trusting the compressor; changing that ceiling breaks these lines loudly.
             if (assertOverCeiling)
-                Assert.Greater(new FileInfo(sysPath).Length, 4 * 1024 * 1024,
-                    "fixture: the noise sheet must exceed the inline-image ceiling");
+                Assert.Greater(new FileInfo(sysPath).Length, 4 * 1024 * 1024, "fixture: the noise sheet must exceed the inline-image ceiling");
             AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceSynchronousImport);
             return assetPath;
         }
@@ -107,8 +102,7 @@ namespace MCPForUnityTests.Editor.Tools
             tex.Apply();
 
             string assetPath = $"{TempRoot}/{name}.png";
-            string sysPath = Path.Combine(
-                Directory.GetParent(Application.dataPath).FullName, assetPath);
+            string sysPath = Path.Combine(Directory.GetParent(Application.dataPath).FullName, assetPath);
             File.WriteAllBytes(sysPath, tex.EncodeToPNG());
             // A Texture2D built in an EditMode test is not collected on its own.
             Object.DestroyImmediate(tex);
@@ -123,26 +117,24 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static JObject Slice(string path, int cols, int rows)
         {
-            var result = Run(new JObject
-            {
-                ["action"] = "slice_sheet",
-                ["path"] = path,
-                ["cols"] = cols,
-                ["rows"] = rows,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "slice_sheet",
+                    ["path"] = path,
+                    ["cols"] = cols,
+                    ["rows"] = rows,
+                }
+            );
             // The refusal tests call this helper too and check the failure themselves.
             if (result.Value<bool>("success"))
-                Assert.AreEqual(cols * rows, SpritesOf(path).Length,
-                    "fixture: slice_sheet produced fewer frames than the grid asked for");
+                Assert.AreEqual(cols * rows, SpritesOf(path).Length, "fixture: slice_sheet produced fewer frames than the grid asked for");
             return result;
         }
 
         /// <summary>The sliced frames, in the natural order their names imply.</summary>
         private static Sprite[] SpritesOf(string path) =>
-            AssetDatabase.LoadAllAssetsAtPath(path)
-                .OfType<Sprite>()
-                .OrderBy(s => int.Parse(s.name.Split('_').Last()))
-                .ToArray();
+            AssetDatabase.LoadAllAssetsAtPath(path).OfType<Sprite>().OrderBy(s => int.Parse(s.name.Split('_').Last())).ToArray();
 
         /// <summary>
         /// Lowers Max Size until the import is smaller than the file, the case where the
@@ -154,8 +146,11 @@ namespace MCPForUnityTests.Editor.Tools
             importer.maxTextureSize = maxSize;
             EditorUtility.SetDirty(importer);
             importer.SaveAndReimport();
-            Assert.AreEqual(expectedImportedWidth, AssetDatabase.LoadAssetAtPath<Texture2D>(path).width,
-                "fixture: Max Size must make the import smaller than the source");
+            Assert.AreEqual(
+                expectedImportedWidth,
+                AssetDatabase.LoadAssetAtPath<Texture2D>(path).width,
+                "fixture: Max Size must make the import smaller than the source"
+            );
         }
 
         /// <summary>Every importer field slice_sheet writes, as one comparable string.</summary>
@@ -165,8 +160,7 @@ namespace MCPForUnityTests.Editor.Tools
 #pragma warning disable CS0618 // same API the tool writes through
             int slices = importer.spritesheet.Length;
 #pragma warning restore CS0618
-            return $"type={importer.textureType} npot={importer.npotScale} mode={importer.spriteImportMode} " +
-                   $"filter={importer.filterMode} slices={slices}";
+            return $"type={importer.textureType} npot={importer.npotScale} mode={importer.spriteImportMode} " + $"filter={importer.filterMode} slices={slices}";
         }
 
         // =====================================================================
@@ -209,10 +203,15 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string path = CreateSheet("bad_flag", 4, 2);
             string before = ImportState(path);
-            var result = Run(new JObject
-            {
-                ["action"] = "full_setup", ["path"] = path, ["cols"] = 4, [key] = "maybe",
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    [key] = "maybe",
+                }
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["diagnostics"].ToString(), Does.Contain("BAD_PARAM"));
             Assert.AreEqual(before, ImportState(path));
@@ -228,18 +227,13 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var result = Run(new JObject { ["action"] = "get_info" });
             Assert.IsFalse(result.Value<bool>("success"));
-            Assert.That(ErrorText(result), Does.Contain("'path' is required"),
-                "success alone would also be false on the importer-not-found branch");
+            Assert.That(ErrorText(result), Does.Contain("'path' is required"), "success alone would also be false on the importer-not-found branch");
         }
 
         [Test]
         public void GetInfo_PathIsNotATexture_ReturnsError()
         {
-            var result = Run(new JObject
-            {
-                ["action"] = "get_info",
-                ["path"] = $"{TempRoot}/nothing_here.png",
-            });
+            var result = Run(new JObject { ["action"] = "get_info", ["path"] = $"{TempRoot}/nothing_here.png" });
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(ErrorText(result), Does.Contain("TextureImporter"));
         }
@@ -276,8 +270,7 @@ namespace MCPForUnityTests.Editor.Tools
             string path = CreateSheet("unsliced", 4, 2);
             var result = Run(new JObject { ["action"] = "get_info", ["path"] = path });
 
-            Assert.IsNotNull(result["slice_count"],
-                "an absent field also reads as 0, so the field itself has to be there");
+            Assert.IsNotNull(result["slice_count"], "an absent field also reads as 0, so the field itself has to be there");
             Assert.AreEqual(0, result.Value<int>("slice_count"));
             // The count alone would pass against a response that reported slices it never counted.
             Assert.AreEqual(0, ((JArray)result["slices"]).Count);
@@ -294,8 +287,7 @@ namespace MCPForUnityTests.Editor.Tools
             // slice_count is independent of the projected list - measured 2026-08-21,
             // emptying `slices` entirely left this test green.
             var names = ((JArray)result["slices"]).Select(t => t.Value<string>("name")).ToArray();
-            Assert.That(names, Is.EquivalentTo(SpritesOf(path).Select(s => s.name)),
-                "every slice is reported, not just counted");
+            Assert.That(names, Is.EquivalentTo(SpritesOf(path).Select(s => s.name)), "every slice is reported, not just counted");
         }
 
         [Test]
@@ -310,8 +302,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(8, ((JArray)result["slices"]).Count);
             // Value<int?> rather than indexing: an omitted property would throw instead of
             // asserting. Absent and null both mean "finished" - do not pin the shape.
-            Assert.IsNull(result.Value<int?>("next_cursor"),
-                "a finished list has no next cursor");
+            Assert.IsNull(result.Value<int?>("next_cursor"), "a finished list has no next cursor");
         }
 
         [Test]
@@ -320,16 +311,17 @@ namespace MCPForUnityTests.Editor.Tools
             string path = CreateSheet("paged", 4, 2);
             Slice(path, 4, 2);
 
-            var result = Run(new JObject
-            {
-                ["action"] = "get_info",
-                ["path"] = path,
-                ["page_size"] = 3,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "get_info",
+                    ["path"] = path,
+                    ["page_size"] = 3,
+                }
+            );
 
             Assert.AreEqual(3, ((JArray)result["slices"]).Count, "the page is bounded");
-            Assert.AreEqual(8, result.Value<int>("slice_count"),
-                "slice_count stays the total, not the size of the page");
+            Assert.AreEqual(8, result.Value<int>("slice_count"), "slice_count stays the total, not the size of the page");
             Assert.AreEqual(3, result.Value<int?>("next_cursor"));
         }
 
@@ -344,13 +336,15 @@ namespace MCPForUnityTests.Editor.Tools
             // Bounded so a cursor that never advances fails rather than hanging the run.
             for (int page = 0; page < 10 && cursor != null; page++)
             {
-                var result = Run(new JObject
-                {
-                    ["action"] = "get_info",
-                    ["path"] = path,
-                    ["page_size"] = 3,
-                    ["cursor"] = cursor.Value,
-                });
+                var result = Run(
+                    new JObject
+                    {
+                        ["action"] = "get_info",
+                        ["path"] = path,
+                        ["page_size"] = 3,
+                        ["cursor"] = cursor.Value,
+                    }
+                );
                 seen.AddRange(((JArray)result["slices"]).Select(t => t.Value<string>("name")));
                 cursor = result.Value<int?>("next_cursor");
             }
@@ -366,12 +360,14 @@ namespace MCPForUnityTests.Editor.Tools
             string path = CreateSheet("tail", 4, 2);
             Slice(path, 4, 2);
 
-            var result = Run(new JObject
-            {
-                ["action"] = "get_info",
-                ["path"] = path,
-                ["cursor"] = 8,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "get_info",
+                    ["path"] = path,
+                    ["cursor"] = 8,
+                }
+            );
 
             Assert.IsTrue(result.Value<bool>("success"));
             Assert.AreEqual(0, ((JArray)result["slices"]).Count);
@@ -386,7 +382,14 @@ namespace MCPForUnityTests.Editor.Tools
             string path = CreateSheet("cursor", 4, 2);
             Slice(path, 4, 2);
 
-            var result = Run(new JObject { ["action"] = "get_info", ["path"] = path, ["cursor"] = cursor });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "get_info",
+                    ["path"] = path,
+                    ["cursor"] = cursor,
+                }
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(ErrorText(result), Does.Contain("cursor"));
@@ -398,18 +401,15 @@ namespace MCPForUnityTests.Editor.Tools
             string path = CreateSheet("nofile", 4, 2);
             // Deleted WITHOUT Refresh, so the importer still resolves and the File.Exists
             // branch answers - the only branch that used to leak the absolute path.
-            string full = Path.Combine(
-                Directory.GetParent(Application.dataPath).FullName, path);
+            string full = Path.Combine(Directory.GetParent(Application.dataPath).FullName, path);
             File.Delete(full);
 
             var result = Run(new JObject { ["action"] = "get_info", ["path"] = path });
             string reason = result.Value<string>("image_omitted_reason");
 
             Assert.IsNotNull(reason, "fixture: the image was supposed to be dropped here");
-            Assert.That(reason, Does.Not.Contain(Application.dataPath),
-                "the response must not disclose where the project lives on disk");
-            Assert.That(reason, Does.Contain(path),
-                "it still has to say which asset it could not read");
+            Assert.That(reason, Does.Not.Contain(Application.dataPath), "the response must not disclose where the project lives on disk");
+            Assert.That(reason, Does.Contain(path), "it still has to say which asset it could not read");
         }
 
         [Test]
@@ -419,15 +419,21 @@ namespace MCPForUnityTests.Editor.Tools
             // warning existed: success, six sprites, empty diagnostics.
             string path = CreateSheetOfSize("remainder", 100, 16);
 
-            var result = Run(new JObject { ["action"] = "slice_sheet", ["path"] = path,
-                                           ["cols"] = 6, ["rows"] = 1 });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "slice_sheet",
+                    ["path"] = path,
+                    ["cols"] = 6,
+                    ["rows"] = 1,
+                }
+            );
 
             // Still a success: a trailing margin is ordinary and refusing would break it.
             Assert.IsTrue(result.Value<bool>("success"));
             Assert.AreEqual(6, SpritesOf(path).Length);
             Assert.That(result["diagnostics"].ToString(), Does.Contain("SLICE_GRID_REMAINDER"));
-            Assert.That(result["diagnostics"].ToString(), Does.Contain("100"),
-                "the warning has to name the texture size, or it cannot be acted on");
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("100"), "the warning has to name the texture size, or it cannot be acted on");
         }
 
         [Test]
@@ -436,8 +442,15 @@ namespace MCPForUnityTests.Editor.Tools
             // Without this, a warning firing on every slice looks like one firing correctly.
             string path = CreateSheetOfSize("exact", 96, 16);
 
-            var result = Run(new JObject { ["action"] = "slice_sheet", ["path"] = path,
-                                           ["cols"] = 6, ["rows"] = 1 });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "slice_sheet",
+                    ["path"] = path,
+                    ["cols"] = 6,
+                    ["rows"] = 1,
+                }
+            );
 
             Assert.IsTrue(result.Value<bool>("success"));
             Assert.That(result["diagnostics"].ToString(), Does.Not.Contain("SLICE_GRID_REMAINDER"));
@@ -450,8 +463,13 @@ namespace MCPForUnityTests.Editor.Tools
         public void SliceSheet_GridValueTooLargeForAnInt_IsRefusedNotThrown(string key)
         {
             string path = CreateSheet($"gridovf{key}", 4, 2);
-            var request = new JObject { ["action"] = "slice_sheet", ["path"] = path,
-                                        ["cols"] = 4, ["rows"] = 2 };
+            var request = new JObject
+            {
+                ["action"] = "slice_sheet",
+                ["path"] = path,
+                ["cols"] = 4,
+                ["rows"] = 2,
+            };
             request[key] = 2147483648L;
 
             // Measured 2026-08-21, before the guard: all four raised an uncaught
@@ -468,8 +486,15 @@ namespace MCPForUnityTests.Editor.Tools
         public void SliceSheet_FractionalGridValue_IsRefusedRatherThanRounded()
         {
             string path = CreateSheet("gridfrac", 4, 2);
-            var result = Run(new JObject { ["action"] = "slice_sheet", ["path"] = path,
-                                           ["cols"] = 2.7, ["rows"] = 2 });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "slice_sheet",
+                    ["path"] = path,
+                    ["cols"] = 2.7,
+                    ["rows"] = 2,
+                }
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(ErrorText(result), Does.Contain("cols"));
@@ -501,12 +526,14 @@ namespace MCPForUnityTests.Editor.Tools
             string path = CreateSheet("fractional", 4, 2);
             Slice(path, 4, 2);
 
-            var result = Run(new JObject
-            {
-                ["action"] = "get_info",
-                ["path"] = path,
-                ["page_size"] = 2.7,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "get_info",
+                    ["path"] = path,
+                    ["page_size"] = 2.7,
+                }
+            );
 
             // Measured before the guard: returned three slices and reported success.
             Assert.IsFalse(result.Value<bool>("success"));
@@ -521,12 +548,14 @@ namespace MCPForUnityTests.Editor.Tools
             string path = CreateSheet($"pagesize{pageSize}", 4, 2);
             Slice(path, 4, 2);
 
-            var result = Run(new JObject
-            {
-                ["action"] = "get_info",
-                ["path"] = path,
-                ["page_size"] = pageSize,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "get_info",
+                    ["path"] = path,
+                    ["page_size"] = pageSize,
+                }
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(ErrorText(result), Does.Contain("page_size"));
@@ -538,22 +567,25 @@ namespace MCPForUnityTests.Editor.Tools
             string path = CreateSheet("imageonce", 4, 2);
             Slice(path, 4, 2);
 
-            var first = Run(new JObject
-            {
-                ["action"] = "get_info",
-                ["path"] = path,
-                ["page_size"] = 3,
-            });
-            var second = Run(new JObject
-            {
-                ["action"] = "get_info",
-                ["path"] = path,
-                ["page_size"] = 3,
-                ["cursor"] = 3,
-            });
+            var first = Run(
+                new JObject
+                {
+                    ["action"] = "get_info",
+                    ["path"] = path,
+                    ["page_size"] = 3,
+                }
+            );
+            var second = Run(
+                new JObject
+                {
+                    ["action"] = "get_info",
+                    ["path"] = path,
+                    ["page_size"] = 3,
+                    ["cursor"] = 3,
+                }
+            );
 
-            Assert.IsNotNull(first.Value<string>("image_base64"),
-                "fixture: the first page is supposed to carry the image");
+            Assert.IsNotNull(first.Value<string>("image_base64"), "fixture: the first page is supposed to carry the image");
             Assert.IsNull(second.Value<string>("image_base64"));
             Assert.That(second.Value<string>("image_omitted_reason"), Does.Contain("first page"));
         }
@@ -632,8 +664,7 @@ namespace MCPForUnityTests.Editor.Tools
             var result = Slice(path, 6, 1);
 
             Assert.IsTrue(result.Value<bool>("success"));
-            Assert.AreEqual(Cell, result.Value<int>("frame_width"),
-                "the grid must be measured against the sheet's real width");
+            Assert.AreEqual(Cell, result.Value<int>("frame_width"), "the grid must be measured against the sheet's real width");
             Assert.AreEqual(6, SpritesOf(path).Length, "no frame may be dropped");
         }
 
@@ -684,13 +715,15 @@ namespace MCPForUnityTests.Editor.Tools
         public void SliceSheet_FrameWidthAloneDerivesTheColumnCount()
         {
             string path = CreateSheet("derive", 4, 1);
-            var result = Run(new JObject
-            {
-                ["action"] = "slice_sheet",
-                ["path"] = path,
-                ["frame_width"] = Cell,
-                ["frame_height"] = Cell,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "slice_sheet",
+                    ["path"] = path,
+                    ["frame_width"] = Cell,
+                    ["frame_height"] = Cell,
+                }
+            );
 
             Assert.IsTrue(result.Value<bool>("success"));
             Assert.AreEqual(4, result.Value<int>("cols"));
@@ -701,13 +734,15 @@ namespace MCPForUnityTests.Editor.Tools
         public void SliceSheet_BaseNameOverridesTheFileName()
         {
             string path = CreateSheet("filename", 2, 1);
-            Run(new JObject
-            {
-                ["action"] = "slice_sheet",
-                ["path"] = path,
-                ["cols"] = 2,
-                ["base_name"] = "hero",
-            });
+            Run(
+                new JObject
+                {
+                    ["action"] = "slice_sheet",
+                    ["path"] = path,
+                    ["cols"] = 2,
+                    ["base_name"] = "hero",
+                }
+            );
 
             Assert.That(SpritesOf(path).Select(s => s.name), Is.EquivalentTo(new[] { "hero_0", "hero_1" }));
         }
@@ -718,8 +753,15 @@ namespace MCPForUnityTests.Editor.Tools
             // rows defaulted to 1 even when frame_height was there to derive it from, so the
             // documented alternative produced a single row and a remainder warning.
             string path = CreateSheet("derive_rows", 4, 4);
-            var result = Run(new JObject { ["action"] = "slice_sheet", ["path"] = path,
-                                           ["cols"] = 4, ["frame_height"] = Cell });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "slice_sheet",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    ["frame_height"] = Cell,
+                }
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(4, result.Value<int>("rows"));
@@ -733,23 +775,31 @@ namespace MCPForUnityTests.Editor.Tools
         public void FilterMode_IsWhatTheSliceSets_PointUnlessAsked(string action, string filterMode, FilterMode expected)
         {
             string path = CreateSheet("filter", 4, 1);
-            Assert.AreEqual(FilterMode.Bilinear, ((TextureImporter)AssetImporter.GetAtPath(path)).filterMode,
-                "fixture: a sheet that starts as Point would let the Point case pass without the slice setting it");
-            var request = new JObject { ["action"] = action, ["path"] = path, ["cols"] = 4 };
+            Assert.AreEqual(
+                FilterMode.Bilinear,
+                ((TextureImporter)AssetImporter.GetAtPath(path)).filterMode,
+                "fixture: a sheet that starts as Point would let the Point case pass without the slice setting it"
+            );
+            var request = new JObject
+            {
+                ["action"] = action,
+                ["path"] = path,
+                ["cols"] = 4,
+            };
             if (filterMode != null)
                 request["filter_mode"] = filterMode;
 
             var result = Run(request);
 
-            Assert.AreEqual(expected, ((TextureImporter)AssetImporter.GetAtPath(path)).filterMode,
-                result.ToString(Newtonsoft.Json.Formatting.None));
+            Assert.AreEqual(expected, ((TextureImporter)AssetImporter.GetAtPath(path)).filterMode, result.ToString(Newtonsoft.Json.Formatting.None));
         }
 
         private static IEnumerable<TestCaseData> RefusedGrids()
         {
             TestCaseData Case(int sheetCols, int sheetRows, JObject grid, string code) =>
-                new TestCaseData(sheetCols, sheetRows, grid, code)
-                    .SetName($"{code} from {string.Join(",", grid.Properties().Select(p => p.Name + "=" + p.Value))}");
+                new TestCaseData(sheetCols, sheetRows, grid, code).SetName(
+                    $"{code} from {string.Join(",", grid.Properties().Select(p => p.Name + "=" + p.Value))}"
+                );
 
             // A frame wider than the sheet derives 0 columns.
             yield return Case(2, 1, new JObject { ["frame_width"] = 4096 }, "SLICE_EMPTY");
@@ -758,7 +808,17 @@ namespace MCPForUnityTests.Editor.Tools
             // Only reachable after the texture is measured, so moving the argument checks
             // earlier could not close this form of the class; the height axis reaches it too.
             yield return Case(2, 1, new JObject { ["cols"] = 2, ["frame_width"] = 4096 }, "SLICE_OUT_OF_BOUNDS");
-            yield return Case(2, 1, new JObject { ["cols"] = 2, ["rows"] = 1, ["frame_height"] = 4096 }, "SLICE_OUT_OF_BOUNDS");
+            yield return Case(
+                2,
+                1,
+                new JObject
+                {
+                    ["cols"] = 2,
+                    ["rows"] = 1,
+                    ["frame_height"] = 4096,
+                },
+                "SLICE_OUT_OF_BOUNDS"
+            );
             // 64 columns across 32 pixels derives a 0-wide frame, whose product passes any
             // "does it fit" test - 64 degenerate rects, reported as success.
             yield return Case(2, 1, new JObject { ["cols"] = 64 }, "SLICE_OUT_OF_BOUNDS");
@@ -776,8 +836,7 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [TestCaseSource(nameof(RefusedGrids))]
-        public void SliceSheet_GridThatCannotBeCut_IsRefusedAndLeavesTheTextureAlone(
-            int sheetCols, int sheetRows, JObject grid, string code)
+        public void SliceSheet_GridThatCannotBeCut_IsRefusedAndLeavesTheTextureAlone(int sheetCols, int sheetRows, JObject grid, string code)
         {
             string path = CreateSheet("badgrid", sheetCols, sheetRows);
             string before = ImportState(path);
@@ -792,8 +851,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(0, SpritesOf(path).Length, "a refused grid must not write any frame");
             // Every refusal after the conversion owes a restore call, an obligation the code
             // cannot enforce; this assertion makes a forgotten one fail.
-            Assert.AreEqual(before, ImportState(path),
-                "a refused request must not leave the importer modified behind it");
+            Assert.AreEqual(before, ImportState(path), "a refused request must not leave the importer modified behind it");
         }
 
         [Test]
@@ -802,12 +860,18 @@ namespace MCPForUnityTests.Editor.Tools
             string path = CreateSheet("npot_default_refused", 6, 1);
             var importer = (TextureImporter)AssetImporter.GetAtPath(path);
             Assert.AreEqual(TextureImporterType.Default, importer.textureType, "fixture: expected a Default-type sheet");
-            Assert.AreNotEqual(TextureImporterNPOTScale.None, importer.npotScale,
-                "fixture: the conversion only touches npotScale when it is not None");
+            Assert.AreNotEqual(TextureImporterNPOTScale.None, importer.npotScale, "fixture: the conversion only touches npotScale when it is not None");
             var npotBefore = importer.npotScale;
 
-            var result = Run(new JObject { ["action"] = "slice_sheet", ["path"] = path,
-                                           ["cols"] = 6, ["frame_width"] = 4096 });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "slice_sheet",
+                    ["path"] = path,
+                    ["cols"] = 6,
+                    ["frame_width"] = 4096,
+                }
+            );
 
             Assert.That(result["diagnostics"].ToString(), Does.Contain("SLICE_OUT_OF_BOUNDS"));
             Assert.AreEqual(npotBefore, ((TextureImporter)AssetImporter.GetAtPath(path)).npotScale);
@@ -823,7 +887,8 @@ namespace MCPForUnityTests.Editor.Tools
 
             private void OnPreprocessTexture()
             {
-                if (assetPath != ArmedPath) return;
+                if (assetPath != ArmedPath)
+                    return;
                 var importer = (TextureImporter)assetImporter;
                 if (importer.spriteImportMode == SpriteImportMode.Multiple)
                     importer.textureType = TextureImporterType.Default;
@@ -837,7 +902,8 @@ namespace MCPForUnityTests.Editor.Tools
 
             private void OnPreprocessTexture()
             {
-                if (assetPath == ArmedPath) Count++;
+                if (assetPath == ArmedPath)
+                    Count++;
             }
         }
 
@@ -847,8 +913,14 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string path = CreateSheet("import_count", 6, 1);
             string before = ImportState(path);
-            var request = new JObject { ["action"] = "slice_sheet", ["path"] = path, ["cols"] = 6 };
-            if (invalidGrid) request["frame_width"] = 4096;
+            var request = new JObject
+            {
+                ["action"] = "slice_sheet",
+                ["path"] = path,
+                ["cols"] = 6,
+            };
+            if (invalidGrid)
+                request["frame_width"] = 4096;
 
             CountSpriteImports.ArmedPath = path;
             CountSpriteImports.Count = 0;
@@ -857,8 +929,10 @@ namespace MCPForUnityTests.Editor.Tools
                 var result = Run(request);
                 Assert.AreEqual(!invalidGrid, result.Value<bool>("success"), result.ToString());
                 Assert.AreEqual(expectedImports, CountSpriteImports.Count);
-                if (invalidGrid) Assert.AreEqual(before, ImportState(path));
-                else Assert.AreEqual(6, SpritesOf(path).Length);
+                if (invalidGrid)
+                    Assert.AreEqual(before, ImportState(path));
+                else
+                    Assert.AreEqual(6, SpritesOf(path).Length);
             }
             finally
             {
@@ -876,17 +950,26 @@ namespace MCPForUnityTests.Editor.Tools
             StripSpritesFromSliceImport.ArmedPath = path;
             try
             {
-                result = Run(new JObject { ["action"] = "slice_sheet", ["path"] = path, ["cols"] = 4 });
+                result = Run(
+                    new JObject
+                    {
+                        ["action"] = "slice_sheet",
+                        ["path"] = path,
+                        ["cols"] = 4,
+                    }
+                );
             }
             finally
             {
                 StripSpritesFromSliceImport.ArmedPath = null;
             }
 
-            Assert.That(result["diagnostics"].ToString(), Does.Contain("SLICE_NOT_GENERATED"),
-                "fixture: the postprocessor did not stop sprite generation; " + result.ToString(Newtonsoft.Json.Formatting.None));
-            Assert.AreEqual(before, ImportState(path),
-                "a slice Unity did not generate must not leave its settings on the asset");
+            Assert.That(
+                result["diagnostics"].ToString(),
+                Does.Contain("SLICE_NOT_GENERATED"),
+                "fixture: the postprocessor did not stop sprite generation; " + result.ToString(Newtonsoft.Json.Formatting.None)
+            );
+            Assert.AreEqual(before, ImportState(path), "a slice Unity did not generate must not leave its settings on the asset");
         }
 
         [Test]
@@ -901,33 +984,43 @@ namespace MCPForUnityTests.Editor.Tools
 #pragma warning disable CS0618 // same API the tool writes through
             int configured = ((TextureImporter)AssetImporter.GetAtPath(path)).spritesheet.Length;
 #pragma warning restore CS0618
-            Assert.AreEqual(2, after.Length,
-                $"stale frames must not survive a reslice; importer holds {configured}, " +
-                "project holds: " + string.Join(", ", after));
+            Assert.AreEqual(
+                2,
+                after.Length,
+                $"stale frames must not survive a reslice; importer holds {configured}, " + "project holds: " + string.Join(", ", after)
+            );
             // A clip that played reslice_2..7 loses those frames, so the slice has to name them.
-            Assert.That(smaller["diagnostics"].ToString(),
-                Does.Contain("SLICE_REMOVED_FRAMES").And.Contain("reslice_7").And.Not.Contain("reslice_1"));
-            Assert.That(Slice(path, 2, 1)["diagnostics"].ToString(), Does.Not.Contain("SLICE_REMOVED_FRAMES"),
-                "the same grid again removes nothing");
+            Assert.That(smaller["diagnostics"].ToString(), Does.Contain("SLICE_REMOVED_FRAMES").And.Contain("reslice_7").And.Not.Contain("reslice_1"));
+            Assert.That(Slice(path, 2, 1)["diagnostics"].ToString(), Does.Not.Contain("SLICE_REMOVED_FRAMES"), "the same grid again removes nothing");
         }
 
         // =====================================================================
         // setup_clips
         // =====================================================================
 
-        private static JObject SetupClips(string path, JArray clips) => Run(new JObject
-        {
-            ["action"] = "setup_clips",
-            ["path"] = path,
-            ["clips"] = clips,
-            ["output_dir"] = TempRoot,
-        });
+        private static JObject SetupClips(string path, JArray clips) =>
+            Run(
+                new JObject
+                {
+                    ["action"] = "setup_clips",
+                    ["path"] = path,
+                    ["clips"] = clips,
+                    ["output_dir"] = TempRoot,
+                }
+            );
 
         private static JArray OneClip(string name, int start, int end, float? fps = null, bool? loop = null)
         {
-            var clip = new JObject { ["name"] = name, ["start_frame"] = start, ["end_frame"] = end };
-            if (fps.HasValue) clip["fps"] = fps.Value;
-            if (loop.HasValue) clip["loop"] = loop.Value;
+            var clip = new JObject
+            {
+                ["name"] = name,
+                ["start_frame"] = start,
+                ["end_frame"] = end,
+            };
+            if (fps.HasValue)
+                clip["fps"] = fps.Value;
+            if (loop.HasValue)
+                clip["loop"] = loop.Value;
             return new JArray { clip };
         }
 
@@ -955,8 +1048,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             var binding = AnimationUtility.GetObjectReferenceCurveBindings(clip).Single();
             Assert.AreEqual(typeof(SpriteRenderer), binding.type);
-            Assert.AreEqual("m_Sprite", binding.propertyName,
-                "anything else animates the wrong property and shows nothing");
+            Assert.AreEqual("m_Sprite", binding.propertyName, "anything else animates the wrong property and shows nothing");
             Assert.AreEqual(4, AnimationUtility.GetObjectReferenceCurve(clip, binding).Length);
         }
 
@@ -984,11 +1076,15 @@ namespace MCPForUnityTests.Editor.Tools
             Slice(path, 4, 2);
             string outputDir = $"{TempRoot}/Unused/Nested";
 
-            var result = Run(new JObject
-            {
-                ["action"] = "setup_clips", ["path"] = path,
-                ["clips"] = OneClip("walk", 0, 7, fps), ["output_dir"] = outputDir,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "setup_clips",
+                    ["path"] = path,
+                    ["clips"] = OneClip("walk", 0, 7, fps),
+                    ["output_dir"] = outputDir,
+                }
+            );
 
             Assert.AreEqual(0, result.Value<int>("clip_count"));
             Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_BAD_FPS"));
@@ -1019,19 +1115,22 @@ namespace MCPForUnityTests.Editor.Tools
             string path = CreateSheet("subrange", 4, 2);
             Slice(path, 4, 2);
             string outputDir = $"{TempRoot}/Clips/Nested";
-            var result = Run(new JObject
-            {
-                ["action"] = "setup_clips", ["path"] = path,
-                ["clips"] = OneClip("walk", 2, 5, 8f), ["output_dir"] = outputDir,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "setup_clips",
+                    ["path"] = path,
+                    ["clips"] = OneClip("walk", 2, 5, 8f),
+                    ["output_dir"] = outputDir,
+                }
+            );
 
             Assert.AreEqual(1, result.Value<int>("clip_count"));
             Assert.AreEqual(0.5f, result["clips"][0].Value<float>("duration"));
             var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>($"{outputDir}/walk.anim");
             var binding = AnimationUtility.GetObjectReferenceCurveBindings(clip).Single();
             var keys = AnimationUtility.GetObjectReferenceCurve(clip, binding);
-            Assert.AreEqual(SpritesOf(path).Skip(2).Take(4).Select(s => s.name).ToArray(),
-                keys.Select(k => k.value.name).ToArray());
+            Assert.AreEqual(SpritesOf(path).Skip(2).Take(4).Select(s => s.name).ToArray(), keys.Select(k => k.value.name).ToArray());
             Assert.AreEqual(new[] { 0f, 0.125f, 0.25f, 0.375f }, keys.Select(k => k.time).ToArray());
         }
 
@@ -1041,15 +1140,30 @@ namespace MCPForUnityTests.Editor.Tools
             string path = CreateSheet("partialfolders", 4, 1);
             Slice(path, 4, 1);
             string outputDir = $"{TempRoot}/Partial/Nested";
-            var result = Run(new JObject
-            {
-                ["action"] = "setup_clips", ["path"] = path, ["output_dir"] = outputDir,
-                ["clips"] = new JArray
+            var result = Run(
+                new JObject
                 {
-                    new JObject { ["name"] = "idle", ["start_frame"] = 0, ["end_frame"] = 1 },
-                    new JObject { ["name"] = "walk", ["start_frame"] = 2, ["end_frame"] = 3, ["fps"] = 0 },
-                },
-            });
+                    ["action"] = "setup_clips",
+                    ["path"] = path,
+                    ["output_dir"] = outputDir,
+                    ["clips"] = new JArray
+                    {
+                        new JObject
+                        {
+                            ["name"] = "idle",
+                            ["start_frame"] = 0,
+                            ["end_frame"] = 1,
+                        },
+                        new JObject
+                        {
+                            ["name"] = "walk",
+                            ["start_frame"] = 2,
+                            ["end_frame"] = 3,
+                            ["fps"] = 0,
+                        },
+                    },
+                }
+            );
 
             Assert.AreEqual(1, result.Value<int>("clip_count"));
             Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_BAD_FPS"));
@@ -1096,19 +1210,30 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string path = CreateSheet("loopname", 4, 1);
             Slice(path, 4, 1);
-            SetupClips(path, new JArray
-            {
-                new JObject { ["name"] = "walk", ["start_frame"] = 0, ["end_frame"] = 1 },
-                new JObject { ["name"] = "attack", ["start_frame"] = 2, ["end_frame"] = 3 },
-            });
+            SetupClips(
+                path,
+                new JArray
+                {
+                    new JObject
+                    {
+                        ["name"] = "walk",
+                        ["start_frame"] = 0,
+                        ["end_frame"] = 1,
+                    },
+                    new JObject
+                    {
+                        ["name"] = "attack",
+                        ["start_frame"] = 2,
+                        ["end_frame"] = 3,
+                    },
+                }
+            );
 
             var walk = AssetDatabase.LoadAssetAtPath<AnimationClip>($"{TempRoot}/walk.anim");
             var attack = AssetDatabase.LoadAssetAtPath<AnimationClip>($"{TempRoot}/attack.anim");
 
-            Assert.IsTrue(AnimationUtility.GetAnimationClipSettings(walk).loopTime,
-                "locomotion should loop");
-            Assert.IsFalse(AnimationUtility.GetAnimationClipSettings(attack).loopTime,
-                "a one-shot attack should not loop");
+            Assert.IsTrue(AnimationUtility.GetAnimationClipSettings(walk).loopTime, "locomotion should loop");
+            Assert.IsFalse(AnimationUtility.GetAnimationClipSettings(attack).loopTime, "a one-shot attack should not loop");
         }
 
         [Test]
@@ -1124,34 +1249,144 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static IEnumerable<TestCaseData> RefusedClips()
         {
-            TestCaseData Case(string label, JToken clip, string code) =>
-                new TestCaseData(clip, code).SetName($"{code}: {label}");
+            TestCaseData Case(string label, JToken clip, string code) => new TestCaseData(clip, code).SetName($"{code}: {label}");
 
             // Measured 2026-08-21: `loop: "maybe"` raised an uncaught FormatException, and
             // `loop: 2` was accepted silently. loop is the one flag with no type above C#.
-            yield return Case("loop is not a bool", new JObject { ["name"] = "walk", ["start_frame"] = 0, ["end_frame"] = 3, ["loop"] = "maybe" }, "CLIP_BAD_LOOP");
+            yield return Case(
+                "loop is not a bool",
+                new JObject
+                {
+                    ["name"] = "walk",
+                    ["start_frame"] = 0,
+                    ["end_frame"] = 3,
+                    ["loop"] = "maybe",
+                },
+                "CLIP_BAD_LOOP"
+            );
             // Before the guard these threw OverflowException out of the tool.
-            yield return Case("start_frame overflows int", new JObject { ["name"] = "walk", ["start_frame"] = 2147483648L, ["end_frame"] = 3 }, "CLIP_BAD_RANGE");
-            yield return Case("end_frame overflows int", new JObject { ["name"] = "walk", ["start_frame"] = 0, ["end_frame"] = 2147483648L }, "CLIP_BAD_RANGE");
+            yield return Case(
+                "start_frame overflows int",
+                new JObject
+                {
+                    ["name"] = "walk",
+                    ["start_frame"] = 2147483648L,
+                    ["end_frame"] = 3,
+                },
+                "CLIP_BAD_RANGE"
+            );
+            yield return Case(
+                "end_frame overflows int",
+                new JObject
+                {
+                    ["name"] = "walk",
+                    ["start_frame"] = 0,
+                    ["end_frame"] = 2147483648L,
+                },
+                "CLIP_BAD_RANGE"
+            );
             // Measured before the guard: rounded to 3, wrote a clip, reported success.
-            yield return Case("fractional start_frame", new JObject { ["name"] = "walk", ["start_frame"] = 2.7, ["end_frame"] = 5 }, "CLIP_BAD_RANGE");
+            yield return Case(
+                "fractional start_frame",
+                new JObject
+                {
+                    ["name"] = "walk",
+                    ["start_frame"] = 2.7,
+                    ["end_frame"] = 5,
+                },
+                "CLIP_BAD_RANGE"
+            );
             // `fps <= 0f` is false for NaN, so the clip was written with NaN keyframe times.
-            yield return Case("NaN fps", new JObject { ["name"] = "walk", ["start_frame"] = 0, ["end_frame"] = 5, ["fps"] = double.NaN }, "CLIP_BAD_FPS");
-            yield return Case("zero fps", new JObject { ["name"] = "walk", ["start_frame"] = 0, ["end_frame"] = 3, ["fps"] = 0f }, "CLIP_BAD_FPS");
+            yield return Case(
+                "NaN fps",
+                new JObject
+                {
+                    ["name"] = "walk",
+                    ["start_frame"] = 0,
+                    ["end_frame"] = 5,
+                    ["fps"] = double.NaN,
+                },
+                "CLIP_BAD_FPS"
+            );
+            yield return Case(
+                "zero fps",
+                new JObject
+                {
+                    ["name"] = "walk",
+                    ["start_frame"] = 0,
+                    ["end_frame"] = 3,
+                    ["fps"] = 0f,
+                },
+                "CLIP_BAD_FPS"
+            );
             // Skip/Take clamps silently: an eight-frame clip for a hundred-frame request.
-            yield return Case("end_frame past the sheet", new JObject { ["name"] = "walk", ["start_frame"] = 0, ["end_frame"] = 99 }, "CLIP_BAD_RANGE");
-            yield return Case("range beyond the sheet", new JObject { ["name"] = "walk", ["start_frame"] = 90, ["end_frame"] = 99 }, "CLIP_BAD_RANGE");
+            yield return Case(
+                "end_frame past the sheet",
+                new JObject
+                {
+                    ["name"] = "walk",
+                    ["start_frame"] = 0,
+                    ["end_frame"] = 99,
+                },
+                "CLIP_BAD_RANGE"
+            );
+            yield return Case(
+                "range beyond the sheet",
+                new JObject
+                {
+                    ["name"] = "walk",
+                    ["start_frame"] = 90,
+                    ["end_frame"] = 99,
+                },
+                "CLIP_BAD_RANGE"
+            );
             // Skip ignores a negative count, so [-2,3] used to select frames 0..5.
-            yield return Case("negative start_frame", new JObject { ["name"] = "walk", ["start_frame"] = -2, ["end_frame"] = 3 }, "CLIP_BAD_RANGE");
+            yield return Case(
+                "negative start_frame",
+                new JObject
+                {
+                    ["name"] = "walk",
+                    ["start_frame"] = -2,
+                    ["end_frame"] = 3,
+                },
+                "CLIP_BAD_RANGE"
+            );
             yield return Case("no name", new JObject { ["start_frame"] = 0, ["end_frame"] = 3 }, "CLIP_NO_NAME");
             // The name is joined into a file path, so separators would escape output_dir.
-            yield return Case("name escapes output_dir", new JObject { ["name"] = "../../evil", ["start_frame"] = 0, ["end_frame"] = 3 }, "CLIP_BAD_NAME");
-            yield return Case("name with a separator", new JObject { ["name"] = "nested/walk", ["start_frame"] = 0, ["end_frame"] = 3 }, "CLIP_BAD_NAME");
+            yield return Case(
+                "name escapes output_dir",
+                new JObject
+                {
+                    ["name"] = "../../evil",
+                    ["start_frame"] = 0,
+                    ["end_frame"] = 3,
+                },
+                "CLIP_BAD_NAME"
+            );
+            yield return Case(
+                "name with a separator",
+                new JObject
+                {
+                    ["name"] = "nested/walk",
+                    ["start_frame"] = 0,
+                    ["end_frame"] = 3,
+                },
+                "CLIP_BAD_NAME"
+            );
             // Forwarded unchanged by the Python surface; the typed cast threw on them.
             yield return Case("entry is a string", new JValue("not_an_object"), "CLIP_NOT_AN_OBJECT");
             yield return Case("entry is a number", new JValue(7), "CLIP_NOT_AN_OBJECT");
             // Legal in an asset path as far as SanitizeAssetPath is concerned, illegal in a file name.
-            yield return Case("name with a character no file name allows", new JObject { ["name"] = "bad:name", ["start_frame"] = 0, ["end_frame"] = 3 }, "CLIP_BAD_NAME");
+            yield return Case(
+                "name with a character no file name allows",
+                new JObject
+                {
+                    ["name"] = "bad:name",
+                    ["start_frame"] = 0,
+                    ["end_frame"] = 3,
+                },
+                "CLIP_BAD_NAME"
+            );
         }
 
         [TestCaseSource(nameof(RefusedClips))]
@@ -1164,8 +1399,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             Assert.AreEqual(0, result.Value<int>("clip_count"));
             Assert.That(result["diagnostics"].ToString(), Does.Contain(code));
-            Assert.AreEqual(0, AssetDatabase.FindAssets("t:AnimationClip", new[] { TempRoot }).Length,
-                "a skipped clip must not leave an asset behind");
+            Assert.AreEqual(0, AssetDatabase.FindAssets("t:AnimationClip", new[] { TempRoot }).Length, "a skipped clip must not leave an asset behind");
         }
 
         [Test]
@@ -1174,13 +1408,15 @@ namespace MCPForUnityTests.Editor.Tools
             string path = CreateSheet("escape", 4, 1);
             Slice(path, 4, 1);
 
-            var result = Run(new JObject
-            {
-                ["action"] = "setup_clips",
-                ["path"] = path,
-                ["clips"] = OneClip("walk", 0, 3),
-                ["output_dir"] = $"{TempRoot}/../../../outside",
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "setup_clips",
+                    ["path"] = path,
+                    ["clips"] = OneClip("walk", 0, 3),
+                    ["output_dir"] = $"{TempRoot}/../../../outside",
+                }
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(ErrorText(result), Does.Contain("output_dir"));
@@ -1217,14 +1453,16 @@ namespace MCPForUnityTests.Editor.Tools
             AssetDatabase.CreateAsset(sentinel, $"{TempRoot}/walk.anim");
             AssetDatabase.SaveAssets();
 
-            var result = Run(new JObject
-            {
-                ["action"] = "setup_clips",
-                ["path"] = path,
-                ["clips"] = OneClip("walk", 0, 3),
-                ["output_dir"] = TempRoot,
-                ["overwrite"] = true,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "setup_clips",
+                    ["path"] = path,
+                    ["clips"] = OneClip("walk", 0, 3),
+                    ["output_dir"] = TempRoot,
+                    ["overwrite"] = true,
+                }
+            );
 
             Assert.AreEqual(1, result.Value<int>("clip_count"));
             var after = AssetDatabase.LoadAssetAtPath<AnimationClip>($"{TempRoot}/walk.anim");
@@ -1258,12 +1496,16 @@ namespace MCPForUnityTests.Editor.Tools
             string destination = $"{TempRoot}/walk.anim";
             string guid = AssetDatabase.CreateFolder(TempRoot, "walk.anim");
 
-            var result = Run(new JObject
-            {
-                ["action"] = "setup_clips", ["path"] = path,
-                ["clips"] = OneClip("walk", 0, 3), ["output_dir"] = TempRoot,
-                ["overwrite"] = overwrite,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "setup_clips",
+                    ["path"] = path,
+                    ["clips"] = OneClip("walk", 0, 3),
+                    ["output_dir"] = TempRoot,
+                    ["overwrite"] = overwrite,
+                }
+            );
 
             Assert.AreEqual(0, result.Value<int>("clip_count"));
             Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_BAD_PATH"));
@@ -1288,13 +1530,16 @@ namespace MCPForUnityTests.Editor.Tools
         // setup_controller
         // =====================================================================
 
-        private static JObject SetupController(JArray clips, bool overwrite = false) => Run(new JObject
-        {
-            ["action"] = "setup_controller",
-            ["clips"] = clips,
-            ["controller_path"] = $"{TempRoot}/Hero.controller",
-            ["overwrite"] = overwrite,
-        });
+        private static JObject SetupController(JArray clips, bool overwrite = false) =>
+            Run(
+                new JObject
+                {
+                    ["action"] = "setup_controller",
+                    ["clips"] = clips,
+                    ["controller_path"] = $"{TempRoot}/Hero.controller",
+                    ["overwrite"] = overwrite,
+                }
+            );
 
         /// <summary>Slices a sheet and builds the named clips, returning [{name, path}] for the controller.</summary>
         private static JArray BuildClips(string sheet, params string[] names)
@@ -1304,16 +1549,24 @@ namespace MCPForUnityTests.Editor.Tools
 
             var defs = new JArray();
             for (int i = 0; i < names.Length; i++)
-                defs.Add(new JObject { ["name"] = names[i], ["start_frame"] = i * 2, ["end_frame"] = i * 2 + 1 });
+                defs.Add(
+                    new JObject
+                    {
+                        ["name"] = names[i],
+                        ["start_frame"] = i * 2,
+                        ["end_frame"] = i * 2 + 1,
+                    }
+                );
             var clipResult = SetupClips(path, defs);
 
             var refs = new JArray();
             foreach (string n in names)
             {
                 string clipPath = $"{TempRoot}/{n}.anim";
-                Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath),
-                    $"fixture: clip '{n}' was not written to {clipPath}; setup_clips said " +
-                    clipResult.ToString(Newtonsoft.Json.Formatting.None));
+                Assert.IsNotNull(
+                    AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath),
+                    $"fixture: clip '{n}' was not written to {clipPath}; setup_clips said " + clipResult.ToString(Newtonsoft.Json.Formatting.None)
+                );
                 refs.Add(new JObject { ["name"] = n, ["path"] = clipPath });
             }
             return refs;
@@ -1322,11 +1575,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SetupController_WithoutClips_ReturnsError()
         {
-            var result = Run(new JObject
-            {
-                ["action"] = "setup_controller",
-                ["controller_path"] = $"{TempRoot}/Hero.controller",
-            });
+            var result = Run(new JObject { ["action"] = "setup_controller", ["controller_path"] = $"{TempRoot}/Hero.controller" });
             Assert.IsFalse(result.Value<bool>("success"));
             // Not just success=false: Newtonsoft reads an absent "success" as false too.
             Assert.That(ErrorText(result), Does.Contain("clips"));
@@ -1335,11 +1584,16 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SetupController_WithoutControllerPath_ReturnsError()
         {
-            var result = Run(new JObject
-            {
-                ["action"] = "setup_controller",
-                ["clips"] = new JArray { new JObject { ["name"] = "walk", ["path"] = "x.anim" } },
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "setup_controller",
+                    ["clips"] = new JArray
+                    {
+                        new JObject { ["name"] = "walk", ["path"] = "x.anim" },
+                    },
+                }
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(ErrorText(result), Does.Contain("controller_path"));
         }
@@ -1349,20 +1603,26 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("Assets", "Assets.controller")]
         [TestCase("Assets/", "Assets/.controller")]
         [TestCase("   ", "Assets/   .controller")]
-        [TestCase(TempRoot, TempRoot + ".controller")]   // an existing folder, no trailing slash
+        [TestCase(TempRoot, TempRoot + ".controller")] // an existing folder, no trailing slash
         public void SetupController_ControllerPathThatIsOnlyAFolder_IsRefusedBeforeWriting(string controllerPath, string strayRelative)
         {
             var clips = BuildClips("folderctrl", "idle", "walk");
-            var result = Run(new JObject
-            {
-                ["action"] = "setup_controller",
-                ["clips"] = clips,
-                ["controller_path"] = controllerPath,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "setup_controller",
+                    ["clips"] = clips,
+                    ["controller_path"] = controllerPath,
+                }
+            );
 
             string stray = Path.Combine(Directory.GetParent(Application.dataPath).FullName, strayRelative);
             bool leaked = File.Exists(stray);
-            if (leaked) { File.Delete(stray); File.Delete(stray + ".meta"); }
+            if (leaked)
+            {
+                File.Delete(stray);
+                File.Delete(stray + ".meta");
+            }
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(ErrorText(result), Does.Contain("controller_path"));
@@ -1384,10 +1644,12 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SetupController_ClipsThatDoNotExist_ReturnsError()
         {
-            var result = SetupController(new JArray
-            {
-                new JObject { ["name"] = "walk", ["path"] = $"{TempRoot}/missing.anim" },
-            });
+            var result = SetupController(
+                new JArray
+                {
+                    new JObject { ["name"] = "walk", ["path"] = $"{TempRoot}/missing.anim" },
+                }
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_NOT_FOUND"));
         }
@@ -1397,16 +1659,17 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // The all-skipped path returns a generic error, so the caller learned the clips
             // did not load without learning why.
-            var result = Run(new JObject
-            {
-                ["action"] = "setup_controller",
-                ["clips"] = new JArray { 7 },
-                ["controller_path"] = $"{TempRoot}/Skipped.controller",
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "setup_controller",
+                    ["clips"] = new JArray { 7 },
+                    ["controller_path"] = $"{TempRoot}/Skipped.controller",
+                }
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
-            Assert.That(result.ToString(), Does.Contain("CLIP_NOT_AN_OBJECT"),
-                "the response must carry the reason the builder recorded");
+            Assert.That(result.ToString(), Does.Contain("CLIP_NOT_AN_OBJECT"), "the response must carry the reason the builder recorded");
         }
 
         [Test]
@@ -1421,8 +1684,11 @@ namespace MCPForUnityTests.Editor.Tools
             var states = controller.layers[0].stateMachine.states.Select(s => s.state.name).ToArray();
             Assert.That(states, Contains.Item("Idle"));
             Assert.That(states, Contains.Item("walk"));
-            Assert.AreEqual("Idle", controller.layers[0].stateMachine.defaultState.name,
-                "idle is the state a character rests in, so it should be the entry point");
+            Assert.AreEqual(
+                "Idle",
+                controller.layers[0].stateMachine.defaultState.name,
+                "idle is the state a character rests in, so it should be the entry point"
+            );
         }
 
         [Test]
@@ -1435,8 +1701,7 @@ namespace MCPForUnityTests.Editor.Tools
             var sm = AssetDatabase.LoadAssetAtPath<AnimatorController>($"{TempRoot}/Hero.controller").layers[0].stateMachine;
             var walk = sm.states.Select(s => s.state).Single(s => s.name == "walk");
             var attack = sm.states.Select(s => s.state).Single(s => s.name == "attack");
-            Assert.That(attack.transitions.Where(t => t.hasExitTime).Select(t => t.destinationState),
-                Contains.Item(walk));
+            Assert.That(attack.transitions.Where(t => t.hasExitTime).Select(t => t.destinationState), Contains.Item(walk));
         }
 
         [Test]
@@ -1450,8 +1715,7 @@ namespace MCPForUnityTests.Editor.Tools
             var sm = AssetDatabase.LoadAssetAtPath<AnimatorController>($"{TempRoot}/Hero.controller").layers[0].stateMachine;
             Assert.That(sm.states.Select(s => s.state.name), Is.EquivalentTo(new[] { "attack", "jump" }));
             foreach (var state in sm.states.Select(s => s.state))
-                Assert.That(state.transitions.Where(t => t.hasExitTime), Is.Empty,
-                    $"'{state.name}' got an exit-time transition");
+                Assert.That(state.transitions.Where(t => t.hasExitTime), Is.Empty, $"'{state.name}' got an exit-time transition");
         }
 
         [Test]
@@ -1464,23 +1728,28 @@ namespace MCPForUnityTests.Editor.Tools
 
             var sm = AssetDatabase.LoadAssetAtPath<AnimatorController>($"{TempRoot}/Hero.controller").layers[0].stateMachine;
             foreach (var (state, trigger) in new[] { ("attack", "Attack"), ("hurt", "Hurt") })
-                Assert.IsTrue(sm.anyStateTransitions.Any(t =>
-                        t.destinationState != null && t.destinationState.name == state &&
-                        t.conditions.Any(c => c.mode == AnimatorConditionMode.If && c.parameter == trigger)),
-                    $"'{state}' needs an Any State transition on '{trigger}'; without one, states built " +
-                    "after it cannot be interrupted by it ('attack' could not interrupt 'hurt')");
-            Assert.That(sm.anyStateTransitions.Where(t => !t.canTransitionToSelf).Select(t => t.destinationState?.name),
-                Is.Empty, "a repeated trigger must restart its clip; with canTransitionToSelf off, Unity keeps " +
-                "the trigger set and replays the state after it ends");
+                Assert.IsTrue(
+                    sm.anyStateTransitions.Any(t =>
+                        t.destinationState != null
+                        && t.destinationState.name == state
+                        && t.conditions.Any(c => c.mode == AnimatorConditionMode.If && c.parameter == trigger)
+                    ),
+                    $"'{state}' needs an Any State transition on '{trigger}'; without one, states built "
+                        + "after it cannot be interrupted by it ('attack' could not interrupt 'hurt')"
+                );
+            Assert.That(
+                sm.anyStateTransitions.Where(t => !t.canTransitionToSelf).Select(t => t.destinationState?.name),
+                Is.Empty,
+                "a repeated trigger must restart its clip; with canTransitionToSelf off, Unity keeps " + "the trigger set and replays the state after it ends"
+            );
 
-            var blended = sm.states
-                .SelectMany(s => s.state.transitions.Select(t => (source: s.state.name, t)))
+            var blended = sm
+                .states.SelectMany(s => s.state.transitions.Select(t => (source: s.state.name, t)))
                 .Concat(sm.anyStateTransitions.Select(t => (source: "Any State", t)))
                 .Where(x => x.t.duration != 0f)
                 .Select(x => $"{x.source} -> {x.t.destinationState?.name} ({x.t.duration})")
                 .ToArray();
-            Assert.That(blended, Is.Empty,
-                "sprite keys cannot blend, so any blend time only delays the frame change");
+            Assert.That(blended, Is.Empty, "sprite keys cannot blend, so any blend time only delays the frame change");
         }
 
         // Each case leaves one clip that no transition plays, so only a warning tells the caller.
@@ -1499,15 +1768,12 @@ namespace MCPForUnityTests.Editor.Tools
             // add a second Any State transition anyway.
             string clip = named[0].Trim('\'');
             var sm = AssetDatabase.LoadAssetAtPath<AnimatorController>($"{TempRoot}/Hero.controller").layers[0].stateMachine;
-            var incoming = sm.anyStateTransitions
-                .Concat(sm.states.SelectMany(s => s.state.transitions))
+            var incoming = sm
+                .anyStateTransitions.Concat(sm.states.SelectMany(s => s.state.transitions))
                 .Where(t => t.destinationState != null && t.destinationState.name == clip);
             Assert.That(incoming, Is.Empty, $"a transition leads to '{clip}'");
 
-            var warnings = result["diagnostics"]
-                .Where(d => d.Value<string>("code") == code)
-                .Select(d => d.Value<string>("message"))
-                .ToArray();
+            var warnings = result["diagnostics"].Where(d => d.Value<string>("code") == code).Select(d => d.Value<string>("message")).ToArray();
             Assert.AreEqual(1, warnings.Length, "diagnostics were " + result["diagnostics"]);
             foreach (string name in named)
                 Assert.That(warnings[0], Does.Contain(name));
@@ -1522,23 +1788,21 @@ namespace MCPForUnityTests.Editor.Tools
             var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>($"{TempRoot}/Hero.controller");
             Assert.That(controller.parameters.Select(p => p.name), Contains.Item("Speed"));
 
-            var loco = controller.layers[0].stateMachine.states
-                .Select(s => s.state)
-                .SingleOrDefault(s => s.name == "Locomotion");
-            Assert.IsNotNull(loco,
-                "two locomotion clips should collapse into one blend tree state; states were: " +
-                string.Join(", ", controller.layers[0].stateMachine.states.Select(s => s.state.name)));
+            var loco = controller.layers[0].stateMachine.states.Select(s => s.state).SingleOrDefault(s => s.name == "Locomotion");
+            Assert.IsNotNull(
+                loco,
+                "two locomotion clips should collapse into one blend tree state; states were: "
+                    + string.Join(", ", controller.layers[0].stateMachine.states.Select(s => s.state.name))
+            );
 
             var tree = loco.motion as BlendTree;
             Assert.IsNotNull(tree);
             Assert.AreEqual("Speed", tree.blendParameter);
             // walk sits below run on the axis, otherwise the character sprints while strolling.
-            Assert.AreEqual(new[] { "walk", "run" },
-                tree.children.Select(c => c.motion.name).ToArray());
+            Assert.AreEqual(new[] { "walk", "run" }, tree.children.Select(c => c.motion.name).ToArray());
             // The values, not just the order: with automatic thresholds left on, Unity
             // overwrote 1/2 with 0/1 and this line is what notices.
-            Assert.AreEqual(new[] { 1f, 2f },
-                tree.children.Select(c => c.threshold).ToArray());
+            Assert.AreEqual(new[] { 1f, 2f }, tree.children.Select(c => c.threshold).ToArray());
         }
 
         [TestCase("attack", "Attack")]
@@ -1578,12 +1842,14 @@ namespace MCPForUnityTests.Editor.Tools
         public void SetupController_ControllerPathEscapingAssets_FailsWithAMessage()
         {
             var clips = BuildClips("escapectrl", "idle", "walk");
-            var result = Run(new JObject
-            {
-                ["action"] = "setup_controller",
-                ["clips"] = clips,
-                ["controller_path"] = $"{TempRoot}/../../../Hero.controller",
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "setup_controller",
+                    ["clips"] = clips,
+                    ["controller_path"] = $"{TempRoot}/../../../Hero.controller",
+                }
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(ErrorText(result), Does.Contain("controller_path"));
@@ -1615,8 +1881,11 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(SetupController(clips, overwrite: true).Value<bool>("success"));
 
             var second = AssetDatabase.LoadAssetAtPath<AnimatorController>(ctrlPath);
-            Assert.That(second.parameters.Select(p => p.name), Has.No.Member("SentinelFromFirstBuild"),
-                "an authorised overwrite must build a new controller, not reuse the old one");
+            Assert.That(
+                second.parameters.Select(p => p.name),
+                Has.No.Member("SentinelFromFirstBuild"),
+                "an authorised overwrite must build a new controller, not reuse the old one"
+            );
         }
 
         [Test]
@@ -1644,11 +1913,15 @@ namespace MCPForUnityTests.Editor.Tools
             string destination = $"{TempRoot}/Hero.controller";
             string guid = AssetDatabase.CreateFolder(TempRoot, "Hero.controller");
 
-            var result = Run(new JObject
-            {
-                ["action"] = "setup_controller", ["clips"] = clips,
-                ["controller_path"] = $"{TempRoot}/Hero", ["overwrite"] = overwrite,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "setup_controller",
+                    ["clips"] = clips,
+                    ["controller_path"] = $"{TempRoot}/Hero",
+                    ["overwrite"] = overwrite,
+                }
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["diagnostics"].ToString(), Does.Contain("BAD_PARAM"));
@@ -1667,7 +1940,9 @@ namespace MCPForUnityTests.Editor.Tools
             string before = EditorJsonUtility.ToJson(importer);
             var parameters = new JObject
             {
-                ["action"] = "full_setup", ["path"] = path, ["cols"] = 4,
+                ["action"] = "full_setup",
+                ["path"] = path,
+                ["cols"] = 4,
                 [key] = key == "clips" ? (JToken)new JObject() : "Assets/../outside",
             };
 
@@ -1691,19 +1966,24 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(before);
 
             // Every replacement clip is unloadable, so the rebuild cannot succeed.
-            var doomed = new JArray {
+            var doomed = new JArray
+            {
                 new JObject { ["name"] = "idle", ["path"] = $"{TempRoot}/does_not_exist.anim" },
             };
-            Run(new JObject
-            {
-                ["action"] = "setup_controller",
-                ["clips"] = doomed,
-                ["controller_path"] = ctrl,
-                ["overwrite"] = true,
-            });
+            Run(
+                new JObject
+                {
+                    ["action"] = "setup_controller",
+                    ["clips"] = doomed,
+                    ["controller_path"] = ctrl,
+                    ["overwrite"] = true,
+                }
+            );
 
-            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimatorController>(ctrl),
-                "a failed rebuild must not leave the caller without the controller they had");
+            Assert.IsNotNull(
+                AssetDatabase.LoadAssetAtPath<AnimatorController>(ctrl),
+                "a failed rebuild must not leave the caller without the controller they had"
+            );
         }
 
         // =====================================================================
@@ -1716,47 +1996,76 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(null, "setup_clips", "ALL_CLIPS_EXIST", "overwrite=true", "setup_controller")]
         [TestCase("s5_new", "setup_controller", "CONTROLLER_EXISTS", "overwrite=true")]
         public void FullSetup_RerunWithoutOverwrite_StopsAtTheRefusingStepBeforeTouchingTheScene(
-            string secondClip, string step, string code, params string[] fixes)
+            string secondClip,
+            string step,
+            string code,
+            params string[] fixes
+        )
         {
             string path = CreateSheet("s5", 4, 1);
             var go = new GameObject("SpriteTest_S5");
             try
             {
                 string ctrl = $"{TempRoot}/S5.controller";
-                Run(new JObject { ["action"] = "full_setup", ["path"] = path, ["cols"] = 4,
-                                  ["output_dir"] = TempRoot, ["controller_path"] = ctrl });
+                Run(
+                    new JObject
+                    {
+                        ["action"] = "full_setup",
+                        ["path"] = path,
+                        ["cols"] = 4,
+                        ["output_dir"] = TempRoot,
+                        ["controller_path"] = ctrl,
+                    }
+                );
 
-                var rerun = new JObject { ["action"] = "full_setup", ["path"] = path, ["cols"] = 4,
-                                          ["output_dir"] = TempRoot, ["controller_path"] = ctrl,
-                                          ["add_to_scene"] = true, ["scene_target"] = "SpriteTest_S5" };
-                if (secondClip != null) rerun["animation_name"] = secondClip;
+                var rerun = new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    ["output_dir"] = TempRoot,
+                    ["controller_path"] = ctrl,
+                    ["add_to_scene"] = true,
+                    ["scene_target"] = "SpriteTest_S5",
+                };
+                if (secondClip != null)
+                    rerun["animation_name"] = secondClip;
                 var result = Run(rerun);
 
                 Assert.IsFalse(result.Value<bool>("success"));
-                Assert.AreEqual(step, result.Value<string>("step"),
-                    "the response must name the step that refused; it was " + result);
+                Assert.AreEqual(step, result.Value<string>("step"), "the response must name the step that refused; it was " + result);
                 var refusal = result["diagnostics"].FirstOrDefault(d => d.Value<string>("code") == code);
                 Assert.IsNotNull(refusal, "diagnostics were " + result["diagnostics"]);
                 Assert.AreEqual("error", refusal.Value<string>("severity"));
                 string offered = string.Join(" ", refusal["fix_options"].Values<string>());
                 foreach (string fix in fixes)
                     Assert.That(offered, Does.Contain(fix));
-                Assert.IsNull(go.GetComponent<Animator>(),
-                    "a refused step must not go on to modify the scene");
+                Assert.IsNull(go.GetComponent<Animator>(), "a refused step must not go on to modify the scene");
             }
-            finally { Object.DestroyImmediate(go); }
+            finally
+            {
+                Object.DestroyImmediate(go);
+            }
         }
 
         [Test]
         public void FullSetup_RequestedSceneTargetMissing_IsNotReportedAsSuccess()
         {
             string path = CreateSheet("s6", 4, 1);
-            var result = Run(new JObject { ["action"] = "full_setup", ["path"] = path, ["cols"] = 4,
-                              ["output_dir"] = TempRoot, ["controller_path"] = $"{TempRoot}/S6.controller",
-                              ["add_to_scene"] = true, ["scene_target"] = "NoSuchObject" });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    ["output_dir"] = TempRoot,
+                    ["controller_path"] = $"{TempRoot}/S6.controller",
+                    ["add_to_scene"] = true,
+                    ["scene_target"] = "NoSuchObject",
+                }
+            );
 
-            Assert.IsFalse(result.Value<bool>("success"),
-                "an attachment that was asked for and did not happen is not a success");
+            Assert.IsFalse(result.Value<bool>("success"), "an attachment that was asked for and did not happen is not a success");
             Assert.That(result["diagnostics"].ToString(), Does.Contain("SCENE_TARGET_NOT_FOUND"));
             // Asserted on the message rather than only the diagnostics array, because reading
             // the array was what let this refusal keep a shape no other refusal in the tool has.
@@ -1771,19 +2080,35 @@ namespace MCPForUnityTests.Editor.Tools
             var go = new GameObject("SpriteTest_S7");
             try
             {
-                var result = Run(new JObject { ["action"] = "full_setup", ["path"] = path, ["cols"] = 4,
-                                  ["output_dir"] = TempRoot,
-                                  ["controller_path"] = $"{TempRoot}/S7",   // no .controller suffix
-                                  ["add_to_scene"] = true, ["scene_target"] = "SpriteTest_S7" });
+                var result = Run(
+                    new JObject
+                    {
+                        ["action"] = "full_setup",
+                        ["path"] = path,
+                        ["cols"] = 4,
+                        ["output_dir"] = TempRoot,
+                        ["controller_path"] = $"{TempRoot}/S7", // no .controller suffix
+                        ["add_to_scene"] = true,
+                        ["scene_target"] = "SpriteTest_S7",
+                    }
+                );
 
                 // Count the components rather than null-checking GetComponent: a missing one
                 // compares equal to null without being a null reference.
-                Assert.AreEqual(1, go.GetComponents<Animator>().Length,
-                    "the object should have received an Animator; result was " + result.ToString(Newtonsoft.Json.Formatting.None));
-                Assert.IsTrue(go.GetComponents<Animator>()[0].runtimeAnimatorController != null,
-                    "the suffix the builder added must not lose the controller on the way to the scene");
+                Assert.AreEqual(
+                    1,
+                    go.GetComponents<Animator>().Length,
+                    "the object should have received an Animator; result was " + result.ToString(Newtonsoft.Json.Formatting.None)
+                );
+                Assert.IsTrue(
+                    go.GetComponents<Animator>()[0].runtimeAnimatorController != null,
+                    "the suffix the builder added must not lose the controller on the way to the scene"
+                );
             }
-            finally { Object.DestroyImmediate(go); }
+            finally
+            {
+                Object.DestroyImmediate(go);
+            }
         }
 
         [Test]
@@ -1793,17 +2118,31 @@ namespace MCPForUnityTests.Editor.Tools
             var go = new GameObject("SpriteTest_S8");
             try
             {
-                var result = Run(new JObject { ["action"] = "full_setup", ["path"] = path, ["cols"] = 4,
-                                  ["output_dir"] = TempRoot, ["controller_path"] = $"{TempRoot}/S8.controller",
-                                  ["add_to_scene"] = true, ["scene_target"] = "SpriteTest_S8" });
+                var result = Run(
+                    new JObject
+                    {
+                        ["action"] = "full_setup",
+                        ["path"] = path,
+                        ["cols"] = 4,
+                        ["output_dir"] = TempRoot,
+                        ["controller_path"] = $"{TempRoot}/S8.controller",
+                        ["add_to_scene"] = true,
+                        ["scene_target"] = "SpriteTest_S8",
+                    }
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"));
-                Assert.AreEqual(1, go.GetComponents<SpriteRenderer>().Length,
-                    "the clips animate a SpriteRenderer, so the attachment has to leave one behind");
-                Assert.That(result["diagnostics"].ToString(), Does.Contain("SCENE_SPRITE_RENDERER_ADDED"),
-                    "a component added to the caller's object must be reported");
+                Assert.AreEqual(1, go.GetComponents<SpriteRenderer>().Length, "the clips animate a SpriteRenderer, so the attachment has to leave one behind");
+                Assert.That(
+                    result["diagnostics"].ToString(),
+                    Does.Contain("SCENE_SPRITE_RENDERER_ADDED"),
+                    "a component added to the caller's object must be reported"
+                );
             }
-            finally { Object.DestroyImmediate(go); }
+            finally
+            {
+                Object.DestroyImmediate(go);
+            }
         }
 
         [Test]
@@ -1814,9 +2153,18 @@ namespace MCPForUnityTests.Editor.Tools
             var existing = go.AddComponent<SpriteRenderer>();
             try
             {
-                var result = Run(new JObject { ["action"] = "full_setup", ["path"] = path, ["cols"] = 4,
-                                  ["output_dir"] = TempRoot, ["controller_path"] = $"{TempRoot}/S9.controller",
-                                  ["add_to_scene"] = true, ["scene_target"] = "SpriteTest_S9" });
+                var result = Run(
+                    new JObject
+                    {
+                        ["action"] = "full_setup",
+                        ["path"] = path,
+                        ["cols"] = 4,
+                        ["output_dir"] = TempRoot,
+                        ["controller_path"] = $"{TempRoot}/S9.controller",
+                        ["add_to_scene"] = true,
+                        ["scene_target"] = "SpriteTest_S9",
+                    }
+                );
 
                 // The scene step has to have run for the renderer assertions to mean anything.
                 Assert.IsTrue(result.Value<bool>("success"));
@@ -1826,7 +2174,10 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.AreSame(existing, go.GetComponent<SpriteRenderer>());
                 Assert.That(result["diagnostics"].ToString(), Does.Not.Contain("SCENE_SPRITE_RENDERER_ADDED"));
             }
-            finally { Object.DestroyImmediate(go); }
+            finally
+            {
+                Object.DestroyImmediate(go);
+            }
         }
 
         [Test]
@@ -1837,56 +2188,107 @@ namespace MCPForUnityTests.Editor.Tools
             go.SetActive(false);
             try
             {
-                var result = Run(new JObject { ["action"] = "full_setup", ["path"] = path, ["cols"] = 4,
-                                  ["output_dir"] = TempRoot, ["controller_path"] = $"{TempRoot}/S10.controller",
-                                  ["add_to_scene"] = true, ["scene_target"] = "SpriteTest_S10" });
+                var result = Run(
+                    new JObject
+                    {
+                        ["action"] = "full_setup",
+                        ["path"] = path,
+                        ["cols"] = 4,
+                        ["output_dir"] = TempRoot,
+                        ["controller_path"] = $"{TempRoot}/S10.controller",
+                        ["add_to_scene"] = true,
+                        ["scene_target"] = "SpriteTest_S10",
+                    }
+                );
 
-                Assert.IsTrue(result.Value<bool>("success"),
-                    "an inactive object is still the object the caller named; result was " + result.ToString(Newtonsoft.Json.Formatting.None));
+                Assert.IsTrue(
+                    result.Value<bool>("success"),
+                    "an inactive object is still the object the caller named; result was " + result.ToString(Newtonsoft.Json.Formatting.None)
+                );
                 Assert.AreEqual(1, go.GetComponents<Animator>().Length);
             }
-            finally { Object.DestroyImmediate(go); }
+            finally
+            {
+                Object.DestroyImmediate(go);
+            }
         }
 
         [Test]
         public void FullSetup_DuplicateSceneTargetNames_AreRefusedBeforeTouchingEither()
         {
             string path = CreateSheet("s11", 4, 1);
-            var first  = new GameObject("SpriteTest_S11");
+            var first = new GameObject("SpriteTest_S11");
             var second = new GameObject("SpriteTest_S11");
             try
             {
-                var result = Run(new JObject { ["action"] = "full_setup", ["path"] = path, ["cols"] = 4,
-                                  ["output_dir"] = TempRoot, ["controller_path"] = $"{TempRoot}/S11.controller",
-                                  ["add_to_scene"] = true, ["scene_target"] = "SpriteTest_S11" });
+                var result = Run(
+                    new JObject
+                    {
+                        ["action"] = "full_setup",
+                        ["path"] = path,
+                        ["cols"] = 4,
+                        ["output_dir"] = TempRoot,
+                        ["controller_path"] = $"{TempRoot}/S11.controller",
+                        ["add_to_scene"] = true,
+                        ["scene_target"] = "SpriteTest_S11",
+                    }
+                );
 
                 Assert.IsFalse(result.Value<bool>("success"));
                 Assert.That(result["diagnostics"].ToString(), Does.Contain("SCENE_TARGET_AMBIGUOUS"));
-                Assert.AreEqual(0, first.GetComponents<Animator>().Length + second.GetComponents<Animator>().Length,
-                    "with two candidates the tool must not guess which one the caller meant");
+                Assert.AreEqual(
+                    0,
+                    first.GetComponents<Animator>().Length + second.GetComponents<Animator>().Length,
+                    "with two candidates the tool must not guess which one the caller meant"
+                );
             }
-            finally { Object.DestroyImmediate(first); Object.DestroyImmediate(second); }
+            finally
+            {
+                Object.DestroyImmediate(first);
+                Object.DestroyImmediate(second);
+            }
         }
 
         [Test]
         public void FullSetup_RefusedClip_IsNotCountedAsCreated()
         {
             string path = CreateSheet("s4", 6, 1);
-            var result = Run(new JObject
-            {
-                ["action"] = "full_setup", ["path"] = path, ["cols"] = 6,
-                ["output_dir"] = TempRoot, ["controller_path"] = $"{TempRoot}/S4.controller",
-                ["clips"] = new JArray {
-                    new JObject { ["name"] = "idle",   ["start_frame"] = 0, ["end_frame"] = 1 },
-                    new JObject { ["name"] = "attack", ["start_frame"] = 2, ["end_frame"] = 3, ["fps"] = 0 },
-                    new JObject { ["name"] = "walk",   ["start_frame"] = 4, ["end_frame"] = 5 },
-                },
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 6,
+                    ["output_dir"] = TempRoot,
+                    ["controller_path"] = $"{TempRoot}/S4.controller",
+                    ["clips"] = new JArray
+                    {
+                        new JObject
+                        {
+                            ["name"] = "idle",
+                            ["start_frame"] = 0,
+                            ["end_frame"] = 1,
+                        },
+                        new JObject
+                        {
+                            ["name"] = "attack",
+                            ["start_frame"] = 2,
+                            ["end_frame"] = 3,
+                            ["fps"] = 0,
+                        },
+                        new JObject
+                        {
+                            ["name"] = "walk",
+                            ["start_frame"] = 4,
+                            ["end_frame"] = 5,
+                        },
+                    },
+                }
+            );
 
             int onDisk = AssetDatabase.FindAssets("t:AnimationClip", new[] { TempRoot }).Length;
             Assert.AreEqual(2, onDisk, "idle and walk are valid, attack is refused");
-            Assert.AreEqual(onDisk, result.Value<int>("clip_count"),
-                "clip_count must count the clips that exist, not the ones that were asked for");
+            Assert.AreEqual(onDisk, result.Value<int>("clip_count"), "clip_count must count the clips that exist, not the ones that were asked for");
             Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_BAD_FPS"));
         }
 
@@ -1900,17 +2302,34 @@ namespace MCPForUnityTests.Editor.Tools
         public void FullSetup_LoopAndName_DecideTheOneShotExit(string clipName, bool? loop, bool expectExit)
         {
             string path = CreateSheet("loopflag", 4, 1);
-            var oneShotDef = new JObject { ["name"] = clipName, ["start_frame"] = 2, ["end_frame"] = 3 };
-            if (loop.HasValue) oneShotDef["loop"] = loop.Value;
-            var result = Run(new JObject
+            var oneShotDef = new JObject
             {
-                ["action"] = "full_setup", ["path"] = path, ["cols"] = 4,
-                ["output_dir"] = TempRoot, ["controller_path"] = $"{TempRoot}/Loop.controller",
-                ["clips"] = new JArray {
-                    new JObject { ["name"] = "idle", ["start_frame"] = 0, ["end_frame"] = 1 },
-                    oneShotDef,
-                },
-            });
+                ["name"] = clipName,
+                ["start_frame"] = 2,
+                ["end_frame"] = 3,
+            };
+            if (loop.HasValue)
+                oneShotDef["loop"] = loop.Value;
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    ["output_dir"] = TempRoot,
+                    ["controller_path"] = $"{TempRoot}/Loop.controller",
+                    ["clips"] = new JArray
+                    {
+                        new JObject
+                        {
+                            ["name"] = "idle",
+                            ["start_frame"] = 0,
+                            ["end_frame"] = 1,
+                        },
+                        oneShotDef,
+                    },
+                }
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
             var sm = AssetDatabase.LoadAssetAtPath<AnimatorController>($"{TempRoot}/Loop.controller").layers[0].stateMachine;
@@ -1929,12 +2348,17 @@ namespace MCPForUnityTests.Editor.Tools
             string controllerGuid = AssetDatabase.AssetPathToGUID(controllerPath);
             string outputDir = $"{TempRoot}/CompletedClips/Nested";
 
-            var result = Run(new JObject
-            {
-                ["action"] = "full_setup", ["path"] = path, ["cols"] = 4,
-                ["animation_name"] = "walk", ["output_dir"] = outputDir,
-                ["controller_path"] = controllerPath,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    ["animation_name"] = "walk",
+                    ["output_dir"] = outputDir,
+                    ["controller_path"] = controllerPath,
+                }
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.AreEqual("setup_controller", result.Value<string>("step"));
@@ -1950,36 +2374,38 @@ namespace MCPForUnityTests.Editor.Tools
         public void FullSetup_SlicesBuildsClipsAndWritesAController()
         {
             string path = CreateSheet("full", 4, 1);
-            var result = Run(new JObject
-            {
-                ["action"] = "full_setup",
-                ["path"] = path,
-                ["cols"] = 4,
-                ["animation_name"] = "walk",
-                ["output_dir"] = TempRoot,
-                ["controller_path"] = $"{TempRoot}/Full.controller",
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    ["animation_name"] = "walk",
+                    ["output_dir"] = TempRoot,
+                    ["controller_path"] = $"{TempRoot}/Full.controller",
+                }
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(4, SpritesOf(path).Length, "the sheet should end up sliced");
-            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{TempRoot}/walk.anim"),
-                "the clip should end up on disk");
-            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimatorController>($"{TempRoot}/Full.controller"),
-                "the controller should end up on disk");
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{TempRoot}/walk.anim"), "the clip should end up on disk");
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimatorController>($"{TempRoot}/Full.controller"), "the controller should end up on disk");
         }
 
         [Test]
         public void FullSetup_DefaultsTheClipNameToTheFileName()
         {
             string path = CreateSheet("hero_idle", 4, 1);
-            var result = Run(new JObject
-            {
-                ["action"] = "full_setup",
-                ["path"] = path,
-                ["cols"] = 4,
-                ["output_dir"] = TempRoot,
-                ["controller_path"] = $"{TempRoot}/Named.controller",
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    ["output_dir"] = TempRoot,
+                    ["controller_path"] = $"{TempRoot}/Named.controller",
+                }
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{TempRoot}/hero_idle.anim"));
@@ -1998,14 +2424,16 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("full_setup")]
         public void PathEscapingAssets_IsRefusedInsteadOfLookedUp(string action)
         {
-            var result = Run(new JObject
-            {
-                ["action"] = action,
-                ["path"] = $"{TempRoot}/../../../outside.png",
-                ["cols"] = 4,
-                ["clips"] = OneClip("walk", 0, 3),
-                ["output_dir"] = TempRoot,
-            });
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = action,
+                    ["path"] = $"{TempRoot}/../../../outside.png",
+                    ["cols"] = 4,
+                    ["clips"] = OneClip("walk", 0, 3),
+                    ["output_dir"] = TempRoot,
+                }
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(ErrorText(result), Does.Contain(".."));
@@ -2017,11 +2445,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void SetupController_ClipPathEscapingAssets_SkipsThatClipAndSaysWhy()
         {
             var clips = BuildClips("badclippath", "idle", "walk");
-            clips.Add(new JObject
-            {
-                ["name"] = "attack",
-                ["path"] = $"{TempRoot}/../../../outside.anim",
-            });
+            clips.Add(new JObject { ["name"] = "attack", ["path"] = $"{TempRoot}/../../../outside.anim" });
 
             var result = SetupController(clips);
 
@@ -2067,21 +2491,21 @@ namespace MCPForUnityTests.Editor.Tools
             // The ceiling is checked against the file, but base64 emits 4 bytes for every 3,
             // so a source under the limit still produces a payload above it.
             string path = CreateNoiseSheet("midsize", 1024, assertOverCeiling: false);
-            long sourceBytes = new FileInfo(Path.Combine(
-                Directory.GetParent(Application.dataPath).FullName, path)).Length;
-            Assert.Less(sourceBytes, 4 * 1024 * 1024,
-                "fixture: this sheet must pass the source-size check to test what happens after it");
+            long sourceBytes = new FileInfo(Path.Combine(Directory.GetParent(Application.dataPath).FullName, path)).Length;
+            Assert.Less(sourceBytes, 4 * 1024 * 1024, "fixture: this sheet must pass the source-size check to test what happens after it");
 
             var result = Run(new JObject { ["action"] = "get_info", ["path"] = path });
 
             string b64 = result.Value<string>("image_base64");
             if (b64 != null)
-                Assert.LessOrEqual(System.Text.Encoding.UTF8.GetByteCount(b64), 4 * 1024 * 1024,
-                    $"inline payload is {System.Text.Encoding.UTF8.GetByteCount(b64)} bytes " +
-                    $"from a {sourceBytes}-byte source; the bound must cover what is sent, not what was read");
+                Assert.LessOrEqual(
+                    System.Text.Encoding.UTF8.GetByteCount(b64),
+                    4 * 1024 * 1024,
+                    $"inline payload is {System.Text.Encoding.UTF8.GetByteCount(b64)} bytes "
+                        + $"from a {sourceBytes}-byte source; the bound must cover what is sent, not what was read"
+                );
             else
-                Assert.IsNotEmpty(result.Value<string>("image_omitted_reason") ?? "",
-                    "an omitted image must say why");
+                Assert.IsNotEmpty(result.Value<string>("image_omitted_reason") ?? "", "an omitted image must say why");
         }
 
         [Test]
@@ -2091,8 +2515,7 @@ namespace MCPForUnityTests.Editor.Tools
             // image/png, which a client that checks the image refuses.
             var tex = new Texture2D(4 * Cell, 2 * Cell, TextureFormat.RGBA32, false);
             string path = $"{TempRoot}/targa.tga";
-            File.WriteAllBytes(Path.Combine(Directory.GetParent(Application.dataPath).FullName, path),
-                tex.EncodeToTGA());
+            File.WriteAllBytes(Path.Combine(Directory.GetParent(Application.dataPath).FullName, path), tex.EncodeToTGA());
             Object.DestroyImmediate(tex);
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
 
@@ -2117,6 +2540,5 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.That(result.Value<string>("image_omitted_reason"), Does.Contain("8000"));
             Assert.AreEqual(8192, result.Value<int>("width"), "the source width, not the import");
         }
-
     }
 }

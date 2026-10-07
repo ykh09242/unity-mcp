@@ -25,8 +25,8 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("Assets/../Test.asset")]
         [TestCase("Assets//Test.asset")]
         [TestCase("Assets/./Test.asset")]
-        public void LegacySanitizerRejectsInvalidPathsBeforeTheAssetDatabase(string path)
-            => Assert.Throws<ArgumentException>(() => AssetPathUtility.SanitizeAssetPath(path));
+        public void LegacySanitizerRejectsInvalidPathsBeforeTheAssetDatabase(string path) =>
+            Assert.Throws<ArgumentException>(() => AssetPathUtility.SanitizeAssetPath(path));
 
         [TestCase("Resources/unity_builtin_extra")]
         [TestCase("Library/unity default resources")]
@@ -64,7 +64,10 @@ namespace MCPForUnityTests.Editor.Helpers
                 serializer.Converters.Add(new UnityEngineObjectConverter());
                 Assert.AreSame(texture, new JObject { ["instanceID"] = texture.GetInstanceIDCompat() }.ToObject<Texture>(serializer));
             }
-            finally { UnityEngine.Object.DestroyImmediate(texture); }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(texture);
+            }
         }
     }
 }

@@ -2,14 +2,14 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using MCPForUnity.Editor.Tools.Prefabs;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.TestTools;
-using MCPForUnity.Editor.Tools.Prefabs;
-using MCPForUnity.Runtime.Helpers;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -57,17 +57,26 @@ namespace MCPForUnityTests.Editor.Tools
             GameObject child = new GameObject("PreservedChild");
             child.transform.SetParent(source.transform);
             JToken target = source.name;
-            if (targetForm == "integer_id") target = source.GetInstanceIDCompat();
-            if (targetForm == "string_id") target = source.GetInstanceIDCompat().ToString();
-            if (targetForm == "path") target = "PrefabTargetParent/McpProbeCube";
-            if (targetForm == "absolute_path") target = "/PrefabTargetParent/McpProbeCube";
+            if (targetForm == "integer_id")
+                target = source.GetInstanceIDCompat();
+            if (targetForm == "string_id")
+                target = source.GetInstanceIDCompat().ToString();
+            if (targetForm == "path")
+                target = "PrefabTargetParent/McpProbeCube";
+            if (targetForm == "absolute_path")
+                target = "/PrefabTargetParent/McpProbeCube";
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "create_from_gameobject", ["target"] = target,
-                    ["prefabPath"] = prefabPath
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_from_gameobject",
+                            ["target"] = target,
+                            ["prefabPath"] = prefabPath,
+                        }
+                    )
+                );
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 GameObject saved = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
                 Assert.IsNotNull(saved);
@@ -78,12 +87,17 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.AreEqual(source.name, result["data"].Value<string>("instanceName"));
                 Assert.AreEqual(parent.transform, source.transform.parent);
                 Assert.IsNotNull(saved.transform.Find("PreservedChild"));
-                var modified = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents", ["prefabPath"] = prefabPath,
-                    ["target"] = result["data"]["rootObjectPath"],
-                    ["scale"] = new JArray(0.75f, 0.75f, 0.75f)
-                }));
+                var modified = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = result["data"]["rootObjectPath"],
+                            ["scale"] = new JArray(0.75f, 0.75f, 0.75f),
+                        }
+                    )
+                );
                 Assert.IsTrue(modified.Value<bool>("success"), modified.ToString());
                 Assert.AreEqual(Vector3.one * 0.75f, AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath).transform.localScale);
             }
@@ -102,11 +116,16 @@ namespace MCPForUnityTests.Editor.Tools
             GameObject second = new GameObject("DuplicatePrefabTarget");
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "create_from_gameobject", ["target"] = first.name,
-                    ["prefabPath"] = prefabPath
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_from_gameobject",
+                            ["target"] = first.name,
+                            ["prefabPath"] = prefabPath,
+                        }
+                    )
+                );
                 Assert.IsFalse(result.Value<bool>("success"));
                 StringAssert.Contains("ambiguous", result.Value<string>("error"));
                 Assert.IsNull(AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath));
@@ -129,12 +148,16 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "create_from_gameobject",
-                    ["target"] = sceneObject.name,
-                    ["prefabPath"] = prefabPath
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_from_gameobject",
+                            ["target"] = sceneObject.name,
+                            ["prefabPath"] = prefabPath,
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"));
                 Assert.AreEqual(prefabPath, result["data"].Value<string>("prefabPath"));
@@ -143,7 +166,8 @@ namespace MCPForUnityTests.Editor.Tools
             finally
             {
                 SafeDeleteAsset(prefabPath);
-                if (sceneObject != null) UnityEngine.Object.DestroyImmediate(sceneObject, true);
+                if (sceneObject != null)
+                    UnityEngine.Object.DestroyImmediate(sceneObject, true);
             }
         }
 
@@ -162,47 +186,63 @@ namespace MCPForUnityTests.Editor.Tools
 
                 // Without unlink - should fail (already linked)
                 string newPath = Path.Combine(TempDirectory, "New.prefab").Replace('\\', '/');
-                var failResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "create_from_gameobject",
-                    ["target"] = sourceObject.name,
-                    ["prefabPath"] = newPath
-                }));
+                var failResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_from_gameobject",
+                            ["target"] = sourceObject.name,
+                            ["prefabPath"] = newPath,
+                        }
+                    )
+                );
                 Assert.IsFalse(failResult.Value<bool>("success"));
                 Assert.IsTrue(failResult.Value<string>("error").Contains("already linked"));
 
                 // With unlinkIfInstance - should succeed
-                var unlinkResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "create_from_gameobject",
-                    ["target"] = sourceObject.name,
-                    ["prefabPath"] = newPath,
-                    ["unlinkIfInstance"] = true
-                }));
+                var unlinkResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_from_gameobject",
+                            ["target"] = sourceObject.name,
+                            ["prefabPath"] = newPath,
+                            ["unlinkIfInstance"] = true,
+                        }
+                    )
+                );
                 Assert.IsTrue(unlinkResult.Value<bool>("success"));
                 Assert.IsTrue(unlinkResult["data"].Value<bool>("wasUnlinked"));
 
                 // With allowOverwrite - should replace
                 GameObject anotherObject = new GameObject("AnotherObject");
-                var overwriteResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "create_from_gameobject",
-                    ["target"] = anotherObject.name,
-                    ["prefabPath"] = newPath,
-                    ["allowOverwrite"] = true
-                }));
+                var overwriteResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_from_gameobject",
+                            ["target"] = anotherObject.name,
+                            ["prefabPath"] = newPath,
+                            ["allowOverwrite"] = true,
+                        }
+                    )
+                );
                 Assert.IsTrue(overwriteResult.Value<bool>("success"));
                 Assert.IsTrue(overwriteResult["data"].Value<bool>("wasReplaced"));
                 UnityEngine.Object.DestroyImmediate(anotherObject, true);
 
                 // Without overwrite on existing - should generate unique path
                 GameObject thirdObject = new GameObject("ThirdObject");
-                var uniqueResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "create_from_gameobject",
-                    ["target"] = thirdObject.name,
-                    ["prefabPath"] = newPath
-                }));
+                var uniqueResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_from_gameobject",
+                            ["target"] = thirdObject.name,
+                            ["prefabPath"] = newPath,
+                        }
+                    )
+                );
                 Assert.IsTrue(uniqueResult.Value<bool>("success"));
                 Assert.AreNotEqual(newPath, uniqueResult["data"].Value<string>("prefabPath"));
                 SafeDeleteAsset(uniqueResult["data"].Value<string>("prefabPath"));
@@ -212,7 +252,8 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 SafeDeleteAsset(prefabPath);
                 SafeDeleteAsset(Path.Combine(TempDirectory, "New.prefab").Replace('\\', '/'));
-                if (sourceObject != null) UnityEngine.Object.DestroyImmediate(sourceObject, true);
+                if (sourceObject != null)
+                    UnityEngine.Object.DestroyImmediate(sourceObject, true);
             }
         }
 
@@ -226,29 +267,38 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 // Without searchInactive - should fail to find inactive object
-                var failResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "create_from_gameobject",
-                    ["target"] = inactiveObject.name,
-                    ["prefabPath"] = prefabPath
-                }));
+                var failResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_from_gameobject",
+                            ["target"] = inactiveObject.name,
+                            ["prefabPath"] = prefabPath,
+                        }
+                    )
+                );
                 Assert.IsFalse(failResult.Value<bool>("success"));
 
                 // With searchInactive - should succeed
-                var successResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "create_from_gameobject",
-                    ["target"] = inactiveObject.name,
-                    ["prefabPath"] = prefabPath,
-                    ["searchInactive"] = true
-                }));
+                var successResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_from_gameobject",
+                            ["target"] = inactiveObject.name,
+                            ["prefabPath"] = prefabPath,
+                            ["searchInactive"] = true,
+                        }
+                    )
+                );
                 Assert.IsTrue(successResult.Value<bool>("success"));
                 Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath));
             }
             finally
             {
                 SafeDeleteAsset(prefabPath);
-                if (inactiveObject != null) UnityEngine.Object.DestroyImmediate(inactiveObject, true);
+                if (inactiveObject != null)
+                    UnityEngine.Object.DestroyImmediate(inactiveObject, true);
             }
         }
 
@@ -263,11 +313,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "get_info",
-                    ["prefabPath"] = prefabPath
-                }));
+                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "get_info", ["prefabPath"] = prefabPath }));
 
                 Assert.IsTrue(result.Value<bool>("success"));
                 var data = result["data"] as JObject;
@@ -296,8 +342,7 @@ namespace MCPForUnityTests.Editor.Tools
                 child1.transform.parent = container.transform;
 
                 // Add nested prefab instance
-                GameObject nestedInstance = PrefabUtility.InstantiatePrefab(
-                    AssetDatabase.LoadAssetAtPath<GameObject>(childPrefabPath)) as GameObject;
+                GameObject nestedInstance = PrefabUtility.InstantiatePrefab(AssetDatabase.LoadAssetAtPath<GameObject>(childPrefabPath)) as GameObject;
                 nestedInstance.transform.parent = container.transform;
 
                 containerPath = Path.Combine(TempDirectory, "Container.prefab").Replace('\\', '/');
@@ -305,11 +350,7 @@ namespace MCPForUnityTests.Editor.Tools
                 UnityEngine.Object.DestroyImmediate(container);
                 AssetDatabase.Refresh();
 
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "get_hierarchy",
-                    ["prefabPath"] = containerPath
-                }));
+                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "get_hierarchy", ["prefabPath"] = containerPath }));
 
                 Assert.IsTrue(result.Value<bool>("success"));
                 var data = result["data"] as JObject;
@@ -327,7 +368,8 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                if (containerPath != null) SafeDeleteAsset(containerPath);
+                if (containerPath != null)
+                    SafeDeleteAsset(containerPath);
                 SafeDeleteAsset(childPrefabPath);
             }
         }
@@ -346,14 +388,18 @@ namespace MCPForUnityTests.Editor.Tools
                 StageUtility.GoToMainStage();
                 Assert.IsNull(PrefabStageUtility.GetCurrentPrefabStage());
 
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["position"] = new JArray(1f, 2f, 3f),
-                    ["rotation"] = new JArray(45f, 0f, 0f),
-                    ["scale"] = new JArray(2f, 2f, 2f)
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["position"] = new JArray(1f, 2f, 3f),
+                            ["rotation"] = new JArray(45f, 0f, 0f),
+                            ["scale"] = new JArray(2f, 2f, 2f),
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"));
 
@@ -379,23 +425,31 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 // Target by name
-                var nameResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["target"] = "Child1",
-                    ["position"] = new JArray(10f, 10f, 10f)
-                }));
+                var nameResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = "Child1",
+                            ["position"] = new JArray(10f, 10f, 10f),
+                        }
+                    )
+                );
                 Assert.IsTrue(nameResult.Value<bool>("success"));
 
                 // Target by path
-                var pathResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["target"] = "Child1/Grandchild",
-                    ["scale"] = new JArray(3f, 3f, 3f)
-                }));
+                var pathResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = "Child1/Grandchild",
+                            ["scale"] = new JArray(3f, 3f, 3f),
+                        }
+                    )
+                );
                 Assert.IsTrue(pathResult.Value<bool>("success"));
 
                 // Verify changes
@@ -418,21 +472,29 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 // Add Rigidbody
-                var addResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["componentsToAdd"] = new JArray("Rigidbody")
-                }));
+                var addResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["componentsToAdd"] = new JArray("Rigidbody"),
+                        }
+                    )
+                );
                 Assert.IsTrue(addResult.Value<bool>("success"));
 
                 // Remove BoxCollider
-                var removeResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["componentsToRemove"] = new JArray("BoxCollider")
-                }));
+                var removeResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["componentsToRemove"] = new JArray("BoxCollider"),
+                        }
+                    )
+                );
                 Assert.IsTrue(removeResult.Value<bool>("success"));
 
                 // Verify
@@ -453,16 +515,20 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["target"] = "Child1",
-                    ["name"] = "RenamedChild",
-                    ["tag"] = "MainCamera",
-                    ["layer"] = "UI",
-                    ["setActive"] = false
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = "Child1",
+                            ["name"] = "RenamedChild",
+                            ["tag"] = "MainCamera",
+                            ["layer"] = "UI",
+                            ["setActive"] = false,
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"));
 
@@ -489,44 +555,60 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 // Modify root - add Rigidbody
-                var rootResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["componentsToAdd"] = new JArray("Rigidbody")
-                }));
+                var rootResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["componentsToAdd"] = new JArray("Rigidbody"),
+                        }
+                    )
+                );
                 Assert.IsTrue(rootResult.Value<bool>("success"));
 
                 // Modify child by name - reposition FrontWheel, add SphereCollider
-                var wheelResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["target"] = "FrontWheel",
-                    ["position"] = new JArray(0f, 0.5f, 2f),
-                    ["componentsToAdd"] = new JArray("SphereCollider")
-                }));
+                var wheelResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = "FrontWheel",
+                            ["position"] = new JArray(0f, 0.5f, 2f),
+                            ["componentsToAdd"] = new JArray("SphereCollider"),
+                        }
+                    )
+                );
                 Assert.IsTrue(wheelResult.Value<bool>("success"));
 
                 // Modify nested child by path - scale Barrel inside Turret
-                var barrelResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["target"] = "Turret/Barrel",
-                    ["scale"] = new JArray(0.5f, 0.5f, 3f),
-                    ["tag"] = "Player"
-                }));
+                var barrelResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = "Turret/Barrel",
+                            ["scale"] = new JArray(0.5f, 0.5f, 3f),
+                            ["tag"] = "Player",
+                        }
+                    )
+                );
                 Assert.IsTrue(barrelResult.Value<bool>("success"));
 
                 // Remove component from child
-                var removeResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["target"] = "BackWheel",
-                    ["componentsToRemove"] = new JArray("BoxCollider")
-                }));
+                var removeResult = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = "BackWheel",
+                            ["componentsToRemove"] = new JArray("BoxCollider"),
+                        }
+                    )
+                );
                 Assert.IsTrue(removeResult.Value<bool>("success"));
 
                 // Verify all changes persisted
@@ -563,13 +645,17 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 // Reparent Child2 under Child1
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["target"] = "Child2",
-                    ["parent"] = "Child1"
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = "Child2",
+                            ["parent"] = "Child1",
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"));
 
@@ -592,18 +678,23 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 // Attempt to parent Child1 under its own descendant (Grandchild)
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["target"] = "Child1",
-                    ["parent"] = "Child1/Grandchild"
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = "Child1",
+                            ["parent"] = "Child1/Grandchild",
+                        }
+                    )
+                );
 
                 Assert.IsFalse(result.Value<bool>("success"));
-                Assert.IsTrue(result.Value<string>("error").Contains("hierarchy loop") ||
-                    result.Value<string>("error").Contains("would create"),
-                    "Error should mention hierarchy loop prevention");
+                Assert.IsTrue(
+                    result.Value<string>("error").Contains("hierarchy loop") || result.Value<string>("error").Contains("would create"),
+                    "Error should mention hierarchy loop prevention"
+                );
             }
             finally
             {
@@ -621,14 +712,18 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 byte[] originalAsset = File.ReadAllBytes(prefabPath);
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["target"] = target,
-                    ["name"] = "UnexpectedRename",
-                    ["parent"] = parent == null ? JValue.CreateNull() : new JValue(parent)
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = target,
+                            ["name"] = "UnexpectedRename",
+                            ["parent"] = parent == null ? JValue.CreateNull() : new JValue(parent),
+                        }
+                    )
+                );
 
                 Assert.IsFalse(result.Value<bool>("success"), $"Expected rejection but got: {result}");
                 StringAssert.Contains("Cannot detach", result.Value<string>("error"));
@@ -653,13 +748,17 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["target"] = "Child1/Grandchild",
-                    ["parent"] = "NamedRootReparentTest"
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = "Child1/Grandchild",
+                            ["parent"] = "NamedRootReparentTest",
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"), $"Expected success but got: {result}");
                 GameObject reloaded = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
@@ -679,18 +778,22 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["createChild"] = new JObject
-                    {
-                        ["name"] = "NewSphere",
-                        ["primitive_type"] = "Sphere",
-                        ["position"] = new JArray(1f, 2f, 3f),
-                        ["scale"] = new JArray(0.5f, 0.5f, 0.5f)
-                    }
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["createChild"] = new JObject
+                            {
+                                ["name"] = "NewSphere",
+                                ["primitive_type"] = "Sphere",
+                                ["position"] = new JArray(1f, 2f, 3f),
+                                ["scale"] = new JArray(0.5f, 0.5f, 0.5f),
+                            },
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"));
 
@@ -714,16 +817,16 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["createChild"] = new JObject
-                    {
-                        ["name"] = "EmptyChild",
-                        ["position"] = new JArray(0f, 5f, 0f)
-                    }
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["createChild"] = new JObject { ["name"] = "EmptyChild", ["position"] = new JArray(0f, 5f, 0f) },
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"));
 
@@ -747,17 +850,31 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["createChild"] = new JArray
-                    {
-                        new JObject { ["name"] = "Child1", ["primitive_type"] = "Cube", ["position"] = new JArray(1f, 0f, 0f) },
-                        new JObject { ["name"] = "Child2", ["primitive_type"] = "Sphere", ["position"] = new JArray(-1f, 0f, 0f) },
-                        new JObject { ["name"] = "Child3", ["position"] = new JArray(0f, 1f, 0f) }
-                    }
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["createChild"] = new JArray
+                            {
+                                new JObject
+                                {
+                                    ["name"] = "Child1",
+                                    ["primitive_type"] = "Cube",
+                                    ["position"] = new JArray(1f, 0f, 0f),
+                                },
+                                new JObject
+                                {
+                                    ["name"] = "Child2",
+                                    ["primitive_type"] = "Sphere",
+                                    ["position"] = new JArray(-1f, 0f, 0f),
+                                },
+                                new JObject { ["name"] = "Child3", ["position"] = new JArray(0f, 1f, 0f) },
+                            },
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"));
 
@@ -781,17 +898,21 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["createChild"] = new JObject
-                    {
-                        ["name"] = "NewGrandchild",
-                        ["parent"] = "Child1",
-                        ["primitive_type"] = "Capsule"
-                    }
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["createChild"] = new JObject
+                            {
+                                ["name"] = "NewGrandchild",
+                                ["parent"] = "Child1",
+                                ["primitive_type"] = "Capsule",
+                            },
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"));
 
@@ -814,43 +935,44 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 // Missing required 'name' field
-                var missingName = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["createChild"] = new JObject
-                    {
-                        ["primitive_type"] = "Cube"
-                    }
-                }));
+                var missingName = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["createChild"] = new JObject { ["primitive_type"] = "Cube" },
+                        }
+                    )
+                );
                 Assert.IsFalse(missingName.Value<bool>("success"));
                 Assert.IsTrue(missingName.Value<string>("error").Contains("name"));
 
                 // Invalid parent
-                var invalidParent = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["createChild"] = new JObject
-                    {
-                        ["name"] = "TestChild",
-                        ["parent"] = "NonexistentParent"
-                    }
-                }));
+                var invalidParent = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["createChild"] = new JObject { ["name"] = "TestChild", ["parent"] = "NonexistentParent" },
+                        }
+                    )
+                );
                 Assert.IsFalse(invalidParent.Value<bool>("success"));
                 Assert.IsTrue(invalidParent.Value<string>("error").Contains("not found"));
 
                 // Invalid primitive type
-                var invalidPrimitive = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["createChild"] = new JObject
-                    {
-                        ["name"] = "TestChild",
-                        ["primitive_type"] = "InvalidType"
-                    }
-                }));
+                var invalidPrimitive = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["createChild"] = new JObject { ["name"] = "TestChild", ["primitive_type"] = "InvalidType" },
+                        }
+                    )
+                );
                 Assert.IsFalse(invalidPrimitive.Value<bool>("success"));
                 Assert.IsTrue(invalidPrimitive.Value<string>("error").Contains("Invalid primitive type"));
             }
@@ -871,12 +993,16 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["deleteChild"] = "Child1"
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["deleteChild"] = "Child1",
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"), $"Expected success but got: {result}");
 
@@ -897,13 +1023,17 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["target"] = "Child1",
-                    ["deleteChild"] = "Grandchild"
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = "Child1",
+                            ["deleteChild"] = "Grandchild",
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"), $"Expected success but got: {result}");
 
@@ -924,12 +1054,16 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["deleteChild"] = new JArray { "Child1", "Child2" }
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["deleteChild"] = new JArray { "Child1", "Child2" },
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"), $"Expected success but got: {result}");
 
@@ -952,16 +1086,19 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["deleteChild"] = "DeleteNonexistentChild" // This also tests whether it searches itself
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["deleteChild"] = "DeleteNonexistentChild", // This also tests whether it searches itself
+                        }
+                    )
+                );
 
                 Assert.IsFalse(result.Value<bool>("success"));
-                Assert.IsTrue(result.Value<string>("error").Contains("not found"),
-                    $"Expected 'not found' error but got: {result.Value<string>("error")}");
+                Assert.IsTrue(result.Value<string>("error").Contains("not found"), $"Expected 'not found' error but got: {result.Value<string>("error")}");
             }
             finally
             {
@@ -980,19 +1117,19 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["componentProperties"] = new JObject
-                    {
-                        ["Rigidbody"] = new JObject
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
                         {
-                            ["mass"] = 42f,
-                            ["useGravity"] = false
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["componentProperties"] = new JObject
+                            {
+                                ["Rigidbody"] = new JObject { ["mass"] = 42f, ["useGravity"] = false },
+                            },
                         }
-                    }
-                }));
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"), $"Expected success but got: {result}");
                 Assert.IsTrue(result["data"].Value<bool>("modified"));
@@ -1017,16 +1154,20 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["componentProperties"] = new JObject
-                    {
-                        ["Rigidbody"] = new JObject { ["mass"] = 10f },
-                        ["Light"] = new JObject { ["intensity"] = 3.5f }
-                    }
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["componentProperties"] = new JObject
+                            {
+                                ["Rigidbody"] = new JObject { ["mass"] = 10f },
+                                ["Light"] = new JObject { ["intensity"] = 3.5f },
+                            },
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"), $"Expected success but got: {result}");
 
@@ -1057,16 +1198,20 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["target"] = "Child1",
-                    ["componentProperties"] = new JObject
-                    {
-                        ["Rigidbody"] = new JObject { ["mass"] = 99f, ["drag"] = 2.5f }
-                    }
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = "Child1",
+                            ["componentProperties"] = new JObject
+                            {
+                                ["Rigidbody"] = new JObject { ["mass"] = 99f, ["drag"] = 2.5f },
+                            },
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"), $"Expected success but got: {result}");
 
@@ -1092,19 +1237,19 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["componentProperties"] = new JObject
-                    {
-                        ["Rigidbody"] = new JObject { ["mass"] = 5f }
-                    }
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["componentProperties"] = new JObject { ["Rigidbody"] = new JObject { ["mass"] = 5f } },
+                        }
+                    )
+                );
 
                 Assert.IsFalse(result.Value<bool>("success"));
-                Assert.IsTrue(result.Value<string>("error").Contains("not found"),
-                    $"Expected 'not found' error but got: {result.Value<string>("error")}");
+                Assert.IsTrue(result.Value<string>("error").Contains("not found"), $"Expected 'not found' error but got: {result.Value<string>("error")}");
             }
             finally
             {
@@ -1119,19 +1264,19 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["componentProperties"] = new JObject
-                    {
-                        ["NonexistentComponent"] = new JObject { ["foo"] = "bar" }
-                    }
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["componentProperties"] = new JObject { ["NonexistentComponent"] = new JObject { ["foo"] = "bar" } },
+                        }
+                    )
+                );
 
                 Assert.IsFalse(result.Value<bool>("success"));
-                Assert.IsTrue(result.Value<string>("error").Contains("not found"),
-                    $"Expected 'not found' error but got: {result.Value<string>("error")}");
+                Assert.IsTrue(result.Value<string>("error").Contains("not found"), $"Expected 'not found' error but got: {result.Value<string>("error")}");
             }
             finally
             {
@@ -1148,16 +1293,17 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["position"] = new JArray(5f, 10f, 15f),
-                    ["componentProperties"] = new JObject
-                    {
-                        ["Rigidbody"] = new JObject { ["mass"] = 25f }
-                    }
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["position"] = new JArray(5f, 10f, 15f),
+                            ["componentProperties"] = new JObject { ["Rigidbody"] = new JObject { ["mass"] = 25f } },
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"), $"Expected success but got: {result}");
 
@@ -1195,15 +1341,18 @@ namespace MCPForUnityTests.Editor.Tools
 
             // Path traversal
             GameObject testObj = new GameObject("Test");
-            var traversal = ToJObject(ManagePrefabs.HandleCommand(new JObject
-            {
-                ["action"] = "create_from_gameobject",
-                ["target"] = "Test",
-                ["prefabPath"] = "../../etc/passwd"
-            }));
+            var traversal = ToJObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create_from_gameobject",
+                        ["target"] = "Test",
+                        ["prefabPath"] = "../../etc/passwd",
+                    }
+                )
+            );
             Assert.IsFalse(traversal.Value<bool>("success"));
-            Assert.IsTrue(traversal.Value<string>("error").Contains("path traversal") ||
-                traversal.Value<string>("error").Contains("Invalid"));
+            Assert.IsTrue(traversal.Value<string>("error").Contains("path traversal") || traversal.Value<string>("error").Contains("Invalid"));
             UnityEngine.Object.DestroyImmediate(testObj, true);
         }
 
@@ -1215,22 +1364,24 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 // Invalid target
-                var invalidTarget = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = prefabPath,
-                    ["target"] = "NonexistentChild"
-                }));
+                var invalidTarget = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = prefabPath,
+                            ["target"] = "NonexistentChild",
+                        }
+                    )
+                );
                 Assert.IsFalse(invalidTarget.Value<bool>("success"));
                 Assert.IsTrue(invalidTarget.Value<string>("error").Contains("not found"));
 
                 // Invalid path
                 LogAssert.Expect(LogType.Error, new Regex(".*modify_contents.*does not exist.*"));
-                var invalidPath = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_contents",
-                    ["prefabPath"] = "Assets/Nonexistent.prefab"
-                }));
+                var invalidPath = ToJObject(
+                    ManagePrefabs.HandleCommand(new JObject { ["action"] = "modify_contents", ["prefabPath"] = "Assets/Nonexistent.prefab" })
+                );
                 Assert.IsFalse(invalidPath.Value<bool>("success"));
             }
             finally
@@ -1254,7 +1405,8 @@ namespace MCPForUnityTests.Editor.Tools
             UnityEngine.Object.DestroyImmediate(temp);
             AssetDatabase.Refresh();
 
-            if (!success) throw new Exception($"Failed to create test prefab at {path}");
+            if (!success)
+                throw new Exception($"Failed to create test prefab at {path}");
             return path;
         }
 
@@ -1271,7 +1423,8 @@ namespace MCPForUnityTests.Editor.Tools
             UnityEngine.Object.DestroyImmediate(root);
             AssetDatabase.Refresh();
 
-            if (!success) throw new Exception($"Failed to create nested test prefab at {path}");
+            if (!success)
+                throw new Exception($"Failed to create nested test prefab at {path}");
             return path;
         }
 
@@ -1289,7 +1442,8 @@ namespace MCPForUnityTests.Editor.Tools
             UnityEngine.Object.DestroyImmediate(temp);
             AssetDatabase.Refresh();
 
-            if (!success) throw new Exception($"Failed to create test prefab at {path}");
+            if (!success)
+                throw new Exception($"Failed to create test prefab at {path}");
             return path;
         }
 
@@ -1329,7 +1483,8 @@ namespace MCPForUnityTests.Editor.Tools
             UnityEngine.Object.DestroyImmediate(root);
             AssetDatabase.Refresh();
 
-            if (!success) throw new Exception($"Failed to create complex test prefab at {path}");
+            if (!success)
+                throw new Exception($"Failed to create complex test prefab at {path}");
             return path;
         }
 

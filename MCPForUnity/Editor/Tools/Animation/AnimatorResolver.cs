@@ -49,8 +49,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new
                 {
                     success = false,
-                    message = $"'{go.name}' has no Animator and {candidates.Length} of its children do " +
-                              $"({names}). Target one of them directly."
+                    message = $"'{go.name}' has no Animator and {candidates.Length} of its children do " + $"({names}). Target one of them directly.",
                 };
             }
 
@@ -67,16 +66,12 @@ namespace MCPForUnity.Editor.Tools.Animation
         /// </summary>
         public static string ResolvedSuffix(GameObject target, Animator resolved)
         {
-            return resolved.gameObject == target
-                ? string.Empty
-                : $" (on '{resolved.gameObject.name}', resolved from '{target.name}')";
+            return resolved.gameObject == target ? string.Empty : $" (on '{resolved.gameObject.name}', resolved from '{target.name}')";
         }
 
         public static string Describe(GameObject target, Animator resolved)
         {
-            return resolved.gameObject == target
-                ? $"'{target.name}'"
-                : $"'{resolved.gameObject.name}' (resolved from '{target.name}')";
+            return resolved.gameObject == target ? $"'{target.name}'" : $"'{resolved.gameObject.name}' (resolved from '{target.name}')";
         }
     }
 }

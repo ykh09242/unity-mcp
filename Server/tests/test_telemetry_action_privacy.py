@@ -1,4 +1,5 @@
 """Registered tool actions are fixed telemetry dimensions, never caller text."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -7,7 +8,7 @@ import sys
 import pytest
 
 
-PROGRAM = r'''
+PROGRAM = r"""
 import copy
 import hashlib
 import importlib
@@ -189,17 +190,32 @@ async def main():
         "versions": {name: version(name) for name in ("fastmcp", "mcp", "httpx")}}))
     assert all(item["passed"] for item in cases), [item["case"] for item in cases if not item["passed"]]
 anyio.run(main)
-'''
+"""
 
 
 @pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
 def test_public_action_telemetry_uses_registered_labels(tmp_path, protocol):
     env = {key: value for key, value in os.environ.items() if not key.startswith("UNITY_MCP_")}
-    for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME", "TEMP", "TMP", "UNITY_MCP_LOG_DIR"):
+    for key in (
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "XDG_DATA_HOME",
+        "TEMP",
+        "TMP",
+        "UNITY_MCP_LOG_DIR",
+    ):
         env[key] = str(tmp_path)
     env["DISABLE_TELEMETRY"] = "1"
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
     env.pop("PYTEST_CURRENT_TEST", None)
-    result = subprocess.run([sys.executable, "-B", "-c", PROGRAM, protocol], env=env, capture_output=True, text=True, timeout=90)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", PROGRAM, protocol],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
     (tmp_path / "public-telemetry.json").write_text(result.stdout, encoding="utf-8")
     assert result.returncode == 0, result.stdout + result.stderr

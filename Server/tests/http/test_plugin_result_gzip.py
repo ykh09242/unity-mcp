@@ -1,4 +1,5 @@
 """Negotiated gzip through the real plugin ASGI endpoint and shared budgets."""
+
 import gzip
 import json
 
@@ -15,12 +16,28 @@ FEATURES = ["large_result_v1", "large_result_gzip_v1"]
 
 def encoded(command_id, raw=None):
     result = {"success": True, "data": "한글😀" * 120000, "large_integer": 9007199254740993}
-    raw = raw or json.dumps({"type": "command_result", "id": command_id, "result": result}, ensure_ascii=False).encode()
+    raw = (
+        raw
+        or json.dumps(
+            {"type": "command_result", "id": command_id, "result": result}, ensure_ascii=False
+        ).encode()
+    )
     wire = gzip.compress(raw, mtime=0)
-    chunks = [MAGIC + command_id.encode() + offset.to_bytes(4, "big") + wire[offset:offset + CHUNK_PAYLOAD_BYTES]
-              for offset in range(0, len(wire), CHUNK_PAYLOAD_BYTES)]
-    start = {"type": "result_start", "id": command_id, "total_bytes": len(wire),
-             "chunk_count": len(chunks), "encoding": "gzip", "decoded_bytes": len(raw)}
+    chunks = [
+        MAGIC
+        + command_id.encode()
+        + offset.to_bytes(4, "big")
+        + wire[offset : offset + CHUNK_PAYLOAD_BYTES]
+        for offset in range(0, len(wire), CHUNK_PAYLOAD_BYTES)
+    ]
+    start = {
+        "type": "result_start",
+        "id": command_id,
+        "total_bytes": len(wire),
+        "chunk_count": len(chunks),
+        "encoding": "gzip",
+        "decoded_bytes": len(raw),
+    }
     return result, start, chunks
 
 
@@ -77,9 +94,17 @@ def test_bad_compressed_payload_closes_offender_and_releases_peak_charge(client,
         task, cid = start_command(client, wire, sid)
         raw = None
         if kind == "invalid_utf8":
-            raw = b'{"type":"command_result","id":"' + cid.encode() + b'","result":{"data":"\xff' + b"x" * 1048576 + b'"}}'
+            raw = (
+                b'{"type":"command_result","id":"'
+                + cid.encode()
+                + b'","result":{"data":"\xff'
+                + b"x" * 1048576
+                + b'"}}'
+            )
         elif kind == "wrong_envelope_id":
-            raw = json.dumps({"type": "command_result", "id": "different-id", "result": {"data": "x" * 1048576}}).encode()
+            raw = json.dumps(
+                {"type": "command_result", "id": "different-id", "result": {"data": "x" * 1048576}}
+            ).encode()
         _, start, chunks = encoded(cid, raw)
         if kind == "crc":
             chunks[-1] = chunks[-1][:-8] + bytes([chunks[-1][-8] ^ 1]) + chunks[-1][-7:]

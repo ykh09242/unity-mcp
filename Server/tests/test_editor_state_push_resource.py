@@ -8,7 +8,7 @@ import textwrap
 
 
 def test_sdk_resource_reuses_push_and_strict_reads_keep_rpc_authority():
-    source = '''
+    source = """
         import asyncio, copy, json, sys, time
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
@@ -98,11 +98,13 @@ def test_sdk_resource_reuses_push_and_strict_reads_keep_rpc_authority():
                     assert rpc.await_count == before + 3
                     assert rpc.await_args.kwargs == {"editor_state_read_mode": "ordinary"}
         asyncio.run(scenario())
-    '''
+    """
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],
         cwd=Path(__file__).resolve().parents[1],
         env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "1"},
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr

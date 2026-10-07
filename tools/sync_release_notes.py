@@ -131,6 +131,7 @@ def _fetch_via_urllib(url: str) -> list[dict] | dict:
     ctx = ssl.create_default_context()
     try:
         import certifi  # type: ignore
+
         ctx = ssl.create_default_context(cafile=certifi.where())
     except ImportError:
         pass
@@ -169,7 +170,11 @@ def fetch_latest_release() -> ReleaseMetadata:
     release = _fetch_via_gh(f"repos/{OWNER}/{REPO}/releases/latest", paginate=False)
     if release is None:
         release = _fetch_via_urllib(f"{API}/latest")
-    if not isinstance(release, dict) or release.get("draft") is not False or release.get("prerelease") is not False:
+    if (
+        not isinstance(release, dict)
+        or release.get("draft") is not False
+        or release.get("prerelease") is not False
+    ):
         raise ReleaseDataError("Latest release must be a non-draft, non-prerelease object.")
     tag = release.get("tag_name")
     url = release.get("html_url")
@@ -258,7 +263,9 @@ def render_releases_md(releases: list[dict]) -> str:
 
             summary = name if name and name != tag else tag
             out.append(f"### [{summary}{prerelease}]({url}) — {date}\n")
-            out.append(f"<details>\n<summary>Show release notes</summary>\n\n{body}\n\n</details>\n")
+            out.append(
+                f"<details>\n<summary>Show release notes</summary>\n\n{body}\n\n</details>\n"
+            )
         out.append("")  # blank line between groups
 
     # Migration footer
@@ -287,9 +294,7 @@ def render_readme_recent(releases: list[dict], n: int = README_RECENT_COUNT) -> 
         prerelease = " *(beta)*" if r.get("prerelease") else ""
         lines.append(f"* **[{tag}{prerelease}]({url})** ({date}){suffix}")
     lines.append("")
-    lines.append(
-        "Full history: [Release Notes](https://coplaydev.github.io/unity-mcp/releases)."
-    )
+    lines.append("Full history: [Release Notes](https://coplaydev.github.io/unity-mcp/releases).")
     lines.append("")
     lines.append("</details>")
     lines.append(README_MARKER_CLOSE)
@@ -324,14 +329,20 @@ def replace_marked_block(text: str, replacement: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true",
-                        help="Exit non-zero if files would change. Used by CI to detect drift.")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit non-zero if files would change. Used by CI to detect drift.",
+    )
     args = parser.parse_args(argv)
 
     try:
         releases = fetch_all_releases()
         if not releases:
-            print("No releases returned by GitHub API. Aborting to avoid blanking files.", file=sys.stderr)
+            print(
+                "No releases returned by GitHub API. Aborting to avoid blanking files.",
+                file=sys.stderr,
+            )
             return 2
         latest = fetch_latest_release()
     except urllib.error.HTTPError as e:
@@ -341,7 +352,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     except (urllib.error.URLError, OSError, ValueError) as e:
-        print(f"GitHub release fetch failed: {e}. Aborting without changing files.", file=sys.stderr)
+        print(
+            f"GitHub release fetch failed: {e}. Aborting without changing files.", file=sys.stderr
+        )
         return 2
 
     new_releases = render_releases_md(releases)
@@ -351,7 +364,9 @@ def main(argv: list[str] | None = None) -> int:
     existing_releases = RELEASES_MD.read_text(encoding="utf-8") if RELEASES_MD.exists() else ""
     existing_readme = README_MD.read_text(encoding="utf-8") if README_MD.exists() else ""
     new_readme = replace_marked_block(existing_readme, new_readme_block)
-    existing_metadata = RELEASE_METADATA.read_text(encoding="utf-8") if RELEASE_METADATA.exists() else ""
+    existing_metadata = (
+        RELEASE_METADATA.read_text(encoding="utf-8") if RELEASE_METADATA.exists() else ""
+    )
 
     releases_drift = existing_releases != new_releases
     readme_drift = existing_readme != new_readme
@@ -380,9 +395,15 @@ def main(argv: list[str] | None = None) -> int:
         RELEASE_METADATA.write_text(new_metadata, encoding="utf-8")
 
     print(f"Synced {len(releases)} releases.")
-    print(f"  - {RELEASES_MD.relative_to(REPO_ROOT)}: {'updated' if releases_drift else 'unchanged'}")
-    print(f"  - {README_MD.relative_to(REPO_ROOT)}:    {'updated' if readme_drift else 'unchanged'}")
-    print(f"  - {RELEASE_METADATA.relative_to(REPO_ROOT)}: {'updated' if metadata_drift else 'unchanged'}")
+    print(
+        f"  - {RELEASES_MD.relative_to(REPO_ROOT)}: {'updated' if releases_drift else 'unchanged'}"
+    )
+    print(
+        f"  - {README_MD.relative_to(REPO_ROOT)}:    {'updated' if readme_drift else 'unchanged'}"
+    )
+    print(
+        f"  - {RELEASE_METADATA.relative_to(REPO_ROOT)}: {'updated' if metadata_drift else 'unchanged'}"
+    )
     return 0
 
 

@@ -1,4 +1,5 @@
 """Common constants for CLI commands."""
+
 import click
 
 # Search method constants used across various CLI commands

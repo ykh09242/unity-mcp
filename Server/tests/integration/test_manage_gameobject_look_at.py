@@ -65,8 +65,10 @@ async def test_look_at_without_target_rejected_before_preflight(monkeypatch):
         return {"success": False, "message": "look_at_target is required"}
 
     monkeypatch.setattr(manage_go_mod, "async_send_command_with_retry", fake_send)
+
     async def unexpected_preflight(*args, **kwargs):
         pytest.fail("Missing look_at_target reached preflight")
+
     monkeypatch.setattr(manage_go_mod, "preflight", unexpected_preflight)
 
     resp = await manage_go_mod.manage_gameobject(

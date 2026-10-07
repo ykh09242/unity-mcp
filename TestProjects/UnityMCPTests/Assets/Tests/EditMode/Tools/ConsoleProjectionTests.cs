@@ -19,8 +19,12 @@ namespace MCPForUnityTests.Editor.Tools
             Debug.Log(body);
             var parameters = new JObject
             {
-                ["action"] = "get", ["types"] = new JArray("all"), ["format"] = format,
-                ["filterText"] = marker, ["pageSize"] = 1, ["fields"] = new JArray("type", "message")
+                ["action"] = "get",
+                ["types"] = new JArray("all"),
+                ["format"] = format,
+                ["filterText"] = marker,
+                ["pageSize"] = 1,
+                ["fields"] = new JArray("type", "message"),
             };
             // When the production handler selects only the mandatory fields.
             var response = JObject.FromObject(ReadConsole.HandleCommand(parameters));
@@ -43,8 +47,10 @@ namespace MCPForUnityTests.Editor.Tools
             // Given contradictory or unsupported selection parameters.
             var parameters = new JObject
             {
-                ["action"] = "get", ["format"] = format, ["fields"] = fields,
-                ["includeStacktrace"] = includeStacktrace
+                ["action"] = "get",
+                ["format"] = format,
+                ["fields"] = fields,
+                ["includeStacktrace"] = includeStacktrace,
             };
             // When the native boundary validates the request.
             var response = JObject.FromObject(ReadConsole.HandleCommand(parameters));
@@ -59,11 +65,18 @@ namespace MCPForUnityTests.Editor.Tools
             string marker = "ConsoleProjectionLegacy_" + Guid.NewGuid().ToString("N");
             Debug.Log(marker);
             // When reading the existing structured format.
-            var response = JObject.FromObject(ReadConsole.HandleCommand(new JObject
-            {
-                ["action"] = "get", ["types"] = new JArray("all"), ["format"] = "json",
-                ["filterText"] = marker, ["pageSize"] = 1
-            }));
+            var response = JObject.FromObject(
+                ReadConsole.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "get",
+                        ["types"] = new JArray("all"),
+                        ["format"] = "json",
+                        ["filterText"] = marker,
+                        ["pageSize"] = 1,
+                    }
+                )
+            );
             // Then all five legacy keys remain, including the null stack placeholder.
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var item = (JObject)response["data"]["items"][0];

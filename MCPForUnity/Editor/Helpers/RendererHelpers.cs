@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
-using UnityEngine;
 using UnityEditor;
+using UnityEngine;
 
 namespace MCPForUnity.Editor.Helpers
 {
@@ -124,27 +124,68 @@ namespace MCPForUnity.Editor.Helpers
             Action apply = () => { };
             // Shadows
             if (@params["shadowCastingMode"] != null)
-            { var shadowMode = @params["shadowCastingMode"].ReadScalar<UnityEngine.Rendering.ShadowCastingMode>(); apply += () => renderer.shadowCastingMode = shadowMode; changes.Add("shadowCastingMode"); }
-            if (@params["receiveShadows"] != null) { bool value = @params["receiveShadows"].ReadScalar<bool>(); apply += () => renderer.receiveShadows = value; changes.Add("receiveShadows"); }
+            {
+                var shadowMode = @params["shadowCastingMode"].ReadScalar<UnityEngine.Rendering.ShadowCastingMode>();
+                apply += () => renderer.shadowCastingMode = shadowMode;
+                changes.Add("shadowCastingMode");
+            }
+            if (@params["receiveShadows"] != null)
+            {
+                bool value = @params["receiveShadows"].ReadScalar<bool>();
+                apply += () => renderer.receiveShadows = value;
+                changes.Add("receiveShadows");
+            }
             // Note: shadowBias is only available on specific renderer types (e.g., ParticleSystemRenderer), not base Renderer
-            
+
             // Lighting and probes
             if (@params["lightProbeUsage"] != null)
-            { var probeUsage = @params["lightProbeUsage"].ReadScalar<UnityEngine.Rendering.LightProbeUsage>(); apply += () => renderer.lightProbeUsage = probeUsage; changes.Add("lightProbeUsage"); }
+            {
+                var probeUsage = @params["lightProbeUsage"].ReadScalar<UnityEngine.Rendering.LightProbeUsage>();
+                apply += () => renderer.lightProbeUsage = probeUsage;
+                changes.Add("lightProbeUsage");
+            }
             if (@params["reflectionProbeUsage"] != null)
-            { var reflectionUsage = @params["reflectionProbeUsage"].ReadScalar<UnityEngine.Rendering.ReflectionProbeUsage>(); apply += () => renderer.reflectionProbeUsage = reflectionUsage; changes.Add("reflectionProbeUsage"); }
-            
+            {
+                var reflectionUsage = @params["reflectionProbeUsage"].ReadScalar<UnityEngine.Rendering.ReflectionProbeUsage>();
+                apply += () => renderer.reflectionProbeUsage = reflectionUsage;
+                changes.Add("reflectionProbeUsage");
+            }
+
             // Motion vectors
             if (@params["motionVectorGenerationMode"] != null)
-            { var motionMode = @params["motionVectorGenerationMode"].ReadScalar<MotionVectorGenerationMode>(); apply += () => renderer.motionVectorGenerationMode = motionMode; changes.Add("motionVectorGenerationMode"); }
-            
+            {
+                var motionMode = @params["motionVectorGenerationMode"].ReadScalar<MotionVectorGenerationMode>();
+                apply += () => renderer.motionVectorGenerationMode = motionMode;
+                changes.Add("motionVectorGenerationMode");
+            }
+
             // Sorting
-            if (@params["sortingOrder"] != null) { int value = @params["sortingOrder"].ReadScalar<int>(); apply += () => renderer.sortingOrder = value; changes.Add("sortingOrder"); }
-            if (@params["sortingLayerName"] != null) { string value = @params["sortingLayerName"].ToString(); apply += () => renderer.sortingLayerName = value; changes.Add("sortingLayerName"); }
-            if (@params["sortingLayerID"] != null) { int value = @params["sortingLayerID"].ReadScalar<int>(); apply += () => renderer.sortingLayerID = value; changes.Add("sortingLayerID"); }
-            
+            if (@params["sortingOrder"] != null)
+            {
+                int value = @params["sortingOrder"].ReadScalar<int>();
+                apply += () => renderer.sortingOrder = value;
+                changes.Add("sortingOrder");
+            }
+            if (@params["sortingLayerName"] != null)
+            {
+                string value = @params["sortingLayerName"].ToString();
+                apply += () => renderer.sortingLayerName = value;
+                changes.Add("sortingLayerName");
+            }
+            if (@params["sortingLayerID"] != null)
+            {
+                int value = @params["sortingLayerID"].ReadScalar<int>();
+                apply += () => renderer.sortingLayerID = value;
+                changes.Add("sortingLayerID");
+            }
+
             // Rendering layer mask (for SRP)
-            if (@params["renderingLayerMask"] != null) { uint value = @params["renderingLayerMask"].ReadScalar<uint>(); apply += () => renderer.renderingLayerMask = value; changes.Add("renderingLayerMask"); }
+            if (@params["renderingLayerMask"] != null)
+            {
+                uint value = @params["renderingLayerMask"].ReadScalar<uint>();
+                apply += () => renderer.renderingLayerMask = value;
+                changes.Add("renderingLayerMask");
+            }
             return apply;
         }
 
@@ -161,10 +202,9 @@ namespace MCPForUnity.Editor.Helpers
                 reflectionProbeUsage = renderer.reflectionProbeUsage.ToString(),
                 sortingOrder = renderer.sortingOrder,
                 sortingLayerName = renderer.sortingLayerName,
-                renderingLayerMask = renderer.renderingLayerMask
+                renderingLayerMask = renderer.renderingLayerMask,
             };
         }
-
 
         /// <summary>
         /// Sets width properties for LineRenderer or TrailRenderer.
@@ -176,22 +216,43 @@ namespace MCPForUnity.Editor.Helpers
         /// <param name="setWidthCurve">Action to set width curve</param>
         /// <param name="setWidthMultiplier">Action to set width multiplier</param>
         /// <param name="parseAnimationCurve">Function to parse animation curve from JToken</param>
-        public static void ApplyWidthProperties(JObject @params, List<string> changes,
-            Action<float> setStartWidth, Action<float> setEndWidth,
-            Action<AnimationCurve> setWidthCurve, Action<float> setWidthMultiplier,
-            Func<JToken, float, AnimationCurve> parseAnimationCurve)
+        public static void ApplyWidthProperties(
+            JObject @params,
+            List<string> changes,
+            Action<float> setStartWidth,
+            Action<float> setEndWidth,
+            Action<AnimationCurve> setWidthCurve,
+            Action<float> setWidthMultiplier,
+            Func<JToken, float, AnimationCurve> parseAnimationCurve
+        )
         {
-            if (@params["width"] != null) 
-            { 
+            if (@params["width"] != null)
+            {
                 float w = @params["width"].ReadScalar<float>();
-                setStartWidth(w); 
-                setEndWidth(w); 
-                changes.Add("width"); 
+                setStartWidth(w);
+                setEndWidth(w);
+                changes.Add("width");
             }
-            if (@params["startWidth"] != null) { setStartWidth(@params["startWidth"].ReadScalar<float>()); changes.Add("startWidth"); }
-            if (@params["endWidth"] != null) { setEndWidth(@params["endWidth"].ReadScalar<float>()); changes.Add("endWidth"); }
-            if (@params["widthCurve"] != null) { setWidthCurve(parseAnimationCurve(@params["widthCurve"], 1f)); changes.Add("widthCurve"); }
-            if (@params["widthMultiplier"] != null) { setWidthMultiplier(@params["widthMultiplier"].ReadScalar<float>()); changes.Add("widthMultiplier"); }
+            if (@params["startWidth"] != null)
+            {
+                setStartWidth(@params["startWidth"].ReadScalar<float>());
+                changes.Add("startWidth");
+            }
+            if (@params["endWidth"] != null)
+            {
+                setEndWidth(@params["endWidth"].ReadScalar<float>());
+                changes.Add("endWidth");
+            }
+            if (@params["widthCurve"] != null)
+            {
+                setWidthCurve(parseAnimationCurve(@params["widthCurve"], 1f));
+                changes.Add("widthCurve");
+            }
+            if (@params["widthMultiplier"] != null)
+            {
+                setWidthMultiplier(@params["widthMultiplier"].ReadScalar<float>());
+                changes.Add("widthMultiplier");
+            }
         }
 
         /// <summary>
@@ -205,24 +266,40 @@ namespace MCPForUnity.Editor.Helpers
         /// <param name="parseColor">Function to parse color from JToken</param>
         /// <param name="parseGradient">Function to parse gradient from JToken</param>
         /// <param name="fadeEndAlpha">If true, sets end color alpha to 0 when using single color</param>
-        public static void ApplyColorProperties(JObject @params, List<string> changes,
-            Action<Color> setStartColor, Action<Color> setEndColor,
+        public static void ApplyColorProperties(
+            JObject @params,
+            List<string> changes,
+            Action<Color> setStartColor,
+            Action<Color> setEndColor,
             Action<Gradient> setGradient,
-            Func<JToken, Color> parseColor, Func<JToken, Gradient> parseGradient,
-            bool fadeEndAlpha = false)
+            Func<JToken, Color> parseColor,
+            Func<JToken, Gradient> parseGradient,
+            bool fadeEndAlpha = false
+        )
         {
-            if (@params["color"] != null) 
-            { 
-                Color c = parseColor(@params["color"]); 
-                setStartColor(c); 
-                setEndColor(fadeEndAlpha ? new Color(c.r, c.g, c.b, 0f) : c); 
-                changes.Add("color"); 
+            if (@params["color"] != null)
+            {
+                Color c = parseColor(@params["color"]);
+                setStartColor(c);
+                setEndColor(fadeEndAlpha ? new Color(c.r, c.g, c.b, 0f) : c);
+                changes.Add("color");
             }
-            if (@params["startColor"] != null) { setStartColor(parseColor(@params["startColor"])); changes.Add("startColor"); }
-            if (@params["endColor"] != null) { setEndColor(parseColor(@params["endColor"])); changes.Add("endColor"); }
-            if (@params["gradient"] != null) { setGradient(parseGradient(@params["gradient"])); changes.Add("gradient"); }
+            if (@params["startColor"] != null)
+            {
+                setStartColor(parseColor(@params["startColor"]));
+                changes.Add("startColor");
+            }
+            if (@params["endColor"] != null)
+            {
+                setEndColor(parseColor(@params["endColor"]));
+                changes.Add("endColor");
+            }
+            if (@params["gradient"] != null)
+            {
+                setGradient(parseGradient(@params["gradient"]));
+                changes.Add("gradient");
+            }
         }
-
 
         /// <summary>
         /// Sets material for a Renderer.
@@ -232,9 +309,16 @@ namespace MCPForUnity.Editor.Helpers
         /// <param name="undoName">Name for the undo operation</param>
         /// <param name="findMaterial">Function to find material by path</param>
         /// <param name="autoAssignDefault">If true, auto-assigns default material when materialPath is not provided</param>
-        public static object SetRendererMaterial(Renderer renderer, JObject @params, string undoName, Func<string, Material> findMaterial, bool autoAssignDefault = true)
+        public static object SetRendererMaterial(
+            Renderer renderer,
+            JObject @params,
+            string undoName,
+            Func<string, Material> findMaterial,
+            bool autoAssignDefault = true
+        )
         {
-            if (renderer == null) return new { success = false, message = "Renderer not found" };
+            if (renderer == null)
+                return new { success = false, message = "Renderer not found" };
 
             string path = @params["materialPath"]?.ToString();
 
@@ -275,7 +359,8 @@ namespace MCPForUnity.Editor.Helpers
             }
 
             Material mat = findMaterial(path);
-            if (mat == null) return new { success = false, message = $"Material not found: {path}" };
+            if (mat == null)
+                return new { success = false, message = $"Material not found: {path}" };
 
             Undo.RecordObject(renderer, undoName);
             renderer.sharedMaterial = mat;
@@ -284,23 +369,56 @@ namespace MCPForUnity.Editor.Helpers
             return new { success = true, message = $"Set material to {mat.name}" };
         }
 
-
         /// <summary>
         /// Applies Line/Trail specific properties (loop, alignment, textureMode, etc.).
         /// </summary>
-        public static void ApplyLineTrailProperties(JObject @params, List<string> changes,
-            Action<bool> setLoop, Action<bool> setUseWorldSpace,
-            Action<int> setNumCornerVertices, Action<int> setNumCapVertices,
-            Action<LineAlignment> setAlignment, Action<LineTextureMode> setTextureMode,
-            Action<bool> setGenerateLightingData)
+        public static void ApplyLineTrailProperties(
+            JObject @params,
+            List<string> changes,
+            Action<bool> setLoop,
+            Action<bool> setUseWorldSpace,
+            Action<int> setNumCornerVertices,
+            Action<int> setNumCapVertices,
+            Action<LineAlignment> setAlignment,
+            Action<LineTextureMode> setTextureMode,
+            Action<bool> setGenerateLightingData
+        )
         {
-            if (@params["loop"] != null && setLoop != null) { setLoop(@params["loop"].ReadScalar<bool>()); changes.Add("loop"); }
-            if (@params["useWorldSpace"] != null && setUseWorldSpace != null) { setUseWorldSpace(@params["useWorldSpace"].ReadScalar<bool>()); changes.Add("useWorldSpace"); }
-            if (@params["numCornerVertices"] != null && setNumCornerVertices != null) { setNumCornerVertices(@params["numCornerVertices"].ReadScalar<int>()); changes.Add("numCornerVertices"); }
-            if (@params["numCapVertices"] != null && setNumCapVertices != null) { setNumCapVertices(@params["numCapVertices"].ReadScalar<int>()); changes.Add("numCapVertices"); }
-            if (@params["alignment"] != null && setAlignment != null) { setAlignment(@params["alignment"].ReadScalar<LineAlignment>()); changes.Add("alignment"); }
-            if (@params["textureMode"] != null && setTextureMode != null) { setTextureMode(@params["textureMode"].ReadScalar<LineTextureMode>()); changes.Add("textureMode"); }
-            if (@params["generateLightingData"] != null && setGenerateLightingData != null) { setGenerateLightingData(@params["generateLightingData"].ReadScalar<bool>()); changes.Add("generateLightingData"); }
+            if (@params["loop"] != null && setLoop != null)
+            {
+                setLoop(@params["loop"].ReadScalar<bool>());
+                changes.Add("loop");
+            }
+            if (@params["useWorldSpace"] != null && setUseWorldSpace != null)
+            {
+                setUseWorldSpace(@params["useWorldSpace"].ReadScalar<bool>());
+                changes.Add("useWorldSpace");
+            }
+            if (@params["numCornerVertices"] != null && setNumCornerVertices != null)
+            {
+                setNumCornerVertices(@params["numCornerVertices"].ReadScalar<int>());
+                changes.Add("numCornerVertices");
+            }
+            if (@params["numCapVertices"] != null && setNumCapVertices != null)
+            {
+                setNumCapVertices(@params["numCapVertices"].ReadScalar<int>());
+                changes.Add("numCapVertices");
+            }
+            if (@params["alignment"] != null && setAlignment != null)
+            {
+                setAlignment(@params["alignment"].ReadScalar<LineAlignment>());
+                changes.Add("alignment");
+            }
+            if (@params["textureMode"] != null && setTextureMode != null)
+            {
+                setTextureMode(@params["textureMode"].ReadScalar<LineTextureMode>());
+                changes.Add("textureMode");
+            }
+            if (@params["generateLightingData"] != null && setGenerateLightingData != null)
+            {
+                setGenerateLightingData(@params["generateLightingData"].ReadScalar<bool>());
+                changes.Add("generateLightingData");
+            }
         }
 
         /// <summary>
@@ -311,7 +429,8 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static void SetSensibleParticleDefaults(ParticleSystem ps)
         {
-            if (ps == null) return;
+            if (ps == null)
+                return;
 
             var main = ps.main;
             main.startSize = new ParticleSystem.MinMaxCurve(0.1f);
@@ -327,6 +446,5 @@ namespace MCPForUnity.Editor.Helpers
             var shape = ps.shape;
             shape.radius = 0.25f;
         }
-
     }
 }

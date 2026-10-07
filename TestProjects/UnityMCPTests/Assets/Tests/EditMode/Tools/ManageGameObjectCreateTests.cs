@@ -1,9 +1,9 @@
 using System.Collections.Generic;
-using NUnit.Framework;
-using UnityEngine;
-using UnityEditorInternal;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Tools.GameObjects;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
+using UnityEditorInternal;
+using UnityEngine;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -43,11 +43,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Create_WithNameOnly_CreatesEmptyGameObject()
         {
-            var p = new JObject
-            {
-                ["action"] = "create",
-                ["name"] = "TestEmptyObject"
-            };
+            var p = new JObject { ["action"] = "create", ["name"] = "TestEmptyObject" };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
@@ -62,10 +58,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Create_WithoutName_ReturnsError()
         {
-            var p = new JObject
-            {
-                ["action"] = "create"
-            };
+            var p = new JObject { ["action"] = "create" };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
@@ -76,11 +69,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Create_WithEmptyName_ReturnsError()
         {
-            var p = new JObject
-            {
-                ["action"] = "create",
-                ["name"] = ""
-            };
+            var p = new JObject { ["action"] = "create", ["name"] = "" };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
@@ -99,7 +88,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestCube",
-                ["primitiveType"] = "Cube"
+                ["primitiveType"] = "Cube",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -121,7 +110,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestSphere",
-                ["primitiveType"] = "Sphere"
+                ["primitiveType"] = "Sphere",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -141,7 +130,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestCapsule",
-                ["primitiveType"] = "Capsule"
+                ["primitiveType"] = "Capsule",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -161,7 +150,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestPlane",
-                ["primitiveType"] = "Plane"
+                ["primitiveType"] = "Plane",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -180,7 +169,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestCylinder",
-                ["primitiveType"] = "Cylinder"
+                ["primitiveType"] = "Cylinder",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -199,7 +188,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestQuad",
-                ["primitiveType"] = "Quad"
+                ["primitiveType"] = "Quad",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -218,7 +207,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestInvalidPrimitive",
-                ["primitiveType"] = "InvalidType"
+                ["primitiveType"] = "InvalidType",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -237,7 +226,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestPositioned",
-                ["position"] = new JArray { 1.0f, 2.0f, 3.0f }
+                ["position"] = new JArray { 1.0f, 2.0f, 3.0f },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -257,7 +246,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestRotated",
-                ["rotation"] = new JArray { 0.0f, 90.0f, 0.0f }
+                ["rotation"] = new JArray { 0.0f, 90.0f, 0.0f },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -278,7 +267,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestScaled",
-                ["scale"] = new JArray { 2.0f, 3.0f, 4.0f }
+                ["scale"] = new JArray { 2.0f, 3.0f, 4.0f },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -300,7 +289,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["name"] = "TestFullTransform",
                 ["position"] = new JArray { 5.0f, 6.0f, 7.0f },
                 ["rotation"] = new JArray { 45.0f, 90.0f, 0.0f },
-                ["scale"] = new JArray { 1.5f, 1.5f, 1.5f }
+                ["scale"] = new JArray { 1.5f, 1.5f, 1.5f },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -329,7 +318,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestChild",
-                ["parent"] = "TestParent"
+                ["parent"] = "TestParent",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -349,7 +338,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestOrphan",
-                ["parent"] = "NonExistentParent"
+                ["parent"] = "NonExistentParent",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -368,7 +357,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestTagged",
-                ["tag"] = "MainCamera" // Use built-in tag
+                ["tag"] = "MainCamera", // Use built-in tag
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -388,7 +377,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestLayered",
-                ["layer"] = "UI" // Use built-in layer
+                ["layer"] = "UI", // Use built-in layer
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -405,30 +394,33 @@ namespace MCPForUnityTests.Editor.Tools
         public void Create_WithNewTag_AutoCreatesTag()
         {
             const string testTag = "AutoCreatedTag12345";
-            
+
             // Tags that don't exist are now auto-created
             var p = new JObject
             {
                 ["action"] = "create",
                 ["name"] = "TestAutoTag",
-                ["tag"] = testTag
+                ["tag"] = testTag,
             };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
-            
+
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
-            
+
             var created = FindAndTrack("TestAutoTag");
             Assert.IsNotNull(created, "Object should be created");
             Assert.AreEqual(testTag, created.tag, "Tag should be auto-created and assigned");
-            
+
             // Verify tag was actually added to the tag manager
-            Assert.That(UnityEditorInternal.InternalEditorUtility.tags, Does.Contain(testTag), 
-                "Tag should exist in Unity's tag manager");
-            
+            Assert.That(UnityEditorInternal.InternalEditorUtility.tags, Does.Contain(testTag), "Tag should exist in Unity's tag manager");
+
             // Clean up the created tag
-            try { UnityEditorInternal.InternalEditorUtility.RemoveTag(testTag); } catch { }
+            try
+            {
+                UnityEditorInternal.InternalEditorUtility.RemoveTag(testTag);
+            }
+            catch { }
         }
 
         #endregion
@@ -448,10 +440,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "create",
                 ["name"] = "TestComponentProperties",
                 ["componentsToAdd"] = new JArray { "BoxCollider" },
-                ["componentProperties"] = new JObject
-                {
-                    ["BoxCollider"] = new JObject { ["size"] = new JArray(2, 2, 2) }
-                }
+                ["componentProperties"] = new JObject { ["BoxCollider"] = new JObject { ["size"] = new JArray(2, 2, 2) } },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -463,8 +452,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(created);
             var collider = created.GetComponent<BoxCollider>();
             Assert.IsNotNull(collider, "BoxCollider should have been added");
-            Assert.AreEqual(new Vector3(2f, 2f, 2f), collider.size,
-                "componentProperties should be applied at create time, not silently ignored");
+            Assert.AreEqual(new Vector3(2f, 2f, 2f), collider.size, "componentProperties should be applied at create time, not silently ignored");
         }
 
         [Test]
@@ -482,9 +470,9 @@ namespace MCPForUnityTests.Editor.Tools
                     new JObject
                     {
                         ["typeName"] = "BoxCollider",
-                        ["properties"] = new JObject { ["size"] = new JArray(3, 3, 3) }
-                    }
-                }
+                        ["properties"] = new JObject { ["size"] = new JArray(3, 3, 3) },
+                    },
+                },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -506,17 +494,13 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "TestComponentPropertiesMissingComponent",
-                ["componentProperties"] = new JObject
-                {
-                    ["BoxCollider"] = new JObject { ["size"] = new JArray(2, 2, 2) }
-                }
+                ["componentProperties"] = new JObject { ["BoxCollider"] = new JObject { ["size"] = new JArray(2, 2, 2) } },
             };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
 
-            Assert.IsFalse(resultObj.Value<bool>("success"),
-                "Setting properties on a component that was never added should fail, not silently succeed");
+            Assert.IsFalse(resultObj.Value<bool>("success"), "Setting properties on a component that was never added should fail, not silently succeed");
 
             var created = GameObject.Find("TestComponentPropertiesMissingComponent");
             Assert.IsNull(created, "The partially-created GameObject should have been cleaned up");
@@ -535,9 +519,9 @@ namespace MCPForUnityTests.Editor.Tools
                     new JObject
                     {
                         ["typeName"] = "BoxCollider",
-                        ["properties"] = new JObject { ["size"] = new JArray(4, 4, 4) }
-                    }
-                }
+                        ["properties"] = new JObject { ["size"] = new JArray(4, 4, 4) },
+                    },
+                },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -560,24 +544,19 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Create_Success_ReturnsInstanceID()
         {
-            var p = new JObject
-            {
-                ["action"] = "create",
-                ["name"] = "TestInstanceID"
-            };
+            var p = new JObject { ["action"] = "create", ["name"] = "TestInstanceID" };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
 
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
-            
+
             var data = resultObj["data"];
             Assert.IsNotNull(data, "Response should include data");
-            
+
             // Check that instanceID is returned (case-insensitive check)
             var instanceID = data["instanceID"]?.Value<int>() ?? data["InstanceID"]?.Value<int>();
-            Assert.IsTrue(instanceID.HasValue && instanceID.Value != 0, 
-                $"Response should include a non-zero instanceID. Data: {data}");
+            Assert.IsTrue(instanceID.HasValue && instanceID.Value != 0, $"Response should include a non-zero instanceID. Data: {data}");
 
             FindAndTrack("TestInstanceID");
         }
@@ -585,24 +564,19 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Create_Success_ReturnsName()
         {
-            var p = new JObject
-            {
-                ["action"] = "create",
-                ["name"] = "TestReturnedName"
-            };
+            var p = new JObject { ["action"] = "create", ["name"] = "TestReturnedName" };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
 
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
-            
+
             var data = resultObj["data"];
             Assert.IsNotNull(data, "Response should include data");
-            
+
             // Check name is in response
             var nameValue = data["name"]?.ToString() ?? data["Name"]?.ToString();
-            Assert.IsTrue(!string.IsNullOrEmpty(nameValue) || data.ToString().Contains("TestReturnedName"),
-                "Response should include name");
+            Assert.IsTrue(!string.IsNullOrEmpty(nameValue) || data.ToString().Contains("TestReturnedName"), "Response should include name");
 
             FindAndTrack("TestReturnedName");
         }
@@ -610,4 +584,3 @@ namespace MCPForUnityTests.Editor.Tools
         #endregion
     }
 }
-

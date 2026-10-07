@@ -70,6 +70,7 @@ from unittest.mock import Mock, AsyncMock, patch, MagicMock, mock_open
 # FIXTURES & SETUP PATTERNS
 # =============================================================================
 
+
 @pytest.fixture
 def temp_repo():
     """Create a temporary repository structure for testing.
@@ -138,7 +139,7 @@ def sample_pyproject_toml():
     Used by: update_versions.py::update_pyproject_toml()
     Challenge: Regex must preserve exact formatting
     """
-    return '''[project]
+    return """[project]
 name = "mcpforunityserver"
 version = "9.2.0"
 description = "MCP for Unity Server"
@@ -148,7 +149,7 @@ requires-python = ">=3.10"
 [build-system]
 requires = ["setuptools>=64.0.0"]
 build-backend = "setuptools.build_meta"
-'''
+"""
 
 
 @pytest.fixture
@@ -158,7 +159,7 @@ def sample_readme_content():
     Pattern: Git URLs with version tags in fragments
     Used by: update_versions.py::update_server_readme()
     """
-    return '''# MCP for Unity
+    return """# MCP for Unity
 
 ## Installation
 
@@ -171,12 +172,13 @@ Or via package URL:
 ```
 https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#v9.2.0
 ```
-'''
+"""
 
 
 # =============================================================================
 # VERSION MANAGEMENT TESTS
 # =============================================================================
+
 
 class TestVersionBumpingLogic:
     """Tests for version bumping and file synchronization.
@@ -197,14 +199,11 @@ class TestVersionBumpingLogic:
         """
         # Write package.json
         temp_repo["mcp_package"].write_text(
-            json.dumps(sample_package_json, indent=2),
-            encoding="utf-8"
+            json.dumps(sample_package_json, indent=2), encoding="utf-8"
         )
 
         # Simulate load_package_version()
-        package_data = json.loads(
-            temp_repo["mcp_package"].read_text(encoding="utf-8")
-        )
+        package_data = json.loads(temp_repo["mcp_package"].read_text(encoding="utf-8"))
         version = package_data.get("version")
 
         assert version == "9.2.0"
@@ -231,14 +230,11 @@ class TestVersionBumpingLogic:
         4. Return True if changed, False if already at target
         """
         temp_repo["mcp_package"].write_text(
-            json.dumps(sample_package_json, indent=2),
-            encoding="utf-8"
+            json.dumps(sample_package_json, indent=2), encoding="utf-8"
         )
 
         new_version = "9.3.0"
-        package_data = json.loads(
-            temp_repo["mcp_package"].read_text(encoding="utf-8")
-        )
+        package_data = json.loads(temp_repo["mcp_package"].read_text(encoding="utf-8"))
         old_version = package_data.get("version")
 
         assert old_version == "9.2.0"
@@ -246,14 +242,11 @@ class TestVersionBumpingLogic:
         # Update
         package_data["version"] = new_version
         temp_repo["mcp_package"].write_text(
-            json.dumps(package_data, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8"
+            json.dumps(package_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
 
         # Verify
-        updated = json.loads(
-            temp_repo["mcp_package"].read_text(encoding="utf-8")
-        )
+        updated = json.loads(temp_repo["mcp_package"].read_text(encoding="utf-8"))
         assert updated["version"] == "9.3.0"
 
     def test_update_pyproject_toml_version(self, temp_repo, sample_pyproject_toml):
@@ -281,11 +274,7 @@ class TestVersionBumpingLogic:
 
         # Replace exactly once
         new_content, count = re.subn(
-            pattern,
-            f'version = "{new_version}"',
-            content,
-            count=1,
-            flags=re.MULTILINE
+            pattern, f'version = "{new_version}"', content, count=1, flags=re.MULTILINE
         )
 
         assert count == 1  # Exactly one replacement
@@ -314,14 +303,16 @@ class TestVersionBumpingLogic:
         content = temp_repo["server_readme"].read_text(encoding="utf-8")
 
         # Pattern from update_versions.py
-        pattern = r'git\+https://github\.com/CoplayDev/unity-mcp@v[0-9]+\.[0-9]+\.[0-9]+#subdirectory=Server'
-        replacement = f'git+https://github.com/CoplayDev/unity-mcp@v{new_version}#subdirectory=Server'
+        pattern = r"git\+https://github\.com/CoplayDev/unity-mcp@v[0-9]+\.[0-9]+\.[0-9]+#subdirectory=Server"
+        replacement = (
+            f"git+https://github.com/CoplayDev/unity-mcp@v{new_version}#subdirectory=Server"
+        )
 
         assert re.search(pattern, content) is not None
 
         new_content = re.sub(pattern, replacement, content)
-        assert f'@v{new_version}#subdirectory=Server' in new_content
-        assert '@v9.2.0#' not in new_content
+        assert f"@v{new_version}#subdirectory=Server" in new_content
+        assert "@v9.2.0#" not in new_content
 
         temp_repo["server_readme"].write_text(new_content, encoding="utf-8")
 
@@ -342,12 +333,12 @@ class TestVersionBumpingLogic:
         content = temp_repo["root_readme"].read_text(encoding="utf-8")
 
         # Pattern from update_versions.py
-        pattern = r'https://github\.com/CoplayDev/unity-mcp\.git\?path=/MCPForUnity#v[0-9]+\.[0-9]+\.[0-9]+'
-        replacement = f'https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#v{new_version}'
+        pattern = r"https://github\.com/CoplayDev/unity-mcp\.git\?path=/MCPForUnity#v[0-9]+\.[0-9]+\.[0-9]+"
+        replacement = f"https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#v{new_version}"
 
         if re.search(pattern, content):
             new_content = re.sub(pattern, replacement, content)
-            assert f'#v{new_version}' in new_content
+            assert f"#v{new_version}" in new_content
 
     def test_dry_run_mode_no_file_modifications(self, temp_repo, sample_package_json):
         """Test that dry-run mode doesn't modify files.
@@ -361,8 +352,7 @@ class TestVersionBumpingLogic:
         Pattern: Conditional write based on dry_run flag
         """
         temp_repo["mcp_package"].write_text(
-            json.dumps(sample_package_json, indent=2),
-            encoding="utf-8"
+            json.dumps(sample_package_json, indent=2), encoding="utf-8"
         )
 
         original_content = temp_repo["mcp_package"].read_text(encoding="utf-8")
@@ -375,16 +365,16 @@ class TestVersionBumpingLogic:
         # With dry_run=True, skip the write
         if not dry_run:
             temp_repo["mcp_package"].write_text(
-                json.dumps(package_data, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8"
+                json.dumps(package_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
             )
 
         # File should be unchanged
         after_content = temp_repo["mcp_package"].read_text(encoding="utf-8")
         assert after_content == original_content
 
-    def test_version_consistency_validation(self, temp_repo, sample_package_json,
-                                           sample_manifest_json, sample_pyproject_toml):
+    def test_version_consistency_validation(
+        self, temp_repo, sample_package_json, sample_manifest_json, sample_pyproject_toml
+    ):
         """Test comprehensive version consistency check across all files.
 
         Behavior: Load versions from all sources, compare
@@ -401,17 +391,12 @@ class TestVersionBumpingLogic:
         """
         # Setup all files
         temp_repo["mcp_package"].write_text(
-            json.dumps(sample_package_json, indent=2),
-            encoding="utf-8"
+            json.dumps(sample_package_json, indent=2), encoding="utf-8"
         )
         temp_repo["manifest"].write_text(
-            json.dumps(sample_manifest_json, indent=2),
-            encoding="utf-8"
+            json.dumps(sample_manifest_json, indent=2), encoding="utf-8"
         )
-        temp_repo["pyproject"].write_text(
-            sample_pyproject_toml,
-            encoding="utf-8"
-        )
+        temp_repo["pyproject"].write_text(sample_pyproject_toml, encoding="utf-8")
 
         # Extract versions
         versions = {}
@@ -439,6 +424,7 @@ class TestVersionBumpingLogic:
 # PACKAGE BUILDING & VALIDATION TESTS
 # =============================================================================
 
+
 class TestMCPBBundleGeneration:
     """Tests for MCPB bundle generation process.
 
@@ -457,10 +443,7 @@ class TestMCPBBundleGeneration:
             "icon": "coplay-logo.png",
             "license": "MIT",
         }
-        temp_repo["manifest"].write_text(
-            json.dumps(template, indent=2),
-            encoding="utf-8"
-        )
+        temp_repo["manifest"].write_text(json.dumps(template, indent=2), encoding="utf-8")
         return template
 
     @pytest.fixture
@@ -528,8 +511,7 @@ class TestMCPBBundleGeneration:
             }
             manifest_path = build_dir / "manifest.json"
             manifest_path.write_text(
-                json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8"
+                json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
             )
             assert manifest_path.exists()
 
@@ -566,10 +548,7 @@ class TestMCPBBundleGeneration:
 
         Pattern: Subprocess with error propagation
         """
-        mock_run.return_value = Mock(
-            stdout="Packed successfully",
-            returncode=0
-        )
+        mock_run.return_value = Mock(stdout="Packed successfully", returncode=0)
 
         build_dir = temp_repo["root"] / "build"
         build_dir.mkdir()
@@ -608,7 +587,7 @@ class TestMCPBBundleGeneration:
         error = subprocess.CalledProcessError(
             returncode=1,
             cmd="npx @anthropic-ai/mcpb pack",
-            stderr="manifest.json not found in build directory"
+            stderr="manifest.json not found in build directory",
         )
         mock_run.side_effect = error
 
@@ -652,6 +631,7 @@ class TestMCPBBundleGeneration:
 # =============================================================================
 # ASSET STORE PACKAGE PREPARATION TESTS
 # =============================================================================
+
 
 class TestAssetStorePackagePreparation:
     """Tests for Asset Store release packaging.
@@ -697,13 +677,13 @@ class TestAssetStorePackagePreparation:
         """
         http_util = unity_project_structure["source_mcp"] / "HttpEndpointUtility.cs"
 
-        original_content = '''public class HttpEndpointUtility {
+        original_content = """public class HttpEndpointUtility {
     private const string DefaultBaseUrl = "http://localhost:8080";
 
     public string GetBaseUrl() {
         return DefaultBaseUrl;
     }
-}'''
+}"""
 
         http_util.write_text(original_content, encoding="utf-8")
 
@@ -736,14 +716,14 @@ class TestAssetStorePackagePreparation:
         """
         setup_service = unity_project_structure["source_mcp"] / "SetupWindowService.cs"
 
-        original_content = '''using UnityEngine;
+        original_content = """using UnityEngine;
 
 [InitializeOnLoad]
 public class SetupWindowService {
     static SetupWindowService() {
         EditorApplication.update += OnUpdate;
     }
-}'''
+}"""
 
         setup_service.write_text(original_content, encoding="utf-8")
 
@@ -798,13 +778,14 @@ public class SetupWindowService {
         connection_section = (
             source / "Editor" / "Windows" / "Components" / "Connection" / "McpConnectionSection.cs"
         )
-        connection_section.write_text('transportDropdown.Init(TransportProtocol.HTTPLocal);')
+        connection_section.write_text("transportDropdown.Init(TransportProtocol.HTTPLocal);")
 
         with tempfile.TemporaryDirectory(prefix="assetstore_") as tmpdir:
             staged_mcp = Path(tmpdir) / "MCPForUnity"
 
             # Copy all files
             import shutil
+
             shutil.copytree(source, staged_mcp)
 
             assert (staged_mcp / "Editor" / "Setup" / "SetupWindowService.cs").exists()
@@ -812,9 +793,7 @@ public class SetupWindowService {
             # Apply edits to staged copy
             staged_service = staged_mcp / "Editor" / "Setup" / "SetupWindowService.cs"
             content = staged_service.read_text(encoding="utf-8")
-            new_content, count = re.subn(
-                r"\[InitializeOnLoad\]", "", content
-            )
+            new_content, count = re.subn(r"\[InitializeOnLoad\]", "", content)
             assert count == 1
             staged_service.write_text(new_content, encoding="utf-8")
 
@@ -822,6 +801,7 @@ public class SetupWindowService {
             target_mcp = unity_project_structure["assets_dir"] / "MCPForUnity"
             if target_mcp.exists():
                 import shutil
+
                 shutil.rmtree(target_mcp)
 
             shutil.copytree(staged_mcp, target_mcp)
@@ -891,6 +871,7 @@ public class SetupWindowService {
 # STRESS TEST PATTERNS & EXECUTION TESTS
 # =============================================================================
 
+
 class TestStressTestSetupPatterns:
     """Tests for stress test infrastructure.
 
@@ -937,7 +918,7 @@ class TestStressTestSetupPatterns:
         files = sorted(
             status_dir.glob("unity-mcp-status-*.json"),
             key=lambda p: p.stat().st_mtime,
-            reverse=True
+            reverse=True,
         )
 
         assert len(files) > 0
@@ -1131,6 +1112,7 @@ class TestStressTestSetupPatterns:
 
         Pattern: Simple protocol for connection maintenance
         """
+
         def make_ping_frame() -> bytes:
             return b"ping"
 
@@ -1158,7 +1140,7 @@ class TestStressTestSetupPatterns:
                 "action": "read",
                 "name": name,
                 "path": path,
-            }
+            },
         }
 
         frame = json.dumps(read_payload).encode("utf-8")
@@ -1170,7 +1152,7 @@ class TestStressTestSetupPatterns:
                 "data": {
                     "contents": "public class Test {}",
                     "sha256": "abc123...",
-                }
+                },
             }
         }
 
@@ -1211,8 +1193,8 @@ class TestStressTestSetupPatterns:
                 "options": {
                     "refresh": "immediate",
                     "validate": "standard",
-                }
-            }
+                },
+            },
         }
 
         # Validate structure
@@ -1316,6 +1298,7 @@ class TestStressTestSetupPatterns:
 # RELEASE CHECKLIST & GIT INTEGRATION TESTS
 # =============================================================================
 
+
 class TestReleaseChecklistValidation:
     """Tests for release validation and checklist items.
 
@@ -1323,8 +1306,9 @@ class TestReleaseChecklistValidation:
     Patterns: Version consistency, manifest validation, changelog preparation
     """
 
-    def test_version_consistency_checklist(self, temp_repo, sample_package_json,
-                                          sample_manifest_json, sample_pyproject_toml):
+    def test_version_consistency_checklist(
+        self, temp_repo, sample_package_json, sample_manifest_json, sample_pyproject_toml
+    ):
         """Test comprehensive version consistency validation checklist.
 
         Checklist items:
@@ -1429,6 +1413,7 @@ class TestReleaseChecklistValidation:
 # =============================================================================
 # GIT TAG & CHANGELOG GENERATION TESTS
 # =============================================================================
+
 
 class TestGitTagAndChangelogGeneration:
     """Tests for git tag creation and changelog patterns.
@@ -1573,6 +1558,7 @@ All notable changes to this project are documented in this file.
 # INTEGRATION & WORKFLOW TESTS
 # =============================================================================
 
+
 class TestBuildReleaseWorkflow:
     """Integration tests for complete build/release workflow.
 
@@ -1580,8 +1566,9 @@ class TestBuildReleaseWorkflow:
     Captures: Typical release steps in order
     """
 
-    def test_version_bump_workflow(self, temp_repo, sample_package_json,
-                                   sample_manifest_json, sample_pyproject_toml):
+    def test_version_bump_workflow(
+        self, temp_repo, sample_package_json, sample_manifest_json, sample_pyproject_toml
+    ):
         """Test complete version bumping workflow.
 
         Steps:
@@ -1616,8 +1603,7 @@ class TestBuildReleaseWorkflow:
         pkg = json.loads(temp_repo["mcp_package"].read_text(encoding="utf-8"))
         pkg["version"] = new_version
         temp_repo["mcp_package"].write_text(
-            json.dumps(pkg, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8"
+            json.dumps(pkg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
         files_updated.append("MCPForUnity/package.json")
 
@@ -1667,6 +1653,7 @@ class TestBuildReleaseWorkflow:
 # ERROR HANDLING & EDGE CASES
 # =============================================================================
 
+
 class TestErrorHandlingPatterns:
     """Tests for error scenarios and edge cases.
 
@@ -1706,17 +1693,13 @@ class TestErrorHandlingPatterns:
         """
         content = "version = 1.0\nversion = 1.0\n"
 
-        pattern = r'^version = 1\.0'
-        new_content, count = re.subn(
-            pattern, "version = 2.0", content, count=1, flags=re.MULTILINE
-        )
+        pattern = r"^version = 1\.0"
+        new_content, count = re.subn(pattern, "version = 2.0", content, count=1, flags=re.MULTILINE)
 
         # Would replace only first, but need exactly 1 total
         if count != 1:
             with pytest.raises(RuntimeError):
-                raise RuntimeError(
-                    f"Expected 1 replacement, got {count}"
-                )
+                raise RuntimeError(f"Expected 1 replacement, got {count}")
 
     def test_line_removal_count_mismatch(self, temp_repo):
         """Test error when exact line removal doesn't match exactly once.
@@ -1740,9 +1723,7 @@ class TestErrorHandlingPatterns:
 
         if removed != 1:
             with pytest.raises(RuntimeError):
-                raise RuntimeError(
-                    f"Expected to remove exactly 1 line, removed {removed}"
-                )
+                raise RuntimeError(f"Expected to remove exactly 1 line, removed {removed}")
 
     def test_json_parsing_error_handling(self, temp_repo):
         """Test handling of invalid JSON files.

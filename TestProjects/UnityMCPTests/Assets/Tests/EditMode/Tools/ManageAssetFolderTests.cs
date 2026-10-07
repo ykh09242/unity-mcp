@@ -29,12 +29,16 @@ namespace MCPForUnityTests.Editor.Tools
         public void NestedFolder_CreatesMissingParents(string action)
         {
             var path = _folder + "/Parent/Child";
-            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
-            {
-                ["action"] = action,
-                ["assetType"] = "Folder",
-                ["path"] = path
-            }));
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["assetType"] = "Folder",
+                        ["path"] = path,
+                    }
+                )
+            );
 
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.IsTrue(AssetDatabase.IsValidFolder(_folder + "/Parent"));
@@ -46,11 +50,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void DeepFolder_ReturnsOnlyRequestedFolderMetadata()
         {
             var path = _folder + "/One/Two/Three/Four/Five";
-            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
-            {
-                ["action"] = "create_folder",
-                ["path"] = path
-            }));
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject { ["action"] = "create_folder", ["path"] = path }));
 
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(path, response["data"].Value<string>("path"));
@@ -63,11 +63,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void ExistingFolder_ReturnsSameGuid()
         {
             var guid = AssetDatabase.AssetPathToGUID(_folder);
-            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
-            {
-                ["action"] = "create_folder",
-                ["path"] = _folder
-            }));
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject { ["action"] = "create_folder", ["path"] = _folder }));
 
             Assert.IsTrue(response.Value<bool>("success"));
             Assert.AreEqual(guid, response["data"].Value<string>("guid"));
@@ -77,11 +73,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void BackslashPath_CreatesCanonicalNestedFolder()
         {
             var path = _folder + "/Parent/Child";
-            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
-            {
-                ["action"] = "create_folder",
-                ["path"] = path.Replace('/', '\\')
-            }));
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject { ["action"] = "create_folder", ["path"] = path.Replace('/', '\\') }));
 
             Assert.IsTrue(response.Value<bool>("success"));
             Assert.AreEqual(path, response["data"].Value<string>("path"));
@@ -95,11 +87,7 @@ namespace MCPForUnityTests.Editor.Tools
             File.WriteAllText(parentPath, "keep");
             AssetDatabase.ImportAsset(parentPath, ImportAssetOptions.ForceSynchronousImport);
             var guid = AssetDatabase.AssetPathToGUID(parentPath);
-            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
-            {
-                ["action"] = "create_folder",
-                ["path"] = parentPath + "/Child"
-            }));
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject { ["action"] = "create_folder", ["path"] = parentPath + "/Child" }));
 
             Assert.IsFalse(response.Value<bool>("success"));
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(parentPath));

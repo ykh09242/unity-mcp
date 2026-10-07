@@ -20,16 +20,20 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var go = new GameObject(name);
             _objects.Add(go);
-            if (parent != null) go.transform.SetParent(parent.transform);
+            if (parent != null)
+                go.transform.SetParent(parent.transform);
             return go;
         }
 
         [TearDown]
         public void TearDown()
         {
-            foreach (var go in _objects) if (go != null) Object.DestroyImmediate(go);
+            foreach (var go in _objects)
+                if (go != null)
+                    Object.DestroyImmediate(go);
             _objects.Clear();
-            if (_prefabPath != null) AssetDatabase.DeleteAsset(_prefabPath);
+            if (_prefabPath != null)
+                AssetDatabase.DeleteAsset(_prefabPath);
             _prefabPath = null;
         }
 
@@ -43,12 +47,17 @@ namespace MCPForUnityTests.Editor.Tools
             var child = Create("Child", go);
             var request = new JObject
             {
-                ["action"] = "modify", ["target"] = go.GetInstanceIDCompat(),
-                ["name"] = "contract-renamed", ["position"] = new JArray(1, 2, 3)
+                ["action"] = "modify",
+                ["target"] = go.GetInstanceIDCompat(),
+                ["name"] = "contract-renamed",
+                ["position"] = new JArray(1, 2, 3),
             };
-            if (invalid == "missing_parent") request["parent"] = "missing-parent-" + Guid.NewGuid().ToString("N");
-            if (invalid == "descendant_parent") request["parent"] = child.GetInstanceIDCompat();
-            if (invalid == "invalid_layer") request["layer"] = "missing-layer-" + Guid.NewGuid().ToString("N");
+            if (invalid == "missing_parent")
+                request["parent"] = "missing-parent-" + Guid.NewGuid().ToString("N");
+            if (invalid == "descendant_parent")
+                request["parent"] = child.GetInstanceIDCompat();
+            if (invalid == "invalid_layer")
+                request["layer"] = "missing-layer-" + Guid.NewGuid().ToString("N");
             string originalName = go.name;
             // When the public handler rejects it, earlier fields must remain unchanged.
             var response = JObject.FromObject(ManageGameObject.HandleCommand(request));
@@ -67,9 +76,11 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Create("contract-target", detach ? parent : null);
             var request = new JObject
             {
-                ["action"] = "modify", ["target"] = go.GetInstanceIDCompat(),
-                ["name"] = "contract-renamed", ["layer"] = "Default",
-                ["parent"] = detach ? JValue.CreateNull() : new JValue(parent.GetInstanceIDCompat())
+                ["action"] = "modify",
+                ["target"] = go.GetInstanceIDCompat(),
+                ["name"] = "contract-renamed",
+                ["layer"] = "Default",
+                ["parent"] = detach ? JValue.CreateNull() : new JValue(parent.GetInstanceIDCompat()),
             };
             var response = JObject.FromObject(ManageGameObject.HandleCommand(request));
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
@@ -93,17 +104,23 @@ namespace MCPForUnityTests.Editor.Tools
             _prefabPath = "Assets/scene-prefab-contract-" + Guid.NewGuid().ToString("N") + ".prefab";
             Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(root, _prefabPath));
             // When modify_contents executes the entire request, overlapping targets are one removal.
-            var response = JObject.FromObject(ManagePrefabs.HandleCommand(new JObject
-            {
-                ["action"] = "modify_contents", ["prefabPath"] = _prefabPath,
-                ["deleteChild"] = new JArray(first, second)
-            }));
+            var response = JObject.FromObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_contents",
+                        ["prefabPath"] = _prefabPath,
+                        ["deleteChild"] = new JArray(first, second),
+                    }
+                )
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var saved = AssetDatabase.LoadAssetAtPath<GameObject>(_prefabPath);
             Assert.IsNotNull(saved);
             Assert.IsNull(saved.transform.Find(first));
             Assert.IsNull(saved.transform.Find(second));
-            if (second != "Sibling") Assert.IsNotNull(saved.transform.Find("Sibling"));
+            if (second != "Sibling")
+                Assert.IsNotNull(saved.transform.Find("Sibling"));
             Assert.IsNotNull(saved.transform.Find("Child10"));
         }
 
@@ -114,11 +131,16 @@ namespace MCPForUnityTests.Editor.Tools
             Create("Grandchild", Create("Child1", root));
             _prefabPath = "Assets/scene-prefab-contract-" + Guid.NewGuid().ToString("N") + ".prefab";
             Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(root, _prefabPath));
-            var response = JObject.FromObject(ManagePrefabs.HandleCommand(new JObject
-            {
-                ["action"] = "modify_contents", ["prefabPath"] = _prefabPath,
-                ["deleteChild"] = new JArray("Child1", new JObject { ["name"] = "Child1/Grandchild" })
-            }));
+            var response = JObject.FromObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_contents",
+                        ["prefabPath"] = _prefabPath,
+                        ["deleteChild"] = new JArray("Child1", new JObject { ["name"] = "Child1/Grandchild" }),
+                    }
+                )
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.IsNull(AssetDatabase.LoadAssetAtPath<GameObject>(_prefabPath).transform.Find("Child1"));
         }
@@ -132,11 +154,16 @@ namespace MCPForUnityTests.Editor.Tools
             Create("Grandchild", Create("Child1", root));
             _prefabPath = "Assets/scene-prefab-contract-" + Guid.NewGuid().ToString("N") + ".prefab";
             Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(root, _prefabPath));
-            var response = JObject.FromObject(ManagePrefabs.HandleCommand(new JObject
-            {
-                ["action"] = "modify_contents", ["prefabPath"] = _prefabPath,
-                ["deleteChild"] = new JArray("Child1", invalid)
-            }));
+            var response = JObject.FromObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_contents",
+                        ["prefabPath"] = _prefabPath,
+                        ["deleteChild"] = new JArray("Child1", invalid),
+                    }
+                )
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<GameObject>(_prefabPath).transform.Find("Child1"));
         }

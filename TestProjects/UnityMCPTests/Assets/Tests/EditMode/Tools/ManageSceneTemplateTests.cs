@@ -1,6 +1,6 @@
-using NUnit.Framework;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Tools;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
 
 namespace MCPForUnity.Tests.EditMode.Tools
 {
@@ -15,7 +15,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
                 ["action"] = "create",
                 ["name"] = "TemplateTest",
                 ["path"] = "Assets/Scenes",
-                ["template"] = "nonexistent_template"
+                ["template"] = "nonexistent_template",
             };
             var result = ManageScene.HandleCommand(p);
             var r = result as JObject ?? JObject.FromObject(result);

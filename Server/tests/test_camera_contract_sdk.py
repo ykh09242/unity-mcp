@@ -1,4 +1,5 @@
 """Camera request contracts through the real SDK, isolated from legacy stubs."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -7,7 +8,7 @@ import textwrap
 
 
 def test_camera_rejects_invalid_explicit_inputs_at_sdk_boundary():
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import asyncio, importlib, json
         from fastmcp import FastMCP, Client
         from core.logging_decorator import log_execution
@@ -60,11 +61,17 @@ def test_camera_rejects_invalid_explicit_inputs_at_sdk_boundary():
                     assert sent[-1] == {"action": "ping"}
             print("real SDK camera input contracts passed")
         asyncio.run(main())
-    ''')
+    """)
     result = subprocess.run(
-        [sys.executable, "-B", "-c", code], capture_output=True, text=True, timeout=30,
-        env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true",
-             "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
+        [sys.executable, "-B", "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={
+            **os.environ,
+            "UNITY_MCP_DISABLE_TELEMETRY": "true",
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        },
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "real SDK camera input contracts passed" in result.stdout

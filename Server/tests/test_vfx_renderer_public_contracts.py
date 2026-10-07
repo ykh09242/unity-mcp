@@ -1,4 +1,5 @@
 """VFX renderer contracts through fresh actual SDK/CLI transport boundaries."""
+
 import os
 import subprocess
 import sys
@@ -6,14 +7,26 @@ import textwrap
 
 
 def _run(code, tmp_path):
-    env = {**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true", "APPDATA": str(tmp_path), "XDG_DATA_HOME": str(tmp_path)}
-    result = subprocess.run([sys.executable, "-B", "-c", textwrap.dedent(code)], env=env, capture_output=True, text=True, timeout=60)
+    env = {
+        **os.environ,
+        "UNITY_MCP_DISABLE_TELEMETRY": "true",
+        "APPDATA": str(tmp_path),
+        "XDG_DATA_HOME": str(tmp_path),
+    }
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", textwrap.dedent(code)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
 
 def test_vfx_cli_renderer_wire_and_json_contracts(tmp_path):
-    output = _run(r'''
+    output = _run(
+        r"""
         import copy
         import json
         import httpx
@@ -77,12 +90,15 @@ def test_vfx_cli_renderer_wire_and_json_contracts(tmp_path):
             check(result.exit_code != 0 and len(requests) == before, "malformed local rejection " + str(command))
         print(f"fresh actual VFX CLI checks={checks} failures={len(failures)} requests={len(requests)}")
         assert not failures, failures
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
     assert "fresh actual VFX CLI checks=" in output
 
 
 def test_vfx_renderer_at_actual_sdk_registry_and_transport(tmp_path):
-    output = _run(r'''
+    output = _run(
+        r"""
         import copy
         import anyio
         from fastmcp import FastMCP, Client
@@ -172,5 +188,7 @@ def test_vfx_renderer_at_actual_sdk_registry_and_transport(tmp_path):
             print(f"fresh actual VFX SDK checks={checks} failures={len(failures)} requests={len(requests)}")
             assert not failures, failures
         anyio.run(main)
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
     assert "fresh actual VFX SDK checks=" in output

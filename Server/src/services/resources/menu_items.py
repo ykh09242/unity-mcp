@@ -15,11 +15,10 @@ class GetMenuItemsResponse(MCPResponse):
 @mcp_for_unity_resource(
     uri="mcpforunity://menu-items",
     name="menu_items",
-    description="Provides a list of all menu items.\n\nURI: mcpforunity://menu-items"
+    description="Provides a list of all menu items.\n\nURI: mcpforunity://menu-items",
 )
 async def get_menu_items(ctx: Context) -> GetMenuItemsResponse | MCPResponse:
-    """Provides a list of all menu items.
-    """
+    """Provides a list of all menu items."""
     unity_instance = await get_unity_instance_from_context(ctx)
     params = {
         "refresh": True,

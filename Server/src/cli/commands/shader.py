@@ -16,7 +16,9 @@ def _shader_file_parts(path: str) -> tuple[str, str]:
     """Keep explicit non-shader paths from addressing a shader sibling."""
     name, suffix = os.path.splitext(os.path.basename(path))
     if suffix and suffix.lower() != ".shader":
-        raise click.BadParameter("Shader path must have a .shader extension or no extension.", param_hint="path")
+        raise click.BadParameter(
+            "Shader path must have a .shader extension or no extension.", param_hint="path"
+        )
     return name, os.path.dirname(path) or "Assets/"
 
 
@@ -41,11 +43,15 @@ def read_shader(path: str):
     # Extract name from path
     name, directory = _shader_file_parts(path)
 
-    result = run_command("manage_shader", {
-        "action": "read",
-        "name": name,
-        "path": directory or "Assets/",
-    }, config)
+    result = run_command(
+        "manage_shader",
+        {
+            "action": "read",
+            "name": name,
+            "path": directory or "Assets/",
+        },
+        config,
+    )
 
     # If successful, display the contents nicely
     if config.format != "json" and result.get("success") and result.get("data", {}).get("contents"):
@@ -56,22 +62,17 @@ def read_shader(path: str):
 
 @shader.command("create")
 @click.argument("name")
+@click.option("--path", "-p", default="Assets/Shaders", help="Directory to create shader in.")
 @click.option(
-    "--path", "-p",
-    default="Assets/Shaders",
-    help="Directory to create shader in."
+    "--contents", "-c", default=None, help="Shader code (reads from stdin if not provided)."
 )
 @click.option(
-    "--contents", "-c",
-    default=None,
-    help="Shader code (reads from stdin if not provided)."
-)
-@click.option(
-    "--file", "-f",
+    "--file",
+    "-f",
     "file_path",
     default=None,
     type=click.Path(exists=True),
-    help="Read shader code from file."
+    help="Read shader code from file.",
 )
 @handle_unity_errors
 def create_shader(name: str, path: str, contents: Optional[str], file_path: Optional[str]):
@@ -87,18 +88,19 @@ def create_shader(name: str, path: str, contents: Optional[str], file_path: Opti
 
     # Get contents from file, option, or stdin
     if file_path:
-        with open(file_path, 'r', encoding='utf-8-sig') as f:
+        with open(file_path, "r", encoding="utf-8-sig") as f:
             shader_contents = f.read()
     elif contents is not None:
         shader_contents = contents
     else:
         # Read from stdin if available
         import sys
+
         if not sys.stdin.isatty():
             shader_contents = sys.stdin.read()
         else:
             # Provide default shader template
-            shader_contents = f'''Shader "Custom/{name}"
+            shader_contents = f"""Shader "Custom/{name}"
 {{
     Properties
     {{
@@ -132,14 +134,18 @@ def create_shader(name: str, path: str, contents: Optional[str], file_path: Opti
     }}
     FallBack "Diffuse"
 }}
-'''
+"""
 
-    result = run_command("manage_shader", {
-        "action": "create",
-        "name": name,
-        "path": path,
-        "contents": shader_contents,
-    }, config)
+    result = run_command(
+        "manage_shader",
+        {
+            "action": "create",
+            "name": name,
+            "path": path,
+            "contents": shader_contents,
+        },
+        config,
+    )
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Created shader: {path}/{name}.shader")
@@ -147,17 +153,14 @@ def create_shader(name: str, path: str, contents: Optional[str], file_path: Opti
 
 @shader.command("update")
 @click.argument("path")
+@click.option("--contents", "-c", default=None, help="New shader code.")
 @click.option(
-    "--contents", "-c",
-    default=None,
-    help="New shader code."
-)
-@click.option(
-    "--file", "-f",
+    "--file",
+    "-f",
     "file_path",
     default=None,
     type=click.Path(exists=True),
-    help="Read shader code from file."
+    help="Read shader code from file.",
 )
 @handle_unity_errors
 def update_shader(path: str, contents: Optional[str], file_path: Optional[str]):
@@ -174,25 +177,29 @@ def update_shader(path: str, contents: Optional[str], file_path: Optional[str]):
 
     # Get contents from file, option, or stdin
     if file_path:
-        with open(file_path, 'r', encoding='utf-8-sig') as f:
+        with open(file_path, "r", encoding="utf-8-sig") as f:
             shader_contents = f.read()
     elif contents is not None:
         shader_contents = contents
     else:
         import sys
+
         if not sys.stdin.isatty():
             shader_contents = sys.stdin.read()
         else:
-            print_error(
-                "No shader contents provided. Use --contents, --file, or pipe via stdin.")
+            print_error("No shader contents provided. Use --contents, --file, or pipe via stdin.")
             sys.exit(1)
 
-    result = run_command("manage_shader", {
-        "action": "update",
-        "name": name,
-        "path": directory or "Assets/",
-        "contents": shader_contents,
-    }, config)
+    result = run_command(
+        "manage_shader",
+        {
+            "action": "update",
+            "name": name,
+            "path": directory or "Assets/",
+            "contents": shader_contents,
+        },
+        config,
+    )
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Updated shader: {path}")
@@ -200,11 +207,7 @@ def update_shader(path: str, contents: Optional[str], file_path: Optional[str]):
 
 @shader.command("delete")
 @click.argument("path")
-@click.option(
-    "--force", "-f",
-    is_flag=True,
-    help="Skip confirmation prompt."
-)
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt.")
 @handle_unity_errors
 def delete_shader(path: str, force: bool):
     """Delete a shader.
@@ -220,11 +223,15 @@ def delete_shader(path: str, force: bool):
 
     confirm_destructive_action("Delete", "shader", path, force)
 
-    result = run_command("manage_shader", {
-        "action": "delete",
-        "name": name,
-        "path": directory or "Assets/",
-    }, config)
+    result = run_command(
+        "manage_shader",
+        {
+            "action": "delete",
+            "name": name,
+            "path": directory or "Assets/",
+        },
+        config,
+    )
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Deleted shader: {path}")

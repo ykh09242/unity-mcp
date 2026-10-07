@@ -22,22 +22,22 @@ namespace MCPForUnity.Editor.Tools.Graphics
         {
             get
             {
-                if (_hasVolumeSystem == null) DetectPackages();
+                if (_hasVolumeSystem == null)
+                    DetectPackages();
                 return _hasVolumeSystem.Value;
             }
         }
 
-        internal static bool HasURP =>
-            RenderPipelineUtility.GetActivePipeline() == RenderPipelineUtility.PipelineKind.Universal;
+        internal static bool HasURP => RenderPipelineUtility.GetActivePipeline() == RenderPipelineUtility.PipelineKind.Universal;
 
-        internal static bool HasHDRP =>
-            RenderPipelineUtility.GetActivePipeline() == RenderPipelineUtility.PipelineKind.HighDefinition;
+        internal static bool HasHDRP => RenderPipelineUtility.GetActivePipeline() == RenderPipelineUtility.PipelineKind.HighDefinition;
 
         internal static Type VolumeType
         {
             get
             {
-                if (_hasVolumeSystem == null) DetectPackages();
+                if (_hasVolumeSystem == null)
+                    DetectPackages();
                 return _volumeType;
             }
         }
@@ -46,7 +46,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
         {
             get
             {
-                if (_hasVolumeSystem == null) DetectPackages();
+                if (_hasVolumeSystem == null)
+                    DetectPackages();
                 return _volumeProfileType;
             }
         }
@@ -55,7 +56,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
         {
             get
             {
-                if (_hasVolumeSystem == null) DetectPackages();
+                if (_hasVolumeSystem == null)
+                    DetectPackages();
                 return _volumeComponentType;
             }
         }
@@ -64,7 +66,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
         {
             get
             {
-                if (_hasVolumeSystem == null) DetectPackages();
+                if (_hasVolumeSystem == null)
+                    DetectPackages();
                 return _volumeParameterType;
             }
         }
@@ -86,7 +89,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var derivedTypes = TypeCache.GetTypesDerivedFrom(VolumeComponentType);
             foreach (var t in derivedTypes)
             {
-                if (t.IsAbstract) continue;
+                if (t.IsAbstract)
+                    continue;
                 if (string.Equals(t.Name, effectName, StringComparison.OrdinalIgnoreCase))
                     return t;
             }
@@ -98,10 +102,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (VolumeComponentType == null)
                 return new List<Type>();
             var derivedTypes = TypeCache.GetTypesDerivedFrom(VolumeComponentType);
-            return derivedTypes
-                .Where(t => !t.IsAbstract && !t.IsGenericType)
-                .OrderBy(t => t.Name)
-                .ToList();
+            return derivedTypes.Where(t => !t.IsAbstract && !t.IsGenericType).OrderBy(t => t.Name).ToList();
         }
 
         internal static Component FindVolume(JObject @params)
@@ -117,11 +118,13 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (int.TryParse(target, out int instanceId))
             {
                 var byId = GameObjectLookup.ResolveInstanceID(instanceId) as GameObject;
-                if (byId != null) return byId.GetComponent(VolumeType);
+                if (byId != null)
+                    return byId.GetComponent(VolumeType);
             }
 
             var go = GameObject.Find(target);
-            if (go != null) return go.GetComponent(VolumeType);
+            if (go != null)
+                return go.GetComponent(VolumeType);
 
             return null;
         }
@@ -134,7 +137,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 RenderPipelineUtility.PipelineKind.HighDefinition => "High Definition (HDRP)",
                 RenderPipelineUtility.PipelineKind.BuiltIn => "Built-in",
                 RenderPipelineUtility.PipelineKind.Custom => "Custom",
-                _ => "Unknown"
+                _ => "Unknown",
             };
         }
 
@@ -146,21 +149,15 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 SerializedPropertyType.Integer => prop.type == "long" ? prop.longValue : (object)prop.intValue,
                 SerializedPropertyType.Float => prop.floatValue,
                 SerializedPropertyType.String => prop.stringValue,
-                SerializedPropertyType.Enum => prop.enumValueIndex < prop.enumNames.Length
-                    ? prop.enumNames[prop.enumValueIndex]
-                    : (object)prop.enumValueIndex,
+                SerializedPropertyType.Enum => prop.enumValueIndex < prop.enumNames.Length ? prop.enumNames[prop.enumValueIndex] : (object)prop.enumValueIndex,
                 SerializedPropertyType.ObjectReference => prop.objectReferenceValue != null
-                    ? (object)new
-                    {
-                        name = prop.objectReferenceValue.name,
-                        path = AssetDatabase.GetAssetPath(prop.objectReferenceValue)
-                    }
+                    ? (object)new { name = prop.objectReferenceValue.name, path = AssetDatabase.GetAssetPath(prop.objectReferenceValue) }
                     : null,
                 SerializedPropertyType.Color => new[] { prop.colorValue.r, prop.colorValue.g, prop.colorValue.b, prop.colorValue.a },
                 SerializedPropertyType.Vector2 => new[] { prop.vector2Value.x, prop.vector2Value.y },
                 SerializedPropertyType.Vector3 => new[] { prop.vector3Value.x, prop.vector3Value.y, prop.vector3Value.z },
                 SerializedPropertyType.LayerMask => prop.intValue,
-                _ => prop.propertyType.ToString()
+                _ => prop.propertyType.ToString(),
             };
         }
 
@@ -191,7 +188,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
                             for (int i = 0; i < prop.enumNames.Length; i++)
                             {
                                 if (string.Equals(prop.enumNames[i], value.ToString(), StringComparison.OrdinalIgnoreCase))
-                                { prop.enumValueIndex = i; return true; }
+                                {
+                                    prop.enumValueIndex = i;
+                                    return true;
+                                }
                             }
                         }
                         prop.enumValueIndex = ParamCoercion.CoerceInt(value, 0);
@@ -200,16 +200,28 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         if (value.Type == JTokenType.String)
                         {
                             string path = value.ToString();
-                            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true));
-                            if (asset != null) { prop.objectReferenceValue = asset; return true; }
+                            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(
+                                AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true)
+                            );
+                            if (asset != null)
+                            {
+                                prop.objectReferenceValue = asset;
+                                return true;
+                            }
                         }
                         else if (value.Type == JTokenType.Object)
                         {
                             string path = value["path"]?.ToString();
                             if (!string.IsNullOrEmpty(path))
                             {
-                                var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true));
-                                if (asset != null) { prop.objectReferenceValue = asset; return true; }
+                                var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(
+                                    AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true)
+                                );
+                                if (asset != null)
+                                {
+                                    prop.objectReferenceValue = asset;
+                                    return true;
+                                }
                             }
                         }
                         else if (value.Type == JTokenType.Null)
@@ -222,8 +234,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         if (value is JArray colorArr && colorArr.Count >= 3)
                         {
                             prop.colorValue = new Color(
-                                colorArr[0].ReadScalar<float>(), colorArr[1].ReadScalar<float>(), colorArr[2].ReadScalar<float>(),
-                                colorArr.Count >= 4 ? colorArr[3].ReadScalar<float>() : 1f);
+                                colorArr[0].ReadScalar<float>(),
+                                colorArr[1].ReadScalar<float>(),
+                                colorArr[2].ReadScalar<float>(),
+                                colorArr.Count >= 4 ? colorArr[3].ReadScalar<float>() : 1f
+                            );
                             return true;
                         }
                         return false;
@@ -248,12 +263,16 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         return false;
                 }
             }
-            catch { return false; }
+            catch
+            {
+                return false;
+            }
         }
 
         internal static void MarkDirty(UnityEngine.Object obj)
         {
-            if (obj == null) return;
+            if (obj == null)
+                return;
             EditorUtility.SetDirty(obj);
             if (obj is Component comp)
             {

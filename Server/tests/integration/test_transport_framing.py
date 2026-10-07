@@ -157,12 +157,12 @@ def test_unframed_data_disconnect():
         sock.close()
 
 
-@pytest.mark.parametrize('prefix_length', [0, 1, 27])
+@pytest.mark.parametrize("prefix_length", [0, 1, 27])
 def test_zero_length_payload_heartbeat(monkeypatch, prefix_length):
     # A TCP read may contain the greeting newline and subsequent framed bytes.
-    greeting = b'WELCOME UNITY-MCP 1 FRAMING=1\n'
+    greeting = b"WELCOME UNITY-MCP 1 FRAMING=1\n"
     payload = b'{"type":"pong"}'
-    frames = struct.pack('>Q', 0) + struct.pack('>Q', len(payload)) + payload
+    frames = struct.pack(">Q", 0) + struct.pack(">Q", len(payload)) + payload
     wire = greeting + frames
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
@@ -186,13 +186,17 @@ def test_zero_length_payload_heartbeat(monkeypatch, prefix_length):
             failures.append(exc)
         finally:
             sock.close()
+
     original_connect = socket.create_connection
+
     class ObservedSocket:
         def __init__(self, actual):
             self.actual = actual
             self.first = True
+
         def __getattr__(self, name):
             return getattr(self.actual, name)
+
         def recv(self, count):
             # Preserve legal recv size; force the coalescing schedule independently
             # of OS packet splitting and CPU contention, using actual TCP bytes.
@@ -209,14 +213,18 @@ def test_zero_length_payload_heartbeat(monkeypatch, prefix_length):
             self.first = False
             prefix_read.set()
             return data
+
     def create_connection(*args, **kwargs):
         return ObservedSocket(original_connect(*args, **kwargs))
-    monkeypatch.setattr(socket, 'create_connection', create_connection)
+
+    monkeypatch.setattr(socket, "create_connection", create_connection)
     thread = threading.Thread(target=_run)
     thread.start()
     conn = UnityConnection(host="127.0.0.1", port=port, allow_legacy_auth=True)
     try:
-        assert conn.connect() is True, f'prefix={prefix_length}; recv_hex={[data.hex() for data in observed]}'
+        assert conn.connect() is True, (
+            f"prefix={prefix_length}; recv_hex={[data.hex() for data in observed]}"
+        )
         resp = conn.receive_full_response(conn.sock)
         assert resp == payload
     finally:
@@ -228,33 +236,40 @@ def test_zero_length_payload_heartbeat(monkeypatch, prefix_length):
         assert not failures
 
 
-@pytest.mark.parametrize('outer_deadline', [None, 0.5])
+@pytest.mark.parametrize("outer_deadline", [None, 0.5])
 def test_fragmented_greeting_reads_share_absolute_deadline(monkeypatch, outer_deadline):
     clock = SimpleNamespace(now=0.0)
     observed = []
+
     class FragmentedSocket:
         closed = False
         timeout = None
+
         def setsockopt(self, *args):
             pass
+
         def settimeout(self, timeout):
             self.timeout = timeout
+
         def gettimeout(self):
             return self.timeout
+
         def recv(self, count):
             observed.append(self.timeout)
             clock.now += 0.25
-            return b'W'
+            return b"W"
+
         def close(self):
             self.closed = True
+
     peer = FragmentedSocket()
-    monkeypatch.setattr(connection_module, 'time', SimpleNamespace(monotonic=lambda: clock.now))
-    monkeypatch.setattr(connection_module.socket, 'create_connection', lambda *args: peer)
-    monkeypatch.setattr(connection_module.config, 'handshake_timeout', 1.0)
-    conn = UnityConnection(host='127.0.0.1', port=1, allow_legacy_auth=True)
+    monkeypatch.setattr(connection_module, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    monkeypatch.setattr(connection_module.socket, "create_connection", lambda *args: peer)
+    monkeypatch.setattr(connection_module.config, "handshake_timeout", 1.0)
+    conn = UnityConnection(host="127.0.0.1", port=1, allow_legacy_auth=True)
     assert conn.connect(deadline=outer_deadline) is False
     budget = 1.0 if outer_deadline is None else outer_deadline
-    assert observed == [budget - index * 0.25 for index in range(int(budget / 0.25))], f'per_recv_timeouts={observed}; expected_budget={budget}'
+    assert observed == [budget - index * 0.25 for index in range(int(budget / 0.25))], (
+        f"per_recv_timeouts={observed}; expected_budget={budget}"
+    )
     assert clock.now == budget and peer.closed and conn.sock is None
-
-

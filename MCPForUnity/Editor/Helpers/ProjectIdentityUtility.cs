@@ -151,7 +151,8 @@ namespace MCPForUnity.Editor.Helpers
 
         internal static void PersistSessionIdOnMainThread(string sessionId)
         {
-            if (string.IsNullOrEmpty(sessionId)) return;
+            if (string.IsNullOrEmpty(sessionId))
+                return;
             string projectHash = GetProjectHash();
             string projectSpecificKey = $"{SessionPrefKey}_{projectHash}";
             EditorPrefs.SetString(projectSpecificKey, sessionId);

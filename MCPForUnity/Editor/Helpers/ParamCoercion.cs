@@ -1,6 +1,6 @@
 using System;
-using Newtonsoft.Json;
 using MCPForUnity.Runtime.Serialization;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Helpers
@@ -18,8 +18,12 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static T ReadScalar<T>(this JToken token)
         {
-            if (IsMissing(token)) return default;
-            try { return (T)JsonScalarConversion.Read(token, typeof(T)); }
+            if (IsMissing(token))
+                return default;
+            try
+            {
+                return (T)JsonScalarConversion.Read(token, typeof(T));
+            }
             catch (JsonSerializationException error)
             {
                 var target = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
@@ -27,6 +31,7 @@ namespace MCPForUnity.Editor.Helpers
                 throw new ArgumentException($"Invalid parameter '{name}': expected {target.Name}, got {token.Type}.", name, error);
             }
         }
+
         /// <summary>Reads a keyed optional scalar with the same strict rules.</summary>
         public static T ReadScalar<T>(this JToken token, object key)
         {
@@ -34,20 +39,28 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         private static bool IsMissing(JToken token) => token == null || token.Type == JTokenType.Null;
+
         /// <summary>Reads an optional integer; only missing/null uses the default.</summary>
         public static int CoerceInt(JToken token, int defaultValue) => IsMissing(token) ? defaultValue : token.ReadScalar<int>();
+
         /// <summary>Reads an optional long integer; only missing/null uses the default.</summary>
         public static long CoerceLong(JToken token, long defaultValue) => IsMissing(token) ? defaultValue : token.ReadScalar<long>();
+
         /// <summary>Reads a nullable integer; explicit invalid values are rejected.</summary>
         public static int? CoerceIntNullable(JToken token) => token.ReadScalar<int?>();
+
         /// <summary>Reads an optional Boolean/canonical Boolean string; numeric flags are rejected.</summary>
         public static bool CoerceBool(JToken token, bool defaultValue) => IsMissing(token) ? defaultValue : token.ReadScalar<bool>();
+
         /// <summary>Reads a nullable Boolean; explicit invalid values are rejected.</summary>
         public static bool? CoerceBoolNullable(JToken token) => token.ReadScalar<bool?>();
+
         /// <summary>Reads an optional finite float; only missing/null uses the default.</summary>
         public static float CoerceFloat(JToken token, float defaultValue) => IsMissing(token) ? defaultValue : token.ReadScalar<float>();
+
         /// <summary>Reads a nullable finite float; explicit invalid values are rejected.</summary>
         public static float? CoerceFloatNullable(JToken token) => token.ReadScalar<float?>();
+
         /// <summary>
         /// Coerces a JToken to a string value, with null handling.
         /// </summary>
@@ -70,7 +83,8 @@ namespace MCPForUnity.Editor.Helpers
         /// <param name="token">The JSON token to coerce</param>
         /// <param name="defaultValue">Default value only for missing/null input</param>
         /// <returns>The enum value; explicit invalid values throw an argument error</returns>
-        public static T CoerceEnum<T>(JToken token, T defaultValue) where T : struct, Enum
+        public static T CoerceEnum<T>(JToken token, T defaultValue)
+            where T : struct, Enum
         {
             return IsMissing(token) ? defaultValue : token.ReadScalar<T>();
         }
@@ -85,10 +99,17 @@ namespace MCPForUnity.Editor.Helpers
         {
             if (token == null || (token.Type != JTokenType.Integer && token.Type != JTokenType.Float))
                 return false;
-            try { token.ReadScalar<float>(); return true; }
-            catch (ArgumentException) { return false; }
+            try
+            {
+                token.ReadScalar<float>();
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
         }
-        
+
         /// <summary>
         /// Validates that an optional field in a JObject is numeric if present.
         /// Used for dry-run validation of complex type formats.
@@ -107,11 +128,12 @@ namespace MCPForUnity.Editor.Helpers
             }
             // Unity uses explicit infinite tangents to encode stepped curve segments.
             // Restrict this exception to slope/tangent fields; all other numeric fields are finite.
-            bool curveTangent = fieldName == "inTangent" || fieldName == "outTangent"
-                || fieldName == "inSlope" || fieldName == "outSlope";
-            bool explicitInfiniteTangent = curveTangent && token.Type == JTokenType.Float
-                && token is JValue tangent && (tangent.Value is double d && double.IsInfinity(d)
-                    || tangent.Value is float f && float.IsInfinity(f));
+            bool curveTangent = fieldName == "inTangent" || fieldName == "outTangent" || fieldName == "inSlope" || fieldName == "outSlope";
+            bool explicitInfiniteTangent =
+                curveTangent
+                && token.Type == JTokenType.Float
+                && token is JValue tangent
+                && (tangent.Value is double d && double.IsInfinity(d) || tangent.Value is float f && float.IsInfinity(f));
             if (!explicitInfiniteTangent && !IsNumericToken(token))
             {
                 error = $"must be a finite representable number, got {token.Type}";
@@ -119,7 +141,7 @@ namespace MCPForUnity.Editor.Helpers
             }
             return true;
         }
-        
+
         /// <summary>
         /// Validates that an optional field in a JObject is an integer if present.
         /// Used for dry-run validation of complex type formats.
@@ -187,4 +209,3 @@ namespace MCPForUnity.Editor.Helpers
         }
     }
 }
-

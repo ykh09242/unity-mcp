@@ -5,6 +5,7 @@
 # ///
 # How to run: Server/.venv/Scripts/python.exe tools/experiments/transport/prepare.py
 """Generate the measurement team's common owned workload fixtures."""
+
 from __future__ import annotations
 
 import json
@@ -18,12 +19,15 @@ from tools.tests.fixtures.transport_bench.workload import Workload, make_result 
 
 
 def main() -> None:
-    fixtures = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent / ".artifacts/fixtures"
+    fixtures = (
+        Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent / ".artifacts/fixtures"
+    )
     fixtures.mkdir(parents=True, exist_ok=True)
     for workload in Workload:
         value = make_result(workload, 4 * 1024 * 1024)
         _ = (fixtures / f"{workload.value}.json").write_text(
-            json.dumps(value, separators=(",", ":")), encoding="utf-8")
+            json.dumps(value, separators=(",", ":")), encoding="utf-8"
+        )
     print(fixtures.resolve())
 
 

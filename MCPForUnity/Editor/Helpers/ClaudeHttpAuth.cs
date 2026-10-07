@@ -11,7 +11,8 @@ namespace MCPForUnity.Editor.Helpers
 {
     internal static class ClaudeHttpAuth
     {
-        internal const string UnsupportedMessage = "Automatic HTTP authentication requires a verified Claude Code CLI 2.1.193 or newer. "
+        internal const string UnsupportedMessage =
+            "Automatic HTTP authentication requires a verified Claude Code CLI 2.1.193 or newer. "
             + "Update Claude Code (use its executable or npm command shim), or select stdio and configure again.";
         internal static Func<string, bool> SupportsHeadersHelper = DetectHeadersHelper;
         private static readonly object ProbeLock = new();
@@ -42,10 +43,11 @@ namespace MCPForUnity.Editor.Helpers
                     {
                         ["CLAUDE_CONFIG_DIR"] = directory,
                         ["DISABLE_AUTOUPDATER"] = "1",
-                        ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+                        ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1",
                     };
-                    supported = ExecPath.TryRun(executable, "--version", directory, out string output, out _,
-                        timeoutMs: 2500, environmentOverrides: environment) && RecognizesVersion(output);
+                    supported =
+                        ExecPath.TryRun(executable, "--version", directory, out string output, out _, timeoutMs: 2500, environmentOverrides: environment)
+                        && RecognizesVersion(output);
                     return supported;
                 }
                 catch
@@ -70,8 +72,7 @@ namespace MCPForUnity.Editor.Helpers
         {
             var match = Regex.Match(output ?? "", @"\A\s*(\d+\.\d+\.\d+) \(Claude Code\)\s*\z");
             // The official 2.1.193 changelog adds helper refresh/reconnect on tool-call 401/403.
-            return match.Success && Version.TryParse(match.Groups[1].Value, out var version)
-                && version >= new Version(2, 1, 193);
+            return match.Success && Version.TryParse(match.Groups[1].Value, out var version) && version >= new Version(2, 1, 193);
         }
 
         internal static bool IsManagedHelper(JObject server)
@@ -98,7 +99,9 @@ namespace MCPForUnity.Editor.Helpers
         {
             if ((existing?["headersHelper"] != null && !IsManagedHelper(existing)) || existing?["oauth"] != null)
             {
-                throw new InvalidOperationException("Claude Code has a custom authentication provider. Update it manually; the existing registration was not changed.");
+                throw new InvalidOperationException(
+                    "Claude Code has a custom authentication provider. Update it manually; the existing registration was not changed."
+                );
             }
         }
 
@@ -115,9 +118,15 @@ namespace MCPForUnity.Editor.Helpers
                 throw new FormatException("Claude Code headers must be an object.");
             }
             var headers = existing?["headers"]?.DeepClone() as JObject ?? new JObject();
-            foreach (var property in headers.Properties().Where(p =>
-                string.Equals(p.Name, AuthConstants.LocalTokenHeader, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(p.Name, AuthConstants.ApiKeyHeader, StringComparison.OrdinalIgnoreCase)).ToArray())
+            foreach (
+                var property in headers
+                    .Properties()
+                    .Where(p =>
+                        string.Equals(p.Name, AuthConstants.LocalTokenHeader, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(p.Name, AuthConstants.ApiKeyHeader, StringComparison.OrdinalIgnoreCase)
+                    )
+                    .ToArray()
+            )
             {
                 property.Remove();
             }
@@ -125,7 +134,7 @@ namespace MCPForUnity.Editor.Helpers
             {
                 ["type"] = "http",
                 ["url"] = url,
-                ["headersHelper"] = helper
+                ["headersHelper"] = helper,
             };
             if (headers.HasValues)
             {
@@ -137,10 +146,11 @@ namespace MCPForUnity.Editor.Helpers
         internal static string BuildRegistrationArguments(JObject entry)
         {
             // ProcessStartInfo.Arguments uses double-quote/backslash argument escaping, not shell single quotes.
-            string json = JsonConvert.SerializeObject(entry, Formatting.None, new JsonSerializerSettings
-            {
-                StringEscapeHandling = StringEscapeHandling.EscapeNonAscii
-            });
+            string json = JsonConvert.SerializeObject(
+                entry,
+                Formatting.None,
+                new JsonSerializerSettings { StringEscapeHandling = StringEscapeHandling.EscapeNonAscii }
+            );
             // npm's Windows shim runs through cmd.exe. Keep shell metacharacters inside JSON escapes.
             foreach (char character in "%!^&|<>()")
             {
@@ -159,17 +169,23 @@ namespace MCPForUnity.Editor.Helpers
             }
             else if (!IsManagedHelper(entry))
             {
-                reason = entry?["headersHelper"] != null
-                    ? "Custom Claude Code authentication requires manual validation. The helper was not executed."
-                    : "Claude Code uses a static launch token. Click Configure for automatic lookup, or select stdio for an older CLI.";
+                reason =
+                    entry?["headersHelper"] != null
+                        ? "Custom Claude Code authentication requires manual validation. The helper was not executed."
+                        : "Claude Code uses a static launch token. Click Configure for automatic lookup, or select stdio for an older CLI.";
             }
             else if (entry["headers"] != null && !(entry["headers"] is JObject))
             {
                 reason = "Claude Code headers must be an object.";
             }
-            else if ((entry["headers"] as JObject)?.Properties().Any(p =>
-                string.Equals(p.Name, AuthConstants.LocalTokenHeader, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(p.Name, AuthConstants.ApiKeyHeader, StringComparison.OrdinalIgnoreCase)) == true)
+            else if (
+                (entry["headers"] as JObject)
+                    ?.Properties()
+                    .Any(p =>
+                        string.Equals(p.Name, AuthConstants.LocalTokenHeader, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(p.Name, AuthConstants.ApiKeyHeader, StringComparison.OrdinalIgnoreCase)
+                    ) == true
+            )
             {
                 reason = "Remove the stale static authentication header by configuring Claude Code again.";
             }

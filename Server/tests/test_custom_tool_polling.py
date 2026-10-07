@@ -15,18 +15,28 @@ def service():
     class Mcp:
         def custom_route(self, *args, **kwargs):
             return lambda fn: fn
+
     return CustomToolService(Mcp())
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("explicit_success", [None, True, False])
-async def test_custom_tool_error_status_is_reported_as_failure(service, monkeypatch, explicit_success):
+async def test_custom_tool_error_status_is_reported_as_failure(
+    service, monkeypatch, explicit_success
+):
     response = {"_mcp_status": "error", "error": "Build failed", "data": {"job_id": "job-1"}}
     if explicit_success is not None:
         response["success"] = explicit_success
-    monkeypatch.setattr(service, "get_tool_definition", AsyncMock(return_value=ToolDefinitionModel(
-        name="build", requires_polling=True,
-    )))
+    monkeypatch.setattr(
+        service,
+        "get_tool_definition",
+        AsyncMock(
+            return_value=ToolDefinitionModel(
+                name="build",
+                requires_polling=True,
+            )
+        ),
+    )
     send = AsyncMock(return_value=response)
     monkeypatch.setattr(module, "send_with_unity_instance", send)
 
@@ -38,11 +48,14 @@ async def test_custom_tool_error_status_is_reported_as_failure(service, monkeypa
     send.assert_awaited_once()
 
 
-@pytest.mark.parametrize("response", [
-    {"success": True, "data": {"value": 1}},
-    {"_mcp_status": "complete", "data": {"value": 1}},
-    {"value": 1},
-])
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"success": True, "data": {"value": 1}},
+        {"_mcp_status": "complete", "data": {"value": 1}},
+        {"value": 1},
+    ],
+)
 def test_custom_tool_successful_and_raw_responses_are_preserved(service, response):
     result = service._normalize_response(response)
     assert result.success is True
@@ -65,8 +78,11 @@ async def test_custom_tool_polling_stops_at_deadline_without_an_extra_request(se
     monkeypatch.setattr(module, "send_with_unity_instance", send)
 
     result = await service._poll_until_complete(
-        "build", "Project@hash", {},
-        {"_mcp_status": "pending", "_mcp_poll_interval": 5}, "status",
+        "build",
+        "Project@hash",
+        {},
+        {"_mcp_status": "pending", "_mcp_poll_interval": 5},
+        "status",
         max_poll_seconds=1,
     )
 
@@ -85,7 +101,11 @@ async def test_custom_tool_polling_propagates_cancellation(service, monkeypatch)
 
     with pytest.raises(asyncio.CancelledError):
         await service._poll_until_complete(
-            "build", "Project@hash", {}, {"_mcp_status": "pending"}, "status",
+            "build",
+            "Project@hash",
+            {},
+            {"_mcp_status": "pending"},
+            "status",
         )
     send.assert_not_awaited()
 
@@ -102,11 +122,17 @@ async def test_custom_tool_deadline_cancels_a_blocked_status_request(service, mo
 
     monkeypatch.setattr(module, "send_with_unity_instance", blocked_status)
 
-    result = await asyncio.wait_for(service._poll_until_complete(
-        "build", "Project@hash", {},
-        {"_mcp_status": "pending", "_mcp_poll_interval": 0.1}, "status",
-        max_poll_seconds=0.15,
-    ), timeout=0.5)
+    result = await asyncio.wait_for(
+        service._poll_until_complete(
+            "build",
+            "Project@hash",
+            {},
+            {"_mcp_status": "pending", "_mcp_poll_interval": 0.1},
+            "status",
+            max_poll_seconds=0.15,
+        ),
+        timeout=0.5,
+    )
 
     assert result.success is False
     assert "Timeout" in result.message
@@ -120,8 +146,12 @@ async def test_custom_tool_polling_threads_user_and_job_parameters(service, monk
     params = {"action": "start", "job_id": "job-1"}
 
     result = await service._poll_until_complete(
-        "build", "Project@hash", params,
-        {"_mcp_status": "pending", "_mcp_poll_interval": 0.1}, "status", user_id="user-a",
+        "build",
+        "Project@hash",
+        params,
+        {"_mcp_status": "pending", "_mcp_poll_interval": 0.1},
+        "status",
+        user_id="user-a",
     )
 
     assert result.success is True
@@ -134,29 +164,46 @@ async def test_custom_tool_polling_threads_user_and_job_parameters(service, monk
 async def test_pending_job_survives_retryable_poll_response(service, monkeypatch):
     # Given: an admitted job encounters a temporary unavailable-session response.
     now = [0.0]
+
     async def advance(delay):
         now[0] += delay
+
     monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(module.asyncio, "sleep", advance)
-    retry = normalize_unity_response(module.PluginHub._unavailable_retry_response("stale_connection"))
-    send = AsyncMock(side_effect=[
-        {"_mcp_status": "pending", "data": {"job_id": "job-1"}},
-        retry,
-        {"_mcp_status": "complete", "data": {"job_id": "job-1", "value": 42}},
-    ])
+    retry = normalize_unity_response(
+        module.PluginHub._unavailable_retry_response("stale_connection")
+    )
+    send = AsyncMock(
+        side_effect=[
+            {"_mcp_status": "pending", "data": {"job_id": "job-1"}},
+            retry,
+            {"_mcp_status": "complete", "data": {"job_id": "job-1", "value": 42}},
+        ]
+    )
     monkeypatch.setattr(module, "send_with_unity_instance", send)
-    monkeypatch.setattr(service, "get_tool_definition", AsyncMock(return_value=ToolDefinitionModel(
-        name="build", requires_polling=True, max_poll_seconds=30,
-    )))
+    monkeypatch.setattr(
+        service,
+        "get_tool_definition",
+        AsyncMock(
+            return_value=ToolDefinitionModel(
+                name="build",
+                requires_polling=True,
+                max_poll_seconds=30,
+            )
+        ),
+    )
 
     # When: the service starts and polls the job.
-    result = await service.execute_tool("project", "build", "Project@hash", {"action": "start"}, user_id="user-a")
+    result = await service.execute_tool(
+        "project", "build", "Project@hash", {"action": "start"}, user_id="user-a"
+    )
 
     # Then: it polls the same job and tenant through completion and releases admission.
     assert result.success is True
     assert result.data == {"job_id": "job-1", "value": 42}
     assert [call.args[3] for call in send.call_args_list] == [
-        {"action": "start"}, {"action": "status", "job_id": "job-1"},
+        {"action": "start"},
+        {"action": "status", "job_id": "job-1"},
         {"action": "status", "job_id": "job-1"},
     ]
     assert all(call.kwargs == {"user_id": "user-a"} for call in send.call_args_list)
@@ -167,8 +214,10 @@ async def test_pending_job_survives_retryable_poll_response(service, monkeypatch
 async def test_retryable_poll_responses_keep_original_deadline(service, monkeypatch):
     # Given: every status request returns a transient retry envelope.
     now = [0.0]
+
     async def advance(delay):
         now[0] += delay
+
     monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(module.asyncio, "sleep", advance)
     send = AsyncMock(return_value=module.PluginHub._unavailable_retry_response())
@@ -176,8 +225,13 @@ async def test_retryable_poll_responses_keep_original_deadline(service, monkeypa
 
     # When: the existing pending job is polled with a three-second budget.
     result = await service._poll_until_complete(
-        "build", "Project@hash", {}, {"_mcp_status": "pending", "data": {"job_id": "job-1"}},
-        "status", user_id="user-a", max_poll_seconds=3,
+        "build",
+        "Project@hash",
+        {},
+        {"_mcp_status": "pending", "data": {"job_id": "job-1"}},
+        "status",
+        user_id="user-a",
+        max_poll_seconds=3,
     )
 
     # Then: retries do not renew that budget or produce a terminal transport result.
@@ -188,17 +242,22 @@ async def test_retryable_poll_responses_keep_original_deadline(service, monkeypa
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("response", [
-    {"success": False, "error": "Tool failed"},
-    {"success": False, "hint": "retry", "_mcp_status": "error", "error": "Tool failed"},
-])
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"success": False, "error": "Tool failed"},
+        {"success": False, "hint": "retry", "_mcp_status": "error", "error": "Tool failed"},
+    ],
+)
 async def test_terminal_poll_error_stops_without_retry(service, monkeypatch, response):
     # Given: the job's status action reports a terminal tool failure.
     monkeypatch.setattr(module.asyncio, "sleep", AsyncMock())
     send = AsyncMock(return_value=response)
     monkeypatch.setattr(module, "send_with_unity_instance", send)
     # When: the pending job is polled.
-    result = await service._poll_until_complete("build", "Project@hash", {}, {"_mcp_status": "pending"}, "status")
+    result = await service._poll_until_complete(
+        "build", "Project@hash", {}, {"_mcp_status": "pending"}, "status"
+    )
     # Then: the actual tool error is returned without another status request.
     assert not result.success
     assert result.error == "Tool failed"

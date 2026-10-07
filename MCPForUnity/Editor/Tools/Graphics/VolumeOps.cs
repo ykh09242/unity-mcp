@@ -4,10 +4,10 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Graphics
 {
@@ -29,7 +29,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 if (!profilePath.EndsWith(".asset", StringComparison.OrdinalIgnoreCase))
                     profilePath += ".asset";
-                try { profilePath = AssetPathUtility.GetContainedAssetPath(profilePath); }
+                try
+                {
+                    profilePath = AssetPathUtility.GetContainedAssetPath(profilePath);
+                }
                 catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
                 {
                     return new ErrorResponse($"Invalid profile_path: {ex.Message}");
@@ -107,14 +110,15 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         if (effectDef is JObject effectObj)
                         {
                             string effectType = ParamCoercion.CoerceString(effectObj["type"], null);
-                            if (string.IsNullOrEmpty(effectType)) continue;
+                            if (string.IsNullOrEmpty(effectType))
+                                continue;
 
                             var type = GraphicsHelpers.ResolveVolumeComponentType(effectType);
-                            if (type == null) continue;
+                            if (type == null)
+                                continue;
 
                             // profile.Add(type, true)
-                            var addMethod = GraphicsHelpers.VolumeProfileType.GetMethod("Add",
-                                new[] { typeof(Type), typeof(bool) });
+                            var addMethod = GraphicsHelpers.VolumeProfileType.GetMethod("Add", new[] { typeof(Type), typeof(bool) });
                             if (addMethod != null)
                             {
                                 var component = addMethod.Invoke(profile, new object[] { type, true });
@@ -131,7 +135,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                                     {
                                         foreach (var prop in effectObj.Properties())
                                         {
-                                            if (prop.Name == "type") continue;
+                                            if (prop.Name == "type")
+                                                continue;
                                             SetVolumeParameter(component, prop.Name, prop.Value);
                                         }
                                     }
@@ -152,8 +157,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 return new
                 {
                     success = true,
-                    message = $"Created {(isGlobal ? "global" : "local")} Volume '{name}'" +
-                             (addedEffects.Count > 0 ? $" with effects: {string.Join(", ", addedEffects)}" : ""),
+                    message = $"Created {(isGlobal ? "global" : "local")} Volume '{name}'"
+                        + (addedEffects.Count > 0 ? $" with effects: {string.Join(", ", addedEffects)}" : ""),
                     data = new
                     {
                         instanceID = go.GetInstanceIDCompat(),
@@ -161,15 +166,16 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         weight,
                         priority,
                         profilePath = profilePath ?? "(embedded)",
-                        effects = addedEffects
-                    }
+                        effects = addedEffects,
+                    },
                 };
             }
             finally
             {
                 if (!completed)
                 {
-                    if (go != null) UnityEngine.Object.DestroyImmediate(go);
+                    if (go != null)
+                        UnityEngine.Object.DestroyImmediate(go);
                     DestroyTransientProfile(allocatedProfile);
                 }
             }
@@ -191,10 +197,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var effectType = GraphicsHelpers.ResolveVolumeComponentType(effectName);
             if (effectType == null)
             {
-                var available = GraphicsHelpers.GetAvailableEffectTypes()
-                    .Select(t => t.Name).ToList();
-                return new ErrorResponse(
-                    $"Effect type '{effectName}' not found. Available: {string.Join(", ", available.Take(20))}");
+                var available = GraphicsHelpers.GetAvailableEffectTypes().Select(t => t.Name).ToList();
+                return new ErrorResponse($"Effect type '{effectName}' not found. Available: {string.Join(", ", available.Take(20))}");
             }
 
             var profile = GetProperty(volume, "sharedProfile");
@@ -213,8 +217,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             }
 
             // profile.Add(effectType, true) -- 'true' means override all params
-            var addMethod = GraphicsHelpers.VolumeProfileType.GetMethod("Add",
-                new[] { typeof(Type), typeof(bool) });
+            var addMethod = GraphicsHelpers.VolumeProfileType.GetMethod("Add", new[] { typeof(Type), typeof(bool) });
             if (addMethod == null)
                 return new ErrorResponse("Could not find VolumeProfile.Add method.");
 
@@ -232,7 +235,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Added '{effectName}' to Volume '{(volume as Component)?.gameObject.name}'.",
-                data = new { effect = effectName, volumeInstanceID = (volume as Component)?.gameObject.GetInstanceIDCompat() }
+                data = new { effect = effectName, volumeInstanceID = (volume as Component)?.gameObject.GetInstanceIDCompat() },
             };
         }
 
@@ -301,7 +304,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = msg,
-                data = new { effect = effectName, set = setParams, failed = failedParams }
+                data = new
+                {
+                    effect = effectName,
+                    set = setParams,
+                    failed = failedParams,
+                },
             };
         }
 
@@ -343,8 +351,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (!found)
                 return new ErrorResponse($"Effect '{effectName}' not found on this Volume.");
 
-            var removeMethod = GraphicsHelpers.VolumeProfileType.GetMethod("Remove",
-                new[] { typeof(Type) });
+            var removeMethod = GraphicsHelpers.VolumeProfileType.GetMethod("Remove", new[] { typeof(Type) });
             if (removeMethod == null)
                 return new ErrorResponse("Could not find VolumeProfile.Remove method.");
 
@@ -358,7 +365,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Removed '{effectName}' from Volume.",
-                data = new { effect = effectName }
+                data = new { effect = effectName },
             };
         }
 
@@ -375,7 +382,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Volume info for '{(volume as Component)?.gameObject.name}'.",
-                data = info
+                data = info,
             };
         }
 
@@ -404,15 +411,31 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var changed = new List<string>();
 
             var weight = p.GetFloat("weight");
-            if (weight.HasValue) { SetProperty(volume, "weight", weight.Value); changed.Add("weight"); }
+            if (weight.HasValue)
+            {
+                SetProperty(volume, "weight", weight.Value);
+                changed.Add("weight");
+            }
 
             var priority = p.GetFloat("priority");
-            if (priority.HasValue) { SetProperty(volume, "priority", priority.Value); changed.Add("priority"); }
+            if (priority.HasValue)
+            {
+                SetProperty(volume, "priority", priority.Value);
+                changed.Add("priority");
+            }
 
-            if (p.Has("is_global")) { SetProperty(volume, "isGlobal", p.GetBool("is_global")); changed.Add("isGlobal"); }
+            if (p.Has("is_global"))
+            {
+                SetProperty(volume, "isGlobal", p.GetBool("is_global"));
+                changed.Add("isGlobal");
+            }
 
             var blendDist = p.GetFloat("blend_distance");
-            if (blendDist.HasValue) { SetProperty(volume, "blendDistance", blendDist.Value); changed.Add("blendDistance"); }
+            if (blendDist.HasValue)
+            {
+                SetProperty(volume, "blendDistance", blendDist.Value);
+                changed.Add("blendDistance");
+            }
 
             if (changed.Count == 0)
                 return new ErrorResponse("No properties specified. Use: weight, priority, is_global, blend_distance.");
@@ -422,7 +445,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Updated Volume properties: {string.Join(", ", changed)}",
-                data = new { changed }
+                data = new { changed },
             };
         }
 
@@ -431,18 +454,20 @@ namespace MCPForUnity.Editor.Tools.Graphics
         internal static object ListEffects(JObject @params)
         {
             var types = GraphicsHelpers.GetAvailableEffectTypes();
-            var effectList = types.Select(t => new
-            {
-                name = t.Name,
-                fullName = t.FullName,
-                ns = t.Namespace
-            }).ToList();
+            var effectList = types
+                .Select(t => new
+                {
+                    name = t.Name,
+                    fullName = t.FullName,
+                    ns = t.Namespace,
+                })
+                .ToList();
 
             return new
             {
                 success = true,
                 message = $"Found {effectList.Count} available volume effects.",
-                data = new { pipeline = GraphicsHelpers.GetPipelineName(), effects = effectList }
+                data = new { pipeline = GraphicsHelpers.GetPipelineName(), effects = effectList },
             };
         }
 
@@ -457,14 +482,16 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             if (!path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase))
                 path += ".asset";
-            try { path = AssetPathUtility.GetContainedAssetPath(path); }
+            try
+            {
+                path = AssetPathUtility.GetContainedAssetPath(path);
+            }
             catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
             {
                 return new ErrorResponse($"Invalid path: {ex.Message}");
             }
 
-            if (System.IO.File.Exists(AssetPathUtility.GetFullAssetPath(path)) ||
-                AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null)
+            if (System.IO.File.Exists(AssetPathUtility.GetFullAssetPath(path)) || AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null)
                 return new ErrorResponse($"An asset or file already exists at '{path}'.");
 
             using var folders = new AssetFolderScope();
@@ -485,7 +512,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     success = true,
                     message = $"Created VolumeProfile at '{path}'.",
-                    data = new { path }
+                    data = new { path },
                 };
             }
             finally
@@ -497,14 +524,13 @@ namespace MCPForUnity.Editor.Tools.Graphics
         // VolumeProfile.Add allocates a new component but does not add it to an asset file.
         private static void PersistAddedEffect(object profile, object component)
         {
-            if (!(profile is UnityEngine.Object profileObj) || !AssetDatabase.Contains(profileObj) ||
-                !(component is UnityEngine.Object componentObj)) return;
+            if (!(profile is UnityEngine.Object profileObj) || !AssetDatabase.Contains(profileObj) || !(component is UnityEngine.Object componentObj))
+                return;
 
             try
             {
                 AssetDatabase.AddObjectToAsset(componentObj, profileObj);
-                if (!AssetDatabase.Contains(componentObj) ||
-                    AssetDatabase.GetAssetPath(componentObj) != AssetDatabase.GetAssetPath(profileObj))
+                if (!AssetDatabase.Contains(componentObj) || AssetDatabase.GetAssetPath(componentObj) != AssetDatabase.GetAssetPath(profileObj))
                     throw new InvalidOperationException("Failed to persist the added Volume effect in its profile asset.");
                 EditorUtility.SetDirty(componentObj);
             }
@@ -517,7 +543,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     if (GetProperty(profile, "components") is System.Collections.IList components)
                     {
                         for (int i = components.Count - 1; i >= 0; i--)
-                            if (ReferenceEquals(components[i], component)) components.RemoveAt(i);
+                            if (ReferenceEquals(components[i], component))
+                                components.RemoveAt(i);
                     }
                     UnityEngine.Object.DestroyImmediate(componentObj);
                 }
@@ -527,7 +554,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
         // Only a newly allocated profile is passed here. Borrowed and persisted assets are retained.
         private static void DestroyTransientProfile(UnityEngine.Object profile)
         {
-            if (profile == null || AssetDatabase.Contains(profile)) return;
+            if (profile == null || AssetDatabase.Contains(profile))
+                return;
             if (GetProperty(profile, "components") is System.Collections.IList components)
             {
                 foreach (var component in components)
@@ -541,7 +569,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
         internal static object ListVolumes(JObject @params)
         {
             if (!GraphicsHelpers.HasVolumeSystem)
-                return new { success = true, message = "Volume system not available.", data = new { volumes = new List<object>() } };
+                return new
+                {
+                    success = true,
+                    message = "Volume system not available.",
+                    data = new { volumes = new List<object>() },
+                };
 
             var allVolumes = UnityFindObjectsCompat.FindAll(GraphicsHelpers.VolumeType);
             var volumeList = new List<object>();
@@ -556,7 +589,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Found {volumeList.Count} volume(s).",
-                data = new { pipeline = GraphicsHelpers.GetPipelineName(), volumes = volumeList }
+                data = new { pipeline = GraphicsHelpers.GetPipelineName(), volumes = volumeList },
             };
         }
 
@@ -564,7 +597,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
         private static object BuildVolumeInfo(object volumeComponent, Dictionary<object, List<object>> profileEffects = null)
         {
             var comp = volumeComponent as Component;
-            if (comp == null) return null;
+            if (comp == null)
+                return null;
 
             bool isGlobal = GetPropertyValue<bool>(volumeComponent, "isGlobal", true);
             float weight = GetPropertyValue<float>(volumeComponent, "weight", 1f);
@@ -585,7 +619,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 blend_distance = blendDistance,
                 profile = profileName,
                 profile_path = profilePath ?? "",
-                effects = BuildProfileEffects(profile, profileEffects)
+                effects = BuildProfileEffects(profile, profileEffects),
             };
         }
 
@@ -602,7 +636,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     foreach (var effect in components)
                     {
-                        if (effect == null) continue;
+                        if (effect == null)
+                            continue;
                         var effectType = effect.GetType();
                         bool active = GetPropertyValue<bool>(effect, "active", true);
 
@@ -611,7 +646,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         foreach (var field in effectType.GetFields(BindingFlags.Public | BindingFlags.Instance))
                         {
                             var fieldValue = field.GetValue(effect);
-                            if (fieldValue == null) continue;
+                            if (fieldValue == null)
+                                continue;
                             var overrideProp = fieldValue.GetType().GetProperty("overrideState");
                             if (overrideProp != null)
                             {
@@ -621,12 +657,14 @@ namespace MCPForUnity.Editor.Tools.Graphics
                             }
                         }
 
-                        effectsList.Add(new
-                        {
-                            type = effectType.Name,
-                            active,
-                            overridden_params = overriddenParams
-                        });
+                        effectsList.Add(
+                            new
+                            {
+                                type = effectType.Name,
+                                active,
+                                overridden_params = overriddenParams,
+                            }
+                        );
                     }
                 }
             }
@@ -639,7 +677,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
         private sealed class ProfileReferenceComparer : IEqualityComparer<object>
         {
             internal static readonly ProfileReferenceComparer Instance = new ProfileReferenceComparer();
+
             public new bool Equals(object x, object y) => ReferenceEquals(x, y);
+
             public int GetHashCode(object obj) => RuntimeHelpers.GetHashCode(obj);
         }
 
@@ -647,25 +687,27 @@ namespace MCPForUnity.Editor.Tools.Graphics
         // VolumeParameter<T> has: overrideState (bool), value (T)
         internal static bool SetVolumeParameter(object component, string fieldName, JToken value)
         {
-            if (component == null || string.IsNullOrEmpty(fieldName)) return false;
+            if (component == null || string.IsNullOrEmpty(fieldName))
+                return false;
 
-            var field = component.GetType().GetField(fieldName,
-                BindingFlags.Public | BindingFlags.Instance);
+            var field = component.GetType().GetField(fieldName, BindingFlags.Public | BindingFlags.Instance);
             if (field == null)
             {
                 // Try camelCase conversion from snake_case
                 string camelCase = StringCaseUtility.ToCamelCase(fieldName);
-                field = component.GetType().GetField(camelCase,
-                    BindingFlags.Public | BindingFlags.Instance);
+                field = component.GetType().GetField(camelCase, BindingFlags.Public | BindingFlags.Instance);
             }
-            if (field == null) return false;
+            if (field == null)
+                return false;
 
             var param = field.GetValue(component);
-            if (param == null) return false;
+            if (param == null)
+                return false;
 
             // Set value with type conversion, then enable override on success
             var valueProp = param.GetType().GetProperty("value");
-            if (valueProp == null) return false;
+            if (valueProp == null)
+                return false;
 
             try
             {
@@ -688,7 +730,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
         // --- Helper: Convert JToken to target parameter type ---
         private static object ConvertToParameterType(JToken value, Type targetType)
         {
-            if (value == null || value.Type == JTokenType.Null) return null;
+            if (value == null || value.Type == JTokenType.Null)
+                return null;
 
             // Handle Color
             if (targetType == typeof(Color))
@@ -727,8 +770,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (targetType == typeof(Vector4))
             {
                 if (value is JArray arr && arr.Count >= 4)
-                    return new Vector4(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(),
-                                      arr[2].ReadScalar<float>(), arr[3].ReadScalar<float>());
+                    return new Vector4(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(), arr[2].ReadScalar<float>(), arr[3].ReadScalar<float>());
             }
 
             // Handle enums
@@ -770,36 +812,36 @@ namespace MCPForUnity.Editor.Tools.Graphics
         // --- Reflection helpers (with field fallback for Volume.sharedProfile etc.) ---
         private static object GetProperty(object obj, string name)
         {
-            if (obj == null) return null;
-            var prop = obj.GetType().GetProperty(name,
-                BindingFlags.Public | BindingFlags.Instance);
-            if (prop != null) return prop.GetValue(obj);
+            if (obj == null)
+                return null;
+            var prop = obj.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            if (prop != null)
+                return prop.GetValue(obj);
             // Fallback: try as a field (e.g., Volume.sharedProfile is a public field, not a property)
-            var field = obj.GetType().GetField(name,
-                BindingFlags.Public | BindingFlags.Instance);
+            var field = obj.GetType().GetField(name, BindingFlags.Public | BindingFlags.Instance);
             return field?.GetValue(obj);
         }
 
         private static T GetPropertyValue<T>(object obj, string name, T defaultValue)
         {
             var val = GetProperty(obj, name);
-            if (val is T typed) return typed;
+            if (val is T typed)
+                return typed;
             return defaultValue;
         }
 
         private static void SetProperty(object obj, string name, object value)
         {
-            if (obj == null) return;
-            var prop = obj.GetType().GetProperty(name,
-                BindingFlags.Public | BindingFlags.Instance);
+            if (obj == null)
+                return;
+            var prop = obj.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
             if (prop != null && prop.CanWrite)
             {
                 prop.SetValue(obj, value);
                 return;
             }
             // Fallback: try as a field (e.g., Volume.sharedProfile is a public field, not a property)
-            var field = obj.GetType().GetField(name,
-                BindingFlags.Public | BindingFlags.Instance);
+            var field = obj.GetType().GetField(name, BindingFlags.Public | BindingFlags.Instance);
             field?.SetValue(obj, value);
         }
     }

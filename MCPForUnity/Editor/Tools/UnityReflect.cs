@@ -37,7 +37,7 @@ namespace MCPForUnity.Editor.Tools
             "UnityEngine.SceneManagement.",
             "UnityEngine.Animations.",
             "UnityEngine.Playables.",
-            "UnityEngine.UIElements."
+            "UnityEngine.UIElements.",
         };
 
         private static readonly Dictionary<Type, string> FriendlyTypeNames = new()
@@ -57,7 +57,7 @@ namespace MCPForUnity.Editor.Tools
             { typeof(uint), "uint" },
             { typeof(ulong), "ulong" },
             { typeof(ushort), "ushort" },
-            { typeof(sbyte), "sbyte" }
+            { typeof(sbyte), "sbyte" },
         };
 
         [InitializeOnLoadMethod]
@@ -125,8 +125,7 @@ namespace MCPForUnity.Editor.Tools
                     case "search":
                         return SearchTypes(p);
                     default:
-                        return new ErrorResponse(
-                            $"Unknown action: '{action}'. Supported actions: get_type, get_member, search.");
+                        return new ErrorResponse($"Unknown action: '{action}'. Supported actions: get_type, get_member, search.");
                 }
             }
             catch (Exception ex)
@@ -151,25 +150,24 @@ namespace MCPForUnity.Editor.Tools
                 var matches = FindAllTypesByShortName(normalizedName);
                 if (matches.Count > 1)
                 {
-                    return new SuccessResponse($"Ambiguous type name '{className}'.", new
-                    {
-                        found = true,
-                        ambiguous = true,
-                        query = className,
-                        matches = matches.Select(t => t.FullName).OrderBy(n => n).ToArray(),
-                        hint = "Use the fully qualified name (e.g., 'UnityEngine.UI.Button') to disambiguate."
-                    });
+                    return new SuccessResponse(
+                        $"Ambiguous type name '{className}'.",
+                        new
+                        {
+                            found = true,
+                            ambiguous = true,
+                            query = className,
+                            matches = matches.Select(t => t.FullName).OrderBy(n => n).ToArray(),
+                            hint = "Use the fully qualified name (e.g., 'UnityEngine.UI.Button') to disambiguate.",
+                        }
+                    );
                 }
             }
 
             var type = ResolveType(normalizedName);
             if (type == null)
             {
-                return new SuccessResponse($"Type '{className}' not found.", new
-                {
-                    found = false,
-                    query = className
-                });
+                return new SuccessResponse($"Type '{className}' not found.", new { found = false, query = className });
             }
 
             // Open generic type definitions (e.g. List<T>) segfault Mono on Unity 2021.3
@@ -177,77 +175,63 @@ namespace MCPForUnity.Editor.Tools
             // performed. Return minimal info using only safe property accesses.
             if (type.IsGenericTypeDefinition)
             {
-                return new SuccessResponse($"Type info for '{type.Name}'.", new
-                {
-                    found = true,
-                    name = type.Name,
-                    full_name = type.FullName,
-                    @namespace = type.Namespace,
-                    assembly = type.Assembly.GetName().Name,
-                    is_generic_type_definition = true,
-                    hint = "Open generic type — consult docs for member details."
-                });
+                return new SuccessResponse(
+                    $"Type info for '{type.Name}'.",
+                    new
+                    {
+                        found = true,
+                        name = type.Name,
+                        full_name = type.FullName,
+                        @namespace = type.Namespace,
+                        assembly = type.Assembly.GetName().Name,
+                        is_generic_type_definition = true,
+                        hint = "Open generic type — consult docs for member details.",
+                    }
+                );
             }
 
             var flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
 
-            var methods = type.GetMethods(flags)
-                .Where(m => !m.IsSpecialName)
-                .Select(m => m.Name)
-                .Distinct()
-                .OrderBy(n => n)
-                .ToArray();
+            var methods = type.GetMethods(flags).Where(m => !m.IsSpecialName).Select(m => m.Name).Distinct().OrderBy(n => n).ToArray();
 
-            var properties = type.GetProperties(flags)
-                .Select(pr => pr.Name)
-                .Distinct()
-                .OrderBy(n => n)
-                .ToArray();
+            var properties = type.GetProperties(flags).Select(pr => pr.Name).Distinct().OrderBy(n => n).ToArray();
 
-            var fields = type.GetFields(flags)
-                .Select(f => f.Name)
-                .Distinct()
-                .OrderBy(n => n)
-                .ToArray();
+            var fields = type.GetFields(flags).Select(f => f.Name).Distinct().OrderBy(n => n).ToArray();
 
-            var events = type.GetEvents(flags)
-                .Select(e => e.Name)
-                .Distinct()
-                .OrderBy(n => n)
-                .ToArray();
+            var events = type.GetEvents(flags).Select(e => e.Name).Distinct().OrderBy(n => n).ToArray();
 
             var obsoleteMembers = GetObsoleteMembers(type, flags);
             var extensionMethods = FindExtensionMethods(type);
 
-            var interfaces = type.GetInterfaces()
-                .Select(i => FormatTypeName(i))
-                .OrderBy(n => n)
-                .ToArray();
+            var interfaces = type.GetInterfaces().Select(i => FormatTypeName(i)).OrderBy(n => n).ToArray();
 
-            return new SuccessResponse($"Type info for '{FormatTypeName(type)}'.", new
-            {
-                found = true,
-                name = FormatTypeName(type),
-                full_name = type.FullName,
-                @namespace = type.Namespace,
-                assembly = type.Assembly.GetName().Name,
-                base_class = type.BaseType != null ? FormatTypeName(type.BaseType) : null,
-                interfaces,
-                is_abstract = type.IsAbstract,
-                is_sealed = type.IsSealed,
-                is_static = type.IsAbstract && type.IsSealed,
-                is_enum = type.IsEnum,
-                is_interface = type.IsInterface,
-                members = new
+            return new SuccessResponse(
+                $"Type info for '{FormatTypeName(type)}'.",
+                new
                 {
-                    methods,
-                    properties,
-                    fields,
-                    events
-                },
-                extension_methods = extensionMethods,
-                obsolete_members = obsoleteMembers
-            });
+                    found = true,
+                    name = FormatTypeName(type),
+                    full_name = type.FullName,
+                    @namespace = type.Namespace,
+                    assembly = type.Assembly.GetName().Name,
+                    base_class = type.BaseType != null ? FormatTypeName(type.BaseType) : null,
+                    interfaces,
+                    is_abstract = type.IsAbstract,
+                    is_sealed = type.IsSealed,
+                    is_static = type.IsAbstract && type.IsSealed,
+                    is_enum = type.IsEnum,
+                    is_interface = type.IsInterface,
+                    members = new
+                    {
+                        methods,
+                        properties,
+                        fields,
+                        events,
+                    },
+                    extension_methods = extensionMethods,
+                    obsolete_members = obsoleteMembers,
+                }
+            );
         }
 
         // === get_member ===
@@ -270,129 +254,143 @@ namespace MCPForUnity.Editor.Tools
                 var matches = FindAllTypesByShortName(normalizedName);
                 if (matches.Count > 1)
                 {
-                    return new SuccessResponse($"Ambiguous type name '{className}'.", new
-                    {
-                        found = true,
-                        ambiguous = true,
-                        query = className,
-                        matches = matches.Select(t => t.FullName).OrderBy(n => n).ToArray(),
-                        hint = "Use the fully qualified name to disambiguate before requesting member details."
-                    });
+                    return new SuccessResponse(
+                        $"Ambiguous type name '{className}'.",
+                        new
+                        {
+                            found = true,
+                            ambiguous = true,
+                            query = className,
+                            matches = matches.Select(t => t.FullName).OrderBy(n => n).ToArray(),
+                            hint = "Use the fully qualified name to disambiguate before requesting member details.",
+                        }
+                    );
                 }
             }
 
             var type = ResolveType(normalizedName);
             if (type == null)
             {
-                return new SuccessResponse($"Type '{className}' not found.", new
-                {
-                    found = false,
-                    query = className
-                });
+                return new SuccessResponse($"Type '{className}' not found.", new { found = false, query = className });
             }
 
             if (type.IsGenericTypeDefinition)
             {
                 return new SuccessResponse(
-                    $"Open generic type '{type.Name}' — consult docs for member details.", new
+                    $"Open generic type '{type.Name}' — consult docs for member details.",
+                    new
                     {
                         found = false,
                         type_name = type.FullName,
                         member_name = memberName,
                         is_generic_type_definition = true,
-                        hint = "Open generic type — consult docs for member details."
-                    });
+                        hint = "Open generic type — consult docs for member details.",
+                    }
+                );
             }
 
             // Use flags without DeclaredOnly to find inherited members
             var flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static;
 
             // Try methods first
-            var methods = type.GetMethods(flags)
-                .Where(m => !m.IsSpecialName && m.Name == memberName)
-                .ToArray();
+            var methods = type.GetMethods(flags).Where(m => !m.IsSpecialName && m.Name == memberName).ToArray();
 
             if (methods.Length > 0)
             {
                 var overloads = methods.Select(m => FormatMethodDetail(m)).ToArray();
-                return new SuccessResponse($"Member '{memberName}' on '{FormatTypeName(type)}'.", new
-                {
-                    found = true,
-                    type_name = FormatTypeName(type),
-                    member_name = memberName,
-                    member_type = "method",
-                    overload_count = overloads.Length,
-                    overloads
-                });
+                return new SuccessResponse(
+                    $"Member '{memberName}' on '{FormatTypeName(type)}'.",
+                    new
+                    {
+                        found = true,
+                        type_name = FormatTypeName(type),
+                        member_name = memberName,
+                        member_type = "method",
+                        overload_count = overloads.Length,
+                        overloads,
+                    }
+                );
             }
 
             // Try properties
             var properties = type.GetProperties(flags).Where(pr => pr.Name == memberName).ToArray();
             if (properties.Length > 1)
             {
-                return new SuccessResponse($"Member '{memberName}' on '{FormatTypeName(type)}'.", new
-                {
-                    found = true,
-                    type_name = FormatTypeName(type),
-                    member_name = memberName,
-                    member_type = "property",
-                    overload_count = properties.Length,
-                    overloads = properties.Select(FormatPropertyDetail).ToArray()
-                });
+                return new SuccessResponse(
+                    $"Member '{memberName}' on '{FormatTypeName(type)}'.",
+                    new
+                    {
+                        found = true,
+                        type_name = FormatTypeName(type),
+                        member_name = memberName,
+                        member_type = "property",
+                        overload_count = properties.Length,
+                        overloads = properties.Select(FormatPropertyDetail).ToArray(),
+                    }
+                );
             }
             if (properties.Length == 1)
             {
                 var prop = properties[0];
-                return new SuccessResponse($"Member '{memberName}' on '{FormatTypeName(type)}'.", new
-                {
-                    found = true,
-                    type_name = FormatTypeName(type),
-                    member_name = memberName,
-                    member_type = "property",
-                    property_type = FormatTypeName(prop.PropertyType),
-                    can_read = prop.CanRead,
-                    can_write = prop.CanWrite,
-                    is_static = (prop.GetMethod ?? prop.SetMethod)?.IsStatic ?? false,
-                    is_obsolete = prop.GetCustomAttribute<ObsoleteAttribute>() != null,
-                    declaring_type = prop.DeclaringType != type ? FormatTypeName(prop.DeclaringType) : null,
-                    index_parameters = FormatIndexParameters(prop)
-                });
+                return new SuccessResponse(
+                    $"Member '{memberName}' on '{FormatTypeName(type)}'.",
+                    new
+                    {
+                        found = true,
+                        type_name = FormatTypeName(type),
+                        member_name = memberName,
+                        member_type = "property",
+                        property_type = FormatTypeName(prop.PropertyType),
+                        can_read = prop.CanRead,
+                        can_write = prop.CanWrite,
+                        is_static = (prop.GetMethod ?? prop.SetMethod)?.IsStatic ?? false,
+                        is_obsolete = prop.GetCustomAttribute<ObsoleteAttribute>() != null,
+                        declaring_type = prop.DeclaringType != type ? FormatTypeName(prop.DeclaringType) : null,
+                        index_parameters = FormatIndexParameters(prop),
+                    }
+                );
             }
 
             // Try fields
             var field = type.GetField(memberName, flags);
             if (field != null)
             {
-                return new SuccessResponse($"Member '{memberName}' on '{FormatTypeName(type)}'.", new
-                {
-                    found = true,
-                    type_name = FormatTypeName(type),
-                    member_name = memberName,
-                    member_type = "field",
-                    field_type = FormatTypeName(field.FieldType),
-                    is_static = field.IsStatic,
-                    is_readonly = field.IsInitOnly,
-                    is_constant = field.IsLiteral,
-                    constant_value = field.IsLiteral ? field.GetRawConstantValue() : null,
-                    is_obsolete = field.GetCustomAttribute<ObsoleteAttribute>() != null,
-                    declaring_type = field.DeclaringType != type ? FormatTypeName(field.DeclaringType) : null
-                });
+                return new SuccessResponse(
+                    $"Member '{memberName}' on '{FormatTypeName(type)}'.",
+                    new
+                    {
+                        found = true,
+                        type_name = FormatTypeName(type),
+                        member_name = memberName,
+                        member_type = "field",
+                        field_type = FormatTypeName(field.FieldType),
+                        is_static = field.IsStatic,
+                        is_readonly = field.IsInitOnly,
+                        is_constant = field.IsLiteral,
+                        constant_value = field.IsLiteral ? field.GetRawConstantValue() : null,
+                        is_obsolete = field.GetCustomAttribute<ObsoleteAttribute>() != null,
+                        declaring_type = field.DeclaringType != type ? FormatTypeName(field.DeclaringType) : null,
+                    }
+                );
             }
 
             // Try events
             var evt = type.GetEvent(memberName, flags);
             if (evt != null)
             {
-                return new SuccessResponse($"Member '{memberName}' on '{FormatTypeName(type)}'.", new
-                {
-                    found = true,
-                    type_name = FormatTypeName(type),
-                    member_name = memberName,
-                    member_type = "event",
-                    event_handler_type = FormatTypeName(evt.EventHandlerType),
-                    is_obsolete = evt.GetCustomAttribute<ObsoleteAttribute>() != null,
-                    declaring_type = evt.DeclaringType != type ? FormatTypeName(evt.DeclaringType) : null
-                });
+                return new SuccessResponse(
+                    $"Member '{memberName}' on '{FormatTypeName(type)}'.",
+                    new
+                    {
+                        found = true,
+                        type_name = FormatTypeName(type),
+                        member_name = memberName,
+                        member_type = "event",
+                        event_handler_type = FormatTypeName(evt.EventHandlerType),
+                        is_obsolete = evt.GetCustomAttribute<ObsoleteAttribute>() != null,
+                        declaring_type = evt.DeclaringType != type ? FormatTypeName(evt.DeclaringType) : null,
+                    }
+                );
             }
 
             // Try extension methods as a last resort
@@ -400,24 +398,30 @@ namespace MCPForUnity.Editor.Tools
             if (extMethods.Length > 0)
             {
                 var overloads = extMethods.Select(m => FormatMethodDetail(m)).ToArray();
-                return new SuccessResponse($"Extension method '{memberName}' on '{FormatTypeName(type)}'.", new
-                {
-                    found = true,
-                    type_name = FormatTypeName(type),
-                    member_name = memberName,
-                    member_type = "extension_method",
-                    overload_count = overloads.Length,
-                    overloads,
-                    declaring_type = FormatTypeName(extMethods[0].DeclaringType)
-                });
+                return new SuccessResponse(
+                    $"Extension method '{memberName}' on '{FormatTypeName(type)}'.",
+                    new
+                    {
+                        found = true,
+                        type_name = FormatTypeName(type),
+                        member_name = memberName,
+                        member_type = "extension_method",
+                        overload_count = overloads.Length,
+                        overloads,
+                        declaring_type = FormatTypeName(extMethods[0].DeclaringType),
+                    }
+                );
             }
 
-            return new SuccessResponse($"Member '{memberName}' not found on '{FormatTypeName(type)}'.", new
-            {
-                found = false,
-                type_name = FormatTypeName(type),
-                member_name = memberName
-            });
+            return new SuccessResponse(
+                $"Member '{memberName}' not found on '{FormatTypeName(type)}'.",
+                new
+                {
+                    found = false,
+                    type_name = FormatTypeName(type),
+                    member_name = memberName,
+                }
+            );
         }
 
         // === search ===
@@ -432,8 +436,7 @@ namespace MCPForUnity.Editor.Tools
 
             if (scope != "unity" && scope != "packages" && scope != "project" && scope != "all")
             {
-                return new ErrorResponse(
-                    $"Invalid scope: '{scope}'. Supported: unity, packages, project, all.");
+                return new ErrorResponse($"Invalid scope: '{scope}'. Supported: unity, packages, project, all.");
             }
 
             var cache = GetAssemblyTypeCache();
@@ -444,7 +447,8 @@ namespace MCPForUnity.Editor.Tools
             foreach (var kvp in cache)
             {
                 var asm = kvp.Value.Length > 0 ? kvp.Value[0].Assembly : null;
-                if (asm == null) continue;
+                if (asm == null)
+                    continue;
 
                 string asmName = asm.GetName().Name;
                 if (!MatchesScope(asmName, scope))
@@ -452,7 +456,8 @@ namespace MCPForUnity.Editor.Tools
 
                 foreach (var t in kvp.Value)
                 {
-                    if (t.Name == null) continue;
+                    if (t.Name == null)
+                        continue;
 
                     string nameLower = t.Name.ToLowerInvariant();
                     string fullNameLower = t.FullName?.ToLowerInvariant() ?? nameLower;
@@ -479,18 +484,21 @@ namespace MCPForUnity.Editor.Tools
                     is_class = c.type.IsClass,
                     is_enum = c.type.IsEnum,
                     is_interface = c.type.IsInterface,
-                    is_struct = c.type.IsValueType && !c.type.IsEnum
+                    is_struct = c.type.IsValueType && !c.type.IsEnum,
                 })
                 .ToArray();
 
-            return new SuccessResponse($"Found {results.Length} type(s) matching '{query}' (scope: {scope}).", new
-            {
-                query,
-                scope,
-                count = results.Length,
-                results,
-                truncated = candidates.Count > 25
-            });
+            return new SuccessResponse(
+                $"Found {results.Length} type(s) matching '{query}' (scope: {scope}).",
+                new
+                {
+                    query,
+                    scope,
+                    count = results.Length,
+                    results,
+                    truncated = candidates.Count > 25,
+                }
+            );
         }
 
         // --- Type Resolution ---
@@ -500,7 +508,8 @@ namespace MCPForUnity.Editor.Tools
             // Use the shared UnityTypeResolver which handles caching,
             // namespace prefixes, player-over-editor priority, and TypeCache fallback.
             var type = UnityTypeResolver.ResolveAny(className);
-            if (type != null) return type;
+            if (type != null)
+                return type;
 
             // UnityTypeResolver doesn't try our extended namespace prefixes,
             // so fall back to assembly cache scan for edge cases.
@@ -511,7 +520,8 @@ namespace MCPForUnity.Editor.Tools
                 foreach (var kvp in cache)
                 {
                     type = Array.Find(kvp.Value, t => t.FullName == fullName);
-                    if (type != null) return type;
+                    if (type != null)
+                        return type;
                 }
             }
 
@@ -538,7 +548,8 @@ namespace MCPForUnity.Editor.Tools
         {
             // Parse List<T> -> List`1, Dictionary<K,V> -> Dictionary`2
             var match = Regex.Match(name, @"^([^<>]+)<(.+)>$");
-            if (!match.Success) return name;
+            if (!match.Success)
+                return name;
 
             string baseName = match.Groups[1].Value;
             string typeArgs = match.Groups[2].Value;
@@ -548,13 +559,16 @@ namespace MCPForUnity.Editor.Tools
             int depth = 0;
             foreach (char c in typeArgs)
             {
-                if (c == '<') depth++;
+                if (c == '<')
+                    depth++;
                 else if (c == '>')
                 {
-                    if (depth == 0) return name;
+                    if (depth == 0)
+                        return name;
                     depth--;
                 }
-                else if (c == ',' && depth == 0) argCount++;
+                else if (c == ',' && depth == 0)
+                    argCount++;
             }
 
             return depth == 0 ? $"{baseName}`{argCount}" : name;
@@ -564,7 +578,8 @@ namespace MCPForUnity.Editor.Tools
 
         private static string FormatTypeName(Type type)
         {
-            if (type == null) return "null";
+            if (type == null)
+                return "null";
 
             if (FriendlyTypeNames.TryGetValue(type, out var friendly))
                 return friendly;
@@ -598,11 +613,10 @@ namespace MCPForUnity.Editor.Tools
 
         private static object[] FormatIndexParameters(PropertyInfo property)
         {
-            return property.GetIndexParameters().Select(parameter => (object)new
-            {
-                name = parameter.Name,
-                type = FormatTypeName(parameter.ParameterType)
-            }).ToArray();
+            return property
+                .GetIndexParameters()
+                .Select(parameter => (object)new { name = parameter.Name, type = FormatTypeName(parameter.ParameterType) })
+                .ToArray();
         }
 
         private static object FormatPropertyDetail(PropertyInfo property)
@@ -614,29 +628,32 @@ namespace MCPForUnity.Editor.Tools
                 can_write = property.CanWrite,
                 is_static = (property.GetMethod ?? property.SetMethod)?.IsStatic ?? false,
                 is_obsolete = property.GetCustomAttribute<ObsoleteAttribute>() != null,
-                declaring_type = property.DeclaringType != property.ReflectedType
-                    ? FormatTypeName(property.DeclaringType) : null,
-                index_parameters = FormatIndexParameters(property)
+                declaring_type = property.DeclaringType != property.ReflectedType ? FormatTypeName(property.DeclaringType) : null,
+                index_parameters = FormatIndexParameters(property),
             };
         }
 
         private static object FormatMethodDetail(MethodInfo m)
         {
-            var parameters = m.GetParameters().Select(param =>
-            {
-                string prefix = "";
-                if (param.IsOut) prefix = "out ";
-                else if (param.ParameterType.IsByRef) prefix = "ref ";
-
-                return new
+            var parameters = m.GetParameters()
+                .Select(param =>
                 {
-                    name = param.Name,
-                    type = prefix + FormatTypeName(param.ParameterType),
-                    has_default = param.HasDefaultValue,
-                    default_value = param.HasDefaultValue ? FormatDefaultValue(param.DefaultValue) : null,
-                    is_params = param.IsDefined(typeof(ParamArrayAttribute))
-                };
-            }).ToArray();
+                    string prefix = "";
+                    if (param.IsOut)
+                        prefix = "out ";
+                    else if (param.ParameterType.IsByRef)
+                        prefix = "ref ";
+
+                    return new
+                    {
+                        name = param.Name,
+                        type = prefix + FormatTypeName(param.ParameterType),
+                        has_default = param.HasDefaultValue,
+                        default_value = param.HasDefaultValue ? FormatDefaultValue(param.DefaultValue) : null,
+                        is_params = param.IsDefined(typeof(ParamArrayAttribute)),
+                    };
+                })
+                .ToArray();
 
             string signature = FormatMethodSignature(m);
             var obsoleteAttr = m.GetCustomAttribute<ObsoleteAttribute>();
@@ -650,14 +667,10 @@ namespace MCPForUnity.Editor.Tools
                 is_virtual = m.IsVirtual && !m.IsFinal,
                 is_abstract = m.IsAbstract,
                 is_generic = m.IsGenericMethod,
-                generic_arguments = m.IsGenericMethod
-                    ? m.GetGenericArguments().Select(a => a.Name).ToArray()
-                    : null,
+                generic_arguments = m.IsGenericMethod ? m.GetGenericArguments().Select(a => a.Name).ToArray() : null,
                 is_obsolete = obsoleteAttr != null,
                 obsolete_message = obsoleteAttr?.Message,
-                declaring_type = m.DeclaringType != m.ReflectedType
-                    ? FormatTypeName(m.DeclaringType)
-                    : null
+                declaring_type = m.DeclaringType != m.ReflectedType ? FormatTypeName(m.DeclaringType) : null,
             };
         }
 
@@ -673,26 +686,32 @@ namespace MCPForUnity.Editor.Tools
                 name += "<" + string.Join(", ", genArgs.Select(a => a.Name)) + ">";
             }
 
-            var paramStrings = m.GetParameters().Select(param =>
-            {
-                string prefix = "";
-                if (param.IsOut) prefix = "out ";
-                else if (param.ParameterType.IsByRef) prefix = "ref ";
+            var paramStrings = m.GetParameters()
+                .Select(param =>
+                {
+                    string prefix = "";
+                    if (param.IsOut)
+                        prefix = "out ";
+                    else if (param.ParameterType.IsByRef)
+                        prefix = "ref ";
 
-                if (param.IsDefined(typeof(ParamArrayAttribute)))
-                    prefix = "params ";
+                    if (param.IsDefined(typeof(ParamArrayAttribute)))
+                        prefix = "params ";
 
-                return prefix + FormatTypeName(param.ParameterType) + " " + param.Name;
-            });
+                    return prefix + FormatTypeName(param.ParameterType) + " " + param.Name;
+                });
 
             return $"{staticPrefix}{returnType} {name}({string.Join(", ", paramStrings)})";
         }
 
         private static object FormatDefaultValue(object value)
         {
-            if (value == null) return "null";
-            if (value is string s) return $"\"{s}\"";
-            if (value is bool b) return b ? "true" : "false";
+            if (value == null)
+                return "null";
+            if (value is string s)
+                return $"\"{s}\"";
+            if (value is bool b)
+                return b ? "true" : "false";
             return value;
         }
 
@@ -745,20 +764,27 @@ namespace MCPForUnity.Editor.Tools
 
                 foreach (var t in kvp.Value)
                 {
-                    if (!t.IsAbstract || !t.IsSealed) continue; // Static classes only
-                    if (!t.IsDefined(typeof(ExtensionAttribute), false)) continue;
+                    if (!t.IsAbstract || !t.IsSealed)
+                        continue; // Static classes only
+                    if (!t.IsDefined(typeof(ExtensionAttribute), false))
+                        continue;
 
                     foreach (var method in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
                     {
-                        if (!method.IsDefined(typeof(ExtensionAttribute), false)) continue;
+                        if (!method.IsDefined(typeof(ExtensionAttribute), false))
+                            continue;
 
                         var firstParam = method.GetParameters().FirstOrDefault();
-                        if (firstParam == null) continue;
+                        if (firstParam == null)
+                            continue;
 
                         var paramType = firstParam.ParameterType;
-                        if (paramType.IsAssignableFrom(targetType) || targetType.IsSubclassOf(paramType)
+                        if (
+                            paramType.IsAssignableFrom(targetType)
+                            || targetType.IsSubclassOf(paramType)
                             || paramType == targetType
-                            || (paramType.IsGenericType && IsGenericMatch(paramType, targetType)))
+                            || (paramType.IsGenericType && IsGenericMatch(paramType, targetType))
+                        )
                         {
                             extensionNames.Add(method.Name);
                         }
@@ -766,9 +792,7 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
 
-            var result = extensionNames.Count > 0
-                ? extensionNames.OrderBy(n => n).ToArray()
-                : Array.Empty<string>();
+            var result = extensionNames.Count > 0 ? extensionNames.OrderBy(n => n).ToArray() : Array.Empty<string>();
 
             ExtensionMethodCache.TryAdd(targetType, result);
             return result;
@@ -787,21 +811,29 @@ namespace MCPForUnity.Editor.Tools
 
                 foreach (var t in kvp.Value)
                 {
-                    if (!t.IsAbstract || !t.IsSealed) continue;
-                    if (!t.IsDefined(typeof(ExtensionAttribute), false)) continue;
+                    if (!t.IsAbstract || !t.IsSealed)
+                        continue;
+                    if (!t.IsDefined(typeof(ExtensionAttribute), false))
+                        continue;
 
                     foreach (var method in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
                     {
-                        if (method.Name != methodName) continue;
-                        if (!method.IsDefined(typeof(ExtensionAttribute), false)) continue;
+                        if (method.Name != methodName)
+                            continue;
+                        if (!method.IsDefined(typeof(ExtensionAttribute), false))
+                            continue;
 
                         var firstParam = method.GetParameters().FirstOrDefault();
-                        if (firstParam == null) continue;
+                        if (firstParam == null)
+                            continue;
 
                         var paramType = firstParam.ParameterType;
-                        if (paramType.IsAssignableFrom(targetType) || targetType.IsSubclassOf(paramType)
+                        if (
+                            paramType.IsAssignableFrom(targetType)
+                            || targetType.IsSubclassOf(paramType)
                             || paramType == targetType
-                            || (paramType.IsGenericType && IsGenericMatch(paramType, targetType)))
+                            || (paramType.IsGenericType && IsGenericMatch(paramType, targetType))
+                        )
                         {
                             results.Add(method);
                         }
@@ -816,7 +848,8 @@ namespace MCPForUnity.Editor.Tools
         {
             // Closed receivers are already checked by IsAssignableFrom. Comparing only
             // their definitions would match e.g. ICollection<int> to ICollection<string>.
-            if (!genericParamType.IsGenericType || !genericParamType.ContainsGenericParameters) return false;
+            if (!genericParamType.IsGenericType || !genericParamType.ContainsGenericParameters)
+                return false;
 
             var genDef = genericParamType.GetGenericTypeDefinition();
 
@@ -843,14 +876,10 @@ namespace MCPForUnity.Editor.Tools
             switch (scope)
             {
                 case "unity":
-                    return assemblyName.StartsWith("UnityEngine")
-                        || assemblyName.StartsWith("UnityEditor")
-                        || assemblyName.StartsWith("Unity.");
+                    return assemblyName.StartsWith("UnityEngine") || assemblyName.StartsWith("UnityEditor") || assemblyName.StartsWith("Unity.");
 
                 case "packages":
-                    return !assemblyName.StartsWith("System")
-                        && !assemblyName.StartsWith("mscorlib")
-                        && !assemblyName.StartsWith("netstandard");
+                    return !assemblyName.StartsWith("System") && !assemblyName.StartsWith("mscorlib") && !assemblyName.StartsWith("netstandard");
 
                 case "project":
                     return assemblyName == "Assembly-CSharp"

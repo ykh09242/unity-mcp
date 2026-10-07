@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Physics;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
 #if UNITY_6000_0_OR_NEWER
 using Material3D = UnityEngine.PhysicsMaterial;
@@ -41,7 +41,8 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 foreach (var gameObject in ownedObjects)
-                    if (gameObject != null) UnityEngine.Object.DestroyImmediate(gameObject);
+                    if (gameObject != null)
+                        UnityEngine.Object.DestroyImmediate(gameObject);
             }
             finally
             {
@@ -56,7 +57,8 @@ namespace MCPForUnityTests.Editor.Tools
 
         private void EnsureOwnedRoot()
         {
-            if (ownsAssetRoot) return;
+            if (ownsAssetRoot)
+                return;
             string leaf = assetRoot.Substring("Assets/".Length);
             string guid = AssetDatabase.CreateFolder("Assets", leaf);
             ownsAssetRoot = !string.IsNullOrEmpty(guid);
@@ -68,11 +70,15 @@ namespace MCPForUnityTests.Editor.Tools
         private UnityEngine.Object CreateMaterial(string dimension)
         {
             EnsureOwnedRoot();
-            var result = Call(new JObject
-            {
-                ["action"] = "create_physics_material", ["name"] = "Fixture",
-                ["dimension"] = dimension, ["path"] = assetRoot
-            });
+            var result = Call(
+                new JObject
+                {
+                    ["action"] = "create_physics_material",
+                    ["name"] = "Fixture",
+                    ["dimension"] = dimension,
+                    ["path"] = assetRoot,
+                }
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             string path = result["data"].Value<string>("path");
             var material = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
@@ -88,20 +94,27 @@ namespace MCPForUnityTests.Editor.Tools
             return gameObject;
         }
 
-        private static JObject Configure(UnityEngine.Object material, string dimension, JObject properties) => new JObject
-        {
-            ["action"] = "configure_physics_material", ["path"] = AssetDatabase.GetAssetPath(material),
-            ["dimension"] = dimension, ["properties"] = properties
-        };
+        private static JObject Configure(UnityEngine.Object material, string dimension, JObject properties) =>
+            new JObject
+            {
+                ["action"] = "configure_physics_material",
+                ["path"] = AssetDatabase.GetAssetPath(material),
+                ["dimension"] = dimension,
+                ["properties"] = properties,
+            };
 
         private static JObject Assign(UnityEngine.Object material, JToken target, string method = null, int? index = null)
         {
             var parameters = new JObject
             {
-                ["action"] = "assign_physics_material", ["material_path"] = AssetDatabase.GetAssetPath(material), ["target"] = target
+                ["action"] = "assign_physics_material",
+                ["material_path"] = AssetDatabase.GetAssetPath(material),
+                ["target"] = target,
             };
-            if (method != null) parameters["search_method"] = method;
-            if (index.HasValue) parameters["component_index"] = index.Value;
+            if (method != null)
+                parameters["search_method"] = method;
+            if (index.HasValue)
+                parameters["component_index"] = index.Value;
             return parameters;
         }
 
@@ -110,8 +123,11 @@ namespace MCPForUnityTests.Editor.Tools
             if (material is Material3D m)
                 return new JObject
                 {
-                    ["dynamic"] = m.dynamicFriction, ["static"] = m.staticFriction, ["bounce"] = m.bounciness,
-                    ["frictionCombine"] = (int)m.frictionCombine, ["bounceCombine"] = (int)m.bounceCombine
+                    ["dynamic"] = m.dynamicFriction,
+                    ["static"] = m.staticFriction,
+                    ["bounce"] = m.bounciness,
+                    ["frictionCombine"] = (int)m.frictionCombine,
+                    ["bounceCombine"] = (int)m.bounceCombine,
                 };
             var m2 = (PhysicsMaterial2D)material;
             return new JObject { ["friction"] = m2.friction, ["bounce"] = m2.bounciness };
@@ -123,8 +139,10 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var parameters = new JObject
             {
-                ["action"] = "create_physics_material", ["name"] = "Fixture", ["path"] = assetRoot + "/Nested",
-                ["dimension"] = dimension == "null" ? JValue.CreateNull() : new JValue(dimension)
+                ["action"] = "create_physics_material",
+                ["name"] = "Fixture",
+                ["path"] = assetRoot + "/Nested",
+                ["dimension"] = dimension == "null" ? JValue.CreateNull() : new JValue(dimension),
             };
             var result = Call(parameters);
             // If the regression creates this previously absent unique root, retain exact cleanup ownership.
@@ -168,18 +186,30 @@ namespace MCPForUnityTests.Editor.Tools
         public void ValidAliasesPreserveSuccessfulOrderAndScalarForms()
         {
             var material = (Material3D)CreateMaterial("3d");
-            var result = Call(Configure(material, "3D", new JObject
-            {
-                ["dynamic_friction"] = "0", ["dynamicFriction"] = 0.3,
-                ["staticFriction"] = false, ["bounciness"] = 0.25,
-                ["friction_combine"] = "minimum", ["frictionCombine"] = "multiply"
-            }));
+            var result = Call(
+                Configure(
+                    material,
+                    "3D",
+                    new JObject
+                    {
+                        ["dynamic_friction"] = "0",
+                        ["dynamicFriction"] = 0.3,
+                        ["staticFriction"] = false,
+                        ["bounciness"] = 0.25,
+                        ["friction_combine"] = "minimum",
+                        ["frictionCombine"] = "multiply",
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(0.3f, material.dynamicFriction);
             Assert.AreEqual(0, material.staticFriction);
             Assert.AreEqual(0.25f, material.bounciness);
             Assert.AreEqual(Combine3D.Multiply, material.frictionCombine);
-            CollectionAssert.AreEqual(new[] { "dynamicFriction", "dynamicFriction", "staticFriction", "bounciness", "frictionCombine", "frictionCombine" }, result["data"]["changed"].ToObject<string[]>());
+            CollectionAssert.AreEqual(
+                new[] { "dynamicFriction", "dynamicFriction", "staticFriction", "bounciness", "frictionCombine", "frictionCombine" },
+                result["data"]["changed"].ToObject<string[]>()
+            );
         }
 
         [TestCase("3d")]
@@ -190,11 +220,16 @@ namespace MCPForUnityTests.Editor.Tools
             string path = AssetDatabase.GetAssetPath(material);
             string guid = AssetDatabase.AssetPathToGUID(path);
             var before = Snapshot(material);
-            var result = Call(new JObject
-            {
-                ["action"] = "create_physics_material", ["name"] = "Fixture", ["dimension"] = dimension,
-                ["path"] = assetRoot, ["bounciness"] = 0.8
-            });
+            var result = Call(
+                new JObject
+                {
+                    ["action"] = "create_physics_material",
+                    ["name"] = "Fixture",
+                    ["dimension"] = dimension,
+                    ["path"] = assetRoot,
+                    ["bounciness"] = 0.8,
+                }
+            );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.AreSame(material, AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path));
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));

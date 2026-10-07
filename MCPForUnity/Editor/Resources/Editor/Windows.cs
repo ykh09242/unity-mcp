@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Resources.Editor
 {
@@ -29,20 +29,22 @@ namespace MCPForUnity.Editor.Resources.Editor
                     try
                     {
                         var position = window.position;
-                        openWindows.Add(new
-                        {
-                            title = window.titleContent.text,
-                            typeName = window.GetType().FullName,
-                            isFocused = EditorWindow.focusedWindow == window,
-                            position = new
+                        openWindows.Add(
+                            new
                             {
-                                x = position.x,
-                                y = position.y,
-                                width = position.width,
-                                height = position.height
-                            },
-                            instanceID = window.GetInstanceIDCompat()
-                        });
+                                title = window.titleContent.text,
+                                typeName = window.GetType().FullName,
+                                isFocused = EditorWindow.focusedWindow == window,
+                                position = new
+                                {
+                                    x = position.x,
+                                    y = position.y,
+                                    width = position.width,
+                                    height = position.height,
+                                },
+                                instanceID = window.GetInstanceIDCompat(),
+                            }
+                        );
                     }
                     catch (Exception ex)
                     {

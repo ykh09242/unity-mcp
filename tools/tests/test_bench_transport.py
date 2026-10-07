@@ -1,4 +1,5 @@
 """Benchmark reports must not hide drift, missing stages, or lifecycle leaks."""
+
 from __future__ import annotations
 
 import json
@@ -12,7 +13,12 @@ import anyio
 
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS.parent))
-from tools.bench_transport_report import Observation, attach_stages, distribution, equivalent_outputs
+from tools.bench_transport_report import (
+    Observation,
+    attach_stages,
+    distribution,
+    equivalent_outputs,
+)
 from tools.bench_transport_process import cleanup_process, native_python
 from tools.bench_transport_compare import Capture, check_contract
 
@@ -20,6 +26,7 @@ from tools.bench_transport_compare import Capture, check_contract
 @dataclass
 class SlowChild:
     """Mutable process fake models a child that ignores terminate until kill."""
+
     returncode: int | None = None
     events: list[str] = field(default_factory=list)
 
@@ -68,8 +75,14 @@ async def test_cleanup_closes_when_owned_real_child_already_exited() -> None:
 @pytest.mark.asyncio
 async def test_cleanup_reaps_when_owned_native_child_is_running_and_caller_cancelled() -> None:
     # Given: the native interpreter itself, without the Windows venv redirector.
-    process = await anyio.open_process([sys._base_executable, "-I", "-c",
-        "import os,time;print(os.getpid(),flush=True);time.sleep(60)"])
+    process = await anyio.open_process(
+        [
+            sys._base_executable,
+            "-I",
+            "-c",
+            "import os,time;print(os.getpid(),flush=True);time.sleep(60)",
+        ]
+    )
     try:
         with anyio.fail_after(5):
             reported_pid = int((await process.stdout.receive()).strip())
@@ -97,8 +110,14 @@ def test_percentiles_when_tail_contains_an_outlier() -> None:
 
 def test_equivalence_rejects_drift_when_later_samples_match() -> None:
     # Given: an earlier mismatch that would be hidden by a last-value map.
-    original = Observation(correlation="small:0", workload="small", phase="warm",
-                           client_total_ms=10, output_sha256="a", output_bytes=1)
+    original = Observation(
+        correlation="small:0",
+        workload="small",
+        phase="warm",
+        client_total_ms=10,
+        output_sha256="a",
+        output_bytes=1,
+    )
     drift = original.model_copy(update={"correlation": "small:1", "output_sha256": "b"})
     # When: compare the full series, whose final values are equal.
     equivalent = equivalent_outputs([[original, drift], [drift, drift]])
@@ -108,26 +127,59 @@ def test_equivalence_rejects_drift_when_later_samples_match() -> None:
 
 def test_stages_include_readiness_when_peer_uses_extra_probe(tmp_path: Path) -> None:
     # Given: one public call, its prerequisite ping, and a legacy admission queue.
-    events = [{"correlation": "small:0", "queue_ms": 2, "synthetic_unity_work_ms": 3,
-               "peer_serialization_ms": 1, "response_bytes": 80},
-              {"correlation": "small:0:readiness", "queue_ms": 1, "synthetic_unity_work_ms": 4,
-               "peer_serialization_ms": 2, "response_bytes": 40}]
-    (tmp_path / "peer.jsonl").write_text("\n".join(json.dumps(row) for row in events), encoding="utf-8")
-    (tmp_path / "queue.jsonl").write_text(json.dumps({"correlation": "small:0", "queue_ms": 1}), encoding="utf-8")
-    observation = Observation(correlation="small:0", workload="small", phase="warm",
-                              client_total_ms=20, output_sha256="a", output_bytes=1)
+    events = [
+        {
+            "correlation": "small:0",
+            "queue_ms": 2,
+            "synthetic_unity_work_ms": 3,
+            "peer_serialization_ms": 1,
+            "response_bytes": 80,
+        },
+        {
+            "correlation": "small:0:readiness",
+            "queue_ms": 1,
+            "synthetic_unity_work_ms": 4,
+            "peer_serialization_ms": 2,
+            "response_bytes": 40,
+        },
+    ]
+    (tmp_path / "peer.jsonl").write_text(
+        "\n".join(json.dumps(row) for row in events), encoding="utf-8"
+    )
+    (tmp_path / "queue.jsonl").write_text(
+        json.dumps({"correlation": "small:0", "queue_ms": 1}), encoding="utf-8"
+    )
+    observation = Observation(
+        correlation="small:0",
+        workload="small",
+        phase="warm",
+        client_total_ms=20,
+        output_sha256="a",
+        output_bytes=1,
+    )
     # When: join all stages of the call.
     result = attach_stages([observation], tmp_path)[0]
     # Then: stage accounting includes the extra work and sums to client latency.
-    assert (result.queue_ms, result.synthetic_unity_work_ms, result.peer_serialization_ms,
-            result.wire_response_framework_ms, result.peer_response_bytes) == (4, 7, 3, 6, 120)
+    assert (
+        result.queue_ms,
+        result.synthetic_unity_work_ms,
+        result.peer_serialization_ms,
+        result.wire_response_framework_ms,
+        result.peer_response_bytes,
+    ) == (4, 7, 3, 6, 120)
 
 
 def test_missing_stage_rejected_when_peer_has_no_correlated_observation(tmp_path: Path) -> None:
     # Given: a client observation whose peer evidence is absent.
     (tmp_path / "peer.jsonl").write_text("", encoding="utf-8")
-    observation = Observation(correlation="small:0", workload="small", phase="warm",
-                              client_total_ms=20, output_sha256="a", output_bytes=1)
+    observation = Observation(
+        correlation="small:0",
+        workload="small",
+        phase="warm",
+        client_total_ms=20,
+        output_sha256="a",
+        output_bytes=1,
+    )
     # When/Then: a missing stage cannot become fabricated zero-cost work.
     with pytest.raises(ValueError, match="Missing peer observation"):
         attach_stages([observation], tmp_path)
@@ -136,11 +188,30 @@ def test_missing_stage_rejected_when_peer_has_no_correlated_observation(tmp_path
 def test_actual_transports_when_owned_peers_complete_cancel_and_reconnect(tmp_path: Path) -> None:
     # Given: the installed SDK/server runtime and isolated owned fixture endpoints.
     output = tmp_path / "measurement.json"
-    command = native_python([str(TOOLS / "bench_transport.py"), "--output", str(output),
-               "--samples", "2", "--warmup", "0", "--large-bytes", "4194304", "--concurrency", "2",
-               "--cohort-gate", "--work-ms", "0", "--resource-contract"], (TOOLS.parent,))
+    command = native_python(
+        [
+            str(TOOLS / "bench_transport.py"),
+            "--output",
+            str(output),
+            "--samples",
+            "2",
+            "--warmup",
+            "0",
+            "--large-bytes",
+            "4194304",
+            "--concurrency",
+            "2",
+            "--cohort-gate",
+            "--work-ms",
+            "0",
+            "--resource-contract",
+        ],
+        (TOOLS.parent,),
+    )
     # When: execute the actual CLI over both product routing paths.
-    completed = subprocess.run(command, cwd=TOOLS.parent, capture_output=True, text=True, timeout=40, check=False)
+    completed = subprocess.run(
+        command, cwd=TOOLS.parent, capture_output=True, text=True, timeout=40, check=False
+    )
     # Then: matched output, observed peer work, and drained state survive replacement.
     assert completed.returncode == 0, completed.stderr
     report = json.loads(output.read_text(encoding="utf-8"))

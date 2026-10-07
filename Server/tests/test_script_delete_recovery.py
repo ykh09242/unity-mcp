@@ -1,4 +1,5 @@
 """Recovery must prove absence instead of treating a failed read as deletion."""
+
 import importlib
 from unittest.mock import AsyncMock
 
@@ -10,14 +11,25 @@ recovery = importlib.import_module("services.tools.refresh_unity")
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("entrypoint", ["delete_script", "manage_script"])
-@pytest.mark.parametrize("verification,deleted", [
-    ({"success": False, "error": "Timeout waiting for command response"}, False),
-    ({"success": False, "error": "Failed to read script 'Assets/Scripts/Foo.cs': access denied"}, False),
-    ({"success": False, "data": {"reason": "reloading"}}, False),
-    ({"success": True, "data": {"contents": "still present"}}, False),
-    ({"success": False, "error": "Script not found at 'Assets/Scripts/Foo.cs'."}, True),
-])
-async def test_delete_recovery_requires_explicit_absence(monkeypatch, entrypoint, verification, deleted):
+@pytest.mark.parametrize(
+    "verification,deleted",
+    [
+        ({"success": False, "error": "Timeout waiting for command response"}, False),
+        (
+            {
+                "success": False,
+                "error": "Failed to read script 'Assets/Scripts/Foo.cs': access denied",
+            },
+            False,
+        ),
+        ({"success": False, "data": {"reason": "reloading"}}, False),
+        ({"success": True, "data": {"contents": "still present"}}, False),
+        ({"success": False, "error": "Script not found at 'Assets/Scripts/Foo.cs'."}, True),
+    ],
+)
+async def test_delete_recovery_requires_explicit_absence(
+    monkeypatch, entrypoint, verification, deleted
+):
     # Given: the actual mutation recovery path sees a disconnect followed by a read.
     disconnect = {"success": False, "error": "connection closed"}
     sender = AsyncMock(side_effect=[disconnect, verification])

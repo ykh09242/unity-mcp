@@ -3,13 +3,12 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using Newtonsoft.Json.Linq;
-using UnityEditor;
-using UnityEngine;
 using MCPForUnity.Editor.Helpers; // For Response class
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
-
+using Newtonsoft.Json.Linq;
+using UnityEditor;
+using UnityEngine;
 #if UNITY_6000_0_OR_NEWER
 using PhysicsMaterialType = UnityEngine.PhysicsMaterial;
 using PhysicsMaterialCombine = UnityEngine.PhysicsMaterialCombine;
@@ -56,9 +55,7 @@ namespace MCPForUnity.Editor.Tools
             if (!ValidActions.Contains(action))
             {
                 string validActionsList = string.Join(", ", ValidActions);
-                return new ErrorResponse(
-                    $"Unknown action: '{action}'. Valid actions are: {validActionsList}"
-                );
+                return new ErrorResponse($"Unknown action: '{action}'. Valid actions are: {validActionsList}");
             }
 
             // Common parameters
@@ -66,10 +63,13 @@ namespace MCPForUnity.Editor.Tools
 
             // Coerce string JSON to JObject for 'properties' if provided as a JSON string
             var propertiesToken = @params["properties"];
-            if (action == "create" && propertiesToken != null
+            if (
+                action == "create"
+                && propertiesToken != null
                 && propertiesToken.Type != JTokenType.Null
                 && propertiesToken.Type != JTokenType.Object
-                && propertiesToken.Type != JTokenType.String)
+                && propertiesToken.Type != JTokenType.String
+            )
             {
                 return new ErrorResponse("'properties' must be a JSON object or null for create.");
             }
@@ -90,11 +90,19 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                if (action == "create" || action == "import" || action == "modify" || action == "delete"
-                    || action == "duplicate" || action == "move" || action == "rename")
+                if (
+                    action == "create"
+                    || action == "import"
+                    || action == "modify"
+                    || action == "delete"
+                    || action == "duplicate"
+                    || action == "move"
+                    || action == "rename"
+                )
                 {
                     var consentError = RequireScriptConsent(path, @params["destination"]?.ToString());
-                    if (consentError != null) return consentError;
+                    if (consentError != null)
+                        return consentError;
                 }
                 switch (action)
                 {
@@ -116,10 +124,7 @@ namespace MCPForUnity.Editor.Tools
                     case "search":
                         return SearchAssets(@params);
                     case "get_info":
-                        return GetAssetInfo(
-                            path,
-                            @params["generatePreview"]?.ReadScalar<bool?>() ?? false
-                        );
+                        return GetAssetInfo(path, @params["generatePreview"]?.ReadScalar<bool?>() ?? false);
                     case "create_folder": // Added specific action for clarity
                         return CreateFolder(path);
                     case "get_components":
@@ -128,17 +133,13 @@ namespace MCPForUnity.Editor.Tools
                     default:
                         // This error message is less likely to be hit now, but kept here as a fallback or for potential future modifications.
                         string validActionsListDefault = string.Join(", ", ValidActions);
-                        return new ErrorResponse(
-                            $"Unknown action: '{action}'. Valid actions are: {validActionsListDefault}"
-                        );
+                        return new ErrorResponse($"Unknown action: '{action}'. Valid actions are: {validActionsListDefault}");
                 }
             }
             catch (Exception e)
             {
                 McpLog.Error($"[ManageAsset] Action '{action}' failed for path '{path}': {e}");
-                return new ErrorResponse(
-                    $"Internal error processing action '{action}' on '{path}': {e.Message}"
-                );
+                return new ErrorResponse($"Internal error processing action '{action}' on '{path}': {e.Message}");
             }
         }
 
@@ -147,7 +148,8 @@ namespace MCPForUnity.Editor.Tools
         private static ErrorResponse RequireScriptConsent(params string[] paths)
         {
             var consentError = ManageScript.RequireExplicitConsent();
-            if (consentError == null) return null;
+            if (consentError == null)
+                return null;
             int remaining = 65536;
             var inspection = System.Diagnostics.Stopwatch.StartNew();
             foreach (string path in paths)
@@ -161,15 +163,42 @@ namespace MCPForUnity.Editor.Tools
         // Unity's supported plug-in file/bundle types, plus C# assembly/compiler inputs.
         private static readonly HashSet<string> CompilationAssetExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
-            ".cs", ".dll", ".asmdef", ".asmref", ".rsp",
-            ".a", ".aar", ".bc", ".c", ".cc", ".cpp", ".def", ".dylib", ".h", ".jar",
-            ".jslib", ".jspre", ".m", ".mm", ".prx", ".rpl", ".so", ".sprx", ".suprx",
-            ".swift", ".winmd", ".xcframework", ".xex", ".xib",
-            ".androidlib", ".bundle", ".framework", ".plugin"
+            ".cs",
+            ".dll",
+            ".asmdef",
+            ".asmref",
+            ".rsp",
+            ".a",
+            ".aar",
+            ".bc",
+            ".c",
+            ".cc",
+            ".cpp",
+            ".def",
+            ".dylib",
+            ".h",
+            ".jar",
+            ".jslib",
+            ".jspre",
+            ".m",
+            ".mm",
+            ".prx",
+            ".rpl",
+            ".so",
+            ".sprx",
+            ".suprx",
+            ".swift",
+            ".winmd",
+            ".xcframework",
+            ".xex",
+            ".xib",
+            ".androidlib",
+            ".bundle",
+            ".framework",
+            ".plugin",
         };
 
-        private static bool AffectsCompilation(string path, ref int remaining, int depth,
-            System.Diagnostics.Stopwatch inspection)
+        private static bool AffectsCompilation(string path, ref int remaining, int depth, System.Diagnostics.Stopwatch inspection)
         {
             // An incomplete inspection cannot establish that a folder is inert.
             if (--remaining < 0 || depth > 128 || inspection.ElapsedMilliseconds >= 1000)
@@ -182,7 +211,8 @@ namespace MCPForUnity.Editor.Tools
 
             string contained = AssetPathUtility.GetContainedAssetPath(path);
             string full = AssetPathUtility.GetFullAssetPath(contained);
-            if (!Directory.Exists(full)) return false;
+            if (!Directory.Exists(full))
+                return false;
             try
             {
                 foreach (string entry in Directory.EnumerateFileSystemEntries(full))
@@ -190,11 +220,14 @@ namespace MCPForUnity.Editor.Tools
                     string child = contained + "/" + Path.GetFileName(entry);
                     // Validate each descendant before traversing a possible directory link.
                     AssetPathUtility.GetFullAssetPath(child);
-                    if (AffectsCompilation(child, ref remaining, depth + 1, inspection)) return true;
+                    if (AffectsCompilation(child, ref remaining, depth + 1, inspection))
+                        return true;
                 }
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
-            { return true; }
+            {
+                return true;
+            }
             return false;
         }
 
@@ -213,16 +246,15 @@ namespace MCPForUnity.Editor.Tools
                 // applying properties via reflection or specific methods, saving, then reimporting.
                 if (properties != null && properties.HasValues)
                 {
-                    McpLog.Warn(
-                        "[ManageAsset.Reimport] Modifying importer properties before reimport is not fully implemented yet."
-                    );
+                    McpLog.Warn("[ManageAsset.Reimport] Modifying importer properties before reimport is not fully implemented yet.");
                     // AssetImporter importer = AssetImporter.GetAtPath(fullPath);
                     // if (importer != null) { /* Apply properties */ AssetDatabase.WriteImportSettingsIfDirty(fullPath); }
                 }
 
                 AssetPathUtility.GetFullAssetPath(fullPath);
                 var consentError = RequireScriptConsent(fullPath);
-                if (consentError != null) return consentError;
+                if (consentError != null)
+                    return consentError;
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
                 // AssetDatabase.Refresh(); // Usually ImportAsset handles refresh
                 return new SuccessResponse($"Asset '{fullPath}' reimported.", GetAssetData(fullPath));
@@ -236,9 +268,7 @@ namespace MCPForUnity.Editor.Tools
         private static object CreateAsset(JObject @params)
         {
             string path = @params["path"]?.ToString();
-            string assetType =
-                @params["assetType"]?.ToString()
-                ?? @params["asset_type"]?.ToString(); // tolerate snake_case payloads from batched commands
+            string assetType = @params["assetType"]?.ToString() ?? @params["asset_type"]?.ToString(); // tolerate snake_case payloads from batched commands
             JObject properties = @params["properties"] as JObject;
 
             if (string.IsNullOrEmpty(path))
@@ -272,7 +302,9 @@ namespace MCPForUnity.Editor.Tools
                 var requested = properties?["shader"]?.ToString();
                 shader = RenderPipelineUtility.ResolveShader(requested);
                 if (shader == null)
-                    return new ErrorResponse($"Could not find a project-compatible shader (requested: '{requested ?? "none"}'). Consider installing URP/HDRP or provide an explicit shader path.");
+                    return new ErrorResponse(
+                        $"Could not find a project-compatible shader (requested: '{requested ?? "none"}'). Consider installing URP/HDRP or provide an explicit shader path."
+                    );
             }
 
             UnityEngine.Object newAsset = null;
@@ -313,23 +345,22 @@ namespace MCPForUnity.Editor.Tools
                     AssetDatabase.CreateAsset(pmat, fullPath);
                 }
 
-                if (newAsset == null || !EditorUtility.IsPersistent(newAsset)
+                if (
+                    newAsset == null
+                    || !EditorUtility.IsPersistent(newAsset)
                     || !string.Equals(
                         AssetPathUtility.NormalizeSeparators(AssetDatabase.GetAssetPath(newAsset)),
                         AssetPathUtility.NormalizeSeparators(fullPath),
-                        StringComparison.OrdinalIgnoreCase))
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                )
                 {
-                    return new ErrorResponse(
-                        $"Failed to create asset '{assetType}' at '{fullPath}'. See logs for details."
-                    );
+                    return new ErrorResponse($"Failed to create asset '{assetType}' at '{fullPath}'. See logs for details.");
                 }
 
                 AssetDatabase.SaveAssets();
                 // AssetDatabase.Refresh(); // CreateAsset often handles refresh
-                var response = new SuccessResponse(
-                    $"Asset '{fullPath}' created successfully.",
-                    GetAssetData(fullPath)
-                );
+                var response = new SuccessResponse($"Asset '{fullPath}' created successfully.", GetAssetData(fullPath));
                 folders.Complete();
                 return response;
             }
@@ -355,16 +386,11 @@ namespace MCPForUnity.Editor.Tools
                 // Check if it's actually a folder already
                 if (AssetDatabase.IsValidFolder(fullPath))
                 {
-                    return new SuccessResponse(
-                        $"Folder already exists at path: {fullPath}",
-                        includeData ? GetAssetData(fullPath) : null
-                    );
+                    return new SuccessResponse($"Folder already exists at path: {fullPath}", includeData ? GetAssetData(fullPath) : null);
                 }
                 else
                 {
-                    return new ErrorResponse(
-                        $"An asset (not a folder) already exists at path: {fullPath}"
-                    );
+                    return new ErrorResponse($"An asset (not a folder) already exists at path: {fullPath}");
                 }
             }
 
@@ -372,10 +398,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 using var folders = new AssetFolderScope();
                 folders.EnsureFolder(fullPath);
-                var response = new SuccessResponse(
-                    $"Folder '{fullPath}' created successfully.",
-                    includeData ? GetAssetData(fullPath) : null
-                );
+                var response = new SuccessResponse($"Folder '{fullPath}' created successfully.", includeData ? GetAssetData(fullPath) : null);
                 folders.Complete();
                 return response;
             }
@@ -398,9 +421,7 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                UnityEngine.Object asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(
-                    fullPath
-                );
+                UnityEngine.Object asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(fullPath);
                 if (asset == null)
                     return new ErrorResponse($"Failed to load asset at path: {fullPath}");
 
@@ -415,10 +436,7 @@ namespace MCPForUnity.Editor.Tools
                     {
                         string componentName = prop.Name; // e.g., "Collectible"
                         // Check if the value associated with the component name is actually an object containing properties
-                        if (
-                            prop.Value is JObject componentProperties
-                            && componentProperties.HasValues
-                        ) // e.g., {"bobSpeed": 2.0}
+                        if (prop.Value is JObject componentProperties && componentProperties.HasValues) // e.g., {"bobSpeed": 2.0}
                         {
                             // Resolve component type via ComponentResolver, then fetch by Type
                             Component targetComponent = null;
@@ -431,19 +449,14 @@ namespace MCPForUnity.Editor.Tools
                             // Only warn about resolution failure if component also not found
                             if (targetComponent == null && !resolved)
                             {
-                                McpLog.Warn(
-                                    $"[ManageAsset.ModifyAsset] Failed to resolve component '{componentName}' on '{gameObject.name}': {compError}"
-                                );
+                                McpLog.Warn($"[ManageAsset.ModifyAsset] Failed to resolve component '{componentName}' on '{gameObject.name}': {compError}");
                             }
 
                             if (targetComponent != null)
                             {
                                 // Apply the nested properties (e.g., bobSpeed) to the found component instance
                                 // Use |= to ensure 'modified' becomes true if any component is successfully modified
-                                modified |= ApplyObjectProperties(
-                                    targetComponent,
-                                    componentProperties
-                                );
+                                modified |= ApplyObjectProperties(targetComponent, componentProperties);
                             }
                             else
                             {
@@ -526,10 +539,7 @@ namespace MCPForUnity.Editor.Tools
                     AssetDatabase.SaveAssets();
                     // Refresh might be needed in some edge cases, but SaveAssets usually covers it.
                     // AssetDatabase.Refresh();
-                    return new SuccessResponse(
-                        $"Asset '{fullPath}' modified successfully.",
-                        GetAssetData(fullPath)
-                    );
+                    return new SuccessResponse($"Asset '{fullPath}' modified successfully.", GetAssetData(fullPath));
                 }
                 else
                 {
@@ -570,9 +580,7 @@ namespace MCPForUnity.Editor.Tools
                 else
                 {
                     // This might happen if the file couldn't be deleted (e.g., locked)
-                    return new ErrorResponse(
-                        $"Failed to delete asset '{fullPath}'. Check logs or if the file is locked."
-                    );
+                    return new ErrorResponse($"Failed to delete asset '{fullPath}'. Check logs or if the file is locked.");
                 }
             }
             catch (Exception e)
@@ -594,8 +602,7 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(destinationPath))
             {
                 // Generate a unique path if destination is not provided
-                destPath = AssetPathUtility.GetContainedAssetPath(
-                    AssetDatabase.GenerateUniqueAssetPath(sourcePath));
+                destPath = AssetPathUtility.GetContainedAssetPath(AssetDatabase.GenerateUniqueAssetPath(sourcePath));
             }
             else
             {
@@ -609,7 +616,8 @@ namespace MCPForUnity.Editor.Tools
                 AssetPathUtility.GetFullAssetPath(sourcePath);
                 AssetPathUtility.GetFullAssetPath(destPath);
                 var consentError = RequireScriptConsent(sourcePath, destPath);
-                if (consentError != null) return consentError;
+                if (consentError != null)
+                    return consentError;
                 using var folders = new AssetFolderScope();
                 folders.EnsureParentDirectory(destPath);
                 AssetPathUtility.GetFullAssetPath(sourcePath);
@@ -618,18 +626,13 @@ namespace MCPForUnity.Editor.Tools
                 if (success)
                 {
                     // AssetDatabase.Refresh();
-                    var response = new SuccessResponse(
-                        $"Asset '{sourcePath}' duplicated to '{destPath}'.",
-                        GetAssetData(destPath)
-                    );
+                    var response = new SuccessResponse($"Asset '{sourcePath}' duplicated to '{destPath}'.", GetAssetData(destPath));
                     folders.Complete();
                     return response;
                 }
                 else
                 {
-                    return new ErrorResponse(
-                        $"Failed to duplicate asset from '{sourcePath}' to '{destPath}'."
-                    );
+                    return new ErrorResponse($"Failed to duplicate asset from '{sourcePath}' to '{destPath}'.");
                 }
             }
             catch (Exception e)
@@ -651,14 +654,13 @@ namespace MCPForUnity.Editor.Tools
             if (!AssetExists(sourcePath))
                 return new ErrorResponse($"Source asset not found at path: {sourcePath}");
             if (AssetExists(destPath))
-                return new ErrorResponse(
-                    $"An asset already exists at the destination path: {destPath}"
-                );
+                return new ErrorResponse($"An asset already exists at the destination path: {destPath}");
 
             try
             {
                 var consentError = RequireScriptConsent(sourcePath, destPath);
-                if (consentError != null) return consentError;
+                if (consentError != null)
+                    return consentError;
                 using var folders = new AssetFolderScope();
                 folders.EnsureParentDirectory(destPath);
                 // Validate will return an error string if failed, null if successful
@@ -667,9 +669,7 @@ namespace MCPForUnity.Editor.Tools
                 string error = AssetDatabase.ValidateMoveAsset(sourcePath, destPath);
                 if (!string.IsNullOrEmpty(error))
                 {
-                    return new ErrorResponse(
-                        $"Failed to move/rename asset from '{sourcePath}' to '{destPath}': {error}"
-                    );
+                    return new ErrorResponse($"Failed to move/rename asset from '{sourcePath}' to '{destPath}': {error}");
                 }
 
                 AssetPathUtility.GetFullAssetPath(sourcePath);
@@ -678,18 +678,13 @@ namespace MCPForUnity.Editor.Tools
                 if (string.IsNullOrEmpty(moveError))
                 {
                     // AssetDatabase.Refresh(); // MoveAsset usually handles refresh
-                    var response = new SuccessResponse(
-                        $"Asset moved/renamed from '{sourcePath}' to '{destPath}'.",
-                        GetAssetData(destPath)
-                    );
+                    var response = new SuccessResponse($"Asset moved/renamed from '{sourcePath}' to '{destPath}'.", GetAssetData(destPath));
                     folders.Complete();
                     return response;
                 }
                 else
                 {
-                    return new ErrorResponse(
-                        $"Failed to move/rename asset from '{sourcePath}' to '{destPath}': {moveError}"
-                    );
+                    return new ErrorResponse($"Failed to move/rename asset from '{sourcePath}' to '{destPath}': {moveError}");
                 }
             }
             catch (Exception e)
@@ -706,10 +701,26 @@ namespace MCPForUnity.Editor.Tools
             string filterDateAfterStr = @params["filterDateAfter"]?.ToString();
             bool generatePreview = @params["generatePreview"]?.ReadScalar<bool?>() ?? false;
             int maximum = generatePreview ? PaginationBounds.MaxPreviewPageSize : PaginationBounds.MaxPageSize;
-            if (!PaginationBounds.TryRead(@params["page_size"] ?? @params["pageSize"], Math.Min(50, maximum),
-                    1, maximum, "pageSize", out int pageSize, out string pageError)
-                || !PaginationBounds.TryRead(@params["page_number"] ?? @params["pageNumber"], 1,
-                    1, int.MaxValue, "pageNumber", out int pageNumber, out pageError))
+            if (
+                !PaginationBounds.TryRead(
+                    @params["page_size"] ?? @params["pageSize"],
+                    Math.Min(50, maximum),
+                    1,
+                    maximum,
+                    "pageSize",
+                    out int pageSize,
+                    out string pageError
+                )
+                || !PaginationBounds.TryRead(
+                    @params["page_number"] ?? @params["pageNumber"],
+                    1,
+                    1,
+                    int.MaxValue,
+                    "pageNumber",
+                    out int pageNumber,
+                    out pageError
+                )
+            )
                 return new ErrorResponse(pageError);
 
             long startIndex = PaginationBounds.StartIndex(pageNumber, pageSize);
@@ -727,9 +738,7 @@ namespace MCPForUnity.Editor.Tools
                 folderScope = new string[] { AssetPathUtility.SanitizeAssetPath(pathScope) };
                 if (!AssetDatabase.IsValidFolder(folderScope[0]))
                 {
-                    return new ErrorResponse(
-                        $"Search path '{pathScope}' is not a valid folder."
-                    );
+                    return new ErrorResponse($"Search path '{pathScope}' is not a valid folder.");
                 }
             }
 
@@ -749,36 +758,38 @@ namespace MCPForUnity.Editor.Tools
                 }
                 else
                 {
-                    return new ErrorResponse(
-                        $"Could not parse filterDateAfter: '{filterDateAfterStr}'. Expected ISO 8601 format."
-                    );
+                    return new ErrorResponse($"Could not parse filterDateAfter: '{filterDateAfterStr}'. Expected ISO 8601 format.");
                 }
             }
 
             try
             {
-                string[] guids = AssetDatabase.FindAssets(
-                    string.Join(" ", searchFilters),
-                    folderScope
-                );
+                string[] guids = AssetDatabase.FindAssets(string.Join(" ", searchFilters), folderScope);
                 List<object> results = new List<object>();
                 int totalFound = 0;
 
                 foreach (string guid in guids)
                 {
                     string assetPath;
-                    try { assetPath = AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: true); }
-                    catch (ArgumentException) { continue; }
-                    catch (InvalidOperationException) { continue; }
+                    try
+                    {
+                        assetPath = AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: true);
+                    }
+                    catch (ArgumentException)
+                    {
+                        continue;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        continue;
+                    }
                     if (string.IsNullOrEmpty(assetPath))
                         continue;
 
                     // Apply date filter if present
                     if (filterDateAfter.HasValue)
                     {
-                        DateTime lastWriteTime = File.GetLastWriteTimeUtc(
-                            Path.Combine(Directory.GetCurrentDirectory(), assetPath)
-                        );
+                        DateTime lastWriteTime = File.GetLastWriteTimeUtc(Path.Combine(Directory.GetCurrentDirectory(), assetPath));
                         if (lastWriteTime <= filterDateAfter.Value)
                         {
                             continue; // Skip assets older than or equal to the filter date
@@ -820,10 +831,7 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                return new SuccessResponse(
-                    "Asset info retrieved.",
-                    GetAssetData(fullPath, generatePreview)
-                );
+                return new SuccessResponse("Asset info retrieved.", GetAssetData(fullPath, generatePreview));
             }
             catch (Exception e)
             {
@@ -850,9 +858,7 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 // 3. Load the asset
-                UnityEngine.Object asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(
-                    fullPath
-                );
+                UnityEngine.Object asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(fullPath);
                 if (asset == null)
                     return new ErrorResponse($"Failed to load asset at path: {fullPath}");
 
@@ -890,19 +896,12 @@ namespace MCPForUnity.Editor.Tools
                     .ToList<object>(); // Explicit cast for clarity if needed
 
                 // 7. Return success response
-                return new SuccessResponse(
-                    $"Found {componentList.Count} component(s) on asset '{fullPath}'.",
-                    componentList
-                );
+                return new SuccessResponse($"Found {componentList.Count} component(s) on asset '{fullPath}'.", componentList);
             }
             catch (Exception e)
             {
-                McpLog.Error(
-                    $"[ManageAsset.GetComponentsFromAsset] Error getting components for '{fullPath}': {e}"
-                );
-                return new ErrorResponse(
-                    $"Error getting components for asset '{fullPath}': {e.Message}"
-                );
+                McpLog.Error($"[ManageAsset.GetComponentsFromAsset] Error getting components for '{fullPath}': {e}");
+                return new ErrorResponse($"Error getting components for asset '{fullPath}': {e.Message}");
             }
         }
 
@@ -949,8 +948,7 @@ namespace MCPForUnity.Editor.Tools
             bool modified = false;
 
             // Example: Set dynamic friction
-            if (properties["dynamicFriction"]?.Type == JTokenType.Float
-                || properties["dynamicFriction"]?.Type == JTokenType.Integer)
+            if (properties["dynamicFriction"]?.Type == JTokenType.Float || properties["dynamicFriction"]?.Type == JTokenType.Integer)
             {
                 float dynamicFriction = properties["dynamicFriction"].ReadScalar<float>();
                 pmat.dynamicFriction = dynamicFriction;
@@ -958,8 +956,7 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Example: Set static friction
-            if (properties["staticFriction"]?.Type == JTokenType.Float
-                || properties["staticFriction"]?.Type == JTokenType.Integer)
+            if (properties["staticFriction"]?.Type == JTokenType.Float || properties["staticFriction"]?.Type == JTokenType.Integer)
             {
                 float staticFriction = properties["staticFriction"].ReadScalar<float>();
                 pmat.staticFriction = staticFriction;
@@ -967,8 +964,7 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Example: Set bounciness
-            if (properties["bounciness"]?.Type == JTokenType.Float
-                || properties["bounciness"]?.Type == JTokenType.Integer)
+            if (properties["bounciness"]?.Type == JTokenType.Float || properties["bounciness"]?.Type == JTokenType.Integer)
             {
                 float bounciness = properties["bounciness"].ReadScalar<float>();
                 pmat.bounciness = bounciness;
@@ -1038,18 +1034,11 @@ namespace MCPForUnity.Editor.Tools
         /// <summary>
         /// Helper to set a property or field via reflection, handling basic types and Unity objects.
         /// </summary>
-        private static bool SetPropertyOrField(
-            object target,
-            string memberName,
-            JToken value,
-            Type type = null
-        )
+        private static bool SetPropertyOrField(object target, string memberName, JToken value, Type type = null)
         {
             type = type ?? target.GetType();
             System.Reflection.BindingFlags flags =
-                System.Reflection.BindingFlags.Public
-                | System.Reflection.BindingFlags.Instance
-                | System.Reflection.BindingFlags.IgnoreCase;
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase;
 
             try
             {
@@ -1057,10 +1046,7 @@ namespace MCPForUnity.Editor.Tools
                 if (propInfo != null && propInfo.CanWrite)
                 {
                     object convertedValue = Helpers.PropertyConversion.TryConvertToType(value, propInfo.PropertyType);
-                    if (
-                        convertedValue != null
-                        && !object.Equals(propInfo.GetValue(target), convertedValue)
-                    )
+                    if (convertedValue != null && !object.Equals(propInfo.GetValue(target), convertedValue))
                     {
                         propInfo.SetValue(target, convertedValue);
                         return true;
@@ -1072,10 +1058,7 @@ namespace MCPForUnity.Editor.Tools
                     if (fieldInfo != null)
                     {
                         object convertedValue = Helpers.PropertyConversion.TryConvertToType(value, fieldInfo.FieldType);
-                        if (
-                            convertedValue != null
-                            && !object.Equals(fieldInfo.GetValue(target), convertedValue)
-                        )
+                        if (convertedValue != null && !object.Equals(fieldInfo.GetValue(target), convertedValue))
                         {
                             fieldInfo.SetValue(target, convertedValue);
                             return true;
@@ -1085,9 +1068,7 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception ex)
             {
-                McpLog.Warn(
-                    $"[SetPropertyOrField] Failed to set '{memberName}' on {type.Name}: {ex.Message}"
-                );
+                McpLog.Warn($"[SetPropertyOrField] Failed to set '{memberName}' on {type.Name}: {ex.Message}");
             }
             return false;
         }
@@ -1097,8 +1078,7 @@ namespace MCPForUnity.Editor.Tools
         /// <summary>
         /// Creates a serializable representation of an asset.
         /// </summary>
-        private static object GetAssetData(string path, bool generatePreview = false,
-            PaginationBounds.PreviewBudget previewBudget = null)
+        private static object GetAssetData(string path, bool generatePreview = false, PaginationBounds.PreviewBudget previewBudget = null)
         {
             path = AssetPathUtility.GetAssetReferencePath(path, allowPackages: true);
             if (string.IsNullOrEmpty(path) || !AssetExists(path))
@@ -1127,8 +1107,7 @@ namespace MCPForUnity.Editor.Tools
                         RenderTexture previous = RenderTexture.active;
                         try
                         {
-                            double scale = Math.Min(1.0, (double)PaginationBounds.MaxPreviewEdge
-                                / Math.Max(preview.width, preview.height));
+                            double scale = Math.Min(1.0, (double)PaginationBounds.MaxPreviewEdge / Math.Max(preview.width, preview.height));
                             int width = Math.Max(1, (int)(preview.width * scale));
                             int height = Math.Max(1, (int)(preview.height * scale));
                             rt = RenderTexture.GetTemporary(width, height);
@@ -1149,24 +1128,22 @@ namespace MCPForUnity.Editor.Tools
                         finally
                         {
                             RenderTexture.active = previous;
-                            if (rt != null) RenderTexture.ReleaseTemporary(rt);
-                            if (readablePreview != null) UnityEngine.Object.DestroyImmediate(readablePreview);
+                            if (rt != null)
+                                RenderTexture.ReleaseTemporary(rt);
+                            if (readablePreview != null)
+                                UnityEngine.Object.DestroyImmediate(readablePreview);
                         }
                     }
                     catch (Exception ex)
                     {
-                        McpLog.Warn(
-                            $"Failed to generate readable preview for '{path}': {ex.Message}. Preview might not be readable."
-                        );
+                        McpLog.Warn($"Failed to generate readable preview for '{path}': {ex.Message}. Preview might not be readable.");
                         // Fallback: Try getting static preview if available?
                         // Texture2D staticPreview = AssetPreview.GetMiniThumbnail(asset);
                     }
                 }
                 else
                 {
-                    McpLog.Warn(
-                        $"Could not get asset preview for {path} (Type: {assetType?.Name}). Is it supported?"
-                    );
+                    McpLog.Warn($"Could not get asset preview for {path} (Type: {assetType?.Name}). Is it supported?");
                 }
             }
 
@@ -1179,10 +1156,7 @@ namespace MCPForUnity.Editor.Tools
                 fileName = Path.GetFileName(path),
                 isFolder = AssetDatabase.IsValidFolder(path),
                 instanceID = asset?.GetInstanceIDCompat() ?? 0,
-                lastWriteTimeUtc = File.GetLastWriteTimeUtc(
-                        Path.Combine(Directory.GetCurrentDirectory(), path)
-                    )
-                    .ToString("o"), // ISO 8601
+                lastWriteTimeUtc = File.GetLastWriteTimeUtc(Path.Combine(Directory.GetCurrentDirectory(), path)).ToString("o"), // ISO 8601
                 // --- Preview Data ---
                 previewBase64 = previewBase64, // PNG data as Base64 string
                 previewWidth = previewWidth,

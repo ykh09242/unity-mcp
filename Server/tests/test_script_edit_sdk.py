@@ -1,4 +1,5 @@
 """Exercise script editing through the real SDK independently of legacy test stubs."""
+
 import subprocess
 import os
 import sys
@@ -7,7 +8,7 @@ import textwrap
 
 def test_modern_sdk_script_edit_preserves_locator_and_replacement():
     # Given: a fresh SDK process with only the Unity wire boundary substituted.
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import asyncio
         import importlib
         from fastmcp import Client, FastMCP
@@ -51,17 +52,22 @@ def test_modern_sdk_script_edit_preserves_locator_and_replacement():
                 assert (span["startCol"], span["endCol"], span["newText"]) == (2, 3, "Z")
                 print("real modern SDK script edit passed")
         asyncio.run(main())
-    ''')
+    """)
     # When: the client validates and invokes the production decorated Python tool.
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=20,
-                            env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"})
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
+    )
     # Then: its requested file/replacement and precondition survive the actual SDK stack.
     assert result.returncode == 0, result.stdout + result.stderr
     assert "real modern SDK script edit passed" in result.stdout
 
 
 def test_modern_sdk_script_literal_formatting_and_preview():
-    code = textwrap.dedent(r'''
+    code = textwrap.dedent(r"""
         import asyncio
         import importlib
         import hashlib
@@ -140,8 +146,13 @@ def test_modern_sdk_script_literal_formatting_and_preview():
                 assert sent[-1]["edits"][0]["beforeMethodName"] == "Existing"
                 print("real SDK formatting contract passed")
         asyncio.run(main())
-    ''')
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=20,
-                            env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"})
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "real SDK formatting contract passed" in result.stdout

@@ -15,9 +15,9 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         internal const int MaxImageBytes = 32 * 1024 * 1024;
         internal const int MaxDataUriBytes = 48 * 1024 * 1024 - 1024;
         private const string SizeError = "Source image exceeds the 32 MiB local image input limit.";
+
         // Extensions that can be inlined as a data URI for provider image input.
-        private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
-        { ".png", ".jpg", ".jpeg", ".webp", ".gif" };
+        private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase) { ".png", ".jpg", ".jpeg", ".webp", ".gif" };
 
         /// <summary>
         /// Resolve an image path under the project's Assets folder to an existing absolute file of
@@ -29,14 +29,22 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         {
             absPath = null;
             error = null;
-            if (string.IsNullOrWhiteSpace(path)) { error = "image_path is empty."; return false; }
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                error = "image_path is empty.";
+                return false;
+            }
             if (!AssetGenPaths.TryGetAssetsRelativePath(path, out string rel))
             {
                 error = "image_path must point to a file under the project's Assets folder.";
                 return false;
             }
             string abs = AssetGenPaths.ToAbsolute(rel);
-            if (!File.Exists(abs)) { error = $"Source image not found: {path}"; return false; }
+            if (!File.Exists(abs))
+            {
+                error = $"Source image not found: {path}";
+                return false;
+            }
             if (!SupportedExtensions.Contains(Path.GetExtension(abs)))
             {
                 error = $"Unsupported image type '{Path.GetExtension(abs)}'. Use .png, .jpg, .jpeg, .webp, or .gif.";
@@ -87,11 +95,13 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             while (offset < bytes.Length)
             {
                 int read = stream.Read(bytes, offset, bytes.Length - offset);
-                if (read == 0) throw new IOException("Source image changed while being read.");
+                if (read == 0)
+                    throw new IOException("Source image changed while being read.");
                 offset += read;
             }
             // Probe only one byte instead of reading a growing file into an expanding buffer.
-            if (stream.ReadByte() != -1) throw new IOException("Source image changed while being read.");
+            if (stream.ReadByte() != -1)
+                throw new IOException("Source image changed while being read.");
             return "data:" + mime + ";base64," + Convert.ToBase64String(bytes);
         }
 
@@ -108,14 +118,17 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         {
             switch ((ext ?? string.Empty).ToLowerInvariant())
             {
-                case ".png": return "image/png";
+                case ".png":
+                    return "image/png";
                 case ".jpg":
-                case ".jpeg": return "image/jpeg";
-                case ".webp": return "image/webp";
-                case ".gif": return "image/gif";
+                case ".jpeg":
+                    return "image/jpeg";
+                case ".webp":
+                    return "image/webp";
+                case ".gif":
+                    return "image/gif";
                 default:
-                    throw new NotSupportedException(
-                        $"Unsupported image type '{ext}' for image input. Use .png, .jpg, .jpeg, .webp, or .gif.");
+                    throw new NotSupportedException($"Unsupported image type '{ext}' for image input. Use .png, .jpg, .jpeg, .webp, or .gif.");
             }
         }
     }

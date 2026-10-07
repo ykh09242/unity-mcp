@@ -56,17 +56,27 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             public override bool CanSeek => false;
             public override bool CanWrite => true;
             public override long Length => _length;
-            public override long Position { get => _length; set => throw new NotSupportedException(); }
+            public override long Position
+            {
+                get => _length;
+                set => throw new NotSupportedException();
+            }
+
             public override void Flush() { }
+
             public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
             public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
             public override void SetLength(long value) => throw new NotSupportedException();
+
             public override void Write(byte[] buffer, int offset, int count)
             {
                 if (count > MaxRequestBytes - _length)
                     throw new IOException("Provider request exceeds the 48 MiB input limit.");
                 _length += count;
             }
+
             public override void WriteByte(byte value)
             {
                 if (_length == MaxRequestBytes)
@@ -83,13 +93,18 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         /// </summary>
         public static void RequireHost(string url, string allowedHost, string apiKey, string context)
         {
-            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri u)
+            if (
+                !Uri.TryCreate(url, UriKind.Absolute, out Uri u)
                 || u.Scheme != Uri.UriSchemeHttps
-                || !string.Equals(u.Host, allowedHost, StringComparison.OrdinalIgnoreCase))
+                || !string.Equals(u.Host, allowedHost, StringComparison.OrdinalIgnoreCase)
+            )
             {
-                throw new Exception(SecretRedactor.Scrub(
-                    $"{context}: refusing to send credentials to an unexpected host in URL '{url}' (expected https://{allowedHost}).",
-                    apiKey));
+                throw new Exception(
+                    SecretRedactor.Scrub(
+                        $"{context}: refusing to send credentials to an unexpected host in URL '{url}' (expected https://{allowedHost}).",
+                        apiKey
+                    )
+                );
             }
         }
 
@@ -105,7 +120,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         /// <summary>Cap a (possibly null) string at 500 chars for inclusion in an error message.</summary>
         public static string Truncate(string s)
         {
-            if (string.IsNullOrEmpty(s)) return string.Empty;
+            if (string.IsNullOrEmpty(s))
+                return string.Empty;
             return s.Length <= 500 ? s : s.Substring(0, 500) + "…";
         }
     }

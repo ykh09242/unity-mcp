@@ -16,19 +16,23 @@ namespace MCPForUnity.Editor.Helpers
         {
             string path = AssetPathUtility.GetContainedAssetPath(assetPath);
             string parent = Path.GetDirectoryName(path)?.Replace('\\', '/');
-            if (!string.IsNullOrEmpty(parent)) EnsureFolder(parent);
+            if (!string.IsNullOrEmpty(parent))
+                EnsureFolder(parent);
         }
 
         public void EnsureFolder(string folderPath)
         {
-            if (disposed) throw new ObjectDisposedException(nameof(AssetFolderScope));
+            if (disposed)
+                throw new ObjectDisposedException(nameof(AssetFolderScope));
             string path = AssetPathUtility.GetContainedAssetPath(folderPath);
-            if (path == "Assets") return;
+            if (path == "Assets")
+                return;
 
             string fullPath = AssetPathUtility.GetFullAssetPath(path);
             if (File.Exists(fullPath))
                 throw new IOException($"The output folder '{path}' is occupied by a file.");
-            if (AssetDatabase.IsValidFolder(path) && Directory.Exists(fullPath)) return;
+            if (AssetDatabase.IsValidFolder(path) && Directory.Exists(fullPath))
+                return;
 
             string parent = Path.GetDirectoryName(path)?.Replace('\\', '/');
             EnsureFolder(parent);
@@ -48,8 +52,7 @@ namespace MCPForUnity.Editor.Helpers
 
             string createdPath = AssetPathUtility.GetContainedAssetPath(AssetDatabase.GUIDToAssetPath(guid));
             createdFolders.Add((createdPath, guid));
-            var comparison = Path.DirectorySeparatorChar == '\\'
-                ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
             if (!string.Equals(createdPath, path, comparison))
                 throw new IOException($"Unity created a different output folder instead of '{path}'.");
         }
@@ -58,9 +61,11 @@ namespace MCPForUnity.Editor.Helpers
 
         public void Dispose()
         {
-            if (disposed) return;
+            if (disposed)
+                return;
             disposed = true;
-            if (completed) return;
+            if (completed)
+                return;
 
             for (int i = createdFolders.Count - 1; i >= 0; i--)
             {
@@ -68,11 +73,11 @@ namespace MCPForUnity.Editor.Helpers
                 try
                 {
                     string fullPath = AssetPathUtility.GetFullAssetPath(folder.path);
-                    if (!Directory.Exists(fullPath)
-                        || AssetDatabase.AssetPathToGUID(folder.path, AssetPathToGUIDOptions.OnlyExistingAssets) != folder.guid)
+                    if (!Directory.Exists(fullPath) || AssetDatabase.AssetPathToGUID(folder.path, AssetPathToGUIDOptions.OnlyExistingAssets) != folder.guid)
                         continue;
                     using (var entries = Directory.EnumerateFileSystemEntries(fullPath).GetEnumerator())
-                        if (entries.MoveNext()) continue;
+                        if (entries.MoveNext())
+                            continue;
 
                     // Never pass a nonempty or replaced folder to Unity's deletion API.
                     if (!AssetDatabase.DeleteAsset(folder.path))

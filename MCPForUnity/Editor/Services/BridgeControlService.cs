@@ -1,4 +1,3 @@
-
 using System;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
@@ -29,14 +28,19 @@ namespace MCPForUnity.Editor.Services
             return _preferredMode;
         }
 
-        private static BridgeVerificationResult BuildVerificationResult(TransportState state, TransportMode mode, bool pingSucceeded, string messageOverride = null, bool? handshakeOverride = null)
+        private static BridgeVerificationResult BuildVerificationResult(
+            TransportState state,
+            TransportMode mode,
+            bool pingSucceeded,
+            string messageOverride = null,
+            bool? handshakeOverride = null
+        )
         {
             bool handshakeValid = handshakeOverride ?? (mode == TransportMode.Stdio ? state.IsConnected : true);
-            string transportLabel = string.IsNullOrWhiteSpace(state.TransportName)
-                ? mode.ToString().ToLowerInvariant()
-                : state.TransportName;
+            string transportLabel = string.IsNullOrWhiteSpace(state.TransportName) ? mode.ToString().ToLowerInvariant() : state.TransportName;
             string detailSuffix = string.IsNullOrWhiteSpace(state.Details) ? string.Empty : $" [{state.Details}]";
-            string message = messageOverride
+            string message =
+                messageOverride
                 ?? state.Error
                 ?? (state.IsConnected ? $"Transport '{transportLabel}' connected{detailSuffix}" : $"Transport '{transportLabel}' disconnected{detailSuffix}");
 
@@ -45,7 +49,7 @@ namespace MCPForUnity.Editor.Services
                 Success = pingSucceeded && handshakeValid,
                 HandshakeValid = handshakeValid,
                 PingSucceeded = pingSucceeded,
-                Message = message
+                Message = message,
             };
         }
 
@@ -97,7 +101,11 @@ namespace MCPForUnity.Editor.Services
                 // Legacy safety: stdio may have been started outside TransportManager state.
                 if (otherMode == TransportMode.Stdio)
                 {
-                    try { StdioBridgeHost.Stop(); } catch { }
+                    try
+                    {
+                        StdioBridgeHost.Stop();
+                    }
+                    catch { }
                 }
 
                 bool started = await _transportManager.StartAsync(mode);
@@ -152,6 +160,5 @@ namespace MCPForUnity.Editor.Services
 
             return BuildVerificationResult(state, mode, pingSucceeded);
         }
-
     }
 }

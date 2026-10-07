@@ -70,9 +70,7 @@ namespace MCPForUnity.Editor.Tools
                         if (EditorApplication.isPlaying)
                         {
                             EditorApplication.isPaused = !EditorApplication.isPaused;
-                            return new SuccessResponse(
-                                EditorApplication.isPaused ? "Game paused." : "Game resumed."
-                            );
+                            return new SuccessResponse(EditorApplication.isPaused ? "Game paused." : "Game resumed.");
                         }
                         return new ErrorResponse("Cannot pause/resume: Not in play mode.");
                     }
@@ -145,16 +143,13 @@ namespace MCPForUnity.Editor.Tools
                 {
                     string groupName = Undo.GetCurrentGroupName();
                     Undo.PerformUndo();
-                    string message = string.IsNullOrEmpty(groupName)
-                        ? "Undo performed (stack may be empty)."
-                        : $"Undid: {groupName}";
+                    string message = string.IsNullOrEmpty(groupName) ? "Undo performed (stack may be empty)." : $"Undid: {groupName}";
                     if (EditorApplication.isPlaying)
                         message += " Warning: undo during play mode may have unexpected effects.";
-                    return new SuccessResponse(message, new
-                    {
-                        undone_group = string.IsNullOrEmpty(groupName) ? (string)null : groupName,
-                        next_group = Undo.GetCurrentGroupName()
-                    });
+                    return new SuccessResponse(
+                        message,
+                        new { undone_group = string.IsNullOrEmpty(groupName) ? (string)null : groupName, next_group = Undo.GetCurrentGroupName() }
+                    );
                 }
                 case "redo":
                 {
@@ -163,10 +158,7 @@ namespace MCPForUnity.Editor.Tools
                     string message = "Redo performed.";
                     if (EditorApplication.isPlaying)
                         message += " Warning: redo during play mode may have unexpected effects.";
-                    return new SuccessResponse(message, new
-                    {
-                        current_group = string.IsNullOrEmpty(nextGroup) ? (string)null : nextGroup
-                    });
+                    return new SuccessResponse(message, new { current_group = string.IsNullOrEmpty(nextGroup) ? (string)null : nextGroup });
                 }
 
                 default:
@@ -186,26 +178,21 @@ namespace MCPForUnity.Editor.Tools
                 if (Enum.TryParse<Tool>(toolName, true, out targetTool)) // Case-insensitive parse
                 {
                     // Check if it's a valid built-in tool
-                    if (Enum.IsDefined(typeof(Tool), targetTool)
-                        && targetTool != Tool.None && targetTool <= Tool.Custom) // Tool.Custom is the last standard tool
+                    if (Enum.IsDefined(typeof(Tool), targetTool) && targetTool != Tool.None && targetTool <= Tool.Custom) // Tool.Custom is the last standard tool
                     {
                         UnityEditor.Tools.current = targetTool;
                         return new SuccessResponse($"Set active tool to '{targetTool}'.");
                     }
                     else
                     {
-                        return new ErrorResponse(
-                            $"Cannot directly set tool to '{toolName}'. It might be None, Custom, or invalid."
-                        );
+                        return new ErrorResponse($"Cannot directly set tool to '{toolName}'. It might be None, Custom, or invalid.");
                     }
                 }
                 else
                 {
                     // Potentially try activating a custom tool by name here if needed
                     // This often requires specific editor scripting knowledge for that tool.
-                    return new ErrorResponse(
-                        $"Could not parse '{toolName}' as a standard Unity Tool (View, Move, Rotate, Scale, Rect, Transform, Custom)."
-                    );
+                    return new ErrorResponse($"Could not parse '{toolName}' as a standard Unity Tool (View, Move, Rotate, Scale, Rect, Transform, Custom).");
                 }
             }
             catch (Exception e)
@@ -291,10 +278,7 @@ namespace MCPForUnity.Editor.Tools
                 for (int i = 0; i < TotalLayerCount; i++)
                 {
                     SerializedProperty layerSP = layersProp.GetArrayElementAtIndex(i);
-                    if (
-                        layerSP != null
-                        && layerName.Equals(layerSP.stringValue, StringComparison.OrdinalIgnoreCase)
-                    )
+                    if (layerSP != null && layerName.Equals(layerSP.stringValue, StringComparison.OrdinalIgnoreCase))
                     {
                         return new ErrorResponse($"Layer '{layerName}' already exists at index {i}.");
                     }
@@ -318,17 +302,13 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 // Assign the name to the found slot
-                SerializedProperty targetLayerSP = layersProp.GetArrayElementAtIndex(
-                    firstEmptyUserLayer
-                );
+                SerializedProperty targetLayerSP = layersProp.GetArrayElementAtIndex(firstEmptyUserLayer);
                 targetLayerSP.stringValue = layerName;
                 // Apply the changes to the TagManager asset
                 tagManager.ApplyModifiedProperties();
                 // Save assets to make sure it's written to disk
                 AssetDatabase.SaveAssets();
-                return new SuccessResponse(
-                    $"Layer '{layerName}' added successfully to slot {firstEmptyUserLayer}."
-                );
+                return new SuccessResponse($"Layer '{layerName}' added successfully to slot {firstEmptyUserLayer}.");
             }
             catch (Exception e)
             {
@@ -358,10 +338,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     SerializedProperty layerSP = layersProp.GetArrayElementAtIndex(i);
                     // Case-insensitive comparison is safer
-                    if (
-                        layerSP != null
-                        && layerName.Equals(layerSP.stringValue, StringComparison.OrdinalIgnoreCase)
-                    )
+                    if (layerSP != null && layerName.Equals(layerSP.stringValue, StringComparison.OrdinalIgnoreCase))
                     {
                         layerIndexToRemove = i;
                         break;
@@ -374,17 +351,13 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 // Clear the name for that index
-                SerializedProperty targetLayerSP = layersProp.GetArrayElementAtIndex(
-                    layerIndexToRemove
-                );
+                SerializedProperty targetLayerSP = layersProp.GetArrayElementAtIndex(layerIndexToRemove);
                 targetLayerSP.stringValue = string.Empty; // Set to empty string to remove
                 // Apply the changes
                 tagManager.ApplyModifiedProperties();
                 // Save assets
                 AssetDatabase.SaveAssets();
-                return new SuccessResponse(
-                    $"Layer '{layerName}' (slot {layerIndexToRemove}) removed successfully."
-                );
+                return new SuccessResponse($"Layer '{layerName}' (slot {layerIndexToRemove}) removed successfully.");
             }
             catch (Exception e)
             {
@@ -402,12 +375,15 @@ namespace MCPForUnity.Editor.Tools
                 if (!result.Success)
                     return new ErrorResponse(result.Message);
 
-                return new SuccessResponse(result.Message, new
-                {
-                    source_path = result.SourcePath,
-                    target_path = result.TargetPath,
-                    backup_path = result.BackupPath
-                });
+                return new SuccessResponse(
+                    result.Message,
+                    new
+                    {
+                        source_path = result.SourcePath,
+                        target_path = result.TargetPath,
+                        backup_path = result.BackupPath,
+                    }
+                );
             }
             catch (Exception e)
             {
@@ -423,11 +399,7 @@ namespace MCPForUnity.Editor.Tools
                 if (!result.Success)
                     return new ErrorResponse(result.Message);
 
-                return new SuccessResponse(result.Message, new
-                {
-                    target_path = result.TargetPath,
-                    backup_path = result.BackupPath
-                });
+                return new SuccessResponse(result.Message, new { target_path = result.TargetPath, backup_path = result.BackupPath });
             }
             catch (Exception e)
             {
@@ -445,9 +417,7 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 // Load the TagManager asset from the ProjectSettings folder
-                UnityEngine.Object[] tagManagerAssets = AssetDatabase.LoadAllAssetsAtPath(
-                    "ProjectSettings/TagManager.asset"
-                );
+                UnityEngine.Object[] tagManagerAssets = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset");
                 if (tagManagerAssets == null || tagManagerAssets.Length == 0)
                 {
                     McpLog.Error("[ManageEditor] TagManager.asset not found in ProjectSettings.");

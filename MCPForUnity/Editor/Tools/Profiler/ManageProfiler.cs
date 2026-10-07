@@ -59,20 +59,17 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
                     // Utility
                     case "ping":
-                        return new SuccessResponse("manage_profiler is available.", new
-                        {
-                            tool = "manage_profiler",
-                            group = "profiling"
-                        });
+                        return new SuccessResponse("manage_profiler is available.", new { tool = "manage_profiler", group = "profiling" });
 
                     default:
                         return new ErrorResponse(
                             $"Unknown action: '{action}'. Valid actions: "
-                            + "profiler_start, profiler_stop, profiler_status, profiler_set_areas, "
-                            + "get_frame_timing, get_counters, get_object_memory, "
-                            + "memory_take_snapshot, memory_list_snapshots, memory_compare_snapshots, "
-                            + "frame_debugger_enable, frame_debugger_disable, frame_debugger_get_events, "
-                            + "ping.");
+                                + "profiler_start, profiler_stop, profiler_status, profiler_set_areas, "
+                                + "get_frame_timing, get_counters, get_object_memory, "
+                                + "memory_take_snapshot, memory_list_snapshots, memory_compare_snapshots, "
+                                + "frame_debugger_enable, frame_debugger_disable, frame_debugger_get_events, "
+                                + "ping."
+                        );
                 }
             }
             catch (Exception ex)

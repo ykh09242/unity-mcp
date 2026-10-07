@@ -7,7 +7,8 @@ internal static class PosixCredentialRoundTripHarness
 {
     public static int Main(string[] args)
     {
-        if (args.Length != 1) return 1;
+        if (args.Length != 1)
+            return 1;
         string generation = Console.ReadLine();
         string token = Console.ReadLine();
         StdioLaunchCredential published = null;
@@ -18,7 +19,8 @@ internal static class PosixCredentialRoundTripHarness
             token = null;
             Console.WriteLine("READY");
             Console.Out.Flush();
-            if (Console.ReadLine() != "dispose") return 1;
+            if (Console.ReadLine() != "dispose")
+                return 1;
             published.Dispose();
             disposed = true;
             Console.WriteLine("DISPOSED");
@@ -43,7 +45,8 @@ internal static class PosixCredentialRoundTripHarness
         finally
         {
             token = null;
-            if (!disposed) published?.Dispose();
+            if (!disposed)
+                published?.Dispose();
         }
     }
 }

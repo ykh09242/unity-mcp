@@ -71,7 +71,8 @@ class TestBasicValidation:
     async def test_valid_key(self):
         svc = _make_service()
         mock_resp = _mock_response(
-            200, {"valid": True, "user_id": "user-1", "metadata": {"plan": "pro"}})
+            200, {"valid": True, "user_id": "user-1", "metadata": {"plan": "pro"}}
+        )
 
         with patch("httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
@@ -89,8 +90,7 @@ class TestBasicValidation:
     @pytest.mark.asyncio
     async def test_invalid_key_200_body(self):
         svc = _make_service()
-        mock_resp = _mock_response(
-            200, {"valid": False, "error": "Key revoked"})
+        mock_resp = _mock_response(200, {"valid": False, "error": "Key revoked"})
 
         with patch("httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
@@ -460,6 +460,7 @@ class TestServiceToken:
 # Cache bound + log redaction
 # ---------------------------------------------------------------------------
 
+
 def _patched_client(mock_resp):
     ctx = patch("httpx.AsyncClient")
     MockClient = ctx.start()
@@ -495,8 +496,9 @@ class TestCacheBound:
         try:
             for i in range(3):
                 await svc.validate(f"bad-key-{i:04d}-padding-to-length")
-            instance.post = AsyncMock(return_value=_mock_response(
-                200, {"valid": True, "user_id": "user-1"}))
+            instance.post = AsyncMock(
+                return_value=_mock_response(200, {"valid": True, "user_id": "user-1"})
+            )
             r1 = await svc.validate("good-key-000-padding-to-length")
             calls_after_first = instance.post.await_count
             r2 = await svc.validate("good-key-000-padding-to-length")
@@ -570,7 +572,9 @@ class TestLogRedaction:
             await svc.validate("valid-key-bbbb-padding-to-length")
             instance.post = AsyncMock(return_value=_mock_response(401))
             await svc.validate("bad-key-cccc-padding-to-length")
-            instance.post = AsyncMock(return_value=_mock_response(200, {"valid": True, "user_id": "u"}))
+            instance.post = AsyncMock(
+                return_value=_mock_response(200, {"valid": True, "user_id": "u"})
+            )
             await svc.validate("valid-key-dddd-padding-to-length")
         finally:
             ctx.stop()

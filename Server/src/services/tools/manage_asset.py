@@ -1,6 +1,7 @@
 """
 Defines the manage_asset tool for interacting with Unity assets.
 """
+
 import asyncio
 import json
 import logging
@@ -23,7 +24,7 @@ logger = logging.getLogger("mcp-for-unity-server")
 @mcp_for_unity_tool(
     description=(
         "Performs asset operations (import, create, modify, delete, etc.) in Unity.\n\n"
-        "Tip (payload safety): for `action=\"search\"`, prefer paging (`page_size`, `page_number`) and keep "
+        'Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_number`) and keep '
         "`generate_preview=false` (previews can add large base64 blobs)."
     ),
     annotations=ToolAnnotations(
@@ -33,37 +34,79 @@ logger = logging.getLogger("mcp-for-unity-server")
 )
 async def manage_asset(
     ctx: Context,
-    action: Annotated[Literal["import", "create", "modify", "delete", "duplicate", "move", "rename", "search", "get_info", "create_folder", "get_components"], "Perform CRUD operations on assets."],
-    path: Annotated[str, "Asset path (e.g., 'Materials/MyMaterial.mat') or search scope (e.g., 'Assets')."],
-    asset_type: Annotated[str,
-                          "Asset type (e.g., 'Material', 'Folder') - required for 'create'. Note: For ScriptableObjects, use manage_scriptable_object."] | None = None,
-    properties: Annotated[dict[str, Any] | str,
-                          "Dictionary of properties for 'create'/'modify'. Keys are property names, values are property values."] | None = None,
-    destination: Annotated[str,
-                           "Target path for 'duplicate'/'move'."] | None = None,
-    generate_preview: Annotated[bool,
-                                "Generate previews up to 256 pixels per edge and 256 KiB PNG each; "
-                                "search allows at most 32 results and 4 MiB aggregate base64."] = False,
-    search_pattern: Annotated[str,
-                              "Search pattern (e.g., '*.prefab' or AssetDatabase filters like 't:MonoScript'). "
-                              "Recommended: put queries like 't:MonoScript' here and set path='Assets'."] | None = None,
+    action: Annotated[
+        Literal[
+            "import",
+            "create",
+            "modify",
+            "delete",
+            "duplicate",
+            "move",
+            "rename",
+            "search",
+            "get_info",
+            "create_folder",
+            "get_components",
+        ],
+        "Perform CRUD operations on assets.",
+    ],
+    path: Annotated[
+        str, "Asset path (e.g., 'Materials/MyMaterial.mat') or search scope (e.g., 'Assets')."
+    ],
+    asset_type: Annotated[
+        str,
+        "Asset type (e.g., 'Material', 'Folder') - required for 'create'. Note: For ScriptableObjects, use manage_scriptable_object.",
+    ]
+    | None = None,
+    properties: Annotated[
+        dict[str, Any] | str,
+        "Dictionary of properties for 'create'/'modify'. Keys are property names, values are property values.",
+    ]
+    | None = None,
+    destination: Annotated[str, "Target path for 'duplicate'/'move'."] | None = None,
+    generate_preview: Annotated[
+        bool,
+        "Generate previews up to 256 pixels per edge and 256 KiB PNG each; "
+        "search allows at most 32 results and 4 MiB aggregate base64.",
+    ] = False,
+    search_pattern: Annotated[
+        str,
+        "Search pattern (e.g., '*.prefab' or AssetDatabase filters like 't:MonoScript'). "
+        "Recommended: put queries like 't:MonoScript' here and set path='Assets'.",
+    ]
+    | None = None,
     filter_type: Annotated[str, "Filter type for search"] | None = None,
-    filter_date_after: Annotated[str,
-                                 "Date after which to filter"] | None = None,
-    page_size: Annotated[int | str,
-                         "Page size: 1-1000 (default 50), or 1-32 with previews (default 32)."] | None = None,
-    page_number: Annotated[int | str,
-                           "Page number for pagination (1-based)."] | None = None,
+    filter_date_after: Annotated[str, "Date after which to filter"] | None = None,
+    page_size: Annotated[
+        int | str, "Page size: 1-1000 (default 50), or 1-32 with previews (default 32)."
+    ]
+    | None = None,
+    page_number: Annotated[int | str, "Page number for pagination (1-based)."] | None = None,
 ) -> dict[str, Any]:
     action_l = (action or "").lower()
-    if action_l not in {"import", "create", "modify", "delete", "duplicate", "move", "rename", "search", "get_info", "create_folder", "get_components"}:
+    if action_l not in {
+        "import",
+        "create",
+        "modify",
+        "delete",
+        "duplicate",
+        "move",
+        "rename",
+        "search",
+        "get_info",
+        "create_folder",
+        "get_components",
+    }:
         return {"success": False, "message": f"Unknown asset action: '{action}'."}
     if action_l != "search" and not path:
         return {"success": False, "message": f"Action '{action}' requires parameter 'path'."}
     if action_l == "create" and not asset_type:
         return {"success": False, "message": "Action 'create' requires parameter 'asset_type'."}
     if action_l == "create" and asset_type.lower() not in {"folder", "material", "physicsmaterial"}:
-        return {"success": False, "message": f"Creating asset type '{asset_type}' is not supported. Supported: Folder, Material, PhysicsMaterial."}
+        return {
+            "success": False,
+            "message": f"Creating asset type '{asset_type}' is not supported. Supported: Folder, Material, PhysicsMaterial.",
+        }
     if action_l in {"move", "rename"} and not destination:
         return {"success": False, "message": f"Action '{action}' requires parameter 'destination'."}
 
@@ -105,13 +148,17 @@ async def manage_asset(
         if (not search_pattern) and raw_path.startswith("t:"):
             search_pattern = raw_path
             path = "Assets"
-            logger.info("manage_asset(search): normalized query from `path` into `search_pattern` and set path='Assets'")
+            logger.info(
+                "manage_asset(search): normalized query from `path` into `search_pattern` and set path='Assets'"
+            )
 
         # If the caller used `asset_type` to mean a search filter, map it to filter_type.
         # (In Unity, filterType becomes `t:<filterType>`.)
         if (not filter_type) and asset_type and isinstance(asset_type, str):
             filter_type = asset_type
-            logger.info("manage_asset(search): mapped `asset_type` into `filter_type` for safer server-side filtering")
+            logger.info(
+                "manage_asset(search): mapped `asset_type` into `filter_type` for safer server-side filtering"
+            )
 
     # Prepare parameters for the C# handler
     params_dict = {
@@ -125,7 +172,7 @@ async def manage_asset(
         "filterType": filter_type,
         "filterDateAfter": filter_date_after,
         "pageSize": page_size,
-        "pageNumber": page_number
+        "pageNumber": page_number,
     }
 
     # Remove None values to avoid sending unnecessary nulls
@@ -140,6 +187,8 @@ async def manage_asset(
     loop = asyncio.get_running_loop()
 
     # Use centralized async retry helper with instance routing
-    result = await send_with_unity_instance(async_send_command_with_retry, unity_instance, "manage_asset", params_dict, loop=loop)
+    result = await send_with_unity_instance(
+        async_send_command_with_retry, unity_instance, "manage_asset", params_dict, loop=loop
+    )
     # Return the result obtained from Unity
     return result if isinstance(result, dict) else {"success": False, "message": str(result)}

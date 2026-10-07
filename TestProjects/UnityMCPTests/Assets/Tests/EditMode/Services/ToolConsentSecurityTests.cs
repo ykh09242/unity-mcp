@@ -14,33 +14,46 @@ namespace MCPForUnityTests.Editor.Services
 {
     public class ToolConsentSecurityTests
     {
-        private static readonly string[] Names = { "execute_code", "manage_packages", "execute_menu_item", "manage_build", "batch_execute", "manage_script", "blender_bridge" };
+        private static readonly string[] Names =
+        {
+            "execute_code",
+            "manage_packages",
+            "execute_menu_item",
+            "manage_build",
+            "batch_execute",
+            "manage_script",
+            "blender_bridge",
+        };
         private readonly Dictionary<string, bool?> saved = new();
 
         [SetUp]
         public void SetUp()
         {
             foreach (string name in Names)
-                foreach (string key in new[] { EditorPrefKeys.ToolEnabledPrefix + name, ToolDiscoveryService.GetConsentPreferenceKey(name) })
-                {
-                    saved[key] = EditorPrefs.HasKey(key) ? EditorPrefs.GetBool(key) : (bool?)null;
-                    EditorPrefs.DeleteKey(key);
-                }
+            foreach (string key in new[] { EditorPrefKeys.ToolEnabledPrefix + name, ToolDiscoveryService.GetConsentPreferenceKey(name) })
+            {
+                saved[key] = EditorPrefs.HasKey(key) ? EditorPrefs.GetBool(key) : (bool?)null;
+                EditorPrefs.DeleteKey(key);
+            }
         }
 
         [TearDown]
         public void TearDown()
         {
             foreach (var entry in saved)
-                if (entry.Value.HasValue) EditorPrefs.SetBool(entry.Key, entry.Value.Value);
-                else EditorPrefs.DeleteKey(entry.Key);
+                if (entry.Value.HasValue)
+                    EditorPrefs.SetBool(entry.Key, entry.Value.Value);
+                else
+                    EditorPrefs.DeleteKey(entry.Key);
         }
 
         [TestCaseSource(nameof(Names))]
         public async Task DispatcherRejectsToolsWithoutConsent(string name)
         {
             string result = await TransportCommandDispatcher.ExecuteCommandJsonAsync(
-                new JObject { ["type"] = name, ["params"] = new JObject() }.ToString(), CancellationToken.None);
+                new JObject { ["type"] = name, ["params"] = new JObject() }.ToString(),
+                CancellationToken.None
+            );
             StringAssert.Contains("disabled", result.ToLowerInvariant());
         }
 
@@ -52,10 +65,7 @@ namespace MCPForUnityTests.Editor.Services
         [TestCase("blender_bridge")]
         public async Task BatchRejectsToolsWithoutConsent(string name)
         {
-            var result = JObject.FromObject(await BatchExecute.HandleCommand(new JObject
-            {
-                ["commands"] = new JArray(new JObject { ["tool"] = name })
-            }));
+            var result = JObject.FromObject(await BatchExecute.HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = name }) }));
             Assert.IsFalse(result.Value<bool>("success"));
             StringAssert.Contains("disabled", result.ToString());
         }
@@ -89,17 +99,16 @@ namespace MCPForUnityTests.Editor.Services
             try
             {
                 EditorPrefs.SetBool(EditorPrefKeys.ToolEnabledPrefix + "blender_bridge", true);
-                var response = JObject.FromObject(await BlenderBridgeTool.HandleCommand(new JObject
-                {
-                    ["action"] = action
-                }));
+                var response = JObject.FromObject(await BlenderBridgeTool.HandleCommand(new JObject { ["action"] = action }));
                 Assert.IsFalse(response.Value<bool>("success"));
                 Assert.AreEqual("blender_consent_required", (string)response["code"]);
             }
             finally
             {
-                if (savedFork != null) EditorPrefs.SetString(forkKey, savedFork);
-                else EditorPrefs.DeleteKey(forkKey);
+                if (savedFork != null)
+                    EditorPrefs.SetString(forkKey, savedFork);
+                else
+                    EditorPrefs.DeleteKey(forkKey);
             }
         }
 
@@ -113,8 +122,11 @@ namespace MCPForUnityTests.Editor.Services
             service.SetToolEnabled("batch_execute", true);
             service.SetToolEnabled("blender_bridge", true);
             var allowed = await InvokeBlender(route);
-            StringAssert.Contains("'code' is required", allowed.ToString(),
-                "An explicit grant must reach normal parameter validation without contacting Blender.");
+            StringAssert.Contains(
+                "'code' is required",
+                allowed.ToString(),
+                "An explicit grant must reach normal parameter validation without contacting Blender."
+            );
 
             service.SetToolEnabled("blender_bridge", false);
             var denied = await InvokeBlender(route);
@@ -135,17 +147,18 @@ namespace MCPForUnityTests.Editor.Services
                 case "registry":
                     return JObject.FromObject(await CommandRegistry.InvokeCommandAsync("blender_bridge", parameters));
                 case "dispatcher":
-                    return JObject.Parse(await TransportCommandDispatcher.ExecuteCommandJsonAsync(
-                        new JObject { ["type"] = "blender_bridge", ["params"] = parameters }.ToString(),
-                        CancellationToken.None));
+                    return JObject.Parse(
+                        await TransportCommandDispatcher.ExecuteCommandJsonAsync(
+                            new JObject { ["type"] = "blender_bridge", ["params"] = parameters }.ToString(),
+                            CancellationToken.None
+                        )
+                    );
                 default:
-                    return JObject.FromObject(await BatchExecute.HandleCommand(new JObject
-                    {
-                        ["commands"] = new JArray(new JObject
-                        {
-                            ["tool"] = "blender_bridge", ["params"] = parameters
-                        })
-                    }));
+                    return JObject.FromObject(
+                        await BatchExecute.HandleCommand(
+                            new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "blender_bridge", ["params"] = parameters }) }
+                        )
+                    );
             }
         }
 
@@ -162,11 +175,17 @@ namespace MCPForUnityTests.Editor.Services
         public void DirectScriptAliasesCannotUseLegacyEnablementAsConsent(string action)
         {
             EditorPrefs.SetBool(EditorPrefKeys.ToolEnabledPrefix + "manage_script", true);
-            var response = JObject.FromObject(ManageScript.HandleCommand(new JObject
-            {
-                ["action"] = action, ["name"] = "OwnedConsentProbe", ["path"] = "Assets",
-                ["options"] = new JObject { ["preview"] = true }
-            }));
+            var response = JObject.FromObject(
+                ManageScript.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["name"] = "OwnedConsentProbe",
+                        ["path"] = "Assets",
+                        ["options"] = new JObject { ["preview"] = true },
+                    }
+                )
+            );
             Assert.IsFalse(response.Value<bool>("success"));
             Assert.AreEqual("script_consent_required", (string)response["code"]);
         }
@@ -185,15 +204,19 @@ namespace MCPForUnityTests.Editor.Services
         public void ExecutableAssetDestinationsRequireConsentBeforeFilesystemWork(string action, string extension)
         {
             string directory = "Assets/__McpConsent_" + System.Guid.NewGuid().ToString("N");
-            string full = System.IO.Path.Combine(UnityEngine.Application.dataPath,
-                System.IO.Path.GetFileName(directory));
+            string full = System.IO.Path.Combine(UnityEngine.Application.dataPath, System.IO.Path.GetFileName(directory));
             Assert.IsFalse(System.IO.Directory.Exists(full) || System.IO.File.Exists(full));
             EditorPrefs.SetBool(EditorPrefKeys.ToolEnabledPrefix + "manage_script", true);
-            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
-            {
-                ["action"] = action, ["path"] = directory + "/Inert.uss",
-                ["destination"] = directory + "/New/Probe" + extension
-            }));
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["path"] = directory + "/Inert.uss",
+                        ["destination"] = directory + "/New/Probe" + extension,
+                    }
+                )
+            );
             Assert.IsFalse(response.Value<bool>("success"));
             Assert.AreEqual("script_consent_required", (string)response["code"]);
             Assert.IsFalse(System.IO.Directory.Exists(full));
@@ -203,8 +226,7 @@ namespace MCPForUnityTests.Editor.Services
         [TestCase(1, 129)]
         public void IncompleteFolderInspectionRequiresConsentWithoutTraversal(int remaining, int depth)
         {
-            var method = typeof(ManageAsset).GetMethod("AffectsCompilation",
-                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            var method = typeof(ManageAsset).GetMethod("AffectsCompilation", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
             Assert.IsNotNull(method);
             // Exhaust the actual classification budget without constructing a huge tree.
             object[] args = { "Assets/OwnedInertFolder", remaining, depth, System.Diagnostics.Stopwatch.StartNew() };

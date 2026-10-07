@@ -1,6 +1,6 @@
-using NUnit.Framework;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Tools;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -98,11 +98,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void GetMember_Method_ReturnsSignature()
         {
-            var jo = Invoke("get_member", new JObject
-            {
-                ["class_name"] = "Physics",
-                ["member_name"] = "Raycast"
-            });
+            var jo = Invoke("get_member", new JObject { ["class_name"] = "Physics", ["member_name"] = "Raycast" });
 
             Assert.IsTrue((bool)jo["success"]);
             var data = jo["data"];
@@ -118,11 +114,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void GetMember_Property_ReturnsPropertyInfo()
         {
-            var jo = Invoke("get_member", new JObject
-            {
-                ["class_name"] = "UnityEngine.Transform",
-                ["member_name"] = "position"
-            });
+            var jo = Invoke("get_member", new JObject { ["class_name"] = "UnityEngine.Transform", ["member_name"] = "position" });
 
             Assert.IsTrue((bool)jo["success"]);
             var data = jo["data"];
@@ -134,11 +126,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void GetMember_NotFound_ReturnsFalse()
         {
-            var jo = Invoke("get_member", new JObject
-            {
-                ["class_name"] = "Physics",
-                ["member_name"] = "TotallyFakeMethod"
-            });
+            var jo = Invoke("get_member", new JObject { ["class_name"] = "Physics", ["member_name"] = "TotallyFakeMethod" });
 
             Assert.IsTrue((bool)jo["success"], "Should be a SuccessResponse even for not-found member");
             var data = jo["data"];
@@ -150,11 +138,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Search_NavMesh_FindsMultipleTypes()
         {
-            var jo = Invoke("search", new JObject
-            {
-                ["query"] = "NavMesh",
-                ["scope"] = "unity"
-            });
+            var jo = Invoke("search", new JObject { ["query"] = "NavMesh", ["scope"] = "unity" });
 
             Assert.IsTrue((bool)jo["success"]);
             var data = jo["data"];
@@ -164,11 +148,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Search_ExactMatch_RankedFirst()
         {
-            var jo = Invoke("search", new JObject
-            {
-                ["query"] = "Camera",
-                ["scope"] = "unity"
-            });
+            var jo = Invoke("search", new JObject { ["query"] = "Camera", ["scope"] = "unity" });
 
             Assert.IsTrue((bool)jo["success"]);
             var data = jo["data"];
@@ -176,18 +156,13 @@ namespace MCPForUnityTests.Editor.Tools
 
             var results = (JArray)data["results"];
             var firstFullName = (string)results[0]["full_name"];
-            Assert.That(firstFullName, Does.EndWith(".Camera"),
-                "First result should be an exact match ending with '.Camera'");
+            Assert.That(firstFullName, Does.EndWith(".Camera"), "First result should be an exact match ending with '.Camera'");
         }
 
         [Test]
         public void Search_NoResults_ReturnsZeroCount()
         {
-            var jo = Invoke("search", new JObject
-            {
-                ["query"] = "ZzzNonexistentType999",
-                ["scope"] = "unity"
-            });
+            var jo = Invoke("search", new JObject { ["query"] = "ZzzNonexistentType999", ["scope"] = "unity" });
 
             Assert.IsTrue((bool)jo["success"], "Should be a SuccessResponse even with no results");
             var data = jo["data"];

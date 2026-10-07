@@ -32,14 +32,14 @@ namespace MCPForUnity.Editor.Resources.Editor
                     {
                         x = handleRotation.x,
                         y = handleRotation.y,
-                        z = handleRotation.z
+                        z = handleRotation.z,
                     },
                     handlePosition = new
                     {
                         x = handlePosition.x,
                         y = handlePosition.y,
-                        z = handlePosition.z
-                    }
+                        z = handlePosition.z,
+                    },
                 };
 
                 return new SuccessResponse("Retrieved active tool information.", toolInfo);

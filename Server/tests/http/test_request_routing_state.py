@@ -31,7 +31,13 @@ async def routing_server(monkeypatch: pytest.MonkeyPatch) -> FastMCP:
     await registry.register("second", "Second", "bbbb2222", "6000")
     monkeypatch.setattr(PluginHub, "_registry", registry)
     monkeypatch.setattr(PluginHub, "_lock", asyncio.Lock())
-    monkeypatch.setattr(PluginHub, "_resolve_session_id", AsyncMock(side_effect=lambda instance, **kwargs: "first" if "aaaa1111" in instance else "second"))
+    monkeypatch.setattr(
+        PluginHub,
+        "_resolve_session_id",
+        AsyncMock(
+            side_effect=lambda instance, **kwargs: "first" if "aaaa1111" in instance else "second"
+        ),
+    )
     server = FastMCP("request-routing")
     server.add_middleware(UnityInstanceMiddleware())
     return server
@@ -39,11 +45,17 @@ async def routing_server(monkeypatch: pytest.MonkeyPatch) -> FastMCP:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "auto"])
-async def test_inline_override_is_visible_to_handler_but_does_not_pin_next_request(routing_server: FastMCP, mode: str) -> None:
+async def test_inline_override_is_visible_to_handler_but_does_not_pin_next_request(
+    routing_server: FastMCP, mode: str
+) -> None:
     # Given a real MCP session with two available plugins and no selected default.
     @routing_server.tool
     async def routing_probe(ctx: Context) -> RoutingSnapshot:
-        return {"instance": await ctx.get_state("unity_instance"), "session": await ctx.get_state("unity_session_id"), "user": await ctx.get_state("user_id")}
+        return {
+            "instance": await ctx.get_state("unity_instance"),
+            "session": await ctx.get_state("unity_session_id"),
+            "user": await ctx.get_state("user_id"),
+        }
 
     async with Client(routing_server, mode=mode) as client:
         first = await client.call_tool("routing_probe", {"unity_instance": "First@aaaa1111"})
@@ -58,7 +70,9 @@ async def test_inline_override_is_visible_to_handler_but_does_not_pin_next_reque
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "auto"])
-async def test_concurrent_inline_overrides_do_not_replace_each_others_routing(routing_server: FastMCP, mode: str) -> None:
+async def test_concurrent_inline_overrides_do_not_replace_each_others_routing(
+    routing_server: FastMCP, mode: str
+) -> None:
     # Given concurrent requests in one real MCP session.
     both_entered = asyncio.Event()
     arrivals = 0
@@ -70,7 +84,11 @@ async def test_concurrent_inline_overrides_do_not_replace_each_others_routing(ro
         if arrivals == 2:
             both_entered.set()
         await asyncio.wait_for(both_entered.wait(), timeout=2)
-        return {"instance": await ctx.get_state("unity_instance"), "session": await ctx.get_state("unity_session_id"), "user": await ctx.get_state("user_id")}
+        return {
+            "instance": await ctx.get_state("unity_instance"),
+            "session": await ctx.get_state("unity_session_id"),
+            "user": await ctx.get_state("user_id"),
+        }
 
     async with Client(routing_server, mode=mode) as client:
         # When both middleware writes finish before either handler reads state.
@@ -86,7 +104,9 @@ async def test_concurrent_inline_overrides_do_not_replace_each_others_routing(ro
 
 
 @pytest.mark.asyncio
-async def test_persisted_active_selection_survives_a_per_call_override(routing_server: FastMCP) -> None:
+async def test_persisted_active_selection_survives_a_per_call_override(
+    routing_server: FastMCP,
+) -> None:
     # Given a pinned default stored through the middleware's session API.
     middleware = UnityInstanceMiddleware()
 
@@ -109,7 +129,9 @@ async def test_persisted_active_selection_survives_a_per_call_override(routing_s
 
 
 @pytest.mark.asyncio
-async def test_old_persisted_transient_values_are_shadowed_per_request(routing_server: FastMCP) -> None:
+async def test_old_persisted_transient_values_are_shadowed_per_request(
+    routing_server: FastMCP,
+) -> None:
     # Given state persisted by a prior server version in the same MCP session.
     @routing_server.tool
     async def seed_old_state(ctx: Context) -> None:
@@ -119,7 +141,11 @@ async def test_old_persisted_transient_values_are_shadowed_per_request(routing_s
 
     @routing_server.tool
     async def migration_probe(ctx: Context) -> RoutingSnapshot:
-        return {"instance": await ctx.get_state("unity_instance"), "session": await ctx.get_state("unity_session_id"), "user": await ctx.get_state("user_id")}
+        return {
+            "instance": await ctx.get_state("unity_instance"),
+            "session": await ctx.get_state("unity_session_id"),
+            "user": await ctx.get_state("user_id"),
+        }
 
     async with Client(routing_server, mode="legacy") as client:
         await client.call_tool("seed_old_state")
@@ -131,7 +157,9 @@ async def test_old_persisted_transient_values_are_shadowed_per_request(routing_s
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "auto"])
-async def test_resource_metadata_routes_concurrent_reads(routing_server: FastMCP, mode: str) -> None:
+async def test_resource_metadata_routes_concurrent_reads(
+    routing_server: FastMCP, mode: str
+) -> None:
     both_entered = asyncio.Event()
     arrivals = 0
 
@@ -142,7 +170,12 @@ async def test_resource_metadata_routes_concurrent_reads(routing_server: FastMCP
         if arrivals >= 2:
             both_entered.set()
         await asyncio.wait_for(both_entered.wait(), timeout=2)
-        return json.dumps({"instance": await ctx.get_state("unity_instance"), "session": await ctx.get_state("unity_session_id")})
+        return json.dumps(
+            {
+                "instance": await ctx.get_state("unity_instance"),
+                "session": await ctx.get_state("unity_session_id"),
+            }
+        )
 
     async with Client(routing_server, mode=mode) as client:
         first, second = await asyncio.gather(
@@ -181,7 +214,9 @@ async def test_resource_metadata_preserves_legacy_default(routing_server: FastMC
 
     async with Client(routing_server, mode="legacy") as client:
         await client.call_tool("pin_resource")
-        override = await client.read_resource("routing://default", meta={"unity_instance": "Second@bbbb2222"})
+        override = await client.read_resource(
+            "routing://default", meta={"unity_instance": "Second@bbbb2222"}
+        )
         assert override[0].text == "Second@bbbb2222"
         default = await client.read_resource("routing://default")
         assert default[0].text == "First@aaaa1111"
@@ -189,21 +224,26 @@ async def test_resource_metadata_preserves_legacy_default(routing_server: FastMC
 
 @pytest.mark.asyncio
 async def test_resource_metadata_cannot_select_another_tenants_instance(
-    routing_server: FastMCP, monkeypatch: pytest.MonkeyPatch,
+    routing_server: FastMCP,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(config, "http_remote_hosted", True)
     registry = PluginRegistry()
     await registry.register("alice", "Alice", "aaaa1111", "6000", user_id="alice")
     await registry.register("bob", "Bob", "bbbb2222", "6000", user_id="bob")
     monkeypatch.setattr(PluginHub, "_registry", registry)
-    monkeypatch.setattr(UnityInstanceMiddleware, "_resolve_user_id", AsyncMock(return_value="alice"))
+    monkeypatch.setattr(
+        UnityInstanceMiddleware, "_resolve_user_id", AsyncMock(return_value="alice")
+    )
 
     @routing_server.resource("routing://tenant")
     async def resource_probe(ctx: Context) -> str:
         return await ctx.get_state("unity_instance")
 
     async with Client(routing_server) as client:
-        own = await client.read_resource("routing://tenant", meta={"unity_instance": "Alice@aaaa1111"})
+        own = await client.read_resource(
+            "routing://tenant", meta={"unity_instance": "Alice@aaaa1111"}
+        )
         assert own[0].text == "Alice@aaaa1111"
         with pytest.raises(MCPError):
             await client.read_resource("routing://tenant", meta={"unity_instance": "Bob@bbbb2222"})

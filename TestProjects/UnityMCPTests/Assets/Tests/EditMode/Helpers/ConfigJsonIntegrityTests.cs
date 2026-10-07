@@ -1,6 +1,6 @@
 using System;
-using System.IO;
 using System.Collections.Generic;
+using System.IO;
 using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
@@ -82,7 +82,7 @@ namespace MCPForUnityTests.Editor.Helpers
             {
                 IsVsCodeLayout = key == "servers",
                 ServerContainerKey = key,
-                SchemaUrl = "https://example.invalid/synthetic-schema"
+                SchemaUrl = "https://example.invalid/synthetic-schema",
             };
 
             Assert.Throws<FormatException>(() => ConfigJsonBuilder.ApplyUnityServerToExistingConfig(root, null, client));
@@ -101,8 +101,9 @@ namespace MCPForUnityTests.Editor.Helpers
             var original = root.DeepClone();
             var other = root["mcpServers"]["other"];
 
-            Assert.Throws<FormatException>(() => ConfigJsonBuilder.ApplyUnityServerToExistingConfig(root, null,
-                new McpClient { SchemaUrl = "https://example.invalid/synthetic-schema" }));
+            Assert.Throws<FormatException>(() =>
+                ConfigJsonBuilder.ApplyUnityServerToExistingConfig(root, null, new McpClient { SchemaUrl = "https://example.invalid/synthetic-schema" })
+            );
             Assert.IsTrue(JToken.DeepEquals(original, root));
             Assert.AreSame(other, root["mcpServers"]["other"]);
             Assert.IsNull(root["$schema"]);
@@ -115,7 +116,8 @@ namespace MCPForUnityTests.Editor.Helpers
             WithOwnedRoot(root =>
             {
                 string path = Owned(root, "synthetic.json");
-                if (existing) File.WriteAllText(path, "original");
+                if (existing)
+                    File.WriteAllText(path, "original");
                 File.WriteAllText(Owned(root, "synthetic.json.tmp"), "unrelated temp");
                 File.WriteAllText(Owned(root, "synthetic.json.backup"), "unrelated backup");
 
@@ -159,7 +161,8 @@ namespace MCPForUnityTests.Editor.Helpers
                 string resolved = Path.GetFullPath(root);
                 Assert.IsTrue(resolved.StartsWith(temp + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
                 Assert.IsTrue(Path.GetFileName(resolved).StartsWith("UnityMCPConfigIntegrity_", StringComparison.Ordinal));
-                if (Directory.Exists(resolved)) Directory.Delete(resolved, true);
+                if (Directory.Exists(resolved))
+                    Directory.Delete(resolved, true);
             }
         }
 

@@ -34,9 +34,13 @@ def test_styles_avoid_browser_only_layout_properties(path: Path) -> None:
     source = re.sub(r"/\*.*?\*/", "", path.read_text(encoding="utf-8"), flags=re.S)
     assert source.count("{") == source.count("}"), path
     properties = re.findall(r"(?:^|[;{])\s*([\w-]+)\s*:", source)
-    assert not set(properties).intersection({"gap", "z-index", "box-shadow", "filter", "border", "outline", "pointer-events"})
+    assert not set(properties).intersection(
+        {"gap", "z-index", "box-shadow", "filter", "border", "outline", "pointer-events"}
+    )
     assert not re.search(r":(?:first-child|last-child|nth-child)\b", source)
-    assert all(value.strip() == "0" for value in re.findall(r"letter-spacing\s*:\s*([^;]+)", source))
+    assert all(
+        value.strip() == "0" for value in re.findall(r"letter-spacing\s*:\s*([^;]+)", source)
+    )
 
 
 def test_all_theme_tokens_resolve_in_both_editor_skins() -> None:
@@ -84,27 +88,46 @@ def test_inline_dropdown_retains_horizontal_growth_and_wrapping() -> None:
 
 
 @pytest.mark.parametrize("selector", [".mcp-editor", ".mcp-editor.unity-theme-light"])
-@pytest.mark.parametrize(("token", "native"), [
-    ("--mcp-bg", "--unity-colors-window-background"),
-    ("--mcp-surface", "--unity-colors-toolbar-background"),
-    ("--mcp-field", "--unity-colors-input_field-background"),
-    ("--mcp-text", "--unity-colors-default-text"),
-])
+@pytest.mark.parametrize(
+    ("token", "native"),
+    [
+        ("--mcp-bg", "--unity-colors-window-background"),
+        ("--mcp-surface", "--unity-colors-toolbar-background"),
+        ("--mcp-field", "--unity-colors-input_field-background"),
+        ("--mcp-text", "--unity-colors-default-text"),
+    ],
+)
 def test_editor_surfaces_follow_native_unity_theme(selector: str, token: str, native: str) -> None:
     assert _common_style(selector)[token].startswith(f"var({native},")
 
 
-@pytest.mark.parametrize("relative", [
-    "MCPForUnityEditorWindow", "MCPSetupWindow", "EditorPrefs/EditorPrefsWindow",
-    "Components/Connection/McpConnectionSection", "Components/ClientConfig/McpClientConfigSection",
-    "Components/Advanced/McpAdvancedSection", "Components/Tools/McpToolsSection",
-    "Components/Resources/McpResourcesSection", "Components/Validation/McpValidationSection",
-])
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "MCPForUnityEditorWindow",
+        "MCPSetupWindow",
+        "EditorPrefs/EditorPrefsWindow",
+        "Components/Connection/McpConnectionSection",
+        "Components/ClientConfig/McpClientConfigSection",
+        "Components/Advanced/McpAdvancedSection",
+        "Components/Tools/McpToolsSection",
+        "Components/Resources/McpResourcesSection",
+        "Components/Validation/McpValidationSection",
+    ],
+)
 def test_static_controller_bindings_have_markup_targets(relative: str) -> None:
     source = (WINDOWS / f"{relative}.cs").read_text(encoding="utf-8")
-    names = {element.attrib["name"] for element in ET.parse(WINDOWS / f"{relative}.uxml").iter() if "name" in element.attrib}
+    names = {
+        element.attrib["name"]
+        for element in ET.parse(WINDOWS / f"{relative}.uxml").iter()
+        if "name" in element.attrib
+    }
     if relative == "EditorPrefs/EditorPrefsWindow":
-        names |= {element.attrib["name"] for element in ET.parse(WINDOWS / "EditorPrefs/EditorPrefItem.uxml").iter() if "name" in element.attrib}
+        names |= {
+            element.attrib["name"]
+            for element in ET.parse(WINDOWS / "EditorPrefs/EditorPrefItem.uxml").iter()
+            if "name" in element.attrib
+        }
     references = set(re.findall(r'\.Q<[^>]+>\("([^"\n]+)"\)', source))
     # Logos are inserted by CreateGUI, not authored in UXML.
     references -= {"header-logo", "setup-logo"}

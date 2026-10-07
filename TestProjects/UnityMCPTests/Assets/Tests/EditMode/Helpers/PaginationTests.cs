@@ -1,7 +1,7 @@
 using System.Collections.Generic;
-using NUnit.Framework;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Helpers
 {
@@ -95,11 +95,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [Test]
         public void HugePageNumber_ReturnsEmptyFinalPage()
         {
-            var request = PaginationRequest.FromParams(new JObject
-            {
-                ["page_number"] = int.MaxValue,
-                ["page_size"] = 50
-            });
+            var request = PaginationRequest.FromParams(new JObject { ["page_number"] = int.MaxValue, ["page_size"] = 50 });
 
             var response = PaginationResponse<int>.Create(new List<int> { 1, 2, 3 }, request);
 
@@ -123,11 +119,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase(-1)]
         public void InvalidPageSize_UsesDefaultWhenComputingPageOffset(int pageSize)
         {
-            var request = PaginationRequest.FromParams(new JObject
-            {
-                ["page_size"] = pageSize,
-                ["page_number"] = 2
-            }, defaultPageSize: 2);
+            var request = PaginationRequest.FromParams(new JObject { ["page_size"] = pageSize, ["page_number"] = 2 }, defaultPageSize: 2);
 
             var response = PaginationResponse<int>.Create(new List<int> { 1, 2, 3, 4 }, request);
 
@@ -249,4 +241,3 @@ namespace MCPForUnityTests.Editor.Helpers
         #endregion
     }
 }
-

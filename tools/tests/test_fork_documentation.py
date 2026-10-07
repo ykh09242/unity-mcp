@@ -88,7 +88,15 @@ def test_pinned_client_and_launch_examples_match_package_source() -> None:
         assert connection["url"] == "http://localhost:8080/mcp"
         assert set(connection["headers"]) == {"X-Unity-MCP-Token"}
     launch = blocks[2]["mcpServers"]["unityMCP"]
-    assert launch["args"] == ["--python", ">=3.11", "--from", expected, "mcp-for-unity", "--transport", "stdio"]
+    assert launch["args"] == [
+        "--python",
+        ">=3.11",
+        "--from",
+        expected,
+        "mcp-for-unity",
+        "--transport",
+        "stdio",
+    ]
     for relative in ("Server/README.md", "website/docs/guides/cli.md"):
         sources = []
         for language, body in FENCES.findall(_read(ROOT / relative)):
@@ -106,7 +114,10 @@ def test_pinned_client_and_launch_examples_match_package_source() -> None:
 def test_upm_install_examples_select_the_fork_subdirectory_and_release() -> None:
     # Given current package identity/version and the canonical install page.
     package = json.loads(_read(ROOT / "MCPForUnity/package.json"))
-    urls = re.findall(r"https://github\.com/ykh09242/unity-mcp\.git[^\s`]+", _read(SITE / "getting-started/install.md"))
+    urls = re.findall(
+        r"https://github\.com/ykh09242/unity-mcp\.git[^\s`]+",
+        _read(SITE / "getting-started/install.md"),
+    )
 
     # When parsing tag and commit-addressed install URLs.
     assert len(urls) == 2
@@ -114,7 +125,9 @@ def test_upm_install_examples_select_the_fork_subdirectory_and_release() -> None
         parsed = urlsplit(raw)
         # Then both select the package subdirectory, with stable tag or full SHA.
         assert parsed.query == "path=/MCPForUnity"
-        assert parsed.fragment == f"ykh09242-v{package['version']}" or re.fullmatch(r"[0-9a-f]{40}", parsed.fragment)
+        assert parsed.fragment == f"ykh09242-v{package['version']}" or re.fullmatch(
+            r"[0-9a-f]{40}", parsed.fragment
+        )
 
 
 def test_cli_examples_name_registered_commands_and_options() -> None:
@@ -123,15 +136,22 @@ def test_cli_examples_name_registered_commands_and_options() -> None:
     option_names = {
         argument.value
         for node in ast.walk(main)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "option"
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "option"
         for argument in node.args
-        if isinstance(argument, ast.Constant) and isinstance(argument.value, str) and argument.value.startswith("-")
+        if isinstance(argument, ast.Constant)
+        and isinstance(argument.value, str)
+        and argument.value.startswith("-")
     }
     root_commands = {
         node.args[0].value
         for node in ast.walk(main)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "command"
-        and node.args and isinstance(node.args[0], ast.Constant)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "command"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
     }
 
     # When parsing task-first command examples.
@@ -166,8 +186,11 @@ def test_cli_examples_name_registered_commands_and_options() -> None:
                     commands = {
                         node.args[0].value
                         for node in ast.walk(declared)
-                        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "command"
-                        and node.args and isinstance(node.args[0], ast.Constant)
+                        if isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "command"
+                        and node.args
+                        and isinstance(node.args[0], ast.Constant)
                     }
                     # Then the documented subcommand exists in its real command group.
                     assert words[0] in commands, line
@@ -180,7 +203,10 @@ def test_authored_cli_inventory_matches_registered_groups() -> None:
         node.value
         for node in ast.walk(source)
         if isinstance(node, ast.Assign)
-        and any(isinstance(target, ast.Name) and target.id == "optional_commands" for target in node.targets)
+        and any(
+            isinstance(target, ast.Name) and target.id == "optional_commands"
+            for target in node.targets
+        )
     )
     registered = {command for _, command in ast.literal_eval(registration)}
 

@@ -104,7 +104,9 @@ async def test_failed_replacement_ack_still_closes_evicted_socket(lifecycle_stat
 
 
 @pytest.mark.asyncio
-async def test_cancelled_startup_releases_configured_hub_and_pool(lifecycle_state, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_cancelled_startup_releases_configured_hub_and_pool(
+    lifecycle_state, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "0")
     monkeypatch.setattr(config, "transport_mode", "stdio")
     pool = Mock()
@@ -146,7 +148,9 @@ async def test_cancelled_replacement_ack_still_closes_evicted_socket(lifecycle_s
         await asyncio.Event().wait()
 
     new.send_json.side_effect = blocked_ack
-    registration = asyncio.create_task(hub._handle_register(new, RegisterMessage(project_hash="same")))
+    registration = asyncio.create_task(
+        hub._handle_register(new, RegisterMessage(project_hash="same"))
+    )
     await asyncio.wait_for(entered.wait(), timeout=1)
     registration.cancel()
     try:
@@ -159,7 +163,8 @@ async def test_cancelled_replacement_ack_still_closes_evicted_socket(lifecycle_s
 
 @pytest.mark.asyncio
 async def test_level_cancelled_replacement_releases_evicted_socket_admission(
-    lifecycle_state, monkeypatch: pytest.MonkeyPatch,
+    lifecycle_state,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(PluginHub, "_admitted", {})
     PluginHub.configure(PluginRegistry())
@@ -204,7 +209,8 @@ async def test_level_cancelled_replacement_releases_evicted_socket_admission(
 
 @pytest.mark.asyncio
 async def test_level_cancelled_socket_close_remains_bounded(
-    lifecycle_state, monkeypatch: pytest.MonkeyPatch,
+    lifecycle_state,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ws = socket_stub()
     stopped = anyio.Event()
@@ -225,7 +231,9 @@ async def test_level_cancelled_socket_close_remains_bounded(
 
 
 @pytest.mark.asyncio
-async def test_shutdown_bounds_socket_close_and_is_idempotent(lifecycle_state, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_shutdown_bounds_socket_close_and_is_idempotent(
+    lifecycle_state, monkeypatch: pytest.MonkeyPatch
+) -> None:
     registry = PluginRegistry()
     PluginHub.configure(registry)
     hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
@@ -264,7 +272,9 @@ async def test_real_fastmcp_client_lifespan_releases_plugin_resources(lifecycle_
 
 
 @pytest.mark.asyncio
-async def test_remote_shutdown_clears_all_tenants_without_unscoped_listing(lifecycle_state, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_remote_shutdown_clears_all_tenants_without_unscoped_listing(
+    lifecycle_state, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(config, "http_remote_hosted", True)
     hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
     sockets = []

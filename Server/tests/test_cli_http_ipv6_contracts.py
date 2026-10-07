@@ -1,4 +1,5 @@
 """Public CLI requests use actual HTTPX with an inert transport boundary."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -8,7 +9,7 @@ import textwrap
 import pytest
 
 
-COMMON = '''
+COMMON = """
 import json, os, socket, sys
 from pathlib import Path
 owned = Path(os.environ["APPDATA"]).parent / "owned-home"
@@ -39,7 +40,7 @@ runner = CliRunner()
 target = "Selected Project@owned+value"
 commands = (["status"], ["instances"], ["tool", "list"], ["raw", "fixture_query", '{"zero":0,"enabled":false}'])
 client_type = httpx.AsyncClient
-'''
+"""
 
 
 def _run(source, tmp_path):
@@ -48,19 +49,29 @@ def _run(source, tmp_path):
         directory = tmp_path / key
         directory.mkdir()
         env[key] = str(directory)
-    for key in ("UNITY_MCP_HOST", "UNITY_MCP_HTTP_PORT", "UNITY_MCP_TIMEOUT", "UNITY_MCP_FORMAT", "UNITY_MCP_INSTANCE"):
+    for key in (
+        "UNITY_MCP_HOST",
+        "UNITY_MCP_HTTP_PORT",
+        "UNITY_MCP_TIMEOUT",
+        "UNITY_MCP_FORMAT",
+        "UNITY_MCP_INSTANCE",
+    ):
         env.pop(key, None)
     result = subprocess.run(
         [sys.executable, "-c", COMMON + textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1], env=env,
-        capture_output=True, text=True, timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("host", ["::1", "2001:db8::1", "[::1]", "127.0.0.1", "localhost"])
 def test_public_cli_all_endpoints_preserve_host_target_auth_and_timeout(host, tmp_path):
-    _run(f'''
+    _run(
+        f"""
 # Given the real CLI/connection module and HTTPX parser with an inert transport.
 host = {host!r}
 def respond(request):
@@ -93,12 +104,15 @@ for command in commands:
     local = host in ("::1", "127.0.0.1", "localhost")
     assert ("Security Warning" in result.stderr) is (not local)
 assert auth_calls == [(host, 18080)] * 4
-''', tmp_path)
+""",
+        tmp_path,
+    )
 
 
 @pytest.mark.parametrize("failure", ["connect", "timeout", "http_status"])
 def test_public_cli_ipv6_preserves_transport_error_exits(failure, tmp_path):
-    _run(f'''
+    _run(
+        f"""
 # Given a valid IPv6 request that fails at the inert HTTP transport boundary.
 failure = {failure!r}
 def respond(request):
@@ -119,11 +133,14 @@ for command in commands:
         assert result.stdout == ""
         expected = "Cannot connect" if failure == "connect" else "timed out" if failure == "timeout" else "HTTP error from server: 503"
         assert expected in result.stderr
-''', tmp_path)
+""",
+        tmp_path,
+    )
 
 
 def test_ipv6_command_timeout_override_and_completed_error_metadata(tmp_path):
-    _run('''
+    _run(
+        """
 # Given completed Unity errors and a controlled launch credential.
 reply = {"success": False, "error": "owned rejected", "hint": "retry", "data": {"reason": "reloading", "zero": 0, "enabled": False}}
 def respond(request):
@@ -142,4 +159,6 @@ cfg = CLIConfig(host="::1", port=18080, timeout=17, unity_instance=target)
 assert connection.run_command("fixture_query", {"zero": 0}, cfg, timeout=3)["success"] is True
 assert requests[-1].extensions["timeout"] == {name: 3 for name in ("connect", "read", "write", "pool")}
 assert auth_calls[-1] == ("::1", 18080) and cfg.timeout == 17
-''', tmp_path)
+""",
+        tmp_path,
+    )

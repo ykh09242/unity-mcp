@@ -1,4 +1,5 @@
 """Bounded process ownership cleanup, including cancellation of its caller."""
+
 from __future__ import annotations
 
 import sys
@@ -17,10 +18,17 @@ def native_python(arguments: list[str], paths: tuple[Path, ...]) -> list[str]:
     Windows venv executables may redirect to another PID. -I -S prevents
     implicit user/global sites; the explicit venv site keeps the installed SDK.
     """
-    bootstrap = ("import runpy,site,sys;sys.prefix=" + repr(sys.prefix) + ";sys.exec_prefix=" + repr(sys.exec_prefix)
-                 + ";site.addsitedir(" + repr(sysconfig.get_path("purelib")) + ");"
-                 "sys.path[:0]=" + repr([str(path) for path in paths]) + ";"
-                 "sys.argv=sys.argv[1:];runpy.run_path(sys.argv[0],run_name='__main__')")
+    bootstrap = (
+        "import runpy,site,sys;sys.prefix="
+        + repr(sys.prefix)
+        + ";sys.exec_prefix="
+        + repr(sys.exec_prefix)
+        + ";site.addsitedir("
+        + repr(sysconfig.get_path("purelib"))
+        + ");"
+        "sys.path[:0]=" + repr([str(path) for path in paths]) + ";"
+        "sys.argv=sys.argv[1:];runpy.run_path(sys.argv[0],run_name='__main__')"
+    )
     return [sys._base_executable, "-I", "-S", "-c", bootstrap, *arguments]
 
 

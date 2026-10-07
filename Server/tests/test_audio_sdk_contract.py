@@ -7,7 +7,7 @@ import textwrap
 
 
 def test_audio_at_actual_registry_and_sdk_boundary():
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import asyncio, importlib
         from fastmcp import FastMCP, Client
         from fastmcp.exceptions import ToolError
@@ -83,9 +83,12 @@ def test_audio_at_actual_registry_and_sdk_boundary():
             print(f"real SDK audio checks={checks} failures={len(errors)} transport_calls={len(sent)}")
             assert not errors, errors
         asyncio.run(main())
-    ''')
+    """)
     result = subprocess.run(
-        [sys.executable, "-B", "-c", code], capture_output=True, text=True, timeout=60,
+        [sys.executable, "-B", "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=60,
         env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
     )
     assert result.returncode == 0, result.stdout + result.stderr

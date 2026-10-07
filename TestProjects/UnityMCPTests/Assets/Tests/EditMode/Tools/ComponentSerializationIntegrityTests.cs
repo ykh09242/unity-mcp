@@ -13,8 +13,7 @@ namespace MCPForUnityTests.Editor.Tools
     {
         private static object ConvertToken(JToken token)
         {
-            var method = typeof(GameObjectSerializer).GetMethod(
-                "ConvertJTokenToPlainObject", BindingFlags.NonPublic | BindingFlags.Static);
+            var method = typeof(GameObjectSerializer).GetMethod("ConvertJTokenToPlainObject", BindingFlags.NonPublic | BindingFlags.Static);
             Assert.IsNotNull(method);
             return method.Invoke(null, new object[] { token });
         }
@@ -48,11 +47,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void NestedNumbersDoNotDiscardOtherValues()
         {
-            var token = new JObject
-            {
-                ["values"] = new JArray(false, ulong.MaxValue, new JValue(1234567890.1234567890123456789m), null),
-                ["zero"] = 0
-            };
+            var token = new JObject { ["values"] = new JArray(false, ulong.MaxValue, new JValue(1234567890.1234567890123456789m), null), ["zero"] = 0 };
             var result = ConvertToken(token);
             Assert.IsInstanceOf<Dictionary<string, object>>(result);
             Assert.AreEqual(token.ToString(Formatting.None), JsonConvert.SerializeObject(result));

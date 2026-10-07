@@ -24,10 +24,24 @@ def git_env(monkeypatch):
 
 def git(repo, *args):
     result = subprocess.run(
-        ["git", "-c", "core.hooksPath=" + os.devnull,
-         "-c", "commit.gpgsign=false", "-c", "user.name=Test",
-         "-c", "user.email=test@example.invalid", "-C", str(repo), *args],
-        capture_output=True, text=True, encoding="utf-8", check=True,
+        [
+            "git",
+            "-c",
+            "core.hooksPath=" + os.devnull,
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-C",
+            str(repo),
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
     )
     return result.stdout.strip()
 
@@ -44,26 +58,43 @@ def repo(tmp_path, git_env):
 @pytest.fixture
 def manifest(tmp_path):
     path = tmp_path / "manifest.json"
-    path.write_text(json.dumps({
-        "dependencies": {mcp_source.PKG_NAME: "old", "com.example.other": "1.2.3"},
-        "testables": ["com.example.other"],
-    }), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "dependencies": {mcp_source.PKG_NAME: "old", "com.example.other": "1.2.3"},
+                "testables": ["com.example.other"],
+            }
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
 def run_switch(repo, manifest, choice=None, *, input=None):
-    command = [sys.executable, "-B", "-W", "error", str(_REPO_ROOT / "mcp_source.py"),
-               "--repo", str(repo), "--manifest", str(manifest)]
+    command = [
+        sys.executable,
+        "-B",
+        "-W",
+        "error",
+        str(_REPO_ROOT / "mcp_source.py"),
+        "--repo",
+        str(repo),
+        "--manifest",
+        str(manifest),
+    ]
     if choice is not None:
         command.extend(["--choice", choice])
-    return subprocess.run(command, input=input, capture_output=True,
-                          text=True, encoding="utf-8")
+    return subprocess.run(command, input=input, capture_output=True, text=True, encoding="utf-8")
 
 
 def assert_source(manifest, source, package="com.ykh09242.unity-mcp"):
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data["dependencies"][package] == source
-    other = "com.coplaydev.unity-mcp" if package == "com.ykh09242.unity-mcp" else "com.ykh09242.unity-mcp"
+    other = (
+        "com.coplaydev.unity-mcp"
+        if package == "com.ykh09242.unity-mcp"
+        else "com.ykh09242.unity-mcp"
+    )
     assert other not in data["dependencies"]
     assert data["dependencies"]["com.example.other"] == "1.2.3"
     assert data["testables"] == ["com.example.other"]
@@ -144,7 +175,11 @@ def test_local_origin_remote_choice_uses_upstream_fallback(repo, manifest):
     git(repo, "remote", "add", "origin", "file:/local/upstream.git")
     result = run_switch(repo, manifest, "3")
     assert result.returncode == 0, result.stderr
-    assert_source(manifest, "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main", "com.coplaydev.unity-mcp")
+    assert_source(
+        manifest,
+        "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main",
+        "com.coplaydev.unity-mcp",
+    )
 
 
 def test_detached_head_remote_choice_pins_checked_out_commit(repo, manifest):
@@ -177,20 +212,32 @@ def test_missing_dependency_leaves_manifest_unchanged(repo, manifest):
 
 
 @pytest.mark.parametrize("original", ["com.coplaydev.unity-mcp", "com.ykh09242.unity-mcp"])
-@pytest.mark.parametrize("choice,expected", [
-    ("1", "com.coplaydev.unity-mcp"),
-    ("2", "com.coplaydev.unity-mcp"),
-    ("3", "com.ykh09242.unity-mcp"),
-    ("4", "com.ykh09242.unity-mcp"),
-])
-def test_switch_migrates_identity_and_testables_without_changing_other_packages(repo, manifest, original, choice, expected):
+@pytest.mark.parametrize(
+    "choice,expected",
+    [
+        ("1", "com.coplaydev.unity-mcp"),
+        ("2", "com.coplaydev.unity-mcp"),
+        ("3", "com.ykh09242.unity-mcp"),
+        ("4", "com.ykh09242.unity-mcp"),
+    ],
+)
+def test_switch_migrates_identity_and_testables_without_changing_other_packages(
+    repo, manifest, original, choice, expected
+):
     # Given: an existing original or fork installation with unrelated dependencies.
     git(repo, "remote", "add", "origin", "https://github.com/ykh09242/unity-mcp.git")
-    manifest.write_text(json.dumps({
-        "dependencies": {original: "old", "com.example.other": "1.2.3"},
-        "testables": [original, "com.example.other"],
-        "scopedRegistries": [{"name": "example", "url": "https://example.invalid", "scopes": ["com.example"]}],
-    }), encoding="utf-8")
+    manifest.write_text(
+        json.dumps(
+            {
+                "dependencies": {original: "old", "com.example.other": "1.2.3"},
+                "testables": [original, "com.example.other"],
+                "scopedRegistries": [
+                    {"name": "example", "url": "https://example.invalid", "scopes": ["com.example"]}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     # When: the real CLI switches between upstream, fork and local sources.
     result = run_switch(repo, manifest, choice)
     # Then: the selected identity replaces the old one without enabling duplicate installs.
@@ -199,7 +246,9 @@ def test_switch_migrates_identity_and_testables_without_changing_other_packages(
     assert set(actual["dependencies"]) == {expected, "com.example.other"}
     assert actual["dependencies"]["com.example.other"] == "1.2.3"
     assert actual["testables"] == [expected, "com.example.other"]
-    assert actual["scopedRegistries"] == [{"name": "example", "url": "https://example.invalid", "scopes": ["com.example"]}]
+    assert actual["scopedRegistries"] == [
+        {"name": "example", "url": "https://example.invalid", "scopes": ["com.example"]}
+    ]
 
 
 def test_remote_upstream_branch_keeps_upstream_package_identity(repo, manifest):
@@ -209,4 +258,8 @@ def test_remote_upstream_branch_keeps_upstream_package_identity(repo, manifest):
     result = run_switch(repo, manifest, "3")
     # Then: the upstream manifest name is used even outside main/beta.
     assert result.returncode == 0, result.stderr
-    assert_source(manifest, "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#topic", "com.coplaydev.unity-mcp")
+    assert_source(
+        manifest,
+        "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#topic",
+        "com.coplaydev.unity-mcp",
+    )

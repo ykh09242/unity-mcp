@@ -54,7 +54,8 @@ namespace MCPForUnityTests.Editor.Helpers
                 var existing = JObject.Parse("{\"type\":\"stdio\",\"command\":\"keep\"}");
                 var snapshot = existing.DeepClone();
                 var error = Assert.Throws<InvalidOperationException>(() =>
-                    ClaudeHttpAuth.BuildLocalEntry("http://localhost:8080/mcp", "synthetic-cli", existing));
+                    ClaudeHttpAuth.BuildLocalEntry("http://localhost:8080/mcp", "synthetic-cli", existing)
+                );
                 StringAssert.Contains("stdio", error.Message);
                 Assert.IsTrue(JToken.DeepEquals(snapshot, existing));
             }
@@ -90,49 +91,54 @@ namespace MCPForUnityTests.Editor.Helpers
         [Test]
         public void ConfigDirectoryOverrideAndScopePrecedenceMatchCli()
         {
-            WithIsolatedConfig((directory, project) =>
-            {
-                string path = Path.Combine(directory, ".claude.json");
-                Assert.AreEqual(path, ClaudeCliMcpConfigurator.GetUserConfigPath());
-                var config = new JObject { ["mcpServers"] = Servers("user") };
-                File.WriteAllText(path, config.ToString());
-                Assert.AreEqual("user", ReadRegistration(project)["command"].Value<string>());
+            WithIsolatedConfig(
+                (directory, project) =>
+                {
+                    string path = Path.Combine(directory, ".claude.json");
+                    Assert.AreEqual(path, ClaudeCliMcpConfigurator.GetUserConfigPath());
+                    var config = new JObject { ["mcpServers"] = Servers("user") };
+                    File.WriteAllText(path, config.ToString());
+                    Assert.AreEqual("user", ReadRegistration(project)["command"].Value<string>());
 
-                File.WriteAllText(Path.Combine(project, ".mcp.json"), new JObject { ["mcpServers"] = Servers("project") }.ToString());
-                Assert.AreEqual("project", ReadRegistration(project)["command"].Value<string>());
+                    File.WriteAllText(Path.Combine(project, ".mcp.json"), new JObject { ["mcpServers"] = Servers("project") }.ToString());
+                    Assert.AreEqual("project", ReadRegistration(project)["command"].Value<string>());
 
-                config["projects"] = new JObject { [project] = new JObject { ["mcpServers"] = Servers("local") } };
-                File.WriteAllText(path, config.ToString());
-                Directory.CreateDirectory(Path.Combine(project, ".claude"));
-                File.WriteAllText(Path.Combine(project, ".claude", "mcp.json"), new JObject { ["mcpServers"] = Servers("legacy") }.ToString());
-                Assert.AreEqual("local", ReadRegistration(project)["command"].Value<string>());
-            });
+                    config["projects"] = new JObject { [project] = new JObject { ["mcpServers"] = Servers("local") } };
+                    File.WriteAllText(path, config.ToString());
+                    Directory.CreateDirectory(Path.Combine(project, ".claude"));
+                    File.WriteAllText(Path.Combine(project, ".claude", "mcp.json"), new JObject { ["mcpServers"] = Servers("legacy") }.ToString());
+                    Assert.AreEqual("local", ReadRegistration(project)["command"].Value<string>());
+                }
+            );
         }
 
         [Test]
         public void ShadowedUserAuthenticationIsNotRemovedByReconfiguration()
         {
-            WithIsolatedConfig((directory, project) =>
-            {
-                var config = new JObject
+            WithIsolatedConfig(
+                (directory, project) =>
                 {
-                    ["projects"] = new JObject { [project] = new JObject { ["mcpServers"] = Servers("local") } },
-                    ["mcpServers"] = new JObject { ["UnityMCP"] = new JObject { ["headersHelper"] = "custom-helper" } }
-                };
-                string path = Path.Combine(directory, ".claude.json");
-                string before = config.ToString();
-                File.WriteAllText(path, before);
-                var method = typeof(ClaudeCliMcpConfigurator).GetMethod("GetExistingConfigForRegistration", BindingFlags.Static | BindingFlags.NonPublic);
-                var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object[] { project }));
-                Assert.IsInstanceOf<InvalidOperationException>(error.InnerException);
-                Assert.AreEqual(before, File.ReadAllText(path));
-            });
+                    var config = new JObject
+                    {
+                        ["projects"] = new JObject { [project] = new JObject { ["mcpServers"] = Servers("local") } },
+                        ["mcpServers"] = new JObject { ["UnityMCP"] = new JObject { ["headersHelper"] = "custom-helper" } },
+                    };
+                    string path = Path.Combine(directory, ".claude.json");
+                    string before = config.ToString();
+                    File.WriteAllText(path, before);
+                    var method = typeof(ClaudeCliMcpConfigurator).GetMethod("GetExistingConfigForRegistration", BindingFlags.Static | BindingFlags.NonPublic);
+                    var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object[] { project }));
+                    Assert.IsInstanceOf<InvalidOperationException>(error.InnerException);
+                    Assert.AreEqual(before, File.ReadAllText(path));
+                }
+            );
         }
 
-        private static JObject Servers(string command) => new JObject
-        {
-            ["UnityMCP"] = new JObject { ["type"] = "stdio", ["command"] = command }
-        };
+        private static JObject Servers(string command) =>
+            new JObject
+            {
+                ["UnityMCP"] = new JObject { ["type"] = "stdio", ["command"] = command },
+            };
 
         private static JObject ReadRegistration(string project)
         {

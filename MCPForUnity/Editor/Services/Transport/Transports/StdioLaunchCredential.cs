@@ -16,14 +16,19 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         [DllImport("libc", SetLastError = true)]
         private static extern int open(string path, int flags);
+
         [DllImport("libc", SetLastError = true)]
         private static extern int openat(int parent, string path, int flags, uint mode);
+
         [DllImport("libc", SetLastError = true)]
         private static extern int mkdirat(int parent, string path, uint mode);
+
         [DllImport("libc", SetLastError = true)]
         private static extern int unlinkat(int parent, string path, int flags);
+
         [DllImport("libc", SetLastError = true)]
         private static extern IntPtr write(int descriptor, byte[] bytes, UIntPtr length);
+
         [DllImport("libc")]
         private static extern int close(int descriptor);
 
@@ -48,10 +53,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             windows.Set(generation, token);
 #else
 #if UNITY_EDITOR_OSX
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) throw new PlatformNotSupportedException();
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                throw new PlatformNotSupportedException();
 #elif UNITY_EDITOR_LINUX
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
-                || RuntimeInformation.ProcessArchitecture != Architecture.X64)
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.ProcessArchitecture != Architecture.X64)
                 throw new PlatformNotSupportedException();
 #else
             throw new PlatformNotSupportedException("No secure stdio credential storage for this platform");
@@ -59,7 +64,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             try
             {
                 parentFd = open(ownedHome ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), DirectoryFlags);
-                if (parentFd < 0) throw new IOException("Cannot open private stdio credential home");
+                if (parentFd < 0)
+                    throw new IOException("Cannot open private stdio credential home");
                 foreach (string part in new[] { ".unity-mcp", "stdio-auth" })
                 {
                     int child = openat(parentFd, part, DirectoryFlags, 0);
@@ -69,7 +75,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             throw new IOException("Cannot create stdio credential directory");
                         child = openat(parentFd, part, DirectoryFlags, 0);
                     }
-                    if (child < 0) throw new IOException("Cannot open stdio credential directory without following links");
+                    if (child < 0)
+                        throw new IOException("Cannot open stdio credential directory without following links");
                     close(parentFd);
                     parentFd = child;
                 }
@@ -77,9 +84,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     throw new IOException("Cannot create private stdio launch credential directory");
                 createdDirectory = true;
                 directoryFd = openat(parentFd, generation, DirectoryFlags, 0);
-                if (directoryFd < 0) throw new IOException("Cannot open private stdio launch credential directory");
+                if (directoryFd < 0)
+                    throw new IOException("Cannot open private stdio launch credential directory");
                 int tokenFd = openat(directoryFd, "token", TokenFlags, 384);
-                if (tokenFd < 0) throw new IOException("Cannot create private stdio launch credential file");
+                if (tokenFd < 0)
+                    throw new IOException("Cannot create private stdio launch credential file");
                 try
                 {
                     byte[] bytes = System.Text.Encoding.UTF8.GetBytes(token);
@@ -101,7 +110,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         public void Dispose()
         {
-            if (windows != null) windows.Delete(generation);
+            if (windows != null)
+                windows.Delete(generation);
             if (directoryFd >= 0)
             {
                 unlinkat(directoryFd, "token", 0);
@@ -110,7 +120,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             if (parentFd >= 0)
             {
-                if (createdDirectory) unlinkat(parentFd, generation, RemoveDirectory);
+                if (createdDirectory)
+                    unlinkat(parentFd, generation, RemoveDirectory);
                 close(parentFd);
                 parentFd = -1;
             }

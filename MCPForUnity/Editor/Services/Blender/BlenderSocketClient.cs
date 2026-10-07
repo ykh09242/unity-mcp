@@ -41,8 +41,13 @@ namespace MCPForUnity.Editor.Services.Blender
         internal const int MaxResponseBytes = 16 * 1024 * 1024;
 
         /// <summary>Sends one command and blocks until the addon answers or the timeout elapses.</summary>
-        public static JToken Send(BlenderEndpoint endpoint, string type, JObject @params = null, int timeoutSeconds = 60,
-            CancellationToken cancellationToken = default)
+        public static JToken Send(
+            BlenderEndpoint endpoint,
+            string type,
+            JObject @params = null,
+            int timeoutSeconds = 60,
+            CancellationToken cancellationToken = default
+        )
         {
             cancellationToken.ThrowIfCancellationRequested();
             timeoutSeconds = Math.Max(1, Math.Min(3600, timeoutSeconds));
@@ -58,8 +63,8 @@ namespace MCPForUnity.Editor.Services.Blender
             if (!connected || !client.Connected)
             {
                 throw new BlenderUnavailableException(
-                    $"Blender addon not reachable at {endpoint}. Start Blender and press " +
-                    "'Connect to MCP server' in the BlenderMCP sidebar (N panel).");
+                    $"Blender addon not reachable at {endpoint}. Start Blender and press " + "'Connect to MCP server' in the BlenderMCP sidebar (N panel)."
+                );
             }
             client.EndConnect(connect);
 
@@ -71,8 +76,13 @@ namespace MCPForUnity.Editor.Services.Blender
             return ReadResponse(stream, type, timeoutSeconds, cancellationToken, elapsed);
         }
 
-        internal static JToken ReadResponse(Stream stream, string type, int timeoutSeconds,
-            CancellationToken cancellationToken = default, Stopwatch elapsedClock = null)
+        internal static JToken ReadResponse(
+            Stream stream,
+            string type,
+            int timeoutSeconds,
+            CancellationToken cancellationToken = default,
+            Stopwatch elapsedClock = null
+        )
         {
             using var buffer = new MemoryStream();
             var chunk = new byte[65536];
@@ -95,8 +105,7 @@ namespace MCPForUnity.Editor.Services.Blender
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!(e.InnerException is SocketException socket) || socket.SocketErrorCode != SocketError.TimedOut)
                         throw;
-                    throw new TimeoutException(
-                        $"Timed out after {timeoutSeconds}s waiting for Blender to answer '{type}'.", e);
+                    throw new TimeoutException($"Timed out after {timeoutSeconds}s waiting for Blender to answer '{type}'.", e);
                 }
                 catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -104,21 +113,29 @@ namespace MCPForUnity.Editor.Services.Blender
                     throw;
                 }
 
-                if (n <= 0) break;
+                if (n <= 0)
+                    break;
                 if (buffer.Length + n > MaxResponseBytes)
                     throw new InvalidDataException($"Blender response exceeds the {MaxResponseBytes}-byte limit.");
                 buffer.Write(chunk, 0, n);
 
-                if (TryParseResponse(buffer.GetBuffer(), (int)buffer.Length, out JObject parsed)) return Unwrap(parsed, type);
+                if (TryParseResponse(buffer.GetBuffer(), (int)buffer.Length, out JObject parsed))
+                    return Unwrap(parsed, type);
             }
 
-            if (TryParseResponse(buffer.GetBuffer(), (int)buffer.Length, out JObject final)) return Unwrap(final, type);
+            if (TryParseResponse(buffer.GetBuffer(), (int)buffer.Length, out JObject final))
+                return Unwrap(final, type);
             throw new IOException($"Blender closed the connection before a complete response to '{type}' arrived.");
         }
 
         /// <summary>Runs <see cref="Send"/> on the thread pool so the editor stays responsive.</summary>
-        public static Task<JToken> SendAsync(BlenderEndpoint endpoint, string type, JObject @params = null, int timeoutSeconds = 60,
-            CancellationToken cancellationToken = default)
+        public static Task<JToken> SendAsync(
+            BlenderEndpoint endpoint,
+            string type,
+            JObject @params = null,
+            int timeoutSeconds = 60,
+            CancellationToken cancellationToken = default
+        )
         {
             return Task.Run(() => Send(endpoint, type, @params, timeoutSeconds, cancellationToken), cancellationToken);
         }
@@ -194,12 +211,14 @@ namespace MCPForUnity.Editor.Services.Blender
     /// <summary>The addon socket could not be reached (Blender closed or the addon not connected).</summary>
     public class BlenderUnavailableException : Exception
     {
-        public BlenderUnavailableException(string message) : base(message) { }
+        public BlenderUnavailableException(string message)
+            : base(message) { }
     }
 
     /// <summary>The addon accepted the command but reported an error while running it.</summary>
     public class BlenderCommandException : Exception
     {
-        public BlenderCommandException(string message) : base(message) { }
+        public BlenderCommandException(string message)
+            : base(message) { }
     }
 }

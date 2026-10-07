@@ -1,10 +1,10 @@
 using System;
 using System.IO;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Tools;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -29,7 +29,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             string guid = Guid.NewGuid().ToString("N");
             _matPath = $"{TempRoot}/StressMat_{guid}.mat";
-            
+
             var material = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
             material.color = Color.white;
             AssetDatabase.CreateAsset(material, _matPath);
@@ -46,12 +46,12 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 UnityEngine.Object.DestroyImmediate(_cube);
             }
-            
+
             if (AssetDatabase.IsValidFolder(TempRoot))
             {
                 AssetDatabase.DeleteAsset(TempRoot);
             }
-            
+
             // Clean up empty parent folders to avoid debris
             CleanupEmptyParentFolders(TempRoot);
         }
@@ -64,7 +64,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "set_material_color",
                 ["materialPath"] = "Assets/NonExistent/Ghost.mat",
-                ["color"] = new JArray(1f, 0f, 0f, 1f)
+                ["color"] = new JArray(1f, 0f, 0f, 1f),
             };
             var resultBadPath = ToJObject(ManageMaterial.HandleCommand(paramsBadPath));
             Assert.IsFalse(resultBadPath.Value<bool>("success"));
@@ -75,14 +75,14 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "set_material_color",
                 ["materialPath"] = _matPath,
-                ["color"] = new JArray(1f) // Invalid
+                ["color"] = new JArray(1f), // Invalid
             };
             var resultBadColor = ToJObject(ManageMaterial.HandleCommand(paramsBadColor));
             Assert.IsFalse(resultBadColor.Value<bool>("success"));
             StringAssert.Contains("Invalid color format", resultBadColor.Value<string>("error"));
 
-             // 3. Bad slot index
-             // Assign material first
+            // 3. Bad slot index
+            // Assign material first
             var renderer = _cube.GetComponent<Renderer>();
             renderer.sharedMaterial = AssetDatabase.LoadAssetAtPath<Material>(_matPath);
 
@@ -92,7 +92,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = "StressCube",
                 ["searchMethod"] = "by_name",
                 ["materialPath"] = _matPath,
-                ["slot"] = 99
+                ["slot"] = 99,
             };
             var resultBadSlot = ToJObject(ManageMaterial.HandleCommand(paramsBadSlot));
             Assert.IsFalse(resultBadSlot.Value<bool>("success"));
@@ -106,12 +106,14 @@ namespace MCPForUnityTests.Editor.Tools
             var renderer = _cube.GetComponent<Renderer>();
             var sharedMat = AssetDatabase.LoadAssetAtPath<Material>(_matPath);
             renderer.sharedMaterial = sharedMat;
-            
+
             // Initial color
             var initialColor = Color.white;
-            if (sharedMat.HasProperty("_BaseColor")) sharedMat.SetColor("_BaseColor", initialColor);
-            else if (sharedMat.HasProperty("_Color")) sharedMat.SetColor("_Color", initialColor);
-            
+            if (sharedMat.HasProperty("_BaseColor"))
+                sharedMat.SetColor("_BaseColor", initialColor);
+            else if (sharedMat.HasProperty("_Color"))
+                sharedMat.SetColor("_Color", initialColor);
+
             // Act - Set Property Block Color
             var blockColor = Color.red;
             var paramsObj = new JObject
@@ -120,9 +122,9 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = "StressCube",
                 ["searchMethod"] = "by_name",
                 ["color"] = new JArray(blockColor.r, blockColor.g, blockColor.b, blockColor.a),
-                ["mode"] = "property_block"
+                ["mode"] = "property_block",
             };
-            
+
             var result = ToJObject(ManageMaterial.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
@@ -141,41 +143,40 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Integration_PureManageMaterial_AssignsMaterialAndModifies()
         {
-             // This simulates a workflow where we create a GO, assign a mat, then tweak it.
-             
-             // 1. Create GO (already done in Setup, but let's verify)
-             Assert.IsNotNull(_cube);
-             
-             // 2. Assign Material using ManageMaterial
-             var assignParams = new JObject
-             {
-                 ["action"] = "assign_material_to_renderer",
-                 ["target"] = "StressCube",
-                 ["searchMethod"] = "by_name",
-                 ["materialPath"] = _matPath
-             };
-             var assignResult = ToJObject(ManageMaterial.HandleCommand(assignParams));
-             Assert.IsTrue(assignResult.Value<bool>("success"), assignResult.ToString());
-             
-             // Verify assignment
-             var renderer = _cube.GetComponent<Renderer>();
-             Assert.AreEqual(Path.GetFileNameWithoutExtension(_matPath), renderer.sharedMaterial.name);
-             
-             // 3. Modify Shared Material Color using ManageMaterial
-             var newColor = Color.blue;
-             var colorParams = new JObject
-             {
-                 ["action"] = "set_material_color",
-                 ["materialPath"] = _matPath,
-                 ["color"] = new JArray(newColor.r, newColor.g, newColor.b, newColor.a)
-             };
-             var colorResult = ToJObject(ManageMaterial.HandleCommand(colorParams));
-             Assert.IsTrue(colorResult.Value<bool>("success"), colorResult.ToString());
-             
-             // Verify color changed on renderer (because it's shared)
-             var propName = renderer.sharedMaterial.HasProperty("_BaseColor") ? "_BaseColor" : "_Color";
-             Assert.AreEqual(newColor, renderer.sharedMaterial.GetColor(propName));
+            // This simulates a workflow where we create a GO, assign a mat, then tweak it.
+
+            // 1. Create GO (already done in Setup, but let's verify)
+            Assert.IsNotNull(_cube);
+
+            // 2. Assign Material using ManageMaterial
+            var assignParams = new JObject
+            {
+                ["action"] = "assign_material_to_renderer",
+                ["target"] = "StressCube",
+                ["searchMethod"] = "by_name",
+                ["materialPath"] = _matPath,
+            };
+            var assignResult = ToJObject(ManageMaterial.HandleCommand(assignParams));
+            Assert.IsTrue(assignResult.Value<bool>("success"), assignResult.ToString());
+
+            // Verify assignment
+            var renderer = _cube.GetComponent<Renderer>();
+            Assert.AreEqual(Path.GetFileNameWithoutExtension(_matPath), renderer.sharedMaterial.name);
+
+            // 3. Modify Shared Material Color using ManageMaterial
+            var newColor = Color.blue;
+            var colorParams = new JObject
+            {
+                ["action"] = "set_material_color",
+                ["materialPath"] = _matPath,
+                ["color"] = new JArray(newColor.r, newColor.g, newColor.b, newColor.a),
+            };
+            var colorResult = ToJObject(ManageMaterial.HandleCommand(colorParams));
+            Assert.IsTrue(colorResult.Value<bool>("success"), colorResult.ToString());
+
+            // Verify color changed on renderer (because it's shared)
+            var propName = renderer.sharedMaterial.HasProperty("_BaseColor") ? "_BaseColor" : "_Color";
+            Assert.AreEqual(newColor, renderer.sharedMaterial.GetColor(propName));
         }
     }
 }
-

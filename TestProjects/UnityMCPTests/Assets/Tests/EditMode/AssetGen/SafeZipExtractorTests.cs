@@ -25,7 +25,12 @@ namespace MCPForUnityTests.Editor.AssetGen
         [TearDown]
         public void TearDown()
         {
-            try { if (Directory.Exists(_work)) Directory.Delete(_work, true); } catch { /* ignore */ }
+            try
+            {
+                if (Directory.Exists(_work))
+                    Directory.Delete(_work, true);
+            }
+            catch { /* ignore */ }
         }
 
         private string MakeZip(string entryName, string content)
@@ -73,10 +78,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void Allowlist_SkipsDisallowedEntries()
         {
             // A hostile marketplace archive: a valid model plus an editor script + a managed dll.
-            string zip = MakeMultiZip(
-                ("teapot.obj", "o teapot"),
-                ("Editor/Hack.cs", "// [InitializeOnLoad] arbitrary code"),
-                ("plugins/Evil.dll", "MZ..."));
+            string zip = MakeMultiZip(("teapot.obj", "o teapot"), ("Editor/Hack.cs", "// [InitializeOnLoad] arbitrary code"), ("plugins/Evil.dll", "MZ..."));
             string dest = Path.Combine(_work, "out");
 
             SafeZipExtractor.ExtractTo(zip, dest, new System.Collections.Generic.HashSet<string> { ".obj" });

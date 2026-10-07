@@ -1,4 +1,5 @@
 """Production Hub + shared-read response reservation regressions, with owned fakes."""
+
 import asyncio
 import importlib
 from copy import deepcopy
@@ -27,7 +28,9 @@ def peer(monkeypatch):
     async def session(session_id):
         return SimpleNamespace(user_id="owned-user")
 
-    websocket = SimpleNamespace(state=SimpleNamespace(plugin_generation="owned-generation"), send_json=send_json)
+    websocket = SimpleNamespace(
+        state=SimpleNamespace(plugin_generation="owned-generation"), send_json=send_json
+    )
     monkeypatch.setattr(PluginHub, "_registry", SimpleNamespace(get_session=session))
     monkeypatch.setattr(PluginHub, "_lock", asyncio.Lock())
     monkeypatch.setattr(PluginHub, "_connections", {"owned-session": websocket})
@@ -39,7 +42,9 @@ def peer(monkeypatch):
 
     async def deliver():
         await sent.wait()
-        await handler._handle_command_result(websocket, CommandResultMessage(id=messages[-1]["id"], result=RESULT))
+        await handler._handle_command_result(
+            websocket, CommandResultMessage(id=messages[-1]["id"], result=RESULT)
+        )
 
     return SimpleNamespace(sent=sent, messages=messages, deliver=deliver)
 
@@ -48,7 +53,9 @@ async def wait(reads, owner, accepted=None, release=None):
     token = response_owner.set(owner)
     try:
         async with reads.session("owned-job") as read:
-            result = await read.fetch(lambda: PluginHub.send_command("owned-session", "get_test_job", {}))
+            result = await read.fetch(
+                lambda: PluginHub.send_command("owned-session", "get_test_job", {})
+            )
             if accepted is not None:
                 accepted.set()
             if release is not None:
@@ -104,10 +111,16 @@ async def test_first_delivery_keeps_shared_snapshot_and_second_copy_charged(peer
 
 
 @pytest.mark.asyncio
-async def test_fanout_reserves_before_copy_and_refuses_capacity_without_second_rpc(peer, monkeypatch):
+async def test_fanout_reserves_before_copy_and_refuses_capacity_without_second_rpc(
+    peer, monkeypatch
+):
     reads = SharedToolReads[dict](freshness_s=2)
     charge = response_size(RESULT)
-    for cap in ("MAX_RETAINED_RESULT_BYTES", "MAX_RETAINED_RESULT_BYTES_PER_USER", "MAX_RETAINED_RESULT_BYTES_PER_SESSION"):
+    for cap in (
+        "MAX_RETAINED_RESULT_BYTES",
+        "MAX_RETAINED_RESULT_BYTES_PER_USER",
+        "MAX_RETAINED_RESULT_BYTES_PER_SESSION",
+    ):
         monkeypatch.setattr(PluginHub, cap, 2 * charge)
     first_owner, second_owner = ResponseOwner(), ResponseOwner()
     allocations = []
@@ -116,7 +129,9 @@ async def test_fanout_reserves_before_copy_and_refuses_capacity_without_second_r
         allocations.append(value)
         return deepcopy(value)
 
-    monkeypatch.setattr(importlib.import_module("services.tools.shared_tool_reads"), "deepcopy", allocate)
+    monkeypatch.setattr(
+        importlib.import_module("services.tools.shared_tool_reads"), "deepcopy", allocate
+    )
     accepted, release = asyncio.Event(), asyncio.Event()
     first = asyncio.create_task(wait(reads, first_owner, accepted, release))
     await peer.sent.wait()
@@ -143,7 +158,9 @@ async def test_expired_snapshot_releases_its_charge_without_releasing_delayed_co
     async with reads.session("owned-job") as read:
         token = response_owner.set(first_owner)
         try:
-            first = asyncio.create_task(read.fetch(lambda: PluginHub.send_command("owned-session", "get_test_job", {})))
+            first = asyncio.create_task(
+                read.fetch(lambda: PluginHub.send_command("owned-session", "get_test_job", {}))
+            )
             await peer.deliver()
             await first
         finally:
@@ -153,7 +170,9 @@ async def test_expired_snapshot_releases_its_charge_without_releasing_delayed_co
         peer.sent.clear()
         token = response_owner.set(second_owner)
         try:
-            second = asyncio.create_task(read.fetch(lambda: PluginHub.send_command("owned-session", "get_test_job", {})))
+            second = asyncio.create_task(
+                read.fetch(lambda: PluginHub.send_command("owned-session", "get_test_job", {}))
+            )
             await peer.sent.wait()
             # Expiry releases the shared source, retaining the first HTTP copy.
             assert len(PluginHub._retained_results) == 1
@@ -176,7 +195,9 @@ async def test_copy_failure_returns_new_capacity_and_final_snapshot_cleanup(peer
     def fail_copy(value):
         raise RuntimeError("owned copy failure")
 
-    monkeypatch.setattr(importlib.import_module("services.tools.shared_tool_reads"), "deepcopy", fail_copy)
+    monkeypatch.setattr(
+        importlib.import_module("services.tools.shared_tool_reads"), "deepcopy", fail_copy
+    )
     task = asyncio.create_task(wait(reads, owner))
     await peer.deliver()
     with pytest.raises(RuntimeError, match="owned copy failure"):
@@ -205,7 +226,9 @@ def test_multi_reservation_refusal_rolls_back_only_new_copies():
 
 
 @pytest.mark.asyncio
-async def test_replacement_keeps_old_snapshot_until_suspended_fetch_reserves_copy(peer, monkeypatch):
+async def test_replacement_keeps_old_snapshot_until_suspended_fetch_reserves_copy(
+    peer, monkeypatch
+):
     reads = SharedToolReads[dict](freshness_s=0)
     owners = [ResponseOwner() for _ in range(3)]
     paused, resume = asyncio.Event(), asyncio.Event()
@@ -223,7 +246,9 @@ async def test_replacement_keeps_old_snapshot_until_suspended_fetch_reserves_cop
     async def fetch(read, owner):
         token = response_owner.set(owner)
         try:
-            return await read.fetch(lambda: PluginHub.send_command("owned-session", "get_test_job", {}))
+            return await read.fetch(
+                lambda: PluginHub.send_command("owned-session", "get_test_job", {})
+            )
         finally:
             response_owner.reset(token)
 

@@ -59,8 +59,20 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var profile = new Profile
             {
-                components = new ArrayList { null, new Effect { active = false, intensity = new Parameter { State = true } },
-                    new OtherEffect { active = true, threshold = new Parameter { State = false } } }
+                components = new ArrayList
+                {
+                    null,
+                    new Effect
+                    {
+                        active = false,
+                        intensity = new Parameter { State = true },
+                    },
+                    new OtherEffect
+                    {
+                        active = true,
+                        threshold = new Parameter { State = false },
+                    },
+                },
             };
             var effects = JArray.FromObject(Summarize(profile, NewCache()));
             Assert.AreEqual(2, effects.Count);
@@ -83,8 +95,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(0, Summarize(new object(), cache).Count);
         }
 
-        private static Profile ProfileWith(Parameter parameter) =>
-            new Profile { components = new ArrayList { new Effect { intensity = parameter } } };
+        private static Profile ProfileWith(Parameter parameter) => new Profile { components = new ArrayList { new Effect { intensity = parameter } } };
 
         private static Dictionary<object, List<object>> NewCache()
         {
@@ -104,24 +115,36 @@ namespace MCPForUnityTests.Editor.Tools
         public sealed class Profile
         {
             public IList components = new ArrayList();
+
             public override bool Equals(object obj) => obj is Profile;
+
             public override int GetHashCode() => 0;
         }
+
         public sealed class Effect
         {
             public bool active = true;
             public Parameter intensity;
         }
+
         public sealed class OtherEffect
         {
             public bool active = true;
             public Parameter threshold;
         }
+
         public sealed class Parameter
         {
             public bool State;
             public int Reads;
-            public bool overrideState { get { Reads++; return State; } }
+            public bool overrideState
+            {
+                get
+                {
+                    Reads++;
+                    return State;
+                }
+            }
         }
     }
 }

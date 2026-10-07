@@ -1,8 +1,8 @@
 using System;
 using System.Reflection;
+using MCPForUnity.Editor.Tools;
 using NUnit.Framework;
 using UnityEngine;
-using MCPForUnity.Editor.Tools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -20,8 +20,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // @"C:\Users\file" — backslashes are NOT escape chars in verbatim strings
             string code = "class C { string s = @\"C:\\Users\\file\"; }";
-            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _),
-                "Verbatim string with backslashes should not break delimiter balance");
+            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _), "Verbatim string with backslashes should not break delimiter balance");
         }
 
         [Test]
@@ -29,8 +28,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // @"He said ""hello""" — doubled quotes are the escape in verbatim strings
             string code = "class C { string s = @\"He said \"\"hello\"\"\"; }";
-            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _),
-                "Verbatim string with doubled quotes should not break delimiter balance");
+            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _), "Verbatim string with doubled quotes should not break delimiter balance");
         }
 
         [Test]
@@ -38,8 +36,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // $"Value: {x}" — the { } are interpolation holes, not real braces
             string code = "class C { void M() { int x = 1; string s = $\"Value: {x}\"; } }";
-            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _),
-                "Interpolated string braces should not be counted as delimiters");
+            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _), "Interpolated string braces should not be counted as delimiters");
         }
 
         [Test]
@@ -47,8 +44,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // $@"Path: {dir}\file" — interpolated + verbatim combined
             string code = "class C { void M() { string dir = \"d\"; string s = $@\"Path: {dir}\\file\"; } }";
-            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _),
-                "Interpolated verbatim string should not break delimiter balance");
+            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _), "Interpolated verbatim string should not break delimiter balance");
         }
 
         [Test]
@@ -56,8 +52,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // $"Outer {$"Inner {x}"}" — nested interpolated strings
             string code = "class C { void M() { int x = 1; string s = $\"Outer {$\"Inner {x}\"}\"; } }";
-            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _),
-                "Nested interpolated strings should not break delimiter balance");
+            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _), "Nested interpolated strings should not break delimiter balance");
         }
 
         [Test]
@@ -65,8 +60,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // C# 11 raw string literal: """{ }"""
             string code = "class C { string s = \"\"\"\n{ }\n\"\"\"; }";
-            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _),
-                "Raw string literal braces should not be counted as delimiters");
+            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _), "Raw string literal braces should not be counted as delimiters");
         }
 
         [Test]
@@ -74,8 +68,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // Verbatim string spanning multiple lines with braces
             string code = "class C { string s = @\"line1\n{ }\"; }";
-            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _),
-                "Multiline verbatim string with braces should not break balance");
+            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _), "Multiline verbatim string with braces should not break balance");
         }
 
         [Test]
@@ -83,8 +76,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // $"literal {{braces}}" — escaped braces in interpolated string
             string code = "class C { string s = $\"literal {{braces}}\"; }";
-            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _),
-                "Escaped braces in interpolated strings should not break balance");
+            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _), "Escaped braces in interpolated strings should not break balance");
         }
 
         [Test]
@@ -92,8 +84,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // $"""...{expr}...""" — interpolated raw string literal (C# 11)
             string code = "class C { void M() { int x = 1; string s = $\"\"\"\n    Hello {x}\n    \"\"\"; } }";
-            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _),
-                "Interpolated raw string should not break delimiter balance");
+            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _), "Interpolated raw string should not break delimiter balance");
         }
 
         [Test]
@@ -101,46 +92,42 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // $$"""...{{expr}}...""" — multi-dollar interpolated raw string
             string code = "class C { void M() { int x = 1; string s = $$\"\"\"\n    {literal} {{x}}\n    \"\"\"; } }";
-            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _),
-                "Multi-dollar raw string should not break delimiter balance");
+            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _), "Multi-dollar raw string should not break delimiter balance");
         }
 
         [Test]
         public void CheckBalancedDelimiters_BracesInComments_Ignored()
         {
             string code = "class C {\n// {\n/* { */\nvoid M() { }\n}";
-            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _),
-                "Braces in comments should be ignored");
+            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _), "Braces in comments should be ignored");
         }
 
         [Test]
         public void CheckBalancedDelimiters_BracesInRegularStrings_Ignored()
         {
             string code = "class C { string s = \"{ }\"; }";
-            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _),
-                "Braces in regular strings should be ignored");
+            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _), "Braces in regular strings should be ignored");
         }
 
         [Test]
         public void CheckBalancedDelimiters_ActuallyUnbalanced_ReturnsFalse()
         {
             string code = "class C { void M() { }";
-            Assert.IsFalse(CallCheckBalancedDelimiters(code, out _, out _),
-                "Actually unbalanced code should return false");
+            Assert.IsFalse(CallCheckBalancedDelimiters(code, out _, out _), "Actually unbalanced code should return false");
         }
 
         [Test]
         public void CheckBalancedDelimiters_ExtraClosingBrace_ReturnsFalse()
         {
             string code = "class C { } }";
-            Assert.IsFalse(CallCheckBalancedDelimiters(code, out _, out _),
-                "Extra closing brace should return false");
+            Assert.IsFalse(CallCheckBalancedDelimiters(code, out _, out _), "Extra closing brace should return false");
         }
 
         [Test]
         public void CheckBalancedDelimiters_RealWorldUnityScript()
         {
-            string code = @"using UnityEngine;
+            string code =
+                @"using UnityEngine;
 
 public class PlayerHUD : MonoBehaviour
 {
@@ -162,8 +149,7 @@ public class PlayerHUD : MonoBehaviour
         Debug.Log(""Literal {{braces}}"");
     }
 }";
-            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _),
-                "Real-world Unity script with interpolated/verbatim strings should pass");
+            Assert.IsTrue(CallCheckBalancedDelimiters(code, out _, out _), "Real-world Unity script with interpolated/verbatim strings should pass");
         }
 
         [TestCase("([)]", ']')]
@@ -237,8 +223,7 @@ public class PlayerHUD : MonoBehaviour
             line = 0;
             expected = '\0';
 
-            var method = typeof(ManageScript).GetMethod("CheckBalancedDelimiters",
-                BindingFlags.NonPublic | BindingFlags.Static);
+            var method = typeof(ManageScript).GetMethod("CheckBalancedDelimiters", BindingFlags.NonPublic | BindingFlags.Static);
             Assert.IsNotNull(method, "CheckBalancedDelimiters method should exist");
 
             var parameters = new object[] { text, 0, '\0' };
@@ -250,8 +235,7 @@ public class PlayerHUD : MonoBehaviour
 
         private static int CallIndexOfClassToken(string source, string className)
         {
-            var method = typeof(ManageScript).GetMethod("IndexOfClassToken",
-                BindingFlags.NonPublic | BindingFlags.Static);
+            var method = typeof(ManageScript).GetMethod("IndexOfClassToken", BindingFlags.NonPublic | BindingFlags.Static);
             Assert.IsNotNull(method, "IndexOfClassToken method should exist");
 
             return (int)method.Invoke(null, new object[] { source, className });

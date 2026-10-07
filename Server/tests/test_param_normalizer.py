@@ -3,6 +3,7 @@
 P1-1.5 uses Pydantic's AliasChoices with Field(validation_alias=...) to accept
 both snake_case and camelCase parameter names at the FastMCP validation layer.
 """
+
 import pytest
 from pydantic import AliasChoices, BaseModel, Field
 from typing import Annotated
@@ -16,8 +17,7 @@ class TestAliasChoicesPattern:
 
         class TestModel(BaseModel):
             search_term: Annotated[
-                str,
-                Field(validation_alias=AliasChoices("search_term", "searchTerm"))
+                str, Field(validation_alias=AliasChoices("search_term", "searchTerm"))
             ]
 
         m = TestModel.model_validate({"search_term": "test"})
@@ -28,8 +28,7 @@ class TestAliasChoicesPattern:
 
         class TestModel(BaseModel):
             search_term: Annotated[
-                str,
-                Field(validation_alias=AliasChoices("search_term", "searchTerm"))
+                str, Field(validation_alias=AliasChoices("search_term", "searchTerm"))
             ]
 
         m = TestModel.model_validate({"searchTerm": "test"})
@@ -40,8 +39,7 @@ class TestAliasChoicesPattern:
 
         class TestModel(BaseModel):
             search_term: Annotated[
-                str,
-                Field(validation_alias=AliasChoices("search_term", "searchTerm"))
+                str, Field(validation_alias=AliasChoices("search_term", "searchTerm"))
             ]
 
         # First matching alias wins
@@ -56,8 +54,8 @@ class TestAliasChoicesPattern:
                 str,
                 Field(
                     default="by_name",
-                    validation_alias=AliasChoices("search_method", "searchMethod")
-                )
+                    validation_alias=AliasChoices("search_method", "searchMethod"),
+                ),
             ]
 
         # Default is used when not provided
@@ -78,10 +76,7 @@ class TestAliasChoicesPattern:
         class TestModel(BaseModel):
             page_size: Annotated[
                 int | None,
-                Field(
-                    default=None,
-                    validation_alias=AliasChoices("page_size", "pageSize")
-                )
+                Field(default=None, validation_alias=AliasChoices("page_size", "pageSize")),
             ]
 
         # None default
@@ -104,8 +99,8 @@ class TestAliasChoicesPattern:
                 bool | str | None,
                 Field(
                     default=None,
-                    validation_alias=AliasChoices("include_inactive", "includeInactive")
-                )
+                    validation_alias=AliasChoices("include_inactive", "includeInactive"),
+                ),
             ]
 
         # camelCase with bool
@@ -121,30 +116,24 @@ class TestAliasChoicesPattern:
 
         class TestModel(BaseModel):
             search_term: Annotated[
-                str,
-                Field(validation_alias=AliasChoices("search_term", "searchTerm"))
+                str, Field(validation_alias=AliasChoices("search_term", "searchTerm"))
             ]
             search_method: Annotated[
                 str,
                 Field(
                     default="by_name",
-                    validation_alias=AliasChoices("search_method", "searchMethod")
-                )
+                    validation_alias=AliasChoices("search_method", "searchMethod"),
+                ),
             ]
             page_size: Annotated[
                 int | None,
-                Field(
-                    default=None,
-                    validation_alias=AliasChoices("page_size", "pageSize")
-                )
+                Field(default=None, validation_alias=AliasChoices("page_size", "pageSize")),
             ]
 
         # Mix of snake_case and camelCase
-        m = TestModel.model_validate({
-            "searchTerm": "Player",
-            "search_method": "by_tag",
-            "pageSize": 25
-        })
+        m = TestModel.model_validate(
+            {"searchTerm": "Player", "search_method": "by_tag", "pageSize": 25}
+        )
 
         assert m.search_term == "Player"
         assert m.search_method == "by_tag"

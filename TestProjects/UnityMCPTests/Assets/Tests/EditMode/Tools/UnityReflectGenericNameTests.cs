@@ -44,12 +44,16 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static JObject Invoke(string action, string className)
         {
-            return JObject.FromObject(UnityReflect.HandleCommand(new JObject
-            {
-                ["action"] = action,
-                ["class_name"] = className,
-                ["member_name"] = "Add"
-            }));
+            return JObject.FromObject(
+                UnityReflect.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["class_name"] = className,
+                        ["member_name"] = "Add",
+                    }
+                )
+            );
         }
     }
 }

@@ -97,14 +97,17 @@ class PluginRegistry:
         async with self._lock:
             previous = (
                 self._user_hash_to_session.get((user_id, project_hash))
-                if user_id else self._hash_to_session.get(project_hash)
+                if user_id
+                else self._hash_to_session.get(project_hash)
             )
             if previous is None:
                 if len(self._sessions) >= self.MAX_SESSIONS:
                     raise ValueError("Plugin session limit reached")
-                if user_id and sum(
-                    session.user_id == user_id for session in self._sessions.values()
-                ) >= self.MAX_SESSIONS_PER_USER:
+                if (
+                    user_id
+                    and sum(session.user_id == user_id for session in self._sessions.values())
+                    >= self.MAX_SESSIONS_PER_USER
+                ):
                     raise ValueError("User plugin session limit reached")
             now = datetime.now(timezone.utc)
             session = PluginSession(
@@ -123,8 +126,7 @@ class PluginRegistry:
             if user_id:
                 # Remote-hosted mode: use composite key (user_id, project_hash)
                 composite_key = (user_id, project_hash)
-                previous_session_id = self._user_hash_to_session.get(
-                    composite_key)
+                previous_session_id = self._user_hash_to_session.get(composite_key)
                 if previous_session_id and previous_session_id != session_id:
                     self._sessions.pop(previous_session_id, None)
                     evicted_session_id = previous_session_id
@@ -178,7 +180,9 @@ class PluginRegistry:
                             del self._user_hash_to_session[composite_key]
                 self.notify_changed()
 
-    async def register_tools_for_session(self, session_id: str, tools: list[ToolDefinitionModel]) -> None:
+    async def register_tools_for_session(
+        self, session_id: str, tools: list[ToolDefinitionModel]
+    ) -> None:
         """Register tools for a specific session."""
         async with self._lock:
             session = self._sessions.get(session_id)
@@ -196,19 +200,29 @@ class PluginRegistry:
             return self._sessions.get(session_id)
 
     async def has_tool_for_session(
-        self, session_id: str, project_hash: str, user_id: str, names: tuple[str, ...],
+        self,
+        session_id: str,
+        project_hash: str,
+        user_id: str,
+        names: tuple[str, ...],
     ) -> bool:
         """Check current tenant mapping and membership in one registry critical section."""
         if not user_id:
             return False
         async with self._lock:
             session = self._sessions.get(session_id)
-            if (session is None or session.user_id != user_id or session.project_hash != project_hash
-                    or self._user_hash_to_session.get((user_id, project_hash)) != session_id):
+            if (
+                session is None
+                or session.user_id != user_id
+                or session.project_hash != project_hash
+                or self._user_hash_to_session.get((user_id, project_hash)) != session_id
+            ):
                 return False
             return any(name in session.tools for name in names)
 
-    async def get_session_id_by_hash(self, project_hash: str, user_id: str | None = None) -> str | None:
+    async def get_session_id_by_hash(
+        self, project_hash: str, user_id: str | None = None
+    ) -> str | None:
         """Resolve a ``project_hash`` (Unity instance id) to a session id."""
 
         if user_id:
@@ -230,9 +244,7 @@ class PluginRegistry:
                         This prevents accidentally leaking sessions across users.
         """
         if user_id is None and config.http_remote_hosted:
-            raise ValueError(
-                "list_sessions requires user_id in remote-hosted mode"
-            )
+            raise ValueError("list_sessions requires user_id in remote-hosted mode")
 
         async with self._lock:
             if user_id is None:

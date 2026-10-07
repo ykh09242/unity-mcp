@@ -23,12 +23,21 @@ def command_response(monkeypatch):
         requests.append(json.loads(request.content))
         return httpx.Response(200, json=response)
 
-    monkeypatch.setattr(connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond)))
+    monkeypatch.setattr(
+        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+    )
     monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
     return response, requests
 
 
-@pytest.mark.parametrize("command", [["asset", "info", "Assets/Missing.asset"], ["component", "add", "Cube", "MissingComponent"], ["raw", "manage_asset", '{"action":"get_info"}']])
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["asset", "info", "Assets/Missing.asset"],
+        ["component", "add", "Cube", "MissingComponent"],
+        ["raw", "manage_asset", '{"action":"get_info"}'],
+    ],
+)
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_domain_failure_exits_nonzero_and_preserves_json(command_response, command, wrapped):
     response, requests = command_response
@@ -53,8 +62,12 @@ def test_dispatcher_error_exits_nonzero(command_response):
 def test_success_envelope_is_normalized_and_keeps_instance(command_response):
     response, requests = command_response
     response.clear()
-    response.update({"status": "success", "result": {"success": True, "data": {"path": "Assets/A.asset"}}})
-    result = CliRunner().invoke(cli, ["--instance", "Project@abc", "--format", "json", "asset", "info", "Assets/A.asset"])
+    response.update(
+        {"status": "success", "result": {"success": True, "data": {"path": "Assets/A.asset"}}}
+    )
+    result = CliRunner().invoke(
+        cli, ["--instance", "Project@abc", "--format", "json", "asset", "info", "Assets/A.asset"]
+    )
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == response["result"]
     assert requests[0]["unity_instance"] == "Project@abc"
@@ -76,7 +89,21 @@ def test_batch_accepts_editor_supported_sizes(command_response, tmp_path, mode, 
 @pytest.mark.parametrize("mode", ["run", "inline"])
 def test_batch_failure_preserves_partial_results(command_response, tmp_path, mode):
     response, _ = command_response
-    failure = {"success": False, "error": "One command failed", "data": {"results": [{"tool": "manage_scene", "callSucceeded": False, "result": {"success": False, "error": "Failed"}}], "callSuccessCount": 0, "callFailureCount": 1}}
+    failure = {
+        "success": False,
+        "error": "One command failed",
+        "data": {
+            "results": [
+                {
+                    "tool": "manage_scene",
+                    "callSucceeded": False,
+                    "result": {"success": False, "error": "Failed"},
+                }
+            ],
+            "callSuccessCount": 0,
+            "callFailureCount": 1,
+        },
+    }
     response.clear()
     response.update({"status": "success", "result": failure})
     commands = [{"tool": "manage_scene", "params": {}}]
@@ -90,7 +117,11 @@ def test_batch_failure_preserves_partial_results(command_response, tmp_path, mod
 
 def test_batch_run_counts_call_success_and_null_results(command_response, tmp_path):
     response, _ = command_response
-    response["data"] = {"results": [{"tool": "custom", "callSucceeded": True, "result": None}], "callSuccessCount": 1, "callFailureCount": 0}
+    response["data"] = {
+        "results": [{"tool": "custom", "callSucceeded": True, "result": None}],
+        "callSuccessCount": 1,
+        "callFailureCount": 0,
+    }
     path = tmp_path / "commands.json"
     path.write_text('[{"tool":"custom","params":{}}]')
     result = CliRunner().invoke(cli, ["batch", "run", str(path)])
@@ -108,11 +139,24 @@ def test_batch_run_json_is_one_document(command_response, tmp_path):
     assert json.loads(result.stdout) == response
 
 
-@pytest.mark.parametrize("command", [["gameobject", "find", "Player"], ["gameobject", "create", "Player"], ["scene", "active"], ["scene", "save"], ["editor", "play"], ["asset", "mkdir", "Assets/New"], ["component", "set", "Cube", "Transform", "position", "[1,2,3]"]])
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["gameobject", "find", "Player"],
+        ["gameobject", "create", "Player"],
+        ["scene", "active"],
+        ["scene", "save"],
+        ["editor", "play"],
+        ["asset", "mkdir", "Assets/New"],
+        ["component", "set", "Cube", "Transform", "position", "[1,2,3]"],
+    ],
+)
 def test_other_domains_propagate_operation_failure(command_response, command):
     response, requests = command_response
     response.clear()
-    response.update({"status": "success", "result": {"success": False, "error": "Operation failed"}})
+    response.update(
+        {"status": "success", "result": {"success": False, "error": "Operation failed"}}
+    )
     result = CliRunner().invoke(cli, command)
     assert result.exit_code == 1, result.output
     assert "Operation failed" in result.output
@@ -154,21 +198,35 @@ def test_raw_custom_payload_without_status_is_not_failure(command_response):
 @pytest.mark.parametrize(
     ("rows", "expected"),
     [
-        ([{"name": "First"}, {"name": "Second", "diagnostic": "LaterField"}],
-         ["First", "Second", "diagnostic", "LaterField"]),
+        (
+            [{"name": "First"}, {"name": "Second", "diagnostic": "LaterField"}],
+            ["First", "Second", "diagnostic", "LaterField"],
+        ),
         ([["First"], ["Second", "LaterCell"]], ["First", "Second", "LaterCell"]),
         ([[], ["LaterCell"]], ["LaterCell"]),
-        ([{"name": "First"}, None, ["LaterCell"], 42],
-         ["First", "None", "LaterCell", "42"]),
+        ([{"name": "First"}, None, ["LaterCell"], 42], ["First", "None", "LaterCell", "42"]),
     ],
 )
 def test_raw_table_preserves_heterogeneous_visible_rows(command_response, rows, expected):
     response, requests = command_response
     response["data"] = rows
-    result = CliRunner().invoke(cli, [
-        "--host", "127.0.0.1", "--port", "8080", "--timeout", "30",
-        "--instance", "Owned@fixture", "--format", "table", "raw", "owned_tool",
-    ])
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8080",
+            "--timeout",
+            "30",
+            "--instance",
+            "Owned@fixture",
+            "--format",
+            "table",
+            "raw",
+            "owned_tool",
+        ],
+    )
     assert result.exit_code == 0, (result.exception, result.output)
     assert result.stderr == ""
     for value in expected:
@@ -187,8 +245,12 @@ def test_transport_errors_still_exit_nonzero(monkeypatch, failure):
             raise httpx.ReadTimeout("Too slow", request=request)
         return httpx.Response(503, json={"success": False, "error": "No Unity connected"})
 
-    monkeypatch.setattr(connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond)))
+    monkeypatch.setattr(
+        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+    )
     monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
     result = CliRunner().invoke(cli, ["scene", "active"])
     assert result.exit_code == 1
-    assert {"http": "HTTP error", "connect": "Cannot connect", "timeout": "timed out"}[failure] in result.output
+    assert {"http": "HTTP error", "connect": "Cannot connect", "timeout": "timed out"}[
+        failure
+    ] in result.output

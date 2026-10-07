@@ -30,30 +30,42 @@ namespace MCPForUnity.Runtime.Helpers
         /// Find the first object using Unity's ordered lookup, optionally including inactive objects.
         /// Throws if the ordered API is unavailable; an unordered lookup cannot preserve selection.
         /// </summary>
-        public static T FindFirst<T>(bool includeInactive = false) where T : UObject
+        public static T FindFirst<T>(bool includeInactive = false)
+            where T : UObject
         {
 #if UNITY_2022_3_OR_NEWER && !UNITY_6000_5_OR_NEWER
-            return (T)UObject.FindFirstObjectByType(typeof(T),
-                includeInactive ? UnityEngine.FindObjectsInactive.Include : UnityEngine.FindObjectsInactive.Exclude);
+            return (T)
+                UObject.FindFirstObjectByType(typeof(T), includeInactive ? UnityEngine.FindObjectsInactive.Include : UnityEngine.FindObjectsInactive.Exclude);
 #else
             if (!_findFirstProbed)
             {
 #if UNITY_6000_5_OR_NEWER
-                _findFirst = typeof(UObject).GetMethod("FindFirstObjectByType",
-                    BindingFlags.Public | BindingFlags.Static, null,
-                    new[] { typeof(Type), typeof(UnityEngine.FindObjectsInactive) }, null);
+                _findFirst = typeof(UObject).GetMethod(
+                    "FindFirstObjectByType",
+                    BindingFlags.Public | BindingFlags.Static,
+                    null,
+                    new[] { typeof(Type), typeof(UnityEngine.FindObjectsInactive) },
+                    null
+                );
 #else
-                _findFirst = typeof(UObject).GetMethod("FindObjectOfType",
-                    BindingFlags.Public | BindingFlags.Static, null,
-                    new[] { typeof(Type), typeof(bool) }, null);
+                _findFirst = typeof(UObject).GetMethod(
+                    "FindObjectOfType",
+                    BindingFlags.Public | BindingFlags.Static,
+                    null,
+                    new[] { typeof(Type), typeof(bool) },
+                    null
+                );
 #endif
                 _findFirstProbed = true;
             }
             if (_findFirst == null)
                 throw new MissingMethodException("Unity's ordered object lookup API is unavailable.");
 #if UNITY_6000_5_OR_NEWER
-            return (T)_findFirst.Invoke(null, new object[] { typeof(T),
-                includeInactive ? UnityEngine.FindObjectsInactive.Include : UnityEngine.FindObjectsInactive.Exclude });
+            return (T)
+                _findFirst.Invoke(
+                    null,
+                    new object[] { typeof(T), includeInactive ? UnityEngine.FindObjectsInactive.Include : UnityEngine.FindObjectsInactive.Exclude }
+                );
 #else
             return (T)_findFirst.Invoke(null, new object[] { typeof(T), includeInactive });
 #endif
@@ -67,7 +79,8 @@ namespace MCPForUnity.Runtime.Helpers
 #endif
 
         /// <summary>Find all active objects of type T.</summary>
-        public static T[] FindAll<T>() where T : UObject
+        public static T[] FindAll<T>()
+            where T : UObject
         {
 #if UNITY_6000_5_OR_NEWER
             return UObject.FindObjectsByType<T>();
@@ -75,9 +88,11 @@ namespace MCPForUnity.Runtime.Helpers
             return UObject.FindObjectsByType<T>(UnityEngine.FindObjectsSortMode.None);
 #else
             var arr = LegacyFindObjectsOfType(typeof(T));
-            if (arr == null) return Array.Empty<T>();
+            if (arr == null)
+                return Array.Empty<T>();
             var typed = new T[arr.Length];
-            for (int i = 0; i < arr.Length; i++) typed[i] = (T)arr[i];
+            for (int i = 0; i < arr.Length; i++)
+                typed[i] = (T)arr[i];
             return typed;
 #endif
         }
@@ -98,12 +113,13 @@ namespace MCPForUnity.Runtime.Helpers
         public static UObject[] FindAll(Type type, bool includeInactive)
         {
 #if UNITY_6000_5_OR_NEWER
-            return UObject.FindObjectsByType(type,
-                includeInactive ? UnityEngine.FindObjectsInactive.Include : UnityEngine.FindObjectsInactive.Exclude);
+            return UObject.FindObjectsByType(type, includeInactive ? UnityEngine.FindObjectsInactive.Include : UnityEngine.FindObjectsInactive.Exclude);
 #elif UNITY_2022_3_OR_NEWER
-            return UObject.FindObjectsByType(type,
+            return UObject.FindObjectsByType(
+                type,
                 includeInactive ? UnityEngine.FindObjectsInactive.Include : UnityEngine.FindObjectsInactive.Exclude,
-                UnityEngine.FindObjectsSortMode.None);
+                UnityEngine.FindObjectsSortMode.None
+            );
 #else
             return LegacyFindObjectsOfType(type, includeInactive) ?? Array.Empty<UObject>();
 #endif
@@ -141,11 +157,19 @@ namespace MCPForUnity.Runtime.Helpers
                     BindingFlags.Public | BindingFlags.Static,
                     null,
                     new[] { typeof(Type) },
-                    null);
+                    null
+                );
             }
-            if (_findObjectsOfTypeByType == null) return null;
-            try { return (UObject[])_findObjectsOfTypeByType.Invoke(null, new object[] { type }); }
-            catch { return null; }
+            if (_findObjectsOfTypeByType == null)
+                return null;
+            try
+            {
+                return (UObject[])_findObjectsOfTypeByType.Invoke(null, new object[] { type });
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static UObject[] LegacyFindObjectsOfType(Type type, bool includeInactive)
@@ -158,15 +182,22 @@ namespace MCPForUnity.Runtime.Helpers
                     BindingFlags.Public | BindingFlags.Static,
                     null,
                     new[] { typeof(Type), typeof(bool) },
-                    null);
+                    null
+                );
             }
             if (_findObjectsOfTypeWithInactive == null)
             {
                 // Older Unity versions only had the (Type) overload — fall back without the flag.
                 return LegacyFindObjectsOfType(type);
             }
-            try { return (UObject[])_findObjectsOfTypeWithInactive.Invoke(null, new object[] { type, includeInactive }); }
-            catch { return null; }
+            try
+            {
+                return (UObject[])_findObjectsOfTypeWithInactive.Invoke(null, new object[] { type, includeInactive });
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static UObject LegacyFindObjectOfType(Type type)
@@ -179,11 +210,19 @@ namespace MCPForUnity.Runtime.Helpers
                     BindingFlags.Public | BindingFlags.Static,
                     null,
                     new[] { typeof(Type) },
-                    null);
+                    null
+                );
             }
-            if (_findObjectOfTypeByType == null) return null;
-            try { return (UObject)_findObjectOfTypeByType.Invoke(null, new object[] { type }); }
-            catch { return null; }
+            if (_findObjectOfTypeByType == null)
+                return null;
+            try
+            {
+                return (UObject)_findObjectOfTypeByType.Invoke(null, new object[] { type });
+            }
+            catch
+            {
+                return null;
+            }
         }
 #endif
     }

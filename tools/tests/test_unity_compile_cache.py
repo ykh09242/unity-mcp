@@ -25,9 +25,15 @@ unity_ci = sys.modules["unity_ci"]
 VERSION = "6000.3.25f1"
 BASE = "unityci/base:ubuntu-3.2.2@sha256:" + "b" * 64
 IMAGE = f"unityci/editor:ubuntu-{VERSION}-base-3@sha256:" + "a" * 64
-ROSLYN_INPUTS = tuple("MonoBleedingEdge/lib/mono/4.5/" + name for name in (
-    "Microsoft.CodeAnalysis.dll", "Microsoft.CodeAnalysis.CSharp.dll",
-    "System.Collections.Immutable.dll", "System.Reflection.Metadata.dll"))
+ROSLYN_INPUTS = tuple(
+    "MonoBleedingEdge/lib/mono/4.5/" + name
+    for name in (
+        "Microsoft.CodeAnalysis.dll",
+        "Microsoft.CodeAnalysis.CSharp.dll",
+        "System.Collections.Immutable.dll",
+        "System.Reflection.Metadata.dll",
+    )
+)
 
 
 @pytest.fixture
@@ -59,19 +65,40 @@ def environment(tmp_path, monkeypatch):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(relative.encode())
     (image_data / "NetCoreRuntime/dotnet").chmod(0o755)
-    for name in ("com.unity.modules.ui", "com.unity.modules.imgui", *cache.PACKAGES,
-                 "com.unity.ide.rider", "com.unity.nuget.newtonsoft-json"):
+    for name in (
+        "com.unity.modules.ui",
+        "com.unity.modules.imgui",
+        *cache.PACKAGES,
+        "com.unity.ide.rider",
+        "com.unity.nuget.newtonsoft-json",
+    ):
         path = image_data / cache.BUILTINS / name
         path.mkdir(parents=True)
-        (path / "package.json").write_text(json.dumps({"name": name, "version": "1.0.0"}), encoding="utf-8")
+        (path / "package.json").write_text(
+            json.dumps({"name": name, "version": "1.0.0"}), encoding="utf-8"
+        )
         (path / "Vendor.cs").write_text("class Vendor {}", encoding="utf-8")
     forbidden = image_data / "Resources/PackageManager/ProjectTemplates/libcache/Editor.dll"
     forbidden.parent.mkdir(parents=True)
     forbidden.write_bytes(b"template not cached")
-    for template in ("com.unity.template.2d-cross-platform-5.1.0", "com.unity.template.3d-cross-platform-17.0.12"):
-        assemblies = image_data / "Resources/PackageManager/ProjectTemplates/libcache" / template / "ScriptAssemblies"
+    for template in (
+        "com.unity.template.2d-cross-platform-5.1.0",
+        "com.unity.template.3d-cross-platform-17.0.12",
+    ):
+        assemblies = (
+            image_data
+            / "Resources/PackageManager/ProjectTemplates/libcache"
+            / template
+            / "ScriptAssemblies"
+        )
         assemblies.mkdir(parents=True)
-        for name in ("UnityEngine.UI.dll", "UnityEditor.UI.dll", "UnityEngine.TestRunner.dll", "UnityEditor.TestRunner.dll", "Assembly-CSharp.dll"):
+        for name in (
+            "UnityEngine.UI.dll",
+            "UnityEditor.UI.dll",
+            "UnityEngine.TestRunner.dll",
+            "UnityEditor.TestRunner.dll",
+            "Assembly-CSharp.dll",
+        ):
             (assemblies / name).write_bytes(f"{template}/{name}".encode())
     (image_data.parent / "Unity").write_bytes(b"editor executable not cached")
     return repo, manifest, image_data
@@ -88,12 +115,24 @@ def install_docker(monkeypatch, image_data, failure=None):
             assert not any(value.startswith("--volume") for value in args)
             directories = [value for value in cache.DIRECTORIES if (image_data / value).is_dir()]
             directories += [value for value in ROSLYN_INPUTS if (image_data / value).exists()]
-            directories += [path.relative_to(image_data).as_posix() for path in image_data.rglob("DotNetSdk") if path.is_dir()]
-            directories += [path.relative_to(image_data).as_posix() for path in (image_data / cache.BUILTINS).iterdir()
-                            if path.name in cache.PACKAGES or path.name.startswith("com.unity.modules.")]
-            directories += [path.relative_to(image_data).as_posix() for path in (image_data / cache.LIBCACHE).rglob("*.dll")
-                            if path.name in cache.UI_REFERENCES and "ScriptAssemblies" in path.parts]
-            return subprocess.CompletedProcess(args, 0, "\n".join(cache.IMAGE_DATA + "/" + value for value in directories))
+            directories += [
+                path.relative_to(image_data).as_posix()
+                for path in image_data.rglob("DotNetSdk")
+                if path.is_dir()
+            ]
+            directories += [
+                path.relative_to(image_data).as_posix()
+                for path in (image_data / cache.BUILTINS).iterdir()
+                if path.name in cache.PACKAGES or path.name.startswith("com.unity.modules.")
+            ]
+            directories += [
+                path.relative_to(image_data).as_posix()
+                for path in (image_data / cache.LIBCACHE).rglob("*.dll")
+                if path.name in cache.UI_REFERENCES and "ScriptAssemblies" in path.parts
+            ]
+            return subprocess.CompletedProcess(
+                args, 0, "\n".join(cache.IMAGE_DATA + "/" + value for value in directories)
+            )
         if args[1] == "create":
             return subprocess.CompletedProcess(args, 0, "c" * 64 + "\n")
         if args[1] == "cp":
@@ -124,27 +163,61 @@ def populate(environment, monkeypatch):
 
 def write_manifest(repo, manifest):
     path = repo / "versions.json"
-    path.write_text(json.dumps({"defaultVersion": VERSION, "previewBaseImage": BASE,
-        "versions": [{"id": VERSION, "channel": "lts", "role": "lts", "image": manifest.versions[0].image}]}), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "defaultVersion": VERSION,
+                "previewBaseImage": BASE,
+                "versions": [
+                    {
+                        "id": VERSION,
+                        "channel": "lts",
+                        "role": "lts",
+                        "image": manifest.versions[0].image,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
 def test_population_is_narrow_preserves_structure_and_modes(environment, monkeypatch):
     directory, result, calls = populate(environment, monkeypatch)
     _, manifest, source = environment
-    assert result == {"unity_data": f".unity-ci-sdk/{VERSION}/Data", "runtime_image": BASE, "populated": True}
-    assert (directory / "Data/NetCoreRuntime/shared/Microsoft.NETCore.App/6.0/libhostpolicy.so").read_bytes() == b"runtime dependency"
-    assert stat.S_IMODE((directory / "Data/NetCoreRuntime/dotnet").stat().st_mode) == stat.S_IMODE((source / "NetCoreRuntime/dotnet").stat().st_mode)
+    assert result == {
+        "unity_data": f".unity-ci-sdk/{VERSION}/Data",
+        "runtime_image": BASE,
+        "populated": True,
+    }
+    assert (
+        directory / "Data/NetCoreRuntime/shared/Microsoft.NETCore.App/6.0/libhostpolicy.so"
+    ).read_bytes() == b"runtime dependency"
+    assert stat.S_IMODE((directory / "Data/NetCoreRuntime/dotnet").stat().st_mode) == stat.S_IMODE(
+        (source / "NetCoreRuntime/dotnet").stat().st_mode
+    )
     builtin = directory / "Data" / cache.BUILTINS
-    assert {path.name for path in builtin.iterdir()} == {"com.unity.modules.ui", "com.unity.modules.imgui", *cache.PACKAGES}
+    assert {path.name for path in builtin.iterdir()} == {
+        "com.unity.modules.ui",
+        "com.unity.modules.imgui",
+        *cache.PACKAGES,
+    }
     templates = directory / "Data" / cache.LIBCACHE
     copied = {path.relative_to(templates).as_posix() for path in templates.rglob("*.dll")}
-    assert copied == {f"{template}/ScriptAssemblies/{name}"
-                      for template in ("com.unity.template.2d-cross-platform-5.1.0", "com.unity.template.3d-cross-platform-17.0.12")
-                      for name in cache.UI_REFERENCES}
+    assert copied == {
+        f"{template}/ScriptAssemblies/{name}"
+        for template in (
+            "com.unity.template.2d-cross-platform-5.1.0",
+            "com.unity.template.3d-cross-platform-17.0.12",
+        )
+        for name in cache.UI_REFERENCES
+    }
     assert not (templates / "Editor.dll").exists()
     for relative in copied:
-        assert (templates / relative).read_bytes() == (source / cache.LIBCACHE / relative).read_bytes()
+        assert (templates / relative).read_bytes() == (
+            source / cache.LIBCACHE / relative
+        ).read_bytes()
     assert not (directory / "Unity").exists()
     assert not (directory / "Data/PlaybackEngines").exists()
     assert calls[-1][1] == "rm"
@@ -165,19 +238,27 @@ def test_valid_hit_calls_no_docker_or_image_preparation(environment, monkeypatch
 def test_key_ignores_repo_sources_profiles_and_unrelated_versions(environment):
     repo, manifest, _ = environment
     first = cache.identity(manifest, VERSION)["cache_key"]
-    for relative in ("MCPForUnity/Runtime/Changed.cs", "tools/compile-refs/Editor.txt", "tools/unity-ci-packages.json"):
+    for relative in (
+        "MCPForUnity/Runtime/Changed.cs",
+        "tools/compile-refs/Editor.txt",
+        "tools/unity-ci-packages.json",
+    ):
         path = repo / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("modified unrelated content", encoding="utf-8")
     unrelated = unity_ci.Version("2021.3.45f2", "lts", "unrelated image", None, None, ())
-    changed = replace(manifest, default_version=unrelated.id, versions=(*manifest.versions, unrelated))
+    changed = replace(
+        manifest, default_version=unrelated.id, versions=(*manifest.versions, unrelated)
+    )
     assert cache.identity(changed, VERSION)["cache_key"] == first
 
 
 def test_selected_editor_identity_and_extractor_change_key(environment, monkeypatch):
     _, manifest, _ = environment
     initial = cache.identity(manifest, VERSION)["cache_key"]
-    changed = replace(manifest, versions=(replace(manifest.versions[0], image=IMAGE[:-64] + "d" * 64),))
+    changed = replace(
+        manifest, versions=(replace(manifest.versions[0], image=IMAGE[:-64] + "d" * 64),)
+    )
     assert cache.identity(changed, VERSION)["cache_key"] != initial
     monkeypatch.setattr(cache, "SCHEMA", cache.SCHEMA + 1)
     assert cache.identity(manifest, VERSION)["cache_key"] != initial
@@ -186,15 +267,34 @@ def test_selected_editor_identity_and_extractor_change_key(environment, monkeypa
 def test_preview_identity_uses_only_verified_editor_archive(environment, monkeypatch):
     _, manifest, _ = environment
     version = "6000.7.0b2"
-    download = unity_ci.EditorDownload("https://download.unity3d.com/download_unity/012345abcdef/LinuxEditorInstaller/Unity-6000.7.0b2.tar.xz", "c" * 32, 42)
+    download = unity_ci.EditorDownload(
+        "https://download.unity3d.com/download_unity/012345abcdef/LinuxEditorInstaller/Unity-6000.7.0b2.tar.xz",
+        "c" * 32,
+        42,
+    )
     row = unity_ci.Version(version, "beta", None, download, None, ())
     manifest = replace(manifest, default_version=version, versions=(row,))
     initial = cache.identity(manifest, version)["cache_key"]
-    module = unity_ci.TestModule("linux-server", download, "Editor/Data/PlaybackEngines/LinuxStandaloneSupport")
-    assert cache.identity(replace(manifest, versions=(replace(row, test_modules=(module,)),)), version)["cache_key"] == initial
-    for archive in (replace(download, md5="d" * 32), replace(download, size=43),
-                    replace(download, url=download.url.replace("012345abcdef", "abcdef012345"))):
-        assert cache.identity(replace(manifest, versions=(replace(row, download=archive),)), version)["cache_key"] != initial
+    module = unity_ci.TestModule(
+        "linux-server", download, "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"
+    )
+    assert (
+        cache.identity(
+            replace(manifest, versions=(replace(row, test_modules=(module,)),)), version
+        )["cache_key"]
+        == initial
+    )
+    for archive in (
+        replace(download, md5="d" * 32),
+        replace(download, size=43),
+        replace(download, url=download.url.replace("012345abcdef", "abcdef012345")),
+    ):
+        assert (
+            cache.identity(replace(manifest, versions=(replace(row, download=archive),)), version)[
+                "cache_key"
+            ]
+            != initial
+        )
 
 
 @pytest.mark.parametrize("damage", ["partial", "corrupt", "extra", "source", "receipt", "mode"])
@@ -209,7 +309,9 @@ def test_invalid_cache_fails_closed_without_docker(environment, monkeypatch, dam
     elif damage == "extra":
         (directory / "Data/Editor.exe").write_bytes(b"forbidden")
     elif damage == "source":
-        manifest = replace(manifest, versions=(replace(manifest.versions[0], image=IMAGE[:-64] + "d" * 64),))
+        manifest = replace(
+            manifest, versions=(replace(manifest.versions[0], image=IMAGE[:-64] + "d" * 64),)
+        )
     elif damage == "receipt":
         (directory / cache.RECEIPT).write_text("{}", encoding="utf-8")
     else:
@@ -224,7 +326,9 @@ def test_invalid_cache_fails_closed_without_docker(environment, monkeypatch, dam
     assert directory.exists()
 
 
-@pytest.mark.parametrize("bad_path", ["outside", ".unity-ci-sdk/other", f".unity-ci-sdk/../.unity-ci-sdk/{VERSION}"])
+@pytest.mark.parametrize(
+    "bad_path", ["outside", ".unity-ci-sdk/other", f".unity-ci-sdk/../.unity-ci-sdk/{VERSION}"]
+)
 def test_output_guard_rejects_other_paths_before_docker(environment, monkeypatch, bad_path):
     docker = Mock()
     monkeypatch.setattr(cache.subprocess, "run", docker)
@@ -233,7 +337,9 @@ def test_output_guard_rejects_other_paths_before_docker(environment, monkeypatch
     docker.assert_not_called()
 
 
-def test_failed_copy_removes_container_and_staging_without_receipt_or_outputs(environment, monkeypatch, capsys):
+def test_failed_copy_removes_container_and_staging_without_receipt_or_outputs(
+    environment, monkeypatch, capsys
+):
     repo, manifest, image_data = environment
     failure = subprocess.CalledProcessError(1, ["docker", "cp"])
     calls = install_docker(monkeypatch, image_data, failure)
@@ -241,7 +347,12 @@ def test_failed_copy_removes_container_and_staging_without_receipt_or_outputs(en
     output.write_text("earlier=value\n", encoding="utf-8")
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     path = write_manifest(repo, manifest)
-    assert cache.main(["prepare", VERSION, "--output", f".unity-ci-sdk/{VERSION}", "--manifest", str(path)]) == 1
+    assert (
+        cache.main(
+            ["prepare", VERSION, "--output", f".unity-ci-sdk/{VERSION}", "--manifest", str(path)]
+        )
+        == 1
+    )
     assert capsys.readouterr().out == ""
     assert output.read_text(encoding="utf-8") == "earlier=value\n"
     assert calls[-1][1] == "rm"
@@ -263,9 +374,17 @@ def test_cli_publishes_only_after_atomic_success(environment, monkeypatch, capsy
         return original_rename(source, target)
 
     monkeypatch.setattr(Path, "rename", rename)
-    assert cache.main(["prepare", VERSION, "--output", f".unity-ci-sdk/{VERSION}", "--manifest", str(path)]) == 0
+    assert (
+        cache.main(
+            ["prepare", VERSION, "--output", f".unity-ci-sdk/{VERSION}", "--manifest", str(path)]
+        )
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["populated"] is True
-    assert output.read_text(encoding="utf-8") == f"unity_data=.unity-ci-sdk/{VERSION}/Data\nruntime_image={BASE}\npopulated=true\n"
+    assert (
+        output.read_text(encoding="utf-8")
+        == f"unity_data=.unity-ci-sdk/{VERSION}/Data\nruntime_image={BASE}\npopulated=true\n"
+    )
 
 
 def test_identity_cli_needs_no_docker(environment, monkeypatch, capsys):
@@ -273,11 +392,16 @@ def test_identity_cli_needs_no_docker(environment, monkeypatch, capsys):
     path = write_manifest(repo, manifest)
     output = repo / "github-output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    monkeypatch.setattr(cache.subprocess, "run", Mock(side_effect=AssertionError("no Docker identity")))
+    monkeypatch.setattr(
+        cache.subprocess, "run", Mock(side_effect=AssertionError("no Docker identity"))
+    )
     assert cache.main(["identity", VERSION, "--manifest", str(path)]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["cache_path"] == f".unity-ci-sdk/{VERSION}"
-    assert output.read_text(encoding="utf-8") == f"cache_key={result['cache_key']}\ncache_path={result['cache_path']}\n"
+    assert (
+        output.read_text(encoding="utf-8")
+        == f"cache_key={result['cache_key']}\ncache_path={result['cache_path']}\n"
+    )
 
 
 def test_nested_modern_sdk_preserves_relative_layout(environment, monkeypatch):
@@ -297,11 +421,20 @@ def test_nested_modern_sdk_preserves_relative_layout(environment, monkeypatch):
     assert (copied / "dotnet").read_bytes() == b"modern runtime"
 
 
-@pytest.mark.parametrize("entry", ["/opt/unity/Editor/Data/Resources/secret/DotNetSdk",
-    "/opt/unity/Editor/Data/../Unity", "/opt/unity/Editor/Data/PlaybackEngines/Linux",
-    "/host/secrets", "/opt/unity/Editor/Data/Resources/PackageManager/BuiltInPackages/com.unity.ide.rider"])
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "/opt/unity/Editor/Data/Resources/secret/DotNetSdk",
+        "/opt/unity/Editor/Data/../Unity",
+        "/opt/unity/Editor/Data/PlaybackEngines/Linux",
+        "/host/secrets",
+        "/opt/unity/Editor/Data/Resources/PackageManager/BuiltInPackages/com.unity.ide.rider",
+    ],
+)
 def test_inventory_rejects_non_public_input_scope(environment, monkeypatch, entry):
-    monkeypatch.setattr(cache.subprocess, "run", Mock(return_value=subprocess.CompletedProcess([], 0, entry)))
+    monkeypatch.setattr(
+        cache.subprocess, "run", Mock(return_value=subprocess.CompletedProcess([], 0, entry))
+    )
     with pytest.raises(ValueError, match="Unexpected"):
         cache.prepare(environment[1], VERSION, Path(f".unity-ci-sdk/{VERSION}"))
     assert list((environment[0] / ".unity-ci-sdk").iterdir()) == []
@@ -355,7 +488,11 @@ def test_malformed_receipt_directories_fail_closed(environment, monkeypatch, dir
     receipt = json.loads((directory / cache.RECEIPT).read_text(encoding="utf-8"))
     receipt["directories"] = directories
     (directory / cache.RECEIPT).write_text(json.dumps(receipt), encoding="utf-8")
-    monkeypatch.setattr(cache.subprocess, "run", Mock(side_effect=AssertionError("corrupt cache must call no Docker")))
+    monkeypatch.setattr(
+        cache.subprocess,
+        "run",
+        Mock(side_effect=AssertionError("corrupt cache must call no Docker")),
+    )
     with pytest.raises(ValueError, match="Invalid compiler cache"):
         cache.prepare(environment[1], VERSION, directory)
 
@@ -367,7 +504,12 @@ def test_failed_atomic_rename_never_publishes_outputs(environment, monkeypatch):
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     monkeypatch.setattr(Path, "rename", Mock(side_effect=OSError("atomic rename failed")))
     path = write_manifest(repo, manifest)
-    assert cache.main(["prepare", VERSION, "--output", f".unity-ci-sdk/{VERSION}", "--manifest", str(path)]) == 1
+    assert (
+        cache.main(
+            ["prepare", VERSION, "--output", f".unity-ci-sdk/{VERSION}", "--manifest", str(path)]
+        )
+        == 1
+    )
     assert not output.exists()
     assert list((repo / ".unity-ci-sdk").iterdir()) == []
 
@@ -391,16 +533,24 @@ def test_declared_compile_reference_inputs_are_in_cache_scope():
         for entry in manifest.read_text(encoding="utf-8").splitlines():
             if entry.startswith("DATA/"):
                 relative = entry[5:]
-                assert any(relative.startswith(root + "/") and cache._allowed_input(root)
-                           for root in cache.DIRECTORIES), (manifest, entry)
+                assert any(
+                    relative.startswith(root + "/") and cache._allowed_input(root)
+                    for root in cache.DIRECTORIES
+                ), (manifest, entry)
             elif entry.startswith("LIBCACHE/"):
                 name = entry[9:]
                 seen_libcache.add(name)
                 if name in source_compiled:
-                    assert not cache._allowed_input("Resources/PackageManager/ProjectTemplates/libcache/template/ScriptAssemblies/" + name)
+                    assert not cache._allowed_input(
+                        "Resources/PackageManager/ProjectTemplates/libcache/template/ScriptAssemblies/"
+                        + name
+                    )
                 else:
                     assert name in ui
-                    assert cache._allowed_input("Resources/PackageManager/ProjectTemplates/libcache/template/ScriptAssemblies/" + name)
+                    assert cache._allowed_input(
+                        "Resources/PackageManager/ProjectTemplates/libcache/template/ScriptAssemblies/"
+                        + name
+                    )
     assert seen_libcache == source_compiled | ui
 
 
@@ -416,13 +566,18 @@ def test_missing_declared_ui_reference_never_publishes_cache(environment, monkey
     assert list((repo / ".unity-ci-sdk").iterdir()) == []
 
 
-@pytest.mark.parametrize("entry", [
-    "Resources/PackageManager/ProjectTemplates/libcache/Template/Other/UnityEngine.UI.dll",
-    "Resources/PackageManager/ProjectTemplates/libcache/Template/ScriptAssemblies/Assembly-CSharp.dll",
-    "Resources/PackageManager/ProjectTemplates/libcache/Template/ScriptAssemblies/UnityEditor.TestRunner.dll",
-    "Resources/PackageManager/ProjectTemplates/libcache/Template/ScriptAssemblies",
-    "Resources/PackageManager/ProjectTemplates/libcache/" + "/".join(["nested"] * 9) + "/ScriptAssemblies/UnityEngine.UI.dll",
-])
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "Resources/PackageManager/ProjectTemplates/libcache/Template/Other/UnityEngine.UI.dll",
+        "Resources/PackageManager/ProjectTemplates/libcache/Template/ScriptAssemblies/Assembly-CSharp.dll",
+        "Resources/PackageManager/ProjectTemplates/libcache/Template/ScriptAssemblies/UnityEditor.TestRunner.dll",
+        "Resources/PackageManager/ProjectTemplates/libcache/Template/ScriptAssemblies",
+        "Resources/PackageManager/ProjectTemplates/libcache/"
+        + "/".join(["nested"] * 9)
+        + "/ScriptAssemblies/UnityEngine.UI.dll",
+    ],
+)
 def test_template_scope_accepts_only_bounded_exact_ui_files(entry):
     assert not cache._allowed_input(entry)
 
@@ -430,24 +585,36 @@ def test_template_scope_accepts_only_bounded_exact_ui_files(entry):
 def test_optional_roslyn_cache_copies_only_exact_coherent_group(environment, monkeypatch):
     directory, _, calls = populate(environment, monkeypatch)
     data = directory / "Data"
-    assert {path.relative_to(data).as_posix() for path in (data / "MonoBleedingEdge").rglob("*.dll")} == set(ROSLYN_INPUTS)
+    assert {
+        path.relative_to(data).as_posix() for path in (data / "MonoBleedingEdge").rglob("*.dll")
+    } == set(ROSLYN_INPUTS)
     receipt = json.loads((directory / cache.RECEIPT).read_text(encoding="utf-8"))
     assert set(ROSLYN_INPUTS) <= set(receipt["directories"])
     assert set(ROSLYN_INPUTS) <= set(receipt["files"])
-    assert {args[2].split(cache.IMAGE_DATA + "/", 1)[1] for args in calls
-            if args[1] == "cp" and "MonoBleedingEdge" in args[2]} == set(ROSLYN_INPUTS)
+    assert {
+        args[2].split(cache.IMAGE_DATA + "/", 1)[1]
+        for args in calls
+        if args[1] == "cp" and "MonoBleedingEdge" in args[2]
+    } == set(ROSLYN_INPUTS)
     for relative in ROSLYN_INPUTS:
         assert relative in cache.INVENTORY
         assert cache._allowed_input(relative)
-    for relative in ("MonoBleedingEdge", "MonoBleedingEdge/lib/mono/4.5", "MonoBleedingEdge/lib/mono/4.5/mscorlib.dll",
-                     "MonoBleedingEdge/lib/mono/4.8/Microsoft.CodeAnalysis.dll"):
+    for relative in (
+        "MonoBleedingEdge",
+        "MonoBleedingEdge/lib/mono/4.5",
+        "MonoBleedingEdge/lib/mono/4.5/mscorlib.dll",
+        "MonoBleedingEdge/lib/mono/4.8/Microsoft.CodeAnalysis.dll",
+    ):
         assert not cache._allowed_input(relative)
 
 
 @pytest.mark.parametrize("relative", ROSLYN_INPUTS)
 @pytest.mark.parametrize("damage", ["missing", "directory"])
 def test_optional_roslyn_input_missing_or_wrong_type_cannot_publish_cache(
-    environment, monkeypatch, relative, damage,
+    environment,
+    monkeypatch,
+    relative,
+    damage,
 ):
     repo, manifest, image_data = environment
     path = image_data / relative
@@ -463,7 +630,9 @@ def test_optional_roslyn_input_missing_or_wrong_type_cannot_publish_cache(
 
 @pytest.mark.parametrize("relative", ROSLYN_INPUTS)
 @pytest.mark.parametrize("damage", ["missing", "tampered", "directory", "receipt_omission", "mode"])
-def test_optional_roslyn_restored_inputs_are_verified_before_use(environment, monkeypatch, relative, damage):
+def test_optional_roslyn_restored_inputs_are_verified_before_use(
+    environment, monkeypatch, relative, damage
+):
     directory, _, _ = populate(environment, monkeypatch)
     path = directory / "Data" / relative
     receipt_path = directory / cache.RECEIPT

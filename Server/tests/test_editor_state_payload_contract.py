@@ -20,7 +20,7 @@ def _run_sdk_regression(source):
 
 
 def test_editor_state_rejects_missing_payload_without_fabricating_readiness():
-    source = '''
+    source = """
         import asyncio, copy, json, sys
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
@@ -67,12 +67,12 @@ def test_editor_state_rejects_missing_payload_without_fabricating_readiness():
                     assert response["data"]["retry_after_ms"] == 25, response
 
         asyncio.run(scenario())
-    '''
+    """
     _run_sdk_regression(source)
 
 
 def test_editor_state_preserves_typed_transport_success_and_retry_metadata():
-    _run_sdk_regression('''
+    _run_sdk_regression("""
         import json, sys
         import anyio
         from unittest.mock import AsyncMock
@@ -113,11 +113,11 @@ def test_editor_state_preserves_typed_transport_success_and_retry_metadata():
                             assert result["hint"] == reply.hint, result
                             assert result["data"] == reply.data, result
         anyio.run(scenario)
-    ''')
+    """)
 
 
 def test_editor_state_reuses_inferred_instance_for_local_scanning():
-    _run_sdk_regression('''
+    _run_sdk_regression("""
         import json, sys
         import anyio
         from unittest.mock import AsyncMock
@@ -153,11 +153,11 @@ def test_editor_state_reuses_inferred_instance_for_local_scanning():
                     state.external_changes_scanner.update_and_get_async.assert_awaited_with("Selected@fixture")
             assert state.unity_transport.send_with_unity_instance.await_count == 2
         anyio.run(scenario)
-    ''')
+    """)
 
 
 def test_editor_state_keeps_native_snapshot_when_optional_discovery_fails():
-    _run_sdk_regression('''
+    _run_sdk_regression("""
         import json, sys
         import anyio
         from unittest.mock import AsyncMock
@@ -203,4 +203,4 @@ def test_editor_state_keeps_native_snapshot_when_optional_discovery_fails():
             else:
                 raise AssertionError("Optional discovery must propagate cancellation")
         anyio.run(scenario)
-    ''')
+    """)

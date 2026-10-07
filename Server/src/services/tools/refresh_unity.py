@@ -22,7 +22,13 @@ logger = logging.getLogger(__name__)
 
 # Blocking reasons that indicate Unity is actually busy (not just stale status).
 # Includes canonical editor_state advice reasons and the legacy asset_import reason.
-_REAL_BLOCKING_REASONS = {"compiling", "domain_reload", "running_tests", "asset_import", "asset_refresh"}
+_REAL_BLOCKING_REASONS = {
+    "compiling",
+    "domain_reload",
+    "running_tests",
+    "asset_import",
+    "asset_refresh",
+}
 
 
 def _in_pytest() -> bool:
@@ -45,7 +51,8 @@ async def wait_for_editor_ready(ctx: Context, timeout_s: float = 30.0) -> tuple[
     while time.monotonic() < deadline:
         try:
             state_resp = await asyncio.wait_for(
-                editor_state.get_editor_state_authoritative(ctx), timeout=max(0.0, deadline - time.monotonic()),
+                editor_state.get_editor_state_authoritative(ctx),
+                timeout=max(0.0, deadline - time.monotonic()),
             )
             if time.monotonic() >= deadline:
                 break
@@ -157,14 +164,23 @@ async def send_mutation(
             if ready and verified.get("success") is True:
                 # Verification only reads state; it cannot schedule another reload.
                 return resp
-    failed = resp.get("success") is False if isinstance(resp, dict) else (
-        isinstance(resp, MCPResponse) and resp.success is False
+    failed = (
+        resp.get("success") is False
+        if isinstance(resp, dict)
+        else (isinstance(resp, MCPResponse) and resp.success is False)
     )
-    error = (resp.get("error") or resp.get("message") or "") if isinstance(resp, dict) else (
-        getattr(resp, "error", "") or getattr(resp, "message", "") or ""
+    error = (
+        (resp.get("error") or resp.get("message") or "")
+        if isinstance(resp, dict)
+        else (getattr(resp, "error", "") or getattr(resp, "message", "") or "")
     )
     timed_out = "timeout" in error.lower() or "timed out" in error.lower()
-    if failed and not timed_out and not is_connection_lost_after_send(resp) and not is_reloading_rejection(resp):
+    if (
+        failed
+        and not timed_out
+        and not is_connection_lost_after_send(resp)
+        and not is_reloading_rejection(resp)
+    ):
         # Return definitive tool errors without delaying them behind an
         # unrelated readiness poll. Timeouts can occur after a mutation was
         # sent, so keep their readiness wait alongside reload/disconnect recovery.
@@ -198,7 +214,9 @@ async def verify_edit_by_sha(
     except Exception as exc:
         logger.debug(
             "Failed to verify edit after disconnect for %s at %s: %r",
-            name, path, exc,
+            name,
+            path,
+            exc,
         )
     return False
 
@@ -213,16 +231,18 @@ async def verify_edit_by_sha(
 async def refresh_unity(
     ctx: Context,
     mode: Annotated[Literal["if_dirty", "force"], "Refresh mode"] = "if_dirty",
-    scope: Annotated[Literal["assets", "scripts", "all"],
-                     "Refresh scope"] = "all",
-    compile: Annotated[Literal["none", "request"],
-                       "Whether to request compilation"] = "none",
-    wait_for_ready: Annotated[bool,
-                              "If true, wait until mcpforunity://editor/state reports data.advice.ready_for_tools true"] = True,
+    scope: Annotated[Literal["assets", "scripts", "all"], "Refresh scope"] = "all",
+    compile: Annotated[Literal["none", "request"], "Whether to request compilation"] = "none",
+    wait_for_ready: Annotated[
+        bool,
+        "If true, wait until mcpforunity://editor/state reports data.advice.ready_for_tools true",
+    ] = True,
 ) -> MCPResponse | dict[str, Any]:
     unity_instance = await get_unity_instance_from_context(ctx)
     dirty_instance = unity_instance or await editor_state.infer_single_instance_id(ctx)
-    dirty_snapshot = external_changes_scanner.capture_dirty_state(dirty_instance) if dirty_instance else None
+    dirty_snapshot = (
+        external_changes_scanner.capture_dirty_state(dirty_instance) if dirty_instance else None
+    )
 
     params: dict[str, Any] = {
         "mode": mode,
@@ -248,10 +268,16 @@ async def refresh_unity(
     # A domain reload may lose the response after dispatch. Recover readiness
     # without replaying the refresh; execution remains unconfirmed in that case.
     # Convert MCPResponse to dict if needed
-    response_dict = response if isinstance(response, dict) else (response.model_dump() if hasattr(response, "model_dump") else response.__dict__)
+    response_dict = (
+        response
+        if isinstance(response, dict)
+        else (response.model_dump() if hasattr(response, "model_dump") else response.__dict__)
+    )
     if not response_dict.get("success", True):
         err = (response_dict.get("error") or response_dict.get("message") or "").lower()
-        is_connection_lost = is_connection_lost_after_send(response_dict) or ("timeout" in err and compile == "request")
+        is_connection_lost = is_connection_lost_after_send(response_dict) or (
+            "timeout" in err and compile == "request"
+        )
         # A rejected command never ran. Later readiness cannot prove refresh success.
         # Only an ambiguous lost response may recover, without replaying the write.
         if is_reloading_rejection(response_dict) or not wait_for_ready or not is_connection_lost:
@@ -276,8 +302,14 @@ async def refresh_unity(
     # A dispatch-only response does not confirm import. Acknowledge only the edits
     # observed before dispatch, leaving concurrent or subsequently sampled edits dirty.
     response_data = response_dict.get("data")
-    refresh_performed = (response_dict.get("success") is True and scope in ("assets", "all")
-                         and (not isinstance(response_data, dict) or response_data.get("refresh_triggered") is not False))
+    refresh_performed = (
+        response_dict.get("success") is True
+        and scope in ("assets", "all")
+        and (
+            not isinstance(response_data, dict)
+            or response_data.get("refresh_triggered") is not False
+        )
+    )
     if ready_confirmed and refresh_performed and dirty_snapshot is not None:
         external_changes_scanner.clear_dirty(dirty_instance, expected=dirty_snapshot)
 

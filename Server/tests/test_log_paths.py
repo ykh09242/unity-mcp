@@ -49,8 +49,7 @@ def _norm(p: str) -> str:
 class TestPlatformDefaults:
     def test_macos_uses_application_support(self):
         path = resolve_log_dir(platform="darwin", env={})
-        assert _norm(path).endswith(_norm(
-            "Library/Application Support/UnityMCP/Logs"))
+        assert _norm(path).endswith(_norm("Library/Application Support/UnityMCP/Logs"))
         assert "~" not in path
 
     def test_windows_uses_localappdata_env(self):
@@ -58,8 +57,9 @@ class TestPlatformDefaults:
             platform="win32",
             env={"LOCALAPPDATA": r"C:\Users\alice\AppData\Local"},
         )
-        assert _norm(path) == _norm(os.path.join(
-            r"C:\Users\alice\AppData\Local", "UnityMCP", "Logs"))
+        assert _norm(path) == _norm(
+            os.path.join(r"C:\Users\alice\AppData\Local", "UnityMCP", "Logs")
+        )
 
     def test_windows_falls_back_when_localappdata_missing(self):
         path = resolve_log_dir(platform="win32", env={})
@@ -72,8 +72,7 @@ class TestPlatformDefaults:
             platform="linux",
             env={"XDG_STATE_HOME": "/home/alice/.local/state"},
         )
-        assert _norm(path) == _norm(os.path.join(
-            "/home/alice/.local/state", "UnityMCP", "Logs"))
+        assert _norm(path) == _norm(os.path.join("/home/alice/.local/state", "UnityMCP", "Logs"))
 
     def test_linux_falls_back_to_default_xdg_path(self):
         path = resolve_log_dir(platform="linux", env={})
@@ -86,8 +85,7 @@ class TestPlatformDefaults:
             platform=unix_like,
             env={"XDG_STATE_HOME": "/var/state"},
         )
-        assert _norm(path) == _norm(os.path.join(
-            "/var/state", "UnityMCP", "Logs"))
+        assert _norm(path) == _norm(os.path.join("/var/state", "UnityMCP", "Logs"))
 
 
 class TestDefaults:

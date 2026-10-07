@@ -2,12 +2,12 @@ using System;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.GameObjects;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -44,7 +44,8 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 foreach (var scene in new[] { ownedScene, secondaryScene })
                 {
-                    if (!scene.IsValid() || !scene.isLoaded) continue;
+                    if (!scene.IsValid() || !scene.isLoaded)
+                        continue;
                     foreach (var root in scene.GetRootGameObjects())
                     {
                         foreach (var transform in root.GetComponentsInChildren<Transform>(true))
@@ -81,19 +82,28 @@ namespace MCPForUnityTests.Editor.Tools
             return go;
         }
 
-        private GameObject[] Objects() => new[] { ownedScene, secondaryScene }
-            .Where(scene => scene.IsValid() && scene.isLoaded)
-            .SelectMany(scene => scene.GetRootGameObjects())
-            .SelectMany(root => root.GetComponentsInChildren<Transform>(true))
-            .Select(transform => transform.gameObject).ToArray();
+        private GameObject[] Objects() =>
+            new[] { ownedScene, secondaryScene }
+                .Where(scene => scene.IsValid() && scene.isLoaded)
+                .SelectMany(scene => scene.GetRootGameObjects())
+                .SelectMany(root => root.GetComponentsInChildren<Transform>(true))
+                .Select(transform => transform.gameObject)
+                .ToArray();
 
         private static JObject Call(JObject request) => JObject.FromObject(ManageGameObject.HandleCommand(request));
+
         private static void Succeeded(JObject response) => Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+
         private JObject Create(string name = null) => new JObject { ["action"] = "create", ["name"] = name ?? prefix + "Created" };
-        private JObject Duplicate(GameObject source) => new JObject
-        {
-            ["action"] = "duplicate", ["target"] = source.GetInstanceIDCompat(), ["searchMethod"] = "by_id"
-        };
+
+        private JObject Duplicate(GameObject source) =>
+            new JObject
+            {
+                ["action"] = "duplicate",
+                ["target"] = source.GetInstanceIDCompat(),
+                ["searchMethod"] = "by_id",
+            };
+
         private GameObject ResponseObject(JObject response, bool duplicate = false)
         {
             var data = duplicate ? response["data"]["duplicatedObject"] : response["data"];
@@ -156,7 +166,8 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var request = Create();
             request["saveAsPrefab"] = true;
-            if (kind != "omitted") request["prefabPath"] = kind == "null" ? JValue.CreateNull() : new JValue("");
+            if (kind != "omitted")
+                request["prefabPath"] = kind == "null" ? JValue.CreateNull() : new JValue("");
             var response = Call(request);
             Assert.IsFalse(response.Value<bool>("success"));
             StringAssert.Contains("prefabPath", response.Value<string>("error"));
@@ -170,7 +181,8 @@ namespace MCPForUnityTests.Editor.Tools
         public void HostilePrefabPath_IsRejectedBeforeObjectsTagsSelectionOrDirectoriesChange(string kind)
         {
             CreateAssetRoot();
-            string relative = kind == "traversal" ? assetRoot + "/First/../Rejected/New.prefab"
+            string relative =
+                kind == "traversal" ? assetRoot + "/First/../Rejected/New.prefab"
                 : kind == "invalid_leaf" ? assetRoot + "/Rejected/Bad?Name.prefab"
                 : kind == "invalid_ancestor" ? assetRoot + "/Bad?Directory/New.prefab"
                 : assetRoot + "/Rejected/New.prefab";
@@ -200,7 +212,10 @@ namespace MCPForUnityTests.Editor.Tools
         public void NullableVectorFallback_RemainsSupported(string kind)
         {
             var request = Create();
-            request["position"] = kind == "null" ? JValue.CreateNull() : kind == "short" ? new JArray(1) : new JArray(1, "bad", 3);
+            request["position"] =
+                kind == "null" ? JValue.CreateNull()
+                : kind == "short" ? new JArray(1)
+                : new JArray(1, "bad", 3);
             var response = Call(request);
             Succeeded(response);
             Assert.AreEqual(Vector3.zero, ResponseObject(response).transform.localPosition);
@@ -211,7 +226,12 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var request = Create();
             request["position"] = new JArray("0", -1, 2, 99);
-            request["scale"] = new JObject { ["x"] = 0, ["y"] = 1, ["z"] = 2 };
+            request["scale"] = new JObject
+            {
+                ["x"] = 0,
+                ["y"] = 1,
+                ["z"] = 2,
+            };
             var response = Call(request);
             Succeeded(response);
             var go = ResponseObject(response);
@@ -375,7 +395,14 @@ namespace MCPForUnityTests.Editor.Tools
             var numericName = Owned("Numeric");
             Assert.IsNull(GameObject.Find(idObject.GetInstanceIDCompat().ToString()), "Numeric-name collision must be created only by this fixture.");
             numericName.name = idObject.GetInstanceIDCompat().ToString();
-            var response = Call(new JObject { ["action"] = "delete", ["target"] = numericName.name, ["searchMethod"] = "by_name" });
+            var response = Call(
+                new JObject
+                {
+                    ["action"] = "delete",
+                    ["target"] = numericName.name,
+                    ["searchMethod"] = "by_name",
+                }
+            );
             Succeeded(response);
             Assert.IsTrue(numericName == null);
             CollectionAssert.AreEqual(new[] { idObject }, Objects());

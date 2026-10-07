@@ -20,29 +20,16 @@ def asset():
 
 @asset.command("search")
 @click.argument("pattern", default="*")
+@click.option("--path", "-p", default="Assets", help="Folder path to search in.")
 @click.option(
-    "--path", "-p",
-    default="Assets",
-    help="Folder path to search in."
-)
-@click.option(
-    "--type", "-t",
+    "--type",
+    "-t",
     "filter_type",
     default=None,
-    help="Filter by asset type (e.g., Material, Prefab, MonoScript)."
+    help="Filter by asset type (e.g., Material, Prefab, MonoScript).",
 )
-@click.option(
-    "--limit", "-l",
-    default=25,
-    type=int,
-    help="Maximum results per page."
-)
-@click.option(
-    "--page",
-    default=1,
-    type=int,
-    help="Page number (1-based)."
-)
+@click.option("--limit", "-l", default=25, type=int, help="Maximum results per page.")
+@click.option("--page", default=1, type=int, help="Page number (1-based).")
 @handle_unity_errors
 def search(pattern: str, path: str, filter_type: Optional[str], limit: int, page: int):
     """Search for assets.
@@ -73,11 +60,7 @@ def search(pattern: str, path: str, filter_type: Optional[str], limit: int, page
 
 @asset.command("info")
 @click.argument("path")
-@click.option(
-    "--preview",
-    is_flag=True,
-    help="Generate preview thumbnail (may be large)."
-)
+@click.option("--preview", is_flag=True, help="Generate preview thumbnail (may be large).")
 @handle_unity_errors
 def info(path: str, preview: bool):
     """Get detailed information about an asset.
@@ -102,11 +85,7 @@ def info(path: str, preview: bool):
 @asset.command("create")
 @click.argument("path")
 @click.argument("asset_type")
-@click.option(
-    "--properties", "-p",
-    default=None,
-    help='Initial properties as JSON.'
-)
+@click.option("--properties", "-p", default=None, help="Initial properties as JSON.")
 @handle_unity_errors
 def create(path: str, asset_type: str, properties: Optional[str]):
     """Create a new asset.
@@ -136,11 +115,7 @@ def create(path: str, asset_type: str, properties: Optional[str]):
 
 @asset.command("delete")
 @click.argument("path")
-@click.option(
-    "--force", "-f",
-    is_flag=True,
-    help="Skip confirmation prompt."
-)
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt.")
 @handle_unity_errors
 def delete(path: str, force: bool):
     """Delete an asset.
@@ -154,8 +129,7 @@ def delete(path: str, force: bool):
 
     confirm_destructive_action("Delete", "asset", path, force)
 
-    result = run_command(
-        "manage_asset", {"action": "delete", "path": path}, config)
+    result = run_command("manage_asset", {"action": "delete", "path": path}, config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Deleted: {path}")
@@ -226,6 +200,7 @@ def rename(path: str, new_name: str):
 
     # Construct destination path
     import os
+
     dir_path = os.path.dirname(path)
     destination = os.path.join(dir_path, new_name).replace("\\", "/")
 
@@ -253,8 +228,7 @@ def import_asset(path: str):
     """
     config = get_config()
 
-    result = run_command(
-        "manage_asset", {"action": "import", "path": path}, config)
+    result = run_command("manage_asset", {"action": "import", "path": path}, config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Imported: {path}")
@@ -273,8 +247,7 @@ def mkdir(path: str):
     """
     config = get_config()
 
-    result = run_command(
-        "manage_asset", {"action": "create_folder", "path": path}, config)
+    result = run_command("manage_asset", {"action": "create_folder", "path": path}, config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Created folder: {path}")

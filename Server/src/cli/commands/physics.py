@@ -66,9 +66,13 @@ def set_settings(dimension, key, value):
         try:
             coerced = json.loads(value)
         except ValueError:
-            raise click.BadParameter("Gravity must be a JSON array, such as [0, -9.81, 0].", param_hint="value") from None
+            raise click.BadParameter(
+                "Gravity must be a JSON array, such as [0, -9.81, 0].", param_hint="value"
+            ) from None
         if not isinstance(coerced, list):
-            raise click.BadParameter("Gravity must be a JSON array, such as [0, -9.81, 0].", param_hint="value")
+            raise click.BadParameter(
+                "Gravity must be a JSON array, such as [0, -9.81, 0].", param_hint="value"
+            )
     else:
         coerced = _coerce_cli_value(value)
     result = run_command(
@@ -208,7 +212,12 @@ def configure_material(path, dimension, properties):
     props = _parse_properties(properties)
     result = run_command(
         "manage_physics",
-        {"action": "configure_physics_material", "path": path, "dimension": dimension, "properties": props},
+        {
+            "action": "configure_physics_material",
+            "path": path,
+            "dimension": dimension,
+            "properties": props,
+        },
         config,
     )
     click.echo(format_output(result, config.format))
@@ -219,10 +228,11 @@ def configure_material(path, dimension, properties):
 @click.option("--material-path", "-m", required=True, help="Path to physics material asset.")
 @click.option("--collider-type", default=None, help="Specific collider type.")
 @click.option(
-    "--component-index", "-i",
+    "--component-index",
+    "-i",
     type=int,
     default=None,
-    help="Zero-based index when multiple colliders of the same type exist."
+    help="Zero-based index when multiple colliders of the same type exist.",
 )
 @handle_unity_errors
 def assign_material(target, material_path, collider_type, component_index):
@@ -263,10 +273,11 @@ def add_joint(target, joint_type, connected_body, dimension):
 @click.option("--target", "-t", required=True, help="Target GameObject.")
 @click.option("--joint-type", "-j", default=None, help="Joint type to target.")
 @click.option(
-    "--component-index", "-i",
+    "--component-index",
+    "-i",
     type=int,
     default=None,
-    help="Zero-based index when multiple joints of the same type exist."
+    help="Zero-based index when multiple joints of the same type exist.",
 )
 @click.argument("properties", nargs=-1)  # key=value pairs
 @handle_unity_errors
@@ -287,10 +298,11 @@ def configure_joint(target, joint_type, component_index, properties):
 @click.option("--target", "-t", required=True, help="Target GameObject.")
 @click.option("--joint-type", "-j", default=None, help="Joint type to remove (omit to remove all).")
 @click.option(
-    "--component-index", "-i",
+    "--component-index",
+    "-i",
     type=int,
     default=None,
-    help="Zero-based index when multiple joints of the same type exist."
+    help="Zero-based index when multiple joints of the same type exist.",
 )
 @handle_unity_errors
 def remove_joint(target, joint_type, component_index):
@@ -306,9 +318,16 @@ def remove_joint(target, joint_type, component_index):
 
 
 @physics.command("overlap")
-@click.option("--shape", "-s", required=True, help="Shape: sphere, box, capsule (3D); circle, box, capsule (2D).")
+@click.option(
+    "--shape",
+    "-s",
+    required=True,
+    help="Shape: sphere, box, capsule (3D); circle, box, capsule (2D).",
+)
 @click.option("--position", "-p", required=True, help="Position as 'x,y,z' or 'x,y'.")
-@click.option("--size", required=True, help="Size: float for sphere/circle radius, or 'x,y,z' for box.")
+@click.option(
+    "--size", required=True, help="Size: float for sphere/circle radius, or 'x,y,z' for box."
+)
 @click.option("--dimension", "-d", default="3d", help="3d or 2d.")
 @handle_unity_errors
 def overlap(shape, position, size, dimension):
@@ -371,10 +390,17 @@ def linecast(start, end, dimension):
 
 
 @physics.command("shapecast")
-@click.option("--shape", "-s", required=True, help="Shape: sphere, box, capsule (3D); circle, box, capsule (2D).")
+@click.option(
+    "--shape",
+    "-s",
+    required=True,
+    help="Shape: sphere, box, capsule (3D); circle, box, capsule (2D).",
+)
 @click.option("--origin", "-o", required=True, help="Origin as 'x,y,z' or 'x,y'.")
 @click.option("--direction", "-d", required=True, help="Direction as 'x,y,z' or 'x,y'.")
-@click.option("--size", required=True, help="Size: float for sphere/circle radius, or 'x,y,z' for box.")
+@click.option(
+    "--size", required=True, help="Size: float for sphere/circle radius, or 'x,y,z' for box."
+)
 @click.option("--max-distance", type=float, default=None, help="Max distance.")
 @click.option("--dimension", default="3d", help="3d or 2d.")
 @handle_unity_errors

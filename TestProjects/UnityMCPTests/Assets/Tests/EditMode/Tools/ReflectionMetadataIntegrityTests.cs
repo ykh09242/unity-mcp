@@ -22,8 +22,10 @@ namespace MCPForUnityTests.EditMode.Tools
         private object previousAssemblies;
         private ConcurrentDictionary<Type, string[]> extensions;
         private KeyValuePair<Type, string[]>[] previousExtensions;
-        private Dictionary<string, Type> fqn, shortNames;
-        private Dictionary<string, Type> previousFqn, previousShortNames;
+        private Dictionary<string, Type> fqn,
+            shortNames;
+        private Dictionary<string, Type> previousFqn,
+            previousShortNames;
 
         [SetUp]
         public void SetUp()
@@ -40,15 +42,24 @@ namespace MCPForUnityTests.EditMode.Tools
             previousFqn = new Dictionary<string, Type>(fqn);
             previousShortNames = new Dictionary<string, Type>(shortNames);
             captured = true;
-            var types = new[] { typeof(ReflectionMetadataFixture), typeof(ReflectionMetadataIntList),
-                typeof(ReflectionMetadataStringList), typeof(ReflectionMetadataDerived),
-                typeof(ReflectionMetadataObjectComparer), typeof(ReflectionMetadataExtensions) };
-            assemblyField.SetValue(null, new Dictionary<string, Type[]>
+            var types = new[]
             {
-                // This controlled cache key supplies the existing Unity assembly filter.
-                // All receiver/extension/member metadata comes from actual owned CLR types.
-                ["Unity.ReflectionMetadataFixture, Version=1.0.0.0"] = types
-            });
+                typeof(ReflectionMetadataFixture),
+                typeof(ReflectionMetadataIntList),
+                typeof(ReflectionMetadataStringList),
+                typeof(ReflectionMetadataDerived),
+                typeof(ReflectionMetadataObjectComparer),
+                typeof(ReflectionMetadataExtensions),
+            };
+            assemblyField.SetValue(
+                null,
+                new Dictionary<string, Type[]>
+                {
+                    // This controlled cache key supplies the existing Unity assembly filter.
+                    // All receiver/extension/member metadata comes from actual owned CLR types.
+                    ["Unity.ReflectionMetadataFixture, Version=1.0.0.0"] = types,
+                }
+            );
             extensions.Clear();
             fqn.Clear();
             shortNames.Clear();
@@ -62,14 +73,18 @@ namespace MCPForUnityTests.EditMode.Tools
         [TearDown]
         public void TearDown()
         {
-            if (!captured) return;
+            if (!captured)
+                return;
             assemblyField.SetValue(null, previousAssemblies);
             extensions.Clear();
-            foreach (var entry in previousExtensions) extensions[entry.Key] = entry.Value;
+            foreach (var entry in previousExtensions)
+                extensions[entry.Key] = entry.Value;
             fqn.Clear();
-            foreach (var entry in previousFqn) fqn[entry.Key] = entry.Value;
+            foreach (var entry in previousFqn)
+                fqn[entry.Key] = entry.Value;
             shortNames.Clear();
-            foreach (var entry in previousShortNames) shortNames[entry.Key] = entry.Value;
+            foreach (var entry in previousShortNames)
+                shortNames[entry.Key] = entry.Value;
         }
 
         [Test]
@@ -157,11 +172,17 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsFalse(UnityTypeResolver.TryResolve(shortName, out Type coldType, out string coldError));
             Assert.IsNull(coldType);
             StringAssert.Contains("Ambiguous", coldError);
-            Type candidate = secondCandidate ? typeof(ResolverCollisionB.ReflectionResolverCollision)
-                : typeof(ResolverCollisionA.ReflectionResolverCollision);
+            Type candidate = secondCandidate ? typeof(ResolverCollisionB.ReflectionResolverCollision) : typeof(ResolverCollisionA.ReflectionResolverCollision);
             Type constraint = secondCandidate ? typeof(ReflectionResolverBaseB) : typeof(ReflectionResolverBaseA);
-            Assert.IsTrue(UnityTypeResolver.TryResolve(constrained ? shortName : candidate.FullName,
-                out Type selected, out string selectedError, constrained ? constraint : null), selectedError);
+            Assert.IsTrue(
+                UnityTypeResolver.TryResolve(
+                    constrained ? shortName : candidate.FullName,
+                    out Type selected,
+                    out string selectedError,
+                    constrained ? constraint : null
+                ),
+                selectedError
+            );
             Assert.AreSame(candidate, selected);
             Assert.IsFalse(UnityTypeResolver.TryResolve(shortName, out Type warmType, out string warmError));
             Assert.IsNull(warmType);
@@ -174,11 +195,9 @@ namespace MCPForUnityTests.EditMode.Tools
             fqn.Clear();
             shortNames.Clear();
             string shortName = nameof(ResolverCollisionA.ReflectionResolverCollision);
-            Assert.IsTrue(UnityTypeResolver.TryResolve(shortName, out Type first, out string firstError,
-                typeof(ReflectionResolverBaseA)), firstError);
+            Assert.IsTrue(UnityTypeResolver.TryResolve(shortName, out Type first, out string firstError, typeof(ReflectionResolverBaseA)), firstError);
             Assert.AreSame(typeof(ResolverCollisionA.ReflectionResolverCollision), first);
-            Assert.IsTrue(UnityTypeResolver.TryResolve(shortName, out Type second, out string secondError,
-                typeof(ReflectionResolverBaseB)), secondError);
+            Assert.IsTrue(UnityTypeResolver.TryResolve(shortName, out Type second, out string secondError, typeof(ReflectionResolverBaseB)), secondError);
             Assert.AreSame(typeof(ResolverCollisionB.ReflectionResolverCollision), second);
         }
 
@@ -188,9 +207,9 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             fqn.Clear();
             shortNames.Clear();
-            var types = new[] { typeof(ResolverCollisionA.ReflectionResolverCollision),
-                typeof(ResolverCollisionB.ReflectionResolverCollision) };
-            if (reverse) Array.Reverse(types);
+            var types = new[] { typeof(ResolverCollisionA.ReflectionResolverCollision), typeof(ResolverCollisionB.ReflectionResolverCollision) };
+            if (reverse)
+                Array.Reverse(types);
             foreach (Type expected in types.Concat(types.Reverse()))
             {
                 Assert.IsTrue(UnityTypeResolver.TryResolve(expected.FullName, out Type actual, out string error), error);
@@ -243,19 +262,24 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         private static JObject Member(Type type, string member) => Invoke("get_member", type, member);
+
         private static JObject Invoke(string action, Type type, string member = null)
         {
             // Public dispatch remains in the controlled complete-source proof. Calling
             // its editor-state preflight here could initialize unowned global services.
-            var method = typeof(UnityReflect).GetMethod(action == "get_type" ? "GetTypeInfo" : "GetMemberInfo",
-                BindingFlags.NonPublic | BindingFlags.Static);
+            var method = typeof(UnityReflect).GetMethod(action == "get_type" ? "GetTypeInfo" : "GetMemberInfo", BindingFlags.NonPublic | BindingFlags.Static);
             Assert.IsNotNull(method);
-            var parameters = new ToolParams(new JObject
-            {
-                ["action"] = action, ["class_name"] = type.FullName, ["member_name"] = member
-            });
+            var parameters = new ToolParams(
+                new JObject
+                {
+                    ["action"] = action,
+                    ["class_name"] = type.FullName,
+                    ["member_name"] = member,
+                }
+            );
             return JObject.FromObject(method.Invoke(null, new object[] { parameters }));
         }
+
         private static FieldInfo Field(Type type, string name)
         {
             var field = type.GetField(name, BindingFlags.NonPublic | BindingFlags.Static);
@@ -269,28 +293,45 @@ namespace MCPForUnityTests.EditMode.Tools
         public int this[int index] => throw new InvalidOperationException("Metadata only; do not invoke.");
         public string this[string key] => throw new InvalidOperationException("Metadata only; do not invoke.");
         public string Value { get; set; }
+
         public int[,] Matrix() => throw new InvalidOperationException("Metadata only; do not invoke.");
+
         public int[,,] Cube() => throw new InvalidOperationException("Metadata only; do not invoke.");
+
         public int[][] Jagged() => throw new InvalidOperationException("Metadata only; do not invoke.");
+
         public int[] Vector() => throw new InvalidOperationException("Metadata only; do not invoke.");
+
         public void Consume(int[,,] cube) => throw new InvalidOperationException("Metadata only; do not invoke.");
     }
+
     public class ReflectionMetadataBase<T> { }
+
     public class ReflectionResolverBaseA { }
+
     public class ReflectionResolverBaseB { }
+
     public class ReflectionMetadataDerived : ReflectionMetadataBase<int> { }
+
     public class ReflectionMetadataIntList : List<int> { }
+
     public class ReflectionMetadataStringList : List<string> { }
+
     public class ReflectionMetadataObjectComparer : IComparer<object>
     {
         public int Compare(object x, object y) => throw new InvalidOperationException("Metadata only; do not invoke.");
     }
+
     public static class ReflectionMetadataExtensions
     {
         public static int ClosedInts(this ICollection<int> value) => 0;
+
         public static int AnyItems<T>(this ICollection<T> value) => 0;
+
         public static int FromBase<T>(this ReflectionMetadataBase<T> value) => 0;
+
         public static int CovariantObjects(this IEnumerable<object> value) => 0;
+
         public static int ContravariantStrings(this IComparer<string> value) => 0;
     }
 }
@@ -299,6 +340,7 @@ namespace MCPForUnityTests.EditMode.Tools.ResolverCollisionA
 {
     public class ReflectionResolverCollision : MCPForUnityTests.EditMode.Tools.ReflectionResolverBaseA { }
 }
+
 namespace MCPForUnityTests.EditMode.Tools.ResolverCollisionB
 {
     public class ReflectionResolverCollision : MCPForUnityTests.EditMode.Tools.ReflectionResolverBaseB { }

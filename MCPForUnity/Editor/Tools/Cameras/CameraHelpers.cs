@@ -76,8 +76,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (targetToken == null)
                 return null;
 
-            string searchMethod = ParamCoercion.CoerceString(
-                @params["searchMethod"] ?? @params["search_method"], null);
+            string searchMethod = ParamCoercion.CoerceString(@params["searchMethod"] ?? @params["search_method"], null);
 
             if (searchMethod != null)
                 return GameObjectLookup.FindByTarget(targetToken, searchMethod, true);
@@ -92,16 +91,17 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (int.TryParse(targetStr, out int parsedId))
             {
                 var byId = GameObjectLookup.FindById(parsedId);
-                if (byId != null) return byId;
+                if (byId != null)
+                    return byId;
             }
 
-            return GameObjectLookup.FindByTarget(targetToken,
-                targetStr.Contains("/") ? "by_path" : "by_name", true);
+            return GameObjectLookup.FindByTarget(targetToken, targetStr.Contains("/") ? "by_path" : "by_name", true);
         }
 
         internal static GameObject ResolveGameObjectRef(object reference)
         {
-            if (reference == null) return null;
+            if (reference == null)
+                return null;
 
             if (reference is JToken jt)
             {
@@ -113,10 +113,10 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     if (int.TryParse(str, out int id))
                     {
                         var byId = GameObjectLookup.FindById(id);
-                        if (byId != null) return byId;
+                        if (byId != null)
+                            return byId;
                     }
-                    return GameObjectLookup.FindByTarget(jt,
-                        str.Contains("/") ? "by_path" : "by_name", true);
+                    return GameObjectLookup.FindByTarget(jt, str.Contains("/") ? "by_path" : "by_name", true);
                 }
             }
 
@@ -125,11 +125,15 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 if (int.TryParse(s, out int id))
                 {
                     var byId = GameObjectLookup.FindById(id);
-                    if (byId != null) return byId;
+                    if (byId != null)
+                        return byId;
                 }
                 var ids = GameObjectLookup.SearchGameObjects(
                     s.Contains("/") ? GameObjectLookup.SearchMethod.ByPath : GameObjectLookup.SearchMethod.ByName,
-                    s, includeInactive: true, maxResults: 1);
+                    s,
+                    includeInactive: true,
+                    maxResults: 1
+                );
                 return ids.Count > 0 ? GameObjectLookup.FindById(ids[0]) : null;
             }
 
@@ -138,7 +142,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
         internal static Component FindCinemachineCamera(JObject @params)
         {
-            if (!HasCinemachine) return null;
+            if (!HasCinemachine)
+                return null;
             var go = FindTargetGameObject(@params);
             return go != null ? go.GetComponent(CinemachineCameraType) : null;
         }
@@ -154,7 +159,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
         internal static UnityEngine.Camera FindMainCamera()
         {
             var main = UnityEngine.Camera.main;
-            if (main != null) return main;
+            if (main != null)
+                return main;
 
             var allCams = UnityFindObjectsCompat.FindAll<UnityEngine.Camera>();
             return allCams.Length > 0 ? allCams[0] : null;
@@ -163,11 +169,16 @@ namespace MCPForUnity.Editor.Tools.Cameras
         internal static JObject ExtractProperties(JObject @params)
         {
             var token = @params["properties"];
-            if (token == null || token.Type == JTokenType.Null) return null;
-            if (token is JObject props) return props;
+            if (token == null || token.Type == JTokenType.Null)
+                return null;
+            if (token is JObject props)
+                return props;
             if (token.Type == JTokenType.String)
             {
-                try { return JObject.Parse(token.Value<string>()); }
+                try
+                {
+                    return JObject.Parse(token.Value<string>());
+                }
                 catch (Newtonsoft.Json.JsonException ex)
                 {
                     throw new ArgumentException($"'properties' must be a JSON object: {ex.Message}", ex);
@@ -178,7 +189,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
         internal static object GetReflectionProperty(Component component, string propertyName)
         {
-            if (component == null) return null;
+            if (component == null)
+                return null;
             var type = component.GetType();
             var prop = type.GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
             return prop?.GetValue(component);
@@ -187,29 +199,35 @@ namespace MCPForUnity.Editor.Tools.Cameras
         /// <summary>Read priority int from a CinemachineCamera component via SerializedObject.</summary>
         internal static int ReadCinemachinePriority(Component cmCamera)
         {
-            if (cmCamera == null) return 0;
+            if (cmCamera == null)
+                return 0;
             using var so = new SerializedObject(cmCamera);
             var priorityProp = so.FindProperty("Priority");
-            if (priorityProp == null) return 0;
+            if (priorityProp == null)
+                return 0;
             var enabledProp = priorityProp.FindPropertyRelative("Enabled");
             var valueProp = priorityProp.FindPropertyRelative("m_Value");
-            if (enabledProp != null && !enabledProp.boolValue) return 0;
+            if (enabledProp != null && !enabledProp.boolValue)
+                return 0;
             return valueProp?.intValue ?? 0;
         }
 
         internal static bool SetReflectionProperty(Component component, string propertyName, object value)
         {
-            if (component == null) return false;
+            if (component == null)
+                return false;
             var type = component.GetType();
             var prop = type.GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
-            if (prop == null || !prop.CanWrite) return false;
+            if (prop == null || !prop.CanWrite)
+                return false;
             prop.SetValue(component, value);
             return true;
         }
 
         internal static void SetTransformTarget(Component cmCamera, string propertyName, JToken targetRef)
         {
-            if (cmCamera == null) return;
+            if (cmCamera == null)
+                return;
 
             if (targetRef == null || targetRef.Type == JTokenType.Null)
             {
@@ -229,24 +247,32 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
         internal static Component GetPipelineComponent(Component cmCamera, string stageName)
         {
-            if (cmCamera == null) return null;
+            if (cmCamera == null)
+                return null;
             var type = cmCamera.GetType();
 
             // CinemachineCamera.GetCinemachineComponent(CinemachineCore.Stage stage)
-            var stageEnumType = type.Assembly.GetType("Unity.Cinemachine.CinemachineCore+Stage")
-                             ?? type.Assembly.GetType("Unity.Cinemachine.CinemachineCore")?.GetNestedType("Stage");
+            var stageEnumType =
+                type.Assembly.GetType("Unity.Cinemachine.CinemachineCore+Stage")
+                ?? type.Assembly.GetType("Unity.Cinemachine.CinemachineCore")?.GetNestedType("Stage");
 
-            if (stageEnumType == null) return null;
+            if (stageEnumType == null)
+                return null;
 
             object stageEnum;
-            try { stageEnum = Enum.Parse(stageEnumType, stageName, true); }
-            catch { return null; }
+            try
+            {
+                stageEnum = Enum.Parse(stageEnumType, stageName, true);
+            }
+            catch
+            {
+                return null;
+            }
 
-            var method = type.GetMethod("GetCinemachineComponent",
-                BindingFlags.Public | BindingFlags.Instance,
-                null, new[] { stageEnumType }, null);
+            var method = type.GetMethod("GetCinemachineComponent", BindingFlags.Public | BindingFlags.Instance, null, new[] { stageEnumType }, null);
 
-            if (method == null) return null;
+            if (method == null)
+                return null;
             return method.Invoke(cmCamera, new[] { stageEnum }) as Component;
         }
 
@@ -259,13 +285,14 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 "set_noise" => "Camera shake without Cinemachine requires a custom script.",
                 "ensure_brain" => "CinemachineBrain requires the Cinemachine package. Basic Camera does not need a Brain.",
                 "get_brain_status" => "No CinemachineBrain available. Cinemachine package not installed.",
-                _ => "Install Cinemachine via Window > Package Manager."
+                _ => "Install Cinemachine via Window > Package Manager.",
             };
         }
 
         internal static void MarkDirty(GameObject go)
         {
-            if (go == null) return;
+            if (go == null)
+                return;
             EditorUtility.SetDirty(go);
             var prefabStage = UnityEditor.SceneManagement.PrefabStageUtility.GetCurrentPrefabStage();
             if (prefabStage != null)

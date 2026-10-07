@@ -1,4 +1,5 @@
 """Bound unauthenticated public HTTP/WebSocket validation using real HTTPX."""
+
 import asyncio
 import json
 from types import SimpleNamespace
@@ -25,7 +26,9 @@ async def admission(monkeypatch):
     verdicts = []
     cancellation_gate = [None]
     now = [0.0]
-    monkeypatch.setattr(api_module, "time", SimpleNamespace(time=lambda: now[0], monotonic=lambda: now[0]))
+    monkeypatch.setattr(
+        api_module, "time", SimpleNamespace(time=lambda: now[0], monotonic=lambda: now[0])
+    )
 
     async def handler(request):
         body = json.loads(request.content)
@@ -37,7 +40,11 @@ async def admission(monkeypatch):
             if cancellation_gate[0] is not None:
                 await cancellation_gate[0].wait()
             raise
-        reply = verdicts.pop(0) if verdicts else httpx.Response(200, json={"valid": True, "user_id": "owned-user"})
+        reply = (
+            verdicts.pop(0)
+            if verdicts
+            else httpx.Response(200, json={"valid": True, "user_id": "owned-user"})
+        )
         if isinstance(reply, Exception):
             raise reply
         return reply
@@ -68,18 +75,33 @@ async def admission(monkeypatch):
         await socket.send_json({"user_id": socket.scope["state"][AUTHENTICATED_USER_STATE]})
         await socket.close()
 
-    app = RemoteControlAuthMiddleware(Starlette(routes=[Route("/protected", protected), WebSocketRoute("/protected", websocket)]))
+    app = RemoteControlAuthMiddleware(
+        Starlette(routes=[Route("/protected", protected), WebSocketRoute("/protected", websocket)])
+    )
 
     async def http(key, source="owned-peer"):
         transport = httpx.ASGITransport(app=app, client=(source, 12345))
-        async with actual_client(transport=transport, base_url="http://owned.invalid", trust_env=False) as client:
-            return await client.get("/protected", headers={"X-API-Key": key, "X-Forwarded-For": "forged-peer"})
+        async with actual_client(
+            transport=transport, base_url="http://owned.invalid", trust_env=False
+        ) as client:
+            return await client.get(
+                "/protected", headers={"X-API-Key": key, "X-Forwarded-For": "forged-peer"}
+            )
 
     async def ws(key, source="owned-peer"):
         messages = []
-        scope = {"type": "websocket", "asgi": {"version": "3.0"}, "path": "/protected", "raw_path": b"/protected",
-            "scheme": "ws", "query_string": b"", "headers": [(b"x-api-key", key.encode("ascii"))],
-            "client": (source, 12345), "server": ("owned.invalid", 80), "subprotocols": []}
+        scope = {
+            "type": "websocket",
+            "asgi": {"version": "3.0"},
+            "path": "/protected",
+            "raw_path": b"/protected",
+            "scheme": "ws",
+            "query_string": b"",
+            "headers": [(b"x-api-key", key.encode("ascii"))],
+            "client": (source, 12345),
+            "server": ("owned.invalid", 80),
+            "subprotocols": [],
+        }
 
         async def receive():
             return {"type": "websocket.connect"}
@@ -90,8 +112,18 @@ async def admission(monkeypatch):
         await app(scope, receive, send)
         return messages
 
-    harness = SimpleNamespace(service=service, http=http, ws=ws, release=release, requests=requests,
-        clients=clients, cancelled=cancelled, verdicts=verdicts, now=now, cancellation_gate=cancellation_gate)
+    harness = SimpleNamespace(
+        service=service,
+        http=http,
+        ws=ws,
+        release=release,
+        requests=requests,
+        clients=clients,
+        cancelled=cancelled,
+        verdicts=verdicts,
+        now=now,
+        cancellation_gate=cancellation_gate,
+    )
     yield harness
     release.set()
     await settle()
@@ -112,21 +144,29 @@ async def test_oversized_key_rejected_before_http_or_websocket_validation(admiss
     response = await admission.http("x" * 65)
     ws = await admission.ws("x" * 65)
     assert response.status_code == 401
-    assert ws == [{"type": "websocket.close", "code": 1008, "reason": "API key authentication required"}]
+    assert ws == [
+        {"type": "websocket.close", "code": 1008, "reason": "API key authentication required"}
+    ]
     assert not admission.requests and not admission.clients
 
 
 @pytest.mark.asyncio
 async def test_unique_misses_are_fail_fast_at_global_capacity(admission):
     admission.release.clear()
-    tasks = [asyncio.create_task(admission.http("unique-" + str(i), "peer-" + str(i))) for i in range(6)]
+    tasks = [
+        asyncio.create_task(admission.http("unique-" + str(i), "peer-" + str(i))) for i in range(6)
+    ]
     await settle()
     started, rejected = len(admission.requests), sum(task.done() for task in tasks)
     admission.release.set()
     responses = await asyncio.gather(*tasks)
     assert started == 2 and rejected == 4
     assert sorted(response.status_code for response in responses) == [200, 200, 429, 429, 429, 429]
-    assert all(response.headers.get("retry-after") == "1" for response in responses if response.status_code == 429)
+    assert all(
+        response.headers.get("retry-after") == "1"
+        for response in responses
+        if response.status_code == 429
+    )
     assert (await admission.http("recovered", "another-peer")).status_code == 200
 
 
@@ -152,7 +192,9 @@ async def test_same_digest_is_coalesced_and_waiters_are_bounded(admission, valid
 async def test_global_waiters_bounded_across_shared_validations(admission):
     admission.service.MAX_WAITERS_PER_KEY = 10
     admission.release.clear()
-    tasks = [asyncio.create_task(admission.http("key-" + str(i % 2), "peer-" + str(i))) for i in range(8)]
+    tasks = [
+        asyncio.create_task(admission.http("key-" + str(i % 2), "peer-" + str(i))) for i in range(8)
+    ]
     await settle()
     started, rejected = len(admission.requests), sum(task.done() for task in tasks)
     admission.release.set()
@@ -230,7 +272,12 @@ async def test_one_waiter_cancel_keeps_shared_request_last_waiter_cancels(admiss
 
 @pytest.mark.asyncio
 async def test_pooled_client_retries_transients_cache_and_shutdown(admission):
-    admission.verdicts.extend([httpx.ReadTimeout("owned timeout"), httpx.Response(200, json={"valid": True, "user_id": "owned-user"})])
+    admission.verdicts.extend(
+        [
+            httpx.ReadTimeout("owned timeout"),
+            httpx.Response(200, json={"valid": True, "user_id": "owned-user"}),
+        ]
+    )
     assert (await admission.http("retry")).status_code == 200
     assert admission.requests == ["retry", "retry"] and len(admission.clients) == 1
     assert (await admission.http("retry")).status_code == 200
@@ -265,6 +312,7 @@ async def test_shutdown_cancels_pending_validation_and_releases_capacity(admissi
 @pytest.mark.asyncio
 async def test_level_cancellation_cannot_strand_waiters_or_inflight(admission):
     import anyio
+
     admission.release.clear()
     async with anyio.create_task_group() as group:
         group.start_soon(admission.http, "level-cancel", "peer")

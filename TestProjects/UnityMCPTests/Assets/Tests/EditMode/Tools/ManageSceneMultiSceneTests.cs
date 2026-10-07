@@ -1,6 +1,6 @@
-using NUnit.Framework;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Tools;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
 using UnityEngine.SceneManagement;
 
 namespace MCPForUnity.Tests.EditMode.Tools
@@ -29,11 +29,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
                 return;
             }
             var active = SceneManager.GetActiveScene();
-            var p = new JObject
-            {
-                ["action"] = "close_scene",
-                ["sceneName"] = active.name
-            };
+            var p = new JObject { ["action"] = "close_scene", ["sceneName"] = active.name };
             var result = ManageScene.HandleCommand(p);
             var r = result as JObject ?? JObject.FromObject(result);
             Assert.IsFalse(r.Value<bool>("success"), "Should fail to close last scene");
@@ -42,11 +38,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
         [Test]
         public void MoveToScene_MissingTarget_ReturnsError()
         {
-            var p = new JObject
-            {
-                ["action"] = "move_to_scene",
-                ["sceneName"] = "SomeScene"
-            };
+            var p = new JObject { ["action"] = "move_to_scene", ["sceneName"] = "SomeScene" };
             var result = ManageScene.HandleCommand(p);
             var r = result as JObject ?? JObject.FromObject(result);
             Assert.IsFalse(r.Value<bool>("success"));
@@ -59,7 +51,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
             {
                 ["action"] = "move_to_scene",
                 ["target"] = "NonExistentGO_99999",
-                ["sceneName"] = "SomeScene"
+                ["sceneName"] = "SomeScene",
             };
             var result = ManageScene.HandleCommand(p);
             var r = result as JObject ?? JObject.FromObject(result);
@@ -73,7 +65,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
             {
                 ["action"] = "modify_build_settings",
                 ["scenePath"] = "Assets/Scenes/Test.unity",
-                ["operation"] = "add"
+                ["operation"] = "add",
             };
             var result = ManageScene.HandleCommand(p);
             var r = result as JObject ?? JObject.FromObject(result);
@@ -84,11 +76,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
         [Test]
         public void SetActiveScene_NotFound_ReturnsError()
         {
-            var p = new JObject
-            {
-                ["action"] = "set_active_scene",
-                ["sceneName"] = "NonExistentScene_99999"
-            };
+            var p = new JObject { ["action"] = "set_active_scene", ["sceneName"] = "NonExistentScene_99999" };
             var result = ManageScene.HandleCommand(p);
             var r = result as JObject ?? JObject.FromObject(result);
             Assert.IsFalse(r.Value<bool>("success"));

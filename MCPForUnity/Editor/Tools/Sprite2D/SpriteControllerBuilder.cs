@@ -1,11 +1,11 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Sprite2D
 {
@@ -54,17 +54,16 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             return new
             {
-                success         = true,
+                success = true,
                 controller_path = built.path,
-                state_count     = built.stateCount,
-                diagnostics     = diagnostics.Build(),
+                state_count = built.stateCount,
+                diagnostics = diagnostics.Build(),
             };
         }
 
         internal static bool TryResolveControllerPath(string controllerPath, out string resolvedPath, out string error)
         {
-            if (!SpriteParams.TryReadAssetPath(new JObject { ["controller_path"] = controllerPath?.Trim() },
-                "controller_path", out resolvedPath, out error))
+            if (!SpriteParams.TryReadAssetPath(new JObject { ["controller_path"] = controllerPath?.Trim() }, "controller_path", out resolvedPath, out error))
                 return false;
             if (AssetDatabase.IsValidFolder(resolvedPath))
             {
@@ -75,11 +74,12 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 resolvedPath += ".controller";
 
             // The suffix can select a different filesystem entry, including a link or junction.
-            if (!SpriteParams.TryReadAssetPath(new JObject { ["controller_path"] = resolvedPath },
-                "controller_path", out resolvedPath, out error))
+            if (!SpriteParams.TryReadAssetPath(new JObject { ["controller_path"] = resolvedPath }, "controller_path", out resolvedPath, out error))
                 return false;
-            if (Path.GetFileName(resolvedPath).Equals(".controller", System.StringComparison.OrdinalIgnoreCase)
-                || Directory.Exists(AssetPathUtility.GetFullAssetPath(resolvedPath)))
+            if (
+                Path.GetFileName(resolvedPath).Equals(".controller", System.StringComparison.OrdinalIgnoreCase)
+                || Directory.Exists(AssetPathUtility.GetFullAssetPath(resolvedPath))
+            )
             {
                 error = "'controller_path' must name a file under Assets/, not a folder or an empty file name.";
                 return false;
@@ -89,8 +89,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
         /// <summary>Returns default when refused; the diagnostics say why. A non-null loop overrides the name guess.</summary>
         internal static (string path, int stateCount) BuildController(
-            IEnumerable<(string name, string path, bool? loop)> clips, string controllerPath, bool overwrite,
-            SpriteDiagnosticBuilder diagnostics)
+            IEnumerable<(string name, string path, bool? loop)> clips,
+            string controllerPath,
+            bool overwrite,
+            SpriteDiagnosticBuilder diagnostics
+        )
         {
             if (!TryResolveControllerPath(controllerPath, out controllerPath, out string pathError))
             {
@@ -102,12 +105,19 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             foreach (var (clipName, clipPath, loop) in clips)
             {
                 if (!SpriteParams.TryReadAssetPath(new JObject { ["path"] = clipPath }, "path", out string safeClipPath, out _))
-                { diagnostics.AddWarning("CLIP_BAD_PATH", $"Clip '{clipName}': path '{clipPath}' must stay under Assets/ and cannot contain '..' - skipped."); continue; }
+                {
+                    diagnostics.AddWarning("CLIP_BAD_PATH", $"Clip '{clipName}': path '{clipPath}' must stay under Assets/ and cannot contain '..' - skipped.");
+                    continue;
+                }
                 var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(safeClipPath);
                 if (clip == null)
-                { diagnostics.AddWarning("CLIP_NOT_FOUND", $"Clip '{clipName}' not found at '{clipPath}' — skipped."); continue; }
+                {
+                    diagnostics.AddWarning("CLIP_NOT_FOUND", $"Clip '{clipName}' not found at '{clipPath}' — skipped.");
+                    continue;
+                }
                 var entry = SpriteNamingDetector.Detect(clipName);
-                if (loop.HasValue) entry.Loop = loop.Value;
+                if (loop.HasValue)
+                    entry.Loop = loop.Value;
                 entries.Add((entry, clip));
             }
 
@@ -119,9 +129,14 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             // Not deleted here: CreateAnimatorControllerAtPath replaces the asset itself, and
             // deleting first left a failed rebuild with no controller at all.
-            if (!overwrite && (File.Exists(AssetPathUtility.GetFullAssetPath(controllerPath))
-                || AssetDatabase.LoadMainAssetAtPath(controllerPath) != null
-                || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(controllerPath, AssetPathToGUIDOptions.OnlyExistingAssets))))
+            if (
+                !overwrite
+                && (
+                    File.Exists(AssetPathUtility.GetFullAssetPath(controllerPath))
+                    || AssetDatabase.LoadMainAssetAtPath(controllerPath) != null
+                    || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(controllerPath, AssetPathToGUIDOptions.OnlyExistingAssets))
+                )
+            )
             {
                 diagnostics.AddError("CONTROLLER_EXISTS", $"An asset already exists at '{controllerPath}'.", "Set overwrite=true to replace it.");
                 return default;
@@ -136,7 +151,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             // asset loadable at the same path.
             if (controller == null || AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath) != controller)
             {
-                diagnostics.AddError("CONTROLLER_WRITE_FAILED", $"Unity did not write '{controllerPath}'.", "Check the Unity console for the AssetDatabase error.");
+                diagnostics.AddError(
+                    "CONTROLLER_WRITE_FAILED",
+                    $"Unity did not write '{controllerPath}'.",
+                    "Check the Unity console for the AssetDatabase error."
+                );
                 return default;
             }
             var rootSM = controller.layers[0].stateMachine;
@@ -150,10 +169,14 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
 
             var triggerNames = entries
-                .Where(e => !string.IsNullOrEmpty(e.entry.TriggerName) &&
-                            (e.entry.Category == SpriteAnimCategory.Combat ||
-                             e.entry.Category == SpriteAnimCategory.Jump   ||
-                             e.entry.Category == SpriteAnimCategory.Object))
+                .Where(e =>
+                    !string.IsNullOrEmpty(e.entry.TriggerName)
+                    && (
+                        e.entry.Category == SpriteAnimCategory.Combat
+                        || e.entry.Category == SpriteAnimCategory.Jump
+                        || e.entry.Category == SpriteAnimCategory.Object
+                    )
+                )
                 .Select(e => e.entry.TriggerName)
                 .Distinct();
             foreach (var t in triggerNames)
@@ -171,10 +194,12 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             }
             // There is one Idle state, so a second idle clip is left out of the controller.
             foreach (var extra in idlePairs.Skip(1))
-                diagnostics.AddWarning("IDLE_CLIP_UNUSED",
+                diagnostics.AddWarning(
+                    "IDLE_CLIP_UNUSED",
                     $"Clip '{extra.entry.ClipName}' is also an idle clip, and the one Idle state plays '{idlePairs[0].entry.ClipName}', so '{extra.entry.ClipName}' got no state.",
                     "Rename it to include an action word such as attack, jump or hurt, and neither idle nor stand, then rebuild with overwrite=true.",
-                    "Put it in its own controller.");
+                    "Put it in its own controller."
+                );
 
             // ── Locomotion ────────────────────────────────────────────────────
 
@@ -186,7 +211,8 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     var locoState = rootSM.AddState(locomotionPairs[0].entry.ClipName);
                     locoState.motion = locomotionPairs[0].clip;
                     locomotionState = locoState;
-                    if (rootSM.defaultState == null) rootSM.defaultState = locoState;
+                    if (rootSM.defaultState == null)
+                        rootSM.defaultState = locoState;
                     if (idleState != null)
                     {
                         var t1 = idleState.AddTransition(locoState);
@@ -202,7 +228,12 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 else
                 {
                     var blendState = rootSM.AddState("Locomotion");
-                    var blendTree  = new BlendTree { name = "LocomotionTree", blendType = BlendTreeType.Simple1D, blendParameter = "Speed" };
+                    var blendTree = new BlendTree
+                    {
+                        name = "LocomotionTree",
+                        blendType = BlendTreeType.Simple1D,
+                        blendParameter = "Speed",
+                    };
                     // Off, or Unity silently redistributes the thresholds and the BlendValues
                     // below never reach the asset - measured live: walk/run wrote 1/2, read back 0/1.
                     blendTree.useAutomaticThresholds = false;
@@ -213,7 +244,8 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
                     blendState.motion = blendTree;
                     locomotionState = blendState;
-                    if (rootSM.defaultState == null) rootSM.defaultState = blendState;
+                    if (rootSM.defaultState == null)
+                        rootSM.defaultState = blendState;
 
                     if (idleState != null)
                     {
@@ -231,10 +263,13 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             // ── Trigger states (combat, jump, object) ─────────────────────────
 
-            var triggerPairs = entries.Where(e =>
-                e.entry.Category == SpriteAnimCategory.Combat ||
-                e.entry.Category == SpriteAnimCategory.Jump   ||
-                e.entry.Category == SpriteAnimCategory.Object).ToList();
+            var triggerPairs = entries
+                .Where(e =>
+                    e.entry.Category == SpriteAnimCategory.Combat
+                    || e.entry.Category == SpriteAnimCategory.Jump
+                    || e.entry.Category == SpriteAnimCategory.Object
+                )
+                .ToList();
 
             // Trigger -> the clip whose state it enters. Two Any State transitions on one trigger
             // always resolve to the same one, so the second could never fire and is not built;
@@ -249,9 +284,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
                 if (triggerOwners.TryGetValue(trigger, out string owner))
                 {
-                    diagnostics.AddWarning("TRIGGER_SHARED",
+                    diagnostics.AddWarning(
+                        "TRIGGER_SHARED",
                         $"Clips '{owner}' and '{pair.entry.ClipName}' share the trigger '{trigger}', which plays '{owner}': no transition leads to '{pair.entry.ClipName}', so it plays only from a script.",
-                        "Give each clip its own action word (attack, slash and punch are three different triggers), then rebuild with overwrite=true.");
+                        "Give each clip its own action word (attack, slash and punch are three different triggers), then rebuild with overwrite=true."
+                    );
                 }
                 else
                 {
@@ -274,9 +311,9 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 {
                     var exitTr = state.AddTransition(exitTarget);
                     exitTr.hasExitTime = true;
-                    exitTr.exitTime     = 1f;
+                    exitTr.exitTime = 1f;
                     exitTr.hasFixedDuration = false;
-                    exitTr.duration     = 0f;
+                    exitTr.duration = 0f;
                 }
             }
 
@@ -289,9 +326,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 if (rootSM.defaultState == null)
                     rootSM.defaultState = state;
                 if (rootSM.defaultState != state)
-                    diagnostics.AddWarning("STATE_UNREACHABLE",
+                    diagnostics.AddWarning(
+                        "STATE_UNREACHABLE",
                         $"Clip '{pair.entry.ClipName}' matches no action word, so no transition leads to its state: it plays only from a script, or after you rename the clip to an action word.",
-                        "Rename the clip to include an action word such as attack, jump or hurt, then rebuild with overwrite=true.");
+                        "Rename the clip to include an action word such as attack, jump or hurt, then rebuild with overwrite=true."
+                    );
             }
 
             EditorUtility.SetDirty(controller);

@@ -8,20 +8,23 @@ import sys
 def _run(program, tmp_path):
     env = {
         **os.environ,
-        'APPDATA': str(tmp_path),
-        'XDG_DATA_HOME': str(tmp_path),
-        'UNITY_MCP_DISABLE_TELEMETRY': 'true',
+        "APPDATA": str(tmp_path),
+        "XDG_DATA_HOME": str(tmp_path),
+        "UNITY_MCP_DISABLE_TELEMETRY": "true",
     }
-    env.pop('PYTEST_CURRENT_TEST', None)
+    env.pop("PYTEST_CURRENT_TEST", None)
     result = subprocess.run(
-        [sys.executable, '-B', '-c', program], env=env,
-        capture_output=True, text=True, timeout=90,
+        [sys.executable, "-B", "-c", program],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
 
-CLI_PROGRAM = r'''
+CLI_PROGRAM = r"""
 import copy
 import json
 import httpx
@@ -95,10 +98,10 @@ for args in (['editor'], ['editor', 'console'], ['editor', 'menu']):
     print('FULL_HELP', json.dumps({'args': args, 'text': result.output}))
 print('CLI_SUMMARY', json.dumps({'checks': checks, 'failures': failures, 'requests': len(requests)}))
 assert not failures, failures
-'''
+"""
 
 
-SDK_PROGRAM = r'''
+SDK_PROGRAM = r"""
 import copy
 import json
 import anyio
@@ -253,19 +256,19 @@ async def main():
     assert not failures, failures
 
 anyio.run(main)
-'''
+"""
 
 
 def test_console_menu_top_level_cli_when_transport_returns_native_documents(tmp_path):
-    assert 'CLI_SUMMARY' in _run(CLI_PROGRAM, tmp_path)
+    assert "CLI_SUMMARY" in _run(CLI_PROGRAM, tmp_path)
 
 
 def test_console_menu_registered_sdk_and_resource_when_inputs_use_supported_shapes(tmp_path):
-    assert 'SDK_SUMMARY' in _run(SDK_PROGRAM, tmp_path)
+    assert "SDK_SUMMARY" in _run(SDK_PROGRAM, tmp_path)
 
 
 def test_console_stacktrace_flag_displays_native_trace_when_console_defaults_to_plain(tmp_path):
-    program = r'''
+    program = r"""
 import json
 import httpx
 from click.testing import CliRunner
@@ -327,5 +330,5 @@ for output_format in ('json', 'text', 'table'):
     assert result.exit_code == 0 and 'cleared' in result.output.lower(), result.output
     assert requests[-1]['params'] == {'action': 'clear'}
 print('console stacktrace rendering controls passed')
-'''
-    assert 'console stacktrace rendering controls passed' in _run(program, tmp_path)
+"""
+    assert "console stacktrace rendering controls passed" in _run(program, tmp_path)

@@ -17,20 +17,33 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class RuntimeMutationResponseTests
     {
-        private static JObject ModifyActive(GameObject target, bool active) => JObject.FromObject(
-            ManageGameObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify", ["target"] = target.GetInstanceIDCompat(),
-                ["searchMethod"] = "by_id", ["setActive"] = active
-            }));
+        private static JObject ModifyActive(GameObject target, bool active) =>
+            JObject.FromObject(
+                ManageGameObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = target.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["setActive"] = active,
+                    }
+                )
+            );
 
-        private static JObject SetInteractable(GameObject target, bool interactable) => JObject.FromObject(
-            ManageComponents.HandleCommand(new JObject
-            {
-                ["action"] = "set_property", ["target"] = target.GetInstanceIDCompat(),
-                ["searchMethod"] = "by_id", ["componentType"] = "UnityEngine.UI.Button",
-                ["property"] = "interactable", ["value"] = interactable
-            }));
+        private static JObject SetInteractable(GameObject target, bool interactable) =>
+            JObject.FromObject(
+                ManageComponents.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_property",
+                        ["target"] = target.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["componentType"] = "UnityEngine.UI.Button",
+                        ["property"] = "interactable",
+                        ["value"] = interactable,
+                    }
+                )
+            );
 
         private static Component AddButton(GameObject go)
         {
@@ -40,8 +53,7 @@ namespace MCPForUnityTests.Editor.Tools
             return go.AddComponent(buttonType);
         }
 
-        private static bool IsInteractable(Component button) =>
-            (bool)button.GetType().GetProperty("interactable").GetValue(button);
+        private static bool IsInteractable(Component button) => (bool)button.GetType().GetProperty("interactable").GetValue(button);
 
         [UnityTest]
         public IEnumerator PlayMode_SetActive_ReturnsSuccessMatchingActualState()
@@ -58,7 +70,10 @@ namespace MCPForUnityTests.Editor.Tools
                     Assert.AreEqual(active, result["data"].Value<bool>("activeSelf"));
                 }
             }
-            finally { Object.DestroyImmediate(go); }
+            finally
+            {
+                Object.DestroyImmediate(go);
+            }
         }
 
         [UnityTest]
@@ -77,7 +92,10 @@ namespace MCPForUnityTests.Editor.Tools
                     Assert.AreEqual(go.GetInstanceIDCompat(), result["data"].Value<int>("instanceID"));
                 }
             }
-            finally { Object.DestroyImmediate(go); }
+            finally
+            {
+                Object.DestroyImmediate(go);
+            }
         }
 
         [TestCase(false)]
@@ -105,9 +123,11 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                if (button != null) Undo.ClearUndo(button);
+                if (button != null)
+                    Undo.ClearUndo(button);
                 Undo.ClearUndo(go);
-                if (go != null) Object.DestroyImmediate(go);
+                if (go != null)
+                    Object.DestroyImmediate(go);
                 EditorSceneManager.CloseScene(scene, true);
                 AssetDatabase.DeleteAsset(path);
             }
@@ -116,7 +136,8 @@ namespace MCPForUnityTests.Editor.Tools
         [UnityTearDown]
         public IEnumerator ExitPlayModeAfterTest()
         {
-            if (EditorApplication.isPlaying) yield return new ExitPlayMode();
+            if (EditorApplication.isPlaying)
+                yield return new ExitPlayMode();
         }
     }
 }

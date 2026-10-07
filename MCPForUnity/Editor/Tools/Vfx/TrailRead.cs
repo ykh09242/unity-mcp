@@ -5,16 +5,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
 {
     internal static class TrailRead
     {
-        public static TrailRenderer FindTrailRenderer(JObject @params)
-            => ManageVfxCommon.FindComponent<TrailRenderer>(@params);
+        public static TrailRenderer FindTrailRenderer(JObject @params) => ManageVfxCommon.FindComponent<TrailRenderer>(@params);
 
-        public static string FindTrailRendererError(JObject @params)
-            => ManageVfxCommon.FindComponentError<TrailRenderer>(@params);
+        public static string FindTrailRendererError(JObject @params) => ManageVfxCommon.FindComponentError<TrailRenderer>(@params);
 
         public static object GetInfo(JObject @params)
         {
             TrailRenderer tr = FindTrailRenderer(@params);
-            if (tr == null) return new { success = false, message = FindTrailRendererError(@params) };
+            if (tr == null)
+                return new { success = false, message = FindTrailRendererError(@params) };
 
             return new
             {
@@ -41,8 +40,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     reflectionProbeUsage = tr.reflectionProbeUsage.ToString(),
                     sortingOrder = tr.sortingOrder,
                     sortingLayerName = tr.sortingLayerName,
-                    renderingLayerMask = tr.renderingLayerMask
-                }
+                    renderingLayerMask = tr.renderingLayerMask,
+                },
             };
         }
     }

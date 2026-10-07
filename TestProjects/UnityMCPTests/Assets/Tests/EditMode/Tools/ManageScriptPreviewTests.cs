@@ -11,7 +11,8 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ManageScriptPreviewTests
     {
-        private bool? _savedEnabled, _savedConsent;
+        private bool? _savedEnabled,
+            _savedConsent;
         private const string EnabledKey = "MCPForUnity.ToolEnabled.manage_script";
         private const string ConsentKey = "MCPForUnity.ToolEnabled.ExplicitConsent.manage_script";
         private string _folder;
@@ -34,13 +35,20 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            try { AssetDatabase.DeleteAsset(_folder); }
+            try
+            {
+                AssetDatabase.DeleteAsset(_folder);
+            }
             finally
             {
-                if (_savedEnabled.HasValue) EditorPrefs.SetBool(EnabledKey, _savedEnabled.Value);
-                else EditorPrefs.DeleteKey(EnabledKey);
-                if (_savedConsent.HasValue) EditorPrefs.SetBool(ConsentKey, _savedConsent.Value);
-                else EditorPrefs.DeleteKey(ConsentKey);
+                if (_savedEnabled.HasValue)
+                    EditorPrefs.SetBool(EnabledKey, _savedEnabled.Value);
+                else
+                    EditorPrefs.DeleteKey(EnabledKey);
+                if (_savedConsent.HasValue)
+                    EditorPrefs.SetBool(ConsentKey, _savedConsent.Value);
+                else
+                    EditorPrefs.DeleteKey(ConsentKey);
             }
         }
 
@@ -72,7 +80,10 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             AssertUnchanged(before, mtime);
             AssertProposal(response["data"], Original, false, 1);
-            Assert.AreEqual(Original.Replace("    public void Anchor() { }\r\n", "    public void Anchor() { /* exact */ }\r\n"), response["data"].Value<string>("new_contents"));
+            Assert.AreEqual(
+                Original.Replace("    public void Anchor() { }\r\n", "    public void Anchor() { /* exact */ }\r\n"),
+                response["data"].Value<string>("new_contents")
+            );
             AssertUnchanged(before, mtime);
             Assert.IsFalse(File.Exists(_path + ".tmp"));
             Assert.IsFalse(File.Exists(_path + ".bak"));
@@ -122,9 +133,24 @@ namespace MCPForUnityTests.Editor.Tools
             var request = Structural("insert_method", "public void Added() { }");
             request["options"]["applyMode"] = sequential ? "sequential" : "atomic";
             if (sequential)
-                ((JArray)request["edits"]).Add(new JObject { ["mode"] = "replace_method", ["className"] = "PreviewProbe", ["methodName"] = "Added", ["replacement"] = "public void Added() { int n = 1; }" });
+                ((JArray)request["edits"]).Add(
+                    new JObject
+                    {
+                        ["mode"] = "replace_method",
+                        ["className"] = "PreviewProbe",
+                        ["methodName"] = "Added",
+                        ["replacement"] = "public void Added() { int n = 1; }",
+                    }
+                );
             else
-                ((JArray)request["edits"]).Add(new JObject { ["mode"] = "insert_method", ["className"] = "PreviewProbe", ["replacement"] = "public void Second() { }" });
+                ((JArray)request["edits"]).Add(
+                    new JObject
+                    {
+                        ["mode"] = "insert_method",
+                        ["className"] = "PreviewProbe",
+                        ["replacement"] = "public void Second() { }",
+                    }
+                );
             var before = File.ReadAllBytes(_path);
             var mtime = File.GetLastWriteTimeUtc(_path);
             var proposal = Send(request);
@@ -142,8 +168,10 @@ namespace MCPForUnityTests.Editor.Tools
         public void DirectEdit_DefaultBehaviorStillWrites(string option)
         {
             var request = Structural("replace_method");
-            if (option == "missing") ((JObject)request["options"]).Remove("preview");
-            else request["options"]["preview"] = false;
+            if (option == "missing")
+                ((JObject)request["options"]).Remove("preview");
+            else
+                request["options"]["preview"] = false;
             var response = Send(request);
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreNotEqual(Original, File.ReadAllText(_path));
@@ -219,8 +247,10 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var request = action == "preview_edit" ? Structural("replace_method") : Text("    public void Anchor() { /* exact */ }\r\n");
             request["action"] = action;
-            if (missing) ((JObject)request["options"]).Remove("preview");
-            else request["options"]["preview"] = false;
+            if (missing)
+                ((JObject)request["options"]).Remove("preview");
+            else
+                request["options"]["preview"] = false;
             var before = File.ReadAllBytes(_path);
             var mtime = File.GetLastWriteTimeUtc(_path);
             var response = Send(request);
@@ -231,23 +261,75 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(File.Exists(_path + ".bak"));
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             AssertProposal(response["data"], Original, false, 1);
-            if (missing) Assert.IsNull(request["options"]["preview"]);
-            else Assert.IsFalse(request["options"].Value<bool>("preview"));
+            if (missing)
+                Assert.IsNull(request["options"]["preview"]);
+            else
+                Assert.IsFalse(request["options"].Value<bool>("preview"));
         }
 
         private JObject Structural(string mode, string replacement = null)
         {
-            replacement = replacement ?? (mode == "replace_class" ? "public class PreviewProbe\n{\n    public void Changed() { }\n}" : "public void " + (mode == "insert_method" ? "Added" : "Anchor") + "()\n{\n    var s = @\"a\r\nb\";\n}");
-            return new JObject { ["action"] = "edit", ["name"] = "PreviewProbe", ["path"] = _folder, ["edits"] = new JArray(new JObject { ["mode"] = mode, ["className"] = "PreviewProbe", ["methodName"] = "Anchor", ["replacement"] = replacement }), ["options"] = Options() };
+            replacement =
+                replacement
+                ?? (
+                    mode == "replace_class"
+                        ? "public class PreviewProbe\n{\n    public void Changed() { }\n}"
+                        : "public void " + (mode == "insert_method" ? "Added" : "Anchor") + "()\n{\n    var s = @\"a\r\nb\";\n}"
+                );
+            return new JObject
+            {
+                ["action"] = "edit",
+                ["name"] = "PreviewProbe",
+                ["path"] = _folder,
+                ["edits"] = new JArray(
+                    new JObject
+                    {
+                        ["mode"] = mode,
+                        ["className"] = "PreviewProbe",
+                        ["methodName"] = "Anchor",
+                        ["replacement"] = replacement,
+                    }
+                ),
+                ["options"] = Options(),
+            };
         }
 
         private JObject Text(string replacement)
         {
-            return new JObject { ["action"] = "apply_text_edits", ["name"] = "PreviewProbe", ["path"] = _folder, ["precondition_sha256"] = Hash(Original), ["edits"] = new JArray(new JObject { ["startLine"] = 5, ["startCol"] = 1, ["endLine"] = 6, ["endCol"] = 1, ["newText"] = replacement }), ["options"] = Options() };
+            return new JObject
+            {
+                ["action"] = "apply_text_edits",
+                ["name"] = "PreviewProbe",
+                ["path"] = _folder,
+                ["precondition_sha256"] = Hash(Original),
+                ["edits"] = new JArray(
+                    new JObject
+                    {
+                        ["startLine"] = 5,
+                        ["startCol"] = 1,
+                        ["endLine"] = 6,
+                        ["endCol"] = 1,
+                        ["newText"] = replacement,
+                    }
+                ),
+                ["options"] = Options(),
+            };
         }
 
-        private static JObject Options() { return new JObject { ["preview"] = true, ["refresh"] = "immediate", ["validate"] = "basic" }; }
-        private static JObject Send(JObject request) { return JObject.FromObject(ManageScript.HandleCommand(request)); }
+        private static JObject Options()
+        {
+            return new JObject
+            {
+                ["preview"] = true,
+                ["refresh"] = "immediate",
+                ["validate"] = "basic",
+            };
+        }
+
+        private static JObject Send(JObject request)
+        {
+            return JObject.FromObject(ManageScript.HandleCommand(request));
+        }
 
         private void AssertProposal(JToken data, string original, bool noOp, int prepared)
         {
@@ -284,7 +366,8 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static string Hash(string text)
         {
-            using (var sha = SHA256.Create()) return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(text))).Replace("-", string.Empty).ToLowerInvariant();
+            using (var sha = SHA256.Create())
+                return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(text))).Replace("-", string.Empty).ToLowerInvariant();
         }
     }
 }

@@ -11,6 +11,7 @@ def profiler():
 
 # --- Session ---
 
+
 @profiler.command("start")
 @click.option("--log-file", default=None, help="Path to .raw file for recording.")
 @click.option("--callstacks", is_flag=True, default=False, help="Enable allocation callstacks.")
@@ -57,13 +58,18 @@ def set_areas(area):
         name = name.strip()
         val = val.strip().lower()
         if not separator or not name or val not in ("true", "1", "yes", "false", "0", "no"):
-            raise click.BadParameter("Use Area=true or Area=false (also accepts 1/0 and yes/no).", param_hint="--area")
+            raise click.BadParameter(
+                "Use Area=true or Area=false (also accepts 1/0 and yes/no).", param_hint="--area"
+            )
         areas[name] = val in ("true", "1", "yes")
-    result = run_command("manage_profiler", {"action": "profiler_set_areas", "areas": areas}, config)
+    result = run_command(
+        "manage_profiler", {"action": "profiler_set_areas", "areas": areas}, config
+    )
     click.echo(format_output(result, config.format))
 
 
 # --- Counters ---
+
 
 @profiler.command("frame-timing")
 @handle_unity_errors
@@ -76,7 +82,9 @@ def frame_timing():
 
 @profiler.command("get-counters")
 @click.option("--category", required=True, help="Profiler category (e.g. Render, Scripts, Memory).")
-@click.option("--counter", multiple=True, help="Specific counter names. Omit to read all in category.")
+@click.option(
+    "--counter", multiple=True, help="Specific counter names. Omit to read all in category."
+)
 @handle_unity_errors
 def get_counters(category, counter):
     """Read profiler counters by category (async, 1-frame wait)."""
@@ -94,11 +102,14 @@ def get_counters(category, counter):
 def object_memory(path):
     """Get native memory size of a specific Unity object."""
     config = get_config()
-    result = run_command("manage_profiler", {"action": "get_object_memory", "object_path": path}, config)
+    result = run_command(
+        "manage_profiler", {"action": "get_object_memory", "object_path": path}, config
+    )
     click.echo(format_output(result, config.format))
 
 
 # --- Memory Snapshot ---
+
 
 @profiler.command("memory-snapshot")
 @click.option("--path", default=None, help="Output .snap file path (default: auto-generated).")
@@ -133,14 +144,20 @@ def memory_list(search_path):
 def memory_compare(snapshot_a, snapshot_b):
     """Compare two memory snapshots."""
     config = get_config()
-    result = run_command("manage_profiler", {
-        "action": "memory_compare_snapshots",
-        "snapshot_a": snapshot_a, "snapshot_b": snapshot_b,
-    }, config)
+    result = run_command(
+        "manage_profiler",
+        {
+            "action": "memory_compare_snapshots",
+            "snapshot_a": snapshot_a,
+            "snapshot_b": snapshot_b,
+        },
+        config,
+    )
     click.echo(format_output(result, config.format))
 
 
 # --- Frame Debugger ---
+
 
 @profiler.command("frame-debugger-enable")
 @handle_unity_errors
@@ -162,7 +179,9 @@ def frame_debugger_disable():
 
 @profiler.command("frame-debugger-events")
 @click.option("--page-size", default=50, help="Events per page (default 50, clamped to 1..500).")
-@click.option("--cursor", default=None, type=int, help="Cursor offset (negative values treated as 0).")
+@click.option(
+    "--cursor", default=None, type=int, help="Cursor offset (negative values treated as 0)."
+)
 @handle_unity_errors
 def frame_debugger_events(page_size, cursor):
     """Get Frame Debugger draw call events (paged)."""

@@ -10,6 +10,7 @@ requests can inspect groups and sync the server's Unity-provided defaults.
 Hosted remote availability follows the authenticated user's Unity catalog;
 session group activation cannot grant access to a Unity-disabled tool.
 """
+
 import logging
 from typing import Annotated, Any, Literal
 
@@ -50,19 +51,18 @@ logger = logging.getLogger("mcp-for-unity-server")
 async def manage_tools(
     ctx: Context,
     action: Annotated[
-        Literal["list_groups", "activate", "deactivate", "sync", "reset"],
-        "Action to perform."
+        Literal["list_groups", "activate", "deactivate", "sync", "reset"], "Action to perform."
     ],
     group: Annotated[
         str | None,
         "Group name (required for activate / deactivate). "
-        "Valid groups: " + ", ".join(sorted(TOOL_GROUPS.keys()))
+        "Valid groups: " + ", ".join(sorted(TOOL_GROUPS.keys())),
     ] = None,
 ) -> dict[str, Any]:
     if action in ("activate", "deactivate", "reset") and is_sessionless(ctx):
         return {
             "error": "This MCP protocol is sessionless, so tool group visibility cannot persist. "
-                     "Use a client with a stateful MCP handshake, or sync the server defaults from Unity.",
+            "Use a client with a stateful MCP handshake, or sync the server defaults from Unity.",
         }
     if action == "list_groups":
         return await _list_groups(ctx)
@@ -97,6 +97,7 @@ async def manage_tools(
     if action == "sync":
         logger.info("Syncing tool visibility from Unity Editor...")
         from services.tools import get_unity_instance_from_context, sync_tool_visibility_from_unity
+
         instance_id = await get_unity_instance_from_context(ctx)
         result = await sync_tool_visibility_from_unity(instance_id=instance_id, notify=True)
         if result.get("error"):
@@ -153,14 +154,16 @@ async def _list_groups(ctx: Context) -> dict[str, Any]:
     groups = []
     for name in sorted(TOOL_GROUPS.keys()):
         currently_enabled = bool(visible_names.intersection(group_tools.get(name, [])))
-        groups.append({
-            "name": name,
-            "description": TOOL_GROUPS[name],
-            "enabled": currently_enabled,
-            "default_enabled": name in DEFAULT_ENABLED_GROUPS,
-            "tools": group_tools.get(name, []),
-            "tool_count": len(group_tools.get(name, [])),
-        })
+        groups.append(
+            {
+                "name": name,
+                "description": TOOL_GROUPS[name],
+                "enabled": currently_enabled,
+                "default_enabled": name in DEFAULT_ENABLED_GROUPS,
+                "tools": group_tools.get(name, []),
+                "tool_count": len(group_tools.get(name, [])),
+            }
+        )
     return {
         "groups": groups,
         "note": (

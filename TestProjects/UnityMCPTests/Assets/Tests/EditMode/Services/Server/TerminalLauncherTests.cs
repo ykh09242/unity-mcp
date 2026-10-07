@@ -1,6 +1,6 @@
 using System;
-using NUnit.Framework;
 using MCPForUnity.Editor.Services.Server;
+using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Services.Server
 {
@@ -161,15 +161,13 @@ namespace MCPForUnityTests.Editor.Services.Server
         [Test]
         public void CreateHeadlessProcessStartInfo_EmptyCommand_ThrowsArgumentException()
         {
-            Assert.Throws<ArgumentException>(() =>
-                _launcher.CreateHeadlessProcessStartInfo(string.Empty, "/tmp/log.txt"));
+            Assert.Throws<ArgumentException>(() => _launcher.CreateHeadlessProcessStartInfo(string.Empty, "/tmp/log.txt"));
         }
 
         [Test]
         public void CreateHeadlessProcessStartInfo_EmptyLogPath_ThrowsArgumentException()
         {
-            Assert.Throws<ArgumentException>(() =>
-                _launcher.CreateHeadlessProcessStartInfo("echo hello", string.Empty));
+            Assert.Throws<ArgumentException>(() => _launcher.CreateHeadlessProcessStartInfo("echo hello", string.Empty));
         }
 
         [Test]
@@ -179,8 +177,7 @@ namespace MCPForUnityTests.Editor.Services.Server
 
             Assert.IsFalse(startInfo.UseShellExecute, "UseShellExecute should be false for headless launch");
             Assert.IsTrue(startInfo.CreateNoWindow, "CreateNoWindow should be true for headless launch");
-            Assert.AreEqual(System.Diagnostics.ProcessWindowStyle.Hidden, startInfo.WindowStyle,
-                "WindowStyle should be Hidden for headless launch");
+            Assert.AreEqual(System.Diagnostics.ProcessWindowStyle.Hidden, startInfo.WindowStyle, "WindowStyle should be Hidden for headless launch");
         }
 
         [Test]

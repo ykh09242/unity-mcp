@@ -1,6 +1,6 @@
 using System;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -92,7 +92,11 @@ namespace MCPForUnity.Editor.Tools.Animation
                 // The controller owns Edit-mode definitions/defaults even without an active Animator graph.
                 controller = animator.runtimeAnimatorController as AnimatorController;
                 if (controller == null)
-                    return new { success = false, message = $"No AnimatorController assigned to the Animator on {AnimatorResolver.Describe(go, animator)}. Cannot set parameter defaults in Edit mode." };
+                    return new
+                    {
+                        success = false,
+                        message = $"No AnimatorController assigned to the Animator on {AnimatorResolver.Describe(go, animator)}. Cannot set parameter defaults in Edit mode.",
+                    };
 
                 allParams = controller.parameters;
                 for (int i = 0; i < allParams.Length; i++)
@@ -107,21 +111,35 @@ namespace MCPForUnity.Editor.Tools.Animation
             }
 
             if (found == null)
-                return new { success = false, message = $"Parameter '{paramName}' not found on {(isPlaying ? "Animator" : $"controller '{controller.name}'")}." };
+                return new
+                {
+                    success = false,
+                    message = $"Parameter '{paramName}' not found on {(isPlaying ? "Animator" : $"controller '{controller.name}'")}.",
+                };
 
             string paramType = @params["parameterType"]?.ToString()?.ToLowerInvariant();
             if (string.IsNullOrEmpty(paramType))
                 paramType = found.type.ToString().ToLowerInvariant();
-            if (paramType == "integer") paramType = "int";
-            if (paramType == "boolean") paramType = "bool";
+            if (paramType == "integer")
+                paramType = "int";
+            if (paramType == "boolean")
+                paramType = "bool";
 
             AnimatorControllerParameterType requestedType;
             switch (paramType)
             {
-                case "float": requestedType = AnimatorControllerParameterType.Float; break;
-                case "int": requestedType = AnimatorControllerParameterType.Int; break;
-                case "bool": requestedType = AnimatorControllerParameterType.Bool; break;
-                case "trigger": requestedType = AnimatorControllerParameterType.Trigger; break;
+                case "float":
+                    requestedType = AnimatorControllerParameterType.Float;
+                    break;
+                case "int":
+                    requestedType = AnimatorControllerParameterType.Int;
+                    break;
+                case "bool":
+                    requestedType = AnimatorControllerParameterType.Bool;
+                    break;
+                case "trigger":
+                    requestedType = AnimatorControllerParameterType.Trigger;
+                    break;
                 default:
                     return new { success = false, message = $"Unknown parameter type: {paramType}. Valid: float, int, bool, trigger" };
             }
@@ -134,9 +152,15 @@ namespace MCPForUnity.Editor.Tools.Animation
             bool bVal = false;
             switch (paramType)
             {
-                case "float": fVal = valueToken?.ReadScalar<float?>() ?? 0f; break;
-                case "int": iVal = valueToken?.ReadScalar<int?>() ?? 0; break;
-                case "bool": bVal = valueToken?.ReadScalar<bool?>() ?? false; break;
+                case "float":
+                    fVal = valueToken?.ReadScalar<float?>() ?? 0f;
+                    break;
+                case "int":
+                    iVal = valueToken?.ReadScalar<int?>() ?? 0;
+                    break;
+                case "bool":
+                    bVal = valueToken?.ReadScalar<bool?>() ?? false;
+                    break;
             }
 
             if (isPlaying)
@@ -160,7 +184,11 @@ namespace MCPForUnity.Editor.Tools.Animation
             }
 
             if (paramType == "trigger")
-                return new { success = true, message = $"Trigger '{paramName}' noted (triggers are runtime-only, no default to set)" + AnimatorResolver.ResolvedSuffix(go, animator) };
+                return new
+                {
+                    success = true,
+                    message = $"Trigger '{paramName}' noted (triggers are runtime-only, no default to set)" + AnimatorResolver.ResolvedSuffix(go, animator),
+                };
 
             Undo.RecordObject(controller, $"Set Parameter Default {paramName}");
             string valueDescription;
@@ -182,7 +210,11 @@ namespace MCPForUnity.Editor.Tools.Animation
             controller.parameters = allParams;
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssets();
-            return new { success = true, message = $"Set {paramType} '{paramName}' = {valueDescription} (default value, Edit mode)" + AnimatorResolver.ResolvedSuffix(go, animator) };
+            return new
+            {
+                success = true,
+                message = $"Set {paramType} '{paramName}' = {valueDescription} (default value, Edit mode)" + AnimatorResolver.ResolvedSuffix(go, animator),
+            };
         }
 
         public static object SetSpeed(JObject @params)

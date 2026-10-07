@@ -86,8 +86,10 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>Stores a string pref, deleting the key when the value is blank so defaults apply.</summary>
         private static void SetOrDelete(string key, string value)
         {
-            if (string.IsNullOrWhiteSpace(value)) EditorPrefs.DeleteKey(key);
-            else EditorPrefs.SetString(key, value.Trim());
+            if (string.IsNullOrWhiteSpace(value))
+                EditorPrefs.DeleteKey(key);
+            else
+                EditorPrefs.SetString(key, value.Trim());
         }
     }
 }

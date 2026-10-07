@@ -1,4 +1,5 @@
 """Gate Unity CI on both the runner outcome and its NUnit result file."""
+
 from __future__ import annotations
 
 import argparse
@@ -35,10 +36,14 @@ def check_results(path: Path, runner_outcome: str) -> int:
         print(f"::error::Cannot validate Unity test results: {escape_data(str(exc))}")
         return 1
 
-    print(f"Results: {passed} passed, {failed} failed, {inconclusive} inconclusive, {skipped} skipped (total: {total})")
+    print(
+        f"Results: {passed} passed, {failed} failed, {inconclusive} inconclusive, {skipped} skipped (total: {total})"
+    )
     # Unity's command-line runner exits 2 (failed) for any Inconclusive test (Assert.Inconclusive,
     # Assume.That), so the runner outcome already fails such a run. Name each one so the log says why.
-    inconclusive_cases = [case for case in root.iter("test-case") if case.get("result") == "Inconclusive"]
+    inconclusive_cases = [
+        case for case in root.iter("test-case") if case.get("result") == "Inconclusive"
+    ]
     for case in inconclusive_cases:
         name = case.get("fullname") or case.get("name") or "<unknown>"
         reason = (case.findtext("reason/message") or "").strip()
@@ -70,11 +75,15 @@ def check_results(path: Path, runner_outcome: str) -> int:
         print("::error::Unity did not execute any passing tests")
         return 1
     if inconclusive or inconclusive_cases:
-        print("::error::Unity fails a run with inconclusive tests; use Assert.Ignore for environment guards")
+        print(
+            "::error::Unity fails a run with inconclusive tests; use Assert.Ignore for environment guards"
+        )
         return 1
     recorded_passes = sum(case.get("result") == "Passed" for case in root.iter("test-case"))
     if recorded_passes != passed:
-        print(f"::error::NUnit declares {passed} passing tests but contains {recorded_passes} passing test-case records")
+        print(
+            f"::error::NUnit declares {passed} passing tests but contains {recorded_passes} passing test-case records"
+        )
         return 1
     return 1 if runner_failed else 0
 

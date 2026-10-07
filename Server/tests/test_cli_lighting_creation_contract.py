@@ -19,10 +19,13 @@ def test_light_creation_configures_returned_id_instead_of_colliding_name(created
             return {"success": True, "data": {"instanceID": created_id, "name": "SharedName"}}
         return {"success": True}
 
-    with patch("cli.commands.lighting.get_config", return_value=CLIConfig(format="json")), patch(
-        "cli.utils.connection.send_command", side_effect=send
+    with (
+        patch("cli.commands.lighting.get_config", return_value=CLIConfig(format="json")),
+        patch("cli.utils.connection.send_command", side_effect=send),
     ):
-        result = CliRunner().invoke(lighting, ["create", "SharedName", "--color", "0", "0", "0", "--intensity", "0"])
+        result = CliRunner().invoke(
+            lighting, ["create", "SharedName", "--color", "0", "0", "0", "--intensity", "0"]
+        )
 
     assert result.exit_code == 0, result.output
     assert len(calls) == 5
@@ -34,10 +37,14 @@ def test_light_creation_configures_returned_id_instead_of_colliding_name(created
 
 @pytest.mark.parametrize("data", [None, {}, {"instanceID": None}])
 def test_light_creation_without_returned_id_stops_before_component_writes(data):
-    with patch("cli.commands.lighting.get_config", return_value=CLIConfig(format="json")), patch(
-        "cli.utils.connection.send_command", new_callable=AsyncMock,
-        return_value={"success": True, "data": data}
-    ) as send:
+    with (
+        patch("cli.commands.lighting.get_config", return_value=CLIConfig(format="json")),
+        patch(
+            "cli.utils.connection.send_command",
+            new_callable=AsyncMock,
+            return_value={"success": True, "data": data},
+        ) as send,
+    ):
         result = CliRunner().invoke(lighting, ["create", "SharedName"])
 
     assert result.exit_code == 1
@@ -46,10 +53,14 @@ def test_light_creation_without_returned_id_stops_before_component_writes(data):
 
 
 def test_failed_light_creation_stops_before_component_writes():
-    with patch("cli.commands.lighting.get_config", return_value=CLIConfig(format="json")), patch(
-        "cli.utils.connection.send_command", new_callable=AsyncMock,
-        return_value={"success": False, "error": "creation failed"}
-    ) as send:
+    with (
+        patch("cli.commands.lighting.get_config", return_value=CLIConfig(format="json")),
+        patch(
+            "cli.utils.connection.send_command",
+            new_callable=AsyncMock,
+            return_value={"success": False, "error": "creation failed"},
+        ) as send,
+    ):
         result = CliRunner().invoke(lighting, ["create", "SharedName"])
 
     assert send.call_count == 1

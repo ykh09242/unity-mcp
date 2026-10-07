@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
-using UnityEditor;
-using UnityEngine;
 using Unity.Profiling;
 using Unity.Profiling.LowLevel.Unsafe;
+using UnityEditor;
+using UnityEngine;
 using UnityEngine.Profiling;
 using UProfiler = UnityEngine.Profiling.Profiler;
 
@@ -51,7 +51,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = "Rendering stats captured.",
-                data = stats
+                data = stats,
             };
         }
 
@@ -77,15 +77,16 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     name = d.Name,
                     category = d.Category.Name,
-                    unit = d.UnitType.ToString()
+                    unit = d.UnitType.ToString(),
                 })
-                .OrderBy(c => c.name).ToList();
+                .OrderBy(c => c.name)
+                .ToList();
 
             return new
             {
                 success = true,
                 message = $"Found {counters.Count} counters in category '{category.Name}'.",
-                data = new { counters }
+                data = new { counters },
             };
         }
 
@@ -97,8 +98,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (string.IsNullOrEmpty(modeName))
             {
                 var validModes = string.Join(", ", Enum.GetNames(typeof(DrawCameraMode)).Take(20));
-                return new ErrorResponse(
-                    $"'mode' parameter required. Options: {validModes}");
+                return new ErrorResponse($"'mode' parameter required. Options: {validModes}");
             }
 
             if (!Enum.TryParse<DrawCameraMode>(modeName, true, out var drawMode))
@@ -115,11 +115,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             sceneView.Repaint();
 
-            return new
-            {
-                success = true,
-                message = $"Scene debug mode set to '{drawMode}'."
-            };
+            return new { success = true, message = $"Scene debug mode set to '{drawMode}'." };
         }
 
         // === stats_get_memory ===
@@ -139,7 +135,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = "Memory stats captured.",
-                data
+                data,
             };
         }
 
@@ -149,22 +145,38 @@ namespace MCPForUnity.Editor.Tools.Graphics
             // ProfilerCategory has static properties for well-known categories
             switch (name.ToLowerInvariant())
             {
-                case "render": return ProfilerCategory.Render;
-                case "scripts": return ProfilerCategory.Scripts;
-                case "memory": return ProfilerCategory.Memory;
-                case "physics": return ProfilerCategory.Physics;
-                case "animation": return ProfilerCategory.Animation;
-                case "audio": return ProfilerCategory.Audio;
-                case "lighting": return ProfilerCategory.Lighting;
-                case "network": return ProfilerCategory.Network;
-                case "gui": return ProfilerCategory.Gui;
-                case "ai": return ProfilerCategory.Ai;
-                case "video": return ProfilerCategory.Video;
-                case "loading": return ProfilerCategory.Loading;
-                case "input": return ProfilerCategory.Input;
-                case "vr": return ProfilerCategory.Vr;
-                case "internal": return ProfilerCategory.Internal;
-                default: return ProfilerCategory.Render;
+                case "render":
+                    return ProfilerCategory.Render;
+                case "scripts":
+                    return ProfilerCategory.Scripts;
+                case "memory":
+                    return ProfilerCategory.Memory;
+                case "physics":
+                    return ProfilerCategory.Physics;
+                case "animation":
+                    return ProfilerCategory.Animation;
+                case "audio":
+                    return ProfilerCategory.Audio;
+                case "lighting":
+                    return ProfilerCategory.Lighting;
+                case "network":
+                    return ProfilerCategory.Network;
+                case "gui":
+                    return ProfilerCategory.Gui;
+                case "ai":
+                    return ProfilerCategory.Ai;
+                case "video":
+                    return ProfilerCategory.Video;
+                case "loading":
+                    return ProfilerCategory.Loading;
+                case "input":
+                    return ProfilerCategory.Input;
+                case "vr":
+                    return ProfilerCategory.Vr;
+                case "internal":
+                    return ProfilerCategory.Internal;
+                default:
+                    return ProfilerCategory.Render;
             }
         }
     }

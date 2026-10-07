@@ -53,7 +53,9 @@ async def test_custom_tool_payloads_stay_out_of_logs(monkeypatch, caplog, pollin
     definition = ToolDefinitionModel(name="safe_tool", description="Test", requires_polling=polling)
     monkeypatch.setattr(service, "get_tool_definition", AsyncMock(return_value=definition))
     response = {"success": True, "data": {"status": "complete", "contents": SENTINEL}}
-    monkeypatch.setattr("services.custom_tool_service.send_with_unity_instance", AsyncMock(return_value=response))
+    monkeypatch.setattr(
+        "services.custom_tool_service.send_with_unity_instance", AsyncMock(return_value=response)
+    )
     result = await service.execute_tool("project", "safe_tool", "instance", {"code": SENTINEL})
     assert result.success
     assert SENTINEL not in caplog.text
@@ -64,8 +66,11 @@ async def test_custom_tool_payloads_stay_out_of_logs(monkeypatch, caplog, pollin
 async def test_invalid_plugin_messages_do_not_log_payloads(caplog):
     caplog.set_level(logging.DEBUG, logger="mcp-for-unity-server")
     hub = PluginHub.__new__(PluginHub)
-    for payload in ([SENTINEL], {"type": "unknown", "content": SENTINEL},
-                    {"type": "command_result", "id": [], "result": SENTINEL}):
+    for payload in (
+        [SENTINEL],
+        {"type": "unknown", "content": SENTINEL},
+        {"type": "command_result", "id": [], "result": SENTINEL},
+    ):
         await hub.on_receive(AsyncMock(), payload)
     assert SENTINEL not in caplog.text
     assert caplog.records

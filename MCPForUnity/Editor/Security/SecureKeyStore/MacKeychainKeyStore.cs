@@ -17,24 +17,32 @@ namespace MCPForUnity.Editor.Security
         public bool TryGet(string providerId, out string apiKey)
         {
             apiKey = null;
-            if (string.IsNullOrEmpty(providerId)) return false;
+            if (string.IsNullOrEmpty(providerId))
+                return false;
             (int code, string stdout, _) = Run("find-generic-password", "-s", Service, "-a", providerId, "-w");
-            if (code != 0) return false;
+            if (code != 0)
+                return false;
             apiKey = (stdout ?? string.Empty).TrimEnd('\n', '\r');
             return !string.IsNullOrEmpty(apiKey);
         }
 
         public void Set(string providerId, string apiKey)
         {
-            if (string.IsNullOrEmpty(providerId)) return;
-            if (string.IsNullOrEmpty(apiKey)) { Delete(providerId); return; }
+            if (string.IsNullOrEmpty(providerId))
+                return;
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                Delete(providerId);
+                return;
+            }
             // -U overwrites an existing item for this service/account.
             Run("add-generic-password", "-U", "-s", Service, "-a", providerId, "-w", apiKey);
         }
 
         public void Delete(string providerId)
         {
-            if (string.IsNullOrEmpty(providerId)) return;
+            if (string.IsNullOrEmpty(providerId))
+                return;
             Run("delete-generic-password", "-s", Service, "-a", providerId);
         }
 
@@ -49,7 +57,8 @@ namespace MCPForUnity.Editor.Security
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                 };
-                foreach (string a in args) psi.ArgumentList.Add(a);
+                foreach (string a in args)
+                    psi.ArgumentList.Add(a);
                 using (var p = Process.Start(psi))
                 {
                     string outp = p.StandardOutput.ReadToEnd();

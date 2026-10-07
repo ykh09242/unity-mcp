@@ -1,4 +1,5 @@
 """Adversarial plugin admission and result ownership regressions."""
+
 import asyncio
 import json
 import time
@@ -23,8 +24,17 @@ from transport.plugin_registry import PluginRegistry
 @pytest.fixture
 def isolated(monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", False)
-    for name in ("_connections", "_pending", "_ping_tasks", "_last_pong", "_admitted", "_retained_results"):
-        monkeypatch.setattr(PluginHub, name, ChargeLedger() if name == '_retained_results' else {}, raising=False)
+    for name in (
+        "_connections",
+        "_pending",
+        "_ping_tasks",
+        "_last_pong",
+        "_admitted",
+        "_retained_results",
+    ):
+        monkeypatch.setattr(
+            PluginHub, name, ChargeLedger() if name == "_retained_results" else {}, raising=False
+        )
     for name in ("_registry", "_lock", "_loop", "_mcp"):
         monkeypatch.setattr(PluginHub, name, None)
     monkeypatch.setattr(PluginHub, "REGISTRATION_TIMEOUT", 0.05, raising=False)
@@ -38,6 +48,7 @@ def client(isolated):
         PluginHub.configure(isolated)
         yield
         await PluginHub.shutdown()
+
     app = Starlette(routes=[WebSocketRoute("/plugin", PluginHub)], lifespan=lifespan)
     with TestClient(app) as wire:
         yield wire
@@ -75,6 +86,7 @@ def test_registration_must_be_first_message(client):
 def test_registration_processing_obeys_same_deadline(client, monkeypatch):
     async def stalled(self, websocket, payload):
         await asyncio.Event().wait()
+
     monkeypatch.setattr(PluginHub, "_handle_register", stalled)
     with client.websocket_connect("/plugin") as wire:
         wire.receive_json()
@@ -116,7 +128,9 @@ async def test_invalid_result_replaced_with_small_error(isolated, monkeypatch, k
     await hub._handle_command_result(ws, CommandResultMessage(id="command", result=result))
     assert future.done()
     reply = future.result()
-    assert reply.get("success") is False, "Unbounded plugin results must never reach the response consumer"
+    assert reply.get("success") is False, (
+        "Unbounded plugin results must never reach the response consumer"
+    )
     assert reply["data"]["reason"] == "result_payload_limit"
     assert len(json.dumps(reply)) < 400
     await PluginHub.shutdown()
@@ -125,7 +139,9 @@ async def test_invalid_result_replaced_with_small_error(isolated, monkeypatch, k
 def test_final_response_bound_before_normalization():
     response = {"success": True, "data": {"wide": [None] * 100_001}}
     reply = normalize_unity_response(response)
-    assert reply["success"] is False, "The final response seam must independently bound oversized data"
+    assert reply["success"] is False, (
+        "The final response seam must independently bound oversized data"
+    )
     assert reply["data"]["reason"] == "response_payload_limit"
 
 
@@ -133,6 +149,7 @@ def test_final_response_bound_before_normalization():
 @pytest.mark.parametrize("scope", ["session", "user", "global"])
 async def test_retained_results_budget_spans_delayed_consumers(isolated, monkeypatch, scope):
     from models.response_limits import ResponseOwner, response_owner, response_size
+
     PluginHub.configure(isolated)
     monkeypatch.setattr(config, "http_remote_hosted", True)
     first_owner = ResponseOwner()
@@ -141,9 +158,11 @@ async def test_retained_results_budget_spans_delayed_consumers(isolated, monkeyp
     hub = PluginHub({"type": "websocket"}, None, None)
     result = {"success": True, "data": "base64-preview" * 100}
     charge = response_size(result)
-    ceiling = {"session": "MAX_RETAINED_RESULT_BYTES_PER_SESSION",
-               "user": "MAX_RETAINED_RESULT_BYTES_PER_USER",
-               "global": "MAX_RETAINED_RESULT_BYTES"}[scope]
+    ceiling = {
+        "session": "MAX_RETAINED_RESULT_BYTES_PER_SESSION",
+        "user": "MAX_RETAINED_RESULT_BYTES_PER_USER",
+        "global": "MAX_RETAINED_RESULT_BYTES",
+    }[scope]
     monkeypatch.setattr(PluginHub, ceiling, charge + 100)
 
     async def socket(session, user):
@@ -152,8 +171,12 @@ async def test_retained_results_budget_spans_delayed_consumers(isolated, monkeyp
         ws.client_state = ws.application_state = WebSocketState.CONNECTED
         PluginHub._connections[session] = ws
         PluginHub._last_pong[session] = time.monotonic()
+
         async def answer(payload):
-            await hub._handle_command_result(ws, CommandResultMessage(id=payload["id"], result=result))
+            await hub._handle_command_result(
+                ws, CommandResultMessage(id=payload["id"], result=result)
+            )
+
         ws.send_json.side_effect = answer
         return ws
 
@@ -188,14 +211,17 @@ async def test_final_mcp_content_and_structured_copies_have_independent_limit(mo
     from fastmcp import FastMCP, Client
     import transport.response_limit_middleware as middleware
     from models.response_limits import response_size
+
     server = FastMCP("inert-output-bound")
     server.add_middleware(middleware.ResponseLimitMiddleware())
     monkeypatch.setattr(middleware, "MAX_RESPONSE_BYTES", 35_768)
     result = {"success": True, "data": "x" * 1600}
     assert response_size(result, max_bytes=3000) is not None
+
     @server.tool
     async def preview() -> dict:
         return result
+
     async with Client(server) as sdk:
         reply = await sdk.call_tool("preview", raise_on_error=False)
     assert reply.is_error
@@ -207,25 +233,33 @@ async def test_final_mcp_content_and_structured_copies_have_independent_limit(mo
 async def test_final_resource_text_and_base64_envelopes_have_independent_limit(monkeypatch, binary):
     from fastmcp import FastMCP, Client
     import transport.response_limit_middleware as middleware
+
     server = FastMCP("inert-resource-bound")
     server.add_middleware(middleware.ResponseLimitMiddleware())
     monkeypatch.setattr(middleware, "MAX_RESPONSE_BYTES", 35_768)
+
     @server.resource("inert://preview")
     async def preview():
         # Text escaping or binary base64 expands a plugin-normalized resource.
         return b"x" * 2500 if binary else "\u0001" * 1600
+
     async with Client(server) as sdk:
         reply = await sdk.read_resource("inert://preview")
     assert "response_payload_limit" in reply[0].text
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("raw", ['{"data":' + '[' * 70 + '0' + ']' * 70 + '}',
-                                    '{"data":[' + ','.join(['0'] * 100_001) + ']}'], ids=["depth", "nodes"])
+@pytest.mark.parametrize(
+    "raw",
+    ['{"data":' + "[" * 70 + "0" + "]" * 70 + "}", '{"data":[' + ",".join(["0"] * 100_001) + "]}"],
+    ids=["depth", "nodes"],
+)
 async def test_raw_graph_rejected_before_json_decoder(isolated, monkeypatch, raw):
     import transport.plugin_hub as module
+
     def forbidden_decode(value):
         raise AssertionError("JSON decoder must not see an unsupported raw graph")
+
     monkeypatch.setattr(module.json, "loads", forbidden_decode)
     hub = PluginHub({"type": "websocket"}, None, None)
     ws = AsyncMock()
@@ -235,22 +269,29 @@ async def test_raw_graph_rejected_before_json_decoder(isolated, monkeypatch, raw
 
 def test_ordinary_unicode_and_base64_response_remain_supported():
     from models.response_limits import response_size, bounded_json_text
+
     result = {"success": True, "data": {"preview": "a" * (4 * 1024 * 1024), "name": "테스트 🎮"}}
     assert response_size(result) is not None
     raw = json.dumps(result, ensure_ascii=False)
-    assert bounded_json_text(raw, max_bytes=32 * 1024 * 1024, max_depth=64, max_nodes=100_000) == raw
+    assert (
+        bounded_json_text(raw, max_bytes=32 * 1024 * 1024, max_depth=64, max_nodes=100_000) == raw
+    )
 
 
 @pytest.mark.asyncio
 async def test_authenticated_socket_admission_is_atomic_and_recoverable(isolated, monkeypatch):
     from services.api_key_service import ApiKeyService, ValidationResult
+
     PluginHub.configure(isolated)
     monkeypatch.setattr(config, "http_remote_hosted", True)
     monkeypatch.setattr(PluginRegistry, "MAX_SESSIONS_PER_USER", 1)
+
     async def validate(key, **kwargs):
         return ValidationResult(valid=True, user_id=key)
+
     monkeypatch.setattr(ApiKeyService, "_instance", SimpleNamespace(validate=validate))
     hub = PluginHub({"type": "websocket"}, None, None)
+
     def socket(user):
         ws = AsyncMock()
         ws.headers = {"X-API-Key": user}
@@ -258,6 +299,7 @@ async def test_authenticated_socket_admission_is_atomic_and_recoverable(isolated
         ws.client = SimpleNamespace(host="inert")
         ws.application_state = WebSocketState.CONNECTED
         return ws
+
     a, duplicate, b = socket("alice"), socket("alice"), socket("bob")
     await asyncio.gather(hub.on_connect(a), hub.on_connect(duplicate), hub.on_connect(b))
     assert sum(ws.accept.await_count for ws in (a, duplicate)) == 1
@@ -283,11 +325,13 @@ async def test_connect_failure_releases_reserved_capacity(isolated, monkeypatch,
     ws = AsyncMock()
     ws.state = SimpleNamespace()
     entered = asyncio.Event()
+
     async def failing(socket):
         entered.set()
         if failure == "exception":
             raise RuntimeError("inert welcome failure")
         await asyncio.Event().wait()
+
     monkeypatch.setattr(hub, "_connect_authenticated", failing)
     task = asyncio.create_task(hub.on_connect(ws))
     await entered.wait()
@@ -298,7 +342,9 @@ async def test_connect_failure_releases_reserved_capacity(isolated, monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_duplicate_results_and_repeated_offenders_do_not_retain_payloads(isolated, monkeypatch):
+async def test_duplicate_results_and_repeated_offenders_do_not_retain_payloads(
+    isolated, monkeypatch
+):
     PluginHub.configure(isolated)
     hub = PluginHub({"type": "websocket"}, None, None)
     ws = AsyncMock()

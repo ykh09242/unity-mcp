@@ -51,7 +51,14 @@ def _compile(pattern: str, text: str, flags: int):
     return regex.compile(pattern, flags | regex.VERSION0)
 
 
-def find_matches(pattern: str, text: str, flags: int = 0, limit: int = MAX_MATCHES, *, budget: WorkBudget | None = None):
+def find_matches(
+    pattern: str,
+    text: str,
+    flags: int = 0,
+    limit: int = MAX_MATCHES,
+    *,
+    budget: WorkBudget | None = None,
+):
     budget = budget or WorkBudget()
     budget.consume(len(text) + len(pattern))
     compiled = _compile(pattern, text, flags)
@@ -70,7 +77,15 @@ def search(pattern: str, text: str, flags: int = 0, *, budget: WorkBudget | None
     return match
 
 
-def substitute(pattern: str, replacement: str, text: str, count: int, flags: int = 0, *, budget: WorkBudget | None = None):
+def substitute(
+    pattern: str,
+    replacement: str,
+    text: str,
+    count: int,
+    flags: int = 0,
+    *,
+    budget: WorkBudget | None = None,
+):
     budget = budget or WorkBudget()
     budget.consume(len(text) + len(pattern) + len(replacement))
     if count < 0:
@@ -88,7 +103,7 @@ def substitute(pattern: str, replacement: str, text: str, count: int, flags: int
             break
         if i >= MAX_MATCHES:
             raise ValueError("Regex replacement exceeds the match limit")
-        part = text[cursor:match.start()] + match.expand(replacement)
+        part = text[cursor : match.start()] + match.expand(replacement)
         length += len(part)
         budget.consume(len(part))
         if length > MAX_TEXT_CHARS:

@@ -29,8 +29,12 @@ MAX_CONCURRENT_REQUESTS = 4
 MAX_CONCURRENT_FETCHES = 8
 _request_slots = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
 _fetch_slots = threading.BoundedSemaphore(MAX_CONCURRENT_FETCHES)
-_fetch_executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_FETCHES, thread_name_prefix="unity-docs")
-_request_budget: ContextVar[tuple[asyncio.Semaphore, float] | None] = ContextVar("docs_budget", default=None)
+_fetch_executor = ThreadPoolExecutor(
+    max_workers=MAX_CONCURRENT_FETCHES, thread_name_prefix="unity-docs"
+)
+_request_budget: ContextVar[tuple[asyncio.Semaphore, float] | None] = ContextVar(
+    "docs_budget", default=None
+)
 
 
 def _bounded_request(func):
@@ -41,26 +45,35 @@ def _bounded_request(func):
         values = signature.bind(*args, **kwargs).arguments
         strings = [v for key, v in values.items() if key != "ctx" and isinstance(v, str)]
         if sum(map(len, strings)) > MAX_INPUT_LENGTH or any(
-                len(v) > MAX_QUERY_LENGTH for key, v in values.items()
-                if key not in ("ctx", "queries") and isinstance(v, str)):
+            len(v) > MAX_QUERY_LENGTH
+            for key, v in values.items()
+            if key not in ("ctx", "queries") and isinstance(v, str)
+        ):
             return {"success": False, "message": "Documentation input exceeds the request limit."}
         if not _request_slots.acquire(blocking=False):
             return {"success": False, "message": "Documentation service is busy; retry later."}
-        token = _request_budget.set((asyncio.Semaphore(2), time.monotonic() + REQUEST_TIMEOUT_SECONDS))
+        token = _request_budget.set(
+            (asyncio.Semaphore(2), time.monotonic() + REQUEST_TIMEOUT_SECONDS)
+        )
         try:
             return await asyncio.wait_for(func(*args, **kwargs), REQUEST_TIMEOUT_SECONDS)
         except (asyncio.TimeoutError, TimeoutError, ConnectionError) as exc:
-            return {"success": False, "message": "Documentation request exceeded its time or resource budget.",
-                    "error_type": type(exc).__name__}
+            return {
+                "success": False,
+                "message": "Documentation request exceeded its time or resource budget.",
+                "error_type": type(exc).__name__,
+            }
         finally:
             _request_budget.reset(token)
             _request_slots.release()
+
     return bounded
 
 
 # ---------------------------------------------------------------------------
 # Version extraction
 # ---------------------------------------------------------------------------
+
 
 def _extract_version(version_str: str | None) -> str | None:
     """Extract major.minor from a full Unity version string.
@@ -84,6 +97,7 @@ def _extract_version(version_str: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 # URL construction
 # ---------------------------------------------------------------------------
+
 
 def _build_doc_url(
     class_name: str,
@@ -117,6 +131,7 @@ def _build_property_url(
 # HTTP fetch
 # ---------------------------------------------------------------------------
 
+
 async def _fetch_url(url: str) -> tuple[int, str]:
     """Fetch a URL and return (status_code, body_text).
 
@@ -132,7 +147,10 @@ async def _fetch_url_full(url: str) -> tuple[int, str, str]:
     Like _fetch_url but also returns the final URL after any redirects.
     """
     budget = _request_budget.get()
-    semaphore, deadline = budget or (asyncio.Semaphore(2), time.monotonic() + REQUEST_TIMEOUT_SECONDS)
+    semaphore, deadline = budget or (
+        asyncio.Semaphore(2),
+        time.monotonic() + REQUEST_TIMEOUT_SECONDS,
+    )
 
     def _do_fetch() -> tuple[int, str, str]:
         req = Request(url, headers={"User-Agent": "MCPForUnity/1.0", "Accept-Encoding": "identity"})
@@ -178,6 +196,7 @@ async def _fetch_url_full(url: str) -> tuple[int, str, str]:
 # ---------------------------------------------------------------------------
 # HTML parser
 # ---------------------------------------------------------------------------
+
 
 class _UnityDocParser(HTMLParser):
     """Extracts structured data from Unity ScriptReference HTML pages."""
@@ -274,7 +293,7 @@ class _UnityDocParser(HTMLParser):
                 text = " ".join("".join(self._current_text).split()).strip()
                 # Remove "Declaration" prefix that appears inside the sig block
                 if text.startswith("Declaration"):
-                    text = text[len("Declaration"):].strip()
+                    text = text[len("Declaration") :].strip()
                 if text:
                     self.signatures.append(text)
             self._in_signature = False
@@ -292,9 +311,13 @@ class _UnityDocParser(HTMLParser):
             self._in_td = False
             text = "".join(self._current_text).strip()
             # Support both old ("name-collumn"/"desc-collumn") and new ("name lbl"/"desc") class names
-            if self._td_class and ("name-collumn" in self._td_class or "name" in self._td_class.split()):
+            if self._td_class and (
+                "name-collumn" in self._td_class or "name" in self._td_class.split()
+            ):
                 self._current_param["name"] = text
-            elif self._td_class and ("desc-collumn" in self._td_class or "desc" in self._td_class.split()):
+            elif self._td_class and (
+                "desc-collumn" in self._td_class or "desc" in self._td_class.split()
+            ):
                 self._current_param["description"] = text
 
         if tag == "tr" and self._in_param_table:
@@ -311,7 +334,14 @@ class _UnityDocParser(HTMLParser):
                 self._in_subsection = False
 
     def handle_data(self, data: str) -> None:
-        if self._in_h2 or self._in_pre or self._in_code_example or self._in_p or self._in_td or self._in_signature:
+        if (
+            self._in_h2
+            or self._in_pre
+            or self._in_code_example
+            or self._in_p
+            or self._in_td
+            or self._in_signature
+        ):
             self._current_text.append(data)
 
 
@@ -332,6 +362,7 @@ def _parse_unity_doc_html(html: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Manual / package doc HTML parser
 # ---------------------------------------------------------------------------
+
 
 class _ManualPageParser(HTMLParser):
     """Extracts content from Unity Manual / package doc HTML pages.
@@ -427,6 +458,7 @@ def _parse_manual_html(html: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # get_manual / get_package_doc helpers
 # ---------------------------------------------------------------------------
+
 
 async def _get_manual(slug: str, version: str | None) -> dict[str, Any]:
     """Fetch a Unity Manual page by slug."""
@@ -538,36 +570,93 @@ async def _get_package_doc(
 
 # Asset-related keywords that trigger manage_asset search in lookup
 _ASSET_KEYWORDS = {
-    "shader", "shaders", "material", "materials", "mat",
-    "texture", "textures", "tex", "sprite", "sprites",
-    "prefab", "prefabs", "mesh", "model", "font", "fonts",
-    "lit", "unlit", "urp", "hdrp", "2d", "3d",
+    "shader",
+    "shaders",
+    "material",
+    "materials",
+    "mat",
+    "texture",
+    "textures",
+    "tex",
+    "sprite",
+    "sprites",
+    "prefab",
+    "prefabs",
+    "mesh",
+    "model",
+    "font",
+    "fonts",
+    "lit",
+    "unlit",
+    "urp",
+    "hdrp",
+    "2d",
+    "3d",
 }
 
 
 # Words to skip when building asset search patterns
 _ASSET_STOPWORDS = {
-    "in", "the", "a", "an", "to", "for", "of", "on", "with", "how", "can", "do",
-    "i", "my", "is", "it", "this", "that", "unity", "objects", "object", "using",
-    "receive", "make", "apply", "get", "set", "use", "create",
+    "in",
+    "the",
+    "a",
+    "an",
+    "to",
+    "for",
+    "of",
+    "on",
+    "with",
+    "how",
+    "can",
+    "do",
+    "i",
+    "my",
+    "is",
+    "it",
+    "this",
+    "that",
+    "unity",
+    "objects",
+    "object",
+    "using",
+    "receive",
+    "make",
+    "apply",
+    "get",
+    "set",
+    "use",
+    "create",
 }
 
 # Map keywords to Unity asset filter types
 _KEYWORD_TO_FILTER_TYPE = {
-    "shader": "Shader", "shaders": "Shader", "lit": "Shader", "unlit": "Shader",
-    "material": "Material", "materials": "Material", "mat": "Material",
-    "texture": "Texture2D", "textures": "Texture2D", "tex": "Texture2D",
-    "sprite": "Sprite", "sprites": "Sprite",
-    "prefab": "Prefab", "prefabs": "Prefab",
-    "mesh": "Mesh", "model": "Mesh",
-    "font": "Font", "fonts": "Font",
+    "shader": "Shader",
+    "shaders": "Shader",
+    "lit": "Shader",
+    "unlit": "Shader",
+    "material": "Material",
+    "materials": "Material",
+    "mat": "Material",
+    "texture": "Texture2D",
+    "textures": "Texture2D",
+    "tex": "Texture2D",
+    "sprite": "Sprite",
+    "sprites": "Sprite",
+    "prefab": "Prefab",
+    "prefabs": "Prefab",
+    "mesh": "Mesh",
+    "model": "Mesh",
+    "font": "Font",
+    "fonts": "Font",
 }
 
 
 def _build_asset_search_terms(query: str) -> list[dict[str, str]]:
     """Extract meaningful search terms and infer asset filter types from query."""
     words = query.lower().replace("-", " ").replace("_", " ").split()
-    terms = list(dict.fromkeys(w for w in words if w not in _ASSET_STOPWORDS and len(w) > 1))[:MAX_QUERIES]
+    terms = list(dict.fromkeys(w for w in words if w not in _ASSET_STOPWORDS and len(w) > 1))[
+        :MAX_QUERIES
+    ]
 
     # Infer filter_type from keywords
     filter_type = None
@@ -614,7 +703,10 @@ async def _search_assets(ctx: Any, query: str) -> dict[str, Any] | None:
             search_params: dict[str, Any] = {"action": "search", "path": "Assets", "pageSize": 10}
             search_params.update(params)
             result = await send_with_unity_instance(
-                async_send_command_with_retry, unity_instance, "manage_asset", search_params,
+                async_send_command_with_retry,
+                unity_instance,
+                "manage_asset",
+                search_params,
             )
             if isinstance(result, dict) and result.get("success"):
                 return result.get("data", {}).get("assets", [])
@@ -631,7 +723,11 @@ async def _search_assets(ctx: Any, query: str) -> dict[str, Any] | None:
                     if path and path not in seen_paths:
                         seen_paths.add(path)
                         all_assets.append(
-                            {"name": a.get("name", ""), "path": path, "type": a.get("assetType", "")}
+                            {
+                                "name": a.get("name", ""),
+                                "path": path,
+                                "type": a.get("assetType", ""),
+                            }
                         )
 
         if all_assets:
@@ -733,7 +829,10 @@ async def _lookup(
     For asset-related queries (shader, material, etc.), also searches project assets.
     """
     if len(queries) > MAX_QUERIES or any(len(q) > MAX_QUERY_LENGTH for q in queries):
-        return {"success": False, "message": "Documentation query count or length exceeds the limit."}
+        return {
+            "success": False,
+            "message": "Documentation query count or length exceeds the limit.",
+        }
     queries = list(dict.fromkeys(queries))
     # Run the bounded query set; HTTP work shares the request and service limits.
     tasks = [_lookup_single(q, version, package, pkg_version, ctx) for q in queries]
@@ -765,7 +864,9 @@ async def _lookup(
                 "- get_doc with exact class name\n"
                 "- get_manual with the correct page slug\n"
                 "- manage_asset(action='search') for shaders, materials, prefabs"
-            ) if all_missed else None,
+            )
+            if all_missed
+            else None,
         },
     }
 
@@ -773,6 +874,7 @@ async def _lookup(
 # ---------------------------------------------------------------------------
 # MCP tool
 # ---------------------------------------------------------------------------
+
 
 @mcp_for_unity_tool(
     unity_target="unity_reflect",
@@ -807,11 +909,18 @@ async def unity_docs(
     member_name: Annotated[Optional[str], "Method or property name to look up."] = None,
     version: Annotated[Optional[str], "Unity version (e.g. '6000.0.38f1'). Auto-extracted."] = None,
     slug: Annotated[Optional[str], "Manual page slug (e.g., 'execution-order')."] = None,
-    package: Annotated[Optional[str], "Package name (e.g., 'com.unity.render-pipelines.universal')."] = None,
+    package: Annotated[
+        Optional[str], "Package name (e.g., 'com.unity.render-pipelines.universal')."
+    ] = None,
     page: Annotated[Optional[str], "Package doc page (e.g., 'index', '2d-index')."] = None,
     pkg_version: Annotated[Optional[str], "Package version major.minor (e.g., '17.0')."] = None,
-    query: Annotated[Optional[str], "Single search query for lookup (class name, topic, or slug)."] = None,
-    queries: Annotated[Optional[str], "Comma-separated search queries for batch lookup (e.g., 'Physics.Raycast,NavMeshAgent,Light2D')."] = None,
+    query: Annotated[
+        Optional[str], "Single search query for lookup (class name, topic, or slug)."
+    ] = None,
+    queries: Annotated[
+        Optional[str],
+        "Comma-separated search queries for batch lookup (e.g., 'Physics.Raycast,NavMeshAgent,Light2D').",
+    ] = None,
 ) -> dict[str, Any]:
     action_lower = action.lower()
     if action_lower not in ALL_ACTIONS:

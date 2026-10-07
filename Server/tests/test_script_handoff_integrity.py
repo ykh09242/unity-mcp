@@ -1,11 +1,12 @@
 """Mixed script recovery must distinguish each successfully applied phase."""
+
 import os
 from pathlib import Path
 import subprocess
 import sys
 
 
-PROGRAM = r'''
+PROGRAM = r"""
 import asyncio
 import hashlib
 import importlib
@@ -115,20 +116,29 @@ async def main():
     return failed == 0
 
 raise SystemExit(0 if asyncio.run(main()) else 1)
-'''
+"""
 
 
 def test_mixed_script_recovery_does_not_verify_prior_text_phase(tmp_path):
-    env = {**os.environ, "APPDATA": str(tmp_path / "profile"),
-           "XDG_DATA_HOME": str(tmp_path / "profile"), "UNITY_MCP_DISABLE_TELEMETRY": "true"}
+    env = {
+        **os.environ,
+        "APPDATA": str(tmp_path / "profile"),
+        "XDG_DATA_HOME": str(tmp_path / "profile"),
+        "UNITY_MCP_DISABLE_TELEMETRY": "true",
+    }
     source = Path(__file__).parents[1] / "src/services/tools/script_apply_edits.py"
-    result = subprocess.run([sys.executable, "-c", "SOURCE = " + repr(str(source)) + "\n" + PROGRAM],
-                            env=env, capture_output=True, text=True, timeout=30)
+    result = subprocess.run(
+        [sys.executable, "-c", "SOURCE = " + repr(str(source)) + "\n" + PROGRAM],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "RESULT 26 passed 0 failed" in result.stdout
 
 
-NEWLINE_PROGRAM = r'''
+NEWLINE_PROGRAM = r"""
 import asyncio
 import hashlib
 import importlib.util
@@ -221,14 +231,23 @@ async def main():
     print(f"RESULT {passed} passed {failed} failed")
     return failed == 0
 raise SystemExit(0 if asyncio.run(main()) else 1)
-'''
+"""
 
 
 def test_script_text_spans_preserve_native_newline_coordinates(tmp_path):
-    env = {**os.environ, "APPDATA": str(tmp_path / "profile"),
-           "XDG_DATA_HOME": str(tmp_path / "profile"), "UNITY_MCP_DISABLE_TELEMETRY": "true"}
+    env = {
+        **os.environ,
+        "APPDATA": str(tmp_path / "profile"),
+        "XDG_DATA_HOME": str(tmp_path / "profile"),
+        "UNITY_MCP_DISABLE_TELEMETRY": "true",
+    }
     source = Path(__file__).parents[1] / "src/services/tools/script_apply_edits.py"
-    result = subprocess.run([sys.executable, "-c", "SOURCE = " + repr(str(source)) + "\n" + NEWLINE_PROGRAM],
-                            env=env, capture_output=True, text=True, timeout=30)
+    result = subprocess.run(
+        [sys.executable, "-c", "SOURCE = " + repr(str(source)) + "\n" + NEWLINE_PROGRAM],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "RESULT 92 passed 0 failed" in result.stdout

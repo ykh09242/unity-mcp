@@ -1,4 +1,5 @@
 """Dynamic custom metadata survives real FastMCP registration and invocation."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -15,13 +16,18 @@ def _run_sdk_scenario(source: str, evidence_dir: Path) -> None:
         env[name] = str(evidence_dir / name.lower())
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],
-        cwd=server_root, env=env, capture_output=True, text=True, timeout=30,
+        cwd=server_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_container_defaults_and_descriptions_reach_sdk_schema_and_calls(tmp_path):
-    _run_sdk_scenario('''
+    _run_sdk_scenario(
+        """
         import asyncio, socket, sys
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
@@ -67,11 +73,14 @@ def test_container_defaults_and_descriptions_reach_sdk_schema_and_calls(tmp_path
                     assert not (await client.call_tool(name, {"label": "target", "payload": override})).is_error
                     assert service.execute_tool.call_args.args[3] == {"payload": override, "label": "target"}
         asyncio.run(scenario())
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
 
 
 def test_scalar_aliases_and_absent_defaults_keep_existing_sdk_behavior(tmp_path):
-    _run_sdk_scenario('''
+    _run_sdk_scenario(
+        """
         import asyncio, socket, sys
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
@@ -109,11 +118,14 @@ def test_scalar_aliases_and_absent_defaults_keep_existing_sdk_behavior(tmp_path)
                     assert not (await client.call_tool(name, {})).is_error
                     assert module.send_with_unity_instance.call_args.args[3] == {"value": expected}
         asyncio.run(scenario())
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
 
 
 def test_invalid_defaults_are_rejected_at_registration_boundary(tmp_path):
-    _run_sdk_scenario('''
+    _run_sdk_scenario(
+        """
         import asyncio, socket, sys
         sys.path.insert(0, "src")
         import httpx
@@ -148,11 +160,14 @@ def test_invalid_defaults_are_rejected_at_registration_boundary(tmp_path):
                     assert service._coerce_default(None, kind) is None
                 assert service._coerce_default("", "string") == ""
         asyncio.run(scenario())
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
 
 
 def test_registration_route_rejects_malformed_json_without_server_errors(tmp_path):
-    _run_sdk_scenario('''
+    _run_sdk_scenario(
+        """
         import asyncio, socket, sys
         sys.path.insert(0, "src")
         import httpx
@@ -189,4 +204,6 @@ def test_registration_route_rejects_malformed_json_without_server_errors(tmp_pat
                 response = await client.post("/register-tools", content=b"{")
                 assert response.status_code == 404
         asyncio.run(scenario())
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )

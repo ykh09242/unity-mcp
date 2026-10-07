@@ -18,6 +18,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
     public sealed class FalAudioAdapter : IAudioProviderAdapter
     {
         private const string QueueHost = "queue.fal.run";
+
         // Stable Audio 2.5: music + SFX in one model, up to ~190s. The catalog default.
         // internal so the model catalog references it directly (single source of truth, drift-guarded).
         internal const string DefaultModel = "fal-ai/stable-audio-25/text-to-audio";
@@ -26,8 +27,10 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         public async Task<string> SubmitAsync(AudioGenRequest req, string apiKey, IHttpTransport http, CancellationToken ct)
         {
-            if (req == null) throw new ArgumentNullException(nameof(req));
-            if (http == null) throw new ArgumentNullException(nameof(http));
+            if (req == null)
+                throw new ArgumentNullException(nameof(req));
+            if (http == null)
+                throw new ArgumentNullException(nameof(http));
 
             string model = string.IsNullOrEmpty(req.Model) ? DefaultModel : req.Model;
             return await FalAdapter.SubmitQueueAsync(BuildBody(model, req), model, apiKey, http, ct);
@@ -57,7 +60,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         public async Task<ProviderPollResult> PollAsync(string providerJobId, string apiKey, IHttpTransport http, CancellationToken ct)
         {
-            if (string.IsNullOrEmpty(providerJobId)) throw new ArgumentNullException(nameof(providerJobId));
+            if (string.IsNullOrEmpty(providerJobId))
+                throw new ArgumentNullException(nameof(providerJobId));
             string responseUrl = providerJobId;
             // providerJobId is provider-supplied (the submit-time response_url). Re-validate before
             // attaching the key so a poisoned URL can never exfiltrate it.
@@ -117,9 +121,11 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         private static string ExtractAudioUrl(JObject result)
         {
             string u = result["audio"]?["url"]?.ToString();
-            if (!string.IsNullOrEmpty(u)) return u;
+            if (!string.IsNullOrEmpty(u))
+                return u;
             u = result["audio_file"]?["url"]?.ToString();
-            if (!string.IsNullOrEmpty(u)) return u;
+            if (!string.IsNullOrEmpty(u))
+                return u;
             u = result["audio_url"]?.ToString();
             return string.IsNullOrEmpty(u) ? null : u;
         }
@@ -131,7 +137,10 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 string ext = Path.GetExtension(new Uri(url).AbsolutePath).TrimStart('.').ToLowerInvariant();
                 return string.IsNullOrEmpty(ext) ? "wav" : ext;
             }
-            catch { return "wav"; }
+            catch
+            {
+                return "wav";
+            }
         }
 
         private static JObject ParseOk(HttpResult res, string apiKey, string phase)
@@ -141,7 +150,11 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             JObject json = null;
             if (!string.IsNullOrEmpty(text))
             {
-                try { json = JObject.Parse(text); } catch { /* non-JSON */ }
+                try
+                {
+                    json = JObject.Parse(text);
+                }
+                catch { /* non-JSON */ }
             }
 
             bool ok = res?.Ok == true;

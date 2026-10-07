@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
+using MCPForUnity.Editor.Tools.ProBuilder;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Tools.ProBuilder;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -17,9 +17,7 @@ namespace MCPForUnityTests.Editor.Tools
         [OneTimeSetUp]
         public void OneTimeSetUp()
         {
-            _proBuilderInstalled = Type.GetType(
-                "UnityEngine.ProBuilder.ProBuilderMesh, Unity.ProBuilder"
-            ) != null;
+            _proBuilderInstalled = Type.GetType("UnityEngine.ProBuilder.ProBuilderMesh, Unity.ProBuilder") != null;
         }
 
         [TearDown]
@@ -67,8 +65,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 // Without ProBuilder, should return error about missing package
                 Assert.IsFalse(result.Value<bool>("success"), result.ToString());
-                Assert.That(result["error"]?.ToString(),
-                    Does.Contain("ProBuilder").IgnoreCase);
+                Assert.That(result["error"]?.ToString(), Does.Contain("ProBuilder").IgnoreCase);
                 return;
             }
 
@@ -88,10 +85,7 @@ namespace MCPForUnityTests.Editor.Tools
                 return;
             }
 
-            var paramsObj = new JObject
-            {
-                ["action"] = "create_shape",
-            };
+            var paramsObj = new JObject { ["action"] = "create_shape" };
             var result = ToJObject(ManageProBuilder.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
         }
@@ -126,11 +120,7 @@ namespace MCPForUnityTests.Editor.Tools
             var paramsObj = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestCube",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestCube" },
             };
             var result = ToJObject(ManageProBuilder.HandleCommand(paramsObj));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -143,7 +133,8 @@ namespace MCPForUnityTests.Editor.Tools
 
             // Track for cleanup
             var go = GameObject.Find("PBTestCube");
-            if (go != null) _createdObjects.Add(go);
+            if (go != null)
+                _createdObjects.Add(go);
         }
 
         [Test]
@@ -189,12 +180,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "create_poly_shape",
                 ["properties"] = new JObject
                 {
-                    ["points"] = new JArray(
-                        new JArray(0f, 0f, 0f),
-                        new JArray(5f, 0f, 0f),
-                        new JArray(5f, 0f, 5f),
-                        new JArray(0f, 0f, 5f)
-                    ),
+                    ["points"] = new JArray(new JArray(0f, 0f, 0f), new JArray(5f, 0f, 0f), new JArray(5f, 0f, 5f), new JArray(0f, 0f, 5f)),
                     ["extrudeHeight"] = 3f,
                     ["name"] = "PBTestPoly",
                 },
@@ -203,7 +189,8 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
             var go = GameObject.Find("PBTestPoly");
-            if (go != null) _createdObjects.Add(go);
+            if (go != null)
+                _createdObjects.Add(go);
         }
 
         // =====================================================================
@@ -223,11 +210,7 @@ namespace MCPForUnityTests.Editor.Tools
             var createParams = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestInfoCube",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestInfoCube" },
             };
             var createResult = ToJObject(ManageProBuilder.HandleCommand(createParams));
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
@@ -267,11 +250,7 @@ namespace MCPForUnityTests.Editor.Tools
             var createParams = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestExtrudeCube",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestExtrudeCube" },
             };
             var createResult = ToJObject(ManageProBuilder.HandleCommand(createParams));
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
@@ -286,18 +265,13 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "extrude_faces",
                 ["target"] = "PBTestExtrudeCube",
-                ["properties"] = new JObject
-                {
-                    ["faceIndices"] = new JArray(0),
-                    ["distance"] = 1.0f,
-                },
+                ["properties"] = new JObject { ["faceIndices"] = new JArray(0), ["distance"] = 1.0f },
             };
             var result = ToJObject(ManageProBuilder.HandleCommand(extrudeParams));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
             int newFaceCount = result["data"].Value<int>("faceCount");
-            Assert.Greater(newFaceCount, initialFaceCount,
-                "Face count should increase after extrusion");
+            Assert.Greater(newFaceCount, initialFaceCount, "Face count should increase after extrusion");
         }
 
         [Test]
@@ -312,11 +286,7 @@ namespace MCPForUnityTests.Editor.Tools
             var createParams = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestDeleteCube",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestDeleteCube" },
             };
             var createResult = ToJObject(ManageProBuilder.HandleCommand(createParams));
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
@@ -330,17 +300,13 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "delete_faces",
                 ["target"] = "PBTestDeleteCube",
-                ["properties"] = new JObject
-                {
-                    ["faceIndices"] = new JArray(0),
-                },
+                ["properties"] = new JObject { ["faceIndices"] = new JArray(0) },
             };
             var result = ToJObject(ManageProBuilder.HandleCommand(deleteParams));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
             int newFaceCount = result["data"].Value<int>("faceCount");
-            Assert.Less(newFaceCount, initialFaceCount,
-                "Face count should decrease after deletion");
+            Assert.Less(newFaceCount, initialFaceCount, "Face count should decrease after deletion");
         }
 
         [Test]
@@ -356,11 +322,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "set_face_material",
                 ["target"] = "NonExistentObject999",
-                ["properties"] = new JObject
-                {
-                    ["faceIndices"] = new JArray(0),
-                    ["materialPath"] = "Assets/Materials/Test.mat",
-                },
+                ["properties"] = new JObject { ["faceIndices"] = new JArray(0), ["materialPath"] = "Assets/Materials/Test.mat" },
             };
             var result = ToJObject(ManageProBuilder.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
@@ -373,11 +335,15 @@ namespace MCPForUnityTests.Editor.Tools
             if (!_proBuilderInstalled)
                 Assert.Ignore("ProBuilder is required for native UV verification.");
 
-            var created = ToJObject(ManageProBuilder.HandleCommand(new JObject
-            {
-                ["action"] = "create_shape",
-                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestUVSettings" },
-            }));
+            var created = ToJObject(
+                ManageProBuilder.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create_shape",
+                        ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestUVSettings" },
+                    }
+                )
+            );
             Assert.IsTrue(created.Value<bool>("success"), created.ToString());
             var go = GameObject.Find("PBTestUVSettings");
             Assert.IsNotNull(go);
@@ -388,12 +354,16 @@ namespace MCPForUnityTests.Editor.Tools
             var uvProperty = faces[0].GetType().GetProperty("uv");
             var untouched = uvProperty.GetValue(faces[1]);
             var properties = JObject.Parse("{\"faceIndices\":[0],\"scale\":[2,3],\"offset\":[4,5],\"rotation\":45,\"flipU\":true,\"flipV\":true}");
-            var result = ToJObject(ManageProBuilder.HandleCommand(new JObject
-            {
-                ["action"] = "set_face_uvs",
-                ["target"] = go.name,
-                ["properties"] = jsonProperties ? (JToken)new JValue(properties.ToString()) : properties,
-            }));
+            var result = ToJObject(
+                ManageProBuilder.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_face_uvs",
+                        ["target"] = go.name,
+                        ["properties"] = jsonProperties ? (JToken)new JValue(properties.ToString()) : properties,
+                    }
+                )
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var uv = uvProperty.GetValue(faces[0]);
             var settingsType = uv.GetType();
@@ -417,11 +387,7 @@ namespace MCPForUnityTests.Editor.Tools
             var createParams = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestFlipCube",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestFlipCube" },
             };
             var createResult = ToJObject(ManageProBuilder.HandleCommand(createParams));
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
@@ -433,10 +399,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "flip_normals",
                 ["target"] = "PBTestFlipCube",
-                ["properties"] = new JObject
-                {
-                    ["faceIndices"] = new JArray(0, 1),
-                },
+                ["properties"] = new JObject { ["faceIndices"] = new JArray(0, 1) },
             };
             var result = ToJObject(ManageProBuilder.HandleCommand(flipParams));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -458,11 +421,7 @@ namespace MCPForUnityTests.Editor.Tools
             var createParams = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestSummaryCube",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestSummaryCube" },
             };
             var createResult = ToJObject(ManageProBuilder.HandleCommand(createParams));
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
@@ -471,11 +430,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(go);
             _createdObjects.Add(go);
 
-            var infoParams = new JObject
-            {
-                ["action"] = "get_mesh_info",
-                ["target"] = "PBTestSummaryCube",
-            };
+            var infoParams = new JObject { ["action"] = "get_mesh_info", ["target"] = "PBTestSummaryCube" };
             var result = ToJObject(ManageProBuilder.HandleCommand(infoParams));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
@@ -498,11 +453,7 @@ namespace MCPForUnityTests.Editor.Tools
             var createParams = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestFacesCube",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestFacesCube" },
             };
             var createResult = ToJObject(ManageProBuilder.HandleCommand(createParams));
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
@@ -547,11 +498,7 @@ namespace MCPForUnityTests.Editor.Tools
             var createParams = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestEdgesCube",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestEdgesCube" },
             };
             var createResult = ToJObject(ManageProBuilder.HandleCommand(createParams));
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
@@ -593,11 +540,7 @@ namespace MCPForUnityTests.Editor.Tools
             var createParams = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestTopNormalCube",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestTopNormalCube" },
             };
             var createResult = ToJObject(ManageProBuilder.HandleCommand(createParams));
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
@@ -647,11 +590,7 @@ namespace MCPForUnityTests.Editor.Tools
             var createParams = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestAutoSmoothCube",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestAutoSmoothCube" },
             };
             var createResult = ToJObject(ManageProBuilder.HandleCommand(createParams));
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
@@ -682,11 +621,7 @@ namespace MCPForUnityTests.Editor.Tools
             var createParams = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestSetSmoothCube",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestSetSmoothCube" },
             };
             var createResult = ToJObject(ManageProBuilder.HandleCommand(createParams));
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
@@ -699,11 +634,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "set_smoothing",
                 ["target"] = "PBTestSetSmoothCube",
-                ["properties"] = new JObject
-                {
-                    ["faceIndices"] = new JArray(0, 1),
-                    ["smoothingGroup"] = 1,
-                },
+                ["properties"] = new JObject { ["faceIndices"] = new JArray(0, 1), ["smoothingGroup"] = 1 },
             };
             var result = ToJObject(ManageProBuilder.HandleCommand(smoothParams));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -729,11 +660,7 @@ namespace MCPForUnityTests.Editor.Tools
             var createParams = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestCenterPivot",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestCenterPivot" },
             };
             var createResult = ToJObject(ManageProBuilder.HandleCommand(createParams));
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
@@ -742,11 +669,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(go);
             _createdObjects.Add(go);
 
-            var pivotParams = new JObject
-            {
-                ["action"] = "center_pivot",
-                ["target"] = "PBTestCenterPivot",
-            };
+            var pivotParams = new JObject { ["action"] = "center_pivot", ["target"] = "PBTestCenterPivot" };
             var result = ToJObject(ManageProBuilder.HandleCommand(pivotParams));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
         }
@@ -777,11 +700,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(go);
             _createdObjects.Add(go);
 
-            var freezeParams = new JObject
-            {
-                ["action"] = "freeze_transform",
-                ["target"] = "PBTestFreeze",
-            };
+            var freezeParams = new JObject { ["action"] = "freeze_transform", ["target"] = "PBTestFreeze" };
             var result = ToJObject(ManageProBuilder.HandleCommand(freezeParams));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
@@ -803,11 +722,7 @@ namespace MCPForUnityTests.Editor.Tools
             var createParams = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestValidate",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestValidate" },
             };
             var createResult = ToJObject(ManageProBuilder.HandleCommand(createParams));
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
@@ -816,11 +731,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(go);
             _createdObjects.Add(go);
 
-            var validateParams = new JObject
-            {
-                ["action"] = "validate_mesh",
-                ["target"] = "PBTestValidate",
-            };
+            var validateParams = new JObject { ["action"] = "validate_mesh", ["target"] = "PBTestValidate" };
             var result = ToJObject(ManageProBuilder.HandleCommand(validateParams));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
@@ -842,11 +753,7 @@ namespace MCPForUnityTests.Editor.Tools
             var createParams = new JObject
             {
                 ["action"] = "create_shape",
-                ["properties"] = new JObject
-                {
-                    ["shapeType"] = "Cube",
-                    ["name"] = "PBTestRepair",
-                },
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestRepair" },
             };
             var createResult = ToJObject(ManageProBuilder.HandleCommand(createParams));
             Assert.IsTrue(createResult.Value<bool>("success"), createResult.ToString());
@@ -855,11 +762,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(go);
             _createdObjects.Add(go);
 
-            var repairParams = new JObject
-            {
-                ["action"] = "repair_mesh",
-                ["target"] = "PBTestRepair",
-            };
+            var repairParams = new JObject { ["action"] = "repair_mesh", ["target"] = "PBTestRepair" };
             var result = ToJObject(ManageProBuilder.HandleCommand(repairParams));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
@@ -881,19 +784,23 @@ namespace MCPForUnityTests.Editor.Tools
                 return;
             }
 
-            string[] testActions = {
-                "ping", "create_shape", "get_mesh_info", "extrude_faces",
-                "auto_smooth", "set_smoothing", "center_pivot", "validate_mesh",
+            string[] testActions =
+            {
+                "ping",
+                "create_shape",
+                "get_mesh_info",
+                "extrude_faces",
+                "auto_smooth",
+                "set_smoothing",
+                "center_pivot",
+                "validate_mesh",
             };
             foreach (var action in testActions)
             {
                 var paramsObj = new JObject { ["action"] = action };
                 var result = ToJObject(ManageProBuilder.HandleCommand(paramsObj));
-                Assert.IsFalse(result.Value<bool>("success"),
-                    $"Action '{action}' should fail without ProBuilder: {result}");
-                Assert.That(result["error"]?.ToString(),
-                    Does.Contain("ProBuilder").IgnoreCase,
-                    $"Error for '{action}' should mention ProBuilder");
+                Assert.IsFalse(result.Value<bool>("success"), $"Action '{action}' should fail without ProBuilder: {result}");
+                Assert.That(result["error"]?.ToString(), Does.Contain("ProBuilder").IgnoreCase, $"Error for '{action}' should mention ProBuilder");
             }
         }
     }

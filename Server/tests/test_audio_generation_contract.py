@@ -8,7 +8,7 @@ import textwrap
 
 
 def test_audio_generation_sdk_and_cli_response_contracts():
-    source = '''
+    source = """
         import json
         import sys
         from unittest.mock import AsyncMock
@@ -78,7 +78,7 @@ def test_audio_generation_sdk_and_cli_response_contracts():
         set_config(CLIConfig(format="text"))
         result = runner.invoke(asset_gen, ["generate-audio", "--prompt", "owned sound"])
         assert result.exit_code == 0 and "unity-mcp asset-gen status --job-id owned-job" in result.output
-    '''
+    """
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],
         cwd=Path(__file__).resolve().parents[1],

@@ -49,14 +49,13 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         return
 
     for tool_info in tools:
-        func = tool_info['func']
-        tool_name = tool_info['name']
-        description = tool_info['description']
-        kwargs = tool_info['kwargs']
+        func = tool_info["func"]
+        tool_name = tool_info["name"]
+        description = tool_info["description"]
+        kwargs = tool_info["kwargs"]
 
         if not project_scoped_tools and tool_name == "execute_custom_tool":
-            logger.info(
-                "Skipping execute_custom_tool registration (project-scoped tools disabled)")
+            logger.info("Skipping execute_custom_tool registration (project-scoped tools disabled)")
             continue
 
         # Apply decorators: logging -> telemetry -> mcp.tool
@@ -64,9 +63,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         # ParamNormalizerMiddleware before FastMCP validation
         wrapped = log_execution(tool_name, "Tool")(func)
         wrapped = telemetry_tool(tool_name)(wrapped)
-        wrapped = mcp.tool(
-            name=tool_name, description=description, **kwargs)(wrapped)
-        tool_info['func'] = wrapped
+        wrapped = mcp.tool(name=tool_name, description=description, **kwargs)(wrapped)
+        tool_info["func"] = wrapped
         logger.debug(f"Registered tool: {tool_name} - {description}")
 
     logger.info(f"Registered {len(tools)} MCP tools")
@@ -119,9 +117,12 @@ async def sync_tool_visibility_from_unity(
         dict with sync results (enabled/disabled groups, tool count).
     """
     from core.config import config
+
     if config.http_remote_hosted:
-        return {"error": "Tool sync is unavailable in remote-hosted mode; Unity pushes its catalog through the authenticated plugin session.",
-                "remote_sync_disabled": True}
+        return {
+            "error": "Tool sync is unavailable in remote-hosted mode; Unity pushes its catalog through the authenticated plugin session.",
+            "remote_sync_disabled": True,
+        }
 
     from transport.legacy.unity_connection import async_send_command_with_retry
     from transport.plugin_hub import PluginHub
@@ -134,15 +135,17 @@ async def sync_tool_visibility_from_unity(
             session_id = await PluginHub._resolve_session_id(instance_id, retry_on_reload=False)
 
         response = await send_with_unity_instance(
-            async_send_command_with_retry, instance_id, "get_tool_states", {},
+            async_send_command_with_retry,
+            instance_id,
+            "get_tool_states",
+            {},
         )
 
         # Detect unsupported command (Unity package too old)
         if isinstance(response, dict):
             error_msg = response.get("error") or response.get("message") or ""
             if isinstance(error_msg, str) and (
-                "unknown" in error_msg.lower()
-                or "unsupported command" in error_msg.lower()
+                "unknown" in error_msg.lower() or "unsupported command" in error_msg.lower()
             ):
                 logger.debug(
                     "Unity does not support get_tool_states yet — "
@@ -180,7 +183,8 @@ async def sync_tool_visibility_from_unity(
 
         logger.info(
             "Syncing tool visibility from Unity: %d/%d tools enabled",
-            len(enabled_tools), len(tools),
+            len(enabled_tools),
+            len(tools),
         )
 
         from models.models import ToolDefinitionModel
@@ -194,7 +198,9 @@ async def sync_tool_visibility_from_unity(
             except ValidationError as exc:
                 issues = [
                     {"loc": error["loc"], "type": error["type"]}
-                    for error in exc.errors(include_input=False, include_context=False, include_url=False)
+                    for error in exc.errors(
+                        include_input=False, include_context=False, include_url=False
+                    )
                 ]
                 name = tool.get("name")
                 safe_name = name[:160] if isinstance(name, str) else "<invalid name>"
@@ -205,11 +211,15 @@ async def sync_tool_visibility_from_unity(
         enabled_tools = valid_tools
 
         if config.transport_mode.lower() == "http":
-            session = await registry.get_session(session_id) if registry is not None and session_id else None
+            session = (
+                await registry.get_session(session_id)
+                if registry is not None and session_id
+                else None
+            )
             if session is not None:
-                await registry.register_tools_for_session(session_id, [
-                    session.tools.get(tool.name, tool) for tool in parsed_tools
-                ])
+                await registry.register_tools_for_session(
+                    session_id, [session.tools.get(tool.name, tool) for tool in parsed_tools]
+                )
             await PluginHub._refresh_server_tool_visibility()
         else:
             PluginHub._sync_server_tool_visibility(enabled_tools)
@@ -219,12 +229,11 @@ async def sync_tool_visibility_from_unity(
         # description, parameters, etc.  If those fields are missing
         # (older Unity package), we skip custom tool registration.
         custom_tool_count = 0
-        has_extended_metadata = any(
-            "is_built_in" in t for t in enabled_tools
-        )
+        has_extended_metadata = any("is_built_in" in t for t in enabled_tools)
         if has_extended_metadata:
             custom_tool_models = [
-                parsed for tool, parsed in zip(enabled_tools, parsed_tools)
+                parsed
+                for tool, parsed in zip(enabled_tools, parsed_tools)
                 if not tool.get("is_built_in", True)
             ]
             if custom_tool_models:
@@ -261,6 +270,7 @@ async def sync_tool_visibility_from_unity(
 
         # Build summary
         from services.registry import get_group_tool_names
+
         group_tools = get_group_tool_names()
         enabled_names = {t.get("name") for t in enabled_tools if t.get("name")}
         enabled_groups = []
@@ -283,7 +293,8 @@ async def sync_tool_visibility_from_unity(
 
     except Exception as exc:
         logger.warning(
-            "Failed to sync tool visibility from Unity (%s)", type(exc).__name__,
+            "Failed to sync tool visibility from Unity (%s)",
+            type(exc).__name__,
         )
         return {"error": str(exc)}
 

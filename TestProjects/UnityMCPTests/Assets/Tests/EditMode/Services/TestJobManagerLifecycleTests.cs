@@ -22,8 +22,7 @@ namespace MCPForUnityTests.Editor.Services
         private object _originalTestService;
         private static FieldInfo TestServiceField => typeof(MCPServiceLocator).GetField("_testRunnerService", StaticPrivate);
 
-        private static Dictionary<string, TestJob> Jobs =>
-            (Dictionary<string, TestJob>)typeof(TestJobManager).GetField("Jobs", StaticPrivate).GetValue(null);
+        private static Dictionary<string, TestJob> Jobs => (Dictionary<string, TestJob>)typeof(TestJobManager).GetField("Jobs", StaticPrivate).GetValue(null);
 
         [SetUp]
         public void SetUp()
@@ -42,7 +41,8 @@ namespace MCPForUnityTests.Editor.Services
         public void TearDown()
         {
             Jobs.Clear();
-            foreach (var pair in _originalJobs) Jobs.Add(pair.Key, pair.Value);
+            foreach (var pair in _originalJobs)
+                Jobs.Add(pair.Key, pair.Value);
             SetCurrent(_originalCurrent);
             typeof(TestJobManager).GetField("_lastPersistUnixMs", StaticPrivate).SetValue(null, _originalPersistTime);
             SessionState.SetString("MCPForUnity.TestJobsV1", _originalSessionJobs);
@@ -86,13 +86,14 @@ namespace MCPForUnityTests.Editor.Services
         private sealed class ThrowingTestService : ITestRunnerService
         {
             public int Calls { get; private set; }
+
             public Task<TestRunResult> RunTestsAsync(TestMode mode, TestFilterOptions filterOptions = null)
             {
                 Calls++;
                 throw new InvalidOperationException("synchronous-startup-failure");
             }
-            public Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode) =>
-                throw new NotSupportedException();
+
+            public Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode) => throw new NotSupportedException();
         }
 
         [TestCase(false, false, -1)]
@@ -103,11 +104,14 @@ namespace MCPForUnityTests.Editor.Services
             var job = NewJob("failed-run", 1);
             Jobs.Add(job.JobId, job);
             SetCurrent(job.JobId);
-            var result = new TestRunResult(new TestRunSummary(2, 1, 1, 0, 1.5, "Failed"), new[]
-            {
-                new TestRunTestResult("Pass", "Suite.Pass", "Passed", 0.5, null, null, null),
-                new TestRunTestResult("Fail", "Suite.Fail", "Failed", 1, "assertion failed", "stack", "output")
-            });
+            var result = new TestRunResult(
+                new TestRunSummary(2, 1, 1, 0, 1.5, "Failed"),
+                new[]
+                {
+                    new TestRunTestResult("Pass", "Suite.Pass", "Passed", 0.5, null, null, null),
+                    new TestRunTestResult("Fail", "Suite.Fail", "Failed", 1, "assertion failed", "stack", "output"),
+                }
+            );
 
             TestJobManager.FinalizeCurrentJobFromRunFinished(result);
             var payload = JObject.FromObject(TestJobManager.ToSerializable(job, includeDetails, includeFailed));
@@ -115,7 +119,8 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual("failed", (string)payload["status"]);
             Assert.AreEqual(JTokenType.Object, payload["result"].Type, "A failed assertion still produces a final run result.");
             Assert.AreEqual(1, (int?)payload["result"]?["summary"]?["failed"]);
-            if (expectedResults < 0) Assert.AreEqual(JTokenType.Null, payload["result"]["results"].Type);
+            if (expectedResults < 0)
+                Assert.AreEqual(JTokenType.Null, payload["result"]["results"].Type);
             else
             {
                 Assert.AreEqual(expectedResults, ((JArray)payload["result"]["results"]).Count);
@@ -171,16 +176,19 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(active.JobId, TestJobManager.CurrentJobId);
         }
 
-        private static TestJob NewJob(string id, long updated) => new TestJob
-        {
-            JobId = id, Status = TestJobStatus.Running, Mode = "EditMode",
-            StartedUnixMs = updated, LastUpdateUnixMs = updated, FailuresSoFar = new List<TestJobFailure>()
-        };
+        private static TestJob NewJob(string id, long updated) =>
+            new TestJob
+            {
+                JobId = id,
+                Status = TestJobStatus.Running,
+                Mode = "EditMode",
+                StartedUnixMs = updated,
+                LastUpdateUnixMs = updated,
+                FailuresSoFar = new List<TestJobFailure>(),
+            };
 
-        private static void SetCurrent(string id) =>
-            typeof(TestJobManager).GetField("_currentJobId", StaticPrivate).SetValue(null, id);
+        private static void SetCurrent(string id) => typeof(TestJobManager).GetField("_currentJobId", StaticPrivate).SetValue(null, id);
 
-        private static void Persist() =>
-            typeof(TestJobManager).GetMethod("PersistToSessionState", StaticPrivate).Invoke(null, new object[] { true });
+        private static void Persist() => typeof(TestJobManager).GetMethod("PersistToSessionState", StaticPrivate).Invoke(null, new object[] { true });
     }
 }

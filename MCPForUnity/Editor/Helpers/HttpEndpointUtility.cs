@@ -37,7 +37,8 @@ namespace MCPForUnity.Editor.Helpers
             }
 
             string path = GetLocalAuthTokenPath(endpoint);
-            if (path == null) return string.Empty;
+            if (path == null)
+                return string.Empty;
 
             try
             {
@@ -66,8 +67,7 @@ namespace MCPForUnity.Editor.Helpers
                 string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                 path = Path.Combine(home, ".unity-mcp", "auth", $"token-{endpoint.Port}");
             }
-            else if (path.StartsWith("~/", StringComparison.Ordinal)
-                || path.StartsWith("~\\", StringComparison.Ordinal))
+            else if (path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith("~\\", StringComparison.Ordinal))
             {
                 path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path.Substring(2));
             }
@@ -79,10 +79,9 @@ namespace MCPForUnity.Editor.Helpers
         public static Dictionary<string, string> GetAuthHeaders()
         {
             bool remote = IsRemoteScope();
-            if (remote) ValidateRemoteConfigurationUrl();
-            string token = remote
-                ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty)
-                : ReadLocalAuthToken(new Uri(GetLocalBaseUrl()));
+            if (remote)
+                ValidateRemoteConfigurationUrl();
+            string token = remote ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty) : ReadLocalAuthToken(new Uri(GetLocalBaseUrl()));
             var headers = new Dictionary<string, string>();
             if (!string.IsNullOrEmpty(token))
             {
@@ -213,7 +212,8 @@ namespace MCPForUnity.Editor.Helpers
         public static ConfiguredTransport GetCurrentServerTransport()
         {
             bool useHttp = EditorConfigurationCache.Instance.UseHttpTransport;
-            if (!useHttp) return ConfiguredTransport.Stdio;
+            if (!useHttp)
+                return ConfiguredTransport.Stdio;
             return IsRemoteScope() ? ConfiguredTransport.HttpRemote : ConfiguredTransport.Http;
         }
 
@@ -316,8 +316,9 @@ namespace MCPForUnity.Editor.Helpers
                     return true;
                 }
 
-                error = "Binding to all interfaces (0.0.0.0/::) is disabled by default. " +
-                        "Enable \"Allow LAN bind for HTTP Local\" in Advanced Settings to opt in.";
+                error =
+                    "Binding to all interfaces (0.0.0.0/::) is disabled by default. "
+                    + "Enable \"Allow LAN bind for HTTP Local\" in Advanced Settings to opt in.";
                 return false;
             }
 
@@ -391,9 +392,7 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static string GetHttpLocalHostRequirementText()
         {
-            return AllowLanHttpBind()
-                ? "localhost/127.0.0.1/::1/0.0.0.0/::"
-                : "localhost/127.0.0.1/::1";
+            return AllowLanHttpBind() ? "localhost/127.0.0.1/::1/0.0.0.0/::" : "localhost/127.0.0.1/::1";
         }
 
         /// <summary>

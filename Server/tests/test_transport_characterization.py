@@ -20,9 +20,18 @@ from datetime import datetime, timezone
 import uuid
 from types import SimpleNamespace
 
-from transport.unity_instance_middleware import UnityInstanceMiddleware, get_unity_instance_middleware, set_unity_instance_middleware
+from transport.unity_instance_middleware import (
+    UnityInstanceMiddleware,
+    get_unity_instance_middleware,
+    set_unity_instance_middleware,
+)
 from transport.plugin_registry import PluginRegistry, PluginSession
-from transport.plugin_hub import PluginHub, NoUnitySessionError, InstanceSelectionRequiredError, PluginDisconnectedError
+from transport.plugin_hub import (
+    PluginHub,
+    NoUnitySessionError,
+    InstanceSelectionRequiredError,
+    PluginDisconnectedError,
+)
 from transport.models import (
     RegisterMessage,
     RegisterToolsMessage,
@@ -52,6 +61,7 @@ def _tool_registry_for_visibility_tests() -> list[dict]:
         {"name": "execute_custom_tool", "unity_target": None},
     ]
 
+
 @pytest.fixture
 def mock_context():
     """Create a mock FastMCP context."""
@@ -60,7 +70,9 @@ def mock_context():
     ctx.client_id = "test-client-456"
 
     state_storage = {}
-    ctx.set_state = AsyncMock(side_effect=lambda k, v, *, serializable=True: state_storage.__setitem__(k, v))
+    ctx.set_state = AsyncMock(
+        side_effect=lambda k, v, *, serializable=True: state_storage.__setitem__(k, v)
+    )
     ctx.get_state = AsyncMock(side_effect=lambda k: state_storage.get(k))
     ctx.info = AsyncMock()
 
@@ -102,6 +114,7 @@ async def configured_plugin_hub(plugin_registry):
 # SESSION MANAGEMENT & ROUTING TESTS
 # ============================================================================
 
+
 def _make_ctx(session_id: str | None = None) -> Mock:
     """Build a minimal Context shim with FastMCP-compatible session state.
 
@@ -112,7 +125,9 @@ def _make_ctx(session_id: str | None = None) -> Mock:
     state: dict[str, object] = {}
     ctx = Mock()
     ctx.session_id = session_id or "test-session"
-    ctx.set_state = AsyncMock(side_effect=lambda k, v, *, serializable=True: state.__setitem__(k, v))
+    ctx.set_state = AsyncMock(
+        side_effect=lambda k, v, *, serializable=True: state.__setitem__(k, v)
+    )
     ctx.get_state = AsyncMock(side_effect=lambda k: state.get(k))
     ctx.delete_state = AsyncMock(side_effect=lambda k: state.pop(k, None))
     return ctx
@@ -137,8 +152,7 @@ class TestUnityInstanceMiddlewareSessionManagement:
         await middleware.set_active_instance(mock_context, instance_id)
         retrieved = await middleware.get_active_instance(mock_context)
 
-        assert retrieved == instance_id, \
-            "Middleware must store and retrieve instance per session"
+        assert retrieved == instance_id, "Middleware must store and retrieve instance per session"
 
     @pytest.mark.asyncio
     async def test_middleware_isolates_multiple_sessions(self):
@@ -190,6 +204,7 @@ class TestUnityInstanceMiddlewareSessionManagement:
 # MIDDLEWARE INJECTION & CONTEXT FLOW TESTS
 # ============================================================================
 
+
 class TestUnityInstanceMiddlewareInjection:
     """Test middleware injection of instance into context state."""
 
@@ -210,6 +225,7 @@ class TestUnityInstanceMiddlewareInjection:
         middleware_ctx.fastmcp_context = mock_context
 
         call_next_called = False
+
         async def mock_call_next(_ctx):
             nonlocal call_next_called
             call_next_called = True
@@ -257,8 +273,12 @@ class TestUnityInstanceMiddlewareInjection:
             return {"status": "ok"}
 
         # Mock PluginHub as unavailable AND legacy connection pool to prevent fallback discovery
-        with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=False):
-            with patch("transport.legacy.unity_connection.get_unity_connection_pool", return_value=None):
+        with patch(
+            "transport.unity_instance_middleware.PluginHub.is_configured", return_value=False
+        ):
+            with patch(
+                "transport.legacy.unity_connection.get_unity_connection_pool", return_value=None
+            ):
                 await middleware.on_call_tool(middleware_ctx, mock_call_next)
 
         # A request-local None shadows stale persisted routing when no target exists.
@@ -266,7 +286,9 @@ class TestUnityInstanceMiddlewareInjection:
         assert await mock_context.get_state("unity_instance") is None
 
     @pytest.mark.asyncio
-    async def test_list_tools_filters_disabled_unity_tools_and_aliases(self, mock_context, monkeypatch):
+    async def test_list_tools_filters_disabled_unity_tools_and_aliases(
+        self, mock_context, monkeypatch
+    ):
         """
         Current behavior: in HTTP mode with a connected Unity session, on_list_tools()
         uses PluginHub-registered tool names to hide disabled Unity tools while keeping
@@ -291,10 +313,21 @@ class TestUnityInstanceMiddlewareInjection:
             return available_tools
 
         with patch.object(middleware, "_inject_unity_instance", new=AsyncMock()):
-            with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=True):
-                with patch("transport.unity_instance_middleware.get_registered_tools", return_value=_tool_registry_for_visibility_tests()):
-                    with patch("transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock) as mock_get_sessions:
-                        with patch("transport.unity_instance_middleware.PluginHub.get_tools_for_project", new_callable=AsyncMock) as mock_get_tools:
+            with patch(
+                "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
+            ):
+                with patch(
+                    "transport.unity_instance_middleware.get_registered_tools",
+                    return_value=_tool_registry_for_visibility_tests(),
+                ):
+                    with patch(
+                        "transport.unity_instance_middleware.PluginHub.get_sessions",
+                        new_callable=AsyncMock,
+                    ) as mock_get_sessions:
+                        with patch(
+                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            new_callable=AsyncMock,
+                        ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
                                 sessions={
                                     "session-1": SessionDetails(
@@ -319,7 +352,9 @@ class TestUnityInstanceMiddlewareInjection:
         assert "manage_asset" not in names
 
     @pytest.mark.asyncio
-    async def test_list_tools_skips_filter_when_no_tools_registered_yet(self, mock_context, monkeypatch):
+    async def test_list_tools_skips_filter_when_no_tools_registered_yet(
+        self, mock_context, monkeypatch
+    ):
         """
         When a Unity session is connected but register_tools has not been sent yet
         (empty registered_tools), defer filtering to avoid hiding tools that may
@@ -345,10 +380,21 @@ class TestUnityInstanceMiddlewareInjection:
             return original_tools
 
         with patch.object(middleware, "_inject_unity_instance", new=AsyncMock()):
-            with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=True):
-                with patch("transport.unity_instance_middleware.get_registered_tools", return_value=_tool_registry_for_visibility_tests()):
-                    with patch("transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock) as mock_get_sessions:
-                        with patch("transport.unity_instance_middleware.PluginHub.get_tools_for_project", new_callable=AsyncMock) as mock_get_tools:
+            with patch(
+                "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
+            ):
+                with patch(
+                    "transport.unity_instance_middleware.get_registered_tools",
+                    return_value=_tool_registry_for_visibility_tests(),
+                ):
+                    with patch(
+                        "transport.unity_instance_middleware.PluginHub.get_sessions",
+                        new_callable=AsyncMock,
+                    ) as mock_get_sessions:
+                        with patch(
+                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            new_callable=AsyncMock,
+                        ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
                                 sessions={
                                     "session-1": SessionDetails(
@@ -402,10 +448,21 @@ class TestUnityInstanceMiddlewareInjection:
         registered_tools = [disabled_tool]
 
         with patch.object(middleware, "_inject_unity_instance", new=AsyncMock()):
-            with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=True):
-                with patch("transport.unity_instance_middleware.get_registered_tools", return_value=_tool_registry_for_visibility_tests()):
-                    with patch("transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock) as mock_get_sessions:
-                        with patch("transport.unity_instance_middleware.PluginHub.get_tools_for_project", new_callable=AsyncMock) as mock_get_tools:
+            with patch(
+                "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
+            ):
+                with patch(
+                    "transport.unity_instance_middleware.get_registered_tools",
+                    return_value=_tool_registry_for_visibility_tests(),
+                ):
+                    with patch(
+                        "transport.unity_instance_middleware.PluginHub.get_sessions",
+                        new_callable=AsyncMock,
+                    ) as mock_get_sessions:
+                        with patch(
+                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            new_callable=AsyncMock,
+                        ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
                                 sessions={
                                     "session-1": SessionDetails(
@@ -429,7 +486,9 @@ class TestUnityInstanceMiddlewareInjection:
         assert "create_script" not in names
 
     @pytest.mark.asyncio
-    async def test_list_tools_skips_filter_when_enabled_set_lookup_fails(self, mock_context, monkeypatch):
+    async def test_list_tools_skips_filter_when_enabled_set_lookup_fails(
+        self, mock_context, monkeypatch
+    ):
         """
         Current behavior: if enabled-tool lookup fails unexpectedly, on_list_tools()
         leaves the FastMCP list unchanged to avoid hiding tools due to transient
@@ -452,10 +511,21 @@ class TestUnityInstanceMiddlewareInjection:
             return original_tools
 
         with patch.object(middleware, "_inject_unity_instance", new=AsyncMock()):
-            with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=True):
-                with patch("transport.unity_instance_middleware.get_registered_tools", return_value=_tool_registry_for_visibility_tests()):
-                    with patch("transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock) as mock_get_sessions:
-                        with patch("transport.unity_instance_middleware.PluginHub.get_tools_for_project", new_callable=AsyncMock) as mock_get_tools:
+            with patch(
+                "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
+            ):
+                with patch(
+                    "transport.unity_instance_middleware.get_registered_tools",
+                    return_value=_tool_registry_for_visibility_tests(),
+                ):
+                    with patch(
+                        "transport.unity_instance_middleware.PluginHub.get_sessions",
+                        new_callable=AsyncMock,
+                    ) as mock_get_sessions:
+                        with patch(
+                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            new_callable=AsyncMock,
+                        ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
                                 sessions={
                                     "session-1": SessionDetails(
@@ -473,7 +543,9 @@ class TestUnityInstanceMiddlewareInjection:
         assert [tool.name for tool in filtered] == [tool.name for tool in original_tools]
 
     @pytest.mark.asyncio
-    async def test_list_tools_uses_user_scoped_tool_lookup_in_hosted_mode(self, mock_context, monkeypatch):
+    async def test_list_tools_uses_user_scoped_tool_lookup_in_hosted_mode(
+        self, mock_context, monkeypatch
+    ):
         """
         Current behavior: in remote-hosted HTTP mode, tool filtering fetches
         Unity-registered tools scoped to the current user.
@@ -491,10 +563,21 @@ class TestUnityInstanceMiddlewareInjection:
             return [SimpleNamespace(name="manage_scene")]
 
         with patch.object(middleware, "_inject_unity_instance", new=AsyncMock()):
-            with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=True):
-                with patch("transport.unity_instance_middleware.get_registered_tools", return_value=_tool_registry_for_visibility_tests()):
-                    with patch("transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock) as mock_get_sessions:
-                        with patch("transport.unity_instance_middleware.PluginHub.get_tools_for_project", new_callable=AsyncMock) as mock_get_tools:
+            with patch(
+                "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
+            ):
+                with patch(
+                    "transport.unity_instance_middleware.get_registered_tools",
+                    return_value=_tool_registry_for_visibility_tests(),
+                ):
+                    with patch(
+                        "transport.unity_instance_middleware.PluginHub.get_sessions",
+                        new_callable=AsyncMock,
+                    ) as mock_get_sessions:
+                        with patch(
+                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            new_callable=AsyncMock,
+                        ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
                                 sessions={
                                     "session-1": SessionDetails(
@@ -513,7 +596,9 @@ class TestUnityInstanceMiddlewareInjection:
         mock_get_tools.assert_awaited_once_with("abc123", user_id="user-123")
 
     @pytest.mark.asyncio
-    async def test_list_tools_skips_filter_when_active_instance_hash_is_stale(self, mock_context, monkeypatch):
+    async def test_list_tools_skips_filter_when_active_instance_hash_is_stale(
+        self, mock_context, monkeypatch
+    ):
         middleware = UnityInstanceMiddleware()
         middleware_ctx = Mock()
         middleware_ctx.fastmcp_context = mock_context
@@ -531,10 +616,21 @@ class TestUnityInstanceMiddlewareInjection:
             return original_tools
 
         with patch.object(middleware, "_inject_unity_instance", new=AsyncMock()):
-            with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=True):
-                with patch("transport.unity_instance_middleware.get_registered_tools", return_value=_tool_registry_for_visibility_tests()):
-                    with patch("transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock) as mock_get_sessions:
-                        with patch("transport.unity_instance_middleware.PluginHub.get_tools_for_project", new_callable=AsyncMock) as mock_get_tools:
+            with patch(
+                "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
+            ):
+                with patch(
+                    "transport.unity_instance_middleware.get_registered_tools",
+                    return_value=_tool_registry_for_visibility_tests(),
+                ):
+                    with patch(
+                        "transport.unity_instance_middleware.PluginHub.get_sessions",
+                        new_callable=AsyncMock,
+                    ) as mock_get_sessions:
+                        with patch(
+                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            new_callable=AsyncMock,
+                        ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
                                 sessions={
                                     "session-1": SessionDetails(
@@ -552,7 +648,9 @@ class TestUnityInstanceMiddlewareInjection:
         mock_get_tools.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_list_tools_hides_alias_when_target_tool_is_disabled(self, mock_context, monkeypatch):
+    async def test_list_tools_hides_alias_when_target_tool_is_disabled(
+        self, mock_context, monkeypatch
+    ):
         middleware = UnityInstanceMiddleware()
         middleware_ctx = Mock()
         middleware_ctx.fastmcp_context = mock_context
@@ -571,10 +669,21 @@ class TestUnityInstanceMiddlewareInjection:
             return original_tools
 
         with patch.object(middleware, "_inject_unity_instance", new=AsyncMock()):
-            with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=True):
-                with patch("transport.unity_instance_middleware.get_registered_tools", return_value=_tool_registry_for_visibility_tests()):
-                    with patch("transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock) as mock_get_sessions:
-                        with patch("transport.unity_instance_middleware.PluginHub.get_tools_for_project", new_callable=AsyncMock) as mock_get_tools:
+            with patch(
+                "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
+            ):
+                with patch(
+                    "transport.unity_instance_middleware.get_registered_tools",
+                    return_value=_tool_registry_for_visibility_tests(),
+                ):
+                    with patch(
+                        "transport.unity_instance_middleware.PluginHub.get_sessions",
+                        new_callable=AsyncMock,
+                    ) as mock_get_sessions:
+                        with patch(
+                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            new_callable=AsyncMock,
+                        ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
                                 sessions={
                                     "session-1": SessionDetails(
@@ -597,7 +706,9 @@ class TestUnityInstanceMiddlewareInjection:
         assert "create_script" not in names
 
     @pytest.mark.asyncio
-    async def test_list_tools_keeps_all_visible_when_tool_registry_is_empty(self, mock_context, monkeypatch):
+    async def test_list_tools_keeps_all_visible_when_tool_registry_is_empty(
+        self, mock_context, monkeypatch
+    ):
         middleware = UnityInstanceMiddleware()
         middleware_ctx = Mock()
         middleware_ctx.fastmcp_context = mock_context
@@ -615,10 +726,20 @@ class TestUnityInstanceMiddlewareInjection:
             return original_tools
 
         with patch.object(middleware, "_inject_unity_instance", new=AsyncMock()):
-            with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=True):
-                with patch("transport.unity_instance_middleware.get_registered_tools", return_value=[]):
-                    with patch("transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock) as mock_get_sessions:
-                        with patch("transport.unity_instance_middleware.PluginHub.get_tools_for_project", new_callable=AsyncMock) as mock_get_tools:
+            with patch(
+                "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
+            ):
+                with patch(
+                    "transport.unity_instance_middleware.get_registered_tools", return_value=[]
+                ):
+                    with patch(
+                        "transport.unity_instance_middleware.PluginHub.get_sessions",
+                        new_callable=AsyncMock,
+                    ) as mock_get_sessions:
+                        with patch(
+                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            new_callable=AsyncMock,
+                        ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
                                 sessions={
                                     "session-1": SessionDetails(
@@ -636,7 +757,9 @@ class TestUnityInstanceMiddlewareInjection:
         assert [tool.name for tool in filtered] == [tool.name for tool in original_tools]
 
     @pytest.mark.asyncio
-    async def test_list_tools_uses_union_of_enabled_tools_across_multiple_sessions(self, mock_context, monkeypatch):
+    async def test_list_tools_uses_union_of_enabled_tools_across_multiple_sessions(
+        self, mock_context, monkeypatch
+    ):
         middleware = UnityInstanceMiddleware()
         middleware_ctx = Mock()
         middleware_ctx.fastmcp_context = mock_context
@@ -660,10 +783,21 @@ class TestUnityInstanceMiddlewareInjection:
             return []
 
         with patch.object(middleware, "_inject_unity_instance", new=AsyncMock()):
-            with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=True):
-                with patch("transport.unity_instance_middleware.get_registered_tools", return_value=_tool_registry_for_visibility_tests()):
-                    with patch("transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock) as mock_get_sessions:
-                        with patch("transport.unity_instance_middleware.PluginHub.get_tools_for_project", new_callable=AsyncMock) as mock_get_tools:
+            with patch(
+                "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
+            ):
+                with patch(
+                    "transport.unity_instance_middleware.get_registered_tools",
+                    return_value=_tool_registry_for_visibility_tests(),
+                ):
+                    with patch(
+                        "transport.unity_instance_middleware.PluginHub.get_sessions",
+                        new_callable=AsyncMock,
+                    ) as mock_get_sessions:
+                        with patch(
+                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            new_callable=AsyncMock,
+                        ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
                                 sessions={
                                     "session-a": SessionDetails(
@@ -694,6 +828,7 @@ class TestUnityInstanceMiddlewareInjection:
 # AUTO-SELECT INSTANCE TESTS
 # ============================================================================
 
+
 class TestAutoSelectInstance:
     """Test auto-selection of sole Unity instance when none is explicitly set."""
 
@@ -712,13 +847,17 @@ class TestAutoSelectInstance:
                     project="TestProject",
                     hash="abc123",
                     unity_version="2022.3",
-                    connected_at="2025-01-26T00:00:00Z"
+                    connected_at="2025-01-26T00:00:00Z",
                 )
             }
         )
 
-        with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=True):
-            with patch("transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock) as mock_get:
+        with patch(
+            "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
+        ):
+            with patch(
+                "transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock
+            ) as mock_get:
                 mock_get.return_value = fake_sessions
 
                 instance = await middleware._maybe_autoselect_instance(mock_context)
@@ -740,20 +879,26 @@ class TestAutoSelectInstance:
                     project="Project1",
                     hash="aaa111",
                     unity_version="2022.3",
-                    connected_at="2025-01-26T00:00:00Z"
+                    connected_at="2025-01-26T00:00:00Z",
                 ),
                 "session-2": SessionDetails(
                     project="Project2",
                     hash="bbb222",
                     unity_version="2023.2",
-                    connected_at="2025-01-26T00:00:00Z"
-                )
+                    connected_at="2025-01-26T00:00:00Z",
+                ),
             }
         )
 
-        with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=True):
-            with patch("transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock) as mock_get:
-                with patch("transport.legacy.unity_connection.get_unity_connection_pool", return_value=None):
+        with patch(
+            "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
+        ):
+            with patch(
+                "transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock
+            ) as mock_get:
+                with patch(
+                    "transport.legacy.unity_connection.get_unity_connection_pool", return_value=None
+                ):
                     mock_get.return_value = fake_sessions
 
                     instance = await middleware._maybe_autoselect_instance(mock_context)
@@ -768,9 +913,15 @@ class TestAutoSelectInstance:
         """
         middleware = UnityInstanceMiddleware()
 
-        with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=True):
-            with patch("transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock) as mock_get:
-                with patch("transport.legacy.unity_connection.get_unity_connection_pool", return_value=None):
+        with patch(
+            "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
+        ):
+            with patch(
+                "transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock
+            ) as mock_get:
+                with patch(
+                    "transport.legacy.unity_connection.get_unity_connection_pool", return_value=None
+                ):
                     mock_get.side_effect = ConnectionError("Plugin hub unavailable")
 
                     # When PluginHub fails, auto-select returns None (graceful fallback)
@@ -783,6 +934,7 @@ class TestAutoSelectInstance:
 # ============================================================================
 # PLUGIN REGISTRY TESTS
 # ============================================================================
+
 
 class TestPluginRegistryFunctionality:
     """Test plugin session registration and lookup."""
@@ -797,7 +949,7 @@ class TestPluginRegistryFunctionality:
             session_id="sess-abc",
             project_name="TestProject",
             project_hash="hash123",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
 
         assert session.session_id == "sess-abc"
@@ -815,7 +967,7 @@ class TestPluginRegistryFunctionality:
             session_id="sess-1",
             project_name="Project1",
             project_hash="hash-aaa",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
 
         found_id = await plugin_registry.get_session_id_by_hash("hash-aaa")
@@ -832,7 +984,7 @@ class TestPluginRegistryFunctionality:
             session_id="sess-1",
             project_name="Project",
             project_hash="hash-same",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
 
         # Reconnect with new session_id, same hash
@@ -840,7 +992,7 @@ class TestPluginRegistryFunctionality:
             session_id="sess-2",
             project_name="Project",
             project_hash="hash-same",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
 
         # Hash should map to new session
@@ -861,7 +1013,7 @@ class TestPluginRegistryFunctionality:
             session_id="sess-x",
             project_name="Project",
             project_hash="hash-x",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
 
         tools = [
@@ -885,7 +1037,7 @@ class TestPluginRegistryFunctionality:
             session_id="sess-y",
             project_name="Project",
             project_hash="hash-y",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
 
         original_timestamp = session.connected_at
@@ -908,7 +1060,7 @@ class TestPluginRegistryFunctionality:
             session_id="sess-z",
             project_name="Project",
             project_hash="hash-z",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
 
         await plugin_registry.unregister("sess-z")
@@ -928,13 +1080,13 @@ class TestPluginRegistryFunctionality:
             session_id="sess-1",
             project_name="Project1",
             project_hash="hash-1",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
         await plugin_registry.register(
             session_id="sess-2",
             project_name="Project2",
             project_hash="hash-2",
-            unity_version="2023.2"
+            unity_version="2023.2",
         )
 
         sessions = await plugin_registry.list_sessions()
@@ -948,6 +1100,7 @@ class TestPluginRegistryFunctionality:
 # PLUGIN HUB MESSAGE HANDLING TESTS
 # ============================================================================
 
+
 class TestPluginHubMessageHandling:
     """Test PluginHub message parsing and registration flow."""
 
@@ -960,7 +1113,7 @@ class TestPluginHubMessageHandling:
             type="register",
             project_name="TestProject",
             project_hash="hash-reg-1",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
 
         assert msg.project_name == "TestProject"
@@ -974,10 +1127,7 @@ class TestPluginHubMessageHandling:
         """
         # Empty hash should still parse, but would be rejected by PluginHub._handle_register
         msg = RegisterMessage(
-            type="register",
-            project_name="TestProject",
-            project_hash="",
-            unity_version="2022.3"
+            type="register", project_name="TestProject", project_hash="", unity_version="2022.3"
         )
 
         assert msg.project_hash == ""
@@ -991,10 +1141,7 @@ class TestPluginHubMessageHandling:
             ToolDefinitionModel(name="tool2", description="Test 2"),
         ]
 
-        msg = RegisterToolsMessage(
-            type="register_tools",
-            tools=tools
-        )
+        msg = RegisterToolsMessage(type="register_tools", tools=tools)
 
         assert len(msg.tools) == 2
         assert msg.tools[0].name == "tool1"
@@ -1004,9 +1151,7 @@ class TestPluginHubMessageHandling:
         Current behavior: CommandResultMessage carries command_id and result dict.
         """
         result_msg = CommandResultMessage(
-            type="command_result",
-            id="cmd-123",
-            result={"success": True, "data": "test"}
+            type="command_result", id="cmd-123", result={"success": True, "data": "test"}
         )
 
         assert result_msg.id == "cmd-123"
@@ -1016,10 +1161,7 @@ class TestPluginHubMessageHandling:
         """
         Current behavior: PongMessage can include optional session_id.
         """
-        pong_msg = PongMessage(
-            type="pong",
-            session_id="sess-123"
-        )
+        pong_msg = PongMessage(type="pong", session_id="sess-123")
 
         assert pong_msg.session_id == "sess-123"
 
@@ -1027,6 +1169,7 @@ class TestPluginHubMessageHandling:
 # ============================================================================
 # COMMAND ROUTING & TIMEOUTS TESTS
 # ============================================================================
+
 
 class TestPluginHubCommandRouting:
     """Test command routing and timeout behavior."""
@@ -1062,6 +1205,7 @@ class TestPluginHubCommandRouting:
 # PLUGIN DISCONNECT & ERROR HANDLING TESTS
 # ============================================================================
 
+
 class TestPluginHubDisconnect:
     """Test behavior when plugin WebSocket disconnects."""
 
@@ -1088,6 +1232,7 @@ class TestPluginHubDisconnect:
 # SESSION RESOLUTION & WAITING TESTS
 # ============================================================================
 
+
 class TestSessionResolution:
     """Test session resolution with waiting for reconnects."""
 
@@ -1111,7 +1256,7 @@ class TestSessionResolution:
                 session_id="sess-delayed",
                 project_name="Project",
                 project_hash=target_hash,
-                unity_version="2022.3"
+                unity_version="2022.3",
             )
 
         # Schedule registration
@@ -1131,7 +1276,9 @@ class TestSessionResolution:
         PluginHub._loop = None
 
     @pytest.mark.asyncio
-    async def test_resolve_session_id_fails_when_no_session_appears(self, plugin_registry, monkeypatch):
+    async def test_resolve_session_id_fails_when_no_session_appears(
+        self, plugin_registry, monkeypatch
+    ):
         """
         Current behavior: If no session appears within max_wait_s,
         raise NoUnitySessionError.
@@ -1166,7 +1313,7 @@ class TestSessionResolution:
             session_id="sess-sole",
             project_name="Project",
             project_hash="hash-sole",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
 
         session_id = await PluginHub._resolve_session_id(None)
@@ -1192,13 +1339,13 @@ class TestSessionResolution:
             session_id="sess-1",
             project_name="Project1",
             project_hash="hash-1",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
         await plugin_registry.register(
             session_id="sess-2",
             project_name="Project2",
             project_hash="hash-2",
-            unity_version="2023.2"
+            unity_version="2023.2",
         )
 
         with pytest.raises(InstanceSelectionRequiredError, match="Multiple Unity instances"):
@@ -1220,20 +1367,19 @@ class TestSessionResolution:
             session_id="sess-1",
             project_name="Project1",
             project_hash="hash-1",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
         await plugin_registry.register(
             session_id="sess-2",
             project_name="Project2",
             project_hash="hash-2",
-            unity_version="2023.2"
+            unity_version="2023.2",
         )
 
         with pytest.raises(InstanceSelectionRequiredError) as excinfo:
             await PluginHub._resolve_session_id(None)
 
-        assert excinfo.value.available_instances == [
-            "Project1@hash-1", "Project2@hash-2"]
+        assert excinfo.value.available_instances == ["Project1@hash-1", "Project2@hash-2"]
         assert "Project1@hash-1" in str(excinfo.value)
         assert "Project2@hash-2" in str(excinfo.value)
 
@@ -1255,19 +1401,19 @@ class TestSessionResolution:
         async def _raise_selection(*_args, **_kwargs):
             raise InstanceSelectionRequiredError(
                 InstanceSelectionRequiredError._MULTIPLE_INSTANCES,
-                available_instances=["A@hash-a", "B@hash-b"])
+                available_instances=["A@hash-a", "B@hash-b"],
+            )
 
         monkeypatch.setattr(unity_transport, "_is_http_transport", lambda: True)
+        monkeypatch.setattr(unity_transport, "_resolve_user_id_from_request", _no_user)
         monkeypatch.setattr(
-            unity_transport, "_resolve_user_id_from_request", _no_user)
-        monkeypatch.setattr(
-            unity_transport.PluginHub, "send_command_for_instance", _raise_selection)
+            unity_transport.PluginHub, "send_command_for_instance", _raise_selection
+        )
 
         async def _send_fn(*_a, **_k):
             raise AssertionError("stdio path should not be used on HTTP transport")
 
-        resp = await unity_transport.send_with_unity_instance(
-            _send_fn, None, "manage_scene", {})
+        resp = await unity_transport.send_with_unity_instance(_send_fn, None, "manage_scene", {})
 
         assert resp["success"] is False
         assert resp["hint"] == "select_instance"
@@ -1290,7 +1436,7 @@ class TestSessionResolution:
             session_id="sess-parse",
             project_name="ProjectName",
             project_hash=target_hash,
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
 
         # Resolve via "Name@hash" format
@@ -1310,6 +1456,7 @@ class TestSessionResolution:
 # ============================================================================
 # PLUGIN HUB CONFIGURATION TESTS
 # ============================================================================
+
 
 class TestPluginHubConfiguration:
     """Test PluginHub initialization and configuration."""
@@ -1444,6 +1591,7 @@ class TestPluginHubConfiguration:
 # GLOBAL MIDDLEWARE SINGLETON TESTS
 # ============================================================================
 
+
 class TestMiddlewareSingleton:
     """Test global middleware singleton pattern."""
 
@@ -1454,6 +1602,7 @@ class TestMiddlewareSingleton:
         """
         # Reset global state
         import transport.unity_instance_middleware as mw_module
+
         mw_module._unity_instance_middleware = None
 
         middleware1 = get_unity_instance_middleware()
@@ -1467,6 +1616,7 @@ class TestMiddlewareSingleton:
         the global singleton (used during server initialization).
         """
         import transport.unity_instance_middleware as mw_module
+
         mw_module._unity_instance_middleware = None
 
         middleware1 = UnityInstanceMiddleware()
@@ -1480,6 +1630,7 @@ class TestMiddlewareSingleton:
 # EDGE CASES & ERROR SCENARIOS
 # ============================================================================
 
+
 class TestTransportEdgeCases:
     """Test edge cases and error scenarios."""
 
@@ -1491,9 +1642,15 @@ class TestTransportEdgeCases:
         """
         middleware = UnityInstanceMiddleware()
 
-        with patch("transport.unity_instance_middleware.PluginHub.is_configured", return_value=True):
-            with patch("transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock) as mock_get:
-                with patch("transport.legacy.unity_connection.get_unity_connection_pool", return_value=None):
+        with patch(
+            "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
+        ):
+            with patch(
+                "transport.unity_instance_middleware.PluginHub.get_sessions", new_callable=AsyncMock
+            ) as mock_get:
+                with patch(
+                    "transport.legacy.unity_connection.get_unity_connection_pool", return_value=None
+                ):
                     mock_get.side_effect = RuntimeError("Unexpected error")
 
                     # Should not raise, just return None
@@ -1521,6 +1678,7 @@ class TestTransportEdgeCases:
 # INTEGRATION SCENARIOS
 # ============================================================================
 
+
 class TestTransportIntegration:
     """Test realistic integration scenarios."""
 
@@ -1537,7 +1695,7 @@ class TestTransportIntegration:
             session_id="sess-interact",
             project_name="Project",
             project_hash="hash-interact",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
 
         # Middleware stores the instance
@@ -1565,7 +1723,7 @@ class TestTransportIntegration:
             session_id="sess-complete",
             project_name="CompleteProject",
             project_hash="hash-complete",
-            unity_version="2022.3"
+            unity_version="2022.3",
         )
 
         # 2. User selects instance via middleware

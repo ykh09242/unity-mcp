@@ -10,8 +10,8 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.PackageManager;
 using UnityEditor.PackageManager.Requests;
-using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 using UnityEngine;
+using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 
 namespace MCPForUnity.Editor.Tools
 {
@@ -71,7 +71,8 @@ namespace MCPForUnity.Editor.Tools
                         return Ping();
                     default:
                         return new ErrorResponse(
-                            $"Unknown action: '{action}'. Supported actions: add_package, remove_package, status, list_packages, search_packages, get_package_info, list_registries, add_registry, remove_registry, embed_package, resolve_packages, ping.");
+                            $"Unknown action: '{action}'. Supported actions: add_package, remove_package, status, list_packages, search_packages, get_package_info, list_registries, add_registry, remove_registry, embed_package, resolve_packages, ping."
+                        );
                 }
             }
             catch (Exception ex)
@@ -106,7 +107,13 @@ namespace MCPForUnity.Editor.Tools
                 return new PendingResponse(
                     message,
                     pollIntervalSeconds: 3.0,
-                    data: new { job_id = jobId, operation = "add", package_ = package, warning }
+                    data: new
+                    {
+                        job_id = jobId,
+                        operation = "add",
+                        package_ = package,
+                        warning,
+                    }
                 );
             }
             catch (Exception e)
@@ -131,16 +138,14 @@ namespace MCPForUnity.Editor.Tools
                 var dependents = GetDependentPackages(package);
                 if (dependents == null)
                 {
-                    return new ErrorResponse(
-                        $"Cannot remove '{package}': failed to look up dependent packages. " +
-                        "Set force=true to remove anyway.");
+                    return new ErrorResponse($"Cannot remove '{package}': failed to look up dependent packages. " + "Set force=true to remove anyway.");
                 }
                 if (dependents.Length > 0)
                 {
                     string depList = string.Join(", ", dependents);
                     return new ErrorResponse(
-                        $"Cannot remove '{package}': {dependents.Length} installed package(s) depend on it: {depList}. " +
-                        "Set force=true to remove anyway.");
+                        $"Cannot remove '{package}': {dependents.Length} installed package(s) depend on it: {depList}. " + "Set force=true to remove anyway."
+                    );
                 }
             }
 
@@ -155,7 +160,12 @@ namespace MCPForUnity.Editor.Tools
                 return new PendingResponse(
                     $"Package removal started for '{package}'. Use status action to check progress.",
                     pollIntervalSeconds: 3.0,
-                    data: new { job_id = jobId, operation = "remove", package_ = package }
+                    data: new
+                    {
+                        job_id = jobId,
+                        operation = "remove",
+                        package_ = package,
+                    }
                 );
             }
             catch (Exception e)
@@ -224,16 +234,12 @@ namespace MCPForUnity.Editor.Tools
                 PackageJobStatus.Running => $"Job {job.JobId} is still running ({job.Operation} '{job.Package}').",
                 PackageJobStatus.Succeeded => $"Job {job.JobId} succeeded ({job.Operation} '{job.Package}').",
                 PackageJobStatus.Failed => $"Job {job.JobId} failed ({job.Operation} '{job.Package}'): {job.Error}",
-                _ => $"Job {job.JobId}: {job.Status}"
+                _ => $"Job {job.JobId}: {job.Status}",
             };
 
             if (job.Status == PackageJobStatus.Running)
             {
-                return new PendingResponse(
-                    message,
-                    pollIntervalSeconds: 3.0,
-                    data: serialized
-                );
+                return new PendingResponse(message, pollIntervalSeconds: 3.0, data: serialized);
             }
 
             return new SuccessResponse(message, serialized);
@@ -282,20 +288,20 @@ namespace MCPForUnity.Editor.Tools
                 if (request.Status == StatusCode.Failure)
                     return CacheQueryResult(jobId, new ErrorResponse($"Failed to list packages: {request.Error?.message ?? "Unknown error"}"));
 
-                var packages = request.Result
-                    .Select(pkg => new
+                var packages = request
+                    .Result.Select(pkg => new
                     {
                         name = pkg.name,
                         version = pkg.version,
                         display_name = pkg.displayName,
-                        source = pkg.source.ToString()
+                        source = pkg.source.ToString(),
                     })
                     .ToArray();
 
-                return CacheQueryResult(jobId, new SuccessResponse(
-                    $"Found {packages.Length} installed package(s).",
-                    new { packages, count = packages.Length }
-                ));
+                return CacheQueryResult(
+                    jobId,
+                    new SuccessResponse($"Found {packages.Length} installed package(s).", new { packages, count = packages.Length })
+                );
             }
             catch (Exception ex)
             {
@@ -324,7 +330,12 @@ namespace MCPForUnity.Editor.Tools
                 return new PendingResponse(
                     $"Searching packages for '{queryResult.Value}'...",
                     pollIntervalSeconds: 1.0,
-                    data: new { job_id = jobId, operation = "search_packages", query = queryResult.Value }
+                    data: new
+                    {
+                        job_id = jobId,
+                        operation = "search_packages",
+                        query = queryResult.Value,
+                    }
                 );
             }
             catch (Exception e)
@@ -337,11 +348,7 @@ namespace MCPForUnity.Editor.Tools
         {
             if (!request.IsCompleted)
             {
-                return new PendingResponse(
-                    "Searching packages...",
-                    pollIntervalSeconds: 1.0,
-                    data: new { job_id = jobId, operation = "search_packages" }
-                );
+                return new PendingResponse("Searching packages...", pollIntervalSeconds: 1.0, data: new { job_id = jobId, operation = "search_packages" });
             }
 
             try
@@ -349,20 +356,17 @@ namespace MCPForUnity.Editor.Tools
                 if (request.Status == StatusCode.Failure)
                     return CacheQueryResult(jobId, new ErrorResponse($"Package search failed: {request.Error?.message ?? "Unknown error"}"));
 
-                var packages = request.Result
-                    .Select(pkg => new
+                var packages = request
+                    .Result.Select(pkg => new
                     {
                         name = pkg.name,
                         version = pkg.version,
                         display_name = pkg.displayName,
-                        description = TruncateDescription(pkg.description)
+                        description = TruncateDescription(pkg.description),
                     })
                     .ToArray();
 
-                return CacheQueryResult(jobId, new SuccessResponse(
-                    $"Found {packages.Length} matching package(s).",
-                    new { packages, count = packages.Length }
-                ));
+                return CacheQueryResult(jobId, new SuccessResponse($"Found {packages.Length} matching package(s).", new { packages, count = packages.Length }));
             }
             catch (Exception ex)
             {
@@ -382,15 +386,12 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 var allPackages = PackageInfo.GetAllRegisteredPackages();
-                var info = allPackages.FirstOrDefault(pkg =>
-                    string.Equals(pkg.name, package, StringComparison.OrdinalIgnoreCase));
+                var info = allPackages.FirstOrDefault(pkg => string.Equals(pkg.name, package, StringComparison.OrdinalIgnoreCase));
 
                 if (info == null)
                     return new ErrorResponse($"Package '{package}' is not installed.");
 
-                var dependencies = info.dependencies
-                    .Select(d => new { name = d.name, version = d.version })
-                    .ToArray();
+                var dependencies = info.dependencies.Select(d => new { name = d.name, version = d.version }).ToArray();
 
                 return new SuccessResponse(
                     $"Package '{info.displayName}' ({info.name}@{info.version}).",
@@ -404,7 +405,7 @@ namespace MCPForUnity.Editor.Tools
                         resolved_path = info.resolvedPath,
                         author = info.author?.name,
                         dependencies,
-                        dependency_count = dependencies.Length
+                        dependency_count = dependencies.Length,
                     }
                 );
             }
@@ -426,12 +427,14 @@ namespace MCPForUnity.Editor.Tools
                 var manifest = ReadRegistryManifest(manifestPath);
                 var registries = manifest["scopedRegistries"] as JArray ?? new JArray();
 
-                var result = registries.Select(r => new
-                {
-                    name = r["name"]?.ToString(),
-                    url = r["url"]?.ToString(),
-                    scopes = (r["scopes"] as JArray)?.Select(s => s.ToString()).ToArray() ?? Array.Empty<string>()
-                }).ToArray();
+                var result = registries
+                    .Select(r => new
+                    {
+                        name = r["name"]?.ToString(),
+                        url = r["url"]?.ToString(),
+                        scopes = (r["scopes"] as JArray)?.Select(s => s.ToString()).ToArray() ?? Array.Empty<string>(),
+                    })
+                    .ToArray();
 
                 return new SuccessResponse(
                     $"Found {result.Length} scoped {(result.Length == 1 ? "registry" : "registries")}.",
@@ -476,8 +479,10 @@ namespace MCPForUnity.Editor.Tools
                 // Check for duplicate
                 foreach (var reg in registries)
                 {
-                    if (string.Equals(reg["name"]?.ToString(), nameResult.Value, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(reg["url"]?.ToString(), urlResult.Value, StringComparison.OrdinalIgnoreCase))
+                    if (
+                        string.Equals(reg["name"]?.ToString(), nameResult.Value, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(reg["url"]?.ToString(), urlResult.Value, StringComparison.OrdinalIgnoreCase)
+                    )
                     {
                         return new ErrorResponse($"A registry with name '{nameResult.Value}' or URL '{urlResult.Value}' already exists.");
                     }
@@ -487,7 +492,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     ["name"] = nameResult.Value,
                     ["url"] = urlResult.Value,
-                    ["scopes"] = new JArray(scopes)
+                    ["scopes"] = new JArray(scopes),
                 };
                 registries.Add(newRegistry);
 
@@ -500,7 +505,7 @@ namespace MCPForUnity.Editor.Tools
                     {
                         name = nameResult.Value,
                         url = urlResult.Value,
-                        scopes
+                        scopes,
                     }
                 );
             }
@@ -533,10 +538,8 @@ namespace MCPForUnity.Editor.Tools
                 JToken toRemove = null;
                 foreach (var reg in registries)
                 {
-                    bool nameMatch = !string.IsNullOrEmpty(name)
-                        && string.Equals(reg["name"]?.ToString(), name, StringComparison.OrdinalIgnoreCase);
-                    bool urlMatch = !string.IsNullOrEmpty(url)
-                        && string.Equals(reg["url"]?.ToString(), url, StringComparison.OrdinalIgnoreCase);
+                    bool nameMatch = !string.IsNullOrEmpty(name) && string.Equals(reg["name"]?.ToString(), name, StringComparison.OrdinalIgnoreCase);
+                    bool urlMatch = !string.IsNullOrEmpty(url) && string.Equals(reg["url"]?.ToString(), url, StringComparison.OrdinalIgnoreCase);
 
                     if (nameMatch || urlMatch)
                     {
@@ -586,7 +589,12 @@ namespace MCPForUnity.Editor.Tools
                 return new PendingResponse(
                     $"Embedding package '{packageResult.Value}'. Use status action to check progress.",
                     pollIntervalSeconds: 3.0,
-                    data: new { job_id = jobId, operation = "embed", package_ = packageResult.Value }
+                    data: new
+                    {
+                        job_id = jobId,
+                        operation = "embed",
+                        package_ = packageResult.Value,
+                    }
                 );
             }
             catch (Exception e)
@@ -622,7 +630,7 @@ namespace MCPForUnity.Editor.Tools
                         unity_version = Application.unityVersion,
                         installed_package_count = allPackages.Length,
                         is_compiling = EditorApplication.isCompiling,
-                        is_updating = EditorApplication.isUpdating
+                        is_updating = EditorApplication.isUpdating,
                     }
                 );
             }
@@ -647,10 +655,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static JObject ReadRegistryManifest(string path)
         {
-            var manifest = JObject.Parse(File.ReadAllText(path), new JsonLoadSettings
-            {
-                DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error
-            });
+            var manifest = JObject.Parse(File.ReadAllText(path), new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
             var registries = manifest["scopedRegistries"];
             if (registries != null && registries.Type != JTokenType.Null && registries is not JArray)
                 throw new FormatException("'scopedRegistries' must be an array; the manifest was not changed.");
@@ -661,9 +666,7 @@ namespace MCPForUnity.Editor.Tools
         {
             void CheckCompletion()
             {
-                if (!PendingRequests.ContainsKey(jobId)
-                    && !PendingListRequests.ContainsKey(jobId)
-                    && !PendingSearchRequests.ContainsKey(jobId))
+                if (!PendingRequests.ContainsKey(jobId) && !PendingListRequests.ContainsKey(jobId) && !PendingSearchRequests.ContainsKey(jobId))
                 {
                     EditorApplication.update -= CheckCompletion;
                     return;
@@ -690,8 +693,7 @@ namespace MCPForUnity.Editor.Tools
 
             if (request.Status == StatusCode.Failure)
             {
-                PackageJobManager.CompleteJob(jobId, false,
-                    error: request.Error?.message ?? "Unknown package manager error");
+                PackageJobManager.CompleteJob(jobId, false, error: request.Error?.message ?? "Unknown package manager error");
                 return;
             }
 
@@ -731,23 +733,21 @@ namespace MCPForUnity.Editor.Tools
                 return (false, "Package identifier cannot be empty.", null);
 
             // Git URLs — allow but warn
-            if (package.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
-                package.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                package.StartsWith("git://", StringComparison.OrdinalIgnoreCase) ||
-                package.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase) ||
-                package.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+            if (
+                package.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                || package.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                || package.StartsWith("git://", StringComparison.OrdinalIgnoreCase)
+                || package.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase)
+                || package.EndsWith(".git", StringComparison.OrdinalIgnoreCase)
+            )
             {
-                return (true,
-                    $"Installing from git URL. Ensure this is a trusted source — git packages execute code on import.",
-                    package);
+                return (true, $"Installing from git URL. Ensure this is a trusted source — git packages execute code on import.", package);
             }
 
             // File paths — allow but warn
             if (package.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
             {
-                return (true,
-                    $"Installing from local path. Ensure this path contains trusted package code.",
-                    package);
+                return (true, $"Installing from local path. Ensure this path contains trusted package code.", package);
             }
 
             // Normal package ID: lowercase the name portion (Unity requires lowercase)
@@ -758,9 +758,7 @@ namespace MCPForUnity.Editor.Tools
             string name = normalized.Contains('@') ? normalized.Substring(0, normalized.IndexOf('@')) : normalized;
             if (!Regex.IsMatch(name, @"^[a-z][a-z0-9._-]*(\.[a-z0-9._-]+)+$"))
             {
-                return (false,
-                    $"'{package}' is not a valid package identifier. Expected format: com.company.package or com.company.package@version.",
-                    null);
+                return (false, $"'{package}' is not a valid package identifier. Expected format: com.company.package or com.company.package@version.", null);
             }
 
             return (true, null, normalized);
@@ -774,8 +772,7 @@ namespace MCPForUnity.Editor.Tools
 
                 var allPackages = PackageInfo.GetAllRegisteredPackages();
                 return allPackages
-                    .Where(pkg => pkg.dependencies.Any(d =>
-                        string.Equals(d.name, name, StringComparison.OrdinalIgnoreCase)))
+                    .Where(pkg => pkg.dependencies.Any(d => string.Equals(d.name, name, StringComparison.OrdinalIgnoreCase)))
                     .Select(pkg => pkg.name)
                     .ToArray();
             }

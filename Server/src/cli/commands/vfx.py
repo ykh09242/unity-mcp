@@ -50,6 +50,7 @@ def vfx():
 # Particle System Commands
 # =============================================================================
 
+
 @vfx.group()
 def particle():
     """Particle system operations."""
@@ -59,7 +60,13 @@ def particle():
 @particle.command("info")
 @click.argument("target")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple ParticleSystems exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple ParticleSystems exist.",
+)
 @handle_unity_errors
 def particle_info(target: str, search_method: Optional[str], component_index: Optional[int]):
     """Get particle system info.
@@ -77,8 +84,7 @@ def particle_info(target: str, search_method: Optional[str], component_index: Op
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
 
 
@@ -86,9 +92,17 @@ def particle_info(target: str, search_method: Optional[str], component_index: Op
 @click.argument("target")
 @click.option("--with-children", is_flag=True, help="Also play child particle systems.")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple ParticleSystems exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple ParticleSystems exist.",
+)
 @handle_unity_errors
-def particle_play(target: str, with_children: bool, search_method: Optional[str], component_index: Optional[int]):
+def particle_play(
+    target: str, with_children: bool, search_method: Optional[str], component_index: Optional[int]
+):
     """Play a particle system.
 
     \b
@@ -104,8 +118,7 @@ def particle_play(target: str, with_children: bool, search_method: Optional[str]
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Playing particle system: {target}")
@@ -115,9 +128,17 @@ def particle_play(target: str, with_children: bool, search_method: Optional[str]
 @click.argument("target")
 @click.option("--with-children", is_flag=True, help="Also stop child particle systems.")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple ParticleSystems exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple ParticleSystems exist.",
+)
 @handle_unity_errors
-def particle_stop(target: str, with_children: bool, search_method: Optional[str], component_index: Optional[int]):
+def particle_stop(
+    target: str, with_children: bool, search_method: Optional[str], component_index: Optional[int]
+):
     """Stop a particle system."""
     config = get_config()
     params: dict[str, Any] = {"action": "particle_stop", "target": target}
@@ -127,8 +148,7 @@ def particle_stop(target: str, with_children: bool, search_method: Optional[str]
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Stopped particle system: {target}")
@@ -137,7 +157,13 @@ def particle_stop(target: str, with_children: bool, search_method: Optional[str]
 @particle.command("pause")
 @click.argument("target")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple ParticleSystems exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple ParticleSystems exist.",
+)
 @handle_unity_errors
 def particle_pause(target: str, search_method: Optional[str], component_index: Optional[int]):
     """Pause a particle system."""
@@ -148,8 +174,7 @@ def particle_pause(target: str, search_method: Optional[str], component_index: O
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
 
 
@@ -157,9 +182,17 @@ def particle_pause(target: str, search_method: Optional[str], component_index: O
 @click.argument("target")
 @click.option("--with-children", is_flag=True)
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple ParticleSystems exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple ParticleSystems exist.",
+)
 @handle_unity_errors
-def particle_restart(target: str, with_children: bool, search_method: Optional[str], component_index: Optional[int]):
+def particle_restart(
+    target: str, with_children: bool, search_method: Optional[str], component_index: Optional[int]
+):
     """Restart a particle system."""
     config = get_config()
     params: dict[str, Any] = {"action": "particle_restart", "target": target}
@@ -169,8 +202,7 @@ def particle_restart(target: str, with_children: bool, search_method: Optional[s
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
 
 
@@ -178,9 +210,17 @@ def particle_restart(target: str, with_children: bool, search_method: Optional[s
 @click.argument("target")
 @click.option("--with-children", is_flag=True)
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple ParticleSystems exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple ParticleSystems exist.",
+)
 @handle_unity_errors
-def particle_clear(target: str, with_children: bool, search_method: Optional[str], component_index: Optional[int]):
+def particle_clear(
+    target: str, with_children: bool, search_method: Optional[str], component_index: Optional[int]
+):
     """Clear all particles from a particle system."""
     config = get_config()
     params: dict[str, Any] = {"action": "particle_clear", "target": target}
@@ -190,14 +230,14 @@ def particle_clear(target: str, with_children: bool, search_method: Optional[str
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
 
 
 # =============================================================================
 # Line Renderer Commands
 # =============================================================================
+
 
 @vfx.group()
 def line():
@@ -208,7 +248,13 @@ def line():
 @line.command("info")
 @click.argument("target")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple LineRenderers exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple LineRenderers exist.",
+)
 @handle_unity_errors
 def line_info(target: str, search_method: Optional[str], component_index: Optional[int]):
     """Get line renderer info.
@@ -225,18 +271,27 @@ def line_info(target: str, search_method: Optional[str], component_index: Option
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
 
 
 @line.command("set-positions")
 @click.argument("target")
-@click.option("--positions", "-p", required=True, help='Positions as JSON array: [[0,0,0], [1,1,1], [2,0,0]]')
+@click.option(
+    "--positions", "-p", required=True, help="Positions as JSON array: [[0,0,0], [1,1,1], [2,0,0]]"
+)
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple LineRenderers exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple LineRenderers exist.",
+)
 @handle_unity_errors
-def line_set_positions(target: str, positions: str, search_method: Optional[str], component_index: Optional[int]):
+def line_set_positions(
+    target: str, positions: str, search_method: Optional[str], component_index: Optional[int]
+):
     """Set all positions on a line renderer.
 
     \b
@@ -257,8 +312,7 @@ def line_set_positions(target: str, positions: str, search_method: Optional[str]
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
 
 
@@ -267,9 +321,21 @@ def line_set_positions(target: str, positions: str, search_method: Optional[str]
 @click.option("--start", nargs=3, type=float, required=True, help="Start point X Y Z")
 @click.option("--end", nargs=3, type=float, required=True, help="End point X Y Z")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple LineRenderers exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple LineRenderers exist.",
+)
 @handle_unity_errors
-def line_create_line(target: str, start: Tuple[float, float, float], end: Tuple[float, float, float], search_method: Optional[str], component_index: Optional[int]):
+def line_create_line(
+    target: str,
+    start: Tuple[float, float, float],
+    end: Tuple[float, float, float],
+    search_method: Optional[str],
+    component_index: Optional[int],
+):
     """Create a simple line between two points.
 
     \b
@@ -288,8 +354,7 @@ def line_create_line(target: str, start: Tuple[float, float, float], end: Tuple[
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
 
 
@@ -299,9 +364,22 @@ def line_create_line(target: str, start: Tuple[float, float, float], end: Tuple[
 @click.option("--radius", type=float, required=True, help="Circle radius")
 @click.option("--segments", type=int, default=32, help="Number of segments")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple LineRenderers exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple LineRenderers exist.",
+)
 @handle_unity_errors
-def line_create_circle(target: str, center: Tuple[float, float, float], radius: float, segments: int, search_method: Optional[str], component_index: Optional[int]):
+def line_create_circle(
+    target: str,
+    center: Tuple[float, float, float],
+    radius: float,
+    segments: int,
+    search_method: Optional[str],
+    component_index: Optional[int],
+):
     """Create a circle shape.
 
     \b
@@ -322,15 +400,20 @@ def line_create_circle(target: str, center: Tuple[float, float, float], radius: 
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
 
 
 @line.command("clear")
 @click.argument("target")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple LineRenderers exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple LineRenderers exist.",
+)
 @handle_unity_errors
 def line_clear(target: str, search_method: Optional[str], component_index: Optional[int]):
     """Clear all positions from a line renderer."""
@@ -341,14 +424,14 @@ def line_clear(target: str, search_method: Optional[str], component_index: Optio
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
 
 
 # =============================================================================
 # Trail Renderer Commands
 # =============================================================================
+
 
 @vfx.group()
 def trail():
@@ -359,7 +442,13 @@ def trail():
 @trail.command("info")
 @click.argument("target")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple TrailRenderers exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple TrailRenderers exist.",
+)
 @handle_unity_errors
 def trail_info(target: str, search_method: Optional[str], component_index: Optional[int]):
     """Get trail renderer info."""
@@ -370,8 +459,7 @@ def trail_info(target: str, search_method: Optional[str], component_index: Optio
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
 
 
@@ -379,9 +467,17 @@ def trail_info(target: str, search_method: Optional[str], component_index: Optio
 @click.argument("target")
 @click.argument("duration", type=float)
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple TrailRenderers exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple TrailRenderers exist.",
+)
 @handle_unity_errors
-def trail_set_time(target: str, duration: float, search_method: Optional[str], component_index: Optional[int]):
+def trail_set_time(
+    target: str, duration: float, search_method: Optional[str], component_index: Optional[int]
+):
     """Set trail duration.
 
     \b
@@ -399,15 +495,20 @@ def trail_set_time(target: str, duration: float, search_method: Optional[str], c
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
 
 
 @trail.command("clear")
 @click.argument("target")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple TrailRenderers exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple TrailRenderers exist.",
+)
 @handle_unity_errors
 def trail_clear(target: str, search_method: Optional[str], component_index: Optional[int]):
     """Clear a trail renderer."""
@@ -418,8 +519,7 @@ def trail_clear(target: str, search_method: Optional[str], component_index: Opti
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
 
 
@@ -427,14 +527,27 @@ def trail_clear(target: str, search_method: Optional[str], component_index: Opti
 # Raw Command (escape hatch for all VFX actions)
 # =============================================================================
 
+
 @vfx.command("raw")
 @click.argument("action")
 @click.argument("target", required=False)
 @click.option("--params", "-p", default="{}", help="Additional parameters as JSON.")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
-@click.option("--component-index", "-i", type=int, default=None, help="Zero-based index when multiple components of the same type exist.")
+@click.option(
+    "--component-index",
+    "-i",
+    type=int,
+    default=None,
+    help="Zero-based index when multiple components of the same type exist.",
+)
 @handle_unity_errors
-def vfx_raw(action: str, target: Optional[str], params: str, search_method: Optional[str], component_index: Optional[int]):
+def vfx_raw(
+    action: str,
+    target: Optional[str],
+    params: str,
+    search_method: Optional[str],
+    component_index: Optional[int],
+):
     """Execute any VFX action directly.
 
     For advanced users who need access to all 60+ VFX actions.
@@ -466,6 +579,5 @@ def vfx_raw(action: str, target: Optional[str], params: str, search_method: Opti
 
     # Merge extra params
     request_params.update(extra_params)
-    result = run_command(
-        "manage_vfx", _normalize_vfx_params(request_params), config)
+    result = run_command("manage_vfx", _normalize_vfx_params(request_params), config)
     click.echo(format_output(result, config.format))

@@ -23,15 +23,14 @@ namespace MCPForUnity.Editor.Services
             TimeSpan.FromSeconds(3),
             TimeSpan.FromSeconds(5),
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30)
+            TimeSpan.FromSeconds(30),
         };
 
         private static CancellationTokenSource _retryCts;
 
         static StdioBridgeReloadHandler()
         {
-            if (UnityEngine.Application.isBatchMode &&
-                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH")))
+            if (UnityEngine.Application.isBatchMode && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH")))
             {
                 return;
             }
@@ -43,7 +42,11 @@ namespace MCPForUnity.Editor.Services
 
         private static void CancelRetries()
         {
-            try { _retryCts?.Cancel(); } catch { }
+            try
+            {
+                _retryCts?.Cancel();
+            }
+            catch { }
         }
 
         private static void OnBeforeAssemblyReload()
@@ -76,10 +79,18 @@ namespace MCPForUnity.Editor.Services
                     // Stop only stdio before reload. This is centralized here so resume-flag updates
                     // and teardown cannot race each other via separate beforeAssemblyReload handlers.
                     var stopTask = MCPServiceLocator.TransportManager.StopAsync(TransportMode.Stdio);
-                    try { stopTask.Wait(500); } catch { }
+                    try
+                    {
+                        stopTask.Wait(500);
+                    }
+                    catch { }
 
                     // Legacy safety: stdio may have been started outside TransportManager state.
-                    try { StdioBridgeHost.Stop(); } catch { }
+                    try
+                    {
+                        StdioBridgeHost.Stop();
+                    }
+                    catch { }
                 }
 
                 if (shouldResume)
@@ -147,7 +158,8 @@ namespace MCPForUnity.Editor.Services
 
             for (int i = 0; i < ResumeRetrySchedule.Length; i++)
             {
-                if (token.IsCancellationRequested) return;
+                if (token.IsCancellationRequested)
+                    return;
 
                 int attempt = i + 1;
                 McpLog.Debug($"[Stdio Reload] Resume attempt {attempt}/{ResumeRetrySchedule.Length}");
@@ -156,14 +168,24 @@ namespace MCPForUnity.Editor.Services
                 if (delay > TimeSpan.Zero)
                 {
                     McpLog.Debug($"[Stdio Reload] Waiting {delay.TotalSeconds:0.#}s before resume attempt {attempt}");
-                    try { await Task.Delay(delay, token); }
-                    catch (OperationCanceledException) { return; }
+                    try
+                    {
+                        await Task.Delay(delay, token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
                 }
 
                 // Abort retries if the user switched transports while we were waiting.
                 if (EditorConfigurationCache.Instance.UseHttpTransport)
                 {
-                    try { EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload); } catch { }
+                    try
+                    {
+                        EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
+                    }
+                    catch { }
                     return;
                 }
 
@@ -173,7 +195,11 @@ namespace MCPForUnity.Editor.Services
                     if (started)
                     {
                         McpLog.Debug($"[Stdio Reload] Resume succeeded on attempt {attempt}");
-                        try { EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload); } catch { }
+                        try
+                        {
+                            EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
+                        }
+                        catch { }
                         MCPForUnityEditorWindow.RequestHealthVerification();
                         return;
                     }
@@ -189,12 +215,20 @@ namespace MCPForUnity.Editor.Services
                 }
             }
 
-            try { EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload); } catch { }
+            try
+            {
+                EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
+            }
+            catch { }
 
             // Clear the stale "reloading" heartbeat so clients stop seeing reloading=true.
             // The bridge isn't running, so clients will get connection-refused (recoverable)
             // instead of hanging on a zombie socket or being rejected by the preflight check.
-            try { StdioBridgeHost.WriteHeartbeat(false, "stopped"); } catch { }
+            try
+            {
+                StdioBridgeHost.WriteHeartbeat(false, "stopped");
+            }
+            catch { }
 
             if (lastException != null)
             {

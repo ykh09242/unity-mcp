@@ -8,7 +8,7 @@ import textwrap
 
 
 def test_status_formats_health_failures_and_environment_precedence(tmp_path):
-    source = '''
+    source = """
         import copy
         import json
         import sys
@@ -77,17 +77,26 @@ def test_status_formats_health_failures_and_environment_precedence(tmp_path):
         assert "Security Warning" in remote.stderr and "Security Warning" not in remote.stdout
         help_result = runner.invoke(cli, ["--help"])
         assert help_result.exit_code == 0 and "unity-mcp --format json scene hierarchy" in help_result.output
-    '''
+    """
     env = {**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"}
     for key in ("APPDATA", "XDG_DATA_HOME", "UNITY_MCP_LOG_DIR"):
         directory = tmp_path / key
         directory.mkdir()
         env[key] = str(directory)
-    for key in ("UNITY_MCP_FORMAT", "UNITY_MCP_HOST", "UNITY_MCP_HTTP_PORT", "UNITY_MCP_TIMEOUT", "UNITY_MCP_INSTANCE"):
+    for key in (
+        "UNITY_MCP_FORMAT",
+        "UNITY_MCP_HOST",
+        "UNITY_MCP_HTTP_PORT",
+        "UNITY_MCP_TIMEOUT",
+        "UNITY_MCP_INSTANCE",
+    ):
         env.pop(key, None)
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1], env=env,
-        capture_output=True, text=True, timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr

@@ -92,10 +92,7 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
             categoryContainer?.Clear();
 
             var service = MCPServiceLocator.ResourceDiscovery;
-            allResources = service.DiscoverAllResources()
-                .OrderBy(r => r.IsBuiltIn ? 0 : 1)
-                .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            allResources = service.DiscoverAllResources().OrderBy(r => r.IsBuiltIn ? 0 : 1).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
 
             bool hasResources = allResources.Count > 0;
             enableAllButton?.SetEnabled(hasResources);
@@ -135,13 +132,14 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
             var foldout = new Foldout
             {
                 text = $"{title} ({resourceList.Count})",
-                value = EditorPrefs.GetBool(EditorPrefKeys.ResourceFoldoutStatePrefix + prefsSuffix, true)
+                value = EditorPrefs.GetBool(EditorPrefKeys.ResourceFoldoutStatePrefix + prefsSuffix, true),
             };
             foldout.AddToClassList("catalog-category");
 
             foldout.RegisterValueChangedCallback(evt =>
             {
-                if (evt.target != foldout || !string.IsNullOrWhiteSpace(searchField?.value)) return;
+                if (evt.target != foldout || !string.IsNullOrWhiteSpace(searchField?.value))
+                    return;
                 EditorPrefs.SetBool(EditorPrefKeys.ResourceFoldoutStatePrefix + prefsSuffix, evt.newValue);
             });
 
@@ -163,10 +161,7 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
             var header = new VisualElement();
             header.AddToClassList("tool-item-header");
 
-            var toggle = new Toggle(resource.Name)
-            {
-                value = MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(resource.Name)
-            };
+            var toggle = new Toggle(resource.Name) { value = MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(resource.Name) };
             toggle.AddToClassList("tool-item-toggle");
             toggle.tooltip = string.IsNullOrWhiteSpace(resource.Description) ? resource.Name : resource.Description;
 
@@ -256,7 +251,8 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
                     bool matches = MatchesSearch(resource, query);
                     if (resourceRowMap.TryGetValue(resource.Name, out var row))
                         row.EnableInClassList("catalog-hidden", !matches);
-                    if (matches) groupVisibleCount++;
+                    if (matches)
+                        groupVisibleCount++;
                 }
 
                 visibleCount += groupVisibleCount;
@@ -273,7 +269,8 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
                 }
             }
 
-            if (!searching) foldoutStatesBeforeSearch.Clear();
+            if (!searching)
+                foldoutStatesBeforeSearch.Clear();
             if (visibleCountLabel != null)
                 visibleCountLabel.text = $"{visibleCount} / {allResources.Count} shown";
             if (emptyStateLabel != null)
@@ -285,9 +282,11 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
 
         private static bool MatchesSearch(ResourceMetadata resource, string query)
         {
-            if (resource == null) return false;
+            if (resource == null)
+                return false;
             query = (query ?? string.Empty).Trim();
-            if (query.Length == 0) return true;
+            if (query.Length == 0)
+                return true;
             string category = resource.IsBuiltIn ? "Built-in Resources" : "Custom Resources";
             return (resource.Name ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
                 || (resource.Description ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0

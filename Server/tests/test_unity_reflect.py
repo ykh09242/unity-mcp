@@ -18,6 +18,7 @@ from services.tools.unity_reflect import (
 # Tool group registration
 # ---------------------------------------------------------------------------
 
+
 def test_docs_group_exists():
     assert "docs" in TOOL_GROUPS
 
@@ -29,6 +30,7 @@ def test_docs_group_not_in_defaults():
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_unity(monkeypatch):
@@ -61,6 +63,7 @@ def ctx():
 # Action list completeness
 # ---------------------------------------------------------------------------
 
+
 def test_all_actions_list():
     assert ALL_ACTIONS == ["get_type", "get_member", "search"]
 
@@ -73,10 +76,9 @@ def test_no_duplicate_actions():
 # Unknown action
 # ---------------------------------------------------------------------------
 
+
 def test_unknown_action_returns_error(mock_unity):
-    result = asyncio.run(
-        unity_reflect(SimpleNamespace(), action="nonexistent_action")
-    )
+    result = asyncio.run(unity_reflect(SimpleNamespace(), action="nonexistent_action"))
     assert result["success"] is False
     assert "Unknown action" in result["message"]
     assert "tool_name" not in mock_unity
@@ -85,6 +87,7 @@ def test_unknown_action_returns_error(mock_unity):
 # ---------------------------------------------------------------------------
 # get_type
 # ---------------------------------------------------------------------------
+
 
 def test_get_type_sends_correct_params(mock_unity):
     result = asyncio.run(
@@ -97,9 +100,7 @@ def test_get_type_sends_correct_params(mock_unity):
 
 
 def test_get_type_requires_class_name(mock_unity):
-    result = asyncio.run(
-        unity_reflect(SimpleNamespace(), action="get_type")
-    )
+    result = asyncio.run(unity_reflect(SimpleNamespace(), action="get_type"))
     assert result["success"] is False
     assert "class_name" in result["message"]
     assert "tool_name" not in mock_unity
@@ -108,6 +109,7 @@ def test_get_type_requires_class_name(mock_unity):
 # ---------------------------------------------------------------------------
 # get_member
 # ---------------------------------------------------------------------------
+
 
 def test_get_member_sends_correct_params(mock_unity):
     result = asyncio.run(
@@ -127,9 +129,7 @@ def test_get_member_sends_correct_params(mock_unity):
 
 def test_get_member_requires_class_name_and_member_name(mock_unity):
     # Missing both
-    result = asyncio.run(
-        unity_reflect(SimpleNamespace(), action="get_member")
-    )
+    result = asyncio.run(unity_reflect(SimpleNamespace(), action="get_member"))
     assert result["success"] is False
     assert "class_name" in result["message"]
     assert "tool_name" not in mock_unity
@@ -153,10 +153,9 @@ def test_get_member_requires_member_name(mock_unity):
 # search
 # ---------------------------------------------------------------------------
 
+
 def test_search_sends_correct_params(mock_unity):
-    result = asyncio.run(
-        unity_reflect(SimpleNamespace(), action="search", query="Rigidbody")
-    )
+    result = asyncio.run(unity_reflect(SimpleNamespace(), action="search", query="Rigidbody"))
     assert result["success"] is True
     assert mock_unity["tool_name"] == "unity_reflect"
     assert mock_unity["params"]["action"] == "search"
@@ -165,9 +164,7 @@ def test_search_sends_correct_params(mock_unity):
 
 def test_search_default_scope(mock_unity):
     """When scope is not provided, it should not appear in params."""
-    result = asyncio.run(
-        unity_reflect(SimpleNamespace(), action="search", query="Camera")
-    )
+    result = asyncio.run(unity_reflect(SimpleNamespace(), action="search", query="Camera"))
     assert result["success"] is True
     assert "scope" not in mock_unity["params"]
 
@@ -186,9 +183,7 @@ def test_search_custom_scope(mock_unity):
 
 
 def test_search_requires_query(mock_unity):
-    result = asyncio.run(
-        unity_reflect(SimpleNamespace(), action="search")
-    )
+    result = asyncio.run(unity_reflect(SimpleNamespace(), action="search"))
     assert result["success"] is False
     assert "query" in result["message"]
     assert "tool_name" not in mock_unity
@@ -197,6 +192,7 @@ def test_search_requires_query(mock_unity):
 # ---------------------------------------------------------------------------
 # Scope not sent for non-search actions
 # ---------------------------------------------------------------------------
+
 
 def test_scope_not_sent_for_get_type(mock_unity):
     """scope should only be included for the search action."""
@@ -216,6 +212,7 @@ def test_scope_not_sent_for_get_type(mock_unity):
 # Case insensitivity
 # ---------------------------------------------------------------------------
 
+
 def test_action_case_insensitive(mock_unity):
     result = asyncio.run(
         unity_reflect(
@@ -231,6 +228,7 @@ def test_action_case_insensitive(mock_unity):
 # ---------------------------------------------------------------------------
 # Non-dict response
 # ---------------------------------------------------------------------------
+
 
 def test_non_dict_response_wrapped(monkeypatch):
     """When Unity returns a non-dict, it should be wrapped."""

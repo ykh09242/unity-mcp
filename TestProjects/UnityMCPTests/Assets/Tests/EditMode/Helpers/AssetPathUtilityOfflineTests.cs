@@ -1,11 +1,11 @@
 using System;
 using System.IO;
 using System.Reflection;
-using Newtonsoft.Json.Linq;
-using MCPForUnity.Editor.Migrations;
-using NUnit.Framework;
-using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Migrations;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
 using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Helpers
@@ -68,8 +68,10 @@ namespace MCPForUnityTests.Editor.Helpers
             }
             finally
             {
-                if (hadOverride) EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, originalOverride);
-                else EditorPrefs.DeleteKey(EditorPrefKeys.GitUrlOverride);
+                if (hadOverride)
+                    EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, originalOverride);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.GitUrlOverride);
             }
         }
 
@@ -132,7 +134,10 @@ namespace MCPForUnityTests.Editor.Helpers
                 File.WriteAllText(Path.Combine(server, "pyproject.toml"), "[project]\nname = 'test'\n");
                 Assert.AreEqual("--python \">=3.11\" --from \"" + server + "\"", AssetPathUtility.GetBetaServerFromArgs(root, null, true));
                 CollectionAssert.AreEqual(new[] { "--python", ">=3.11", "--from", server }, AssetPathUtility.GetBetaServerFromArgsList(root, null));
-                CollectionAssert.AreEqual(new[] { "--python", ">=3.11", "--from", "file://" + server }, AssetPathUtility.GetBetaServerFromArgsList("file://" + root, null));
+                CollectionAssert.AreEqual(
+                    new[] { "--python", ">=3.11", "--from", "file://" + server },
+                    AssetPathUtility.GetBetaServerFromArgsList("file://" + root, null)
+                );
                 EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, root);
                 Assert.AreEqual(server, AssetPathUtility.GetMcpServerPackageSource());
                 Assert.AreEqual(server, EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride));
@@ -141,8 +146,10 @@ namespace MCPForUnityTests.Editor.Helpers
             }
             finally
             {
-                if (hadOverride) EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, originalOverride);
-                else EditorPrefs.DeleteKey(EditorPrefKeys.GitUrlOverride);
+                if (hadOverride)
+                    EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, originalOverride);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.GitUrlOverride);
                 Directory.Delete(root, true);
             }
         }

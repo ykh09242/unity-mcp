@@ -1,6 +1,6 @@
 using System;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Animations;
 
@@ -29,9 +29,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             float weight = @params["weight"]?.ReadScalar<float?>() ?? 1f;
             string blendingModeStr = @params["blendingMode"]?.ToString()?.ToLowerInvariant() ?? "override";
 
-            AnimatorLayerBlendingMode blendingMode = blendingModeStr == "additive"
-                ? AnimatorLayerBlendingMode.Additive
-                : AnimatorLayerBlendingMode.Override;
+            AnimatorLayerBlendingMode blendingMode = blendingModeStr == "additive" ? AnimatorLayerBlendingMode.Additive : AnimatorLayerBlendingMode.Override;
 
             AssetPathUtility.GetFullAssetPath(controllerPath);
             Undo.RecordObject(controller, "Add Layer");
@@ -57,8 +55,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     layerName,
                     layerIndex = layers.Length - 1,
                     weight,
-                    blendingMode = blendingMode.ToString()
-                }
+                    blendingMode = blendingMode.ToString(),
+                },
             };
         }
 
@@ -127,8 +125,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 {
                     controllerPath,
                     layerName,
-                    layerIndex = layerIndex.Value
-                }
+                    layerIndex = layerIndex.Value,
+                },
             };
         }
 
@@ -197,8 +195,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     controllerPath,
                     layerName,
                     layerIndex = layerIndex.Value,
-                    weight
-                }
+                    weight,
+                },
             };
         }
     }

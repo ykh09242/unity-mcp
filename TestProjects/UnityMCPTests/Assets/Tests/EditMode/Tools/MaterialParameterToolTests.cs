@@ -2,13 +2,12 @@ using System;
 using System.IO;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Tools.GameObjects;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 using static MCPForUnityTests.Editor.TestUtilities;
-
 #if UNITY_6000_0_OR_NEWER
 using PhysicsMaterialType = UnityEngine.PhysicsMaterial;
 #else
@@ -45,8 +44,10 @@ namespace MCPForUnityTests.Editor.Tools
             var abs = Path.Combine(Directory.GetCurrentDirectory(), _matPath);
             try
             {
-                if (File.Exists(abs)) File.Delete(abs);
-                if (File.Exists(abs + ".meta")) File.Delete(abs + ".meta");
+                if (File.Exists(abs))
+                    File.Delete(abs);
+                if (File.Exists(abs + ".meta"))
+                    File.Delete(abs + ".meta");
             }
             catch { /* best-effort cleanup */ }
             AssetDatabase.Refresh();
@@ -91,11 +92,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "create",
                 ["path"] = _matPath,
                 ["assetType"] = "Material",
-                ["properties"] = new JObject
-                {
-                    ["shader"] = "Universal Render Pipeline/Lit",
-                    ["color"] = new JArray(0f, 0f, 1f, 1f)
-                }
+                ["properties"] = new JObject { ["shader"] = "Universal Render Pipeline/Lit", ["color"] = new JArray(0f, 0f, 1f, 1f) },
             };
 
             var result = ToJObject(ManageAsset.HandleCommand(createParams));
@@ -120,18 +117,22 @@ namespace MCPForUnityTests.Editor.Tools
             var path = $"{TempRoot}/Physics_{Guid.NewGuid():N}.physicMaterial";
             JValue numericValue = floatingPoint ? new JValue(value) : new JValue((int)value);
             Assert.AreEqual(floatingPoint ? JTokenType.Float : JTokenType.Integer, numericValue.Type);
-            var response = ToJObject(ManageAsset.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = path,
-                ["assetType"] = "PhysicsMaterial",
-                ["properties"] = new JObject
-                {
-                    ["dynamicFriction"] = numericValue.DeepClone(),
-                    ["staticFriction"] = numericValue.DeepClone(),
-                    ["bounciness"] = numericValue.DeepClone()
-                }
-            }));
+            var response = ToJObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["path"] = path,
+                        ["assetType"] = "PhysicsMaterial",
+                        ["properties"] = new JObject
+                        {
+                            ["dynamicFriction"] = numericValue.DeepClone(),
+                            ["staticFriction"] = numericValue.DeepClone(),
+                            ["bounciness"] = numericValue.DeepClone(),
+                        },
+                    }
+                )
+            );
 
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
@@ -153,7 +154,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "create",
                 ["name"] = "ToolTestSphere",
-                ["primitiveType"] = "Sphere"
+                ["primitiveType"] = "Sphere",
             };
             var createGoResult = ToJObject(ManageGameObject.HandleCommand(createGo));
             Assert.IsTrue(createGoResult.Value<bool>("success"), createGoResult.Value<string>("error"));
@@ -168,7 +169,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = "ToolTestSphere",
                 ["searchMethod"] = "by_name",
                 ["materialPath"] = _matPath,
-                ["slot"] = 0
+                ["slot"] = 0,
             };
 
             var assignResult = ToJObject(ManageMaterial.HandleCommand(assignParams));
@@ -198,8 +199,12 @@ namespace MCPForUnityTests.Editor.Tools
             if (data.TryGetValue("properties", out var propsObj) && propsObj is System.Collections.Generic.Dictionary<string, object> props)
             {
                 Assert.IsTrue(
-                    props.ContainsKey("sharedMaterial") || props.ContainsKey("material") || props.ContainsKey("sharedMaterials") || props.ContainsKey("materials"),
-                    "Serialized data should include material info.");
+                    props.ContainsKey("sharedMaterial")
+                        || props.ContainsKey("material")
+                        || props.ContainsKey("sharedMaterials")
+                        || props.ContainsKey("materials"),
+                    "Serialized data should include material info."
+                );
             }
         }
     }

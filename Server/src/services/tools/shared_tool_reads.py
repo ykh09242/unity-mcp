@@ -1,4 +1,5 @@
 """Bounded read sharing owned by active tool callers and their event loop."""
+
 from __future__ import annotations
 
 import asyncio
@@ -84,8 +85,11 @@ class SharedRead(Generic[T]):
         """Share a fresh read, returning private data for caller-side observations."""
         flight = self._flight
         if flight is not None and flight.task.done() and not flight.task.cancelled():
-            if (flight.task.exception() is not None
-                    or asyncio.get_running_loop().time() - flight.task.result().received_at >= self._freshness_s):
+            if (
+                flight.task.exception() is not None
+                or asyncio.get_running_loop().time() - flight.task.result().received_at
+                >= self._freshness_s
+            ):
                 flight.release()
                 flight = None
         if flight is None or flight.task.cancelled():
@@ -135,15 +139,21 @@ class SharedRead(Generic[T]):
 class SharedToolReads(Generic[T]):
     """Share reads only within active sessions; never retain finished jobs."""
 
-    def __init__(self, *, freshness_s: float = 0.0, max_entries: int = 128, retention_s: float = 0.0) -> None:
+    def __init__(
+        self, *, freshness_s: float = 0.0, max_entries: int = 128, retention_s: float = 0.0
+    ) -> None:
         self._freshness_s = freshness_s
         self._max_entries = max_entries
         self._retention_s = retention_s
         # Weak values avoid retaining a closed loop through a cached task.
         # Active callers and an owned expiry task hold each live read strongly.
-        self._loops: WeakKeyDictionary[asyncio.AbstractEventLoop, WeakValueDictionary[Hashable, SharedRead[T]]] = WeakKeyDictionary()
+        self._loops: WeakKeyDictionary[
+            asyncio.AbstractEventLoop, WeakValueDictionary[Hashable, SharedRead[T]]
+        ] = WeakKeyDictionary()
 
-    async def _expire(self, entries: WeakValueDictionary, key: Hashable, read: SharedRead[T]) -> None:
+    async def _expire(
+        self, entries: WeakValueDictionary, key: Hashable, read: SharedRead[T]
+    ) -> None:
         try:
             await asyncio.sleep(self._retention_s)
         except asyncio.CancelledError:

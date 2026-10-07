@@ -13,13 +13,13 @@ namespace MCPForUnityTests.Editor.AssetGen
     /// </summary>
     public class SketchfabAdapterTests
     {
-        private static HttpResult Json(string json, int status = 200)
-            => new HttpResult
+        private static HttpResult Json(string json, int status = 200) =>
+            new HttpResult
             {
                 Status = status,
                 IsSuccess = status >= 200 && status < 300,
                 Text = json,
-                Body = Encoding.UTF8.GetBytes(json)
+                Body = Encoding.UTF8.GetBytes(json),
             };
 
         [Test]
@@ -46,8 +46,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var http = new FakeHttpTransport { Handler = _ => Json("{\"results\":[],\"cursors\":{\"next\":\"2\"}}") };
             var adapter = new SketchfabAdapter();
 
-            adapter.SearchAsync("castle", "architecture", false, 12, "2", "sfk_secret", http, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            adapter.SearchAsync("castle", "architecture", false, 12, "2", "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult();
 
             string url = http.RecordedRequests[0].Url;
             StringAssert.Contains("categories=architecture", url);
@@ -59,14 +58,10 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void ResolveDownloadUrl_ParsesGltfUrl()
         {
-            var http = new FakeHttpTransport
-            {
-                Handler = _ => Json("{\"gltf\":{\"url\":\"https://dl.sketchfab.com/models/abc/file.zip?sig=x\"}}")
-            };
+            var http = new FakeHttpTransport { Handler = _ => Json("{\"gltf\":{\"url\":\"https://dl.sketchfab.com/models/abc/file.zip?sig=x\"}}") };
             var adapter = new SketchfabAdapter();
 
-            string url = adapter.ResolveDownloadUrlAsync("abc", "sfk_secret", http, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            string url = adapter.ResolveDownloadUrlAsync("abc", "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult();
 
             Assert.AreEqual("https://dl.sketchfab.com/models/abc/file.zip?sig=x", url);
             HttpRequestSpec rec = http.RecordedRequests[0];
@@ -80,8 +75,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var http = new FakeHttpTransport { Handler = _ => Json("{\"usdz\":{\"url\":\"https://x/y.usdz\"}}") };
             var adapter = new SketchfabAdapter();
 
-            Assert.Throws<System.Exception>(() =>
-                adapter.ResolveDownloadUrlAsync("abc", "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult());
+            Assert.Throws<System.Exception>(() => adapter.ResolveDownloadUrlAsync("abc", "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult());
         }
     }
 }

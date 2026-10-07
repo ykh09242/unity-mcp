@@ -43,7 +43,8 @@ namespace MCPForUnity.Editor.Services.Server
 
             try
             {
-                string stdout, stderr;
+                string stdout,
+                    stderr;
                 if (Application.platform == RuntimePlatform.WindowsEditor)
                 {
                     // taskkill without /F first; fall back to /F if needed.
@@ -60,7 +61,8 @@ namespace MCPForUnity.Editor.Services.Server
                     // Note: `kill -15` can succeed (exit 0) even if the process takes time to exit,
                     // so we verify and only escalate when needed.
                     string killPath = "/bin/kill";
-                    if (!File.Exists(killPath)) killPath = "kill";
+                    if (!File.Exists(killPath))
+                        killPath = "kill";
                     ExecPath.TryRun(killPath, $"-15 {pid}", Application.dataPath, out stdout, out stderr);
 
                     // Wait briefly for graceful shutdown.

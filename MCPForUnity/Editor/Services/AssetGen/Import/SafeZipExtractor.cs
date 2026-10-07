@@ -20,23 +20,34 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
     /// </summary>
     public static class SafeZipExtractor
     {
-        public static void ExtractTo(string zipPath, string destDir, ISet<string> allowedExtensions = null,
-            CancellationToken cancellationToken = default, Action<string> ensureDirectory = null)
-            => ExtractTo(zipPath, destDir, allowedExtensions, cancellationToken, 4096,
-                512L * 1024 * 1024, 2L * 1024 * 1024 * 1024, 200, ensureDirectory);
+        public static void ExtractTo(
+            string zipPath,
+            string destDir,
+            ISet<string> allowedExtensions = null,
+            CancellationToken cancellationToken = default,
+            Action<string> ensureDirectory = null
+        ) => ExtractTo(zipPath, destDir, allowedExtensions, cancellationToken, 4096, 512L * 1024 * 1024, 2L * 1024 * 1024 * 1024, 200, ensureDirectory);
 
-        internal static void ExtractTo(string zipPath, string destDir, ISet<string> allowedExtensions,
-            CancellationToken cancellationToken, int maxEntries, long maxEntryBytes, long maxTotalBytes, int maxRatio,
-            Action<string> ensureDirectory = null)
+        internal static void ExtractTo(
+            string zipPath,
+            string destDir,
+            ISet<string> allowedExtensions,
+            CancellationToken cancellationToken,
+            int maxEntries,
+            long maxEntryBytes,
+            long maxTotalBytes,
+            int maxRatio,
+            Action<string> ensureDirectory = null
+        )
         {
-            if (string.IsNullOrEmpty(zipPath)) throw new ArgumentException("zipPath required", nameof(zipPath));
-            if (string.IsNullOrEmpty(destDir)) throw new ArgumentException("destDir required", nameof(destDir));
+            if (string.IsNullOrEmpty(zipPath))
+                throw new ArgumentException("zipPath required", nameof(zipPath));
+            if (string.IsNullOrEmpty(destDir))
+                throw new ArgumentException("destDir required", nameof(destDir));
 
             cancellationToken.ThrowIfCancellationRequested();
             string destFull = Path.GetFullPath(destDir);
-            string prefix = destFull.EndsWith(Path.DirectorySeparatorChar.ToString())
-                ? destFull
-                : destFull + Path.DirectorySeparatorChar;
+            string prefix = destFull.EndsWith(Path.DirectorySeparatorChar.ToString()) ? destFull : destFull + Path.DirectorySeparatorChar;
 
             using (FileStream fs = File.OpenRead(zipPath))
             using (var archive = OpenBoundedArchive(fs, maxEntries, cancellationToken))
@@ -64,7 +75,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         string name = entry.FullName.Replace('\\', '/');
-                        if (string.IsNullOrEmpty(name)) continue;
+                        if (string.IsNullOrEmpty(name))
+                            continue;
 
                         // Reject traversal / absolute paths up front.
                         if (name.Contains("..") || name.Contains(":") || Path.IsPathRooted(name))
@@ -83,14 +95,18 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                         }
 
                         // Allowlist gate: skip anything that isn't an inert asset type the caller permits.
-                        if (allowedExtensions != null && allowedExtensions.Count > 0
-                            && !allowedExtensions.Contains(Path.GetExtension(entry.Name).ToLowerInvariant()))
+                        if (
+                            allowedExtensions != null
+                            && allowedExtensions.Count > 0
+                            && !allowedExtensions.Contains(Path.GetExtension(entry.Name).ToLowerInvariant())
+                        )
                         {
                             continue;
                         }
 
                         string parent = Path.GetDirectoryName(target);
-                        if (!string.IsNullOrEmpty(parent)) prepareDirectory(parent);
+                        if (!string.IsNullOrEmpty(parent))
+                            prepareDirectory(parent);
 
                         using (Stream src = entry.Open())
                         using (FileStream dst = new FileStream(target, FileMode.CreateNew, FileAccess.Write))
@@ -102,8 +118,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                             while ((count = src.Read(buffer, 0, buffer.Length)) != 0)
                             {
                                 cancellationToken.ThrowIfCancellationRequested();
-                                if (count > maxEntryBytes - entryWritten || count > maxTotalBytes - totalWritten ||
-                                    count > entry.Length - entryWritten)
+                                if (count > maxEntryBytes - entryWritten || count > maxTotalBytes - totalWritten || count > entry.Length - entryWritten)
                                     throw new IOException("Archive exceeds the actual uncompressed size limit.");
                                 dst.Write(buffer, 0, count);
                                 entryWritten += count;

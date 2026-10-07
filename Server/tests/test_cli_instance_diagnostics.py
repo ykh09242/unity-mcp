@@ -1,4 +1,5 @@
 """Public instance commands retain machine-readable results and close transports."""
+
 import json
 
 import httpx
@@ -18,7 +19,18 @@ def instance_transport(monkeypatch, tmp_path):
     from cli.main import cli
     from cli.utils import connection
 
-    catalog = {"success": True, "instances": [{"project": "Controlled", "hash": "aaaa1111", "unity_version": "6000.fixture", "session_id": "fixture-session", "connected_at": "fixture-time"}]}
+    catalog = {
+        "success": True,
+        "instances": [
+            {
+                "project": "Controlled",
+                "hash": "aaaa1111",
+                "unity_version": "6000.fixture",
+                "session_id": "fixture-session",
+                "connected_at": "fixture-time",
+            }
+        ],
+    }
     selected = {"success": True, "data": {"instance": "Controlled@aaaa1111"}}
     requests, clients = [], []
     client_type = httpx.AsyncClient
@@ -53,7 +65,9 @@ def test_instance_list_json_retains_entire_catalog(instance_transport, empty):
 
 
 @pytest.mark.parametrize("selector", [None, "Controlled@aaaa1111"])
-def test_current_json_reports_only_configured_selector_without_discovery(instance_transport, selector):
+def test_current_json_reports_only_configured_selector_without_discovery(
+    instance_transport, selector
+):
     cli, _, _, requests = instance_transport
     args = ["--format", "json"]
     if selector:

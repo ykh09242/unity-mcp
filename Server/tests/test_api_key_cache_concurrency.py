@@ -1,4 +1,5 @@
 """Exercise complete API-key cache entry points with real HTTPX in isolated children."""
+
 import json
 import os
 from pathlib import Path
@@ -8,21 +9,40 @@ import sys
 import pytest
 
 
-@pytest.mark.parametrize("case", [
-    "race_valid_retained", "race_negative_retained", "refresh_negative_retained",
-    "distinct_negative", "negative_priority", "expired_cleanup", "transient_retry",
-])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "race_valid_retained",
+        "race_negative_retained",
+        "refresh_negative_retained",
+        "distinct_negative",
+        "negative_priority",
+        "expired_cleanup",
+        "transient_retry",
+    ],
+)
 def test_api_key_cache_contract(case, tmp_path):
     child_root = tmp_path / case
     child_root.mkdir()
     env = os.environ.copy()
-    for key in ("APPDATA", "XDG_DATA_HOME", "UNITY_MCP_LOG_DIR", "HOME", "USERPROFILE", "TEMP", "TMP"):
+    for key in (
+        "APPDATA",
+        "XDG_DATA_HOME",
+        "UNITY_MCP_LOG_DIR",
+        "HOME",
+        "USERPROFILE",
+        "TEMP",
+        "TMP",
+    ):
         env[key] = str(child_root)
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "true"
     env["UNITY_MCP_TRANSPORT"] = "stdio"
     result = subprocess.run(
         [sys.executable, "-B", __file__, case, str(child_root)],
-        env=env, capture_output=True, text=True, timeout=30,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -55,7 +75,9 @@ async def _scenario(case):
             await release[index].wait()
             if case == "race_second_negative" and index == 1:
                 return httpx.Response(401)
-        if key == "fixture-negative" or (case == "race_negative_retained" and key == "fixture-retained"):
+        if key == "fixture-negative" or (
+            case == "race_negative_retained" and key == "fixture-retained"
+        ):
             return httpx.Response(401)
         if case == "transient_retry" and key == "fixture-transient":
             transient_index += 1
@@ -72,7 +94,13 @@ async def _scenario(case):
         raise AssertionError("Application network prohibited")
 
     # Windows asyncio creates its internal socketpair before application guards are installed.
-    with patch.object(socket.socket, "connect", denied), patch.object(socket.socket, "connect_ex", denied), patch("socket.create_connection", denied), patch("httpx.AsyncClient", client), patch("services.api_key_service.time.time", lambda: now[0]):
+    with (
+        patch.object(socket.socket, "connect", denied),
+        patch.object(socket.socket, "connect_ex", denied),
+        patch("socket.create_connection", denied),
+        patch("httpx.AsyncClient", client),
+        patch("services.api_key_service.time.time", lambda: now[0]),
+    ):
         if case.startswith("race_"):
             retained = await service.validate("fixture-retained")
             first = asyncio.create_task(service.validate("fixture-concurrent"))
@@ -88,7 +116,9 @@ async def _scenario(case):
             assert second_result.valid
             before = len(requests)
             assert (await service.validate("fixture-retained")).valid is retained.valid
-            assert len(requests) == before, "Replacing the same cached key must not evict another entry"
+            assert len(requests) == before, (
+                "Replacing the same cached key must not evict another entry"
+            )
             assert (await service.validate("fixture-concurrent")).valid
             assert len(requests) == before, "The shared definitive verdict must remain cached"
             assert len(service._cache) == 2

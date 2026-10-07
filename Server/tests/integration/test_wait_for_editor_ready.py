@@ -31,7 +31,9 @@ async def test_polls_until_ready(monkeypatch):
         nonlocal call_count
         call_count += 1
         if call_count < 3:
-            return {"data": {"advice": {"ready_for_tools": False, "blocking_reasons": ["compiling"]}}}
+            return {
+                "data": {"advice": {"ready_for_tools": False, "blocking_reasons": ["compiling"]}}
+            }
         return {"data": {"advice": {"ready_for_tools": True, "blocking_reasons": []}}}
 
     monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", fake_get_editor_state)
@@ -69,7 +71,9 @@ async def test_stale_only_treated_as_ready(monkeypatch):
     from services.tools import refresh_unity as mod
 
     async def fake_get_editor_state(ctx):
-        return {"data": {"advice": {"ready_for_tools": False, "blocking_reasons": ["stale_status"]}}}
+        return {
+            "data": {"advice": {"ready_for_tools": False, "blocking_reasons": ["stale_status"]}}
+        }
 
     monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", fake_get_editor_state)
 
@@ -83,6 +87,7 @@ async def test_blocked_state_request_is_cancelled_at_readiness_timeout(monkeypat
     # Given: the state request blocks indefinitely but cooperates with cancellation.
     from services.tools import refresh_unity as mod
     import asyncio
+
     monkeypatch.setattr(mod, "_in_pytest", lambda: False)
     cancelled = []
 
@@ -95,7 +100,8 @@ async def test_blocked_state_request_is_cancelled_at_readiness_timeout(monkeypat
     monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", blocked_state)
     # When: readiness is allowed twenty milliseconds, with a separate test watchdog.
     ready, elapsed = await asyncio.wait_for(
-        mod.wait_for_editor_ready(DummyContext(), timeout_s=0.02), timeout=1,
+        mod.wait_for_editor_ready(DummyContext(), timeout_s=0.02),
+        timeout=1,
     )
     # Then: the bounded wait returns its normal result and cleans up the request.
     assert ready is False
@@ -108,6 +114,7 @@ async def test_state_ready_after_deadline_is_not_accepted(monkeypatch):
     # Given: a state request completes with readiness after the caller's deadline.
     from services.tools import refresh_unity as mod
     from types import SimpleNamespace
+
     monkeypatch.setattr(mod, "_in_pytest", lambda: False)
     now = [0.0]
     monkeypatch.setattr(mod, "time", SimpleNamespace(monotonic=lambda: now[0]))
@@ -131,6 +138,7 @@ async def test_nonpositive_readiness_timeout_does_not_poll(monkeypatch, timeout)
     from services.tools import refresh_unity as mod
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
+
     monkeypatch.setattr(mod, "_in_pytest", lambda: False)
     monkeypatch.setattr(mod, "time", SimpleNamespace(monotonic=lambda: 0.0))
     state = AsyncMock()
@@ -147,6 +155,7 @@ async def test_readiness_caller_cancellation_reaches_state_request(monkeypatch):
     # Given: a readiness request is awaiting the editor state.
     from services.tools import refresh_unity as mod
     import asyncio
+
     monkeypatch.setattr(mod, "_in_pytest", lambda: False)
     entered = asyncio.Event()
     cancelled = []
@@ -199,16 +208,27 @@ async def test_exception_during_poll_keeps_trying(monkeypatch):
 
 def test_is_reloading_rejection_true():
     """Detects a reloading rejection response."""
-    resp = {"success": False, "error": "Unity is reloading", "data": {"reason": "reloading"}, "hint": "retry"}
+    resp = {
+        "success": False,
+        "error": "Unity is reloading",
+        "data": {"reason": "reloading"},
+        "hint": "retry",
+    }
     assert is_reloading_rejection(resp) is True
 
 
 def test_is_reloading_rejection_false_on_success():
-    assert is_reloading_rejection({"success": True, "data": {"reason": "reloading"}, "hint": "retry"}) is False
+    assert (
+        is_reloading_rejection({"success": True, "data": {"reason": "reloading"}, "hint": "retry"})
+        is False
+    )
 
 
 def test_is_reloading_rejection_false_on_other_error():
-    assert is_reloading_rejection({"success": False, "error": "timeout", "data": {}, "hint": "retry"}) is False
+    assert (
+        is_reloading_rejection({"success": False, "error": "timeout", "data": {}, "hint": "retry"})
+        is False
+    )
 
 
 def test_is_reloading_rejection_false_on_non_dict():
@@ -228,7 +248,10 @@ def test_is_reloading_rejection_false_on_non_dict():
     ],
 )
 def test_model_reloading_rejection_requires_exact_no_execution_marker(
-    success, data, hint, expected,
+    success,
+    data,
+    hint,
+    expected,
 ):
     from models import MCPResponse
 
@@ -240,15 +263,19 @@ def test_model_reloading_rejection_requires_exact_no_execution_marker(
 @pytest.mark.parametrize("response_type", ["dict", "model"])
 @pytest.mark.parametrize("second_rejected", [False, True])
 async def test_reload_recovery_retries_once_and_preserves_last_response(
-    monkeypatch, response_type, second_rejected,
+    monkeypatch,
+    response_type,
+    second_rejected,
 ):
     from unittest.mock import AsyncMock
     from models import MCPResponse
     from services.tools import refresh_unity as mod
 
     refused = {
-        "success": False, "error": "Unity is reloading; please retry",
-        "hint": "retry", "data": {"reason": "reloading", "retry_after_ms": 500},
+        "success": False,
+        "error": "Unity is reloading; please retry",
+        "hint": "retry",
+        "data": {"reason": "reloading", "retry_after_ms": 500},
     }
     first = MCPResponse(**refused) if response_type == "model" else refused
     second = first if second_rejected else {"success": True, "data": {"created": "Canvas"}}
@@ -259,7 +286,10 @@ async def test_reload_recovery_retries_once_and_preserves_last_response(
     monkeypatch.setattr(mod, "wait_for_editor_ready", ready)
 
     result = await mod.send_mutation(
-        DummyContext(), "Safe@sixsafe", "manage_ugui", {"action": "create"},
+        DummyContext(),
+        "Safe@sixsafe",
+        "manage_ugui",
+        {"action": "create"},
         verify_after_disconnect=verify,
     )
 
@@ -277,7 +307,9 @@ async def test_model_ordinary_error_returns_without_replay_or_readiness_wait(mon
     from services.tools import refresh_unity as mod
 
     response = MCPResponse(
-        success=False, error="Unity connection unavailable", hint="retry",
+        success=False,
+        error="Unity connection unavailable",
+        hint="retry",
         data={"reason": "stale_connection", "retry_after_ms": 500},
     )
     send = AsyncMock(return_value=response)
@@ -286,7 +318,10 @@ async def test_model_ordinary_error_returns_without_replay_or_readiness_wait(mon
     monkeypatch.setattr(mod, "wait_for_editor_ready", ready)
 
     result = await mod.send_mutation(
-        DummyContext(), "Safe@sixsafe", "manage_ugui", {"action": "create"},
+        DummyContext(),
+        "Safe@sixsafe",
+        "manage_ugui",
+        {"action": "create"},
     )
 
     assert result is response
@@ -431,7 +466,10 @@ async def test_send_mutation_returns_selection_failure_without_readiness_wait(mo
     monkeypatch.setattr(mod, "wait_for_editor_ready", ready)
     # When
     result = await send_mutation(
-        DummyContext(), None, "manage_ugui", {"action": "create"},
+        DummyContext(),
+        None,
+        "manage_ugui",
+        {"action": "create"},
         verify_after_disconnect=verify,
     )
     # Then: return the exact payload after one attempt, without recovery or mutation replay.
@@ -453,10 +491,12 @@ async def test_send_mutation_keeps_initial_reload_wait_when_retry_requires_selec
         "hint": "select_instance",
         "data": {"reason": "instance_selection_required", "available_instances": ["A", "B"]},
     }
-    send = AsyncMock(side_effect=[
-        {"success": False, "hint": "retry", "data": {"reason": "reloading"}},
-        response,
-    ])
+    send = AsyncMock(
+        side_effect=[
+            {"success": False, "hint": "retry", "data": {"reason": "reloading"}},
+            response,
+        ]
+    )
     ready = AsyncMock(return_value=(True, 0.0))
     monkeypatch.setattr(mod.unity_transport, "send_with_unity_instance", send)
     monkeypatch.setattr(mod, "wait_for_editor_ready", ready)
@@ -475,17 +515,37 @@ async def test_send_mutation_keeps_initial_reload_wait_when_retry_requires_selec
     "response,should_wait",
     [
         ({"success": True}, True),
-        ({"success": False, "error": "busy", "hint": "retry", "data": {"reason": "tests_running"}}, False),
+        (
+            {
+                "success": False,
+                "error": "busy",
+                "hint": "retry",
+                "data": {"reason": "tests_running"},
+            },
+            False,
+        ),
         ({"success": False, "error": "timeout", "hint": "retry"}, True),
         ({"success": False, "message": "Timed out waiting for response"}, True),
         ({"success": False, "error": "Connection closed"}, True),
-        ({"success": False, "hint": "retry", "data": {"reason": "instance_selection_required"}}, False),
+        (
+            {"success": False, "hint": "retry", "data": {"reason": "instance_selection_required"}},
+            False,
+        ),
         ({"success": False, "hint": "select_instance"}, False),
         ({"success": False, "hint": "select_instance", "data": {"reason": "other"}}, False),
-        ({"success": True, "hint": "select_instance", "data": {"reason": "instance_selection_required"}}, True),
+        (
+            {
+                "success": True,
+                "hint": "select_instance",
+                "data": {"reason": "instance_selection_required"},
+            },
+            True,
+        ),
     ],
 )
-async def test_send_mutation_waits_only_when_completion_may_be_pending(monkeypatch, response, should_wait):
+async def test_send_mutation_waits_only_when_completion_may_be_pending(
+    monkeypatch, response, should_wait
+):
     # Given: definitive errors need no readiness poll; successful or uncertain mutations do.
     from services.tools import refresh_unity as mod
     from unittest.mock import AsyncMock
@@ -508,7 +568,9 @@ async def test_send_mutation_waits_only_when_completion_may_be_pending(monkeypat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("initially_ready", [True, False])
-async def test_send_mutation_reuses_confirmed_readiness_after_readonly_verification(monkeypatch, initially_ready):
+async def test_send_mutation_reuses_confirmed_readiness_after_readonly_verification(
+    monkeypatch, initially_ready
+):
     # Given: a connection loss may follow a successful mutation and still needs verification.
     from services.tools import refresh_unity as mod
     from unittest.mock import AsyncMock
@@ -521,7 +583,11 @@ async def test_send_mutation_reuses_confirmed_readiness_after_readonly_verificat
     monkeypatch.setattr(mod, "wait_for_editor_ready", ready)
     # When
     result = await send_mutation(
-        DummyContext(), None, "manage_script", {}, verify_after_disconnect=verify,
+        DummyContext(),
+        None,
+        "manage_script",
+        {},
+        verify_after_disconnect=verify,
     )
     # A confirmed ready snapshot and a successful read verification need no extra RPC.
     # If the first readiness wait expired, retain the final readiness check.

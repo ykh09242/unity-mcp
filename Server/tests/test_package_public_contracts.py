@@ -324,8 +324,8 @@ anyio.run(main)
 
 
 def test_packages_top_level_cli_contracts(tmp_path):
-    assert 'CLI_SUMMARY' in _run(CLI_PROGRAM, tmp_path)
+    assert "CLI_SUMMARY" in _run(CLI_PROGRAM, tmp_path)
 
 
 def test_packages_registered_sdk_and_polling_contracts(tmp_path):
-    assert 'SDK_SUMMARY' in _run(SDK_PROGRAM, tmp_path)
+    assert "SDK_SUMMARY" in _run(SDK_PROGRAM, tmp_path)

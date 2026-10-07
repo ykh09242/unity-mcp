@@ -10,26 +10,45 @@ from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
 ANIMATOR_ACTIONS = [
-    "animator_get_info", "animator_get_parameter",
-    "animator_play", "animator_crossfade",
-    "animator_set_parameter", "animator_set_speed", "animator_set_enabled",
+    "animator_get_info",
+    "animator_get_parameter",
+    "animator_play",
+    "animator_crossfade",
+    "animator_set_parameter",
+    "animator_set_speed",
+    "animator_set_enabled",
 ]
 
 CONTROLLER_ACTIONS = [
-    "controller_create", "controller_add_state", "controller_add_transition",
-    "controller_add_parameter", "controller_get_info", "controller_assign",
-    "controller_add_layer", "controller_remove_layer", "controller_set_layer_weight",
-    "controller_create_blend_tree_1d", "controller_create_blend_tree_2d", "controller_add_blend_tree_child",
+    "controller_create",
+    "controller_add_state",
+    "controller_add_transition",
+    "controller_add_parameter",
+    "controller_get_info",
+    "controller_assign",
+    "controller_add_layer",
+    "controller_remove_layer",
+    "controller_set_layer_weight",
+    "controller_create_blend_tree_1d",
+    "controller_create_blend_tree_2d",
+    "controller_add_blend_tree_child",
 ]
 
 CLIP_ACTIONS = [
-    "clip_create", "clip_get_info",
-    "clip_add_curve", "clip_set_curve", "clip_set_vector_curve",
-    "clip_create_preset", "clip_assign",
-    "clip_add_event", "clip_remove_event",
+    "clip_create",
+    "clip_get_info",
+    "clip_add_curve",
+    "clip_set_curve",
+    "clip_set_vector_curve",
+    "clip_create_preset",
+    "clip_assign",
+    "clip_add_event",
+    "clip_remove_event",
 ]
 
-ALL_ACTIONS = ANIMATOR_ACTIONS + CONTROLLER_ACTIONS + CLIP_ACTIONS #Not loaded in the MCP context, but will return this in the error response (1 Shot)
+ALL_ACTIONS = (
+    ANIMATOR_ACTIONS + CONTROLLER_ACTIONS + CLIP_ACTIONS
+)  # Not loaded in the MCP context, but will return this in the error response (1 Shot)
 
 
 @mcp_for_unity_tool(
@@ -54,8 +73,12 @@ async def manage_animation(
         Literal["by_id", "by_name", "by_path", "by_tag", "by_layer"] | None,
         "How to find the target GameObject.",
     ] = None,
-    clip_path: Annotated[str | None, "Asset path for AnimationClip (e.g. 'Assets/Animations/Walk.anim')."] = None,
-    controller_path: Annotated[str | None, "Asset path for AnimatorController (e.g. 'Assets/Animators/Player.controller')."] = None,
+    clip_path: Annotated[
+        str | None, "Asset path for AnimationClip (e.g. 'Assets/Animations/Walk.anim')."
+    ] = None,
+    controller_path: Annotated[
+        str | None, "Asset path for AnimatorController (e.g. 'Assets/Animators/Player.controller')."
+    ] = None,
     properties: Annotated[
         dict[str, Any] | str | None,
         "Action-specific parameters (dict or JSON object string).",

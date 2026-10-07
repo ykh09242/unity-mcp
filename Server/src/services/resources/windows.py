@@ -11,6 +11,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 
 class WindowPosition(BaseModel):
     """Window position and size."""
+
     x: float = 0.0
     y: float = 0.0
     width: float = 0.0
@@ -19,6 +20,7 @@ class WindowPosition(BaseModel):
 
 class WindowInfo(BaseModel):
     """Information about an editor window."""
+
     title: str = ""
     typeName: str = ""
     isFocused: bool = False
@@ -28,21 +30,19 @@ class WindowInfo(BaseModel):
 
 class WindowsResponse(MCPResponse):
     """List of all open editor windows."""
+
     data: list[WindowInfo] = []
 
 
 @mcp_for_unity_resource(
     uri="mcpforunity://editor/windows",
     name="editor_windows",
-    description="All currently open editor windows with their titles, types, positions, and focus state.\n\nURI: mcpforunity://editor/windows"
+    description="All currently open editor windows with their titles, types, positions, and focus state.\n\nURI: mcpforunity://editor/windows",
 )
 async def get_windows(ctx: Context) -> WindowsResponse | MCPResponse:
     """Get all open editor windows."""
     unity_instance = await get_unity_instance_from_context(ctx)
     response = await send_with_unity_instance(
-        async_send_command_with_retry,
-        unity_instance,
-        "get_windows",
-        {}
+        async_send_command_with_retry, unity_instance, "get_windows", {}
     )
     return parse_resource_response(response, WindowsResponse)

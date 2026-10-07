@@ -33,7 +33,9 @@ def local_discovery(monkeypatch):
     monkeypatch.delenv("UNITY_MCP_DEFAULT_INSTANCE", raising=False)
     pool = uc.UnityConnectionPool()
     monkeypatch.setattr(uc, "get_unity_connection_pool", lambda: pool)
-    target = SimpleNamespace(id="Main@deadbeef", hash="deadbeef", name="Main", port=6400, path="/Owned/Main/Assets")
+    target = SimpleNamespace(
+        id="Main@deadbeef", hash="deadbeef", name="Main", port=6400, path="/Owned/Main/Assets"
+    )
     return pool, target, UnityInstanceMiddleware(), SessionContext()
 
 
@@ -66,12 +68,17 @@ def gated_discovery(monkeypatch, target):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("selector", ["Main@deadbeef", "dead", "6400", None])
 async def test_local_selection_allows_other_requests_while_discovery_waits(
-    local_discovery, monkeypatch, selector,
+    local_discovery,
+    monkeypatch,
+    selector,
 ):
     pool, target, middleware, ctx = local_discovery
     started, _, release, threads = gated_discovery(monkeypatch, target)
-    operation = (middleware._maybe_autoselect_instance(ctx) if selector is None
-                 else middleware._resolve_instance_value(selector, ctx))
+    operation = (
+        middleware._maybe_autoselect_instance(ctx)
+        if selector is None
+        else middleware._resolve_instance_value(selector, ctx)
+    )
     request = asyncio.create_task(operation)
     try:
         await asyncio.wait_for(started.wait(), 2)
@@ -94,7 +101,8 @@ async def test_local_selection_allows_other_requests_while_discovery_waits(
 
 @pytest.mark.asyncio
 async def test_cancelled_autoselect_does_not_persist_late_discovery(
-    local_discovery, monkeypatch,
+    local_discovery,
+    monkeypatch,
 ):
     _, target, middleware, ctx = local_discovery
     started, completed, release, _ = gated_discovery(monkeypatch, target)
@@ -115,7 +123,8 @@ async def test_cancelled_autoselect_does_not_persist_late_discovery(
 
 @pytest.mark.asyncio
 async def test_missing_exact_selection_fallback_stays_off_event_loop(
-    local_discovery, monkeypatch,
+    local_discovery,
+    monkeypatch,
 ):
     _, target, middleware, ctx = local_discovery
     threads = []
@@ -138,7 +147,9 @@ async def test_missing_exact_selection_fallback_stays_off_event_loop(
 
 
 @pytest.mark.asyncio
-async def test_late_autoselect_preserves_explicit_public_tool_selection(local_discovery, monkeypatch):
+async def test_late_autoselect_preserves_explicit_public_tool_selection(
+    local_discovery, monkeypatch
+):
     import services.tools.set_active_instance as selection_tool
 
     pool, target, middleware, ctx = local_discovery
@@ -159,7 +170,11 @@ async def test_late_autoselect_preserves_explicit_public_tool_selection(local_di
         return pool.discover_all_instances(force_refresh=force_refresh)
 
     monkeypatch.setattr(PortDiscovery, "discover_all_unity_instances", changing_inventory)
-    monkeypatch.setattr(selection_tool, "get_unity_connection_pool", lambda: SimpleNamespace(discover_all_instances=explicit_discovery))
+    monkeypatch.setattr(
+        selection_tool,
+        "get_unity_connection_pool",
+        lambda: SimpleNamespace(discover_all_instances=explicit_discovery),
+    )
     monkeypatch.setattr(selection_tool, "get_unity_instance_middleware", lambda: middleware)
     monkeypatch.setattr(selection_tool, "is_sessionless", lambda _: False)
     automatic = asyncio.create_task(middleware._maybe_autoselect_instance(ctx))
@@ -178,7 +193,9 @@ async def test_late_autoselect_preserves_explicit_public_tool_selection(local_di
 @pytest.mark.asyncio
 @pytest.mark.parametrize("explicit_action", ["set", "clear"])
 async def test_auto_selection_state_read_and_write_cannot_overwrite_explicit_writer(
-    local_discovery, monkeypatch, explicit_action,
+    local_discovery,
+    monkeypatch,
+    explicit_action,
 ):
     _, target, middleware, _ = local_discovery
     reading = asyncio.Event()
@@ -197,8 +214,11 @@ async def test_auto_selection_state_read_and_write_cannot_overwrite_explicit_wri
     explicit = None
     try:
         await asyncio.wait_for(reading.wait(), 2)
-        operation = (middleware.set_active_instance(ctx, "Other@cafebabe")
-                     if explicit_action == "set" else middleware.clear_active_instance(ctx))
+        operation = (
+            middleware.set_active_instance(ctx, "Other@cafebabe")
+            if explicit_action == "set"
+            else middleware.clear_active_instance(ctx)
+        )
         explicit = asyncio.create_task(operation)
         await asyncio.sleep(0)
         assert not explicit.done(), "An explicit writer interleaved automatic state read/write"

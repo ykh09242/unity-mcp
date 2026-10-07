@@ -25,14 +25,17 @@ namespace MCPForUnity.Editor.Resources.Editor
                     return new SuccessResponse("No prefab stage open.", new { isOpen = false });
 
                 var root = stage.prefabContentsRoot;
-                return new SuccessResponse("Retrieved prefab stage info.", new
-                {
-                    isOpen = true,
-                    assetPath = stage.assetPath,
-                    prefabRootName = root != null ? root.name : null,
-                    mode = stage.mode.ToString(),
-                    isDirty = stage.scene.isDirty,
-                });
+                return new SuccessResponse(
+                    "Retrieved prefab stage info.",
+                    new
+                    {
+                        isOpen = true,
+                        assetPath = stage.assetPath,
+                        prefabRootName = root != null ? root.name : null,
+                        mode = stage.mode.ToString(),
+                        isDirty = stage.scene.isDirty,
+                    }
+                );
             }
             catch (Exception e)
             {

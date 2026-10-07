@@ -41,6 +41,7 @@ def camera():
 # Setup
 # =============================================================================
 
+
 @camera.command("ping")
 @handle_unity_errors
 def ping():
@@ -87,12 +88,18 @@ def brain_status():
 # Creation
 # =============================================================================
 
+
 @camera.command("create")
 @click.option("--name", "-n", default=None, help="Name for the camera GameObject.")
-@click.option("--preset", "-p", default=None,
-              type=click.Choice(["follow", "third_person", "freelook", "dolly",
-                                 "static", "top_down", "side_scroller"]),
-              help="Camera preset (Cinemachine only).")
+@click.option(
+    "--preset",
+    "-p",
+    default=None,
+    type=click.Choice(
+        ["follow", "third_person", "freelook", "dolly", "static", "top_down", "side_scroller"]
+    ),
+    help="Camera preset (Cinemachine only).",
+)
 @click.option("--follow", default=None, help="Follow target (name/path/ID).")
 @click.option("--look-at", default=None, help="LookAt target (name/path/ID).")
 @click.option("--priority", type=int, default=None, help="Camera priority.")
@@ -163,6 +170,7 @@ def ensure_brain(camera_ref, blend_style, blend_duration):
 # Configuration
 # =============================================================================
 
+
 @camera.command("set-target")
 @click.argument("target")
 @click.option("--search-method", "-s", type=SEARCH_METHOD_CHOICE_BASIC, default=None)
@@ -183,12 +191,14 @@ def set_target(target, search_method, follow, look_at):
     if look_at:
         props["lookAt"] = look_at
 
-    params = _normalize_cam_params({
-        "action": "set_target",
-        "target": target,
-        "searchMethod": search_method,
-        "properties": props if props else None,
-    })
+    params = _normalize_cam_params(
+        {
+            "action": "set_target",
+            "target": target,
+            "searchMethod": search_method,
+            "properties": props if props else None,
+        }
+    )
     result = run_command("manage_camera", params, config)
     click.echo(format_output(result, config.format))
 
@@ -222,12 +232,14 @@ def set_lens(target, search_method, fov, near, far, ortho_size, dutch):
     if dutch is not None:
         props["dutch"] = dutch
 
-    params = _normalize_cam_params({
-        "action": "set_lens",
-        "target": target,
-        "searchMethod": search_method,
-        "properties": props if props else None,
-    })
+    params = _normalize_cam_params(
+        {
+            "action": "set_lens",
+            "target": target,
+            "searchMethod": search_method,
+            "properties": props if props else None,
+        }
+    )
     result = run_command("manage_camera", params, config)
     click.echo(format_output(result, config.format))
 
@@ -245,12 +257,14 @@ def set_priority(target, search_method, priority):
         unity-mcp camera set-priority "CM Camera" --priority 20
     """
     config = get_config()
-    params = _normalize_cam_params({
-        "action": "set_priority",
-        "target": target,
-        "searchMethod": search_method,
-        "properties": {"priority": priority},
-    })
+    params = _normalize_cam_params(
+        {
+            "action": "set_priority",
+            "target": target,
+            "searchMethod": search_method,
+            "properties": {"priority": priority},
+        }
+    )
     result = run_command("manage_camera", params, config)
     click.echo(format_output(result, config.format))
 
@@ -258,6 +272,7 @@ def set_priority(target, search_method, priority):
 # =============================================================================
 # Cinemachine Pipeline
 # =============================================================================
+
 
 @camera.command("set-body")
 @click.argument("target")
@@ -280,12 +295,14 @@ def set_body(target, search_method, body_type, props):
     if props:
         properties.update(parse_json_dict_or_exit(props))
 
-    params = _normalize_cam_params({
-        "action": "set_body",
-        "target": target,
-        "searchMethod": search_method,
-        "properties": properties if properties else None,
-    })
+    params = _normalize_cam_params(
+        {
+            "action": "set_body",
+            "target": target,
+            "searchMethod": search_method,
+            "properties": properties if properties else None,
+        }
+    )
     result = run_command("manage_camera", params, config)
     click.echo(format_output(result, config.format))
 
@@ -310,12 +327,14 @@ def set_aim(target, search_method, aim_type, props):
     if props:
         properties.update(parse_json_dict_or_exit(props))
 
-    params = _normalize_cam_params({
-        "action": "set_aim",
-        "target": target,
-        "searchMethod": search_method,
-        "properties": properties if properties else None,
-    })
+    params = _normalize_cam_params(
+        {
+            "action": "set_aim",
+            "target": target,
+            "searchMethod": search_method,
+            "properties": properties if properties else None,
+        }
+    )
     result = run_command("manage_camera", params, config)
     click.echo(format_output(result, config.format))
 
@@ -340,12 +359,14 @@ def set_noise(target, search_method, amplitude, frequency):
     if frequency is not None:
         props["frequencyGain"] = frequency
 
-    params = _normalize_cam_params({
-        "action": "set_noise",
-        "target": target,
-        "searchMethod": search_method,
-        "properties": props if props else None,
-    })
+    params = _normalize_cam_params(
+        {
+            "action": "set_noise",
+            "target": target,
+            "searchMethod": search_method,
+            "properties": props if props else None,
+        }
+    )
     result = run_command("manage_camera", params, config)
     click.echo(format_output(result, config.format))
 
@@ -353,6 +374,7 @@ def set_noise(target, search_method, amplitude, frequency):
 # =============================================================================
 # Extensions
 # =============================================================================
+
 
 @camera.command("add-extension")
 @click.argument("target")
@@ -373,12 +395,14 @@ def add_extension(target, extension_type, search_method, props):
     if props:
         properties.update(parse_json_dict_or_exit(props))
 
-    params = _normalize_cam_params({
-        "action": "add_extension",
-        "target": target,
-        "searchMethod": search_method,
-        "properties": properties,
-    })
+    params = _normalize_cam_params(
+        {
+            "action": "add_extension",
+            "target": target,
+            "searchMethod": search_method,
+            "properties": properties,
+        }
+    )
     result = run_command("manage_camera", params, config)
     click.echo(format_output(result, config.format))
 
@@ -396,12 +420,14 @@ def remove_extension(target, extension_type, search_method):
         unity-mcp camera remove-extension "CM Camera" CinemachineDeoccluder
     """
     config = get_config()
-    params = _normalize_cam_params({
-        "action": "remove_extension",
-        "target": target,
-        "searchMethod": search_method,
-        "properties": {"extensionType": extension_type},
-    })
+    params = _normalize_cam_params(
+        {
+            "action": "remove_extension",
+            "target": target,
+            "searchMethod": search_method,
+            "properties": {"extensionType": extension_type},
+        }
+    )
     result = run_command("manage_camera", params, config)
     click.echo(format_output(result, config.format))
 
@@ -409,6 +435,7 @@ def remove_extension(target, extension_type, search_method):
 # =============================================================================
 # Control
 # =============================================================================
+
 
 @camera.command("set-blend")
 @click.option("--style", default=None, help="Blend style (Cut, EaseInOut, Linear, etc.).")
@@ -448,11 +475,13 @@ def force_camera(target, search_method):
         unity-mcp camera force "CM Cinematic"
     """
     config = get_config()
-    params = _normalize_cam_params({
-        "action": "force_camera",
-        "target": target,
-        "searchMethod": search_method,
-    })
+    params = _normalize_cam_params(
+        {
+            "action": "force_camera",
+            "target": target,
+            "searchMethod": search_method,
+        }
+    )
     result = run_command("manage_camera", params, config)
     click.echo(format_output(result, config.format))
 
@@ -475,24 +504,45 @@ def release_override():
 # Capture
 # =============================================================================
 
+
 @camera.command("screenshot")
 @click.option("--camera-ref", default=None, help="Camera to capture from (name/path/ID).")
 @click.option("--file-name", default=None, help="Output file name.")
 @click.option("--super-size", type=int, default=None, help="Supersize multiplier.")
 @click.option("--include-image/--no-include-image", default=None, help="Return inline base64 PNG.")
 @click.option("--max-resolution", type=int, default=None, help="Max resolution for inline image.")
-@click.option("--capture-source", default=None,
-              type=click.Choice(["game_view", "scene_view"], case_sensitive=False),
-              help="Capture source: game_view (default) or scene_view.")
-@click.option("--batch", default=None, type=click.Choice(["surround", "orbit"]),
-              help="Batch capture mode.")
-@click.option("--view-target", default=None,
-              help="Target to focus on (name/path/ID or [x,y,z]). Aims camera (game_view) or frames Scene View (scene_view).")
-@click.option("--output-folder", default=None,
-              help="Output folder, project-relative (e.g. 'Assets/Screenshots' or 'Captures') or absolute inside the project. "
-                   "Overrides Editor preference; falls back to Assets/Screenshots when unset.")
+@click.option(
+    "--capture-source",
+    default=None,
+    type=click.Choice(["game_view", "scene_view"], case_sensitive=False),
+    help="Capture source: game_view (default) or scene_view.",
+)
+@click.option(
+    "--batch", default=None, type=click.Choice(["surround", "orbit"]), help="Batch capture mode."
+)
+@click.option(
+    "--view-target",
+    default=None,
+    help="Target to focus on (name/path/ID or [x,y,z]). Aims camera (game_view) or frames Scene View (scene_view).",
+)
+@click.option(
+    "--output-folder",
+    default=None,
+    help="Output folder, project-relative (e.g. 'Assets/Screenshots' or 'Captures') or absolute inside the project. "
+    "Overrides Editor preference; falls back to Assets/Screenshots when unset.",
+)
 @handle_unity_errors
-def screenshot(camera_ref, file_name, super_size, include_image, max_resolution, capture_source, batch, view_target, output_folder):
+def screenshot(
+    camera_ref,
+    file_name,
+    super_size,
+    include_image,
+    max_resolution,
+    capture_source,
+    batch,
+    view_target,
+    output_folder,
+):
     """Capture a screenshot from a camera.
 
     \b
@@ -522,8 +572,11 @@ def screenshot(camera_ref, file_name, super_size, include_image, max_resolution,
     # Unity reads a JSON array as a position and any other value as a GameObject; the
     # option arrives as text, so "[x,y,z]" is parsed to reach Unity as an array.
     if view_target:
-        params["viewTarget"] = (parse_json_list_or_exit(view_target, "view-target")
-                                if view_target.lstrip().startswith("[") else view_target)
+        params["viewTarget"] = (
+            parse_json_list_or_exit(view_target, "view-target")
+            if view_target.lstrip().startswith("[")
+            else view_target
+        )
     if output_folder:
         params["outputFolder"] = output_folder
     result = run_command("manage_camera", params, config)
@@ -532,10 +585,15 @@ def screenshot(camera_ref, file_name, super_size, include_image, max_resolution,
 
 @camera.command("screenshot-multiview")
 @click.option("--max-resolution", type=int, default=None, help="Max resolution per tile.")
-@click.option("--view-target", default=None, help="Center target: GameObject name/path/ID or [x,y,z].")
-@click.option("--output-folder", default=None,
-              help="Output folder, project-relative or absolute inside the project. "
-                   "Overrides Editor preference; falls back to Assets/Screenshots when unset.")
+@click.option(
+    "--view-target", default=None, help="Center target: GameObject name/path/ID or [x,y,z]."
+)
+@click.option(
+    "--output-folder",
+    default=None,
+    help="Output folder, project-relative or absolute inside the project. "
+    "Overrides Editor preference; falls back to Assets/Screenshots when unset.",
+)
 @handle_unity_errors
 def screenshot_multiview(max_resolution, view_target, output_folder):
     """Capture a 6-angle contact sheet around the scene.
@@ -550,8 +608,11 @@ def screenshot_multiview(max_resolution, view_target, output_folder):
     if max_resolution is not None:
         params["maxResolution"] = max_resolution
     if view_target:
-        params["viewTarget"] = (parse_json_list_or_exit(view_target, "view-target")
-                                if view_target.lstrip().startswith("[") else view_target)
+        params["viewTarget"] = (
+            parse_json_list_or_exit(view_target, "view-target")
+            if view_target.lstrip().startswith("[")
+            else view_target
+        )
     if output_folder:
         params["outputFolder"] = output_folder
     result = run_command("manage_camera", params, config)

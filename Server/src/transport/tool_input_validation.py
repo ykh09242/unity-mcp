@@ -1,4 +1,5 @@
 """Check SDK argument structure before instance discovery, without running a tool."""
+
 from functools import lru_cache
 from typing import Any, Callable
 
@@ -22,17 +23,21 @@ def _structural_schema(value: Any) -> Any:
     if kind == "function-after":
         schema = _structural_schema(value["schema"])
         return {**schema, **({"ref": value["ref"]} if "ref" in value else {})}
-    if kind in ("function-before", "function-wrap", "function-plain", "model", "dataclass") or (
-        kind == "tagged-union" and callable(value.get("discriminator"))
-    ) or (
-        kind == "enum" and callable(value.get("missing"))
+    if (
+        kind in ("function-before", "function-wrap", "function-plain", "model", "dataclass")
+        or (kind == "tagged-union" and callable(value.get("discriminator")))
+        or (kind == "enum" and callable(value.get("missing")))
     ):
         # These may deliberately accept a different raw type or construct objects.
         # Leave them to the SDK so custom validators/constructors execute once.
         return {"type": "any", **({"ref": value["ref"]} if "ref" in value else {})}
     if kind == "default" and "default_factory" in value:
         return {
-            **{key: item for key, item in value.items() if key not in ("default_factory", "default_factory_takes_data")},
+            **{
+                key: item
+                for key, item in value.items()
+                if key not in ("default_factory", "default_factory_takes_data")
+            },
             "schema": _structural_schema(value["schema"]),
             "default": None,
             "validate_default": False,
@@ -53,7 +58,9 @@ def _argument_validator(function: Callable) -> SchemaValidator:
     return SchemaValidator(_structural_schema(arguments))
 
 
-def validate_tool_arguments(tool: object, arguments: dict[str, object], *, strict: bool | None = None) -> None:
+def validate_tool_arguments(
+    tool: object, arguments: dict[str, object], *, strict: bool | None = None
+) -> None:
     """Reuse FunctionTool's argument schema; never invoke handler/dependency code."""
     if not isinstance(tool, FunctionTool):
         return  # Remote/proxy tools own their validation beyond this local boundary.

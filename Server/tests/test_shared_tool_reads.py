@@ -1,4 +1,5 @@
 """Lifecycle and capacity bounds for reads shared by batch and test-job callers."""
+
 import asyncio
 
 import pytest
@@ -72,8 +73,10 @@ async def test_last_cancelled_waiter_cancels_and_drains_orphan_then_can_retry():
     assert cancelled.is_set()
     assert reads._loops[asyncio.get_running_loop()] == {}
     async with reads.session("job") as fresh:
+
         async def retry():
             return 7
+
         assert await fresh.fetch(retry) == 7
 
 
@@ -93,8 +96,10 @@ async def test_failed_shared_fetch_is_drained_and_does_not_poison_next_session()
     assert all(isinstance(reply, OSError) for reply in replies)
     assert reads._loops[asyncio.get_running_loop()] == {}
     async with reads.session("job") as fresh:
+
         async def retry():
             return 7
+
         assert await fresh.fetch(retry) == 7
 
 
@@ -107,6 +112,7 @@ def test_pool_can_be_reused_after_event_loop_replacement():
             nonlocal calls
             calls += 1
             return calls
+
         async with reads.session("job") as read:
             return await read.fetch(fetch)
 

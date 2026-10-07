@@ -1,4 +1,5 @@
 """Focused physics material, settings and simulation public contracts."""
+
 import os
 import subprocess
 import sys
@@ -6,14 +7,26 @@ import textwrap
 
 
 def _run(code, tmp_path):
-    env = {**os.environ, "APPDATA": str(tmp_path), "XDG_DATA_HOME": str(tmp_path), "UNITY_MCP_DISABLE_TELEMETRY": "true"}
-    result = subprocess.run([sys.executable, "-B", "-c", textwrap.dedent(code)], env=env, capture_output=True, text=True, timeout=60)
+    env = {
+        **os.environ,
+        "APPDATA": str(tmp_path),
+        "XDG_DATA_HOME": str(tmp_path),
+        "UNITY_MCP_DISABLE_TELEMETRY": "true",
+    }
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", textwrap.dedent(code)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
 
 def test_physics_assets_settings_cli_payloads_and_diagnostics(tmp_path):
-    output = _run(r'''
+    output = _run(
+        r"""
         import copy
         import json
         import httpx
@@ -99,12 +112,15 @@ def test_physics_assets_settings_cli_payloads_and_diagnostics(tmp_path):
             print("FULL_HELP",command,json.dumps(result.stdout))
         print(f"fresh physics assets/settings CLI checks={checks} failures={len(failures)} requests={len(requests)}")
         assert not failures, failures
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
     assert "fresh physics assets/settings CLI checks=" in output
 
 
 def test_physics_assets_settings_registered_sdk_payloads_and_results(tmp_path):
-    output = _run(r'''
+    output = _run(
+        r"""
         import copy
         import json
         import anyio
@@ -189,5 +205,7 @@ def test_physics_assets_settings_registered_sdk_payloads_and_results(tmp_path):
             print(f"fresh physics assets/settings SDK checks={checks} failures={len(failures)} requests={len(requests)}")
             assert not failures, failures
         anyio.run(main)
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
     assert "fresh physics assets/settings SDK checks=" in output

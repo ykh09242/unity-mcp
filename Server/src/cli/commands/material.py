@@ -30,25 +30,21 @@ def info(path: str):
     """
     config = get_config()
 
-    result = run_command("manage_material", {
-        "action": "get_material_info",
-        "materialPath": path,
-    }, config)
+    result = run_command(
+        "manage_material",
+        {
+            "action": "get_material_info",
+            "materialPath": path,
+        },
+        config,
+    )
     click.echo(format_output(result, config.format))
 
 
 @material.command("create")
 @click.argument("path")
-@click.option(
-    "--shader", "-s",
-    default="Standard",
-    help="Shader to use (default: Standard)."
-)
-@click.option(
-    "--properties", "-p",
-    default=None,
-    help='Initial properties as JSON.'
-)
+@click.option("--shader", "-s", default="Standard", help="Shader to use (default: Standard).")
+@click.option("--properties", "-p", default=None, help="Initial properties as JSON.")
 @handle_unity_errors
 def create(path: str, shader: str, properties: Optional[str]):
     """Create a new material.
@@ -82,11 +78,7 @@ def create(path: str, shader: str, properties: Optional[str]):
 @click.argument("g", type=float)
 @click.argument("b", type=float)
 @click.argument("a", type=float, default=1.0)
-@click.option(
-    "--property", "-p",
-    default="_Color",
-    help="Color property name (default: _Color)."
-)
+@click.option("--property", "-p", default="_Color", help="Color property name (default: _Color).")
 @handle_unity_errors
 def set_color(path: str, r: float, g: float, b: float, a: float, property: str):
     """Set a material's color.
@@ -151,19 +143,15 @@ def set_property(path: str, property_name: str, value: str):
     "--search-method",
     type=SEARCH_METHOD_CHOICE_RENDERER,
     default=None,
-    help="How to find the target GameObject."
+    help="How to find the target GameObject.",
 )
+@click.option("--slot", "-s", default=0, type=int, help="Material slot index (default: 0).")
 @click.option(
-    "--slot", "-s",
-    default=0,
-    type=int,
-    help="Material slot index (default: 0)."
-)
-@click.option(
-    "--mode", "-m",
+    "--mode",
+    "-m",
     type=click.Choice(["shared", "instance", "property_block", "create_unique"]),
     default="shared",
-    help="Assignment mode."
+    help="Assignment mode.",
 )
 @handle_unity_errors
 def assign(material_path: str, target: str, search_method: Optional[str], slot: int, mode: str):
@@ -204,16 +192,19 @@ def assign(material_path: str, target: str, search_method: Optional[str], slot: 
     "--search-method",
     type=SEARCH_METHOD_CHOICE_RENDERER,
     default=None,
-    help="How to find the target GameObject."
+    help="How to find the target GameObject.",
 )
 @click.option(
-    "--mode", "-m",
+    "--mode",
+    "-m",
     type=click.Choice(["shared", "instance", "property_block", "create_unique"]),
     default="property_block",
-    help="Modification mode (default: property_block — use create_unique for persistent per-object material)."
+    help="Modification mode (default: property_block — use create_unique for persistent per-object material).",
 )
 @handle_unity_errors
-def set_renderer_color(target: str, r: float, g: float, b: float, a: float, search_method: Optional[str], mode: str):
+def set_renderer_color(
+    target: str, r: float, g: float, b: float, a: float, search_method: Optional[str], mode: str
+):
     """Set a renderer's material color directly.
 
     \b

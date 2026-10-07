@@ -18,7 +18,8 @@ namespace MCPForUnity.Editor.Helpers
         /// <typeparam name="T">The type of Unity Object to resolve</typeparam>
         /// <param name="instruction">JObject with "find" (required), "method" (optional), "component" (optional)</param>
         /// <returns>The resolved object, or null if not found</returns>
-        public static T Resolve<T>(JObject instruction) where T : UnityEngine.Object
+        public static T Resolve<T>(JObject instruction)
+            where T : UnityEngine.Object
         {
             return Resolve(instruction, typeof(T)) as T;
         }
@@ -47,10 +48,9 @@ namespace MCPForUnity.Editor.Helpers
             // --- Asset Search ---
             // Normalize path separators before checking asset paths
             string normalizedPath = AssetPathUtility.NormalizeSeparators(findTerm);
-            
+
             // If the target is an asset type, try AssetDatabase first
-            if (IsAssetType(targetType) || 
-                (typeof(GameObject).IsAssignableFrom(targetType) && normalizedPath.StartsWith("Assets/")))
+            if (IsAssetType(targetType) || (typeof(GameObject).IsAssignableFrom(targetType) && normalizedPath.StartsWith("Assets/")))
             {
                 return TryLoadAsset(normalizedPath, targetType);
             }
@@ -111,12 +111,13 @@ namespace MCPForUnity.Editor.Helpers
             // If target is a simple value, use GameObjectLookup directly
             if (target.Type != JTokenType.Object)
             {
-                if (string.IsNullOrEmpty(searchMethod) ||
-                    string.Equals(searchMethod, "by_id_or_name_or_path", StringComparison.OrdinalIgnoreCase))
+                if (string.IsNullOrEmpty(searchMethod) || string.Equals(searchMethod, "by_id_or_name_or_path", StringComparison.OrdinalIgnoreCase))
                 {
                     string findTerm = target.ToString();
-                    searchMethod = int.TryParse(findTerm, out _) ? "by_id" :
-                        findTerm.Contains("/") ? "by_path" : "by_name";
+                    searchMethod =
+                        int.TryParse(findTerm, out _) ? "by_id"
+                        : findTerm.Contains("/") ? "by_path"
+                        : "by_name";
                 }
                 GameObject resolved = GameObjectLookup.FindByTarget(target, searchMethod);
                 ValidateResolvedAsset(resolved);
@@ -161,7 +162,8 @@ namespace MCPForUnity.Editor.Helpers
 
         private static void ValidateResolvedAsset(UnityEngine.Object resolved)
         {
-            if (resolved == null) return;
+            if (resolved == null)
+                return;
             string path = AssetDatabase.GetAssetPath(resolved);
             if (!string.IsNullOrEmpty(path))
                 AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true);
@@ -169,15 +171,15 @@ namespace MCPForUnity.Editor.Helpers
 
         private static bool IsAssetType(Type type)
         {
-            return typeof(Material).IsAssignableFrom(type) ||
-                   typeof(Texture).IsAssignableFrom(type) ||
-                   typeof(ScriptableObject).IsAssignableFrom(type) ||
-                   type.FullName?.StartsWith("UnityEngine.U2D") == true ||
-                   typeof(AudioClip).IsAssignableFrom(type) ||
-                   typeof(AnimationClip).IsAssignableFrom(type) ||
-                   typeof(Font).IsAssignableFrom(type) ||
-                   typeof(Shader).IsAssignableFrom(type) ||
-                   typeof(ComputeShader).IsAssignableFrom(type);
+            return typeof(Material).IsAssignableFrom(type)
+                || typeof(Texture).IsAssignableFrom(type)
+                || typeof(ScriptableObject).IsAssignableFrom(type)
+                || type.FullName?.StartsWith("UnityEngine.U2D") == true
+                || typeof(AudioClip).IsAssignableFrom(type)
+                || typeof(AnimationClip).IsAssignableFrom(type)
+                || typeof(Font).IsAssignableFrom(type)
+                || typeof(Shader).IsAssignableFrom(type)
+                || typeof(ComputeShader).IsAssignableFrom(type);
         }
 
         private static UnityEngine.Object TryLoadAsset(string findTerm, Type targetType)
@@ -185,12 +187,12 @@ namespace MCPForUnity.Editor.Helpers
             // Try loading directly by path first
             string assetPath = AssetPathUtility.GetAssetReferencePath(findTerm, allowPackages: true, allowBuiltIn: true);
             UnityEngine.Object asset = AssetDatabase.LoadAssetAtPath(assetPath, targetType);
-            if (asset != null) 
+            if (asset != null)
                 return asset;
-            
+
             // Try generic load if type-specific failed
             asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
-            if (asset != null && targetType.IsAssignableFrom(asset.GetType())) 
+            if (asset != null && targetType.IsAssignableFrom(asset.GetType()))
                 return asset;
 
             // An explicit path must not resolve a same-name asset elsewhere.
@@ -204,12 +206,14 @@ namespace MCPForUnity.Editor.Helpers
             if (guids.Length == 1)
             {
                 asset = AssetDatabase.LoadAssetAtPath(AssetPathUtility.GetAssetPathFromGuid(guids[0], allowPackages: true, allowBuiltIn: true), targetType);
-                if (asset != null) 
+                if (asset != null)
                     return asset;
             }
             else if (guids.Length > 1)
             {
-                McpLog.Warn($"[ObjectResolver] Ambiguous asset find: Found {guids.Length} assets matching filter '{searchFilter}'. Provide a full path or unique name.");
+                McpLog.Warn(
+                    $"[ObjectResolver] Ambiguous asset find: Found {guids.Length} assets matching filter '{searchFilter}'. Provide a full path or unique name."
+                );
                 return null;
             }
 
@@ -217,4 +221,3 @@ namespace MCPForUnity.Editor.Helpers
         }
     }
 }
-

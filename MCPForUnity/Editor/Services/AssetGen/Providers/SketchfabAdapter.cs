@@ -20,14 +20,27 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         public string Id => "sketchfab";
 
-        public async Task<string> SearchAsync(string query, string categories, bool downloadable, int? count, string cursor, string apiKey, IHttpTransport http, CancellationToken ct)
+        public async Task<string> SearchAsync(
+            string query,
+            string categories,
+            bool downloadable,
+            int? count,
+            string cursor,
+            string apiKey,
+            IHttpTransport http,
+            CancellationToken ct
+        )
         {
-            if (http == null) throw new ArgumentNullException(nameof(http));
-            string url = SearchEndpoint + "?type=models&downloadable=" + (downloadable ? "true" : "false")
-                         + "&q=" + Uri.EscapeDataString(query ?? string.Empty);
-            if (!string.IsNullOrEmpty(categories)) url += "&categories=" + Uri.EscapeDataString(categories);
-            if (count.HasValue) url += "&count=" + count.Value;
-            if (!string.IsNullOrEmpty(cursor)) url += "&cursor=" + Uri.EscapeDataString(cursor);
+            if (http == null)
+                throw new ArgumentNullException(nameof(http));
+            string url =
+                SearchEndpoint + "?type=models&downloadable=" + (downloadable ? "true" : "false") + "&q=" + Uri.EscapeDataString(query ?? string.Empty);
+            if (!string.IsNullOrEmpty(categories))
+                url += "&categories=" + Uri.EscapeDataString(categories);
+            if (count.HasValue)
+                url += "&count=" + count.Value;
+            if (!string.IsNullOrEmpty(cursor))
+                url += "&cursor=" + Uri.EscapeDataString(cursor);
             var spec = new HttpRequestSpec { Method = "GET", Url = url };
             spec.Headers["Authorization"] = "Token " + apiKey;
             HttpResult res = await http.SendAsync(spec, ct);
@@ -37,8 +50,10 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         public async Task<string> PreviewAsync(string uid, string apiKey, IHttpTransport http, CancellationToken ct)
         {
-            if (string.IsNullOrEmpty(uid)) throw new ArgumentNullException(nameof(uid));
-            if (http == null) throw new ArgumentNullException(nameof(http));
+            if (string.IsNullOrEmpty(uid))
+                throw new ArgumentNullException(nameof(uid));
+            if (http == null)
+                throw new ArgumentNullException(nameof(http));
             var spec = new HttpRequestSpec { Method = "GET", Url = ModelsEndpoint + "/" + uid };
             spec.Headers["Authorization"] = "Token " + apiKey;
             HttpResult res = await http.SendAsync(spec, ct);
@@ -47,8 +62,10 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         public async Task<string> ResolveDownloadUrlAsync(string uid, string apiKey, IHttpTransport http, CancellationToken ct)
         {
-            if (string.IsNullOrEmpty(uid)) throw new ArgumentNullException(nameof(uid));
-            if (http == null) throw new ArgumentNullException(nameof(http));
+            if (string.IsNullOrEmpty(uid))
+                throw new ArgumentNullException(nameof(uid));
+            if (http == null)
+                throw new ArgumentNullException(nameof(http));
             var spec = new HttpRequestSpec { Method = "GET", Url = ModelsEndpoint + "/" + uid + "/download" };
             spec.Headers["Authorization"] = "Token " + apiKey;
 
@@ -58,8 +75,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             string url = json["gltf"]?["url"]?.ToString();
             if (string.IsNullOrEmpty(url))
             {
-                throw new Exception(SecretRedactor.Scrub(
-                    $"Sketchfab download returned no gltf url for '{uid}': {ProviderHttp.Truncate(res?.Text)}", apiKey));
+                throw new Exception(SecretRedactor.Scrub($"Sketchfab download returned no gltf url for '{uid}': {ProviderHttp.Truncate(res?.Text)}", apiKey));
             }
             return url;
         }
@@ -81,7 +97,11 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             JObject json = null;
             if (!string.IsNullOrEmpty(text))
             {
-                try { json = JObject.Parse(text); } catch { /* non-JSON */ }
+                try
+                {
+                    json = JObject.Parse(text);
+                }
+                catch { /* non-JSON */ }
             }
 
             bool ok = res?.Ok == true;

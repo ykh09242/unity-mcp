@@ -1,10 +1,10 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Sprite2D
 {
@@ -46,24 +46,20 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             return new
             {
-                success     = true,
+                success = true,
                 sprite_path = path,
-                clip_count  = clips.Count,
+                clip_count = clips.Count,
                 clips,
                 diagnostics = diagnostics.Build(),
             };
         }
 
         /// <summary>`path` is already sanitized; `outputDir` null means the sprite's own folder.</summary>
-        internal static List<SpriteClipInfo> CreateClips(string path, JArray clipsToken, string outputDir,
-                                                          bool overwrite, SpriteDiagnosticBuilder diagnostics)
+        internal static List<SpriteClipInfo> CreateClips(string path, JArray clipsToken, string outputDir, bool overwrite, SpriteDiagnosticBuilder diagnostics)
         {
             var created = new List<SpriteClipInfo>();
 
-            var allSprites = AssetDatabase.LoadAllAssetsAtPath(path)
-                .OfType<Sprite>()
-                .OrderBy(s => NaturalSortKey(s.name))
-                .ToArray();
+            var allSprites = AssetDatabase.LoadAllAssetsAtPath(path).OfType<Sprite>().OrderBy(s => NaturalSortKey(s.name)).ToArray();
 
             if (allSprites.Length == 0)
             {
@@ -89,13 +85,20 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
                 string clipName = clipDef["name"]?.ToString();
                 if (string.IsNullOrEmpty(clipName))
-                { diagnostics.AddWarning("CLIP_NO_NAME", "Clip name is missing — skipped.", "Add a 'name' field to each clip definition."); continue; }
+                {
+                    diagnostics.AddWarning("CLIP_NO_NAME", "Clip name is missing — skipped.", "Add a 'name' field to each clip definition.");
+                    continue;
+                }
 
                 // Measured: "nested/walk" either threw from CreateAsset or, where the folder
                 // existed, wrote the clip outside output_dir.
                 if (clipName.Contains("/") || clipName.Contains("\\"))
                 {
-                    diagnostics.AddWarning("CLIP_BAD_NAME", $"Clip '{clipName}': the name cannot contain a path separator - skipped.", "Remove '..' and path separators from the clip name.");
+                    diagnostics.AddWarning(
+                        "CLIP_BAD_NAME",
+                        $"Clip '{clipName}': the name cannot contain a path separator - skipped.",
+                        "Remove '..' and path separators from the clip name."
+                    );
                     continue;
                 }
 
@@ -103,24 +106,37 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 // parameter unassigned and the second value is used below.
                 int endFrame = allSprites.Length - 1;
                 bool rangeOk = SpriteParams.TryReadWholeNumber(clipDef, "start_frame", 0, out int startFrame, out string frameError);
-                if (rangeOk) rangeOk = SpriteParams.TryReadWholeNumber(clipDef, "end_frame", allSprites.Length - 1, out endFrame, out frameError);
+                if (rangeOk)
+                    rangeOk = SpriteParams.TryReadWholeNumber(clipDef, "end_frame", allSprites.Length - 1, out endFrame, out frameError);
                 if (!rangeOk)
                 {
-                    diagnostics.AddWarning("CLIP_BAD_RANGE", $"Clip '{clipName}': {frameError} - skipped.", "start_frame and end_frame must be whole numbers within a sprite index.");
+                    diagnostics.AddWarning(
+                        "CLIP_BAD_RANGE",
+                        $"Clip '{clipName}': {frameError} - skipped.",
+                        "start_frame and end_frame must be whole numbers within a sprite index."
+                    );
                     continue;
                 }
                 if (endFrame > allSprites.Length - 1)
                 {
                     // Skip/Take clamps silently: an end_frame past the last sprite produced a
                     // shorter clip and reported success.
-                    diagnostics.AddWarning("CLIP_BAD_RANGE", $"Clip '{clipName}': end_frame {endFrame} is past the last sprite index {allSprites.Length - 1} - skipped.", $"This sheet has {allSprites.Length} sprites, so end_frame must be at most {allSprites.Length - 1}.");
+                    diagnostics.AddWarning(
+                        "CLIP_BAD_RANGE",
+                        $"Clip '{clipName}': end_frame {endFrame} is past the last sprite index {allSprites.Length - 1} - skipped.",
+                        $"This sheet has {allSprites.Length} sprites, so end_frame must be at most {allSprites.Length - 1}."
+                    );
                     continue;
                 }
                 if (startFrame < 0 || endFrame < startFrame)
                 {
                     // Skip yields everything for a negative count: start_frame=-2 with
                     // end_frame=3 wrote frames 0..5 as a success.
-                    diagnostics.AddWarning("CLIP_BAD_RANGE", $"Clip '{clipName}': frame range [{startFrame},{endFrame}] is invalid - skipped.", "start_frame must be 0 or more, and end_frame must not be below start_frame.");
+                    diagnostics.AddWarning(
+                        "CLIP_BAD_RANGE",
+                        $"Clip '{clipName}': frame range [{startFrame},{endFrame}] is invalid - skipped.",
+                        "start_frame must be 0 or more, and end_frame must not be below start_frame."
+                    );
                     continue;
                 }
                 // `fps <= 0f` is false for NaN, so a NaN rate wrote a clip of NaN keyframe
@@ -133,7 +149,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 if (fps <= 0f)
                 {
                     // Times are i / fps, so a non-positive rate puts every key at infinity.
-                    diagnostics.AddWarning("CLIP_BAD_FPS", $"Clip '{clipName}': fps must be greater than 0, got {fps} - skipped.", "Leave fps out to use the default of 12.");
+                    diagnostics.AddWarning(
+                        "CLIP_BAD_FPS",
+                        $"Clip '{clipName}': fps must be greater than 0, got {fps} - skipped.",
+                        "Leave fps out to use the default of 12."
+                    );
                     continue;
                 }
 
@@ -142,11 +162,15 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 // A finite positive rate can still overflow the key times and response duration.
                 if (float.IsInfinity(duration))
                 {
-                    diagnostics.AddWarning("CLIP_BAD_FPS", $"Clip '{clipName}': fps is too small for {frameCount} frames - skipped.", "Increase fps so the clip duration is finite.");
+                    diagnostics.AddWarning(
+                        "CLIP_BAD_FPS",
+                        $"Clip '{clipName}': fps is too small for {frameCount} frames - skipped.",
+                        "Increase fps so the clip duration is finite."
+                    );
                     continue;
                 }
 
-                var entry      = SpriteNamingDetector.Detect(clipName);
+                var entry = SpriteNamingDetector.Detect(clipName);
                 if (!SpriteParams.TryReadBool(clipDef, "loop", entry.Loop, out bool loop, out string loopError))
                 {
                     diagnostics.AddWarning("CLIP_BAD_LOOP", $"Clip '{clipName}': {loopError} - skipped.", "Leave loop out to let the clip name decide.");
@@ -158,10 +182,13 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
                 // Refusals come before the allocation: a `new AnimationClip` that never becomes
                 // an asset leaks.
-                if (!SpriteParams.TryReadAssetPath(new JObject { ["path"] = $"{outputDir}/{clipName}.anim" },
-                    "path", out string clipPath, out _))
+                if (!SpriteParams.TryReadAssetPath(new JObject { ["path"] = $"{outputDir}/{clipName}.anim" }, "path", out string clipPath, out _))
                 {
-                    diagnostics.AddWarning("CLIP_BAD_NAME", $"Clip '{clipName}': the name cannot be used as a file name - skipped.", "Remove '..', path separators and characters like : * ? \" < > | from the clip name.");
+                    diagnostics.AddWarning(
+                        "CLIP_BAD_NAME",
+                        $"Clip '{clipName}': the name cannot be used as a file name - skipped.",
+                        "Remove '..', path separators and characters like : * ? \" < > | from the clip name."
+                    );
                     continue;
                 }
 
@@ -171,17 +198,31 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 string fullClipPath = AssetPathUtility.GetFullAssetPath(clipPath);
                 if (Directory.Exists(fullClipPath))
                 {
-                    diagnostics.AddWarning("CLIP_BAD_PATH", $"Clip '{clipName}': '{clipPath}' is a folder - skipped.", "Choose a different clip name or output_dir.");
+                    diagnostics.AddWarning(
+                        "CLIP_BAD_PATH",
+                        $"Clip '{clipName}': '{clipPath}' is a folder - skipped.",
+                        "Choose a different clip name or output_dir."
+                    );
                     continue;
                 }
-                if (!overwrite && (File.Exists(fullClipPath)
-                    || AssetDatabase.LoadMainAssetAtPath(clipPath) != null
-                    || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(clipPath, AssetPathToGUIDOptions.OnlyExistingAssets))))
+                if (
+                    !overwrite
+                    && (
+                        File.Exists(fullClipPath)
+                        || AssetDatabase.LoadMainAssetAtPath(clipPath) != null
+                        || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(clipPath, AssetPathToGUIDOptions.OnlyExistingAssets))
+                    )
+                )
                 {
                     // Measured: an unrelated clip at this path was replaced by a request carrying
                     // no overwrite field. Same policy as the controller builder: destruction
                     // needs authorisation.
-                    diagnostics.AddWarning("CLIP_EXISTS", $"Clip '{clipName}': an asset already exists at '{clipPath}' - skipped.", "Set overwrite=true to replace it.", "Choose a different clip name or output_dir.");
+                    diagnostics.AddWarning(
+                        "CLIP_EXISTS",
+                        $"Clip '{clipName}': an asset already exists at '{clipPath}' - skipped.",
+                        "Set overwrite=true to replace it.",
+                        "Choose a different clip name or output_dir."
+                    );
                     continue;
                 }
 
@@ -192,19 +233,15 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
                     var binding = new EditorCurveBinding
                     {
-                        type         = typeof(SpriteRenderer),
-                        path         = "",
+                        type = typeof(SpriteRenderer),
+                        path = "",
                         propertyName = "m_Sprite",
                     };
 
                     var keyframes = new ObjectReferenceKeyframe[frameCount];
                     for (int i = 0; i < frameCount; i++)
                     {
-                        keyframes[i] = new ObjectReferenceKeyframe
-                        {
-                            time  = i / fps,
-                            value = allSprites[startFrame + i],
-                        };
+                        keyframes[i] = new ObjectReferenceKeyframe { time = i / fps, value = allSprites[startFrame + i] };
                     }
 
                     AnimationUtility.SetObjectReferenceCurve(clip, binding, keyframes);
@@ -219,19 +256,25 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     AssetDatabase.CreateAsset(clip, clipPath);
                     if (AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath) != clip)
                     {
-                        diagnostics.AddWarning("CLIP_WRITE_FAILED", $"Clip '{clipName}': Unity did not write '{clipPath}' - skipped.", "Check the Unity console for the AssetDatabase error.");
+                        diagnostics.AddWarning(
+                            "CLIP_WRITE_FAILED",
+                            $"Clip '{clipName}': Unity did not write '{clipPath}' - skipped.",
+                            "Check the Unity console for the AssetDatabase error."
+                        );
                         continue;
                     }
 
-                    created.Add(new SpriteClipInfo
-                    {
-                        name        = clipName,
-                        path        = clipPath,
-                        frame_count = frameCount,
-                        fps         = fps,
-                        loop        = loop,
-                        duration    = duration,
-                    });
+                    created.Add(
+                        new SpriteClipInfo
+                        {
+                            name = clipName,
+                            path = clipPath,
+                            frame_count = frameCount,
+                            fps = fps,
+                            loop = loop,
+                            duration = duration,
+                        }
+                    );
                     folders.Complete();
                 }
                 finally
@@ -256,7 +299,8 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 if (char.IsDigit(name[i]))
                 {
                     int start = i;
-                    while (i < name.Length && char.IsDigit(name[i])) i++;
+                    while (i < name.Length && char.IsDigit(name[i]))
+                        i++;
                     // Left-pad the run of digits so a lexicographic sort compares them numerically.
                     sb.Append(name.Substring(start, i - start).PadLeft(10, '0'));
                 }

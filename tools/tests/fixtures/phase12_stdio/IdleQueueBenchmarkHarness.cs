@@ -9,13 +9,18 @@ using MCPForUnity.Editor.Services.Transport.Transports;
 internal static class IdleQueueBenchmarkHarness
 {
     private const BindingFlags PrivateStatic = BindingFlags.Static | BindingFlags.NonPublic;
+
     private static void EmptyControl() { }
+
     public static int Main(string[] args)
     {
-        if (args.Length != 3) throw new ArgumentException("label iterations samples required");
+        if (args.Length != 3)
+            throw new ArgumentException("label iterations samples required");
         string label = args[0];
-        int iterations = int.Parse(args[1]), samples = int.Parse(args[2]);
-        if (iterations < 1 || samples < 1) throw new ArgumentException("positive iteration/sample counts required");
+        int iterations = int.Parse(args[1]),
+            samples = int.Parse(args[2]);
+        if (iterations < 1 || samples < 1)
+            throw new ArgumentException("positive iteration/sample counts required");
         Type host = typeof(StdioBridgeHost);
         host.GetField("isRunning", PrivateStatic).SetValue(null, true);
         host.GetField("ownedEndpoint", PrivateStatic).SetValue(null, true);
@@ -23,7 +28,8 @@ internal static class IdleQueueBenchmarkHarness
         var pump = host.GetMethod("ProcessCommands", PrivateStatic);
         var control = typeof(IdleQueueBenchmarkHarness).GetMethod("EmptyControl", PrivateStatic);
         var allocatedMethod = typeof(GC).GetMethod("GetAllocatedBytesForCurrentThread", BindingFlags.Static | BindingFlags.Public);
-        if (allocatedMethod == null) throw new NotSupportedException("Mono current-thread allocation counter unavailable");
+        if (allocatedMethod == null)
+            throw new NotSupportedException("Mono current-thread allocation counter unavailable");
         var allocated = (Func<long>)Delegate.CreateDelegate(typeof(Func<long>), allocatedMethod);
         var pumpDelegate = (Action)Delegate.CreateDelegate(typeof(Action), pump);
         var controlDelegate = (Action)Delegate.CreateDelegate(typeof(Action), control);
@@ -32,7 +38,8 @@ internal static class IdleQueueBenchmarkHarness
         for (int row = 0; row < rows.Length; row++)
         {
             Action tick = rows[row];
-            for (int warmup = 0; warmup < 10000; warmup++) tick();
+            for (int warmup = 0; warmup < 10000; warmup++)
+                tick();
             for (int sample = 0; sample < samples; sample++)
             {
                 GC.Collect();
@@ -41,11 +48,23 @@ internal static class IdleQueueBenchmarkHarness
                 var clock = new Stopwatch();
                 long before = allocated();
                 clock.Start();
-                for (int iteration = 0; iteration < iterations; iteration++) tick();
+                for (int iteration = 0; iteration < iterations; iteration++)
+                    tick();
                 clock.Stop();
                 long bytes = allocated() - before;
-                Console.WriteLine(label + "," + names[row] + "," + sample + "," + iterations + "," + bytes + "," +
-                    clock.Elapsed.TotalMilliseconds.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
+                Console.WriteLine(
+                    label
+                        + ","
+                        + names[row]
+                        + ","
+                        + sample
+                        + ","
+                        + iterations
+                        + ","
+                        + bytes
+                        + ","
+                        + clock.Elapsed.TotalMilliseconds.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+                );
             }
         }
         return 0;

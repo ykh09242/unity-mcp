@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.ProBuilder;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -20,8 +20,19 @@ namespace MCPForUnityTests.Editor.Tools
         [SetUp]
         public void SetUp()
         {
-            foreach (string name in new[] { "_typesResolved", "_proBuilderAvailable", "_proBuilderMeshType",
-                "_faceType", "_edgeType", "_editorMeshUtilityType", "_extrudeElementsType", "_connectElementsType" })
+            foreach (
+                string name in new[]
+                {
+                    "_typesResolved",
+                    "_proBuilderAvailable",
+                    "_proBuilderMeshType",
+                    "_faceType",
+                    "_edgeType",
+                    "_editorMeshUtilityType",
+                    "_extrudeElementsType",
+                    "_connectElementsType",
+                }
+            )
             {
                 var field = typeof(ManageProBuilder).GetField(name, BindingFlags.NonPublic | BindingFlags.Static);
                 savedFields.Add(field, field.GetValue(null));
@@ -58,13 +69,17 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Dispatch(string action, string properties)
         {
-            return JObject.FromObject(ManageProBuilder.HandleCommand(new JObject
-            {
-                ["action"] = action,
-                ["target"] = target.GetInstanceIDCompat().ToString(),
-                ["searchMethod"] = "by_id",
-                ["properties"] = JObject.Parse(properties),
-            }));
+            return JObject.FromObject(
+                ManageProBuilder.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["target"] = target.GetInstanceIDCompat().ToString(),
+                        ["searchMethod"] = "by_id",
+                        ["properties"] = JObject.Parse(properties),
+                    }
+                )
+            );
         }
 
         [Test]
@@ -180,13 +195,17 @@ namespace MCPForUnityTests.Editor.Tools
         public void FaceUVSettingsWritePropertiesOnSelectedFaces(bool jsonProperties)
         {
             var properties = JObject.Parse("{\"faceIndices\":[0],\"scale\":[2,3],\"offset\":[4,5],\"rotation\":45,\"flip_u\":true,\"flip_v\":true}");
-            var response = JObject.FromObject(ManageProBuilder.HandleCommand(new JObject
-            {
-                ["action"] = "set_face_uvs",
-                ["target"] = target.GetInstanceIDCompat().ToString(),
-                ["searchMethod"] = "by_id",
-                ["properties"] = jsonProperties ? (JToken)new JValue(properties.ToString()) : properties,
-            }));
+            var response = JObject.FromObject(
+                ManageProBuilder.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_face_uvs",
+                        ["target"] = target.GetInstanceIDCompat().ToString(),
+                        ["searchMethod"] = "by_id",
+                        ["properties"] = jsonProperties ? (JToken)new JValue(properties.ToString()) : properties,
+                    }
+                )
+            );
             Assert.That(response["success"].Value<bool>(), Is.True, response.ToString());
             Assert.That(mesh.faces[0].uv.scale, Is.EqualTo(new Vector2(2, 3)));
             Assert.That(mesh.faces[0].uv.offset, Is.EqualTo(new Vector2(4, 5)));
@@ -207,50 +226,106 @@ namespace MCPForUnityTests.Editor.Tools
         public void ExplicitTargetSelectorsRemainSupported(string searchMethod)
         {
             target.name = "123";
-            var response = JObject.FromObject(ManageProBuilder.HandleCommand(new JObject
-            {
-                ["action"] = "move_vertices",
-                ["target"] = searchMethod == "by_id" ? target.GetInstanceIDCompat().ToString() : target.name,
-                ["searchMethod"] = searchMethod,
-                ["properties"] = JObject.Parse("{\"vertexIndices\":[0],\"offset\":[1,0,0]}"),
-            }));
+            var response = JObject.FromObject(
+                ManageProBuilder.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "move_vertices",
+                        ["target"] = searchMethod == "by_id" ? target.GetInstanceIDCompat().ToString() : target.name,
+                        ["searchMethod"] = searchMethod,
+                        ["properties"] = JObject.Parse("{\"vertexIndices\":[0],\"offset\":[1,0,0]}"),
+                    }
+                )
+            );
             Assert.That(response["success"].Value<bool>(), Is.True);
             Assert.That(mesh.positions[0].x, Is.EqualTo(2));
         }
     }
 
-    public enum ProBuilderContractRefreshMask { None = 0, All = 255 }
+    public enum ProBuilderContractRefreshMask
+    {
+        None = 0,
+        All = 255,
+    }
+
     public class ProBuilderContractMesh : MonoBehaviour
     {
         private IList<Vector3> vertexPositions = new List<Vector3> { new Vector3(1, 2, 3), new Vector3(4, 5, 6) };
-        public int Sets, Refreshes, ToMeshes, VertexReads;
+        public int Sets,
+            Refreshes,
+            ToMeshes,
+            VertexReads;
         public ProBuilderContractRefreshMask LastMask;
         public MeshTopology LastTopology;
-        public IList<Vector3> positions { get => vertexPositions; set { Sets++; vertexPositions = value; } }
-        public int vertexCount { get { VertexReads++; return positions.Count; } }
+        public IList<Vector3> positions
+        {
+            get => vertexPositions;
+            set
+            {
+                Sets++;
+                vertexPositions = value;
+            }
+        }
+        public int vertexCount
+        {
+            get
+            {
+                VertexReads++;
+                return positions.Count;
+            }
+        }
         public int faceCount => faces.Length;
         public ProBuilderContractFace[] faces { get; } = new[] { new ProBuilderContractFace(), new ProBuilderContractFace() };
         public int[][] sharedVertices { get; set; }
-        public void ToMesh(MeshTopology topology = MeshTopology.Triangles) { ToMeshes++; LastTopology = topology; }
-        public void Refresh(ProBuilderContractRefreshMask mask = ProBuilderContractRefreshMask.All) { Refreshes++; LastMask = mask; }
+
+        public void ToMesh(MeshTopology topology = MeshTopology.Triangles)
+        {
+            ToMeshes++;
+            LastTopology = topology;
+        }
+
+        public void Refresh(ProBuilderContractRefreshMask mask = ProBuilderContractRefreshMask.All)
+        {
+            Refreshes++;
+            LastMask = mask;
+        }
     }
+
     public class ProBuilderContractParameterlessMesh : MonoBehaviour
     {
-        public int Refreshes, ToMeshes;
-        public void ToMesh() { ToMeshes++; }
-        public void Refresh() { Refreshes++; }
+        public int Refreshes,
+            ToMeshes;
+
+        public void ToMesh()
+        {
+            ToMeshes++;
+        }
+
+        public void Refresh()
+        {
+            Refreshes++;
+        }
     }
+
     public class ProBuilderContractEdge
     {
-        public int a, b;
-        public ProBuilderContractEdge(int a, int b) { this.a = a; this.b = b; }
+        public int a,
+            b;
+
+        public ProBuilderContractEdge(int a, int b)
+        {
+            this.a = a;
+            this.b = b;
+        }
     }
+
     public class ProBuilderContractFace
     {
         public ProBuilderContractEdge[] edges { get; set; } = new[] { new ProBuilderContractEdge(0, 1) };
         public int smoothingGroup { get; set; }
         public ProBuilderContractUVSettings uv { get; set; }
     }
+
     public struct ProBuilderContractUVSettings
     {
         public Vector2 scale { get; set; }
@@ -259,19 +334,36 @@ namespace MCPForUnityTests.Editor.Tools
         public bool flipU { get; set; }
         public bool flipV { get; set; }
     }
+
     public static class ProBuilderContractExtrude
     {
         public static int Calls;
         public static ProBuilderContractEdge[] Last;
         public static bool AsGroup;
         public static float Distance;
+
         public static void Extrude(ProBuilderContractMesh mesh, ProBuilderContractEdge[] edges, float distance, bool asGroup, bool ignored)
-        { Calls++; Last = edges; Distance = distance; AsGroup = asGroup; }
+        {
+            Calls++;
+            Last = edges;
+            Distance = distance;
+            AsGroup = asGroup;
+        }
     }
+
     public static class ProBuilderContractConnect
     {
-        public static int FaceCalls, EdgeCalls;
-        public static void Connect(ProBuilderContractMesh mesh, IEnumerable<ProBuilderContractFace> faces) { FaceCalls++; }
-        public static void Connect(ProBuilderContractMesh mesh, IEnumerable<ProBuilderContractEdge> edges) { EdgeCalls++; }
+        public static int FaceCalls,
+            EdgeCalls;
+
+        public static void Connect(ProBuilderContractMesh mesh, IEnumerable<ProBuilderContractFace> faces)
+        {
+            FaceCalls++;
+        }
+
+        public static void Connect(ProBuilderContractMesh mesh, IEnumerable<ProBuilderContractEdge> edges)
+        {
+            EdgeCalls++;
+        }
     }
 }

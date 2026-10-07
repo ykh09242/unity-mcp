@@ -2,11 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using NUnit.Framework;
-using MCPForUnity.Editor.Services;
-using MCPForUnity.Editor.Services.Server;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Server;
+using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -114,11 +114,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
             // A binary that always launches and exits 0 immediately, so Process.Start does not throw.
             private static System.Diagnostics.ProcessStartInfo HarmlessNoOpStartInfo()
             {
-                var psi = new System.Diagnostics.ProcessStartInfo
-                {
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
+                var psi = new System.Diagnostics.ProcessStartInfo { UseShellExecute = false, CreateNoWindow = true };
                 if (Application.platform == RuntimePlatform.WindowsEditor)
                 {
                     psi.FileName = "cmd.exe";
@@ -146,30 +142,35 @@ namespace MCPForUnityTests.Editor.Services.Characterization
             }
 
             public string BuildUvPathFromUvx(string uvxPath) => uvxPath;
+
             public string GetPlatformSpecificPathPrepend() => string.Empty;
-            public string QuoteIfNeeded(string input) =>
-                (!string.IsNullOrEmpty(input) && input.Contains(" ")) ? "\"" + input + "\"" : input;
+
+            public string QuoteIfNeeded(string input) => (!string.IsNullOrEmpty(input) && input.Contains(" ")) ? "\"" + input + "\"" : input;
         }
 
         // A fake process detector that reports no listeners (so the "port in use" branch is skipped).
         private sealed class NoListenersProcessDetector : IProcessDetector
         {
             public bool LooksLikeMcpServerProcess(int pid) => false;
-            public bool TryGetProcessCommandLine(int pid, out string argsLower) { argsLower = string.Empty; return false; }
+
+            public bool TryGetProcessCommandLine(int pid, out string argsLower)
+            {
+                argsLower = string.Empty;
+                return false;
+            }
+
             public System.Collections.Generic.List<int> GetListeningProcessIdsForPort(int port) => new System.Collections.Generic.List<int>();
+
             public int GetCurrentProcessId() => -1;
+
             public bool ProcessExists(int pid) => false;
+
             public string NormalizeForMatch(string input) => (input ?? string.Empty).Replace(" ", string.Empty).ToLowerInvariant();
         }
 
         private ServerManagementService BuildServiceWithFakeLauncher(RecordingTerminalLauncher launcher)
         {
-            return new ServerManagementService(
-                new NoListenersProcessDetector(),
-                null,
-                null,
-                new FakeCommandBuilder(),
-                launcher);
+            return new ServerManagementService(new NoListenersProcessDetector(), null, null, new FakeCommandBuilder(), launcher);
         }
 
         [Test]
@@ -198,8 +199,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
 
             // Assert - the headless launch path was taken (gate passed without a dialog).
             Assert.IsTrue(launcher.HeadlessCalled, "Confirmed launch should reach the headless launcher without a dialog");
-            StringAssert.Contains("uvx run mcp-for-unity", launcher.LastCommand,
-                "The headless command should be the built server command");
+            StringAssert.Contains("uvx run mcp-for-unity", launcher.LastCommand, "The headless command should be the built server command");
         }
 
         [Test]
@@ -227,8 +227,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
 
             // Assert
             Assert.IsTrue(launcher.HeadlessCalled, "Quiet launch should reach the headless launcher without a dialog");
-            Assert.IsFalse(EditorPrefs.GetBool(EditorPrefKeys.HttpServerLaunchConfirmed, false),
-                "Quiet auto-start must NOT set the first-time-confirm flag");
+            Assert.IsFalse(EditorPrefs.GetBool(EditorPrefKeys.HttpServerLaunchConfirmed, false), "Quiet auto-start must NOT set the first-time-confirm flag");
         }
 
         [Test]
@@ -256,8 +255,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
 
             // Assert - the launch log path is the per-port server-launch log.
             Assert.IsTrue(launcher.HeadlessCalled, "Launch should reach the headless launcher");
-            StringAssert.Contains("server-launch-59996.log", launcher.LastLogPath,
-                "Headless launch should redirect output to the per-port launch log");
+            StringAssert.Contains("server-launch-59996.log", launcher.LastLogPath, "Headless launch should redirect output to the per-port launch log");
         }
 
         #endregion
@@ -646,10 +644,13 @@ namespace MCPForUnityTests.Editor.Services.Characterization
             _service = new ServerManagementService();
 
             // Act & Assert - Should never throw regardless of server state
-            Assert.DoesNotThrow(() =>
-            {
-                _service.IsLocalHttpServerReachable();
-            }, "IsLocalHttpServerReachable should handle all error cases gracefully");
+            Assert.DoesNotThrow(
+                () =>
+                {
+                    _service.IsLocalHttpServerReachable();
+                },
+                "IsLocalHttpServerReachable should handle all error cases gracefully"
+            );
         }
 
         #endregion
@@ -677,10 +678,13 @@ namespace MCPForUnityTests.Editor.Services.Characterization
             _service = new ServerManagementService();
 
             // Act & Assert - Should never throw regardless of server state
-            Assert.DoesNotThrow(() =>
-            {
-                _service.IsLocalHttpServerRunning();
-            }, "IsLocalHttpServerRunning should handle all detection strategies gracefully");
+            Assert.DoesNotThrow(
+                () =>
+                {
+                    _service.IsLocalHttpServerRunning();
+                },
+                "IsLocalHttpServerRunning should handle all detection strategies gracefully"
+            );
         }
 
         #endregion
@@ -703,20 +707,23 @@ namespace MCPForUnityTests.Editor.Services.Characterization
             };
 
             // Act & Assert - Should not throw even if uvx is not installed
-            Assert.DoesNotThrow(() =>
-            {
-                LogAssert.ignoreFailingMessages = true;
-                Application.logMessageReceived += handler;
-                try
+            Assert.DoesNotThrow(
+                () =>
                 {
-                    _service.ClearUvxCache();
-                }
-                finally
-                {
-                    Application.logMessageReceived -= handler;
-                    LogAssert.ignoreFailingMessages = false;
-                }
-            }, "ClearUvxCache should handle missing uvx gracefully");
+                    LogAssert.ignoreFailingMessages = true;
+                    Application.logMessageReceived += handler;
+                    try
+                    {
+                        _service.ClearUvxCache();
+                    }
+                    finally
+                    {
+                        Application.logMessageReceived -= handler;
+                        LogAssert.ignoreFailingMessages = false;
+                    }
+                },
+                "ClearUvxCache should handle missing uvx gracefully"
+            );
 
             Assert.IsNotNull(lastLog, "Expected a uv cache log message.");
             StringAssert.Contains("uv cache", lastLog);
@@ -730,9 +737,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
         public void NormalizeForMatch_RemovesWhitespace_ViaReflection()
         {
             // Arrange - Use reflection to access private static method
-            var method = typeof(ServerManagementService).GetMethod(
-                "NormalizeForMatch",
-                BindingFlags.NonPublic | BindingFlags.Static);
+            var method = typeof(ServerManagementService).GetMethod("NormalizeForMatch", BindingFlags.NonPublic | BindingFlags.Static);
 
             if (method == null)
             {
@@ -751,9 +756,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
         public void NormalizeForMatch_HandlesNull_ViaReflection()
         {
             // Arrange
-            var method = typeof(ServerManagementService).GetMethod(
-                "NormalizeForMatch",
-                BindingFlags.NonPublic | BindingFlags.Static);
+            var method = typeof(ServerManagementService).GetMethod("NormalizeForMatch", BindingFlags.NonPublic | BindingFlags.Static);
 
             if (method == null)
             {
@@ -772,9 +775,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
         public void QuoteIfNeeded_PathWithSpaces_AddsQuotes_ViaReflection()
         {
             // Arrange
-            var method = typeof(ServerManagementService).GetMethod(
-                "QuoteIfNeeded",
-                BindingFlags.NonPublic | BindingFlags.Static);
+            var method = typeof(ServerManagementService).GetMethod("QuoteIfNeeded", BindingFlags.NonPublic | BindingFlags.Static);
 
             if (method == null)
             {
@@ -793,9 +794,7 @@ namespace MCPForUnityTests.Editor.Services.Characterization
         public void QuoteIfNeeded_PathWithoutSpaces_NoChange_ViaReflection()
         {
             // Arrange
-            var method = typeof(ServerManagementService).GetMethod(
-                "QuoteIfNeeded",
-                BindingFlags.NonPublic | BindingFlags.Static);
+            var method = typeof(ServerManagementService).GetMethod("QuoteIfNeeded", BindingFlags.NonPublic | BindingFlags.Static);
 
             if (method == null)
             {
@@ -819,7 +818,8 @@ namespace MCPForUnityTests.Editor.Services.Characterization
                 BindingFlags.NonPublic | BindingFlags.Static,
                 null,
                 new[] { typeof(string) },
-                null);
+                null
+            );
 
             if (method == null)
             {
@@ -846,7 +846,8 @@ namespace MCPForUnityTests.Editor.Services.Characterization
                 BindingFlags.NonPublic | BindingFlags.Static,
                 null,
                 new[] { typeof(string) },
-                null);
+                null
+            );
 
             if (method == null)
             {
@@ -875,7 +876,8 @@ namespace MCPForUnityTests.Editor.Services.Characterization
                 BindingFlags.NonPublic | BindingFlags.Static,
                 null,
                 new[] { typeof(string) },
-                null);
+                null
+            );
 
             if (method == null)
             {

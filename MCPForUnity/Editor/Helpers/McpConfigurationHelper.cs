@@ -64,10 +64,7 @@ namespace MCPForUnity.Editor.Helpers
                 }
                 else
                 {
-                    existingRoot = JObject.Parse(existingJson, new JsonLoadSettings
-                    {
-                        DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error
-                    });
+                    existingRoot = JObject.Parse(existingJson, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
                 }
             }
             catch (JsonException e)
@@ -77,7 +74,8 @@ namespace MCPForUnity.Editor.Helpers
 
             bool useHttp = EditorConfigurationCache.Instance.UseHttpTransport && mcpClient?.SupportsHttpTransport != false;
             string uvxPath = useHttp ? null : MCPServiceLocator.Paths.GetUvxPath();
-            if (!useHttp && string.IsNullOrEmpty(uvxPath)) return "uv package manager not found. Please install uv first.";
+            if (!useHttp && string.IsNullOrEmpty(uvxPath))
+                return "uv package manager not found. Please install uv first.";
 
             existingRoot = ConfigJsonBuilder.ApplyUnityServerToExistingConfig(existingRoot, uvxPath, mcpClient);
 
@@ -141,9 +139,7 @@ namespace MCPForUnity.Editor.Helpers
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
-                return string.IsNullOrEmpty(mcpClient.macConfigPath)
-                    ? mcpClient.linuxConfigPath
-                    : mcpClient.macConfigPath;
+                return string.IsNullOrEmpty(mcpClient.macConfigPath) ? mcpClient.linuxConfigPath : mcpClient.macConfigPath;
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
@@ -165,7 +161,8 @@ namespace MCPForUnity.Editor.Helpers
 
         public static string ExtractUvxUrl(string[] args)
         {
-            if (args == null) return null;
+            if (args == null)
+                return null;
             for (int i = 0; i < args.Length - 1; i++)
             {
                 if (string.Equals(args[i], "--from", StringComparison.OrdinalIgnoreCase))
@@ -178,7 +175,8 @@ namespace MCPForUnity.Editor.Helpers
 
         public static bool PathsEqual(string a, string b)
         {
-            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b))
+                return false;
             try
             {
                 string na = Path.GetFullPath(a.Trim());
@@ -232,7 +230,11 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     if (!writeDone && backupCreated && File.Exists(backup))
                     {
-                        try { File.Copy(backup, path, true); } catch { }
+                        try
+                        {
+                            File.Copy(backup, path, true);
+                        }
+                        catch { }
                     }
                 }
                 catch { }
@@ -240,8 +242,18 @@ namespace MCPForUnity.Editor.Helpers
             }
             finally
             {
-                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
-                try { if (writeDone && File.Exists(backup)) File.Delete(backup); } catch { }
+                try
+                {
+                    if (File.Exists(tmp))
+                        File.Delete(tmp);
+                }
+                catch { }
+                try
+                {
+                    if (writeDone && File.Exists(backup))
+                        File.Delete(backup);
+                }
+                catch { }
             }
         }
     }

@@ -4,11 +4,11 @@ using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.GameObjects
 {
@@ -18,10 +18,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
         {
             bool findAll = findParams?["findAll"]?.ReadScalar<bool?>() ?? false;
 
-            if (
-                targetToken?.Type == JTokenType.Integer
-                || (searchMethod == "by_id" && int.TryParse(targetToken?.ToString(), out _))
-            )
+            if (targetToken?.Type == JTokenType.Integer || (searchMethod == "by_id" && int.TryParse(targetToken?.ToString(), out _)))
             {
                 findAll = false;
             }
@@ -30,12 +27,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             return results.Count > 0 ? results[0] : null;
         }
 
-        internal static List<GameObject> FindObjectsInternal(
-            JToken targetToken,
-            string searchMethod,
-            bool findAll,
-            JObject findParams = null
-        )
+        internal static List<GameObject> FindObjectsInternal(JToken targetToken, string searchMethod, bool findAll, JObject findParams = null)
         {
             List<GameObject> results = new List<GameObject>();
             string searchTerm = findParams?["searchTerm"]?.ToString() ?? targetToken?.ToString();
@@ -77,9 +69,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
                 case "by_name":
                     var searchPoolName = rootSearchObject
-                        ? rootSearchObject
-                            .GetComponentsInChildren<Transform>(searchInactive)
-                            .Select(t => t.gameObject)
+                        ? rootSearchObject.GetComponentsInChildren<Transform>(searchInactive).Select(t => t.gameObject)
                         : GetAllSceneObjects(searchInactive);
                     AddMatches(results, searchPoolName.Where(go => go.name == searchTerm), findAll);
                     break;
@@ -117,18 +107,14 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
                 case "by_tag":
                     var searchPoolTag = rootSearchObject
-                        ? rootSearchObject
-                            .GetComponentsInChildren<Transform>(searchInactive)
-                            .Select(t => t.gameObject)
+                        ? rootSearchObject.GetComponentsInChildren<Transform>(searchInactive).Select(t => t.gameObject)
                         : GetAllSceneObjects(searchInactive);
                     AddMatches(results, searchPoolTag.Where(go => go.CompareTag(searchTerm)), findAll);
                     break;
 
                 case "by_layer":
                     var searchPoolLayer = rootSearchObject
-                        ? rootSearchObject
-                            .GetComponentsInChildren<Transform>(searchInactive)
-                            .Select(t => t.gameObject)
+                        ? rootSearchObject.GetComponentsInChildren<Transform>(searchInactive).Select(t => t.gameObject)
                         : GetAllSceneObjects(searchInactive);
                     if (int.TryParse(searchTerm, out int layerIndex))
                     {
@@ -149,15 +135,11 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                         IEnumerable<GameObject> searchPoolComp;
                         if (rootSearchObject)
                         {
-                            searchPoolComp = rootSearchObject
-                                .GetComponentsInChildren(componentType, searchInactive)
-                                .Select(c => (c as Component).gameObject);
+                            searchPoolComp = rootSearchObject.GetComponentsInChildren(componentType, searchInactive).Select(c => (c as Component).gameObject);
                         }
                         else
                         {
-                            searchPoolComp = UnityFindObjectsCompat.FindAll(componentType, searchInactive)
-                                .Cast<Component>()
-                                .Select(c => c.gameObject);
+                            searchPoolComp = UnityFindObjectsCompat.FindAll(componentType, searchInactive).Cast<Component>().Select(c => c.gameObject);
                         }
                         AddMatches(results, searchPoolComp.Where(go => go != null), findAll);
                     }

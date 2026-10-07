@@ -2,8 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.Constants;
-using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Models;
+using MCPForUnity.Editor.Services;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -16,7 +16,8 @@ namespace MCPForUnity.Editor.Helpers
         {
             var root = new JObject();
             bool isVSCode = client?.IsVsCodeLayout == true;
-            if (!string.IsNullOrEmpty(client?.SchemaUrl)) root["$schema"] = client.SchemaUrl;
+            if (!string.IsNullOrEmpty(client?.SchemaUrl))
+                root["$schema"] = client.SchemaUrl;
             JObject container = EnsureObject(root, GetContainerKey(client, isVSCode));
 
             var unity = new JObject();
@@ -29,7 +30,8 @@ namespace MCPForUnity.Editor.Helpers
 
         public static JObject ApplyUnityServerToExistingConfig(JObject root, string uvPath, McpClient client)
         {
-            if (root == null) root = new JObject();
+            if (root == null)
+                root = new JObject();
             bool isVSCode = client?.IsVsCodeLayout == true;
             string containerKey = GetContainerKey(client, isVSCode);
             JToken existingContainer = root[containerKey];
@@ -43,7 +45,8 @@ namespace MCPForUnity.Editor.Helpers
             JObject unity = existingUnity?.DeepClone() as JObject ?? new JObject();
             PopulateUnityNode(unity, uvPath, client, isVSCode);
 
-            if (!string.IsNullOrEmpty(client?.SchemaUrl) && root["$schema"] == null) root["$schema"] = client.SchemaUrl;
+            if (!string.IsNullOrEmpty(client?.SchemaUrl) && root["$schema"] == null)
+                root["$schema"] = client.SchemaUrl;
             JObject container = EnsureObject(root, containerKey);
             container["unityMCP"] = unity;
             return root;
@@ -82,17 +85,26 @@ namespace MCPForUnity.Editor.Helpers
 
                 foreach (var prop in urlPropsToRemove)
                 {
-                    if (unity[prop] != null) unity.Remove(prop);
+                    if (unity[prop] != null)
+                        unity.Remove(prop);
                 }
 
                 // Remove command/args if they exist from previous config
-                if (unity["command"] != null) unity.Remove("command");
-                if (unity["args"] != null) unity.Remove("args");
+                if (unity["command"] != null)
+                    unity.Remove("command");
+                if (unity["args"] != null)
+                    unity.Remove("args");
 
                 var headers = existingHeaders as JObject ?? new JObject();
-                foreach (var property in headers.Properties().Where(property =>
-                    string.Equals(property.Name, AuthConstants.ApiKeyHeader, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(property.Name, AuthConstants.LocalTokenHeader, StringComparison.OrdinalIgnoreCase)).ToArray())
+                foreach (
+                    var property in headers
+                        .Properties()
+                        .Where(property =>
+                            string.Equals(property.Name, AuthConstants.ApiKeyHeader, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(property.Name, AuthConstants.LocalTokenHeader, StringComparison.OrdinalIgnoreCase)
+                        )
+                        .ToArray()
+                )
                     property.Remove();
                 foreach (var header in HttpEndpointUtility.GetAuthHeaders())
                     headers[header.Key] = header.Value;
@@ -122,9 +134,12 @@ namespace MCPForUnity.Editor.Helpers
                 unity["args"] = JArray.FromObject(toolArgs.ToArray());
 
                 // Remove all supported HTTP endpoint aliases when switching to stdio.
-                if (unity["url"] != null) unity.Remove("url");
-                if (unity["serverUrl"] != null) unity.Remove("serverUrl");
-                if (unity["httpUrl"] != null) unity.Remove("httpUrl");
+                if (unity["url"] != null)
+                    unity.Remove("url");
+                if (unity["serverUrl"] != null)
+                    unity.Remove("serverUrl");
+                if (unity["httpUrl"] != null)
+                    unity.Remove("httpUrl");
                 unity.Remove("headers");
 
                 // Include type for all clients — standard MCP protocol field. A few clients use a
@@ -159,8 +174,7 @@ namespace MCPForUnity.Editor.Helpers
             }
         }
 
-        internal static bool TryValidateAuthHeaders(JToken configuredHeaders,
-            IDictionary<string, string> expectedHeaders, out string reason)
+        internal static bool TryValidateAuthHeaders(JToken configuredHeaders, IDictionary<string, string> expectedHeaders, out string reason)
         {
             reason = null;
             if (expectedHeaders == null)
@@ -177,13 +191,16 @@ namespace MCPForUnity.Editor.Helpers
             var headers = configuredHeaders as JObject;
             foreach (string name in new[] { AuthConstants.LocalTokenHeader, AuthConstants.ApiKeyHeader })
             {
-                var properties = headers?.Properties().Where(p =>
-                    string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)).ToArray();
+                var properties = headers?.Properties().Where(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)).ToArray();
                 int count = properties?.Length ?? 0;
                 if (expectedHeaders.TryGetValue(name, out string expected))
                 {
-                    if (string.IsNullOrEmpty(expected) || count != 1 || properties[0].Value.Type != JTokenType.String
-                        || !string.Equals((string)properties[0].Value, expected, StringComparison.Ordinal))
+                    if (
+                        string.IsNullOrEmpty(expected)
+                        || count != 1
+                        || properties[0].Value.Type != JTokenType.String
+                        || !string.Equals((string)properties[0].Value, expected, StringComparison.Ordinal)
+                    )
                     {
                         reason = "HTTP authentication is missing or stale. Start the server, configure again and reconnect the client.";
                         return false;
@@ -200,13 +217,15 @@ namespace MCPForUnity.Editor.Helpers
 
         private static string GetContainerKey(McpClient client, bool isVSCode)
         {
-            if (isVSCode) return "servers";
+            if (isVSCode)
+                return "servers";
             return string.IsNullOrEmpty(client?.ServerContainerKey) ? "mcpServers" : client.ServerContainerKey;
         }
 
         private static JObject EnsureObject(JObject parent, string name)
         {
-            if (parent[name] is JObject o) return o;
+            if (parent[name] is JObject o)
+                return o;
             if (parent[name] != null)
                 throw new FormatException($"Configuration '{name}' must be an object.");
             var created = new JObject();
@@ -237,6 +256,5 @@ namespace MCPForUnity.Editor.Helpers
 
             return args;
         }
-
     }
 }

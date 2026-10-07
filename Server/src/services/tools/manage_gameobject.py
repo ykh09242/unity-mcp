@@ -7,12 +7,19 @@ from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
-from services.tools.utils import coerce_bool, parse_json_payload, normalize_vector3, normalize_string_list
+from services.tools.utils import (
+    coerce_bool,
+    parse_json_payload,
+    normalize_vector3,
+    normalize_string_list,
+)
 from services.tools.preflight import preflight
 from services.tools.primitive_validation import primitive_type_error
 
 
-def _normalize_components_to_add(value: Any) -> tuple[list[str | dict[str, Any]] | None, str | None]:
+def _normalize_components_to_add(
+    value: Any,
+) -> tuple[list[str | dict[str, Any]] | None, str | None]:
     """
     Normalize components_to_add, accepting both plain type-name strings and
     {"typeName": ..., "properties": {...}} objects for setting initial component
@@ -29,6 +36,7 @@ def _normalize_components_to_add(value: Any) -> tuple[list[str | dict[str, Any]]
     Returns:
         Tuple of (parsed_list, error_message). If error_message is set, parsed_list is None.
     """
+
     def _validate_items(items: list[Any]) -> tuple[list[str | dict[str, Any]] | None, str | None]:
         normalized: list[str | dict[str, Any]] = []
         for item in items:
@@ -89,12 +97,20 @@ def _normalize_components_to_add(value: Any) -> tuple[list[str | dict[str, Any]]
             # Treat as single-element list
             return [value], None
 
-        return None, f"components_to_add must be a JSON array (list), got string that parsed to {type(parsed).__name__}"
+        return (
+            None,
+            f"components_to_add must be a JSON array (list), got string that parsed to {type(parsed).__name__}",
+        )
 
-    return None, f"components_to_add must be a list, object, or JSON string, got {type(value).__name__}"
+    return (
+        None,
+        f"components_to_add must be a list, object, or JSON string, got {type(value).__name__}",
+    )
 
 
-def _normalize_component_properties(value: Any) -> tuple[dict[str, dict[str, Any]] | None, str | None]:
+def _normalize_component_properties(
+    value: Any,
+) -> tuple[dict[str, dict[str, Any]] | None, str | None]:
     """
     Robustly normalize component_properties to a dict.
     Returns (parsed_dict, error_message). If error_message is set, parsed_dict is None.
@@ -106,20 +122,29 @@ def _normalize_component_properties(value: Any) -> tuple[dict[str, dict[str, Any
     if isinstance(value, dict):
         for component, properties in value.items():
             if not isinstance(component, str) or not component or not isinstance(properties, dict):
-                return None, "component_properties must map component type names to property objects."
+                return (
+                    None,
+                    "component_properties must map component type names to property objects.",
+                )
         return value, None
 
     # Try parsing as JSON string
     if isinstance(value, str):
         # Check for obviously invalid values
         if value in ("[object Object]", "undefined", "null", ""):
-            return None, f"component_properties received invalid value: '{value}'. Expected a JSON object like {{\"ComponentName\": {{\"property\": value}}}}"
+            return (
+                None,
+                f'component_properties received invalid value: \'{value}\'. Expected a JSON object like {{"ComponentName": {{"property": value}}}}',
+            )
 
         parsed = parse_json_payload(value)
         if isinstance(parsed, dict):
             return _normalize_component_properties(parsed)
 
-        return None, f"component_properties must be a JSON object (dict), got string that parsed to {type(parsed).__name__}"
+        return (
+            None,
+            f"component_properties must be a JSON object (dict), got string that parsed to {type(parsed).__name__}",
+        )
 
     return None, f"component_properties must be a dict or JSON string, got {type(value).__name__}"
 
@@ -139,95 +164,156 @@ def _normalize_component_properties(value: Any) -> tuple[dict[str, dict[str, Any
 )
 async def manage_gameobject(
     ctx: Context,
-    action: Annotated[Literal["create", "modify", "delete", "duplicate",
-                              "move_relative", "look_at"], "Action to perform on GameObject."] | None = None,
-    target: Annotated[str,
-                      "GameObject identifier by name, path, or instance ID for modify/delete/duplicate actions"] | None = None,
+    action: Annotated[
+        Literal["create", "modify", "delete", "duplicate", "move_relative", "look_at"],
+        "Action to perform on GameObject.",
+    ]
+    | None = None,
+    target: Annotated[
+        str,
+        "GameObject identifier by name, path, or instance ID for modify/delete/duplicate actions",
+    ]
+    | None = None,
     search_method: Annotated[
         Literal["by_id", "by_name", "by_path", "by_tag", "by_layer", "by_component"],
         "How to resolve 'target'. If omitted, Unity infers: instance ID -> by_id, "
-        "path (contains '/') -> by_path, otherwise by_name."
-    ] | None = None,
-    name: Annotated[str,
-                    "GameObject name for 'create' (initial name) and 'modify' (rename) actions."] | None = None,
-    tag: Annotated[str,
-                   "Tag name - used for both 'create' (initial tag) and 'modify' (change tag)"] | None = None,
-    parent: Annotated[str,
-                      "Parent GameObject reference - used for both 'create' (initial parent) and 'modify' (change parent)"] | None = None,
-    position: Annotated[list[float] | dict[str, float] | str,
-                        "Position as [x, y, z] array, {x, y, z} object, or JSON string"] | None = None,
-    rotation: Annotated[list[float] | dict[str, float] | str,
-                        "Rotation as [x, y, z] euler angles array, {x, y, z} object, or JSON string"] | None = None,
-    scale: Annotated[list[float] | dict[str, float] | str,
-                     "Scale as [x, y, z] array, {x, y, z} object, or JSON string"] | None = None,
-    components_to_add: Annotated[list[str | dict[str, Any]] | dict[str, Any] | str,
-                                 """List of components to add during 'create' or 'modify'. Each entry is either
+        "path (contains '/') -> by_path, otherwise by_name.",
+    ]
+    | None = None,
+    name: Annotated[
+        str, "GameObject name for 'create' (initial name) and 'modify' (rename) actions."
+    ]
+    | None = None,
+    tag: Annotated[str, "Tag name - used for both 'create' (initial tag) and 'modify' (change tag)"]
+    | None = None,
+    parent: Annotated[
+        str,
+        "Parent GameObject reference - used for both 'create' (initial parent) and 'modify' (change parent)",
+    ]
+    | None = None,
+    position: Annotated[
+        list[float] | dict[str, float] | str,
+        "Position as [x, y, z] array, {x, y, z} object, or JSON string",
+    ]
+    | None = None,
+    rotation: Annotated[
+        list[float] | dict[str, float] | str,
+        "Rotation as [x, y, z] euler angles array, {x, y, z} object, or JSON string",
+    ]
+    | None = None,
+    scale: Annotated[
+        list[float] | dict[str, float] | str,
+        "Scale as [x, y, z] array, {x, y, z} object, or JSON string",
+    ]
+    | None = None,
+    components_to_add: Annotated[
+        list[str | dict[str, Any]] | dict[str, Any] | str,
+        """List of components to add during 'create' or 'modify'. Each entry is either
                                  a plain type name string (e.g. "BoxCollider") or an object
                                  {"typeName": "BoxCollider", "properties": {"size": [2, 2, 2]}} that adds the
                                  component with initial properties applied in the same call. Mixing both forms
-                                 in one list is fine."""] | None = None,
-    primitive_type: Annotated[str,
-                              "Primitive type for 'create' action"] | None = None,
-    save_as_prefab: Annotated[bool | str,
-                              "If True, saves the created GameObject as a prefab (accepts true/false or 'true'/'false')"] | None = None,
+                                 in one list is fine.""",
+    ]
+    | None = None,
+    primitive_type: Annotated[str, "Primitive type for 'create' action"] | None = None,
+    save_as_prefab: Annotated[
+        bool | str,
+        "If True, saves the created GameObject as a prefab (accepts true/false or 'true'/'false')",
+    ]
+    | None = None,
     prefab_path: Annotated[str, "Path for prefab creation"] | None = None,
-    prefab_folder: Annotated[str,
-                             "Folder for prefab creation"] | None = None,
+    prefab_folder: Annotated[str, "Folder for prefab creation"] | None = None,
     # --- Parameters for 'modify' ---
-    set_active: Annotated[bool | str,
-                          "If True, sets the GameObject active (accepts true/false or 'true'/'false')"] | None = None,
+    set_active: Annotated[
+        bool | str, "If True, sets the GameObject active (accepts true/false or 'true'/'false')"
+    ]
+    | None = None,
     layer: Annotated[str, "Layer name"] | None = None,
-    is_static: Annotated[bool | str,
-                         "Set the GameObject's static flag. true = all StaticEditorFlags, false = none (accepts true/false or 'true'/'false')"] | None = None,
-    components_to_remove: Annotated[list[str] | str,
-                                    "List of component names to remove"] | None = None,
-    component_properties: Annotated[dict[str, dict[str, Any]] | str,
-                                    """Dictionary of component names to their properties to set. Works for both
+    is_static: Annotated[
+        bool | str,
+        "Set the GameObject's static flag. true = all StaticEditorFlags, false = none (accepts true/false or 'true'/'false')",
+    ]
+    | None = None,
+    components_to_remove: Annotated[list[str] | str, "List of component names to remove"]
+    | None = None,
+    component_properties: Annotated[
+        dict[str, dict[str, Any]] | str,
+        """Dictionary of component names to their properties to set. Works for both
                                     'create' (applied to components already present on the new GameObject - add
                                     them via components_to_add first) and 'modify'. For example:
                                     `{"MyScript": {"otherObject": {"find": "Player", "method": "by_name"}}}` assigns GameObject
                                     `{"MyScript": {"playerHealth": {"find": "Player", "component": "HealthComponent"}}}` assigns Component
                                     Example set nested property:
-                                    - Access shared material: `{"MeshRenderer": {"sharedMaterial.color": [1, 0, 0, 1]}}`"""] | None = None,
+                                    - Access shared material: `{"MeshRenderer": {"sharedMaterial.color": [1, 0, 0, 1]}}`""",
+    ]
+    | None = None,
     # --- Parameters for 'duplicate' ---
-    new_name: Annotated[str,
-                        "New name for the duplicated object (default: SourceName_Copy)"] | None = None,
-    offset: Annotated[list[float] | str,
-                      "Offset from original/reference position as [x, y, z] array (list or JSON string)"] | None = None,
+    new_name: Annotated[str, "New name for the duplicated object (default: SourceName_Copy)"]
+    | None = None,
+    offset: Annotated[
+        list[float] | str,
+        "Offset from original/reference position as [x, y, z] array (list or JSON string)",
+    ]
+    | None = None,
     # --- Parameters for 'move_relative' ---
-    reference_object: Annotated[str,
-                                "Reference object for relative movement (required for move_relative)"] | None = None,
-    direction: Annotated[Literal["left", "right", "up", "down", "forward", "back", "front", "backward", "behind"],
-                         "Direction for relative movement (e.g., 'right', 'up', 'forward')"] | None = None,
-    distance: Annotated[float,
-                        "Distance to move in the specified direction (default: 1.0)"] | None = None,
-    world_space: Annotated[bool | str,
-                           "If True (default), use world space directions; if False, use reference object's local directions"] | None = None,
+    reference_object: Annotated[
+        str, "Reference object for relative movement (required for move_relative)"
+    ]
+    | None = None,
+    direction: Annotated[
+        Literal["left", "right", "up", "down", "forward", "back", "front", "backward", "behind"],
+        "Direction for relative movement (e.g., 'right', 'up', 'forward')",
+    ]
+    | None = None,
+    distance: Annotated[float, "Distance to move in the specified direction (default: 1.0)"]
+    | None = None,
+    world_space: Annotated[
+        bool | str,
+        "If True (default), use world space directions; if False, use reference object's local directions",
+    ]
+    | None = None,
     # --- Parameters for 'look_at' ---
-    look_at_target: Annotated[list[float] | str,
-                              "World position [x,y,z] or GameObject name/path/ID to look at (for look_at action)."] | None = None,
-    look_at_up: Annotated[list[float] | str,
-                          "Optional up vector [x,y,z] for look_at. Defaults to [0,1,0]."] | None = None,
+    look_at_target: Annotated[
+        list[float] | str,
+        "World position [x,y,z] or GameObject name/path/ID to look at (for look_at action).",
+    ]
+    | None = None,
+    look_at_up: Annotated[
+        list[float] | str, "Optional up vector [x,y,z] for look_at. Defaults to [0,1,0]."
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     if action not in {"create", "modify", "delete", "duplicate", "move_relative", "look_at"}:
         return {
             "success": False,
-            "message": "Missing required parameter 'action'. Valid actions: create, modify, delete, duplicate, move_relative, look_at. To SEARCH for GameObjects use the find_gameobjects tool. To manage COMPONENTS use the manage_components tool."
+            "message": "Missing required parameter 'action'. Valid actions: create, modify, delete, duplicate, move_relative, look_at. To SEARCH for GameObjects use the find_gameobjects tool. To manage COMPONENTS use the manage_components tool.",
         }
 
     if action == "create" and not name:
         return {"success": False, "message": "Action 'create' requires parameter 'name'."}
     # Unity permits 'name' as a target alias only when target is omitted.
     if action != "create" and not (target if target is not None else name):
-        return {"success": False, "message": f"Action '{action}' requires parameter 'target' or its 'name' alias."}
+        return {
+            "success": False,
+            "message": f"Action '{action}' requires parameter 'target' or its 'name' alias.",
+        }
     if action == "move_relative":
         if not reference_object:
-            return {"success": False, "message": "Action 'move_relative' requires parameter 'reference_object'."}
+            return {
+                "success": False,
+                "message": "Action 'move_relative' requires parameter 'reference_object'.",
+            }
         if not direction and offset is None:
-            return {"success": False, "message": "Action 'move_relative' requires 'direction' or 'offset'."}
+            return {
+                "success": False,
+                "message": "Action 'move_relative' requires 'direction' or 'offset'.",
+            }
     if action == "look_at":
         if look_at_target is None or look_at_target == "":
-            return {"success": False, "message": "Action 'look_at' requires parameter 'look_at_target'."}
+            return {
+                "success": False,
+                "message": "Action 'look_at' requires parameter 'look_at_target'.",
+            }
         # Strings can also be GameObject names, including names resembling JSON.
         if not isinstance(look_at_target, str):
             _, look_error = normalize_vector3(look_at_target, "look_at_target")
@@ -265,8 +351,7 @@ async def manage_gameobject(
             return {"success": False, "message": primitive_error}
 
     # --- Normalize component_properties with detailed error handling ---
-    component_properties, comp_props_error = _normalize_component_properties(
-        component_properties)
+    component_properties, comp_props_error = _normalize_component_properties(component_properties)
     if comp_props_error:
         return {"success": False, "message": comp_props_error}
 
@@ -275,7 +360,9 @@ async def manage_gameobject(
     if add_error:
         return {"success": False, "message": add_error}
 
-    components_to_remove, remove_error = normalize_string_list(components_to_remove, "components_to_remove")
+    components_to_remove, remove_error = normalize_string_list(
+        components_to_remove, "components_to_remove"
+    )
     if remove_error:
         return {"success": False, "message": remove_error}
 
@@ -320,15 +407,24 @@ async def manage_gameobject(
         if action == "create" and params.get("saveAsPrefab"):
             if "prefabPath" not in params:
                 if "name" not in params or not params["name"]:
-                    return {"success": False, "message": "Cannot create default prefab path: 'name' parameter is missing."}
+                    return {
+                        "success": False,
+                        "message": "Cannot create default prefab path: 'name' parameter is missing.",
+                    }
                 if prefab_folder is not None:
                     constructed_path = f"{prefab_folder}/{params['name']}.prefab"
                     # Ensure clean path separators (Unity prefers '/')
                     params["prefabPath"] = constructed_path.replace("\\", "/")
                 else:
-                    return {"success": False, "message": "'prefab_path' or 'prefab_folder' is required when 'save_as_prefab' is true."}
+                    return {
+                        "success": False,
+                        "message": "'prefab_path' or 'prefab_folder' is required when 'save_as_prefab' is true.",
+                    }
             elif not params["prefabPath"].lower().endswith(".prefab"):
-                return {"success": False, "message": f"Invalid prefab_path: '{params['prefabPath']}' must end with .prefab"}
+                return {
+                    "success": False,
+                    "message": f"Invalid prefab_path: '{params['prefabPath']}' must end with .prefab",
+                }
         # Ensure prefabFolder itself isn't sent if prefabPath was constructed or provided
         # The C# side only needs the final prefabPath
         params.pop("prefabFolder", None)
@@ -349,8 +445,14 @@ async def manage_gameobject(
         # Check if the response indicates success
         # If the response is not successful, raise an exception with the error message
         if isinstance(response, dict) and response.get("success"):
-            return {"success": True, "message": response.get("message", "GameObject operation successful."), "data": response.get("data")}
-        return response if isinstance(response, dict) else {"success": False, "message": str(response)}
+            return {
+                "success": True,
+                "message": response.get("message", "GameObject operation successful."),
+                "data": response.get("data"),
+            }
+        return (
+            response if isinstance(response, dict) else {"success": False, "message": str(response)}
+        )
 
     except Exception as e:
         return {"success": False, "message": f"Python error managing GameObject: {e!s}"}

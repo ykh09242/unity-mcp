@@ -1,4 +1,5 @@
 """Canonical instance names containing @ retain project-only custom tool lookup."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -7,7 +8,7 @@ import sys
 import pytest
 
 
-PROGRAM = r'''
+PROGRAM = r"""
 import copy
 import json
 import os
@@ -79,18 +80,31 @@ async def main():
     assert calls == 12
     print("PASS", sys.argv[1], "12 execution calls; 3 actual producer resource reads")
 anyio.run(main)
-'''
+"""
 
 
 @pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
 def test_project_only_custom_tool_uses_final_canonical_hash(tmp_path, protocol):
     env = {key: value for key, value in os.environ.items() if not key.startswith("UNITY_MCP_")}
-    for key in ("HOME", "USERPROFILE", "APPDATA", "XDG_DATA_HOME", "UNITY_MCP_LOG_DIR", "TEMP", "TMP"):
+    for key in (
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "XDG_DATA_HOME",
+        "UNITY_MCP_LOG_DIR",
+        "TEMP",
+        "TMP",
+    ):
         env[key] = str(tmp_path)
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "true"
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
     env.pop("PYTEST_CURRENT_TEST", None)
-    result = subprocess.run([sys.executable, "-B", "-c", PROGRAM, protocol], env=env,
-                            capture_output=True, text=True, timeout=90)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", PROGRAM, protocol],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "12 execution calls" in result.stdout

@@ -1,4 +1,5 @@
 """Test-job long polling must obey the caller's complete wait budget."""
+
 import asyncio
 import importlib
 import time
@@ -10,10 +11,15 @@ from unittest.mock import AsyncMock
 import pytest
 
 jobs = importlib.import_module("services.tools.run_tests")
-RUNNING = {"success": True, "data": {
-    "job_id": "job", "status": "running", "last_update_unix_ms": 1,
-    "progress": {"editor_is_focused": False},
-}}
+RUNNING = {
+    "success": True,
+    "data": {
+        "job_id": "job",
+        "status": "running",
+        "last_update_unix_ms": 1,
+        "progress": {"editor_is_focused": False},
+    },
+}
 
 
 @pytest.fixture
@@ -23,7 +29,9 @@ def job_transport(monkeypatch):
     monkeypatch.setattr(jobs, "_terminal_nudge_jobs", OrderedDict())
     monkeypatch.setattr(jobs, "_background_tasks", set())
     monkeypatch.setattr(jobs, "_active_nudge_task", None)
-    monkeypatch.setattr(jobs, "get_unity_instance_from_context", AsyncMock(return_value="Project@aaaa"))
+    monkeypatch.setattr(
+        jobs, "get_unity_instance_from_context", AsyncMock(return_value="Project@aaaa")
+    )
     monkeypatch.setattr(jobs, "_get_unity_project_path", AsyncMock(return_value="/project"))
     monkeypatch.setattr(jobs.unity_transport, "send_with_unity_instance", sender)
     monkeypatch.setattr(jobs, "should_nudge", lambda **kwargs: False)
@@ -36,6 +44,7 @@ async def test_wait_does_not_start_another_fetch_at_deadline(job_transport):
     async def fetch(*args, **kwargs):
         await asyncio.sleep(0.05)
         return deepcopy(RUNNING)
+
     job_transport.side_effect = fetch
     # When: the tool waits to its deadline.
     response = await jobs.get_test_job(AsyncMock(), "job", wait_timeout=1)
@@ -50,6 +59,7 @@ async def test_slow_first_fetch_is_bounded_by_wait_timeout(job_transport):
     async def fetch(*args, **kwargs):
         await asyncio.sleep(1.4)
         return deepcopy(RUNNING)
+
     job_transport.side_effect = fetch
     started = time.monotonic()
     # When: the tool waits for at most one second.
@@ -66,15 +76,19 @@ async def test_focus_nudge_shares_the_wait_budget(job_transport, monkeypatch, sl
     # Given: a running status whose focus recovery would take longer than the wait.
     monkeypatch.setattr(jobs, "should_nudge", lambda **kwargs: True)
     entered, cancelled = asyncio.Event(), asyncio.Event()
+
     async def slow_nudge(**kwargs):
         entered.set()
         try:
             await asyncio.Future()
         finally:
             cancelled.set()
+
     if slow_stage == "project":
+
         async def slow_project(*args):
             await slow_nudge()
+
         monkeypatch.setattr(jobs, "_get_unity_project_path", slow_project)
         monkeypatch.setattr(jobs, "nudge_unity_focus", AsyncMock(return_value=True))
     else:
@@ -90,10 +104,14 @@ async def test_focus_nudge_shares_the_wait_budget(job_transport, monkeypatch, sl
 
 
 @pytest.mark.asyncio
-async def test_expired_budget_before_first_fetch_returns_explicit_timeout(job_transport, monkeypatch):
+async def test_expired_budget_before_first_fetch_returns_explicit_timeout(
+    job_transport, monkeypatch
+):
     # Given: the process was paused until the deadline before its first fetch.
     clock = iter([0.0, 2.0])
-    monkeypatch.setattr(jobs.asyncio, "get_event_loop", lambda: SimpleNamespace(time=lambda: next(clock)))
+    monkeypatch.setattr(
+        jobs.asyncio, "get_event_loop", lambda: SimpleNamespace(time=lambda: next(clock))
+    )
     # When: polling resumes.
     response = await jobs.get_test_job(AsyncMock(), "job", wait_timeout=1)
     # Then: unknown status is a timeout, not a None-to-response conversion failure.
@@ -107,12 +125,14 @@ async def test_wait_preserves_external_cancellation(job_transport):
     # Given: an outstanding status request.
     entered = asyncio.Event()
     cancelled = asyncio.Event()
+
     async def fetch(*args, **kwargs):
         entered.set()
         try:
             await asyncio.Future()
         finally:
             cancelled.set()
+
     job_transport.side_effect = fetch
     task = asyncio.create_task(jobs.get_test_job(AsyncMock(), "job", wait_timeout=10))
     await entered.wait()
@@ -138,9 +158,24 @@ async def test_nonpositive_wait_preserves_single_status_fetch(job_transport, wai
 @pytest.mark.asyncio
 async def test_failed_terminal_job_preserves_test_results(job_transport):
     # Given: the job failed because a test failed, while the status request succeeded.
-    job_transport.return_value = {"success": True, "data": {"job_id": "job", "status": "failed", "result": {
-        "mode": "EditMode", "summary": {"total": 1, "passed": 0, "failed": 1, "skipped": 0, "durationSeconds": 0.1, "resultState": "Failed"},
-    }}}
+    job_transport.return_value = {
+        "success": True,
+        "data": {
+            "job_id": "job",
+            "status": "failed",
+            "result": {
+                "mode": "EditMode",
+                "summary": {
+                    "total": 1,
+                    "passed": 0,
+                    "failed": 1,
+                    "skipped": 0,
+                    "durationSeconds": 0.1,
+                    "resultState": "Failed",
+                },
+            },
+        },
+    }
     # When: long polling sees the terminal status.
     response = await jobs.get_test_job(AsyncMock(), "job", wait_timeout=1)
     # Then: it returns the full failed-test data immediately.

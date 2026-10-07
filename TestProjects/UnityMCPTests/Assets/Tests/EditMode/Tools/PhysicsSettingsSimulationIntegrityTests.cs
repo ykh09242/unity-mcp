@@ -2,12 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using MCPForUnity.Editor.Tools.Physics;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
-using MCPForUnity.Editor.Tools.Physics;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -36,10 +36,14 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 if (logsError)
                     LogAssert.Expect(LogType.Error, new Regex("\\[ManagePhysics\\] Action 'set_settings' failed:"));
-                var response = Send("set_settings", "3d", new JObject
-                {
-                    ["settings"] = new JObject { ["bounceThreshold"] = beforeBounce + 1f, [key] = JToken.Parse(value) }
-                });
+                var response = Send(
+                    "set_settings",
+                    "3d",
+                    new JObject
+                    {
+                        ["settings"] = new JObject { ["bounceThreshold"] = beforeBounce + 1f, [key] = JToken.Parse(value) },
+                    }
+                );
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 Assert.IsTrue(JToken.DeepEquals(before, Send("get_settings", "3d", new JObject())["data"]));
             }
@@ -64,10 +68,14 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 if (logsError)
                     LogAssert.Expect(LogType.Error, new Regex("\\[ManagePhysics\\] Action 'set_settings' failed:"));
-                var response = Send("set_settings", "2d", new JObject
-                {
-                    ["settings"] = new JObject { ["velocityIterations"] = beforeIterations + 1, [key] = JToken.Parse(value) }
-                });
+                var response = Send(
+                    "set_settings",
+                    "2d",
+                    new JObject
+                    {
+                        ["settings"] = new JObject { ["velocityIterations"] = beforeIterations + 1, [key] = JToken.Parse(value) },
+                    }
+                );
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 Assert.IsTrue(JToken.DeepEquals(before, Send("get_settings", "2d", new JObject())["data"]));
             }

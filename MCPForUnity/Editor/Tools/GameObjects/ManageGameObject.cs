@@ -69,8 +69,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             // --- Prefab Asset Check ---
             // Prefab assets require different tools. Only 'create' (instantiation) is valid here.
-            string targetPath =
-                targetToken?.Type == JTokenType.String ? targetToken.ToString() : null;
+            string targetPath = targetToken?.Type == JTokenType.String ? targetToken.ToString() : null;
             if (
                 !string.IsNullOrEmpty(targetPath)
                 && targetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)
@@ -78,9 +77,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             )
             {
                 return new ErrorResponse(
-                    $"Target '{targetPath}' is a prefab asset. " +
-                    $"Use 'manage_asset' with action='modify' for prefab asset modifications, " +
-                    $"or 'manage_prefabs' with action='modify_contents' to edit the prefab headlessly, or 'manage_prefabs' with action='close_prefab_stage' to exit prefab editing mode."
+                    $"Target '{targetPath}' is a prefab asset. "
+                        + $"Use 'manage_asset' with action='modify' for prefab asset modifications, "
+                        + $"or 'manage_prefabs' with action='modify_contents' to edit the prefab headlessly, or 'manage_prefabs' with action='close_prefab_stage' to exit prefab editing mode."
                 );
             }
             // --- End Prefab Asset Check ---

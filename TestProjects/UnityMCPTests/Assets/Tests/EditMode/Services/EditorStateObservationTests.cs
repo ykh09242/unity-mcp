@@ -11,7 +11,9 @@ namespace MCPForUnityTests.Editor.Services
         [Test]
         public void ObservationRefreshPreservesSequenceActivityAndEveryOtherField()
         {
-            var snapshot = JObject.Parse(@"{""schema_version"":""unity-mcp/editor_state@2"",""observed_at_unix_ms"":100,""sequence"":7,""activity"":{""phase"":""idle"",""since_unix_ms"":90,""reasons"":[""tick""]},""tests"":{""mode"":null},""settings"":{""batch_execute_max_commands"":25}}");
+            var snapshot = JObject.Parse(
+                @"{""schema_version"":""unity-mcp/editor_state@2"",""observed_at_unix_ms"":100,""sequence"":7,""activity"":{""phase"":""idle"",""since_unix_ms"":90,""reasons"":[""tick""]},""tests"":{""mode"":null},""settings"":{""batch_execute_max_commands"":25}}"
+            );
             var before = (JObject)snapshot.DeepClone();
             Observe(snapshot, 5000);
             Assert.AreEqual(5000, snapshot.Value<long>("observed_at_unix_ms"));
@@ -24,7 +26,11 @@ namespace MCPForUnityTests.Editor.Services
         [Test]
         public void ObservationRefreshRetainsCachedContentObjects()
         {
-            var snapshot = new JObject { ["observed_at_unix_ms"] = 1, ["editor"] = new JObject { ["is_focused"] = true } };
+            var snapshot = new JObject
+            {
+                ["observed_at_unix_ms"] = 1,
+                ["editor"] = new JObject { ["is_focused"] = true },
+            };
             var editor = snapshot["editor"];
             Observe(snapshot, 2);
             Assert.AreSame(editor, snapshot["editor"], "An unchanged observation must not rebuild content.");

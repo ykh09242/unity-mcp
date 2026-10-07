@@ -24,7 +24,13 @@ namespace MCPForUnityTests.Editor.AssetGen
             return rel;
         }
 
-        private static HttpResult Json(string body) => new HttpResult { Status = 200, IsSuccess = true, Text = body };
+        private static HttpResult Json(string body) =>
+            new HttpResult
+            {
+                Status = 200,
+                IsSuccess = true,
+                Text = body,
+            };
 
         [Test]
         public void Submit_Then_Poll_ReturnsInlineImageBytes()
@@ -33,10 +39,15 @@ namespace MCPForUnityTests.Editor.AssetGen
             string b64 = Convert.ToBase64String(expected);
             var fake = new FakeHttpTransport
             {
-                Handler = spec => Json("{\"choices\":[{\"message\":{\"images\":[{\"image_url\":{\"url\":\"data:image/png;base64," + b64 + "\"}}]}}]}")
+                Handler = spec => Json("{\"choices\":[{\"message\":{\"images\":[{\"image_url\":{\"url\":\"data:image/png;base64," + b64 + "\"}}]}}]}"),
             };
             var adapter = new OpenRouterAdapter();
-            var req = new ImageGenRequest { Provider = "openrouter", Mode = "text", Prompt = "a cat" };
+            var req = new ImageGenRequest
+            {
+                Provider = "openrouter",
+                Mode = "text",
+                Prompt = "a cat",
+            };
 
             string pid = adapter.SubmitAsync(req, "orkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
             Assert.AreEqual("ready", pid);
@@ -57,10 +68,16 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var fake = new FakeHttpTransport
             {
-                Handler = spec => Json("{\"choices\":[{\"message\":{\"images\":[{\"image_url\":{\"url\":\"data:image/png;base64,AAAA\"}}]}}]}")
+                Handler = spec => Json("{\"choices\":[{\"message\":{\"images\":[{\"image_url\":{\"url\":\"data:image/png;base64,AAAA\"}}]}}]}"),
             };
             var adapter = new OpenRouterAdapter();
-            var req = new ImageGenRequest { Provider = "openrouter", Mode = "image", Prompt = "make it watercolor", ImageUrl = "https://ex.com/in.png" };
+            var req = new ImageGenRequest
+            {
+                Provider = "openrouter",
+                Mode = "image",
+                Prompt = "make it watercolor",
+                ImageUrl = "https://ex.com/in.png",
+            };
 
             adapter.SubmitAsync(req, "orkey", fake, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -77,10 +94,16 @@ namespace MCPForUnityTests.Editor.AssetGen
             {
                 var fake = new FakeHttpTransport
                 {
-                    Handler = spec => Json("{\"choices\":[{\"message\":{\"images\":[{\"image_url\":{\"url\":\"data:image/png;base64,AAAA\"}}]}}]}")
+                    Handler = spec => Json("{\"choices\":[{\"message\":{\"images\":[{\"image_url\":{\"url\":\"data:image/png;base64,AAAA\"}}]}}]}"),
                 };
                 var adapter = new OpenRouterAdapter();
-                var req = new ImageGenRequest { Provider = "openrouter", Mode = "image", Prompt = "watercolor", ImagePath = rel };
+                var req = new ImageGenRequest
+                {
+                    Provider = "openrouter",
+                    Mode = "image",
+                    Prompt = "watercolor",
+                    ImagePath = rel,
+                };
 
                 adapter.SubmitAsync(req, "orkey", fake, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -88,18 +111,27 @@ namespace MCPForUnityTests.Editor.AssetGen
                 StringAssert.Contains("image_url", sent);
                 StringAssert.Contains("data:image/png;base64,", sent);
             }
-            finally { try { Directory.Delete(Path.Combine(ProjectRoot(), "Assets/Generated/__assetgen_openrouter_adapter"), true); } catch { } }
+            finally
+            {
+                try
+                {
+                    Directory.Delete(Path.Combine(ProjectRoot(), "Assets/Generated/__assetgen_openrouter_adapter"), true);
+                }
+                catch { }
+            }
         }
 
         [Test]
         public void Submit_NoImage_PollFails()
         {
-            var fake = new FakeHttpTransport
-            {
-                Handler = spec => Json("{\"choices\":[{\"message\":{\"content\":\"sorry, no image\"}}]}")
-            };
+            var fake = new FakeHttpTransport { Handler = spec => Json("{\"choices\":[{\"message\":{\"content\":\"sorry, no image\"}}]}") };
             var adapter = new OpenRouterAdapter();
-            var req = new ImageGenRequest { Provider = "openrouter", Mode = "text", Prompt = "a cat" };
+            var req = new ImageGenRequest
+            {
+                Provider = "openrouter",
+                Mode = "text",
+                Prompt = "a cat",
+            };
 
             adapter.SubmitAsync(req, "orkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
             ProviderPollResult pr = adapter.PollAsync("ready", "orkey123", fake, CancellationToken.None).GetAwaiter().GetResult();

@@ -27,14 +27,16 @@ namespace MCPForUnity.Editor.Clients.Configurators
     /// </summary>
     public class PiConfigurator : JsonFileMcpConfigurator
     {
-        public PiConfigurator() : base(new McpClient
-        {
-            name = "Pi",
-            windowsConfigPath = GetSharedMcpConfigPath(),
-            macConfigPath = GetSharedMcpConfigPath(),
-            linuxConfigPath = GetSharedMcpConfigPath()
-        })
-        { }
+        public PiConfigurator()
+            : base(
+                new McpClient
+                {
+                    name = "Pi",
+                    windowsConfigPath = GetSharedMcpConfigPath(),
+                    macConfigPath = GetSharedMcpConfigPath(),
+                    linuxConfigPath = GetSharedMcpConfigPath(),
+                }
+            ) { }
 
         /// <summary>
         /// Pi-exclusive presence check, deliberately NOT the inherited
@@ -65,13 +67,14 @@ namespace MCPForUnity.Editor.Clients.Configurators
             }
         }
 
-        public override IList<string> GetInstallationSteps() => new List<string>
-        {
-            "Install an MCP extension for Pi — Pi ships no MCP client of its own:\npi install npm:pi-mcp-adapter",
-            "Restart Pi so the extension loads (extensions are read at startup)",
-            "Paste the configuration JSON into the file at the path above, or use Configure",
-            "Start Pi and ask it to search MCP — e.g. \"search MCP for manage_gameobject\""
-        };
+        public override IList<string> GetInstallationSteps() =>
+            new List<string>
+            {
+                "Install an MCP extension for Pi — Pi ships no MCP client of its own:\npi install npm:pi-mcp-adapter",
+                "Restart Pi so the extension loads (extensions are read at startup)",
+                "Paste the configuration JSON into the file at the path above, or use Configure",
+                "Start Pi and ask it to search MCP — e.g. \"search MCP for manage_gameobject\"",
+            };
 
         /// <summary>The tool-agnostic shared MCP config Pi MCP extensions read, in the user's home.</summary>
         private static string GetSharedMcpConfigPath()

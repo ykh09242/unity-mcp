@@ -45,7 +45,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 {
                     Status = 500,
                     IsSuccess = false,
-                    Text = "FakeHttpTransport: no canned response matched " + (spec?.Url ?? "<null>")
+                    Text = "FakeHttpTransport: no canned response matched " + (spec?.Url ?? "<null>"),
                 };
             }
 

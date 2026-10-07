@@ -5,6 +5,7 @@ Thin pass-through: this tool carries NO API keys and NO file bytes. The C# side
 reads the user's provider key from the OS secure store, performs the provider
 HTTPS call, downloads the result, and imports it into the Unity project.
 """
+
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -40,20 +41,27 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 )
 async def generate_model(
     ctx: Context,
-    action: Annotated[Literal["generate", "status", "cancel", "list_providers", "list_models", "refresh_models"],
-                      "Action to perform."],
-
-    provider: Annotated[str, "Provider id (tripo, meshy, fal). fal supports GLB output."] | None = None,
+    action: Annotated[
+        Literal["generate", "status", "cancel", "list_providers", "list_models", "refresh_models"],
+        "Action to perform.",
+    ],
+    provider: Annotated[str, "Provider id (tripo, meshy, fal). fal supports GLB output."]
+    | None = None,
     mode: Annotated[str, "Generation mode: text or image."] | None = None,
     prompt: Annotated[str, "Text prompt for text->3D."] | None = None,
     image_path: Annotated[str, "Path to a source image for image->3D."] | None = None,
     image_url: Annotated[str, "URL of a source image for image->3D."] | None = None,
     format: Annotated[str, "Output model format: glb, fbx, obj, or usdz."] | None = None,
-    target_size: Annotated[float, "Normalize the largest dimension to this size (meters)."] | None = None,
+    target_size: Annotated[float, "Normalize the largest dimension to this size (meters)."]
+    | None = None,
     texture: Annotated[bool, "Whether to generate textures for the model."] | None = None,
     tier: Annotated[str, "Provider quality/cost tier."] | None = None,
-    model: Annotated[str, "Provider model id/version (e.g. Tripo v3.1, Meshy meshy-6). "
-                     "Omit for the GUI-selected default."] | None = None,
+    model: Annotated[
+        str,
+        "Provider model id/version (e.g. Tripo v3.1, Meshy meshy-6). "
+        "Omit for the GUI-selected default.",
+    ]
+    | None = None,
     name: Annotated[str, "Base name for the imported asset."] | None = None,
     output_folder: Annotated[str, "Destination folder under Assets/ for the import."] | None = None,
     job_id: Annotated[str, "Job id for status/cancel."] | None = None,

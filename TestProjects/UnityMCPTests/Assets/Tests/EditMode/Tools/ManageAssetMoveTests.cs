@@ -36,12 +36,16 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string originalGuid = AssetDatabase.AssetPathToGUID(_source);
 
-            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
-            {
-                ["action"] = action,
-                ["path"] = _source,
-                ["destination"] = _destination
-            }));
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["path"] = _source,
+                        ["destination"] = _destination,
+                    }
+                )
+            );
 
             Assert.IsTrue(response.Value<bool>("success"), response["error"]?.ToString());
             Assert.IsFalse(File.Exists(_source));
@@ -55,12 +59,16 @@ namespace MCPForUnityTests.Editor.Tools
             File.WriteAllText(_destination, "destination fixture");
             AssetDatabase.ImportAsset(_destination, ImportAssetOptions.ForceSynchronousImport);
 
-            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
-            {
-                ["action"] = "move",
-                ["path"] = _source,
-                ["destination"] = _destination
-            }));
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "move",
+                        ["path"] = _source,
+                        ["destination"] = _destination,
+                    }
+                )
+            );
 
             Assert.IsFalse(response.Value<bool>("success"));
             Assert.AreEqual("move fixture", File.ReadAllText(_source));

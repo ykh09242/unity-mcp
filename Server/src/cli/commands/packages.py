@@ -39,7 +39,9 @@ def add_package(package: str):
 
 @packages.command("remove")
 @click.argument("package")
-@click.option("--force", "-f", is_flag=True, help="Force removal even if other packages depend on it.")
+@click.option(
+    "--force", "-f", is_flag=True, help="Force removal even if other packages depend on it."
+)
 @handle_unity_errors
 def remove_package(package: str, force: bool):
     """Remove a package.
@@ -104,7 +106,9 @@ def get_info(package: str):
         unity-mcp packages info com.unity.inputsystem
     """
     config = get_config()
-    result = run_command("manage_packages", {"action": "get_package_info", "package": package}, config)
+    result = run_command(
+        "manage_packages", {"action": "get_package_info", "package": package}, config
+    )
     click.echo(format_output(result, config.format))
 
 
@@ -181,7 +185,9 @@ def list_registries():
 @packages.command("add-registry")
 @click.argument("registry_name")
 @click.option("--url", required=True, help="Registry URL.")
-@click.option("--scope", "-s", multiple=True, required=True, help="Package scope (can specify multiple).")
+@click.option(
+    "--scope", "-s", multiple=True, required=True, help="Package scope (can specify multiple)."
+)
 @handle_unity_errors
 def add_registry(registry_name: str, url: str, scope: tuple):
     """Add a scoped registry.
@@ -191,12 +197,16 @@ def add_registry(registry_name: str, url: str, scope: tuple):
         unity-mcp packages add-registry OpenUPM --url https://package.openupm.com --scope com.cysharp --scope com.neuecc
     """
     config = get_config()
-    result = run_command("manage_packages", {
-        "action": "add_registry",
-        "name": registry_name,
-        "url": url,
-        "scopes": list(scope),
-    }, config)
+    result = run_command(
+        "manage_packages",
+        {
+            "action": "add_registry",
+            "name": registry_name,
+            "url": url,
+            "scopes": list(scope),
+        },
+        config,
+    )
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Registry added: {registry_name}")
@@ -213,10 +223,14 @@ def remove_registry(registry_name: str):
         unity-mcp packages remove-registry OpenUPM
     """
     config = get_config()
-    result = run_command("manage_packages", {
-        "action": "remove_registry",
-        "name": registry_name,
-    }, config)
+    result = run_command(
+        "manage_packages",
+        {
+            "action": "remove_registry",
+            "name": registry_name,
+        },
+        config,
+    )
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Registry removed: {registry_name}")

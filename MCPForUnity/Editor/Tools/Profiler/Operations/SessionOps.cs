@@ -37,13 +37,16 @@ namespace MCPForUnity.Editor.Tools.Profiler
             if (enableCallstacks.HasValue)
                 UProfiler.enableAllocationCallstacks = enableCallstacks.Value;
 
-            return new SuccessResponse("Profiler started.", new
-            {
-                enabled = UProfiler.enabled,
-                recording = UProfiler.enableBinaryLog,
-                log_file = UProfiler.enableBinaryLog ? UProfiler.logFile : null,
-                allocation_callstacks = UProfiler.enableAllocationCallstacks,
-            });
+            return new SuccessResponse(
+                "Profiler started.",
+                new
+                {
+                    enabled = UProfiler.enabled,
+                    recording = UProfiler.enableBinaryLog,
+                    log_file = UProfiler.enableBinaryLog ? UProfiler.logFile : null,
+                    allocation_callstacks = UProfiler.enableAllocationCallstacks,
+                }
+            );
         }
 
         internal static object Stop(JObject @params)
@@ -54,11 +57,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
             UProfiler.enableAllocationCallstacks = false;
             UProfiler.enabled = false;
 
-            return new SuccessResponse("Profiler stopped.", new
-            {
-                enabled = false,
-                previous_log_file = previousLogFile,
-            });
+            return new SuccessResponse("Profiler stopped.", new { enabled = false, previous_log_file = previousLogFile });
         }
 
         internal static object Status(JObject @params)
@@ -70,14 +69,17 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     areas[name] = UProfiler.GetAreaEnabled(area);
             }
 
-            return new SuccessResponse("Profiler status.", new
-            {
-                enabled = UProfiler.enabled,
-                recording = UProfiler.enableBinaryLog,
-                log_file = UProfiler.enableBinaryLog ? UProfiler.logFile : null,
-                allocation_callstacks = UProfiler.enableAllocationCallstacks,
-                areas,
-            });
+            return new SuccessResponse(
+                "Profiler status.",
+                new
+                {
+                    enabled = UProfiler.enabled,
+                    recording = UProfiler.enableBinaryLog,
+                    log_file = UProfiler.enableBinaryLog ? UProfiler.logFile : null,
+                    allocation_callstacks = UProfiler.enableAllocationCallstacks,
+                    areas,
+                }
+            );
         }
 
         internal static object SetAreas(JObject @params)

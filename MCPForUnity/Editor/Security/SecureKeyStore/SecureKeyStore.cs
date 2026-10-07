@@ -30,9 +30,7 @@ namespace MCPForUnity.Editor.Security
                 case RuntimePlatform.WindowsEditor:
                     return new WindowsCredentialKeyStore();
                 case RuntimePlatform.LinuxEditor:
-                    return LinuxSecretToolKeyStore.IsAvailable()
-                        ? (ISecureKeyStore)new LinuxSecretToolKeyStore()
-                        : new EncryptedFileKeyStore();
+                    return LinuxSecretToolKeyStore.IsAvailable() ? (ISecureKeyStore)new LinuxSecretToolKeyStore() : new EncryptedFileKeyStore();
                 default:
                     return new EncryptedFileKeyStore();
             }
@@ -47,16 +45,19 @@ namespace MCPForUnity.Editor.Security
     {
         private readonly ISecureKeyStore _inner;
 
-        public EnvOverlayKeyStore(ISecureKeyStore inner) { _inner = inner; }
+        public EnvOverlayKeyStore(ISecureKeyStore inner)
+        {
+            _inner = inner;
+        }
 
         public bool TryGet(string providerId, out string apiKey)
         {
-            if (EnvKeyOverride.TryGet(providerId, out apiKey)) return true;
+            if (EnvKeyOverride.TryGet(providerId, out apiKey))
+                return true;
             return _inner.TryGet(providerId, out apiKey);
         }
 
-        public bool Has(string providerId)
-            => EnvKeyOverride.TryGet(providerId, out _) || _inner.Has(providerId);
+        public bool Has(string providerId) => EnvKeyOverride.TryGet(providerId, out _) || _inner.Has(providerId);
 
         public void Set(string providerId, string apiKey) => _inner.Set(providerId, apiKey);
 

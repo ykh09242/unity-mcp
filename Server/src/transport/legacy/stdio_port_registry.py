@@ -25,14 +25,17 @@ class StdioPortRegistry:
         instances = PortDiscovery.discover_all_unity_instances()
         self._instances = {inst.id: inst for inst in instances}
         self._last_refresh = time.time()
-        logger.debug(
-            f"STDIO port registry refreshed with {len(instances)} instance(s)")
+        logger.debug(f"STDIO port registry refreshed with {len(instances)} instance(s)")
 
     def get_instances(self, *, force_refresh: bool = False) -> list[UnityInstanceInfo]:
         ttl = getattr(config, "port_registry_ttl", 5.0)
         with self._lock:
             now = time.time()
-            if not force_refresh and self._last_refresh is not None and (now - self._last_refresh) < ttl:
+            if (
+                not force_refresh
+                and self._last_refresh is not None
+                and (now - self._last_refresh) < ttl
+            ):
                 return list(self._instances.values())
             self._refresh_locked()
             return list(self._instances.values())
@@ -55,7 +58,9 @@ class StdioPortRegistry:
         if instance and isinstance(instance.port, int):
             return instance.port
         if instance_id:
-            raise ConnectionError(f"Unity instance '{instance_id}' not found in STDIO port registry")
+            raise ConnectionError(
+                f"Unity instance '{instance_id}' not found in STDIO port registry"
+            )
         return PortDiscovery.discover_unity_port()
 
     def clear(self) -> None:

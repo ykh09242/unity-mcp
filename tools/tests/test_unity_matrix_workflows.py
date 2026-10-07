@@ -17,10 +17,13 @@ def workflow(name):
     return yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("name,job_name", [
-    ("compile-check.yml", "compile"),
-    ("unity-tests.yml", "testAllModes"),
-])
+@pytest.mark.parametrize(
+    "name,job_name",
+    [
+        ("compile-check.yml", "compile"),
+        ("unity-tests.yml", "testAllModes"),
+    ],
+)
 def test_every_unity_job_uses_the_full_validated_manifest(name, job_name):
     jobs = workflow(name)["jobs"]
     matrix = jobs["matrix"]
@@ -42,8 +45,14 @@ def test_licensed_tests_prepare_the_selected_immutable_editor_image():
     job = workflow("unity-tests.yml")["jobs"]["testAllModes"]
     preparation = next(step for step in job["steps"] if step.get("id") == "editor")
     assert preparation["env"]["UNITY_VERSION"] == "${{ matrix.unity.version }}"
-    assert 'python3 tools/unity_ci.py prepare "$UNITY_VERSION" --purpose tests' in preparation["run"]
-    runners = [step for step in job["steps"] if step.get("uses", "").startswith("game-ci/unity-test-runner@")]
+    assert (
+        'python3 tools/unity_ci.py prepare "$UNITY_VERSION" --purpose tests' in preparation["run"]
+    )
+    runners = [
+        step
+        for step in job["steps"]
+        if step.get("uses", "").startswith("game-ci/unity-test-runner@")
+    ]
     assert len(runners) == 2
     for runner in runners:
         assert runner["with"]["customImage"] == "${{ steps.editor.outputs.image }}"
@@ -70,7 +79,10 @@ def test_compilation_restores_exact_sdk_cache_and_validates_it_on_every_run():
     assert "if" not in preparation
     assert preparation["env"]["UNITY_VERSION"] == "${{ matrix.unity.version }}"
     assert preparation["env"]["SDK_PATH"] == "${{ steps.sdk_identity.outputs.cache_path }}"
-    assert 'python3 tools/unity_compile_cache.py prepare "$UNITY_VERSION" --output "$SDK_PATH"' in preparation["run"]
+    assert (
+        'python3 tools/unity_compile_cache.py prepare "$UNITY_VERSION" --output "$SDK_PATH"'
+        in preparation["run"]
+    )
     assert steps.index(identity) < steps.index(restore) < steps.index(preparation)
 
 
@@ -94,7 +106,9 @@ def test_compilation_saves_new_sdk_before_package_or_compiler_failures():
 
 def test_failed_restored_sdk_has_bounded_read_only_diagnostics():
     steps = workflow("compile-check.yml")["jobs"]["compile"]["steps"]
-    diagnostic = next(step for step in steps if step.get("name") == "Diagnose restored compiler cache")
+    diagnostic = next(
+        step for step in steps if step.get("name") == "Diagnose restored compiler cache"
+    )
     assert diagnostic["if"] == (
         "failure() && steps.sdk.outcome == 'failure' && steps.sdk_cache.outputs.cache-hit == 'true'"
     )
@@ -102,8 +116,13 @@ def test_failed_restored_sdk_has_bounded_read_only_diagnostics():
         "UNITY_VERSION": "${{ matrix.unity.version }}",
         "SDK_PATH": "${{ steps.sdk_identity.outputs.cache_path }}",
     }
-    assert 'python3 tools/unity_compile_cache_diagnostics.py "$UNITY_VERSION" --cache "$SDK_PATH"' in diagnostic["run"]
-    assert steps.index(diagnostic) > next(i for i, step in enumerate(steps) if step.get("id") == "sdk")
+    assert (
+        'python3 tools/unity_compile_cache_diagnostics.py "$UNITY_VERSION" --cache "$SDK_PATH"'
+        in diagnostic["run"]
+    )
+    assert steps.index(diagnostic) > next(
+        i for i, step in enumerate(steps) if step.get("id") == "sdk"
+    )
     assert "continue-on-error" not in diagnostic
 
 
@@ -113,12 +132,14 @@ def test_compilation_uses_cached_data_with_small_pinned_runtime_image():
     compile_step = next(step for step in steps if step.get("name") == "Compile")
     assert compile_step["env"]["UNITY_IMAGE"] == "${{ steps.sdk.outputs.runtime_image }}"
     assert compile_step["env"]["UNITY_DATA"] == "${{ steps.sdk.outputs.unity_data }}"
-    assert '--entrypoint /bin/bash' in compile_step["run"]
+    assert "--entrypoint /bin/bash" in compile_step["run"]
     assert '-e UNITY_DATA="/repo/$UNITY_DATA"' in compile_step["run"]
     assert '"$UNITY_IMAGE" /repo/tools/compile-check.sh' in compile_step["run"]
 
 
-@pytest.mark.parametrize("path", ["tools/unity_compile_cache.py", "tools/unity_compile_cache_diagnostics.py"])
+@pytest.mark.parametrize(
+    "path", ["tools/unity_compile_cache.py", "tools/unity_compile_cache_diagnostics.py"]
+)
 def test_sdk_extractor_changes_trigger_compilation(path):
     config = workflow("compile-check.yml")
     triggers = config.get("on", config.get(True))
@@ -127,14 +148,17 @@ def test_sdk_extractor_changes_trigger_compilation(path):
 
 
 @pytest.mark.parametrize("name", ["compile-check.yml", "unity-tests.yml"])
-@pytest.mark.parametrize("path", [
-    "tools/unity-versions.json",
-    "tools/unity_ci.py",
-    "tools/unity-ci/Dockerfile",
-    "tools/unity_ci_packages.py",
-    "tools/unity-ci-packages.json",
-    "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/UnityReflectTests.cs",
-])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "tools/unity-versions.json",
+        "tools/unity_ci.py",
+        "tools/unity-ci/Dockerfile",
+        "tools/unity_ci_packages.py",
+        "tools/unity-ci-packages.json",
+        "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/UnityReflectTests.cs",
+    ],
+)
 def test_matrix_and_package_policy_changes_trigger_unity_validation(name, path):
     config = workflow(name)
     triggers = config.get("on", config.get(True))
@@ -159,10 +183,14 @@ def test_real_matrix_covers_the_support_floor_and_all_release_channels():
     manifest = json.loads((ROOT / "tools" / "unity-versions.json").read_text(encoding="utf-8"))
     result = subprocess.run(
         [sys.executable, str(ROOT / "tools" / "unity_ci.py"), "matrix"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     matrix = json.loads(result.stdout)
-    assert matrix == [{"version": row["id"], "channel": row["channel"]} for row in manifest["versions"]]
+    assert matrix == [
+        {"version": row["id"], "channel": row["channel"]} for row in manifest["versions"]
+    ]
     assert {row["channel"] for row in matrix} == {"lts", "supported", "beta", "alpha"}
     assert any(row["version"].startswith("2021.3.") for row in matrix)
     assert any(row["version"].startswith("2022.3.") for row in matrix)
@@ -171,10 +199,13 @@ def test_real_matrix_covers_the_support_floor_and_all_release_channels():
     assert default["channel"] == "lts"
 
 
-@pytest.mark.parametrize("name,job_name", [
-    ("compile-check.yml", "compile"),
-    ("unity-tests.yml", "testAllModes"),
-])
+@pytest.mark.parametrize(
+    "name,job_name",
+    [
+        ("compile-check.yml", "compile"),
+        ("unity-tests.yml", "testAllModes"),
+    ],
+)
 def test_compilation_and_editor_tests_share_isolated_package_preparation(name, job_name):
     job = workflow(name)["jobs"][job_name]
     packages = next(step for step in job["steps"] if step.get("id") == "packages")
@@ -183,20 +214,37 @@ def test_compilation_and_editor_tests_share_isolated_package_preparation(name, j
     assert '--output ".unity-ci/$UNITY_VERSION"' in packages["run"]
     if name == "unity-tests.yml":
         assert packages["env"]["UNITY_IMAGE"] == "${{ steps.editor.outputs.image }}"
-        runners = [step for step in job["steps"] if step.get("uses", "").startswith("game-ci/unity-test-runner@")]
-        assert all(step["with"]["projectPath"] == "${{ steps.packages.outputs.project_path }}" for step in runners)
+        runners = [
+            step
+            for step in job["steps"]
+            if step.get("uses", "").startswith("game-ci/unity-test-runner@")
+        ]
+        assert all(
+            step["with"]["projectPath"] == "${{ steps.packages.outputs.project_path }}"
+            for step in runners
+        )
     else:
         assert packages["env"]["UNITY_DATA"] == "${{ steps.sdk.outputs.unity_data }}"
         assert '--unity-data "$UNITY_DATA"' in packages["run"]
         assert "--image" not in packages["run"]
         compile_step = next(step for step in job["steps"] if step.get("name") == "Compile")
         assert compile_step["env"]["EXTRA_REFS"] == "${{ steps.packages.outputs.refs }}"
-        assert compile_step["env"]["TEST_FRAMEWORK_SOURCE"] == "${{ steps.packages.outputs.test_framework_source }}"
-        assert compile_step["env"]["EDITOR_COROUTINES_SOURCE"] == "${{ steps.packages.outputs.editor_coroutines_source }}"
+        assert (
+            compile_step["env"]["TEST_FRAMEWORK_SOURCE"]
+            == "${{ steps.packages.outputs.test_framework_source }}"
+        )
+        assert (
+            compile_step["env"]["EDITOR_COROUTINES_SOURCE"]
+            == "${{ steps.packages.outputs.editor_coroutines_source }}"
+        )
         assert compile_step["env"]["TEST_PROJECT"] == "${{ steps.packages.outputs.project_path }}"
         assert '-e TEST_PROJECT="/repo/$TEST_PROJECT"' in compile_step["run"]
-        assert '-e EDITOR_COROUTINES_SOURCE="/repo/$EDITOR_COROUTINES_SOURCE"' in compile_step["run"]
-        artifact = next(step for step in job["steps"] if step.get("name") == "Upload package resolution")
+        assert (
+            '-e EDITOR_COROUTINES_SOURCE="/repo/$EDITOR_COROUTINES_SOURCE"' in compile_step["run"]
+        )
+        artifact = next(
+            step for step in job["steps"] if step.get("name") == "Upload package resolution"
+        )
         assert artifact["with"]["path"] == "${{ steps.packages.outputs.resolution_report }}"
         assert artifact["with"]["if-no-files-found"] == "error"
         assert artifact["with"]["include-hidden-files"] is True

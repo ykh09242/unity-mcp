@@ -20,12 +20,14 @@ namespace MCPForUnity.Editor.Helpers
             try
             {
                 string pref = EditorPrefs.GetString(PrefClaude, string.Empty);
-                if (!string.IsNullOrEmpty(pref) && File.Exists(pref)) return pref;
+                if (!string.IsNullOrEmpty(pref) && File.Exists(pref))
+                    return pref;
             }
             catch { }
 
             string env = Environment.GetEnvironmentVariable("CLAUDE_CLI");
-            if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
+            if (!string.IsNullOrEmpty(env) && File.Exists(env))
+                return env;
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
@@ -37,10 +39,15 @@ namespace MCPForUnity.Editor.Helpers
                     Path.Combine(home, ".local", "bin", "claude"),
                     Path.Combine(home, ".claude", "local", "claude"), // `claude migrate-installer` location
                 };
-                foreach (string c in candidates) { if (File.Exists(c)) return c; }
+                foreach (string c in candidates)
+                {
+                    if (File.Exists(c))
+                        return c;
+                }
                 // Try NVM-installed claude under ~/.nvm/versions/node/*/bin/claude
                 string nvmClaude = ResolveClaudeFromNvm(home);
-                if (!string.IsNullOrEmpty(nvmClaude)) return nvmClaude;
+                if (!string.IsNullOrEmpty(nvmClaude))
+                    return nvmClaude;
 #if UNITY_EDITOR_OSX || UNITY_EDITOR_LINUX
                 return Which("claude", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
 #else
@@ -69,9 +76,15 @@ namespace MCPForUnity.Editor.Helpers
                     Path.Combine(appData, "npm", "claude.ps1"),
                     Path.Combine(localAppData, "npm", "claude.ps1"),
                 };
-                foreach (string c in candidates) { if (File.Exists(c)) return c; }
-                string fromWhere = FindInPathWindows("claude.exe") ?? FindInPathWindows("claude.cmd") ?? FindInPathWindows("claude.ps1") ?? FindInPathWindows("claude");
-                if (!string.IsNullOrEmpty(fromWhere)) return fromWhere;
+                foreach (string c in candidates)
+                {
+                    if (File.Exists(c))
+                        return c;
+                }
+                string fromWhere =
+                    FindInPathWindows("claude.exe") ?? FindInPathWindows("claude.cmd") ?? FindInPathWindows("claude.ps1") ?? FindInPathWindows("claude");
+                if (!string.IsNullOrEmpty(fromWhere))
+                    return fromWhere;
 #endif
                 return null;
             }
@@ -86,10 +99,15 @@ namespace MCPForUnity.Editor.Helpers
                     Path.Combine(home, ".local", "bin", "claude"),
                     Path.Combine(home, ".claude", "local", "claude"), // `claude migrate-installer` location
                 };
-                foreach (string c in candidates) { if (File.Exists(c)) return c; }
+                foreach (string c in candidates)
+                {
+                    if (File.Exists(c))
+                        return c;
+                }
                 // Try NVM-installed claude under ~/.nvm/versions/node/*/bin/claude
                 string nvmClaude = ResolveClaudeFromNvm(home);
-                if (!string.IsNullOrEmpty(nvmClaude)) return nvmClaude;
+                if (!string.IsNullOrEmpty(nvmClaude))
+                    return nvmClaude;
 #if UNITY_EDITOR_OSX || UNITY_EDITOR_LINUX
                 return Which("claude", "/usr/local/bin:/usr/bin:/bin");
 #else
@@ -103,16 +121,19 @@ namespace MCPForUnity.Editor.Helpers
         {
             try
             {
-                if (string.IsNullOrEmpty(home)) return null;
+                if (string.IsNullOrEmpty(home))
+                    return null;
                 string nvmNodeDir = Path.Combine(home, ".nvm", "versions", "node");
-                if (!Directory.Exists(nvmNodeDir)) return null;
+                if (!Directory.Exists(nvmNodeDir))
+                    return null;
 
                 string bestPath = null;
                 Version bestVersion = null;
                 foreach (string versionDir in Directory.EnumerateDirectories(nvmNodeDir))
                 {
                     string name = Path.GetFileName(versionDir);
-                    if (string.IsNullOrEmpty(name)) continue;
+                    if (string.IsNullOrEmpty(name))
+                        continue;
                     if (name.StartsWith("v", StringComparison.OrdinalIgnoreCase))
                     {
                         // Extract numeric portion: e.g., v18.19.0-nightly -> 18.19.0
@@ -138,7 +159,10 @@ namespace MCPForUnity.Editor.Helpers
                 }
                 return bestPath;
             }
-            catch { return null; }
+            catch
+            {
+                return null;
+            }
         }
 
         // Explicitly set the Claude CLI absolute path override in EditorPrefs
@@ -196,7 +220,8 @@ namespace MCPForUnity.Editor.Helpers
             out string stderr,
             int timeoutMs = 15000,
             string extraPathPrepend = null,
-            IDictionary<string, string> environmentOverrides = null)
+            IDictionary<string, string> environmentOverrides = null
+        )
         {
             stdout = string.Empty;
             stderr = string.Empty;
@@ -210,9 +235,8 @@ namespace MCPForUnity.Editor.Helpers
                 // Handle batch shims (pyenv-win, npm .cmd wrappers, ...) on Windows: CreateProcess
                 // cannot launch .bat/.cmd directly while UseShellExecute is false, so route them
                 // through cmd.exe instead of failing with a Win32Exception.
-                bool isBatch = isWindows &&
-                               (file.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) ||
-                                file.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase));
+                bool isBatch =
+                    isWindows && (file.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) || file.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase));
 
                 string fileName;
                 string arguments;
@@ -248,8 +272,9 @@ namespace MCPForUnity.Editor.Helpers
                     foreach (var entry in environmentOverrides)
                     {
                         string key = isWindows
-                            ? psi.EnvironmentVariables.Keys.Cast<string>().FirstOrDefault(existing =>
-                                string.Equals(existing, entry.Key, StringComparison.OrdinalIgnoreCase)) ?? entry.Key
+                            ? psi.EnvironmentVariables.Keys.Cast<string>()
+                                .FirstOrDefault(existing => string.Equals(existing, entry.Key, StringComparison.OrdinalIgnoreCase))
+                                ?? entry.Key
                             : entry.Key;
                         psi.EnvironmentVariables[key] = entry.Value;
                     }
@@ -257,26 +282,40 @@ namespace MCPForUnity.Editor.Helpers
                 if (!string.IsNullOrEmpty(extraPathPrepend))
                 {
                     string currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-                    SetPathVariable(psi, string.IsNullOrEmpty(currentPath)
-                        ? extraPathPrepend
-                        : (extraPathPrepend + System.IO.Path.PathSeparator + currentPath));
+                    SetPathVariable(
+                        psi,
+                        string.IsNullOrEmpty(currentPath) ? extraPathPrepend : (extraPathPrepend + System.IO.Path.PathSeparator + currentPath)
+                    );
                 }
 
                 using var process = new Process { StartInfo = psi, EnableRaisingEvents = false };
 
                 var sb = new StringBuilder();
                 var se = new StringBuilder();
-                process.OutputDataReceived += (_, e) => { if (e.Data != null) sb.AppendLine(e.Data); };
-                process.ErrorDataReceived += (_, e) => { if (e.Data != null) se.AppendLine(e.Data); };
+                process.OutputDataReceived += (_, e) =>
+                {
+                    if (e.Data != null)
+                        sb.AppendLine(e.Data);
+                };
+                process.ErrorDataReceived += (_, e) =>
+                {
+                    if (e.Data != null)
+                        se.AppendLine(e.Data);
+                };
 
-                if (!process.Start()) return false;
+                if (!process.Start())
+                    return false;
 
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
                 if (!process.WaitForExit(timeoutMs))
                 {
-                    try { process.Kill(); } catch { }
+                    try
+                    {
+                        process.Kill();
+                    }
+                    catch { }
                     return false;
                 }
 
@@ -339,15 +378,24 @@ namespace MCPForUnity.Editor.Helpers
                 SetPathVariable(psi, string.IsNullOrEmpty(path) ? prependPath : (prependPath + Path.PathSeparator + path));
 
                 using var p = Process.Start(psi);
-                if (p == null) return null;
+                if (p == null)
+                    return null;
 
                 var so = new StringBuilder();
-                p.OutputDataReceived += (_, e) => { if (e.Data != null) so.AppendLine(e.Data); };
+                p.OutputDataReceived += (_, e) =>
+                {
+                    if (e.Data != null)
+                        so.AppendLine(e.Data);
+                };
                 p.BeginOutputReadLine();
 
                 if (!p.WaitForExit(1500))
                 {
-                    try { p.Kill(); } catch { }
+                    try
+                    {
+                        p.Kill();
+                    }
+                    catch { }
                     return null;
                 }
 
@@ -355,7 +403,10 @@ namespace MCPForUnity.Editor.Helpers
                 string output = so.ToString().Trim();
                 return (!string.IsNullOrEmpty(output) && File.Exists(output)) ? output : null;
             }
-            catch { return null; }
+            catch
+            {
+                return null;
+            }
         }
 #endif
 
@@ -387,15 +438,24 @@ namespace MCPForUnity.Editor.Helpers
                 }
 
                 using var p = Process.Start(psi);
-                if (p == null) return Array.Empty<string>();
+                if (p == null)
+                    return Array.Empty<string>();
 
                 var so = new StringBuilder();
-                p.OutputDataReceived += (_, e) => { if (e.Data != null) so.AppendLine(e.Data); };
+                p.OutputDataReceived += (_, e) =>
+                {
+                    if (e.Data != null)
+                        so.AppendLine(e.Data);
+                };
                 p.BeginOutputReadLine();
 
                 if (!p.WaitForExit(1500))
                 {
-                    try { p.Kill(); } catch { }
+                    try
+                    {
+                        p.Kill();
+                    }
+                    catch { }
                     return Array.Empty<string>();
                 }
 
@@ -406,7 +466,10 @@ namespace MCPForUnity.Editor.Helpers
                     .Where(line => line.Length > 0 && File.Exists(line))
                     .ToArray();
             }
-            catch { return Array.Empty<string>(); }
+            catch
+            {
+                return Array.Empty<string>();
+            }
         }
 #endif
     }

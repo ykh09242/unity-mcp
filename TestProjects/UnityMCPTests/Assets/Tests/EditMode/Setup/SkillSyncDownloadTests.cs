@@ -19,8 +19,14 @@ namespace MCPForUnityTests.Editor.Setup
 
         private static object Invoke(MethodInfo method, params object[] arguments)
         {
-            try { return method.Invoke(null, arguments); }
-            catch (TargetInvocationException e) { throw e.InnerException ?? e; }
+            try
+            {
+                return method.Invoke(null, arguments);
+            }
+            catch (TargetInvocationException e)
+            {
+                throw e.InnerException ?? e;
+            }
         }
 
         private static string Download(HttpMessageHandler handler, int limit = 8)
@@ -28,9 +34,12 @@ namespace MCPForUnityTests.Editor.Setup
             MethodInfo method = Service.GetMethod("DownloadString", Internal);
             Type clientType = method.GetParameters()[0].ParameterType;
             using var client = (System.Net.Http.HttpClient)Activator.CreateInstance(clientType, handler);
-            return (string)Invoke(method, method.GetParameters().Length == 2
-                ? new object[] { client, "https://fixture.invalid/tree" }
-                : new object[] { client, "https://fixture.invalid/tree", limit });
+            return (string)Invoke(
+                method,
+                method.GetParameters().Length == 2
+                    ? new object[] { client, "https://fixture.invalid/tree" }
+                    : new object[] { client, "https://fixture.invalid/tree", limit }
+            );
         }
 
         [TestCase(null)]
@@ -98,7 +107,8 @@ namespace MCPForUnityTests.Editor.Setup
             PropertyInfo next = type.GetProperty("NextBlobLimit", BindingFlags.Instance | BindingFlags.NonPublic);
             PropertyInfo remaining = type.GetProperty("Remaining", BindingFlags.Instance | BindingFlags.NonPublic);
             const long blob = 64L * 1024 * 1024;
-            for (int i = 0; i < 3; i++) admit.Invoke(budget, new object[] { blob });
+            for (int i = 0; i < 3; i++)
+                admit.Invoke(budget, new object[] { blob });
             admit.Invoke(budget, new object[] { blob - 4 });
             Assert.AreEqual(4L, next.GetValue(budget));
             admit.Invoke(budget, new object[] { 4L });
@@ -118,8 +128,10 @@ namespace MCPForUnityTests.Editor.Setup
             Type type = Service.Assembly.GetType("MCPForUnity.Editor.Setup.SkillSyncDownload");
             MethodInfo method = type.GetMethod("ReadBounded", Internal);
             var stream = new ObservedStream(body, 1);
-            if (accepted) CollectionAssert.IsEmpty((byte[])Invoke(method, stream, 0L, CancellationToken.None));
-            else Assert.Throws<IOException>(() => Invoke(method, stream, 0L, CancellationToken.None));
+            if (accepted)
+                CollectionAssert.IsEmpty((byte[])Invoke(method, stream, 0L, CancellationToken.None));
+            else
+                Assert.Throws<IOException>(() => Invoke(method, stream, 0L, CancellationToken.None));
             Assert.LessOrEqual(stream.BytesRead, 1);
             Assert.LessOrEqual(stream.LargestRequest, 1);
             stream.Dispose();
@@ -132,8 +144,10 @@ namespace MCPForUnityTests.Editor.Setup
         {
             Type type = Service.Assembly.GetType("MCPForUnity.Editor.Setup.SkillSyncDownload");
             MethodInfo method = type.GetMethod("RequireFileCount", Internal);
-            if (accepted) Invoke(method, count);
-            else Assert.Throws<IOException>(() => Invoke(method, count));
+            if (accepted)
+                Invoke(method, count);
+            else
+                Assert.Throws<IOException>(() => Invoke(method, count));
         }
 
         [TestCase("{\"tree\":[{},{},{}]}", true)]
@@ -147,8 +161,10 @@ namespace MCPForUnityTests.Editor.Setup
         {
             Type type = Service.Assembly.GetType("MCPForUnity.Editor.Setup.SkillSyncDownload");
             MethodInfo method = type.GetMethod("ValidateTreeJson", Internal);
-            if (accepted) Invoke(method, json, 3);
-            else Assert.Throws<IOException>(() => Invoke(method, json, 3));
+            if (accepted)
+                Invoke(method, json, 3);
+            else
+                Assert.Throws<IOException>(() => Invoke(method, json, 3));
         }
 
         private sealed class ResponseHandler : HttpMessageHandler
@@ -156,12 +172,19 @@ namespace MCPForUnityTests.Editor.Setup
             private readonly Stream _stream;
             private readonly long? _declared;
             private readonly HttpStatusCode _status;
+
             public ResponseHandler(Stream stream, long? declared, HttpStatusCode status = HttpStatusCode.OK)
-            { _stream = stream; _declared = declared; _status = status; }
+            {
+                _stream = stream;
+                _declared = declared;
+                _status = status;
+            }
+
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
             {
                 var content = new StreamContent(_stream);
-                if (_declared.HasValue) content.Headers.ContentLength = _declared;
+                if (_declared.HasValue)
+                    content.Headers.ContentLength = _declared;
                 return Task.FromResult(new HttpResponseMessage(_status) { Content = content });
             }
         }
@@ -170,19 +193,37 @@ namespace MCPForUnityTests.Editor.Setup
         {
             private readonly MemoryStream _inner;
             private readonly int _chunk;
-            public int BytesRead, LargestRequest;
-            public bool Disposed, CancelRead, SawCancelableToken;
-            public ObservedStream(string text, int chunk) { _inner = new MemoryStream(Encoding.UTF8.GetBytes(text)); _chunk = chunk; }
+            public int BytesRead,
+                LargestRequest;
+            public bool Disposed,
+                CancelRead,
+                SawCancelableToken;
+
+            public ObservedStream(string text, int chunk)
+            {
+                _inner = new MemoryStream(Encoding.UTF8.GetBytes(text));
+                _chunk = chunk;
+            }
+
             // Prevent StreamContent inferring a Content-Length when the scenario omits it.
             public override bool CanSeek => false;
             public override bool CanRead => true;
             public override bool CanWrite => false;
             public override long Length => throw new NotSupportedException();
-            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+            public override long Position
+            {
+                get => throw new NotSupportedException();
+                set => throw new NotSupportedException();
+            }
+
             public override void Flush() { }
+
             public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
             public override void SetLength(long value) => throw new NotSupportedException();
+
             public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
             public override int Read(byte[] buffer, int offset, int count)
             {
                 LargestRequest = Math.Max(LargestRequest, count);
@@ -190,13 +231,22 @@ namespace MCPForUnityTests.Editor.Setup
                 BytesRead += read;
                 return read;
             }
+
             public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken token)
             {
                 SawCancelableToken |= token.CanBeCanceled;
-                if (CancelRead) return Task.FromCanceled<int>(new CancellationToken(true));
+                if (CancelRead)
+                    return Task.FromCanceled<int>(new CancellationToken(true));
                 return Task.FromResult(Read(buffer, offset, count));
             }
-            protected override void Dispose(bool disposing) { Disposed = true; if (disposing) _inner.Dispose(); base.Dispose(disposing); }
+
+            protected override void Dispose(bool disposing)
+            {
+                Disposed = true;
+                if (disposing)
+                    _inner.Dispose();
+                base.Dispose(disposing);
+            }
         }
     }
 }

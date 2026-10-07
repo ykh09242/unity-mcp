@@ -31,20 +31,28 @@ namespace MCPForUnity.Editor.Tools.AssetGen
 
         public static async Task<object> HandleCommand(JObject @params)
         {
-            if (@params == null) return new ErrorResponse("Parameters cannot be null.");
+            if (@params == null)
+                return new ErrorResponse("Parameters cannot be null.");
             var p = new ToolParams(@params);
             string action = (p.Get("action") ?? string.Empty).ToLowerInvariant();
             try
             {
                 switch (action)
                 {
-                    case "search": return await Search(p);
-                    case "preview": return await Preview(p);
-                    case "import": return Import(p);
-                    case "status": return Status(p);
-                    case "cancel": return Cancel(p);
-                    case "list_providers": return ListProviders();
-                    case "": return new ErrorResponse("'action' parameter is required.");
+                    case "search":
+                        return await Search(p);
+                    case "preview":
+                        return await Preview(p);
+                    case "import":
+                        return Import(p);
+                    case "status":
+                        return Status(p);
+                    case "cancel":
+                        return Cancel(p);
+                    case "list_providers":
+                        return ListProviders();
+                    case "":
+                        return new ErrorResponse("'action' parameter is required.");
                     default:
                         return new ErrorResponse($"Unknown action: '{action}'. Supported: search, preview, import, status, cancel, list_providers.");
                 }
@@ -64,42 +72,57 @@ namespace MCPForUnity.Editor.Tools.AssetGen
         private static async Task<object> Search(ToolParams p)
         {
             string query = p.Get("query");
-            if (string.IsNullOrWhiteSpace(query)) return new ErrorResponse("'query' is required for search.");
+            if (string.IsNullOrWhiteSpace(query))
+                return new ErrorResponse("'query' is required for search.");
             if (!SecureKeyStore.Current.TryGet(Provider, out string key) || string.IsNullOrEmpty(key))
                 return KeyError();
 
             IMarketplaceProviderAdapter adapter = AssetGenProviders.Marketplace(Provider);
             string results = await adapter.SearchAsync(
-                query, p.Get("categories"), p.GetBool("downloadable", true), p.GetInt("count"), p.Get("cursor"),
-                key, Transport(), CancellationToken.None);
-            return new SuccessResponse($"Search results for '{query}'.",
-                new { provider = Provider, results = ParseOrRaw(results) });
+                query,
+                p.Get("categories"),
+                p.GetBool("downloadable", true),
+                p.GetInt("count"),
+                p.Get("cursor"),
+                key,
+                Transport(),
+                CancellationToken.None
+            );
+            return new SuccessResponse($"Search results for '{query}'.", new { provider = Provider, results = ParseOrRaw(results) });
         }
 
         private static async Task<object> Preview(ToolParams p)
         {
             string uid = p.Get("uid");
-            if (string.IsNullOrWhiteSpace(uid)) return new ErrorResponse("'uid' is required for preview.");
+            if (string.IsNullOrWhiteSpace(uid))
+                return new ErrorResponse("'uid' is required for preview.");
             if (!SecureKeyStore.Current.TryGet(Provider, out string key) || string.IsNullOrEmpty(key))
                 return KeyError();
 
             IMarketplaceProviderAdapter adapter = AssetGenProviders.Marketplace(Provider);
             string preview = await adapter.PreviewAsync(uid, key, Transport(), CancellationToken.None);
-            return new SuccessResponse($"Preview for '{uid}'.",
-                new { provider = Provider, uid, preview = ParseOrRaw(preview) });
+            return new SuccessResponse(
+                $"Preview for '{uid}'.",
+                new
+                {
+                    provider = Provider,
+                    uid,
+                    preview = ParseOrRaw(preview),
+                }
+            );
         }
 
         private static object Import(ToolParams p)
         {
             string uid = p.Get("uid");
-            if (string.IsNullOrWhiteSpace(uid)) return new ErrorResponse("'uid' is required for import.");
+            if (string.IsNullOrWhiteSpace(uid))
+                return new ErrorResponse("'uid' is required for import.");
             AssetGenProviders.Marketplace(Provider); // throws NotSupportedException for unimplemented providers
 
             float targetSize = p.GetFloat("targetSize", 1f) ?? 1f;
             string name = p.Get("name");
             string outputFolder = p.Get("outputFolder");
-            if (!string.IsNullOrWhiteSpace(outputFolder)
-                && !AssetGenPaths.TryGetAssetsFolder(outputFolder, out outputFolder))
+            if (!string.IsNullOrWhiteSpace(outputFolder) && !AssetGenPaths.TryGetAssetsFolder(outputFolder, out outputFolder))
             {
                 return new ErrorResponse("'output_folder' must resolve under the project's Assets folder.");
             }
@@ -111,22 +134,37 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             return new PendingResponse(
                 $"Sketchfab import started for '{uid}'. Poll the status action with this job_id.",
                 pollIntervalSeconds: 3.0,
-                data: new { job_id = job.JobId, provider = Provider, status = "pending" });
+                data: new
+                {
+                    job_id = job.JobId,
+                    provider = Provider,
+                    status = "pending",
+                }
+            );
         }
 
         private static object Status(ToolParams p)
         {
             string jobId = p.Get("job_id");
-            if (string.IsNullOrEmpty(jobId)) return new ErrorResponse("'job_id' is required for status.");
+            if (string.IsNullOrEmpty(jobId))
+                return new ErrorResponse("'job_id' is required for status.");
             AssetGenJob job = AssetGenJobManager.GetJob(jobId);
-            if (job == null) return new ErrorResponse($"No job found with ID '{jobId}'.");
+            if (job == null)
+                return new ErrorResponse($"No job found with ID '{jobId}'.");
 
             switch (job.State)
             {
                 case AssetGenJobState.Done:
                     return new SuccessResponse(
                         $"Import complete: {job.AssetPath}",
-                        new { state = "done", asset_path = job.AssetPath, asset_guid = job.AssetGuid, progress = 1f });
+                        new
+                        {
+                            state = "done",
+                            asset_path = job.AssetPath,
+                            asset_guid = job.AssetGuid,
+                            progress = 1f,
+                        }
+                    );
                 case AssetGenJobState.Failed:
                     return new ErrorResponse(job.Error ?? "Import failed.", new { state = "failed" });
                 case AssetGenJobState.Canceled:
@@ -135,14 +173,21 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                     return new PendingResponse(
                         $"Import {job.State.ToString().ToLowerInvariant()} ({job.Progress:P0}).",
                         pollIntervalSeconds: 3.0,
-                        data: new { job_id = job.JobId, state = job.State.ToString().ToLowerInvariant(), progress = job.Progress });
+                        data: new
+                        {
+                            job_id = job.JobId,
+                            state = job.State.ToString().ToLowerInvariant(),
+                            progress = job.Progress,
+                        }
+                    );
             }
         }
 
         private static object Cancel(ToolParams p)
         {
             string jobId = p.Get("job_id");
-            if (string.IsNullOrEmpty(jobId)) return new ErrorResponse("'job_id' is required for cancel.");
+            if (string.IsNullOrEmpty(jobId))
+                return new ErrorResponse("'job_id' is required for cancel.");
             return AssetGenJobManager.Cancel(jobId)
                 ? new SuccessResponse($"Cancel requested for job '{jobId}'.")
                 : new ErrorResponse($"No cancelable job found with ID '{jobId}'.");
@@ -153,19 +198,35 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             var list = new List<object>();
             foreach (ProviderInfo info in AssetGenProviders.List())
             {
-                if (info.Kind != "marketplace") continue;
-                list.Add(new { id = info.Id, kind = info.Kind, configured = info.Configured, capabilities = info.Capabilities });
+                if (info.Kind != "marketplace")
+                    continue;
+                list.Add(
+                    new
+                    {
+                        id = info.Id,
+                        kind = info.Kind,
+                        configured = info.Configured,
+                        capabilities = info.Capabilities,
+                    }
+                );
             }
             return new SuccessResponse($"{list.Count} provider(s).", new { providers = list });
         }
 
-        private static object KeyError()
-            => new ErrorResponse(AssetGenProviders.MissingKeyMessage(Provider));
+        private static object KeyError() => new ErrorResponse(AssetGenProviders.MissingKeyMessage(Provider));
 
         private static object ParseOrRaw(string json)
         {
-            if (string.IsNullOrEmpty(json)) return null;
-            try { return JToken.Parse(json); } catch { return json; }
+            if (string.IsNullOrEmpty(json))
+                return null;
+            try
+            {
+                return JToken.Parse(json);
+            }
+            catch
+            {
+                return json;
+            }
         }
     }
 }

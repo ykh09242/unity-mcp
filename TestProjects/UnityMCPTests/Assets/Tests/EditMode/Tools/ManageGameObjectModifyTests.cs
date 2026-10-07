@@ -1,10 +1,10 @@
 using System.Collections.Generic;
-using NUnit.Framework;
-using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
-using UnityEditorInternal;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Tools.GameObjects;
+using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
+using UnityEditorInternal;
+using UnityEngine;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -57,7 +57,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "modify",
                 ["target"] = "ModifyTestObject",
                 ["searchMethod"] = "by_name",
-                ["position"] = new JArray { 10.0f, 0.0f, 0.0f }
+                ["position"] = new JArray { 10.0f, 0.0f, 0.0f },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -77,7 +77,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "modify",
                 ["target"] = instanceID,
                 ["searchMethod"] = "by_id",
-                ["position"] = new JArray { 20.0f, 0.0f, 0.0f }
+                ["position"] = new JArray { 20.0f, 0.0f, 0.0f },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -95,7 +95,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "modify",
                 ["name"] = "ModifyTestObject",
-                ["position"] = new JArray { 30.0f, 0.0f, 0.0f }
+                ["position"] = new JArray { 30.0f, 0.0f, 0.0f },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -113,7 +113,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "modify",
                 ["target"] = "NonExistentObject12345",
                 ["searchMethod"] = "by_name",
-                ["position"] = new JArray { 0.0f, 0.0f, 0.0f }
+                ["position"] = new JArray { 0.0f, 0.0f, 0.0f },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -128,7 +128,7 @@ namespace MCPForUnityTests.Editor.Tools
             var p = new JObject
             {
                 ["action"] = "modify",
-                ["position"] = new JArray { 0.0f, 0.0f, 0.0f }
+                ["position"] = new JArray { 0.0f, 0.0f, 0.0f },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -148,7 +148,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "modify",
                 ["target"] = "ModifyTestObject",
-                ["position"] = new JArray { 1.0f, 2.0f, 3.0f }
+                ["position"] = new JArray { 1.0f, 2.0f, 3.0f },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -165,7 +165,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "modify",
                 ["target"] = "ModifyTestObject",
-                ["rotation"] = new JArray { 0.0f, 90.0f, 0.0f }
+                ["rotation"] = new JArray { 0.0f, 90.0f, 0.0f },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -182,7 +182,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "modify",
                 ["target"] = "ModifyTestObject",
-                ["scale"] = new JArray { 2.0f, 3.0f, 4.0f }
+                ["scale"] = new JArray { 2.0f, 3.0f, 4.0f },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -201,7 +201,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = "ModifyTestObject",
                 ["position"] = new JArray { 5.0f, 6.0f, 7.0f },
                 ["rotation"] = new JArray { 45.0f, 45.0f, 45.0f },
-                ["scale"] = new JArray { 0.5f, 0.5f, 0.5f }
+                ["scale"] = new JArray { 0.5f, 0.5f, 0.5f },
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -221,13 +221,13 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // Get instanceID first since name will change
             int instanceID = testObjects[0].GetInstanceIDCompat();
-            
+
             var p = new JObject
             {
                 ["action"] = "modify",
                 ["target"] = instanceID,
                 ["searchMethod"] = "by_id",
-                ["name"] = "RenamedObject"  // Uses 'name' parameter, not 'newName'
+                ["name"] = "RenamedObject", // Uses 'name' parameter, not 'newName'
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -241,13 +241,13 @@ namespace MCPForUnityTests.Editor.Tools
         public void Modify_NameToEmpty_HandlesGracefully()
         {
             int instanceID = testObjects[0].GetInstanceIDCompat();
-            
+
             var p = new JObject
             {
                 ["action"] = "modify",
                 ["target"] = instanceID,
                 ["searchMethod"] = "by_id",
-                ["name"] = ""  // Empty name
+                ["name"] = "", // Empty name
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -268,7 +268,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "modify",
                 ["target"] = "ModifyTestObject",
-                ["parent"] = "NewParent"
+                ["parent"] = "NewParent",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -289,7 +289,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "modify",
                 ["target"] = "ModifyTestObject",
-                ["parent"] = JValue.CreateNull()
+                ["parent"] = JValue.CreateNull(),
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -304,7 +304,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "modify",
                 ["target"] = "ModifyTestObject",
-                ["parent"] = "NonExistentParent12345"
+                ["parent"] = "NonExistentParent12345",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -325,7 +325,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "modify",
                 ["target"] = "ModifyTestObject",
-                ["setActive"] = false
+                ["setActive"] = false,
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -345,7 +345,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "modify",
                 ["target"] = "ModifyTestObject",
-                ["setActive"] = true
+                ["setActive"] = true,
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -366,7 +366,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "modify",
                 ["target"] = "ModifyTestObject",
-                ["tag"] = "MainCamera"
+                ["tag"] = "MainCamera",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -383,7 +383,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "modify",
                 ["target"] = "ModifyTestObject",
-                ["layer"] = "UI"
+                ["layer"] = "UI",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -397,27 +397,30 @@ namespace MCPForUnityTests.Editor.Tools
         public void Modify_NewTag_AutoCreatesTag()
         {
             const string testTag = "AutoModifyTag12345";
-            
+
             // Tags that don't exist are now auto-created
             var p = new JObject
             {
                 ["action"] = "modify",
                 ["target"] = "ModifyTestObject",
-                ["tag"] = testTag
+                ["tag"] = testTag,
             };
 
             var result = ManageGameObject.HandleCommand(p);
             var resultObj = result as JObject ?? JObject.FromObject(result);
-            
+
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
             Assert.AreEqual(testTag, testObjects[0].tag, "Tag should be auto-created and assigned");
-            
+
             // Verify tag was actually added to the tag manager
-            Assert.That(UnityEditorInternal.InternalEditorUtility.tags, Does.Contain(testTag), 
-                "Tag should exist in Unity's tag manager");
-            
+            Assert.That(UnityEditorInternal.InternalEditorUtility.tags, Does.Contain(testTag), "Tag should exist in Unity's tag manager");
+
             // Clean up the created tag
-            try { UnityEditorInternal.InternalEditorUtility.RemoveTag(testTag); } catch { }
+            try
+            {
+                UnityEditorInternal.InternalEditorUtility.RemoveTag(testTag);
+            }
+            catch { }
         }
 
         #endregion
@@ -435,11 +438,11 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "modify",
                 ["target"] = instanceID,
                 ["searchMethod"] = "by_id",
-                ["name"] = "MultiModifiedObject",  // Uses 'name' not 'newName'
+                ["name"] = "MultiModifiedObject", // Uses 'name' not 'newName'
                 ["position"] = new JArray { 100.0f, 200.0f, 300.0f },
                 ["scale"] = new JArray { 5.0f, 5.0f, 5.0f },
                 ["parent"] = "MultiModifyParent",
-                ["tag"] = "MainCamera"
+                ["tag"] = "MainCamera",
             };
 
             var result = ManageGameObject.HandleCommand(p);
@@ -454,4 +457,3 @@ namespace MCPForUnityTests.Editor.Tools
         #endregion
     }
 }
-

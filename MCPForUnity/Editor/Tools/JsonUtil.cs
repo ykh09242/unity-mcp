@@ -12,7 +12,8 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         internal static void CoerceJsonStringParameter(JObject @params, string paramName)
         {
-            if (@params == null || string.IsNullOrEmpty(paramName)) return;
+            if (@params == null || string.IsNullOrEmpty(paramName))
+                return;
             var token = @params[paramName];
             if (token != null && token.Type == JTokenType.String)
             {

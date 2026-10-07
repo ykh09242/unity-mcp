@@ -1,4 +1,5 @@
 """Defines the batch_execute tool for orchestrating multiple Unity MCP commands."""
+
 from __future__ import annotations
 
 import logging
@@ -15,7 +16,10 @@ from services.tools import get_unity_instance_from_context
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 from services.tools.utils import coerce_bool, coerce_int
 from transport.unity_transport import send_with_unity_instance
-from transport.legacy.unity_connection import async_send_command_with_retry, get_authenticated_stdio_generation
+from transport.legacy.unity_connection import (
+    async_send_command_with_retry,
+    get_authenticated_stdio_generation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +47,11 @@ async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str 
     if unity_instance:
         try:
             user_id = await ctx.get_state("user_id")
-            http_session = (await ctx.get_state("unity_session_id") if config.transport_mode.lower() == "http"
-                            else await get_authenticated_stdio_generation(unity_instance))
+            http_session = (
+                await ctx.get_state("unity_session_id")
+                if config.transport_mode.lower() == "http"
+                else await get_authenticated_stdio_generation(unity_instance)
+            )
             if (user_id is None or isinstance(user_id, str)) and (
                 not config.http_remote_hosted or bool(user_id)
             ):
@@ -63,27 +70,45 @@ async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str 
         # The enriched resource also scans external assets and reads project_info;
         # batch validation only needs the editor's settings snapshot.
         value = await send_with_unity_instance(
-            async_send_command_with_retry, unity_instance, "get_editor_state", {},
+            async_send_command_with_retry,
+            unity_instance,
+            "get_editor_state",
+            {},
         )
         return value.model_dump() if hasattr(value, "model_dump") else value
 
     try:
         async with _limit_reads.session(read_key) as shared_read:
             state_resp = await shared_read.fetch(fetch_editor_settings)
-        data = state_resp.data if hasattr(state_resp, "data") else (
-            state_resp.get("data") if isinstance(state_resp, dict) else None
+        data = (
+            state_resp.data
+            if hasattr(state_resp, "data")
+            else (state_resp.get("data") if isinstance(state_resp, dict) else None)
         )
         if isinstance(data, dict):
             settings = data.get("settings")
             if isinstance(settings, dict):
                 limit = settings.get("batch_execute_max_commands")
                 if type(limit) is int and 1 <= limit <= ABSOLUTE_MAX_COMMANDS_PER_BATCH:
-                    identity_current = (config.transport_mode.lower() == "http"
-                                        or cache_key is not None and cache_key[3] == await get_authenticated_stdio_generation(unity_instance))
-                    if cache_key is not None and generation == _limit_cache_generation and identity_current:
-                        if cache_key not in _cached_max_commands and len(_cached_max_commands) >= _LIMIT_CACHE_MAX_ENTRIES:
+                    identity_current = (
+                        config.transport_mode.lower() == "http"
+                        or cache_key is not None
+                        and cache_key[3] == await get_authenticated_stdio_generation(unity_instance)
+                    )
+                    if (
+                        cache_key is not None
+                        and generation == _limit_cache_generation
+                        and identity_current
+                    ):
+                        if (
+                            cache_key not in _cached_max_commands
+                            and len(_cached_max_commands) >= _LIMIT_CACHE_MAX_ENTRIES
+                        ):
                             _cached_max_commands.pop(next(iter(_cached_max_commands)))
-                        _cached_max_commands[cache_key] = (limit, time.monotonic() + _LIMIT_CACHE_TTL_SECONDS)
+                        _cached_max_commands[cache_key] = (
+                            limit,
+                            time.monotonic() + _LIMIT_CACHE_TTL_SECONDS,
+                        )
                     return limit
     except SharedReadCapacityError:
         raise
@@ -118,20 +143,18 @@ def invalidate_cached_max_commands() -> None:
 async def batch_execute(
     ctx: Context,
     commands: Annotated[list[dict[str, Any]], "List of commands with 'tool' and 'params' keys."],
-    parallel: Annotated[bool | None,
-                        "Attempt to run read-only commands in parallel"] = None,
-    fail_fast: Annotated[bool | None,
-                         "Stop processing after the first failure"] = None,
-    max_parallelism: Annotated[int | None,
-                               "Hint for the maximum number of parallel workers"] = None,
+    parallel: Annotated[bool | None, "Attempt to run read-only commands in parallel"] = None,
+    fail_fast: Annotated[bool | None, "Stop processing after the first failure"] = None,
+    max_parallelism: Annotated[
+        int | None, "Hint for the maximum number of parallel workers"
+    ] = None,
 ) -> dict[str, Any]:
     """Proxy the batch_execute tool to the Unity Editor transporter."""
     parallel = coerce_bool(parallel)
     fail_fast = coerce_bool(fail_fast)
     max_parallelism = coerce_int(max_parallelism)
     if not isinstance(commands, list) or not commands:
-        raise ValueError(
-            "'commands' must be a non-empty list of command specifications")
+        raise ValueError("'commands' must be a non-empty list of command specifications")
 
     if len(commands) > ABSOLUTE_MAX_COMMANDS_PER_BATCH:
         raise ValueError(
@@ -142,22 +165,21 @@ async def batch_execute(
     for index, command in enumerate(commands):
         if not isinstance(command, dict):
             raise ValueError(
-                f"Command at index {index} must be an object with 'tool' and 'params' keys")
+                f"Command at index {index} must be an object with 'tool' and 'params' keys"
+            )
 
         tool_name = command.get("tool")
         params = command.get("params", {})
 
         if not isinstance(tool_name, str) or not tool_name.strip():
-            raise ValueError(
-                f"Command at index {index} is missing a valid 'tool' name")
+            raise ValueError(f"Command at index {index} is missing a valid 'tool' name")
         if tool_name.casefold() == "batch_execute":
             raise ValueError("Nested batch_execute commands are not allowed")
 
         if params is None:
             params = {}
         if not isinstance(params, dict):
-            raise ValueError(
-                f"Command '{tool_name}' must specify parameters as an object/dict")
+            raise ValueError(f"Command '{tool_name}' must specify parameters as an object/dict")
 
         if "unity_instance" in params:
             raise ValueError(
@@ -166,10 +188,12 @@ async def batch_execute(
                 "Set unity_instance on the outer batch_execute call to route the entire batch."
             )
 
-        normalized_commands.append({
-            "tool": tool_name,
-            "params": params,
-        })
+        normalized_commands.append(
+            {
+                "tool": tool_name,
+                "params": params,
+            }
+        )
 
     unity_instance = await get_unity_instance_from_context(ctx)
     try:

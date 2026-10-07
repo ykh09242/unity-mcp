@@ -41,11 +41,7 @@ def open_stage(path: str):
 
 
 @prefab.command("close")
-@click.option(
-    "--save", "-s",
-    is_flag=True,
-    help="Save the prefab before closing."
-)
+@click.option("--save", "-s", is_flag=True, help="Save the prefab before closing.")
 @handle_unity_errors
 def close_stage(save: bool):
     """Close the current prefab stage.
@@ -92,11 +88,7 @@ def save_stage():
 
 @prefab.command("info")
 @click.argument("path")
-@click.option(
-    "--compact", "-c",
-    is_flag=True,
-    help="Show compact output (key values only)."
-)
+@click.option("--compact", "-c", is_flag=True, help="Show compact output (key values only).")
 @handle_unity_errors
 def info(path: str, compact: bool):
     """Get information about a prefab asset.
@@ -116,16 +108,20 @@ def info(path: str, compact: bool):
     result = run_command("manage_prefabs", params, config)
     # Get the actual response data from the wrapped result structure
     response_data = result.get("result", result)
-    if config.format != "json" and compact and response_data.get("success") and response_data.get("data"):
+    if (
+        config.format != "json"
+        and compact
+        and response_data.get("success")
+        and response_data.get("data")
+    ):
         data = response_data["data"]
         click.echo(f"Prefab: {data.get('assetPath', path)}")
         click.echo(f"  Type: {data.get('prefabType', 'Unknown')}")
         click.echo(f"  Root: {data.get('rootObjectName', 'N/A')}")
         click.echo(f"  GUID: {data.get('guid', 'N/A')}")
-        click.echo(
-            f"  Components: {len(data.get('rootComponentTypes', []))}")
+        click.echo(f"  Components: {len(data.get('rootComponentTypes', []))}")
         click.echo(f"  Children: {data.get('childCount', 0)}")
-        if data.get('isVariant'):
+        if data.get("isVariant"):
             click.echo(f"  Variant of: {data.get('parentPrefab', 'N/A')}")
     else:
         click.echo(format_output(result, config.format))
@@ -133,16 +129,8 @@ def info(path: str, compact: bool):
 
 @prefab.command("hierarchy")
 @click.argument("path")
-@click.option(
-    "--compact", "-c",
-    is_flag=True,
-    help="Show compact output (names and paths only)."
-)
-@click.option(
-    "--show-prefab-info", "-p",
-    is_flag=True,
-    help="Show prefab nesting information."
-)
+@click.option("--compact", "-c", is_flag=True, help="Show compact output (names and paths only).")
+@click.option("--show-prefab-info", "-p", is_flag=True, help="Show prefab nesting information.")
 @handle_unity_errors
 def hierarchy(path: str, compact: bool, show_prefab_info: bool):
     """Get the hierarchical structure of a prefab.
@@ -163,7 +151,12 @@ def hierarchy(path: str, compact: bool, show_prefab_info: bool):
     result = run_command("manage_prefabs", params, config)
     # Get the actual response data from the wrapped result structure
     response_data = result.get("result", result)
-    if config.format != "json" and compact and response_data.get("success") and response_data.get("data"):
+    if (
+        config.format != "json"
+        and compact
+        and response_data.get("success")
+        and response_data.get("data")
+    ):
         data = response_data["data"]
         items = data.get("items", [])
         for item in items:
@@ -196,23 +189,19 @@ def hierarchy(path: str, compact: bool, show_prefab_info: bool):
 @prefab.command("create")
 @click.argument("target")
 @click.argument("path")
+@click.option("--overwrite", is_flag=True, help="Overwrite existing prefab at path.")
 @click.option(
-    "--overwrite",
-    is_flag=True,
-    help="Overwrite existing prefab at path."
-)
-@click.option(
-    "--include-inactive",
-    is_flag=True,
-    help="Include inactive objects when finding target."
+    "--include-inactive", is_flag=True, help="Include inactive objects when finding target."
 )
 @click.option(
     "--unlink-if-instance",
     is_flag=True,
-    help="Unlink from existing prefab before creating new one."
+    help="Unlink from existing prefab before creating new one.",
 )
 @handle_unity_errors
-def create(target: str, path: str, overwrite: bool, include_inactive: bool, unlink_if_instance: bool):
+def create(
+    target: str, path: str, overwrite: bool, include_inactive: bool, unlink_if_instance: bool
+):
     """Create a prefab from a scene GameObject.
 
     \b
@@ -262,10 +251,12 @@ def _parse_property(prop_str: str) -> tuple[str, str, Any]:
         raise click.BadParameter("Must be 'Component.prop=value' format")
     component, prop = comp_prop.rsplit(".", 1)
     if not component.strip() or not prop.strip():
-        raise click.BadParameter(f"Component and property must be non-empty in '{comp_prop}', expected 'Component.prop=value'")
+        raise click.BadParameter(
+            f"Component and property must be non-empty in '{comp_prop}', expected 'Component.prop=value'"
+        )
 
     val_str = val_str.strip()
-    
+
     # Parse booleans
     if val_str.lower() == "true":
         parsed_value: Any = True
@@ -273,7 +264,7 @@ def _parse_property(prop_str: str) -> tuple[str, str, Any]:
         parsed_value = False
     else:
         parsed_value = parse_value_safe(val_str)
-    
+
     return component.strip(), prop.strip(), parsed_value
 
 
@@ -290,16 +281,31 @@ def _parse_property(prop_str: str) -> tuple[str, str, Any]:
 @click.option("--parent", help="New parent object name/path")
 @click.option("--add-component", multiple=True, help="Component type to add (repeatable)")
 @click.option("--remove-component", multiple=True, help="Component type to remove (repeatable)")
-@click.option("--set-property", multiple=True, help="Property as 'Component.prop=value' (repeatable)")
+@click.option(
+    "--set-property", multiple=True, help="Property as 'Component.prop=value' (repeatable)"
+)
 @click.option("--delete-child", multiple=True, help="Child name/path to remove (repeatable)")
 @click.option("--create-child", help="JSON object for child creation")
 @handle_unity_errors
-def modify(path: str, target: Optional[str], position: Optional[str], rotation: Optional[str],
-           scale: Optional[str], name: Optional[str], tag: Optional[str], layer: Optional[str],
-           active: Optional[bool], parent: Optional[str], add_component: tuple, remove_component: tuple,
-           set_property: tuple, delete_child: tuple, create_child: Optional[str]):
+def modify(
+    path: str,
+    target: Optional[str],
+    position: Optional[str],
+    rotation: Optional[str],
+    scale: Optional[str],
+    name: Optional[str],
+    tag: Optional[str],
+    layer: Optional[str],
+    active: Optional[bool],
+    parent: Optional[str],
+    add_component: tuple,
+    remove_component: tuple,
+    set_property: tuple,
+    delete_child: tuple,
+    create_child: Optional[str],
+):
     """Modify a prefab's contents (headless, no UI).
-    
+
     \b
     Examples:
         unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --delete-child Child1
@@ -353,7 +359,9 @@ def modify(path: str, target: Optional[str], position: Optional[str], rotation: 
         except json.JSONDecodeError as e:
             raise click.BadParameter(f"Invalid JSON for --create-child: {e}") from e
         if not isinstance(parsed, dict):
-            raise click.BadParameter(f"--create-child must be a JSON object, got {type(parsed).__name__}")
+            raise click.BadParameter(
+                f"--create-child must be a JSON object, got {type(parsed).__name__}"
+            )
         params["createChild"] = parsed
 
     result = run_command("manage_prefabs", params, config)

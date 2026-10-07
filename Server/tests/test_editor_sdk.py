@@ -1,4 +1,5 @@
 """Editor control parameters and native result shapes through the actual MCP SDK."""
+
 import os
 import subprocess
 import sys
@@ -6,7 +7,7 @@ import textwrap
 
 
 def test_editor_controls_at_actual_sdk_boundary():
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import asyncio, importlib
         from fastmcp import FastMCP, Client
         from core.logging_decorator import log_execution
@@ -57,8 +58,13 @@ def test_editor_controls_at_actual_sdk_boundary():
                     assert len(sent)==before
             print("real SDK editor control contracts passed in both protocol modes")
         asyncio.run(main())
-    ''')
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30,
-                            env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"})
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "real SDK editor control contracts passed" in result.stdout

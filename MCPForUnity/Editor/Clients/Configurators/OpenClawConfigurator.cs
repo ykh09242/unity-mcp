@@ -23,21 +23,20 @@ namespace MCPForUnity.Editor.Clients.Configurators
         private const string StdioTransportName = "stdio";
         private const string StdioUrl = "stdio://local";
 
-        public OpenClawConfigurator() : base(new McpClient
-        {
-            name = "OpenClaw",
-            windowsConfigPath = BuildConfigPath(),
-            macConfigPath = BuildConfigPath(),
-            linuxConfigPath = BuildConfigPath()
-        })
-        { }
+        public OpenClawConfigurator()
+            : base(
+                new McpClient
+                {
+                    name = "OpenClaw",
+                    windowsConfigPath = BuildConfigPath(),
+                    macConfigPath = BuildConfigPath(),
+                    linuxConfigPath = BuildConfigPath(),
+                }
+            ) { }
 
         private static string BuildConfigPath()
         {
-            return Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".openclaw",
-                "openclaw.json");
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".openclaw", "openclaw.json");
         }
 
         public override string GetConfigPath() => CurrentOsPath();
@@ -115,8 +114,8 @@ namespace MCPForUnity.Editor.Clients.Configurators
             pluginEntry["enabled"] = true;
 
             JObject pluginConfig = EnsureConfigObject(pluginEntry, "config");
-            pluginConfig.Remove("timeout");  // removed in openclaw-mcp-bridge v2+
-            pluginConfig.Remove("retries");  // removed in openclaw-mcp-bridge v2+
+            pluginConfig.Remove("timeout"); // removed in openclaw-mcp-bridge v2+
+            pluginConfig.Remove("retries"); // removed in openclaw-mcp-bridge v2+
             pluginConfig["servers"] = UpsertUnityServer(pluginConfig["servers"]);
 
             McpConfigurationHelper.WriteAtomicFile(path, root.ToString(Formatting.Indented));
@@ -149,30 +148,25 @@ namespace MCPForUnity.Editor.Clients.Configurators
                         [PluginName] = new JObject
                         {
                             ["enabled"] = true,
-                            ["config"] = new JObject
-                            {
-                                ["servers"] = new JObject
-                                {
-                                    [ServerName] = BuildUnityServerEntry()
-                                }
-                            }
-                        }
-                    }
-                }
+                            ["config"] = new JObject { ["servers"] = new JObject { [ServerName] = BuildUnityServerEntry() } },
+                        },
+                    },
+                },
             };
 
             return snippet.ToString(Formatting.Indented);
         }
 
-        public override IList<string> GetInstallationSteps() => new List<string>
-        {
-            "Install OpenClaw",
-            "Install the bridge plugin: npm install -g openclaw-mcp-bridge (or pnpm add -g openclaw-mcp-bridge)",
-            "In MCP for Unity, choose OpenClaw and click Configure",
-            "OpenClaw uses the currently selected MCP for Unity transport (HTTP or stdio)",
-            "OpenClaw exposes a proxy tool such as unityMCP__call for Unity MCP access",
-            "Restart OpenClaw if the plugin does not hot-reload the new config"
-        };
+        public override IList<string> GetInstallationSteps() =>
+            new List<string>
+            {
+                "Install OpenClaw",
+                "Install the bridge plugin: npm install -g openclaw-mcp-bridge (or pnpm add -g openclaw-mcp-bridge)",
+                "In MCP for Unity, choose OpenClaw and click Configure",
+                "OpenClaw uses the currently selected MCP for Unity transport (HTTP or stdio)",
+                "OpenClaw exposes a proxy tool such as unityMCP__call for Unity MCP access",
+                "Restart OpenClaw if the plugin does not hot-reload the new config",
+            };
 
         private JObject LoadConfig(string path)
         {
@@ -188,8 +182,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
             }
             catch (JsonException ex)
             {
-                throw new InvalidOperationException(
-                    $"OpenClaw config contains non-JSON content and cannot be safely auto-edited: {ex.Message}");
+                throw new InvalidOperationException($"OpenClaw config contains non-JSON content and cannot be safely auto-edited: {ex.Message}");
             }
         }
 
@@ -311,7 +304,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
                     ["args"] = args,
                     ["toolPrefix"] = ServerName,
                     ["requestTimeoutMs"] = 60000,
-                    ["connectTimeoutMs"] = 15000
+                    ["connectTimeoutMs"] = 15000,
                 };
             }
 
@@ -322,7 +315,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 ["headers"] = JObject.FromObject(HttpEndpointUtility.GetAuthHeaders()),
                 ["transport"] = HttpTransportName,
                 ["toolPrefix"] = ServerName,
-                ["requestTimeoutMs"] = 30000
+                ["requestTimeoutMs"] = 30000,
             };
         }
 
@@ -353,8 +346,11 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 string[] args = (server["args"] as JArray)?.ToObject<string[]>();
                 string configuredSource = McpConfigurationHelper.ExtractUvxUrl(args);
                 string expectedSource = GetExpectedPackageSourceForValidation();
-                if (!string.IsNullOrEmpty(configuredSource) && !string.IsNullOrEmpty(expectedSource) &&
-                    !McpConfigurationHelper.PathsEqual(configuredSource, expectedSource))
+                if (
+                    !string.IsNullOrEmpty(configuredSource)
+                    && !string.IsNullOrEmpty(expectedSource)
+                    && !McpConfigurationHelper.PathsEqual(configuredSource, expectedSource)
+                )
                 {
                     return false;
                 }
@@ -362,23 +358,28 @@ namespace MCPForUnity.Editor.Clients.Configurators
             else
             {
                 string configuredUrl = server["url"]?.ToString();
-                if (string.IsNullOrWhiteSpace(configuredUrl) ||
-                    (!UrlsEqual(configuredUrl, HttpEndpointUtility.GetLocalMcpRpcUrl()) &&
-                     !UrlsEqual(configuredUrl, HttpEndpointUtility.GetRemoteMcpRpcUrl())))
+                if (
+                    string.IsNullOrWhiteSpace(configuredUrl)
+                    || (
+                        !UrlsEqual(configuredUrl, HttpEndpointUtility.GetLocalMcpRpcUrl())
+                        && !UrlsEqual(configuredUrl, HttpEndpointUtility.GetRemoteMcpRpcUrl())
+                    )
+                )
                 {
                     return false;
                 }
                 var expectedHeaders = HttpEndpointUtility.GetAuthHeaders();
-                if ((!HttpEndpointUtility.IsRemoteScope() && !expectedHeaders.ContainsKey(Constants.AuthConstants.LocalTokenHeader))
-                    || !ConfigJsonBuilder.TryValidateAuthHeaders(server["headers"], expectedHeaders, out _))
+                if (
+                    (!HttpEndpointUtility.IsRemoteScope() && !expectedHeaders.ContainsKey(Constants.AuthConstants.LocalTokenHeader))
+                    || !ConfigJsonBuilder.TryValidateAuthHeaders(server["headers"], expectedHeaders, out _)
+                )
                 {
                     return false;
                 }
             }
 
             string toolPrefix = server["toolPrefix"]?.ToString();
-            return string.IsNullOrWhiteSpace(toolPrefix) ||
-                   string.Equals(toolPrefix, ServerName, StringComparison.OrdinalIgnoreCase);
+            return string.IsNullOrWhiteSpace(toolPrefix) || string.Equals(toolPrefix, ServerName, StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsEnabled(JObject entry)
@@ -392,8 +393,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
             string configuredTransport = server?["transport"]?.ToString();
             string configuredUrl = server?["url"]?.ToString();
 
-            if (string.Equals(configuredTransport, StdioTransportName, StringComparison.OrdinalIgnoreCase) ||
-                UrlsEqual(configuredUrl, StdioUrl))
+            if (string.Equals(configuredTransport, StdioTransportName, StringComparison.OrdinalIgnoreCase) || UrlsEqual(configuredUrl, StdioUrl))
             {
                 return ConfiguredTransport.Stdio;
             }

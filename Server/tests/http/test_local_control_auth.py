@@ -20,8 +20,15 @@ def local_client(monkeypatch):
 
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "local_auth_token", "test-launch-token")
-    for name in ("_connections", "_pending", "_ping_tasks", "_last_pong", "_admitted", "_retained_results"):
-        monkeypatch.setattr(PluginHub, name, ChargeLedger() if name == '_retained_results' else {})
+    for name in (
+        "_connections",
+        "_pending",
+        "_ping_tasks",
+        "_last_pong",
+        "_admitted",
+        "_retained_results",
+    ):
+        monkeypatch.setattr(PluginHub, name, ChargeLedger() if name == "_retained_results" else {})
     for name in ("_registry", "_lock", "_loop", "_mcp"):
         monkeypatch.setattr(PluginHub, name, None)
     app = create_mcp_server(False).http_app()
@@ -40,9 +47,7 @@ def local_client(monkeypatch):
         yield client
 
 
-def test_command_without_token_is_rejected_before_body_parsing(
-    local_client, monkeypatch
-):
+def test_command_without_token_is_rejected_before_body_parsing(local_client, monkeypatch):
     # Given an unauthenticated request whose body cannot be parsed as JSON.
     sessions = AsyncMock()
     monkeypatch.setattr(PluginHub, "get_sessions", sessions)
@@ -140,9 +145,7 @@ def test_non_json_command_is_denied_before_parsing(local_client, content_type):
         {"X-Unity-MCP-Token": "test-launch-token", "Sec-Fetch-Site": "same-origin"},
     ],
 )
-def test_plugin_handshake_rejects_missing_stale_or_browser_credentials(
-    local_client, headers
-):
+def test_plugin_handshake_rejects_missing_stale_or_browser_credentials(local_client, headers):
     with pytest.raises(WebSocketDisconnect):
         with local_client.websocket_connect("/hub/plugin", headers=headers):
             pass
@@ -233,8 +236,12 @@ def test_explicit_host_policy_preserves_local_authentication(monkeypatch):
         allowed_origins=["https://trusted.example"],
     )
     payload = {
-        "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-03-26", "capabilities": {},
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
             "clientInfo": {"name": "host-policy-regression", "version": "1"},
         },
     }
@@ -247,10 +254,19 @@ def test_explicit_host_policy_preserves_local_authentication(monkeypatch):
         assert response.status_code == 200, response.text
         assert "result" in response.json()
         assert client.post("/mcp", json=payload).status_code == 401
-        assert client.post(
-            "/mcp", headers={**headers, "Host": "untrusted.example"}, json=payload,
-        ).status_code == 421
-        assert client.post(
-            "/mcp", headers={**headers, "Origin": "https://trusted.example"},
-            json=payload,
-        ).status_code == 403
+        assert (
+            client.post(
+                "/mcp",
+                headers={**headers, "Host": "untrusted.example"},
+                json=payload,
+            ).status_code
+            == 421
+        )
+        assert (
+            client.post(
+                "/mcp",
+                headers={**headers, "Origin": "https://trusted.example"},
+                json=payload,
+            ).status_code
+            == 403
+        )

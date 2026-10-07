@@ -44,7 +44,9 @@ def test_write_permissions_are_limited_to_jobs_that_need_them() -> None:
     actual = {}
     for path in WORKFLOWS:
         for name, job in workflow(path.name)["jobs"].items():
-            writes = {scope for scope, access in job.get("permissions", {}).items() if access == "write"}
+            writes = {
+                scope for scope, access in job.get("permissions", {}).items() if access == "write"
+            }
             if writes:
                 actual[path.name, name] = writes
     assert actual == expected

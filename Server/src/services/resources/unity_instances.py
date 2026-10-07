@@ -1,6 +1,7 @@
 """
 Resource to list all available Unity Editor instances.
 """
+
 import logging
 from typing import Any
 
@@ -16,7 +17,7 @@ logger = logging.getLogger("mcp-for-unity-server")
 @mcp_for_unity_resource(
     uri="mcpforunity://instances",
     name="unity_instances",
-    description="Lists all running Unity Editor instances with their details.\n\nURI: mcpforunity://instances"
+    description="Lists all running Unity Editor instances with their details.\n\nURI: mcpforunity://instances",
 )
 async def unity_instances(ctx: Context) -> dict[str, Any]:
     """
@@ -43,8 +44,7 @@ async def unity_instances(ctx: Context) -> dict[str, Any]:
         if transport == "http":
             # HTTP/WebSocket transport: query PluginHub
             # In remote-hosted mode, filter sessions by user_id
-            user_id = (await ctx.get_state(
-                "user_id")) if config.http_remote_hosted else None
+            user_id = (await ctx.get_state("user_id")) if config.http_remote_hosted else None
             sessions_data = await PluginHub.get_sessions(user_id=user_id)
             sessions = sessions_data.sessions
 
@@ -58,23 +58,23 @@ async def unity_instances(ctx: Context) -> dict[str, Any]:
                         "PluginHub session missing required 'project' or 'hash' fields."
                     )
 
-                instances.append({
-                    "id": f"{project}@{project_hash}",
-                    "name": project,
-                    "hash": project_hash,
-                    "unity_version": session_info.unity_version,
-                    "connected_at": session_info.connected_at,
-                    "session_id": session_id,
-                })
+                instances.append(
+                    {
+                        "id": f"{project}@{project_hash}",
+                        "name": project,
+                        "hash": project_hash,
+                        "unity_version": session_info.unity_version,
+                        "connected_at": session_info.connected_at,
+                        "session_id": session_id,
+                    }
+                )
 
             # Check for duplicate project names
             name_counts = {}
             for inst in instances:
-                name_counts[inst["name"]] = name_counts.get(
-                    inst["name"], 0) + 1
+                name_counts[inst["name"]] = name_counts.get(inst["name"], 0) + 1
 
-            duplicates = [name for name,
-                          count in name_counts.items() if count > 1]
+            duplicates = [name for name, count in name_counts.items() if count > 1]
 
             result = {
                 "success": True,
@@ -100,8 +100,7 @@ async def unity_instances(ctx: Context) -> dict[str, Any]:
             for inst in instances:
                 name_counts[inst.name] = name_counts.get(inst.name, 0) + 1
 
-            duplicates = [name for name,
-                          count in name_counts.items() if count > 1]
+            duplicates = [name for name, count in name_counts.items() if count > 1]
 
             result = {
                 "success": True,
@@ -124,5 +123,5 @@ async def unity_instances(ctx: Context) -> dict[str, Any]:
             "success": False,
             "error": f"Failed to list Unity instances: {str(e)}",
             "instance_count": 0,
-            "instances": []
+            "instances": [],
         }

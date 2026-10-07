@@ -25,8 +25,7 @@ def list_instances():
     config = get_config()
 
     result = run_list_instances(config)
-    instances = result.get("instances", []) if isinstance(
-        result, dict) else []
+    instances = result.get("instances", []) if isinstance(result, dict) else []
 
     if config.format != "text":
         click.echo(format_output(result if config.format == "json" else instances, config.format))
@@ -63,7 +62,7 @@ def set_instance(instance_id: str):
     result = {
         "success": False,
         "error": "'instance set' cannot persist a target across stateless CLI requests. "
-                 "Use 'unity-mcp --instance <id> <command>' or set UNITY_MCP_INSTANCE in your shell.",
+        "Use 'unity-mcp --instance <id> <command>' or set UNITY_MCP_INSTANCE in your shell.",
         "data": {"requested_instance": instance_id},
     }
     output = result
@@ -91,7 +90,11 @@ def current_instance():
 
     if config.format != "text":
         data = {"instance": config.unity_instance}
-        click.echo(format_output({"success": True, "data": data} if config.format == "json" else data, config.format))
+        click.echo(
+            format_output(
+                {"success": True, "data": data} if config.format == "json" else data, config.format
+            )
+        )
         return
 
     # The current instance is typically shown in telemetry or needs to be tracked
@@ -99,7 +102,6 @@ def current_instance():
     if config.unity_instance:
         click.echo(f"Configured instance: {config.unity_instance}")
     else:
-        print_info(
-            "No instance explicitly set. Using default (auto-select single instance).")
+        print_info("No instance explicitly set. Using default (auto-select single instance).")
         print_info("Use 'unity-mcp instance list' to see available instances.")
         print_info("Use --instance <id> or UNITY_MCP_INSTANCE to target commands.")

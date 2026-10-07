@@ -22,19 +22,29 @@ import unity_ci
 BASE = "unityci/base:ubuntu-3.2.2@sha256:" + "a" * 64
 STABLE_IMAGE = "unityci/editor:ubuntu-6000.3.25f1-base-3@sha256:" + "b" * 64
 STABLE_TEST_IMAGE = "unityci/editor:ubuntu-6000.3.25f1-linux-il2cpp-3@sha256:" + "c" * 64
-BETA_URL = ("https://download.unity3d.com/download_unity/d6546dc2b3a9/"
-            "LinuxEditorInstaller/Unity-6000.7.0b2.tar.xz")
+BETA_URL = (
+    "https://download.unity3d.com/download_unity/d6546dc2b3a9/"
+    "LinuxEditorInstaller/Unity-6000.7.0b2.tar.xz"
+)
 
 
 @pytest.fixture
 def metadata():
     return {
-        "defaultVersion": "6000.3.25f1", "previewBaseImage": BASE,
+        "defaultVersion": "6000.3.25f1",
+        "previewBaseImage": BASE,
         "versions": [
             {"id": "6000.3.25f1", "role": "lts", "channel": "lts", "image": STABLE_IMAGE},
-            {"id": "6000.7.0b2", "role": "preview", "channel": "beta",
-             "editorDownload": {"url": BETA_URL, "integrity": "md5-myMEkqj41IpM3/OuO3PDzQ==",
-                                "size": 4076709268}},
+            {
+                "id": "6000.7.0b2",
+                "role": "preview",
+                "channel": "beta",
+                "editorDownload": {
+                    "url": BETA_URL,
+                    "integrity": "md5-myMEkqj41IpM3/OuO3PDzQ==",
+                    "size": 4076709268,
+                },
+            },
         ],
     }
 
@@ -44,12 +54,20 @@ def test_metadata(metadata):
     metadata["versions"][0]["testImage"] = STABLE_TEST_IMAGE
     prefix = BETA_URL.split("/LinuxEditorInstaller/")[0] + "/LinuxEditorTargetInstaller/"
     metadata["versions"][1]["testModules"] = [
-        {"name": "linux-il2cpp", "url": prefix + "UnitySetup-Linux-IL2CPP-Support-for-Editor-6000.7.0b2.tar.xz",
-         "integrity": "md5-Uz0k9an3hIYx+/w8w1weYQ==", "size": 64521976,
-         "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"},
-        {"name": "linux-server", "url": prefix + "UnitySetup-Linux-Server-Support-for-Editor-6000.7.0b2.tar.xz",
-         "integrity": "md5-uWQ0d0nI3uPzI5tKEY440Q==", "size": 175632308,
-         "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"},
+        {
+            "name": "linux-il2cpp",
+            "url": prefix + "UnitySetup-Linux-IL2CPP-Support-for-Editor-6000.7.0b2.tar.xz",
+            "integrity": "md5-Uz0k9an3hIYx+/w8w1weYQ==",
+            "size": 64521976,
+            "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport",
+        },
+        {
+            "name": "linux-server",
+            "url": prefix + "UnitySetup-Linux-Server-Support-for-Editor-6000.7.0b2.tar.xz",
+            "integrity": "md5-uWQ0d0nI3uPzI5tKEY440Q==",
+            "size": 175632308,
+            "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport",
+        },
     ]
     return metadata
 
@@ -64,7 +82,9 @@ def test_real_matrix_cli_emits_every_row_in_manifest_order(tmp_path, metadata):
     path = write_manifest(tmp_path, metadata)
     result = subprocess.run(
         [sys.executable, str(Path(unity_ci.__file__)), "matrix", "--manifest", str(path)],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == [
@@ -87,38 +107,44 @@ def test_rejects_invalid_manifest_structure(tmp_path, metadata, problem):
         unity_ci.load_manifest(write_manifest(tmp_path, metadata))
 
 
-@pytest.mark.parametrize("changes", [
-    {"id": "6000.3.25f1;echo unsafe"},
-    {"id": "\uff16\uff10\uff10\uff10.3.25f1"},
-    {"role": ""},
-    {"channel": "unknown"},
-    {"channel": []},
-    {"channel": "beta"},
-    {"image": "unityci/editor:ubuntu-6000.3.25f1-base-3"},
-    {"image": "unityci/editor:ubuntu-6000.3.26f1-base-3@sha256:" + "b" * 64},
-    {"image": "attacker/editor:ubuntu-6000.3.25f1-base-3@sha256:" + "b" * 64},
-    {"image": STABLE_IMAGE + "\nimage=unsafe"},
-    {"editorDownload": {"url": BETA_URL}},
-    {"image": None},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"id": "6000.3.25f1;echo unsafe"},
+        {"id": "\uff16\uff10\uff10\uff10.3.25f1"},
+        {"role": ""},
+        {"channel": "unknown"},
+        {"channel": []},
+        {"channel": "beta"},
+        {"image": "unityci/editor:ubuntu-6000.3.25f1-base-3"},
+        {"image": "unityci/editor:ubuntu-6000.3.26f1-base-3@sha256:" + "b" * 64},
+        {"image": "attacker/editor:ubuntu-6000.3.25f1-base-3@sha256:" + "b" * 64},
+        {"image": STABLE_IMAGE + "\nimage=unsafe"},
+        {"editorDownload": {"url": BETA_URL}},
+        {"image": None},
+    ],
+)
 def test_rejects_invalid_stable_rows(tmp_path, metadata, changes):
     metadata["versions"][0].update(changes)
     with pytest.raises(ValueError):
         unity_ci.load_manifest(write_manifest(tmp_path, metadata))
 
 
-@pytest.mark.parametrize("changes", [
-    {"url": BETA_URL.replace("download.unity3d.com", "example.com")},
-    {"url": BETA_URL.replace("6000.7.0b2", "6000.7.0a6")},
-    {"url": BETA_URL + "?redirect=unsafe"},
-    {"url": BETA_URL.replace("https:", "http:")},
-    {"integrity": "sha256-myMEkqj41IpM3/OuO3PDzQ=="},
-    {"integrity": "md5-aGVsbG8="},
-    {"integrity": "md5-not base64"},
-    {"size": 0},
-    {"size": -1},
-    {"size": True},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"url": BETA_URL.replace("download.unity3d.com", "example.com")},
+        {"url": BETA_URL.replace("6000.7.0b2", "6000.7.0a6")},
+        {"url": BETA_URL + "?redirect=unsafe"},
+        {"url": BETA_URL.replace("https:", "http:")},
+        {"integrity": "sha256-myMEkqj41IpM3/OuO3PDzQ=="},
+        {"integrity": "md5-aGVsbG8="},
+        {"integrity": "md5-not base64"},
+        {"size": 0},
+        {"size": -1},
+        {"size": True},
+    ],
+)
 def test_rejects_invalid_official_downloads(tmp_path, metadata, changes):
     metadata["versions"][1]["editorDownload"].update(changes)
     with pytest.raises(ValueError):
@@ -194,14 +220,18 @@ def test_failed_prepare_cli_has_no_stdout_or_output(tmp_path, metadata, monkeypa
     path = write_manifest(tmp_path, metadata)
     output = tmp_path / "github-output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    monkeypatch.setattr(subprocess, "run", Mock(side_effect=subprocess.CalledProcessError(1, ["docker"])))
+    monkeypatch.setattr(
+        subprocess, "run", Mock(side_effect=subprocess.CalledProcessError(1, ["docker"]))
+    )
     assert unity_ci.main(["prepare", "6000.7.0b2", "--manifest", str(path)]) == 1
     result = capsys.readouterr()
     assert result.out == "" and "failed" in result.err
     assert not output.exists()
 
 
-def test_stable_tests_prepare_uses_distinct_pinned_runtime_image(tmp_path, test_metadata, monkeypatch):
+def test_stable_tests_prepare_uses_distinct_pinned_runtime_image(
+    tmp_path, test_metadata, monkeypatch
+):
     docker = Mock(side_effect=AssertionError("public test image must not build"))
     monkeypatch.setattr(subprocess, "run", docker)
     manifest = unity_ci.load_manifest(write_manifest(tmp_path, test_metadata))
@@ -211,7 +241,9 @@ def test_stable_tests_prepare_uses_distinct_pinned_runtime_image(tmp_path, test_
 
 
 @pytest.mark.parametrize("purpose", ["compile", "tests"])
-def test_preview_purpose_controls_tag_and_verified_module_arguments(tmp_path, test_metadata, monkeypatch, purpose):
+def test_preview_purpose_controls_tag_and_verified_module_arguments(
+    tmp_path, test_metadata, monkeypatch, purpose
+):
     docker = Mock()
     monkeypatch.setattr(subprocess, "run", docker)
     manifest = unity_ci.load_manifest(write_manifest(tmp_path, test_metadata))
@@ -231,19 +263,31 @@ def test_preview_purpose_controls_tag_and_verified_module_arguments(tmp_path, te
         assert "SERVER_SIZE=175632308" in args
 
 
-@pytest.mark.parametrize("image", [STABLE_IMAGE, STABLE_TEST_IMAGE.replace("6000.3.25f1", "6000.3.26f1"),
-                                   STABLE_TEST_IMAGE.split("@")[0], "example.com/editor@sha256:" + "c" * 64])
+@pytest.mark.parametrize(
+    "image",
+    [
+        STABLE_IMAGE,
+        STABLE_TEST_IMAGE.replace("6000.3.25f1", "6000.3.26f1"),
+        STABLE_TEST_IMAGE.split("@")[0],
+        "example.com/editor@sha256:" + "c" * 64,
+    ],
+)
 def test_rejects_invalid_test_image(tmp_path, test_metadata, image):
     test_metadata["versions"][0]["testImage"] = image
     with pytest.raises(ValueError):
         unity_ci.load_manifest(write_manifest(tmp_path, test_metadata))
 
 
-@pytest.mark.parametrize("changes", [
-    {"name": "android"}, {"destination": "../../outside"},
-    {"url": "https://example.com/editor.tar.xz"},
-    {"integrity": "md5-invalid"}, {"size": False},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"name": "android"},
+        {"destination": "../../outside"},
+        {"url": "https://example.com/editor.tar.xz"},
+        {"integrity": "md5-invalid"},
+        {"size": False},
+    ],
+)
 def test_rejects_invalid_test_module_metadata(tmp_path, test_metadata, changes):
     test_metadata["versions"][1]["testModules"][0].update(changes)
     with pytest.raises(ValueError):
@@ -260,7 +304,9 @@ def test_rejects_modules_from_other_editor_revision(tmp_path, test_metadata):
 @pytest.mark.parametrize("problem", ["missing", "duplicate"])
 def test_requires_both_distinct_runtime_modules(tmp_path, test_metadata, problem):
     modules = test_metadata["versions"][1]["testModules"]
-    test_metadata["versions"][1]["testModules"] = modules[:1] if problem == "missing" else [modules[0], modules[0]]
+    test_metadata["versions"][1]["testModules"] = (
+        modules[:1] if problem == "missing" else [modules[0], modules[0]]
+    )
     with pytest.raises(ValueError):
         unity_ci.load_manifest(write_manifest(tmp_path, test_metadata))
 
@@ -277,12 +323,18 @@ def test_missing_runtime_provider_never_builds_or_publishes(tmp_path, metadata, 
     assert not output.exists()
 
 
-def test_tests_purpose_cli_build_failure_does_not_publish(tmp_path, test_metadata, monkeypatch, capsys):
+def test_tests_purpose_cli_build_failure_does_not_publish(
+    tmp_path, test_metadata, monkeypatch, capsys
+):
     path = write_manifest(tmp_path, test_metadata)
     output = tmp_path / "github-output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    monkeypatch.setattr(subprocess, "run", Mock(side_effect=subprocess.CalledProcessError(1, ["docker"])))
-    assert unity_ci.main(["prepare", "6000.7.0b2", "--purpose", "tests", "--manifest", str(path)]) == 1
+    monkeypatch.setattr(
+        subprocess, "run", Mock(side_effect=subprocess.CalledProcessError(1, ["docker"]))
+    )
+    assert (
+        unity_ci.main(["prepare", "6000.7.0b2", "--purpose", "tests", "--manifest", str(path)]) == 1
+    )
     assert capsys.readouterr().out == ""
     assert not output.exists()
 
@@ -301,9 +353,14 @@ def test_preview_downloads_retry_tls_failures_with_bounded_time():
     for command in commands:
         args = shlex.split(command.split(";", 1)[0])
         assert "--fail" in args and "--retry-all-errors" in args
-        for option, value in (("--retry", "3"), ("--retry-max-time", "600"),
-                              ("--connect-timeout", "30"), ("--max-time", "600"),
-                              ("--proto", "=https"), ("--proto-redir", "=https")):
+        for option, value in (
+            ("--retry", "3"),
+            ("--retry-max-time", "600"),
+            ("--connect-timeout", "30"),
+            ("--max-time", "600"),
+            ("--proto", "=https"),
+            ("--proto-redir", "=https"),
+        ):
             assert args[args.index(option) + 1] == value
         assert args[args.index("--output") + 1] == "$archive"
 
@@ -319,28 +376,51 @@ def test_preview_dockerfile_verifies_before_extraction_and_cleans_archive():
     assert "COPY" not in text
 
 
-@pytest.mark.parametrize("purpose, problem", [
-    ("compile", None), ("tests", None), ("tests", "checksum"),
-    ("tests", "size"), ("tests", "layout"),
-])
+@pytest.mark.parametrize(
+    "purpose, problem",
+    [
+        ("compile", None),
+        ("tests", None),
+        ("tests", "checksum"),
+        ("tests", "size"),
+        ("tests", "layout"),
+    ],
+)
 def test_preview_installation_body_checks_each_archive_without_network(tmp_path, purpose, problem):
     shell = shutil.which("bash")
     if not shell and os.name == "nt" and Path("C:/Program Files/Git/bin/bash.exe").exists():
         shell = "C:/Program Files/Git/bin/bash.exe"
     if not shell:
         pytest.skip("Bash is required for the hermetic Dockerfile installation check")
-    env = {name: os.environ[name] for name in (
-        "PATH", "SystemRoot", "TEMP", "TMP", "HOME", "SYSTEMDRIVE",
-    ) if name in os.environ}
-    env.update(IMAGE_PURPOSE=purpose, UNITY_PATH="unity",
-               MODULE_DESTINATION="Editor/Data/PlaybackEngines/LinuxStandaloneSupport",
-               ARCHIVE_DIR=".", FIXTURE_DIR=".")
+    env = {
+        name: os.environ[name]
+        for name in (
+            "PATH",
+            "SystemRoot",
+            "TEMP",
+            "TMP",
+            "HOME",
+            "SYSTEMDRIVE",
+        )
+        if name in os.environ
+    }
+    env.update(
+        IMAGE_PURPOSE=purpose,
+        UNITY_PATH="unity",
+        MODULE_DESTINATION="Editor/Data/PlaybackEngines/LinuxStandaloneSupport",
+        ARCHIVE_DIR=".",
+        FIXTURE_DIR=".",
+    )
     for name in ("EDITOR", "IL2CPP", "SERVER"):
         path = tmp_path / f"{name}.tar.xz"
         member_name = "Editor/Unity" if name == "EDITOR" else f"Variations/{name}.txt"
         if problem == "layout" and name != "EDITOR":
             member_name = f"Other/{name}.txt"
-        content = b"#!/bin/sh\n# controlled fixture, never executed\nexit 1\n" if name == "EDITOR" else b"controlled fixture"
+        content = (
+            b"#!/bin/sh\n# controlled fixture, never executed\nexit 1\n"
+            if name == "EDITOR"
+            else b"controlled fixture"
+        )
         member = tarfile.TarInfo(member_name)
         member.mode = 0o755 if name == "EDITOR" else 0o644
         member.size = len(content)
@@ -357,7 +437,8 @@ def test_preview_installation_body_checks_each_archive_without_network(tmp_path,
     # Exercise the actual install body, excluding the wrapper that writes /usr/bin.
     body = text.split("RUN ", 1)[1].split("printf '%s\\n' '#!/bin/bash'", 1)[0]
     body = body.replace("\\\n", "").replace("/tmp/unity", "${ARCHIVE_DIR}/unity")
-    program = r'''
+    program = (
+        r"""
 curl() {
     local arg name="" output="${!#}"
     for arg in "$@"; do
@@ -371,9 +452,12 @@ tar() {
     printf '%s\n' "${2##*/}" >> "$FIXTURE_DIR/extractions.txt"
     command tar "$@"
 }
-''' + body
-    result = subprocess.run([shell, "-c", program], env=env, cwd=tmp_path,
-                            capture_output=True, text=True, timeout=30)
+"""
+        + body
+    )
+    result = subprocess.run(
+        [shell, "-c", program], env=env, cwd=tmp_path, capture_output=True, text=True, timeout=30
+    )
     assert (result.returncode == 0) is (problem is None), result.stdout + result.stderr
     downloads = (tmp_path / "downloads.txt").read_text().splitlines()
     extractions = (tmp_path / "extractions.txt").read_text().splitlines()

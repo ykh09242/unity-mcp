@@ -47,10 +47,10 @@ def parse_json_payload(value: Any) -> Any:
 
     # Fast path: if it doesn't look like JSON structure, return as is
     if not (
-        (val_trimmed.startswith("{") and val_trimmed.endswith("}")) or
-        (val_trimmed.startswith("[") and val_trimmed.endswith("]")) or
-        val_trimmed in ("true", "false", "null") or
-        (val_trimmed.replace(".", "", 1).replace("-", "", 1).isdigit())
+        (val_trimmed.startswith("{") and val_trimmed.endswith("}"))
+        or (val_trimmed.startswith("[") and val_trimmed.endswith("]"))
+        or val_trimmed in ("true", "false", "null")
+        or (val_trimmed.replace(".", "", 1).replace("-", "", 1).isdigit())
     ):
         return value
 
@@ -111,18 +111,26 @@ def normalize_properties(value: Any) -> tuple[dict[str, Any] | None, str | None]
     if isinstance(value, str):
         # Check for obviously invalid values from serialization bugs
         if value in ("[object Object]", "undefined", "null", ""):
-            return None, f"properties received invalid value: '{value}'. Expected a JSON object like {{\"key\": value}}"
+            return (
+                None,
+                f"properties received invalid value: '{value}'. Expected a JSON object like {{\"key\": value}}",
+            )
 
         parsed = parse_json_payload(value)
         if isinstance(parsed, dict):
             return parsed, None
 
-        return None, f"properties must be a JSON object (dict), got string that parsed to {type(parsed).__name__}"
+        return (
+            None,
+            f"properties must be a JSON object (dict), got string that parsed to {type(parsed).__name__}",
+        )
 
     return None, f"properties must be a dict or JSON string, got {type(value).__name__}"
 
 
-def normalize_vector3(value: Any, param_name: str = "vector") -> tuple[list[float] | None, str | None]:
+def normalize_vector3(
+    value: Any, param_name: str = "vector"
+) -> tuple[list[float] | None, str | None]:
     """
     Normalize a vector parameter to [x, y, z] format.
 
@@ -165,7 +173,10 @@ def normalize_vector3(value: Any, param_name: str = "vector") -> tuple[list[floa
     if isinstance(value, str):
         # Check for obviously invalid values
         if value in ("[object Object]", "undefined", "null", ""):
-            return None, f"{param_name} received invalid value: '{value}'. Expected [x, y, z] array or {{x, y, z}} object"
+            return (
+                None,
+                f"{param_name} received invalid value: '{value}'. Expected [x, y, z] array or {{x, y, z}} object",
+            )
 
         parsed = parse_json_payload(value)
 
@@ -202,7 +213,9 @@ def normalize_vector3(value: Any, param_name: str = "vector") -> tuple[list[floa
     return None, f"{param_name} must be a list, dict, or string, got {type(value).__name__}"
 
 
-def normalize_string_list(value: Any, param_name: str = "list") -> tuple[list[str] | None, str | None]:
+def normalize_string_list(
+    value: Any, param_name: str = "list"
+) -> tuple[list[str] | None, str | None]:
     """
     Normalize a string list parameter that might be a JSON string or plain string.
 
@@ -230,10 +243,13 @@ def normalize_string_list(value: Any, param_name: str = "list") -> tuple[list[st
         val_trimmed = value.strip()
         # Check for obviously invalid values
         if val_trimmed in ("[object Object]", "undefined", "null", ""):
-            return None, f"{param_name} received invalid value: '{value}'. Expected a JSON array like [\"item1\", \"item2\"]"
+            return (
+                None,
+                f'{param_name} received invalid value: \'{value}\'. Expected a JSON array like ["item1", "item2"]',
+            )
 
         # Check if it looks like a JSON array but will fail to parse
-        looks_like_json_array = (val_trimmed.startswith("[") and val_trimmed.endswith("]"))
+        looks_like_json_array = val_trimmed.startswith("[") and val_trimmed.endswith("]")
 
         parsed = parse_json_payload(value)
         # If parsing succeeded and result is a list, validate and return
@@ -245,18 +261,26 @@ def normalize_string_list(value: Any, param_name: str = "list") -> tuple[list[st
         # If parsing returned the original string but it looked like a JSON array,
         # it's malformed JSON - return error instead of treating as single item
         if parsed == value and looks_like_json_array:
-            return None, f"{param_name} has invalid JSON syntax: '{value}'. Expected a valid JSON array like [\"item1\", \"item2\"]"
+            return (
+                None,
+                f'{param_name} has invalid JSON syntax: \'{value}\'. Expected a valid JSON array like ["item1", "item2"]',
+            )
         # If parsing returned the original string (plain non-JSON), treat as single item
         if parsed == value:
             # Treat as single-element list
             return [value], None
 
-        return None, f"{param_name} must be a JSON array (list), got string that parsed to {type(parsed).__name__}"
+        return (
+            None,
+            f"{param_name} must be a JSON array (list), got string that parsed to {type(parsed).__name__}",
+        )
 
     return None, f"{param_name} must be a list or JSON string, got {type(value).__name__}"
 
 
-def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float] | None, str | None]:
+def normalize_color(
+    value: Any, output_range: str = "float"
+) -> tuple[list[float] | None, str | None]:
     """
     Normalize a color parameter to [r, g, b, a] format.
 
@@ -299,7 +323,11 @@ def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float
     if isinstance(value, dict):
         if all(k in value for k in ("r", "g", "b")):
             try:
-                color = [coerce_float(value["r"]), coerce_float(value["g"]), coerce_float(value["b"])]
+                color = [
+                    coerce_float(value["r"]),
+                    coerce_float(value["g"]),
+                    coerce_float(value["b"]),
+                ]
                 if "a" in value:
                     color.append(coerce_float(value["a"]))
                 else:
@@ -334,7 +362,10 @@ def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float
     # Try parsing as string
     if isinstance(value, str):
         if value in ("[object Object]", "undefined", "null", ""):
-            return None, f"color received invalid value: '{value}'. Expected [r, g, b, a] or {{r, g, b, a}}"
+            return (
+                None,
+                f"color received invalid value: '{value}'. Expected [r, g, b, a] or {{r, g, b, a}}",
+            )
 
         # Handle hex colors
         if value.startswith("#"):
@@ -345,10 +376,10 @@ def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float
                     components = [int(c + c, 16) for c in h] + [255]
                     return _to_output_range(components, from_hex=True), None
                 elif len(h) == 6:
-                    components = [int(h[i:i+2], 16) for i in (0, 2, 4)] + [255]
+                    components = [int(h[i : i + 2], 16) for i in (0, 2, 4)] + [255]
                     return _to_output_range(components, from_hex=True), None
                 elif len(h) == 8:
-                    components = [int(h[i:i+2], 16) for i in (0, 2, 4, 6)]
+                    components = [int(h[i : i + 2], 16) for i in (0, 2, 4, 6)]
                     return _to_output_range(components, from_hex=True), None
             except ValueError:
                 return None, f"Invalid hex color: {value}"
@@ -397,7 +428,10 @@ def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float
 
         return None, f"Failed to parse color string: {value}"
 
-    return None, f"color must be a list, dict, hex string, or JSON string, got {type(value).__name__}"
+    return (
+        None,
+        f"color must be a list, dict, hex string, or JSON string, got {type(value).__name__}",
+    )
 
 
 def extract_screenshot_images(response: dict[str, Any]) -> "ToolResult | None":
@@ -533,7 +567,10 @@ def build_screenshot_params(
             try:
                 orbit_elevations = json.loads(orbit_elevations)
             except (ValueError, TypeError):
-                return {"success": False, "message": "orbit_elevations must be a JSON array of floats."}
+                return {
+                    "success": False,
+                    "message": "orbit_elevations must be a JSON array of floats.",
+                }
         if not isinstance(orbit_elevations, list) or not all(
             isinstance(v, (int, float)) and not isinstance(v, bool) for v in orbit_elevations
         ):
@@ -541,7 +578,10 @@ def build_screenshot_params(
         try:
             orbit_elevations = [coerce_float(v) for v in orbit_elevations]
         except ValueError:
-            return {"success": False, "message": "orbit_elevations must be a list of finite numbers."}
+            return {
+                "success": False,
+                "message": "orbit_elevations must be a list of finite numbers.",
+            }
         params["orbitElevations"] = orbit_elevations
     coerced_orbit_distance = scalars["orbit_distance"]
     if coerced_orbit_distance is not None:

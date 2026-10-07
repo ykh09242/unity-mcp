@@ -21,6 +21,7 @@ from services.tools.manage_profiler import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_unity(monkeypatch):
     """Patch Unity transport layer and return captured call dict."""
@@ -46,6 +47,7 @@ def mock_unity(monkeypatch):
 # ---------------------------------------------------------------------------
 # Action list completeness
 # ---------------------------------------------------------------------------
+
 
 def test_profiler_actions_count():
     assert len(ALL_ACTIONS) == 14
@@ -80,7 +82,13 @@ def test_utility_actions():
 
 
 def test_all_actions_is_union():
-    expected = set(UTILITY_ACTIONS + SESSION_ACTIONS + COUNTER_ACTIONS + MEMORY_SNAPSHOT_ACTIONS + FRAME_DEBUGGER_ACTIONS)
+    expected = set(
+        UTILITY_ACTIONS
+        + SESSION_ACTIONS
+        + COUNTER_ACTIONS
+        + MEMORY_SNAPSHOT_ACTIONS
+        + FRAME_DEBUGGER_ACTIONS
+    )
     assert set(ALL_ACTIONS) == expected
 
 
@@ -88,19 +96,16 @@ def test_all_actions_is_union():
 # Invalid / missing action
 # ---------------------------------------------------------------------------
 
+
 def test_unknown_action_returns_error(mock_unity):
-    result = asyncio.run(
-        manage_profiler(SimpleNamespace(), action="nonexistent_action")
-    )
+    result = asyncio.run(manage_profiler(SimpleNamespace(), action="nonexistent_action"))
     assert result["success"] is False
     assert "Unknown action" in result["message"]
     assert "tool_name" not in mock_unity
 
 
 def test_empty_action_returns_error(mock_unity):
-    result = asyncio.run(
-        manage_profiler(SimpleNamespace(), action="")
-    )
+    result = asyncio.run(manage_profiler(SimpleNamespace(), action=""))
     assert result["success"] is False
     assert "Unknown action" in result["message"]
     assert "tool_name" not in mock_unity
@@ -110,32 +115,42 @@ def test_empty_action_returns_error(mock_unity):
 # Each action forwards correctly
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("action_name", [
-    "ping",
-    "profiler_start", "profiler_stop", "profiler_status", "profiler_set_areas",
-    "get_frame_timing", "get_counters", "get_object_memory",
-    "memory_take_snapshot", "memory_list_snapshots", "memory_compare_snapshots",
-    "frame_debugger_enable", "frame_debugger_disable", "frame_debugger_get_events",
-])
+
+@pytest.mark.parametrize(
+    "action_name",
+    [
+        "ping",
+        "profiler_start",
+        "profiler_stop",
+        "profiler_status",
+        "profiler_set_areas",
+        "get_frame_timing",
+        "get_counters",
+        "get_object_memory",
+        "memory_take_snapshot",
+        "memory_list_snapshots",
+        "memory_compare_snapshots",
+        "frame_debugger_enable",
+        "frame_debugger_disable",
+        "frame_debugger_get_events",
+    ],
+)
 def test_every_action_forwards_to_unity(mock_unity, action_name):
-    result = asyncio.run(
-        manage_profiler(SimpleNamespace(), action=action_name)
-    )
+    result = asyncio.run(manage_profiler(SimpleNamespace(), action=action_name))
     assert result["success"] is True
     assert mock_unity["tool_name"] == "manage_profiler"
     assert mock_unity["params"]["action"] == action_name
 
 
 def test_uses_unity_instance_from_context(mock_unity):
-    asyncio.run(
-        manage_profiler(SimpleNamespace(), action="get_frame_timing")
-    )
+    asyncio.run(manage_profiler(SimpleNamespace(), action="get_frame_timing"))
     assert mock_unity["unity_instance"] == "unity-instance-1"
 
 
 # ---------------------------------------------------------------------------
 # Param forwarding
 # ---------------------------------------------------------------------------
+
 
 def test_get_counters_forwards_category(mock_unity):
     result = asyncio.run(
@@ -148,8 +163,10 @@ def test_get_counters_forwards_category(mock_unity):
 def test_get_counters_forwards_counter_names(mock_unity):
     result = asyncio.run(
         manage_profiler(
-            SimpleNamespace(), action="get_counters",
-            category="Render", counters=["Draw Calls Count", "Batches Count"],
+            SimpleNamespace(),
+            action="get_counters",
+            category="Render",
+            counters=["Draw Calls Count", "Batches Count"],
         )
     )
     assert result["success"] is True
@@ -199,7 +216,9 @@ def test_get_object_memory_forwards_path(mock_unity):
 
 def test_memory_take_snapshot_forwards_path(mock_unity):
     result = asyncio.run(
-        manage_profiler(SimpleNamespace(), action="memory_take_snapshot", snapshot_path="/tmp/snap.snap")
+        manage_profiler(
+            SimpleNamespace(), action="memory_take_snapshot", snapshot_path="/tmp/snap.snap"
+        )
     )
     assert result["success"] is True
     assert mock_unity["params"]["snapshot_path"] == "/tmp/snap.snap"
@@ -208,8 +227,10 @@ def test_memory_take_snapshot_forwards_path(mock_unity):
 def test_memory_compare_forwards_both_paths(mock_unity):
     result = asyncio.run(
         manage_profiler(
-            SimpleNamespace(), action="memory_compare_snapshots",
-            snapshot_a="/tmp/a.snap", snapshot_b="/tmp/b.snap",
+            SimpleNamespace(),
+            action="memory_compare_snapshots",
+            snapshot_a="/tmp/a.snap",
+            snapshot_b="/tmp/b.snap",
         )
     )
     assert result["success"] is True
@@ -220,8 +241,10 @@ def test_memory_compare_forwards_both_paths(mock_unity):
 def test_frame_debugger_get_events_forwards_paging(mock_unity):
     result = asyncio.run(
         manage_profiler(
-            SimpleNamespace(), action="frame_debugger_get_events",
-            page_size=25, cursor=50,
+            SimpleNamespace(),
+            action="frame_debugger_get_events",
+            page_size=25,
+            cursor=50,
         )
     )
     assert result["success"] is True
@@ -230,9 +253,7 @@ def test_frame_debugger_get_events_forwards_paging(mock_unity):
 
 
 def test_action_only_params_no_extras(mock_unity):
-    result = asyncio.run(
-        manage_profiler(SimpleNamespace(), action="profiler_stop")
-    )
+    result = asyncio.run(manage_profiler(SimpleNamespace(), action="profiler_stop"))
     assert result["success"] is True
     assert mock_unity["params"] == {"action": "profiler_stop"}
 
@@ -241,18 +262,15 @@ def test_action_only_params_no_extras(mock_unity):
 # Case insensitivity
 # ---------------------------------------------------------------------------
 
+
 def test_action_case_insensitive(mock_unity):
-    result = asyncio.run(
-        manage_profiler(SimpleNamespace(), action="Get_Frame_Timing")
-    )
+    result = asyncio.run(manage_profiler(SimpleNamespace(), action="Get_Frame_Timing"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "get_frame_timing"
 
 
 def test_action_uppercase(mock_unity):
-    result = asyncio.run(
-        manage_profiler(SimpleNamespace(), action="PROFILER_STATUS")
-    )
+    result = asyncio.run(manage_profiler(SimpleNamespace(), action="PROFILER_STATUS"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "profiler_status"
 
@@ -260,6 +278,7 @@ def test_action_uppercase(mock_unity):
 # ---------------------------------------------------------------------------
 # Non-dict response wrapped
 # ---------------------------------------------------------------------------
+
 
 def test_non_dict_response_wrapped(monkeypatch):
     monkeypatch.setattr(
@@ -275,9 +294,7 @@ def test_non_dict_response_wrapped(monkeypatch):
         fake_send,
     )
 
-    result = asyncio.run(
-        manage_profiler(SimpleNamespace(), action="get_frame_timing")
-    )
+    result = asyncio.run(manage_profiler(SimpleNamespace(), action="get_frame_timing"))
     assert result["success"] is False
     assert "unexpected string response" in result["message"]
 
@@ -286,11 +303,10 @@ def test_non_dict_response_wrapped(monkeypatch):
 # Tool registration
 # ---------------------------------------------------------------------------
 
+
 def test_tool_registered_with_profiling_group():
     from services.registry.tool_registry import _tool_registry
 
-    profiler_tools = [
-        t for t in _tool_registry if t.get("name") == "manage_profiler"
-    ]
+    profiler_tools = [t for t in _tool_registry if t.get("name") == "manage_profiler"]
     assert len(profiler_tools) == 1
     assert profiler_tools[0]["group"] == "profiling"

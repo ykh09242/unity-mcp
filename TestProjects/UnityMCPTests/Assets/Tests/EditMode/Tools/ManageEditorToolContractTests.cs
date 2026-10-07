@@ -18,12 +18,14 @@ namespace MCPForUnityTests.EditMode.Tools
             try
             {
                 UnityEditor.Tools.current = Tool.Move;
-                var response = JObject.FromObject(ManageEditor.HandleCommand(new JObject
-                    { ["action"] = "set_active_tool", ["toolName"] = name }));
+                var response = JObject.FromObject(ManageEditor.HandleCommand(new JObject { ["action"] = "set_active_tool", ["toolName"] = name }));
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 Assert.AreEqual(Tool.Move, UnityEditor.Tools.current);
             }
-            finally { UnityEditor.Tools.current = original; }
+            finally
+            {
+                UnityEditor.Tools.current = original;
+            }
         }
 
         [TestCase("Move")]
@@ -34,12 +36,14 @@ namespace MCPForUnityTests.EditMode.Tools
             Tool original = UnityEditor.Tools.current;
             try
             {
-                var response = JObject.FromObject(ManageEditor.HandleCommand(new JObject
-                    { ["action"] = "set_active_tool", ["toolName"] = name }));
+                var response = JObject.FromObject(ManageEditor.HandleCommand(new JObject { ["action"] = "set_active_tool", ["toolName"] = name }));
                 Assert.IsTrue(response.Value<bool>("success"), response.ToString());
                 Assert.AreEqual(Tool.Move, UnityEditor.Tools.current);
             }
-            finally { UnityEditor.Tools.current = original; }
+            finally
+            {
+                UnityEditor.Tools.current = original;
+            }
         }
     }
 }

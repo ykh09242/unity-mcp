@@ -26,23 +26,20 @@ namespace MCPForUnity.Editor.Helpers
             {
                 // Check environment variables first
                 var envDisable = Environment.GetEnvironmentVariable("DISABLE_TELEMETRY");
-                if (!string.IsNullOrEmpty(envDisable) &&
-                    (envDisable.ToLower() == "true" || envDisable == "1"))
+                if (!string.IsNullOrEmpty(envDisable) && (envDisable.ToLower() == "true" || envDisable == "1"))
                 {
                     return false;
                 }
 
                 var unityMcpDisable = Environment.GetEnvironmentVariable("UNITY_MCP_DISABLE_TELEMETRY");
-                if (!string.IsNullOrEmpty(unityMcpDisable) &&
-                    (unityMcpDisable.ToLower() == "true" || unityMcpDisable == "1"))
+                if (!string.IsNullOrEmpty(unityMcpDisable) && (unityMcpDisable.ToLower() == "true" || unityMcpDisable == "1"))
                 {
                     return false;
                 }
 
                 // Honor protocol-wide opt-out as well
                 var mcpDisable = Environment.GetEnvironmentVariable("MCP_DISABLE_TELEMETRY");
-                if (!string.IsNullOrEmpty(mcpDisable) &&
-                    (mcpDisable.Equals("true", StringComparison.OrdinalIgnoreCase) || mcpDisable == "1"))
+                if (!string.IsNullOrEmpty(mcpDisable) && (mcpDisable.Equals("true", StringComparison.OrdinalIgnoreCase) || mcpDisable == "1"))
                 {
                     return false;
                 }
@@ -100,7 +97,7 @@ namespace MCPForUnity.Editor.Helpers
                     ["customer_uuid"] = GetCustomerUUID(),
                     ["unity_version"] = Application.unityVersion,
                     ["platform"] = Application.platform.ToString(),
-                    ["source"] = "unity_bridge"
+                    ["source"] = "unity_bridge",
                 };
 
                 if (data != null)
@@ -140,11 +137,14 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static void RecordBridgeStartup()
         {
-            RecordEvent("bridge_startup", new Dictionary<string, object>
-            {
-                ["bridge_version"] = AssetPathUtility.GetPackageVersion(),
-                ["auto_connect"] = StdioBridgeHost.IsAutoConnectMode()
-            });
+            RecordEvent(
+                "bridge_startup",
+                new Dictionary<string, object>
+                {
+                    ["bridge_version"] = AssetPathUtility.GetPackageVersion(),
+                    ["auto_connect"] = StdioBridgeHost.IsAutoConnectMode(),
+                }
+            );
         }
 
         /// <summary>
@@ -152,10 +152,7 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static void RecordBridgeConnection(bool success, string error = null)
         {
-            var data = new Dictionary<string, object>
-            {
-                ["success"] = success
-            };
+            var data = new Dictionary<string, object> { ["success"] = success };
 
             if (!string.IsNullOrEmpty(error))
             {
@@ -174,7 +171,7 @@ namespace MCPForUnity.Editor.Helpers
             {
                 ["tool_name"] = toolName,
                 ["success"] = success,
-                ["duration_ms"] = Math.Round(durationMs, 2)
+                ["duration_ms"] = Math.Round(durationMs, 2),
             };
 
             if (!string.IsNullOrEmpty(error))

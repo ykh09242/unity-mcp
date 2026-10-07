@@ -18,16 +18,29 @@ from services.tools.generate_audio import generate_audio
 
 COMMAND = "generate_audio"
 ALLOWED_KEYS = {
-    "action", "provider", "prompt", "model", "duration", "name", "outputFolder", "jobId",
+    "action",
+    "provider",
+    "prompt",
+    "model",
+    "duration",
+    "name",
+    "outputFolder",
+    "jobId",
 }
 
 
 def _call_tool(**kwargs):
     ctx = MagicMock()
-    with patch.object(generate_audio_module, "get_unity_instance_from_context",
-                      new=AsyncMock(return_value="unity-1")):
-        with patch.object(generate_audio_module, "send_with_unity_instance",
-                          new=AsyncMock(return_value={"success": True, "data": {}})) as mock_send:
+    with patch.object(
+        generate_audio_module,
+        "get_unity_instance_from_context",
+        new=AsyncMock(return_value="unity-1"),
+    ):
+        with patch.object(
+            generate_audio_module,
+            "send_with_unity_instance",
+            new=AsyncMock(return_value={"success": True, "data": {}}),
+        ) as mock_send:
             result = asyncio.run(generate_audio(ctx, **kwargs))
     return result, mock_send.call_args.args
 
@@ -54,10 +67,13 @@ def mock_config():
 def cli_runner(runner, mock_config):
     def _invoke(args):
         with patch("cli.commands.asset_gen.get_config", return_value=mock_config):
-            with patch("cli.commands.asset_gen.run_command",
-                       return_value={"success": True, "message": "OK", "data": {}}) as mock_run:
+            with patch(
+                "cli.commands.asset_gen.run_command",
+                return_value={"success": True, "message": "OK", "data": {}},
+            ) as mock_run:
                 result = runner.invoke(asset_gen, args)
                 return result, mock_run
+
     return _invoke
 
 
@@ -81,7 +97,10 @@ class TestGenerateAudioRouting:
 
     def test_param_camelcase_mapping(self):
         _, sent = _call_tool(
-            action="generate", provider="fal", prompt="rain", duration=30.0,
+            action="generate",
+            provider="fal",
+            prompt="rain",
+            duration=30.0,
             output_folder="Assets/Generated/Audio",
         )
         params = _sent_params(sent)
@@ -103,15 +122,24 @@ class TestGenerateAudioRouting:
         assert params == {"action": "generate", "provider": "fal", "prompt": "p"}
 
     def test_explicit_model_passes_through(self):
-        _, sent = _call_tool(action="generate", provider="fal", prompt="p",
-                             model="cassetteai/sound-effects-generator")
+        _, sent = _call_tool(
+            action="generate",
+            provider="fal",
+            prompt="p",
+            model="cassetteai/sound-effects-generator",
+        )
         assert _sent_params(sent)["model"] == "cassetteai/sound-effects-generator"
 
     def test_no_secret_keys_in_payload(self):
         _, sent = _call_tool(
-            action="generate", provider="fal", prompt="p",
-            model="fal-ai/stable-audio-25/text-to-audio", duration=12.5, name="Sfx",
-            output_folder="Assets/Generated/Audio", job_id="j",
+            action="generate",
+            provider="fal",
+            prompt="p",
+            model="fal-ai/stable-audio-25/text-to-audio",
+            duration=12.5,
+            name="Sfx",
+            output_folder="Assets/Generated/Audio",
+            job_id="j",
         )
         params = _sent_params(sent)
         assert set(params.keys()).issubset(ALLOWED_KEYS)
@@ -121,10 +149,14 @@ class TestGenerateAudioRouting:
 
     def test_non_dict_response_guarded(self):
         ctx = MagicMock()
-        with patch.object(generate_audio_module, "get_unity_instance_from_context",
-                          new=AsyncMock(return_value="u")):
-            with patch.object(generate_audio_module, "send_with_unity_instance",
-                              new=AsyncMock(return_value=42)):
+        with patch.object(
+            generate_audio_module,
+            "get_unity_instance_from_context",
+            new=AsyncMock(return_value="u"),
+        ):
+            with patch.object(
+                generate_audio_module, "send_with_unity_instance", new=AsyncMock(return_value=42)
+            ):
                 result = asyncio.run(generate_audio(ctx, action="status", job_id="j"))
         assert result["success"] is False
         assert "42" in result["message"]
@@ -132,9 +164,17 @@ class TestGenerateAudioRouting:
 
 class TestGenerateAudioCLI:
     def test_generate_audio_cli(self, cli_runner):
-        result, mock_run = cli_runner([
-            "generate-audio", "--provider", "fal", "--prompt", "ambient", "--duration", "30",
-        ])
+        result, mock_run = cli_runner(
+            [
+                "generate-audio",
+                "--provider",
+                "fal",
+                "--prompt",
+                "ambient",
+                "--duration",
+                "30",
+            ]
+        )
         assert result.exit_code == 0
         command = mock_run.call_args.args[0]
         params = mock_run.call_args.args[1]

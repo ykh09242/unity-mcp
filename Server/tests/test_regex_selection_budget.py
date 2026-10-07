@@ -1,4 +1,5 @@
 """Causal work and behavior checks for script regex selection."""
+
 import importlib
 from collections.abc import Iterator
 import re
@@ -30,10 +31,20 @@ def test_closing_brace_selection_tokenizes_once(monkeypatch):
     assert tokens <= len(text), f"Retokenized prefixes: {tokens} tokens for {len(text)} characters"
 
 
-@pytest.mark.parametrize("literal", [
-    '"}"', '@"}"', '$"}}"', '$@"}}"', '"""}"""', '$$"""}}"""',
-    "'}'", "/* } */", "// }\n",
-])
+@pytest.mark.parametrize(
+    "literal",
+    [
+        '"}"',
+        '@"}"',
+        '$"}}"',
+        '$@"}}"',
+        '"""}"""',
+        '$$"""}}"""',
+        "'}'",
+        "/* } */",
+        "// }\n",
+    ],
+)
 def test_brace_selection_ignores_strings_comments_and_preserves_outermost(literal):
     text = "class C {\n void M() {\n  " + literal + ";\n }\n}\n/* } */"
     match = selection._find_best_anchor_match(r"}[^\n]*$", text, re.MULTILINE)
@@ -137,27 +148,29 @@ def test_lexer_checks_cooperative_cancellation(monkeypatch):
 async def test_span_backreference_expansion_is_bounded_before_allocating(monkeypatch):
     monkeypatch.setattr(bounded_regex, "MAX_TEXT_CHARS", 1024)
     with pytest.raises(selection._TextEditError, match="output size limit"):
-        await selection._text_edit_spans("a" * 1000, [
-            {"op": "regex_replace", "pattern": "(a+)", "replacement": "$1" * 100}
-        ])
+        await selection._text_edit_spans(
+            "a" * 1000, [{"op": "regex_replace", "pattern": "(a+)", "replacement": "$1" * 100}]
+        )
 
 
 @pytest.mark.asyncio
 async def test_span_operations_share_request_work_budget(monkeypatch):
     monkeypatch.setattr(bounded_regex, "MAX_WORK_CHARS", 100)
     with pytest.raises(selection._TextEditError, match="character budget"):
-        await selection._text_edit_spans("abcdefghi", [
-            {"op": "regex_replace", "pattern": "a", "replacement": "b"}
-        ] * 20)
+        await selection._text_edit_spans(
+            "abcdefghi", [{"op": "regex_replace", "pattern": "a", "replacement": "b"}] * 20
+        )
 
 
 @pytest.mark.asyncio
 async def test_span_conversion_preserves_backreferences_and_line_positions():
     source = "class C {\n name=abc;\n}\n"
-    spans = await selection._text_edit_spans(source, [
-        {"op": "regex_replace", "pattern": r"name=(\w+)", "replacement": "$1=value"}
-    ])
-    assert spans == [{"startLine": 2, "startCol": 2, "endLine": 2, "endCol": 10, "newText": "abc=value"}]
+    spans = await selection._text_edit_spans(
+        source, [{"op": "regex_replace", "pattern": r"name=(\w+)", "replacement": "$1=value"}]
+    )
+    assert spans == [
+        {"startLine": 2, "startCol": 2, "endLine": 2, "endCol": 10, "newText": "abc=value"}
+    ]
     assert selection._preview_text_spans(source, spans) == "class C {\n abc=value;\n}\n"
     assert selection._preview_text_spans(source, []) == source
 
@@ -173,8 +186,14 @@ async def test_two_admitted_workers_leave_executor_available(monkeypatch):
         assert release.wait(1)
         return index
 
-    tasks = [asyncio.create_task(selection._run_regex_work(
-        bounded_regex.WorkBudget(), lambda index=index: blocked(index))) for index in range(2)]
+    tasks = [
+        asyncio.create_task(
+            selection._run_regex_work(
+                bounded_regex.WorkBudget(), lambda index=index: blocked(index)
+            )
+        )
+        for index in range(2)
+    ]
     try:
         while not all(event.is_set() for event in entered):
             await asyncio.sleep(0.001)

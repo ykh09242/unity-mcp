@@ -1,4 +1,5 @@
 """ASCII sizing avoids copies while preserving independent bounds and hooks."""
+
 import json
 import sys
 
@@ -13,8 +14,11 @@ def counted_utf8_encodes(call):
     previous = sys.getprofile()
 
     def profile(_frame, event, function):
-        if (event == "c_call" and getattr(function, "__name__", None) == "encode"
-                and isinstance(getattr(function, "__self__", None), str)):
+        if (
+            event == "c_call"
+            and getattr(function, "__name__", None) == "encode"
+            and isinstance(getattr(function, "__self__", None), str)
+        ):
             encodes.append(function.__self__)
 
     try:
@@ -28,10 +32,11 @@ def counted_utf8_encodes(call):
 @pytest.mark.parametrize("length", [32, 65_536])
 def test_exact_ascii_raw_text_avoids_utf8_recount(length):
     # Given an ASCII document spanning one or multiple recount chunks.
-    raw = '"' + 'A' * length + '"'
+    raw = '"' + "A" * length + '"'
     # When it passes through the real bounded scanner.
-    result, encodes = counted_utf8_encodes(lambda: limits.bounded_json_text(
-        raw, max_bytes=len(raw), max_depth=64, max_nodes=100_000))
+    result, encodes = counted_utf8_encodes(
+        lambda: limits.bounded_json_text(raw, max_bytes=len(raw), max_depth=64, max_nodes=100_000)
+    )
     # Then the document survives with no intermediate UTF-8 byte copies.
     assert result == raw
     assert encodes == []
@@ -40,7 +45,7 @@ def test_exact_ascii_raw_text_avoids_utf8_recount(length):
 @pytest.mark.parametrize("length", [32, 128 * 1024])
 def test_admitted_ascii_document_avoids_full_utf8_copy(length):
     # Given a graph conservatively admitted for whole-document JSON encoding.
-    value = {"data": 'A' * length}
+    value = {"data": "A" * length}
     # When independent graph and encoded-size bounds inspect it.
     charge, encodes = counted_utf8_encodes(lambda: limits.response_size(value))
     # Then the graph is charged without a complete UTF-8 copy.
@@ -59,7 +64,7 @@ def test_raw_unicode_keeps_strict_utf8_byte_limits(raw):
     exact = limits.bounded_json_text(raw, max_bytes=byte_count, max_depth=64, max_nodes=100)
     short = limits.bounded_json_text(raw, max_bytes=byte_count - 1, max_depth=64, max_nodes=100)
     # Then strict Unicode encoding, including surrogate rejection, is preserved.
-    assert exact == (raw if '\ud800' not in raw else None)
+    assert exact == (raw if "\ud800" not in raw else None)
     assert short is None
 
 
@@ -103,8 +108,9 @@ def test_encoded_text_subclass_keeps_strict_encode_hook(monkeypatch):
             hooks.append("encode")
             return str.encode(self, *args, **kwargs)
 
-    monkeypatch.setattr(json.JSONEncoder, "encode",
-                        lambda self, value: EncodedText(normal_encode(self, value)))
+    monkeypatch.setattr(
+        json.JSONEncoder, "encode", lambda self, value: EncodedText(normal_encode(self, value))
+    )
     # When the admitted whole-document sizing path executes.
     charge = limits.response_size({"data": "ASCII"})
     # Then custom encoding remains observable exactly once.
@@ -112,11 +118,14 @@ def test_encoded_text_subclass_keeps_strict_encode_hook(monkeypatch):
     assert hooks == ["encode"]
 
 
-@pytest.mark.parametrize("raw, kwargs", [
-    ('"ASCII"', {"max_bytes": 6}),
-    ('[[1]]', {"max_depth": 1}),
-    ('[1,2]', {"max_nodes": 2}),
-])
+@pytest.mark.parametrize(
+    "raw, kwargs",
+    [
+        ('"ASCII"', {"max_bytes": 6}),
+        ("[[1]]", {"max_depth": 1}),
+        ("[1,2]", {"max_nodes": 2}),
+    ],
+)
 def test_ascii_copy_elision_preserves_scanner_rejections(raw, kwargs):
     # Given a document exceeding an independent scanner limit.
     bounds = {"max_bytes": 100, "max_depth": 64, "max_nodes": 100}

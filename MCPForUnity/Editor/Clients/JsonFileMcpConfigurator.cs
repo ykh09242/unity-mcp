@@ -13,11 +13,11 @@ using UnityEngine;
 
 namespace MCPForUnity.Editor.Clients
 {
-
     /// <summary>JSON-file based configurator (Cursor, Windsurf, VS Code, etc.).</summary>
     public abstract class JsonFileMcpConfigurator : McpClientConfiguratorBase
     {
-        public JsonFileMcpConfigurator(McpClient client) : base(client) { }
+        public JsonFileMcpConfigurator(McpClient client)
+            : base(client) { }
 
         public override string GetConfigPath() => CurrentOsPath();
 
@@ -46,11 +46,9 @@ namespace MCPForUnity.Editor.Clients
                     JToken unityToken = null;
                     if (rootConfig != null)
                     {
-                        string containerKey = string.IsNullOrEmpty(client.ServerContainerKey)
-                            ? "mcpServers" : client.ServerContainerKey;
+                        string containerKey = string.IsNullOrEmpty(client.ServerContainerKey) ? "mcpServers" : client.ServerContainerKey;
                         unityToken = client.IsVsCodeLayout
-                            ? rootConfig["servers"]?["unityMCP"]
-                                ?? rootConfig["mcp"]?["servers"]?["unityMCP"]
+                            ? rootConfig["servers"]?["unityMCP"] ?? rootConfig["mcp"]?["servers"]?["unityMCP"]
                             : rootConfig[containerKey]?["unityMCP"];
                     }
 
@@ -135,8 +133,7 @@ namespace MCPForUnity.Editor.Clients
                 {
                     // Match against the active scope's URL
                     string expectedUrl = HttpEndpointUtility.GetMcpRpcUrl();
-                    matches = expectsHttp && UrlsEqual(configuredUrl, expectedUrl)
-                        && serverConfig["command"] == null && serverConfig["args"] == null;
+                    matches = expectsHttp && UrlsEqual(configuredUrl, expectedUrl) && serverConfig["command"] == null && serverConfig["args"] == null;
                 }
 
                 if (matches)
@@ -234,9 +231,9 @@ namespace MCPForUnity.Editor.Clients
             }
         }
 
-        internal bool ShouldUnregister => client.status == McpStatus.Configured
-            && client.configuredTransport == (client.SupportsHttpTransport
-                ? HttpEndpointUtility.GetCurrentServerTransport() : ConfiguredTransport.Stdio);
+        internal bool ShouldUnregister =>
+            client.status == McpStatus.Configured
+            && client.configuredTransport == (client.SupportsHttpTransport ? HttpEndpointUtility.GetCurrentServerTransport() : ConfiguredTransport.Stdio);
 
         public override string GetConfigureActionLabel() => ShouldUnregister ? "Unregister" : "Configure";
 
@@ -269,14 +266,16 @@ namespace MCPForUnity.Editor.Clients
                 bool removed = false;
                 if (client.IsVsCodeLayout)
                 {
-                    if ((root["servers"] as JObject)?.Remove("unityMCP") == true) removed = true;
-                    if ((root["mcp"]?["servers"] as JObject)?.Remove("unityMCP") == true) removed = true;
+                    if ((root["servers"] as JObject)?.Remove("unityMCP") == true)
+                        removed = true;
+                    if ((root["mcp"]?["servers"] as JObject)?.Remove("unityMCP") == true)
+                        removed = true;
                 }
                 else
                 {
-                    string containerKey = string.IsNullOrEmpty(client.ServerContainerKey)
-                        ? "mcpServers" : client.ServerContainerKey;
-                    if ((root[containerKey] as JObject)?.Remove("unityMCP") == true) removed = true;
+                    string containerKey = string.IsNullOrEmpty(client.ServerContainerKey) ? "mcpServers" : client.ServerContainerKey;
+                    if ((root[containerKey] as JObject)?.Remove("unityMCP") == true)
+                        removed = true;
                 }
 
                 if (removed)
@@ -297,8 +296,7 @@ namespace MCPForUnity.Editor.Clients
         {
             try
             {
-                string uvx = client.SupportsHttpTransport && EditorConfigurationCache.Instance.UseHttpTransport
-                    ? null : GetUvxPathOrError();
+                string uvx = client.SupportsHttpTransport && EditorConfigurationCache.Instance.UseHttpTransport ? null : GetUvxPathOrError();
                 return ConfigJsonBuilder.BuildManualConfigJson(uvx, client);
             }
             catch (Exception ex)

@@ -15,13 +15,16 @@ def _run(program, tmp_path):
     env.pop("PYTEST_CURRENT_TEST", None)
     result = subprocess.run(
         [sys.executable, "-B", "-c", program],
-        env=env, capture_output=True, text=True, timeout=90,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
 
-CLI_PROGRAM = r'''
+CLI_PROGRAM = r"""
 import copy
 import json
 import httpx
@@ -157,10 +160,10 @@ for group, commands in (('graphics', [None, *graphics.commands]), ('lighting', [
         print('FULL_HELP', json.dumps({'group': group, 'command': command, 'text': result.output}))
 print('CLI_SUMMARY', json.dumps({'checks': checks, 'failures': failures, 'requests': len(requests)}))
 assert not failures, failures
-'''
+"""
 
 
-SDK_PROGRAM = r'''
+SDK_PROGRAM = r"""
 import copy
 import json
 import anyio
@@ -290,7 +293,7 @@ async def main():
     assert not failures, failures
 
 anyio.run(main)
-'''
+"""
 
 
 def test_lighting_environment_actual_cli_contracts(tmp_path):

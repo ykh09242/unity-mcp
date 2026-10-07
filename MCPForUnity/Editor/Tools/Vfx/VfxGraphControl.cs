@@ -1,7 +1,6 @@
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
-
 #if UNITY_VFX_GRAPH
 using UnityEngine.VFX;
 #endif
@@ -40,15 +39,28 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             switch (action)
             {
-                case "play": vfx.Play(); break;
-                case "stop": vfx.Stop(); break;
-                case "pause": vfx.pause = !vfx.pause; break;
-                case "reinit": vfx.Reinit(); break;
+                case "play":
+                    vfx.Play();
+                    break;
+                case "stop":
+                    vfx.Stop();
+                    break;
+                case "pause":
+                    vfx.pause = !vfx.pause;
+                    break;
+                case "reinit":
+                    vfx.Reinit();
+                    break;
                 default:
                     return new { success = false, message = $"Unknown VFX action: {action}" };
             }
 
-            return new { success = true, message = $"VFX {action}", isPaused = vfx.pause };
+            return new
+            {
+                success = true,
+                message = $"VFX {action}",
+                isPaused = vfx.pause,
+            };
         }
 
         public static object SetPlaybackSpeed(JObject @params)

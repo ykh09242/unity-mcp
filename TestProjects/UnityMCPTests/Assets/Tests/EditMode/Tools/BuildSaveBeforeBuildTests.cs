@@ -1,7 +1,7 @@
+using MCPForUnity.Editor.Tools.Build;
 using NUnit.Framework;
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
-using MCPForUnity.Editor.Tools.Build;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -29,8 +29,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                Assert.IsTrue(string.IsNullOrEmpty(target.path),
-                    "sanity: the target scene must have never been saved");
+                Assert.IsTrue(string.IsNullOrEmpty(target.path), "sanity: the target scene must have never been saved");
 
                 EditorSceneManager.MarkSceneDirty(target);
                 Assert.IsTrue(target.isDirty, "sanity: scene must be dirty to reach the save path");
@@ -41,10 +40,8 @@ namespace MCPForUnityTests.Editor.Tools
 
                 // The sharp assertion: the scene was skipped, not saved. A saved scene would have
                 // been given a path and would no longer be dirty.
-                Assert.IsTrue(string.IsNullOrEmpty(target.path),
-                    "an untitled scene must not be written anywhere");
-                Assert.IsTrue(target.isDirty,
-                    "an untitled scene must be left dirty — saving it is what opens the modal");
+                Assert.IsTrue(string.IsNullOrEmpty(target.path), "an untitled scene must not be written anywhere");
+                Assert.IsTrue(target.isDirty, "an untitled scene must be left dirty — saving it is what opens the modal");
             }
             finally
             {

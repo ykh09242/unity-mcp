@@ -1,9 +1,9 @@
 using System.Collections.Generic;
+using MCPForUnity.Editor.Tools.Physics;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
-using MCPForUnity.Editor.Tools.Physics;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -15,8 +15,10 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var go = new GameObject(name);
             objects.Add(go);
-            if (twoD) go.AddComponent<Rigidbody2D>().gravityScale = 0f;
-            else go.AddComponent<Rigidbody>().useGravity = false;
+            if (twoD)
+                go.AddComponent<Rigidbody2D>().gravityScale = 0f;
+            else
+                go.AddComponent<Rigidbody>().useGravity = false;
             return go;
         }
 
@@ -24,7 +26,8 @@ namespace MCPForUnityTests.Editor.Tools
         public void TearDown()
         {
             foreach (var go in objects)
-                if (go != null) Object.DestroyImmediate(go);
+                if (go != null)
+                    Object.DestroyImmediate(go);
             objects.Clear();
         }
 
@@ -37,12 +40,18 @@ namespace MCPForUnityTests.Editor.Tools
         public void InvalidTorque_DoesNotQueueForce(string dimension, string torque)
         {
             var go = Body("PhysicsContract_Rejected", dimension == "2d");
-            var response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
-                ["dimension"] = dimension, ["force"] = new JArray(1, 2, 3),
-                ["torque"] = JToken.Parse(torque)
-            }));
+            var response = JObject.FromObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "apply_force",
+                        ["target"] = go.GetInstanceIDCompat().ToString(),
+                        ["dimension"] = dimension,
+                        ["force"] = new JArray(1, 2, 3),
+                        ["torque"] = JToken.Parse(torque),
+                    }
+                )
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
 #if UNITY_2022_2_OR_NEWER
             if (dimension == "3d")
@@ -58,12 +67,19 @@ namespace MCPForUnityTests.Editor.Tools
         public void TwoDTorque_AcceptsDocumentedArrayAndLegacyScalar(string torque)
         {
             var go = Body("PhysicsContract_2D", true);
-            var response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
-                ["dimension"] = "2d", ["force"] = new JArray(1, 2),
-                ["torque"] = JToken.Parse(torque), ["force_mode"] = "Impulse"
-            }));
+            var response = JObject.FromObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "apply_force",
+                        ["target"] = go.GetInstanceIDCompat().ToString(),
+                        ["dimension"] = "2d",
+                        ["force"] = new JArray(1, 2),
+                        ["torque"] = JToken.Parse(torque),
+                        ["force_mode"] = "Impulse",
+                    }
+                )
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(2f, response["data"].Value<float>("torque"));
             CollectionAssert.AreEqual(new[] { 1f, 2f }, response["data"]["force"].ToObject<float[]>());
@@ -73,12 +89,19 @@ namespace MCPForUnityTests.Editor.Tools
         public void ThreeDForceAndTorque_PreservePayload()
         {
             var go = Body("PhysicsContract_3D");
-            var response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
-                ["force"] = new JArray(1, 2, 3), ["torque"] = new JArray(4, 5, 6),
-                ["position"] = new JArray(0, 1, 0), ["force_mode"] = "Impulse"
-            }));
+            var response = JObject.FromObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "apply_force",
+                        ["target"] = go.GetInstanceIDCompat().ToString(),
+                        ["force"] = new JArray(1, 2, 3),
+                        ["torque"] = new JArray(4, 5, 6),
+                        ["position"] = new JArray(0, 1, 0),
+                        ["force_mode"] = "Impulse",
+                    }
+                )
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             CollectionAssert.AreEqual(new[] { 4f, 5f, 6f }, response["data"]["torque"].ToObject<float[]>());
         }
@@ -87,11 +110,17 @@ namespace MCPForUnityTests.Editor.Tools
         public void InvalidDimension_DoesNotQueueForce()
         {
             var go = Body("PhysicsContract_Dimension");
-            var response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
-                ["dimension"] = "4d", ["force"] = new JArray(1, 2, 3)
-            }));
+            var response = JObject.FromObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "apply_force",
+                        ["target"] = go.GetInstanceIDCompat().ToString(),
+                        ["dimension"] = "4d",
+                        ["force"] = new JArray(1, 2, 3),
+                    }
+                )
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
 #if UNITY_2022_2_OR_NEWER
             Assert.AreEqual(Vector3.zero, go.GetComponent<Rigidbody>().GetAccumulatedForce());
@@ -129,9 +158,12 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Body("PhysicsContract_InvalidExplosion");
             var parameters = new JObject
             {
-                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
-                ["force_type"] = "explosion", ["explosion_force"] = 10f,
-                ["explosion_radius"] = 2f, ["explosion_position"] = new JArray(0, 1, 0)
+                ["action"] = "apply_force",
+                ["target"] = go.GetInstanceIDCompat().ToString(),
+                ["force_type"] = "explosion",
+                ["explosion_force"] = 10f,
+                ["explosion_radius"] = 2f,
+                ["explosion_position"] = new JArray(0, 1, 0),
             };
             foreach (var property in JObject.Parse(input).Properties())
                 parameters[property.Name] = property.Value;
@@ -147,13 +179,21 @@ namespace MCPForUnityTests.Editor.Tools
         public void ExplosionOptionalNullUpwardsAndZeroRadius_PreservePayload()
         {
             var go = Body("PhysicsContract_ExplosionDefaults");
-            var response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
-            {
-                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
-                ["force_type"] = "explosion", ["explosion_force"] = 10f,
-                ["explosion_radius"] = 0f, ["explosion_position"] = new JArray(0, 1, 0),
-                ["upwards_modifier"] = JValue.CreateNull(), ["force_mode"] = "Impulse"
-            }));
+            var response = JObject.FromObject(
+                ManagePhysics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "apply_force",
+                        ["target"] = go.GetInstanceIDCompat().ToString(),
+                        ["force_type"] = "explosion",
+                        ["explosion_force"] = 10f,
+                        ["explosion_radius"] = 0f,
+                        ["explosion_position"] = new JArray(0, 1, 0),
+                        ["upwards_modifier"] = JValue.CreateNull(),
+                        ["force_mode"] = "Impulse",
+                    }
+                )
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(0f, response["data"].Value<float>("upwards_modifier"));
             Assert.AreEqual(0f, response["data"].Value<float>("explosion_radius"));
@@ -167,9 +207,11 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Body("PhysicsContract_Null", dimension == "2d");
             var parameters = new JObject
             {
-                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
-                ["dimension"] = dimension, ["force"] = JValue.CreateNull(),
-                ["torque"] = dimension == "2d" ? (JToken)new JValue(2f) : new JArray(1, 2, 3)
+                ["action"] = "apply_force",
+                ["target"] = go.GetInstanceIDCompat().ToString(),
+                ["dimension"] = dimension,
+                ["force"] = JValue.CreateNull(),
+                ["torque"] = dimension == "2d" ? (JToken)new JValue(2f) : new JArray(1, 2, 3),
             };
             var torqueResult = JObject.FromObject(ManagePhysics.HandleCommand(parameters));
             Assert.IsTrue(torqueResult.Value<bool>("success"), torqueResult.ToString());
@@ -197,12 +239,16 @@ namespace MCPForUnityTests.Editor.Tools
             var selected = method == "by_name" || method == "by_path" ? namedBody : idBody;
             var forceParams = new JObject
             {
-                ["action"] = "apply_force", ["target"] = target, ["force"] = new JArray(1, 2, 3)
+                ["action"] = "apply_force",
+                ["target"] = target,
+                ["force"] = new JArray(1, 2, 3),
             };
             var jointParams = new JObject
             {
-                ["action"] = "configure_joint", ["target"] = target, ["joint_type"] = "fixed",
-                ["properties"] = new JObject { ["breakForce"] = 42f }
+                ["action"] = "configure_joint",
+                ["target"] = target,
+                ["joint_type"] = "fixed",
+                ["properties"] = new JObject { ["breakForce"] = 42f },
             };
             if (method != null)
             {

@@ -8,7 +8,9 @@ from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.rendering_limits import orbit_limits_error, screenshot_limits_error
 from services.tools.utils import (
-    build_screenshot_params, extract_screenshot_images, normalize_properties,
+    build_screenshot_params,
+    extract_screenshot_images,
+    normalize_properties,
 )
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -19,19 +21,33 @@ SETUP_ACTIONS = ["ping", "ensure_brain", "get_brain_status"]
 CREATION_ACTIONS = ["create_camera"]
 
 CONFIGURATION_ACTIONS = [
-    "set_target", "set_priority", "set_lens",
-    "set_body", "set_aim", "set_noise",
+    "set_target",
+    "set_priority",
+    "set_lens",
+    "set_body",
+    "set_aim",
+    "set_noise",
 ]
 
 EXTENSION_ACTIONS = ["add_extension", "remove_extension"]
 
 CONTROL_ACTIONS = [
-    "set_blend", "force_camera", "release_override", "list_cameras",
+    "set_blend",
+    "force_camera",
+    "release_override",
+    "list_cameras",
 ]
 
 CAPTURE_ACTIONS = ["screenshot", "screenshot_multiview"]
 
-ALL_ACTIONS = SETUP_ACTIONS + CREATION_ACTIONS + CONFIGURATION_ACTIONS + EXTENSION_ACTIONS + CONTROL_ACTIONS + CAPTURE_ACTIONS
+ALL_ACTIONS = (
+    SETUP_ACTIONS
+    + CREATION_ACTIONS
+    + CONFIGURATION_ACTIONS
+    + EXTENSION_ACTIONS
+    + CONTROL_ACTIONS
+    + CAPTURE_ACTIONS
+)
 
 
 @mcp_for_unity_tool(
@@ -92,45 +108,67 @@ async def manage_camera(
         "Action-specific parameters (dict or JSON string).",
     ] = None,
     # --- screenshot params ---
-    screenshot_file_name: Annotated[str | None,
-        "Screenshot file name (optional). Defaults to timestamp."] = None,
-    screenshot_super_size: Annotated[int | str | None,
-        "Screenshot supersize multiplier (integer 1 to 4)."] = None,
-    camera: Annotated[str | None,
+    screenshot_file_name: Annotated[
+        str | None, "Screenshot file name (optional). Defaults to timestamp."
+    ] = None,
+    screenshot_super_size: Annotated[
+        int | str | None, "Screenshot supersize multiplier (integer 1 to 4)."
+    ] = None,
+    camera: Annotated[
+        str | None,
         "Camera to capture from (name, path, or instance ID). "
         "Omit to use ScreenCapture API (captures all layers including Screen Space Overlay UI). "
         "Specify only when you need a particular camera viewpoint; note that Screen Space - Overlay "
-        "canvases will NOT appear in camera-rendered captures."] = None,
-    include_image: Annotated[bool | str | None,
-        "If true, return screenshot as inline base64 PNG. Default false."] = None,
-    max_resolution: Annotated[int | str | None,
+        "canvases will NOT appear in camera-rendered captures.",
+    ] = None,
+    include_image: Annotated[
+        bool | str | None, "If true, return screenshot as inline base64 PNG. Default false."
+    ] = None,
+    max_resolution: Annotated[
+        int | str | None,
         "Max resolution (longest edge px) for inline image, 1 to 8192. Default 640. "
-        "The Editor also enforces frame and aggregate pixel budgets."] = None,
-    capture_source: Annotated[Literal["game_view", "scene_view"] | None,
+        "The Editor also enforces frame and aggregate pixel budgets.",
+    ] = None,
+    capture_source: Annotated[
+        Literal["game_view", "scene_view"] | None,
         "Screenshot source. 'game_view' (default) captures the game/camera path; "
-        "'scene_view' captures the active Unity Scene View viewport."] = None,
-    batch: Annotated[str | None,
-        "Batch capture mode: 'surround' (6 angles) or 'orbit' (configurable grid)."] = None,
-    view_target: Annotated[str | int | list[float] | None,
+        "'scene_view' captures the active Unity Scene View viewport.",
+    ] = None,
+    batch: Annotated[
+        str | None, "Batch capture mode: 'surround' (6 angles) or 'orbit' (configurable grid)."
+    ] = None,
+    view_target: Annotated[
+        str | int | list[float] | None,
         "Target to focus on. GameObject name/path/ID or [x,y,z]. "
-        "For game_view: aims camera at target. For scene_view: frames the Scene View on the target."] = None,
-    view_position: Annotated[list[float] | str | None,
-        "World position [x,y,z] to place camera for positioned capture."] = None,
-    view_rotation: Annotated[list[float] | str | None,
-        "Euler rotation [x,y,z] for camera. Overrides view_target if both provided."] = None,
-    orbit_angles: Annotated[int | str | None,
-        "Number of azimuth samples for batch='orbit' (default 8, max 36)."] = None,
-    orbit_elevations: Annotated[list[float] | str | None,
+        "For game_view: aims camera at target. For scene_view: frames the Scene View on the target.",
+    ] = None,
+    view_position: Annotated[
+        list[float] | str | None, "World position [x,y,z] to place camera for positioned capture."
+    ] = None,
+    view_rotation: Annotated[
+        list[float] | str | None,
+        "Euler rotation [x,y,z] for camera. Overrides view_target if both provided.",
+    ] = None,
+    orbit_angles: Annotated[
+        int | str | None, "Number of azimuth samples for batch='orbit' (default 8, max 36)."
+    ] = None,
+    orbit_elevations: Annotated[
+        list[float] | str | None,
         "Elevation angles in degrees for batch='orbit' (default [0, 30, -15]). "
-        "1 to 16 finite angles; at most 128 total orbit shots."] = None,
-    orbit_distance: Annotated[float | str | None,
-        "Camera distance from target for batch='orbit' (default auto)."] = None,
-    orbit_fov: Annotated[float | str | None,
-        "Camera FOV in degrees for batch='orbit' (default 60)."] = None,
-    output_folder: Annotated[str | None,
+        "1 to 16 finite angles; at most 128 total orbit shots.",
+    ] = None,
+    orbit_distance: Annotated[
+        float | str | None, "Camera distance from target for batch='orbit' (default auto)."
+    ] = None,
+    orbit_fov: Annotated[
+        float | str | None, "Camera FOV in degrees for batch='orbit' (default 60)."
+    ] = None,
+    output_folder: Annotated[
+        str | None,
         "Optional folder for screenshot output. Project-relative (e.g. 'Assets/Screenshots' or 'Captures') "
         "or absolute path inside the project. Overrides the user's Editor preference. "
-        "If omitted, falls back to the Editor preference, then to the built-in default (Assets/Screenshots)."] = None,
+        "If omitted, falls back to the Editor preference, then to the built-in default (Assets/Screenshots).",
+    ] = None,
 ) -> dict[str, Any] | ToolResult:
     """Unified camera management tool (Unity Camera + Cinemachine)."""
 
@@ -192,11 +230,15 @@ async def manage_camera(
             return err
 
         capture_error = screenshot_limits_error(
-            params_dict.get("superSize", 1), params_dict.get("maxResolution", 640),
+            params_dict.get("superSize", 1),
+            params_dict.get("maxResolution", 640),
         )
         # The native shorthand always selects surround. Nested properties are
         # not used by the native screenshot dispatcher.
-        if action_normalized == "screenshot" and str(params_dict.get("batch", "")).lower() == "orbit":
+        if (
+            action_normalized == "screenshot"
+            and str(params_dict.get("batch", "")).lower() == "orbit"
+        ):
             capture_error = capture_error or orbit_limits_error(
                 params_dict.get("orbitAngles", 8),
                 params_dict.get("orbitElevations", [0.0, 30.0, -15.0]),

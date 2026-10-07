@@ -4,6 +4,7 @@ It creates the release with GITHUB_TOKEN, and events made with that token start 
 (only workflow_dispatch and repository_dispatch are exempt), so sync-releases.yml never saw
 `release: published` and README/releases.md stopped at v10.0.0.
 """
+
 from pathlib import Path
 import re
 

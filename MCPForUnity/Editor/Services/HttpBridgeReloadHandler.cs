@@ -27,13 +27,12 @@ namespace MCPForUnity.Editor.Services
             TimeSpan.FromSeconds(3),
             TimeSpan.FromSeconds(5),
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30)
+            TimeSpan.FromSeconds(30),
         };
 
         static HttpBridgeReloadHandler()
         {
-            if (UnityEngine.Application.isBatchMode &&
-                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH")))
+            if (UnityEngine.Application.isBatchMode && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH")))
             {
                 return;
             }
@@ -109,7 +108,8 @@ namespace MCPForUnity.Editor.Services
         {
             try
             {
-                if (!SessionState.GetBool(ResumeSessionKey, false)) return false;
+                if (!SessionState.GetBool(ResumeSessionKey, false))
+                    return false;
 
                 // Only resume HTTP if it is still the selected transport.
                 if (!EditorConfigurationCache.Instance.UseHttpTransport)
@@ -133,7 +133,8 @@ namespace MCPForUnity.Editor.Services
 
         private static void ResumeTick()
         {
-            if (IsEditorBusy()) return;
+            if (IsEditorBusy())
+                return;
             EditorApplication.update -= ResumeTick;
             _ = ResumeHttpWithRetriesAsync();
         }
@@ -144,8 +145,7 @@ namespace MCPForUnity.Editor.Services
         /// "Recompile After Finished Playing" preference, which would block resume until
         /// play mode exits.
         /// </summary>
-        internal static bool IsEditorBusy()
-            => EditorStateCache.GetActualIsCompiling() || EditorApplication.isUpdating;
+        internal static bool IsEditorBusy() => EditorStateCache.GetActualIsCompiling() || EditorApplication.isUpdating;
 
         // scheduleOverride lets EditMode tests pass an all-zero schedule so the loop
         // completes synchronously (the test framework floor cannot run async tests).
@@ -163,12 +163,19 @@ namespace MCPForUnity.Editor.Services
                 if (delay > TimeSpan.Zero)
                 {
                     McpLog.Debug($"[HTTP Reload] Waiting {delay.TotalSeconds:0.#}s before resume attempt {attempt}");
-                    try { await Task.Delay(delay); }
-                    catch { return; }
+                    try
+                    {
+                        await Task.Delay(delay);
+                    }
+                    catch
+                    {
+                        return;
+                    }
                 }
 
                 // The flag doubles as the cancel signal (see CancelPendingResume).
-                if (!IsResumePending) return;
+                if (!IsResumePending)
+                    return;
 
                 try
                 {

@@ -10,6 +10,7 @@ DESIGN: Single source of truth via middleware state:
 - get_unity_instance_from_context() reads from ctx.get_state()
 - All tools (GameObject, Script, Asset, etc.) use get_unity_instance_from_context()
 """
+
 import pytest
 from unittest.mock import AsyncMock, Mock, MagicMock, patch
 from fastmcp import Context
@@ -31,7 +32,9 @@ def _make_stateful_ctx(session_id: str) -> Mock:
     state: dict[str, object] = {}
     ctx = Mock(spec=Context)
     ctx.session_id = session_id
-    ctx.set_state = AsyncMock(side_effect=lambda k, v, *, serializable=True: state.__setitem__(k, v))
+    ctx.set_state = AsyncMock(
+        side_effect=lambda k, v, *, serializable=True: state.__setitem__(k, v)
+    )
     ctx.get_state = AsyncMock(side_effect=lambda k: state.get(k))
     ctx.delete_state = AsyncMock(side_effect=lambda k: state.pop(k, None))
     return ctx
@@ -114,8 +117,9 @@ class TestInstanceRoutingIntegration:
         # Call and verify
         result = await get_unity_instance_from_context(ctx)
 
-        assert result == "Project@state123", \
+        assert result == "Project@state123", (
             "get_unity_instance_from_context must read from ctx.get_state()!"
+        )
 
     @pytest.mark.asyncio
     async def test_get_unity_instance_returns_none_when_not_set(self):
@@ -141,11 +145,11 @@ class TestInstanceRoutingToolCategories:
         # Set up state storage (only source of truth)
         state_storage = {"unity_instance": instance_id}
         ctx.get_state = AsyncMock(side_effect=lambda k: state_storage.get(k))
-        ctx.set_state = AsyncMock(side_effect=lambda k,
-                             v, *, serializable=True: state_storage.__setitem__(k, v))
+        ctx.set_state = AsyncMock(
+            side_effect=lambda k, v, *, serializable=True: state_storage.__setitem__(k, v)
+        )
 
         return ctx
-
 
 
 class TestInstanceRoutingHTTP:
@@ -158,8 +162,9 @@ class TestInstanceRoutingHTTP:
         ctx = Mock(spec=Context)
         ctx.session_id = "http-session"
         state_storage = {}
-        ctx.set_state = AsyncMock(side_effect=lambda k,
-                             v, *, serializable=True: state_storage.__setitem__(k, v))
+        ctx.set_state = AsyncMock(
+            side_effect=lambda k, v, *, serializable=True: state_storage.__setitem__(k, v)
+        )
         ctx.get_state = AsyncMock(side_effect=lambda k: state_storage.get(k))
 
         monkeypatch.setattr(config, "transport_mode", "http")
@@ -194,8 +199,9 @@ class TestInstanceRoutingHTTP:
         ctx = Mock(spec=Context)
         ctx.session_id = "http-session-2"
         state_storage = {}
-        ctx.set_state = AsyncMock(side_effect=lambda k,
-                             v, *, serializable=True: state_storage.__setitem__(k, v))
+        ctx.set_state = AsyncMock(
+            side_effect=lambda k, v, *, serializable=True: state_storage.__setitem__(k, v)
+        )
         ctx.get_state = AsyncMock(side_effect=lambda k: state_storage.get(k))
 
         monkeypatch.setattr(config, "transport_mode", "http")
@@ -256,8 +262,12 @@ class TestInstanceRoutingHTTP:
         monkeypatch.setattr(config, "transport_mode", "http")
         fake_sessions = SessionList(
             sessions={
-                "sess-a": SessionDetails(project="ProjA", hash="abc12345", unity_version="2022", connected_at="now"),
-                "sess-b": SessionDetails(project="ProjB", hash="abc98765", unity_version="2022", connected_at="now"),
+                "sess-a": SessionDetails(
+                    project="ProjA", hash="abc12345", unity_version="2022", connected_at="now"
+                ),
+                "sess-b": SessionDetails(
+                    project="ProjB", hash="abc98765", unity_version="2022", connected_at="now"
+                ),
             }
         )
         monkeypatch.setattr(
@@ -286,8 +296,9 @@ class TestInstanceRoutingRaceConditions:
         ctx.session_id = "test-session"
 
         state_storage = {}
-        ctx.set_state = AsyncMock(side_effect=lambda k,
-                             v, *, serializable=True: state_storage.__setitem__(k, v))
+        ctx.set_state = AsyncMock(
+            side_effect=lambda k, v, *, serializable=True: state_storage.__setitem__(k, v)
+        )
         ctx.get_state = AsyncMock(side_effect=lambda k: state_storage.get(k))
 
         instances = ["Project1@aaa", "Project2@bbb", "Project3@ccc"]
@@ -319,8 +330,9 @@ class TestInstanceRoutingRaceConditions:
         ctx.info = Mock()
 
         state_storage = {}
-        ctx.set_state = AsyncMock(side_effect=lambda k,
-                             v, *, serializable=True: state_storage.__setitem__(k, v))
+        ctx.set_state = AsyncMock(
+            side_effect=lambda k, v, *, serializable=True: state_storage.__setitem__(k, v)
+        )
         ctx.get_state = AsyncMock(side_effect=lambda k: state_storage.get(k))
         ctx.request_context = None
 
@@ -341,8 +353,9 @@ class TestInstanceRoutingRaceConditions:
 
         # Verify create_script would route to correct instance
         result = await mock_create_script_call(ctx)
-        assert result["routed_to"] == "ramble@8e29de57", \
+        assert result["routed_to"] == "ramble@8e29de57", (
             "create_script must route to the instance set by set_active_instance"
+        )
 
 
 class TestInstanceRoutingSequentialOperations:
@@ -389,8 +402,9 @@ class TestInstanceRoutingSequentialOperations:
         ctx.info = Mock()
 
         state_storage = {}
-        ctx.set_state = AsyncMock(side_effect=lambda k,
-                             v, *, serializable=True: state_storage.__setitem__(k, v))
+        ctx.set_state = AsyncMock(
+            side_effect=lambda k, v, *, serializable=True: state_storage.__setitem__(k, v)
+        )
         ctx.get_state = AsyncMock(side_effect=lambda k: state_storage.get(k))
 
         # Execute sequence
@@ -407,14 +421,18 @@ class TestInstanceRoutingSequentialOperations:
         expected4 = await simulate_create_script(ctx, "Script4", "UnityMCPTests@cc8756d4")
 
         # Assertions - these will FAIL until the bug is fixed
-        assert script_routes.get("Script1") == expected1, \
+        assert script_routes.get("Script1") == expected1, (
             f"Script1 should route to {expected1}, got {script_routes.get('Script1')}"
-        assert script_routes.get("Script2") == expected2, \
+        )
+        assert script_routes.get("Script2") == expected2, (
             f"Script2 should route to {expected2}, got {script_routes.get('Script2')}"
-        assert script_routes.get("Script3") == expected3, \
+        )
+        assert script_routes.get("Script3") == expected3, (
             f"Script3 should route to {expected3}, got {script_routes.get('Script3')}"
-        assert script_routes.get("Script4") == expected4, \
+        )
+        assert script_routes.get("Script4") == expected4, (
             f"Script4 should route to {expected4}, got {script_routes.get('Script4')}"
+        )
 
 
 # Test regimen summary

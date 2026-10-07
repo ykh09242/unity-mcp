@@ -1,6 +1,6 @@
 using System;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Tools.Sprite2D
 {
@@ -27,8 +27,8 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             {
                 path = AssetPathUtility.SanitizeAssetPath(path);
             }
-            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException
-                || ex is System.IO.IOException || ex is UnauthorizedAccessException)
+            catch (Exception ex)
+                when (ex is ArgumentException || ex is InvalidOperationException || ex is System.IO.IOException || ex is UnauthorizedAccessException)
             {
                 path = null;
                 error = $"'{key}' must be a valid path under Assets/ without '..', symbolic links or junctions.";
@@ -46,8 +46,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
         /// Reads an optional whole number. Returns false with a caller-facing reason when
         /// the value is present but is not a whole number an int can hold.
         /// </summary>
-        internal static bool TryReadWholeNumber(JObject @params, string key, int fallback,
-                                                out int value, out string error)
+        internal static bool TryReadWholeNumber(JObject @params, string key, int fallback, out int value, out string error)
         {
             value = fallback;
             if (!ParamCoercion.ValidateIntegerField(@params, key, out error))
@@ -90,8 +89,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
         /// array where nothing above C# validates it - measured 2026-08-21: ToObject&lt;bool?&gt;
         /// threw on `loop: "maybe"` and silently accepted `loop: 2`.
         /// </summary>
-        internal static bool TryReadBool(JObject @params, string key, bool fallback,
-                                         out bool value, out string error)
+        internal static bool TryReadBool(JObject @params, string key, bool fallback, out bool value, out string error)
         {
             value = fallback;
             error = null;
@@ -124,8 +122,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
         /// (`fps &lt;= 0f` is false for NaN), so a NaN rate reached the keyframe arithmetic
         /// and wrote a clip whose frame times were all NaN.
         /// </summary>
-        internal static bool TryReadFiniteFloat(JObject @params, string key, float fallback,
-                                                out float value, out string error)
+        internal static bool TryReadFiniteFloat(JObject @params, string key, float fallback, out float value, out string error)
         {
             value = fallback;
             if (!ParamCoercion.ValidateNumericField(@params, key, out error))

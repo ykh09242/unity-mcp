@@ -1,6 +1,6 @@
+using MCPForUnity.Editor.Tools.Animation;
 using NUnit.Framework;
 using UnityEngine;
-using MCPForUnity.Editor.Tools.Animation;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -76,8 +76,7 @@ namespace MCPForUnityTests.Editor.Tools
             var rig = child.AddComponent<Animator>();
             child.SetActive(false);
 
-            Assert.AreSame(rig, AnimatorResolver.Find(_root, out _),
-                "A disabled rig is still readable");
+            Assert.AreSame(rig, AnimatorResolver.Find(_root, out _), "A disabled rig is still readable");
         }
 
         [Test]
@@ -126,8 +125,7 @@ namespace MCPForUnityTests.Editor.Tools
             _root = new GameObject("AnimResTest_SuffixSame");
             var own = _root.AddComponent<Animator>();
 
-            Assert.AreEqual(string.Empty, AnimatorResolver.ResolvedSuffix(_root, own),
-                "A response that did not retarget must read exactly as before");
+            Assert.AreEqual(string.Empty, AnimatorResolver.ResolvedSuffix(_root, own), "A response that did not retarget must read exactly as before");
         }
 
         [Test]

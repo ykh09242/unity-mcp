@@ -27,16 +27,16 @@
 //
 // Security note: Any dynamically compiled code runs with the same permissions as the editor. Be careful when running untrusted code.
 
-#if UNITY_EDITOR
-using UnityEditor;
-#endif
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Collections.Generic;
-using UnityEngine;
 using MCPForUnity.Runtime.Helpers;
+using UnityEngine;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 #if UNITY_EDITOR
 using Microsoft.CodeAnalysis;
@@ -47,22 +47,26 @@ public class RoslynRuntimeCompiler : MonoBehaviour
 {
     [TextArea(8, 20)]
     [Tooltip("Code to compile at runtime. Example class name: AIGenerated with public static void Run(GameObject host)")]
-    public string code = "using UnityEngine;\npublic class AIGenerated {\n    public static void Run(GameObject host) {\n        Debug.Log($\"Hello from AI - {host.name}\");\n        host.transform.Rotate(Vector3.up * 45f * Time.deltaTime);\n    }\n}";
+    public string code =
+        "using UnityEngine;\npublic class AIGenerated {\n    public static void Run(GameObject host) {\n        Debug.Log($\"Hello from AI - {host.name}\");\n        host.transform.Rotate(Vector3.up * 45f * Time.deltaTime);\n    }\n}";
 
     [Tooltip("Fully qualified type name to invoke (default: AIGenerated)")]
     public string entryTypeName = "AIGenerated";
+
     [Tooltip("Method name to call on entry type (default: Run)")]
     public string entryMethodName = "Run";
-    
+
     [Header("MonoBehaviour Support")]
     [Tooltip("If true, attempts to attach generated MonoBehaviour to target GameObject")]
     public bool attachAsComponent = false;
+
     [Tooltip("Target GameObject to attach component to (if null, uses this.gameObject)")]
     public GameObject targetGameObject;
 
     [Header("History & Tracing")]
     [Tooltip("Enable automatic history tracking of compiled scripts")]
     public bool enableHistory = true;
+
     [Tooltip("Maximum number of history entries to keep")]
     public int maxHistoryEntries = 20;
 
@@ -79,7 +83,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
 
     // compile result diagnostics (string-friendly)
     public string lastCompileDiagnostics = "";
-    
+
     // History tracking - SHARED across all instances
     [System.Serializable]
     public class CompilationHistoryEntry
@@ -92,10 +96,10 @@ public class RoslynRuntimeCompiler : MonoBehaviour
         public string diagnostics;
         public string executionTarget;
     }
-    
+
     // Static shared history
     private static System.Collections.Generic.List<CompilationHistoryEntry> _sharedHistory = new System.Collections.Generic.List<CompilationHistoryEntry>();
-    
+
     public System.Collections.Generic.List<CompilationHistoryEntry> CompilationHistory => _sharedHistory;
 
     // public wrapper so EditorWindow or other runtime UI can call compile/run
@@ -119,9 +123,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
             refs.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
 
             // Add all currently loaded assemblies' locations that are not dynamic and have a location
-            var assemblies = AppDomain.CurrentDomain.GetAssemblies()
-                .Where(a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location))
-                .Distinct();
+            var assemblies = AppDomain.CurrentDomain.GetAssemblies().Where(a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location)).Distinct();
 
             foreach (var a in assemblies)
             {
@@ -163,7 +165,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
                     diagnostics = lastCompileDiagnostics;
                     return false;
                 }
-                
+
                 // Check if it's a MonoBehaviour
                 if (typeof(MonoBehaviour).IsAssignableFrom(type))
                 {
@@ -179,8 +181,9 @@ public class RoslynRuntimeCompiler : MonoBehaviour
                 var method = type.GetMethod(entryMethodName, BindingFlags.Public | BindingFlags.Static);
                 if (method == null)
                 {
-                    lastCompileDiagnostics = $"Static method '{entryMethodName}' not found on type '{entryTypeName}'.\n" +
-                        $"For MonoBehaviour types, set 'attachAsComponent' to true instead.";
+                    lastCompileDiagnostics =
+                        $"Static method '{entryMethodName}' not found on type '{entryTypeName}'.\n"
+                        + $"For MonoBehaviour types, set 'attachAsComponent' to true instead.";
                     diagnostics = lastCompileDiagnostics;
                     return false;
                 }
@@ -284,7 +287,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
     public bool AttachMonoBehaviour(GameObject host, out string runtimeError)
     {
         runtimeError = null;
-        
+
         if (host == null)
         {
             runtimeError = "Target GameObject is null.";
@@ -303,8 +306,9 @@ public class RoslynRuntimeCompiler : MonoBehaviour
             var existing = host.GetComponent(entryType);
             // Each successful recompile loads a new Type identity for the same class.
             if (existing == null)
-                existing = attachedComponents.FirstOrDefault(component => component != null
-                    && component.gameObject == host && component.GetType().FullName == entryType.FullName);
+                existing = attachedComponents.FirstOrDefault(component =>
+                    component != null && component.gameObject == host && component.GetType().FullName == entryType.FullName
+                );
 
             // Preserve same-Type replacement order for DisallowMultipleComponent classes.
             if (existing != null && existing.GetType() == entryType)
@@ -359,7 +363,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
     private bool InvokeCoroutine(MonoBehaviour host, GameObject target, out string runtimeError)
     {
         runtimeError = null;
-        
+
         if (entryMethod == null)
         {
             runtimeError = "No entry method found.";
@@ -423,12 +427,13 @@ public class RoslynRuntimeCompiler : MonoBehaviour
     /// <param name="errorMessage">Output error message if operation fails</param>
     /// <returns>True if successful, false otherwise</returns>
     public bool CompileAndExecute(
-        string sourceCode, 
-        string typeName, 
-        string methodName, 
-        GameObject targetObject, 
+        string sourceCode,
+        string typeName,
+        string methodName,
+        GameObject targetObject,
         bool shouldAttachComponent,
-        out string errorMessage)
+        out string errorMessage
+    )
     {
         errorMessage = null;
         compiledAssembly = null;
@@ -458,7 +463,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
         // Determine target GameObject first
         GameObject target = targetGameObject != null ? targetGameObject : this.gameObject;
         string targetName = target != null ? target.name : "null";
-        
+
         // Compile
         if (!CompileInMemory(out string compileError))
         {
@@ -486,12 +491,12 @@ public class RoslynRuntimeCompiler : MonoBehaviour
                     AddHistoryEntry(sourceCode, typeName, entryMethodName, false, attachError, target.name);
                     return false;
                 }
-                
+
                 Debug.Log($"[MCP] MonoBehaviour '{typeName}' successfully attached to '{target.name}'");
                 AddHistoryEntry(sourceCode, typeName, entryMethodName, true, "Component attached successfully", target.name);
                 return true;
             }
-            
+
             // Coroutine invocation
             if (entryMethod != null && typeof(System.Collections.IEnumerator).IsAssignableFrom(entryMethod.ReturnType))
             {
@@ -502,12 +507,12 @@ public class RoslynRuntimeCompiler : MonoBehaviour
                     AddHistoryEntry(sourceCode, typeName, entryMethodName, false, coroutineError, target.name);
                     return false;
                 }
-                
+
                 Debug.Log($"[MCP] Coroutine '{methodName}' started on '{target.name}'");
                 AddHistoryEntry(sourceCode, typeName, entryMethodName, true, "Coroutine started successfully", target.name);
                 return true;
             }
-            
+
             // Static method invocation
             if (!InvokeEntry(target, out string invokeError))
             {
@@ -515,7 +520,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
                 AddHistoryEntry(sourceCode, typeName, entryMethodName, false, invokeError, target.name);
                 return false;
             }
-            
+
             Debug.Log($"[MCP] Method '{methodName}' executed successfully on '{target.name}'");
             AddHistoryEntry(sourceCode, typeName, entryMethodName, true, "Method executed successfully", target.name);
             return true;
@@ -554,14 +559,15 @@ public class RoslynRuntimeCompiler : MonoBehaviour
         if (!CompileAndExecute(code, entryTypeName, entryMethodName, targetGameObject, attachAsComponent, out var error))
             Debug.LogError("Compile and run failed: " + error);
     }
-    
+
     /// <summary>
     /// Adds an entry to the compilation history
     /// </summary>
     private void AddHistoryEntry(string sourceCode, string typeName, string methodName, bool success, string diagnostics, string target)
     {
-        if (!enableHistory) return;
-        
+        if (!enableHistory)
+            return;
+
         var entry = new CompilationHistoryEntry
         {
             timestamp = System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
@@ -570,18 +576,18 @@ public class RoslynRuntimeCompiler : MonoBehaviour
             methodName = methodName,
             success = success,
             diagnostics = diagnostics,
-            executionTarget = target
+            executionTarget = target,
         };
-        
+
         _sharedHistory.Add(entry);
-        
+
         // Trim if exceeded max
         while (_sharedHistory.Count > maxHistoryEntries)
         {
             _sharedHistory.RemoveAt(0);
         }
     }
-    
+
     /// <summary>
     /// Saves the compilation history to a JSON file outside Assets
     /// </summary>
@@ -589,24 +595,24 @@ public class RoslynRuntimeCompiler : MonoBehaviour
     {
         error = "";
         savedPath = "";
-        
+
         try
         {
             string projectRoot = Application.dataPath.Replace("/Assets", "").Replace("\\Assets", "");
             string historyDir = System.IO.Path.Combine(projectRoot, "RoslynHistory");
-            
+
             if (!System.IO.Directory.Exists(historyDir))
             {
                 System.IO.Directory.CreateDirectory(historyDir);
             }
-            
+
             string timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
             string filename = $"RoslynHistory_{timestamp}.json";
             savedPath = System.IO.Path.Combine(historyDir, filename);
-            
+
             string json = JsonUtility.ToJson(new HistoryWrapper { entries = _sharedHistory }, true);
             System.IO.File.WriteAllText(savedPath, json);
-            
+
             Debug.Log($"[RuntimeRoslynDemo] Saved {_sharedHistory.Count} history entries to: {savedPath}");
             return true;
         }
@@ -617,7 +623,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
             return false;
         }
     }
-    
+
     /// <summary>
     /// Saves a specific history entry as a standalone .cs file outside Assets
     /// </summary>
@@ -625,33 +631,34 @@ public class RoslynRuntimeCompiler : MonoBehaviour
     {
         error = "";
         savedPath = "";
-        
+
         if (index < 0 || index >= _sharedHistory.Count)
         {
             error = "Invalid history index";
             return false;
         }
-        
+
         try
         {
             var entry = _sharedHistory[index];
             string projectRoot = Application.dataPath.Replace("/Assets", "").Replace("\\Assets", "");
             string scriptsDir = System.IO.Path.Combine(projectRoot, "RoslynHistory", "Scripts");
-            
+
             if (!System.IO.Directory.Exists(scriptsDir))
             {
                 System.IO.Directory.CreateDirectory(scriptsDir);
             }
-            
+
             string timestamp = System.DateTime.Parse(entry.timestamp).ToString("yyyyMMdd_HHmmss");
             string filename = $"{entry.typeName}_{timestamp}.cs";
             savedPath = System.IO.Path.Combine(scriptsDir, filename);
-            
+
             // Add header comment
-            string header = $"// Roslyn Runtime Compiled Script\n// Original Timestamp: {entry.timestamp}\n// Type: {entry.typeName}\n// Method: {entry.methodName}\n// Success: {entry.success}\n// Target: {entry.executionTarget}\n\n";
-            
+            string header =
+                $"// Roslyn Runtime Compiled Script\n// Original Timestamp: {entry.timestamp}\n// Type: {entry.typeName}\n// Method: {entry.methodName}\n// Success: {entry.success}\n// Target: {entry.executionTarget}\n\n";
+
             System.IO.File.WriteAllText(savedPath, header + entry.sourceCode);
-            
+
             Debug.Log($"[RuntimeRoslynDemo] Saved script to: {savedPath}");
             return true;
         }
@@ -662,7 +669,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
             return false;
         }
     }
-    
+
     /// <summary>
     /// Clears the compilation history
     /// </summary>
@@ -671,7 +678,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
         _sharedHistory.Clear();
         Debug.Log("[RuntimeRoslynDemo] Compilation history cleared");
     }
-    
+
     [System.Serializable]
     private class HistoryWrapper
     {
@@ -685,7 +692,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
 public static class RoslynMCPHelper
 {
     private static RoslynRuntimeCompiler _compiler;
-    
+
     /// <summary>
     /// Get or create the runtime compiler instance
     /// </summary>
@@ -724,7 +731,7 @@ public static class RoslynMCPHelper
         try
         {
             var compiler = GetOrCreateCompiler();
-            
+
             // Find or create target GameObject
             GameObject target = null;
             if (!string.IsNullOrEmpty(targetGameObjectName))
@@ -745,7 +752,7 @@ public static class RoslynMCPHelper
 
             // Compile and execute
             bool success = compiler.CompileAndExecute(sourceCode, className, target, out string error);
-            
+
             if (success)
             {
                 result = $"Successfully compiled and attached '{className}' to '{target.name}'";
@@ -781,7 +788,7 @@ public static class RoslynMCPHelper
         try
         {
             var compiler = GetOrCreateCompiler();
-            
+
             GameObject target = compiler.gameObject;
             if (!string.IsNullOrEmpty(targetGameObjectName))
             {
@@ -795,7 +802,7 @@ public static class RoslynMCPHelper
             }
 
             bool success = compiler.CompileAndExecute(sourceCode, className, methodName, target, false, out string error);
-            
+
             if (success)
             {
                 result = $"Successfully compiled and executed '{className}.{methodName}'";
@@ -844,8 +851,11 @@ public static class RoslynMCPHelper
 // Editor window
 public class RoslynRuntimeCompilerWindow : EditorWindow
 {
-    [SerializeField] private RoslynRuntimeCompiler helperInScene;
-    [SerializeField] private RoslynRuntimeCompiler ownedHelper;
+    [SerializeField]
+    private RoslynRuntimeCompiler helperInScene;
+
+    [SerializeField]
+    private RoslynRuntimeCompiler ownedHelper;
     private Vector2 scrollPos;
     private Vector2 diagScroll;
     private Vector2 historyScroll;
@@ -872,9 +882,10 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
     {
         // Preserve the same helper across repeated enables and script reloads.
         if (helperInScene == null || helperInScene.gameObject == null)
-            helperInScene = ownedHelper != null && ownedHelper.gameObject != null
-                ? ownedHelper
-                : UnityFindObjectsCompat.FindFirst<RoslynRuntimeCompiler>(includeInactive: true);
+            helperInScene =
+                ownedHelper != null && ownedHelper.gameObject != null
+                    ? ownedHelper
+                    : UnityFindObjectsCompat.FindFirst<RoslynRuntimeCompiler>(includeInactive: true);
         if (helperInScene == null)
         {
             var go = new GameObject("RoslynRuntimeHelper");
@@ -906,7 +917,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
             helperInScene.targetGameObject = targetGameObject;
         }
     }
-    
+
     void OnDestroy()
     {
         // Only helpers created by this window belong to its cleanup lifecycle.
@@ -925,7 +936,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
         {
             // Try to find existing helper first
             helperInScene = UnityFindObjectsCompat.FindFirst<RoslynRuntimeCompiler>(includeInactive: true);
-            
+
             // If still not found, create a new one
             if (helperInScene == null)
             {
@@ -933,7 +944,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
                 helperInScene = go.AddComponent<RoslynRuntimeCompiler>();
                 ownedHelper = helperInScene;
                 go.hideFlags = HideFlags.HideAndDontSave;
-                
+
                 // Initialize with default values
                 helperInScene.code = codeText;
                 helperInScene.entryTypeName = typeName;
@@ -954,11 +965,11 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
 
         EditorGUILayout.LabelField("Roslyn Runtime Compiler (Editor)", EditorStyles.boldLabel);
         EditorGUILayout.Space();
-        
+
         // Tab selector
         selectedTab = GUILayout.Toolbar(selectedTab, tabNames);
         EditorGUILayout.Space();
-        
+
         if (selectedTab == 0)
         {
             DrawCompilerTab();
@@ -968,7 +979,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
             DrawHistoryTab();
         }
     }
-    
+
     void DrawCompilerTab()
     {
         EditorGUILayout.BeginHorizontal();
@@ -977,7 +988,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
         EditorGUILayout.LabelField("Method:", GUILayout.Width(50));
         methodName = EditorGUILayout.TextField(methodName, GUILayout.Width(120));
         EditorGUILayout.EndHorizontal();
-        
+
         EditorGUILayout.BeginHorizontal();
         attachAsComponent = EditorGUILayout.Toggle("Attach as Component", attachAsComponent, GUILayout.Width(200));
         if (attachAsComponent)
@@ -1007,8 +1018,10 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
             }
         }
 
-        bool canRun = helperInScene != null && helperInScene.HasCompiledAssembly && 
-                      (helperInScene.HasEntryMethod || (helperInScene.HasEntryType && typeof(MonoBehaviour).IsAssignableFrom(helperInScene.EntryType)));
+        bool canRun =
+            helperInScene != null
+            && helperInScene.HasCompiledAssembly
+            && (helperInScene.HasEntryMethod || (helperInScene.HasEntryType && typeof(MonoBehaviour).IsAssignableFrom(helperInScene.EntryType)));
         GUI.enabled = canRun;
         if (GUILayout.Button("Run (invoke on selected)"))
         {
@@ -1016,7 +1029,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
             var sel = Selection.activeGameObject;
             if (sel == null && helperInScene != null && helperInScene.gameObject != null)
                 sel = helperInScene.gameObject;
-                
+
             if (sel != null && helperInScene != null)
             {
                 if (helperInScene.InvokeEntry(sel, out var runtimeErr))
@@ -1041,31 +1054,34 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Diagnostics:");
         diagScroll = EditorGUILayout.BeginScrollView(diagScroll, GUILayout.Height(120));
-        string diagnosticsText = (helperInScene != null && helperInScene.lastCompileDiagnostics != null) 
-            ? helperInScene.lastCompileDiagnostics 
-            : "No diagnostics available.";
+        string diagnosticsText =
+            (helperInScene != null && helperInScene.lastCompileDiagnostics != null) ? helperInScene.lastCompileDiagnostics : "No diagnostics available.";
         EditorGUILayout.HelpBox(diagnosticsText, MessageType.Info);
         EditorGUILayout.EndScrollView();
 
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Notes:");
-        EditorGUILayout.HelpBox("This compiles code in-memory using Roslyn. Do not write .cs files into Assets while running. Generated code runs with editor permissions.\n\n" +
-            "Supported patterns:\n" +
-            "1. Static method: public static void Run(GameObject host)\n" +
-            "2. MonoBehaviour: Enable 'Attach as Component' for classes inheriting MonoBehaviour\n" +
-            "3. Coroutine: public static IEnumerator RunCoroutine(MonoBehaviour host)\n" +
-            "4. Parameterless: public static void Run()", MessageType.None);
+        EditorGUILayout.HelpBox(
+            "This compiles code in-memory using Roslyn. Do not write .cs files into Assets while running. Generated code runs with editor permissions.\n\n"
+                + "Supported patterns:\n"
+                + "1. Static method: public static void Run(GameObject host)\n"
+                + "2. MonoBehaviour: Enable 'Attach as Component' for classes inheriting MonoBehaviour\n"
+                + "3. Coroutine: public static IEnumerator RunCoroutine(MonoBehaviour host)\n"
+                + "4. Parameterless: public static void Run()",
+            MessageType.None
+        );
     }
-    
+
     void DrawHistoryTab()
     {
-        if (helperInScene == null) return;
-        
+        if (helperInScene == null)
+            return;
+
         var history = helperInScene.CompilationHistory;
-        
+
         EditorGUILayout.BeginHorizontal();
         EditorGUILayout.LabelField($"Compilation History ({history.Count} entries)", EditorStyles.boldLabel);
-        
+
         if (GUILayout.Button("Save History JSON", GUILayout.Width(140)))
         {
             if (helperInScene.SaveHistoryToFile(out string path, out string error))
@@ -1077,7 +1093,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
                 EditorUtility.DisplayDialog("Error", $"Failed to save history:\n{error}", "OK");
             }
         }
-        
+
         if (GUILayout.Button("Clear History", GUILayout.Width(100)))
         {
             if (EditorUtility.DisplayDialog("Clear History", "Are you sure you want to clear all compilation history?", "Yes", "No"))
@@ -1087,73 +1103,73 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
             }
         }
         EditorGUILayout.EndHorizontal();
-        
+
         EditorGUILayout.Space();
-        
+
         if (history.Count == 0)
         {
             EditorGUILayout.HelpBox("No compilation history yet. Compile and run scripts to see them here.", MessageType.Info);
             return;
         }
-        
+
         EditorGUILayout.BeginHorizontal();
-        
+
         // Left panel - history list
         EditorGUILayout.BeginVertical(GUILayout.Width(position.width * 0.4f));
         EditorGUILayout.LabelField("History Entries:", EditorStyles.boldLabel);
         historyScroll = EditorGUILayout.BeginScrollView(historyScroll);
-        
+
         for (int i = history.Count - 1; i >= 0; i--) // Reverse order (newest first)
         {
             var entry = history[i];
             GUIStyle entryStyle = new GUIStyle(GUI.skin.button);
             entryStyle.alignment = TextAnchor.MiddleLeft;
             entryStyle.normal.textColor = entry.success ? Color.green : Color.red;
-            
+
             if (selectedHistoryIndex == i)
             {
                 entryStyle.normal.background = Texture2D.grayTexture;
             }
-            
+
             string label = $"[{i}] {entry.timestamp} - {entry.typeName}.{entry.methodName}";
             if (entry.success)
                 label += " ✓";
             else
                 label += " ✗";
-                
+
             if (GUILayout.Button(label, entryStyle, GUILayout.Height(30)))
             {
                 selectedHistoryIndex = i;
             }
         }
-        
+
         EditorGUILayout.EndScrollView();
         EditorGUILayout.EndVertical();
-        
+
         // Right panel - selected entry details
         EditorGUILayout.BeginVertical();
-        
+
         if (selectedHistoryIndex >= 0 && selectedHistoryIndex < history.Count)
         {
             var entry = history[selectedHistoryIndex];
-            
+
             EditorGUILayout.LabelField("Entry Details:", EditorStyles.boldLabel);
             EditorGUILayout.LabelField("Timestamp:", entry.timestamp);
             EditorGUILayout.LabelField("Type:", entry.typeName);
             EditorGUILayout.LabelField("Method:", entry.methodName);
             EditorGUILayout.LabelField("Target:", entry.executionTarget);
             EditorGUILayout.LabelField("Success:", entry.success ? "Yes" : "No");
-            
+
             EditorGUILayout.Space();
-            
+
             if (!string.IsNullOrEmpty(entry.diagnostics))
             {
                 EditorGUILayout.LabelField("Diagnostics:");
                 EditorGUILayout.HelpBox(entry.diagnostics, entry.success ? MessageType.Info : MessageType.Error);
             }
-            
+
             EditorGUILayout.Space();
-            
+
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button("Load to Compiler", GUILayout.Height(25)))
             {
@@ -1162,7 +1178,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
                 methodName = entry.methodName;
                 selectedTab = 0; // Switch to compiler tab
             }
-            
+
             if (GUILayout.Button("Save as .cs File", GUILayout.Height(25)))
             {
                 if (helperInScene.SaveHistoryEntryAsScript(selectedHistoryIndex, out string path, out string error))
@@ -1176,9 +1192,9 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
                 }
             }
             EditorGUILayout.EndHorizontal();
-            
+
             EditorGUILayout.Space();
-            
+
             EditorGUILayout.LabelField("Source Code:");
             historyCodeScroll = EditorGUILayout.BeginScrollView(historyCodeScroll, GUILayout.ExpandHeight(true));
             EditorGUILayout.TextArea(entry.sourceCode, GUILayout.ExpandHeight(true));
@@ -1188,9 +1204,9 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
         {
             EditorGUILayout.HelpBox("Select a history entry to view details.", MessageType.Info);
         }
-        
+
         EditorGUILayout.EndVertical();
-        
+
         EditorGUILayout.EndHorizontal();
     }
 

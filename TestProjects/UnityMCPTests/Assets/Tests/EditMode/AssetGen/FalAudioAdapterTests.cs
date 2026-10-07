@@ -12,21 +12,29 @@ namespace MCPForUnityTests.Editor.AssetGen
         private const string StableAudio = "fal-ai/stable-audio-25/text-to-audio";
         private const string Resp = "https://queue.fal.run/fal-ai/stable-audio-25/text-to-audio/requests/r1";
 
-        private static HttpResult Json(string body) => new HttpResult { Status = 200, IsSuccess = true, Text = body };
+        private static HttpResult Json(string body) =>
+            new HttpResult
+            {
+                Status = 200,
+                IsSuccess = true,
+                Text = body,
+            };
 
         private static AudioGenRequest Req(string model = null, float duration = 0f) =>
-            new AudioGenRequest { Provider = "fal", Model = model, Prompt = "gentle rain", Duration = duration };
+            new AudioGenRequest
+            {
+                Provider = "fal",
+                Model = model,
+                Prompt = "gentle rain",
+                Duration = duration,
+            };
 
-        private static string SubmittedBody(FakeHttpTransport fake) =>
-            Encoding.UTF8.GetString(fake.RecordedRequests[0].Body);
+        private static string SubmittedBody(FakeHttpTransport fake) => Encoding.UTF8.GetString(fake.RecordedRequests[0].Body);
 
         [Test]
         public void Submit_PostsModelEndpoint_WithKeyHeader_ReturnsResponseUrl()
         {
-            var fake = new FakeHttpTransport
-            {
-                Handler = _ => Json("{\"request_id\":\"r1\",\"response_url\":\"" + Resp + "\"}")
-            };
+            var fake = new FakeHttpTransport { Handler = _ => Json("{\"request_id\":\"r1\",\"response_url\":\"" + Resp + "\"}") };
             var adapter = new FalAudioAdapter();
 
             string pid = adapter.SubmitAsync(Req(), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
@@ -45,8 +53,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var fake = new FakeHttpTransport { Handler = _ => Json("{\"response_url\":\"" + Resp + "\"}") };
             var adapter = new FalAudioAdapter();
 
-            adapter.SubmitAsync(Req("cassetteai/sound-effects-generator"), "falkey123", fake, CancellationToken.None)
-                   .GetAwaiter().GetResult();
+            adapter.SubmitAsync(Req("cassetteai/sound-effects-generator"), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
 
             StringAssert.Contains("cassetteai/sound-effects-generator", fake.RecordedRequests[0].Url);
         }
@@ -80,8 +87,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var fake = new FakeHttpTransport { Handler = _ => Json("{\"response_url\":\"" + Resp + "\"}") };
             var adapter = new FalAudioAdapter();
 
-            adapter.SubmitAsync(Req("cassetteai/sound-effects-generator", 45f), "falkey123", fake, CancellationToken.None)
-                   .GetAwaiter().GetResult();
+            adapter.SubmitAsync(Req("cassetteai/sound-effects-generator", 45f), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
 
             JObject body = JObject.Parse(SubmittedBody(fake));
             Assert.AreEqual(30, (int)body["duration"]);
@@ -93,8 +99,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var fake = new FakeHttpTransport { Handler = _ => Json("{\"response_url\":\"" + Resp + "\"}") };
             var adapter = new FalAudioAdapter();
 
-            adapter.SubmitAsync(Req("cassetteai/music-generator", 300f), "falkey123", fake, CancellationToken.None)
-                   .GetAwaiter().GetResult();
+            adapter.SubmitAsync(Req("cassetteai/music-generator", 300f), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
 
             JObject body = JObject.Parse(SubmittedBody(fake));
             Assert.AreEqual(180, (int)body["duration"]);
@@ -108,8 +113,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var fake = new FakeHttpTransport { Handler = _ => Json("{\"response_url\":\"" + Resp + "\"}") };
             var adapter = new FalAudioAdapter();
 
-            adapter.SubmitAsync(Req("cassetteai/music-generator"), "falkey123", fake, CancellationToken.None)
-                   .GetAwaiter().GetResult();
+            adapter.SubmitAsync(Req("cassetteai/music-generator"), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
 
             JObject body = JObject.Parse(SubmittedBody(fake));
             Assert.IsNotNull(body["duration"], "duration must be present for a required-duration model");
@@ -123,8 +127,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var fake = new FakeHttpTransport { Handler = _ => Json("{\"response_url\":\"" + Resp + "\"}") };
             var adapter = new FalAudioAdapter();
 
-            adapter.SubmitAsync(Req("cassetteai/music-generator", 0.5f), "falkey123", fake, CancellationToken.None)
-                   .GetAwaiter().GetResult();
+            adapter.SubmitAsync(Req("cassetteai/music-generator", 0.5f), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
 
             JObject body = JObject.Parse(SubmittedBody(fake));
             Assert.GreaterOrEqual((int)body["duration"], 1);
@@ -138,8 +141,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var fake = new FakeHttpTransport { Handler = _ => Json("{\"response_url\":\"" + Resp + "\"}") };
             var adapter = new FalAudioAdapter();
 
-            adapter.SubmitAsync(Req("cassetteai/music-generator", 10.9f), "falkey123", fake, CancellationToken.None)
-                   .GetAwaiter().GetResult();
+            adapter.SubmitAsync(Req("cassetteai/music-generator", 10.9f), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
 
             JObject body = JObject.Parse(SubmittedBody(fake));
             Assert.AreEqual(10, (int)body["duration"]);
@@ -184,8 +186,9 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void Submit_InvalidModelId_FailsBeforeSending(string model)
         {
             var fake = new FakeHttpTransport();
-            Assert.Throws<System.InvalidOperationException>(() => new FalAudioAdapter()
-                .SubmitAsync(Req(model), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult());
+            Assert.Throws<System.InvalidOperationException>(() =>
+                new FalAudioAdapter().SubmitAsync(Req(model), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult()
+            );
             Assert.IsEmpty(fake.RecordedRequests);
         }
 
@@ -194,9 +197,8 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var fake = new FakeHttpTransport
             {
-                Handler = spec => spec.Url.EndsWith("/status")
-                    ? Json("{\"status\":\"COMPLETED\"}")
-                    : Json("{\"audio_file\":{\"url\":\"https://cdn.example.com/a.wav\"}}")
+                Handler = spec =>
+                    spec.Url.EndsWith("/status") ? Json("{\"status\":\"COMPLETED\"}") : Json("{\"audio_file\":{\"url\":\"https://cdn.example.com/a.wav\"}}"),
             };
             var adapter = new FalAudioAdapter();
 
@@ -214,9 +216,8 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var fake = new FakeHttpTransport
             {
-                Handler = spec => spec.Url.EndsWith("/status")
-                    ? Json("{\"status\":\"COMPLETED\"}")
-                    : Json("{\"audio_file\":{\"url\":\"https://cdn.example.com/a.wav\"}}")
+                Handler = spec =>
+                    spec.Url.EndsWith("/status") ? Json("{\"status\":\"COMPLETED\"}") : Json("{\"audio_file\":{\"url\":\"https://cdn.example.com/a.wav\"}}"),
             };
             var adapter = new FalAudioAdapter();
 
@@ -232,9 +233,10 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var fake = new FakeHttpTransport
             {
-                Handler = spec => spec.Url.EndsWith("/status")
-                    ? Json("{\"status\":\"COMPLETED\"}")
-                    : Json("{\"audio_file\":{\"url\":\"https://cdn.example.com/track.mp3\"}}")
+                Handler = spec =>
+                    spec.Url.EndsWith("/status")
+                        ? Json("{\"status\":\"COMPLETED\"}")
+                        : Json("{\"audio_file\":{\"url\":\"https://cdn.example.com/track.mp3\"}}"),
             };
             var adapter = new FalAudioAdapter();
 
@@ -246,16 +248,9 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void Poll_AudioShape_And_BareUrl_Extracted()
         {
-            foreach (string result in new[]
+            foreach (string result in new[] { "{\"audio\":{\"url\":\"https://cdn.example.com/a.wav\"}}", "{\"audio_url\":\"https://cdn.example.com/a.wav\"}" })
             {
-                "{\"audio\":{\"url\":\"https://cdn.example.com/a.wav\"}}",
-                "{\"audio_url\":\"https://cdn.example.com/a.wav\"}"
-            })
-            {
-                var fake = new FakeHttpTransport
-                {
-                    Handler = spec => spec.Url.EndsWith("/status") ? Json("{\"status\":\"COMPLETED\"}") : Json(result)
-                };
+                var fake = new FakeHttpTransport { Handler = spec => spec.Url.EndsWith("/status") ? Json("{\"status\":\"COMPLETED\"}") : Json(result) };
                 var adapter = new FalAudioAdapter();
 
                 ProviderPollResult pr = adapter.PollAsync(Resp, "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
@@ -268,10 +263,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void Poll_Completed_NoUrl_Fails()
         {
-            var fake = new FakeHttpTransport
-            {
-                Handler = spec => spec.Url.EndsWith("/status") ? Json("{\"status\":\"COMPLETED\"}") : Json("{}")
-            };
+            var fake = new FakeHttpTransport { Handler = spec => spec.Url.EndsWith("/status") ? Json("{\"status\":\"COMPLETED\"}") : Json("{}") };
             var adapter = new FalAudioAdapter();
 
             ProviderPollResult pr = adapter.PollAsync(Resp, "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
@@ -305,10 +297,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void Poll_Failed_RedactsError()
         {
-            var fake = new FakeHttpTransport
-            {
-                Handler = _ => Json("{\"status\":\"ERROR\",\"error\":\"boom falkey123 leaked\"}")
-            };
+            var fake = new FakeHttpTransport { Handler = _ => Json("{\"status\":\"ERROR\",\"error\":\"boom falkey123 leaked\"}") };
             var adapter = new FalAudioAdapter();
 
             ProviderPollResult pr = adapter.PollAsync(Resp, "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
@@ -338,8 +327,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             var adapter = new FalAudioAdapter();
 
             Assert.Throws<System.Exception>(() =>
-                adapter.PollAsync("https://attacker.example/harvest", "falkey123", fake, CancellationToken.None)
-                       .GetAwaiter().GetResult());
+                adapter.PollAsync("https://attacker.example/harvest", "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult()
+            );
             Assert.IsEmpty(fake.RecordedRequests, "no request (and no key) may be sent to a foreign host");
         }
 
@@ -350,8 +339,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var fake = new FakeHttpTransport { Handler = _ => Json("{\"response_url\":\"https://evil.example/x\"}") };
             var adapter = new FalAudioAdapter();
 
-            Assert.Throws<System.Exception>(() =>
-                adapter.SubmitAsync(Req(), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult());
+            Assert.Throws<System.Exception>(() => adapter.SubmitAsync(Req(), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult());
         }
     }
 }

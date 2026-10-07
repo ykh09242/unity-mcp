@@ -20,10 +20,7 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
 
         public virtual DependencyStatus DetectUv()
         {
-            var status = new DependencyStatus("uv Package Manager", isRequired: true)
-            {
-                InstallationHint = GetUvInstallUrl()
-            };
+            var status = new DependencyStatus("uv Package Manager", isRequired: true) { InstallationHint = GetUvInstallUrl() };
 
             try
             {
@@ -63,7 +60,6 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
             return status;
         }
 
-
         // Git is not needed to run the bridge, only to add or update the package from a Git URL
         // in the Package Manager, which is the install path most users take (issue #1216). It is
         // reported as optional so a missing git never blocks setup, but the row tells the user why
@@ -72,10 +68,7 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
 
         public virtual DependencyStatus DetectGit()
         {
-            var status = new DependencyStatus("Git", isRequired: false)
-            {
-                InstallationHint = GitInstallUrl
-            };
+            var status = new DependencyStatus("Git", isRequired: false) { InstallationHint = GitInstallUrl };
 
             try
             {
@@ -86,13 +79,16 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
                     return status;
                 }
 
-                if (ExecPath.TryRun(gitPath, "--version", null, out string stdout, out string stderr, 5000)
-                    && TryParseGitVersion(string.IsNullOrWhiteSpace(stdout) ? stderr : stdout, out string version))
+                if (
+                    ExecPath.TryRun(gitPath, "--version", null, out string stdout, out string stderr, 5000)
+                    && TryParseGitVersion(string.IsNullOrWhiteSpace(stdout) ? stderr : stdout, out string version)
+                )
                 {
                     status.IsAvailable = true;
                     status.Version = version;
                     status.Path = gitPath;
-                    status.Details = "If the Package Manager still reports 'not in a git directory', git is refusing a folder "
+                    status.Details =
+                        "If the Package Manager still reports 'not in a git directory', git is refusing a folder "
                         + "owned by another user: run git config --global --add safe.directory \"<your Unity project folder>\"";
                     return status;
                 }
@@ -127,8 +123,7 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
 
         internal bool IsSupportedPythonVersion(string version)
         {
-            return TryParseVersion(version, out int major, out int minor)
-                && (major > 3 || (major == 3 && minor >= 11));
+            return TryParseVersion(version, out int major, out int minor) && (major > 3 || (major == 3 && minor >= 11));
         }
 
         protected bool TryParseVersion(string version, out int major, out int minor)
@@ -151,6 +146,7 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
 
             return false;
         }
+
         // In PlatformDetectorBase.cs
         protected bool TryValidateUvWithPath(string command, string augmentedPath, out string version, out string fullPath)
         {
@@ -165,8 +161,7 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
                     commandToRun = resolvedPath;
                 }
 
-                if (!ExecPath.TryRun(commandToRun, "--version", null, out string stdout, out string stderr,
-                    5000, augmentedPath))
+                if (!ExecPath.TryRun(commandToRun, "--version", null, out string stdout, out string stderr, 5000, augmentedPath))
                     return false;
 
                 string output = string.IsNullOrWhiteSpace(stdout) ? stderr.Trim() : stdout.Trim();
@@ -179,10 +174,7 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
                         var remainder = output.Substring(spaceIndex + 1).Trim();
                         int nextSpace = remainder.IndexOf(' ');
                         int parenIndex = remainder.IndexOf('(');
-                        int endIndex = Math.Min(
-                            nextSpace >= 0 ? nextSpace : int.MaxValue,
-                            parenIndex >= 0 ? parenIndex : int.MaxValue
-                        );
+                        int endIndex = Math.Min(nextSpace >= 0 ? nextSpace : int.MaxValue, parenIndex >= 0 ? parenIndex : int.MaxValue);
                         version = endIndex < int.MaxValue ? remainder.Substring(0, endIndex).Trim() : remainder;
                         fullPath = commandToRun;
                         return true;
@@ -196,7 +188,6 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
 
             return false;
         }
-        
 
         // Add abstract method for subclasses to implement
         protected abstract bool TryFindInPath(string executable, out string fullPath);

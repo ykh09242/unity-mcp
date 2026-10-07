@@ -54,19 +54,25 @@ def test_second_registration_closes_socket_and_removes_session(plugin_client):
     assert plugin_client.portal.call(PluginHub._registry.list_sessions) == {}
 
 
-@pytest.mark.parametrize("field, value", [
-    ("project_hash", "x" * 257),
-    ("project_name", "x" * 257),
-    ("unity_version", "x" * 65),
-    ("project_path", "x" * 4097),
-], ids=["hash", "name", "version", "path"])
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("project_hash", "x" * 257),
+        ("project_name", "x" * 257),
+        ("unity_version", "x" * 65),
+        ("project_path", "x" * 4097),
+    ],
+    ids=["hash", "name", "version", "path"],
+)
 def test_registration_rejects_oversized_fields(field, value):
     with pytest.raises(ValidationError):
         RegisterMessage(**{"project_hash": "valid", field: value})
 
 
 @pytest.mark.parametrize("field", ["project_name", "project_hash"])
-@pytest.mark.parametrize("control", ["\x00", "\t", "\n", "\r", "\x1b", "\x7f", "\x85", "\u2028", "\u2029"])
+@pytest.mark.parametrize(
+    "control", ["\x00", "\t", "\n", "\r", "\x1b", "\x7f", "\x85", "\u2028", "\u2029"]
+)
 def test_registration_rejects_log_control_characters(field, control):
     with pytest.raises(ValidationError):
         RegisterMessage(**{"project_hash": "valid", field: "project" + control + "forged"})
@@ -78,7 +84,13 @@ def test_websocket_registration_rejects_log_injection(plugin_client, caplog, fie
     caplog.set_level(logging.INFO, logger="transport.plugin_hub")
     with plugin_client.websocket_connect("/hub/plugin") as ws:
         assert ws.receive_json()["type"] == "welcome"
-        ws.send_json({"type": "register", "project_hash": "invalid", field: "source" + control + "FORGED_ENTRY"})
+        ws.send_json(
+            {
+                "type": "register",
+                "project_hash": "invalid",
+                field: "source" + control + "FORGED_ENTRY",
+            }
+        )
         # Failed first registration now closes admission immediately.
         with pytest.raises(WebSocketDisconnect) as closed:
             ws.receive_json()
@@ -97,7 +109,11 @@ def test_registration_preserves_unicode_and_escapes_log_fields(plugin_client, ca
         assert ws.receive_json()["type"] == "registered"
         sessions = plugin_client.portal.call(PluginHub._registry.list_sessions)
         assert next(iter(sessions.values())).project_name == name
-    registrations = [record.getMessage() for record in caplog.records if record.getMessage().startswith("Plugin registered:")]
+    registrations = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Plugin registered:")
+    ]
     assert registrations == [f"Plugin registered: {name!r} ({'hash with spaces'!r})"]
 
 
@@ -112,7 +128,8 @@ async def test_registry_quota_allows_reconnect_but_rejects_new_instance(monkeypa
         await registry.register("second", "B", "hash-b", "6000", user_id="user-a")
 
     replacement, evicted = await registry.register(
-        "replacement", "A", "hash-a", "6000", user_id="user-a")
+        "replacement", "A", "hash-a", "6000", user_id="user-a"
+    )
     assert replacement.session_id == "replacement"
     assert evicted == "first"
     await registry.register("other-user", "B", "hash-b", "6000", user_id="user-b")

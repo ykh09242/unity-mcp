@@ -41,8 +41,10 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             AssetGenJobManager.ResetForTests();
             SecureKeyStore.ResetForTests();
-            if (Directory.Exists(_absoluteFolder)) Directory.Delete(_absoluteFolder, true);
-            if (File.Exists(_absoluteFolder + ".meta")) File.Delete(_absoluteFolder + ".meta");
+            if (Directory.Exists(_absoluteFolder))
+                Directory.Delete(_absoluteFolder, true);
+            if (File.Exists(_absoluteFolder + ".meta"))
+                File.Delete(_absoluteFolder + ".meta");
         }
 
         private string WriteSized(string name, int length)
@@ -53,23 +55,40 @@ namespace MCPForUnityTests.Editor.AssetGen
             return path;
         }
 
-        private static FakeHttpTransport Transport() => new FakeHttpTransport
-        {
-            Handler = spec => new HttpResult
+        private static FakeHttpTransport Transport() =>
+            new FakeHttpTransport
             {
-                IsSuccess = true, Status = 200,
-                Text = spec.Url.Contains("meshy") ? "{\"result\":\"fixture-task\"}"
-                    : spec.Url.Contains("openrouter") ? "{}"
-                    : "{\"response_url\":\"https://queue.fal.run/fixture/requests/fixture-task\"}"
-            }
-        };
+                Handler = spec => new HttpResult
+                {
+                    IsSuccess = true,
+                    Status = 200,
+                    Text =
+                        spec.Url.Contains("meshy") ? "{\"result\":\"fixture-task\"}"
+                        : spec.Url.Contains("openrouter") ? "{}"
+                        : "{\"response_url\":\"https://queue.fal.run/fixture/requests/fixture-task\"}",
+                },
+            };
 
         private static Task Submit(string provider, string path, FakeHttpTransport http, string extra = "edit")
         {
             if (provider == "meshy")
-                return new MeshyAdapter().SubmitAsync(new ModelGenRequest
-                { Mode = "image", ImagePath = path, Model = extra }, "fixture-only", http, CancellationToken.None);
-            var request = new ImageGenRequest { Mode = "image", ImagePath = path, Prompt = extra };
+                return new MeshyAdapter().SubmitAsync(
+                    new ModelGenRequest
+                    {
+                        Mode = "image",
+                        ImagePath = path,
+                        Model = extra,
+                    },
+                    "fixture-only",
+                    http,
+                    CancellationToken.None
+                );
+            var request = new ImageGenRequest
+            {
+                Mode = "image",
+                ImagePath = path,
+                Prompt = extra,
+            };
             return provider == "fal"
                 ? new FalAdapter().SubmitAsync(request, "fixture-only", http, CancellationToken.None)
                 : new OpenRouterAdapter().SubmitAsync(request, "fixture-only", http, CancellationToken.None);
@@ -77,10 +96,15 @@ namespace MCPForUnityTests.Editor.AssetGen
 
         private static JObject Handle(string provider, string path)
         {
-            var p = new JObject { ["action"] = "generate", ["provider"] = provider,
-                ["mode"] = "ImAgE", ["image_path"] = path, ["prompt"] = "edit" };
-            return JObject.FromObject(provider == "meshy"
-                ? GenerateModel.HandleCommand(p) : GenerateImage.HandleCommand(p));
+            var p = new JObject
+            {
+                ["action"] = "generate",
+                ["provider"] = provider,
+                ["mode"] = "ImAgE",
+                ["image_path"] = path,
+                ["prompt"] = "edit",
+            };
+            return JObject.FromObject(provider == "meshy" ? GenerateModel.HandleCommand(p) : GenerateImage.HandleCommand(p));
         }
 
         [TestCase("fal")]
@@ -125,7 +149,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual(1, http.RecordedRequests.Count);
             Assert.LessOrEqual(http.RecordedRequests[0].Body.Length, RequestLimit);
             var body = JObject.Parse(Encoding.UTF8.GetString(http.RecordedRequests[0].Body));
-            string uri = provider == "fal" ? (string)body["image_urls"][0]
+            string uri =
+                provider == "fal" ? (string)body["image_urls"][0]
                 : provider == "meshy" ? (string)body["image_url"]
                 : (string)body["messages"][0]["content"][1]["image_url"]["url"];
             StringAssert.StartsWith("data:image/png;base64,", uri);
@@ -155,7 +180,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             string chunk = new string('\0', 4096);
             var tokens = new JArray();
             // Values share one small immutable string; escaped JSON exceeds the request budget.
-            for (int i = 0; i < 2048; i++) tokens.Add(chunk);
+            for (int i = 0; i < 2048; i++)
+                tokens.Add(chunk);
             Assert.Throws<IOException>(() => Serialize(new JObject { ["p"] = tokens }));
         }
 
@@ -204,13 +230,29 @@ namespace MCPForUnityTests.Editor.AssetGen
             var http = Transport();
             const string hosted = "https://fixture.invalid/ref.png";
             if (provider == "meshy")
-                await new MeshyAdapter().SubmitAsync(new ModelGenRequest
-                { Mode = mode, ImageUrl = hosted, Prompt = "한글😀" }, "fixture-only", http, CancellationToken.None);
+                await new MeshyAdapter().SubmitAsync(
+                    new ModelGenRequest
+                    {
+                        Mode = mode,
+                        ImageUrl = hosted,
+                        Prompt = "한글😀",
+                    },
+                    "fixture-only",
+                    http,
+                    CancellationToken.None
+                );
             else
             {
-                var request = new ImageGenRequest { Mode = mode, ImageUrl = hosted, Prompt = "한글😀" };
-                if (provider == "fal") await new FalAdapter().SubmitAsync(request, "fixture-only", http, CancellationToken.None);
-                else await new OpenRouterAdapter().SubmitAsync(request, "fixture-only", http, CancellationToken.None);
+                var request = new ImageGenRequest
+                {
+                    Mode = mode,
+                    ImageUrl = hosted,
+                    Prompt = "한글😀",
+                };
+                if (provider == "fal")
+                    await new FalAdapter().SubmitAsync(request, "fixture-only", http, CancellationToken.None);
+                else
+                    await new OpenRouterAdapter().SubmitAsync(request, "fixture-only", http, CancellationToken.None);
             }
             Assert.AreEqual(1, http.RecordedRequests.Count);
             string json = Encoding.UTF8.GetString(http.RecordedRequests[0].Body);
@@ -243,13 +285,17 @@ namespace MCPForUnityTests.Editor.AssetGen
             Type type = typeof(FalAdapter).Assembly.GetType("MCPForUnity.Editor.Services.AssetGen.Providers.ProviderHttp+RequestByteCounter");
             using var counter = (Stream)Activator.CreateInstance(type, true);
             byte[] chunk = new byte[4096];
-            for (int i = 0; i < RequestLimit / chunk.Length; i++) counter.Write(chunk, 0, chunk.Length);
+            for (int i = 0; i < RequestLimit / chunk.Length; i++)
+                counter.Write(chunk, 0, chunk.Length);
             Assert.AreEqual(RequestLimit, counter.Length);
             Assert.Throws<IOException>(() => counter.WriteByte(0));
             var body = new JObject
             {
                 ["p"] = "한글😀\ud800\u0000\"\\\u0085\u2028\u2029",
-                ["integer"] = 123, ["float"] = 1.25, ["bool"] = true, ["null"] = null
+                ["integer"] = 123,
+                ["float"] = 1.25,
+                ["bool"] = true,
+                ["null"] = null,
             };
             CultureInfo previous = CultureInfo.CurrentCulture;
             try
@@ -260,7 +306,10 @@ namespace MCPForUnityTests.Editor.AssetGen
                     CollectionAssert.AreEqual(Encoding.UTF8.GetBytes(body.ToString(Formatting.None)), Serialize(body));
                 }
             }
-            finally { CultureInfo.CurrentCulture = previous; }
+            finally
+            {
+                CultureInfo.CurrentCulture = previous;
+            }
         }
 
         [TestCase(true)]
@@ -276,10 +325,17 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             private readonly bool _grows;
             private int _writes;
-            public ChangingBody(bool grows) { _grows = grows; this["p"] = "xx"; }
+
+            public ChangingBody(bool grows)
+            {
+                _grows = grows;
+                this["p"] = "xx";
+            }
+
             public override void WriteTo(JsonWriter writer, params JsonConverter[] converters)
             {
-                if (++_writes == 2) this["p"] = _grows ? "xxxx" : "x";
+                if (++_writes == 2)
+                    this["p"] = _grows ? "xxxx" : "x";
                 base.WriteTo(writer, converters);
             }
         }
@@ -292,8 +348,14 @@ namespace MCPForUnityTests.Editor.AssetGen
 
         private static object Invoke(MethodInfo method, params object[] args)
         {
-            try { return method.Invoke(null, args); }
-            catch (TargetInvocationException e) { throw e.InnerException; }
+            try
+            {
+                return method.Invoke(null, args);
+            }
+            catch (TargetInvocationException e)
+            {
+                throw e.InnerException;
+            }
         }
 
         [TestCase(ImageLimit + 1, 0, 0)]
@@ -314,8 +376,15 @@ namespace MCPForUnityTests.Editor.AssetGen
             private readonly long _advertised;
             public int BytesRead;
             public int LargestRequest;
-            public ChangingStream(long advertised, int available) : base(new byte[available]) { _advertised = advertised; }
+
+            public ChangingStream(long advertised, int available)
+                : base(new byte[available])
+            {
+                _advertised = advertised;
+            }
+
             public override long Length => _advertised;
+
             public override int Read(byte[] buffer, int offset, int count)
             {
                 LargestRequest = Math.Max(LargestRequest, count);
@@ -323,10 +392,12 @@ namespace MCPForUnityTests.Editor.AssetGen
                 BytesRead += read;
                 return read;
             }
+
             public override int ReadByte()
             {
                 int value = base.ReadByte();
-                if (value >= 0) BytesRead++;
+                if (value >= 0)
+                    BytesRead++;
                 return value;
             }
         }
@@ -334,8 +405,15 @@ namespace MCPForUnityTests.Editor.AssetGen
         private sealed class FixtureKeys : ISecureKeyStore
         {
             public bool Has(string providerId) => true;
-            public bool TryGet(string providerId, out string apiKey) { apiKey = "fixture-only"; return true; }
+
+            public bool TryGet(string providerId, out string apiKey)
+            {
+                apiKey = "fixture-only";
+                return true;
+            }
+
             public void Set(string providerId, string apiKey) { }
+
             public void Delete(string providerId) { }
         }
     }

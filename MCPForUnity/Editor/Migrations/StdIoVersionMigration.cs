@@ -39,7 +39,10 @@ namespace MCPForUnity.Editor.Migrations
             }
 
             string upgradeIdentity;
-            try { upgradeIdentity = GetUpgradeIdentity(currentVersion, AssetPathUtility.GetMcpServerPackageSource()); }
+            try
+            {
+                upgradeIdentity = GetUpgradeIdentity(currentVersion, AssetPathUtility.GetMcpServerPackageSource());
+            }
             catch (Exception ex)
             {
                 McpLog.Warn($"Cannot refresh stdio configs: {ex.Message}");
@@ -47,7 +50,11 @@ namespace MCPForUnity.Editor.Migrations
             }
 
             string lastUpgradeVersion = string.Empty;
-            try { lastUpgradeVersion = EditorPrefs.GetString(LastUpgradeKey, string.Empty); } catch { }
+            try
+            {
+                lastUpgradeVersion = EditorPrefs.GetString(LastUpgradeKey, string.Empty);
+            }
+            catch { }
 
             if (string.Equals(lastUpgradeVersion, upgradeIdentity, StringComparison.Ordinal))
             {
@@ -101,7 +108,11 @@ namespace MCPForUnity.Editor.Migrations
             if (!touchedAny)
             {
                 // Nothing needed refreshing; still record version so we don't rerun every launch
-                try { EditorPrefs.SetString(LastUpgradeKey, upgradeIdentity); } catch { }
+                try
+                {
+                    EditorPrefs.SetString(LastUpgradeKey, upgradeIdentity);
+                }
+                catch { }
                 return;
             }
 
@@ -142,15 +153,15 @@ namespace MCPForUnity.Editor.Migrations
                 JToken unityNode = null;
                 if (client.IsVsCodeLayout)
                 {
-                    unityNode = root.SelectToken("servers.unityMCP")
-                               ?? root.SelectToken("mcp.servers.unityMCP");
+                    unityNode = root.SelectToken("servers.unityMCP") ?? root.SelectToken("mcp.servers.unityMCP");
                 }
                 else
                 {
                     unityNode = root.SelectToken("mcpServers.unityMCP");
                 }
 
-                if (unityNode == null) return false;
+                if (unityNode == null)
+                    return false;
 
                 return unityNode["command"] != null;
             }
@@ -159,6 +170,5 @@ namespace MCPForUnity.Editor.Migrations
                 return false;
             }
         }
-
     }
 }

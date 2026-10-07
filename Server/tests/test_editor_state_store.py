@@ -8,16 +8,23 @@ from pydantic import JsonValue
 from transport.editor_state_store import EditorStateStore
 
 
-def message(*, sequence: int = 1, observed: int = 100_000,
-            epoch: str = "domain-a", reload_pending: bool = False) -> dict[str, JsonValue]:
+def message(
+    *,
+    sequence: int = 1,
+    observed: int = 100_000,
+    epoch: str = "domain-a",
+    reload_pending: bool = False,
+) -> dict[str, JsonValue]:
     return {
-        "type": "editor_state", "epoch": epoch, "sequence": sequence,
+        "type": "editor_state",
+        "epoch": epoch,
+        "sequence": sequence,
         "observed_at_unix_ms": observed,
         "state": {
             "schema_version": "unity-mcp/editor_state@2",
-            "sequence": sequence, "observed_at_unix_ms": observed,
-            "compilation": {"is_compiling": False,
-                            "is_domain_reload_pending": reload_pending},
+            "sequence": sequence,
+            "observed_at_unix_ms": observed,
+            "compilation": {"is_compiling": False, "is_domain_reload_pending": reload_pending},
             "editor": {"active_scene": {"name": "fixture"}},
         },
     }
@@ -46,8 +53,9 @@ def test_initial_state_is_detached_from_sender_and_readers(store):
     assert original["editor"]["active_scene"]["name"] == "fixture"
 
 
-@pytest.mark.parametrize("session,user", [("unknown", "alice"), ("actual-socket", "bob"),
-                                         ("actual-socket", None)])
+@pytest.mark.parametrize(
+    "session,user", [("unknown", "alice"), ("actual-socket", "bob"), ("actual-socket", None)]
+)
 def test_read_requires_registered_socket_owner(store, session, user):
     # Given Alice's cached state.
     cache, _ = store
@@ -58,11 +66,18 @@ def test_read_requires_registered_socket_owner(store, session, user):
     assert result is None
 
 
-@pytest.mark.parametrize("changes", [
-    {"sequence": 0}, {"observed_at_unix_ms": 99_000},
-    {"session_id": "another-socket"}, {"sequence": True}, {"epoch": ""},
-    {"type": "other"}, {"state": {}},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"sequence": 0},
+        {"observed_at_unix_ms": 99_000},
+        {"session_id": "another-socket"},
+        {"sequence": True},
+        {"epoch": ""},
+        {"type": "other"},
+        {"state": {}},
+    ],
+)
 def test_rejects_invalid_or_out_of_order_snapshot(store, changes):
     # Given a valid accepted watermark.
     cache, _ = store
@@ -211,8 +226,11 @@ def test_nonfinite_or_nonpositive_ttl_never_bypasses_freshness(store, age):
     assert result is None
 
 
-@pytest.mark.parametrize("value", ["x" * (129 * 1024), [0] * 4097, float("nan")],
-                         ids=["oversized-string", "wide-list", "nonfinite-number"])
+@pytest.mark.parametrize(
+    "value",
+    ["x" * (129 * 1024), [0] * 4097, float("nan")],
+    ids=["oversized-string", "wide-list", "nonfinite-number"],
+)
 def test_state_payload_has_independent_size_and_shape_budget(store, value):
     # Given a registered state channel and an excessive/malformed extension.
     cache, _ = store

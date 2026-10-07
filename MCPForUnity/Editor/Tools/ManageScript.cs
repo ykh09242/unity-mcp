@@ -1,17 +1,16 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Collections.Generic;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
-using Newtonsoft.Json.Linq;
-using UnityEditor;
-using UnityEngine;
+using System.Threading;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
-using System.Threading;
-using System.Security.Cryptography;
-
+using Newtonsoft.Json.Linq;
+using UnityEditor;
+using UnityEngine;
 #if USE_ROSLYN
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -21,7 +20,6 @@ using Microsoft.CodeAnalysis.CSharp;
 using UnityEditor.Compilation;
 #endif
 
-
 namespace MCPForUnity.Editor.Tools
 {
     /// <summary>
@@ -30,24 +28,24 @@ namespace MCPForUnity.Editor.Tools
     /// <remarks>
     /// ROSLYN INSTALLATION GUIDE:
     /// To enable advanced syntax validation with Roslyn compiler services:
-    /// 
+    ///
     /// 1. Install Microsoft.CodeAnalysis.CSharp NuGet package:
     ///    - Open Package Manager in Unity
     ///    - Follow the instruction on https://github.com/GlitchEnzo/NuGetForUnity
-    ///    
+    ///
     /// 2. Open NuGet Package Manager and Install Microsoft.CodeAnalysis.CSharp:
-    ///    
+    ///
     /// 3. Alternative: Manual DLL installation:
     ///    - Download Microsoft.CodeAnalysis.CSharp.dll and dependencies
     ///    - Place in Assets/Plugins/ folder
     ///    - Ensure .NET compatibility settings are correct
-    ///    
+    ///
     /// 4. Define USE_ROSLYN symbol:
     ///    - Go to Player Settings > Scripting Define Symbols
     ///    - Add "USE_ROSLYN" to enable Roslyn-based validation
-    ///    
+    ///
     /// 5. Restart Unity after installation
-    /// 
+    ///
     /// Note: Without Roslyn, the system falls back to basic structural validation.
     /// Roslyn provides full C# compiler diagnostics with line numbers and detailed error messages.
     /// </remarks>
@@ -56,10 +54,14 @@ namespace MCPForUnity.Editor.Tools
     {
         internal static ErrorResponse RequireExplicitConsent()
         {
-            if (!EditorPrefs.GetBool(ToolDiscoveryService.GetConsentPreferenceKey("manage_script"), false)
-                || !MCPServiceLocator.ToolDiscovery.IsToolEnabled("manage_script"))
-                return new ErrorResponse("script_consent_required",
-                    "Enable manage_script explicitly in the Unity Editor before using script or compilation-affecting asset operations.");
+            if (
+                !EditorPrefs.GetBool(ToolDiscoveryService.GetConsentPreferenceKey("manage_script"), false)
+                || !MCPServiceLocator.ToolDiscovery.IsToolEnabled("manage_script")
+            )
+                return new ErrorResponse(
+                    "script_consent_required",
+                    "Enable manage_script explicitly in the Unity Editor before using script or compilation-affecting asset operations."
+                );
             return null;
         }
 
@@ -85,6 +87,7 @@ namespace MCPForUnity.Editor.Tools
                 return false;
             }
         }
+
         /// <summary>
         /// Main handler for script management actions.
         /// </summary>
@@ -97,7 +100,8 @@ namespace MCPForUnity.Editor.Tools
             }
 
             var consentError = RequireExplicitConsent();
-            if (consentError != null) return consentError;
+            if (consentError != null)
+                return consentError;
 
             var p = new ToolParams(@params);
 
@@ -149,9 +153,7 @@ namespace MCPForUnity.Editor.Tools
             // Basic name validation (alphanumeric, underscores, cannot start with number)
             if (!Regex.IsMatch(name, @"^[a-zA-Z_][a-zA-Z0-9_]*$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2)))
             {
-                return new ErrorResponse(
-                    $"Invalid script name: '{name}'. Use only letters, numbers, underscores, and don't start with a number."
-                );
+                return new ErrorResponse($"Invalid script name: '{name}'. Use only letters, numbers, underscores, and don't start with a number.");
             }
 
             // Resolve and harden target directory under Assets/
@@ -164,21 +166,20 @@ namespace MCPForUnity.Editor.Tools
             string scriptFileName = $"{name}.cs";
             string relativePath = AssetPathUtility.NormalizeSeparators(Path.Combine(relPathSafeDir, scriptFileName));
             string fullPath;
-            try { fullPath = AssetPathUtility.GetFullAssetPath(relativePath); }
-            catch (Exception) { return new ErrorResponse("Unsafe script path: linked or unreadable paths are not permitted."); }
+            try
+            {
+                fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
+            }
+            catch (Exception)
+            {
+                return new ErrorResponse("Unsafe script path: linked or unreadable paths are not permitted.");
+            }
 
             // Route to specific action handlers
             switch (action)
             {
                 case "create":
-                    return CreateScript(
-                        fullPath,
-                        relativePath,
-                        name,
-                        contents,
-                        scriptType,
-                        namespaceName
-                    );
+                    return CreateScript(fullPath, relativePath, name, contents, scriptType, namespaceName);
                 case "read":
                     McpLog.Warn("manage_script.read is deprecated; prefer resources/read. Serving read for backward compatibility.");
                     return ReadScript(fullPath, relativePath);
@@ -189,33 +190,40 @@ namespace MCPForUnity.Editor.Tools
                     return DeleteScript(fullPath, relativePath);
                 case "apply_text_edits":
                 case "preview_text_edits":
-                    {
-                        var textEdits = p.GetRaw("edits") as JArray;
-                        string precondition = p.Get("precondition_sha256");
-                        // Respect optional options (guard type before indexing)
-                        var optionsObj = p.GetRaw("options") as JObject;
-                        string refreshOpt = optionsObj?["refresh"]?.ToString()?.ToLowerInvariant();
-                        string validateOpt = optionsObj?["validate"]?.ToString()?.ToLowerInvariant();
-                        bool preview = action == "preview_text_edits" || optionsObj?.ReadScalar<bool?>("preview") == true;
-                        return ApplyTextEdits(fullPath, relativePath, name, textEdits, precondition, refreshOpt, validateOpt, preview);
-                    }
+                {
+                    var textEdits = p.GetRaw("edits") as JArray;
+                    string precondition = p.Get("precondition_sha256");
+                    // Respect optional options (guard type before indexing)
+                    var optionsObj = p.GetRaw("options") as JObject;
+                    string refreshOpt = optionsObj?["refresh"]?.ToString()?.ToLowerInvariant();
+                    string validateOpt = optionsObj?["validate"]?.ToString()?.ToLowerInvariant();
+                    bool preview = action == "preview_text_edits" || optionsObj?.ReadScalar<bool?>("preview") == true;
+                    return ApplyTextEdits(fullPath, relativePath, name, textEdits, precondition, refreshOpt, validateOpt, preview);
+                }
                 case "validate":
+                {
+                    string level = p.Get("level", "standard").ToLowerInvariant();
+                    var chosen = level switch
                     {
-                        string level = p.Get("level", "standard").ToLowerInvariant();
-                        var chosen = level switch
-                        {
-                            "basic" => ValidationLevel.Basic,
-                            "standard" => ValidationLevel.Standard,
-                            "strict" => ValidationLevel.Strict,
-                            "comprehensive" => ValidationLevel.Comprehensive,
-                            _ => ValidationLevel.Standard
-                        };
-                        string fileText;
-                        try { fileText = ReadScriptContents(fullPath); }
-                        catch (Exception ex) { return new ErrorResponse($"Failed to read script: {ex.Message}"); }
+                        "basic" => ValidationLevel.Basic,
+                        "standard" => ValidationLevel.Standard,
+                        "strict" => ValidationLevel.Strict,
+                        "comprehensive" => ValidationLevel.Comprehensive,
+                        _ => ValidationLevel.Standard,
+                    };
+                    string fileText;
+                    try
+                    {
+                        fileText = ReadScriptContents(fullPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        return new ErrorResponse($"Failed to read script: {ex.Message}");
+                    }
 
-                        bool ok = ValidateScriptSyntax(fileText, chosen, out string[] diagsRaw);
-                        var diags = (diagsRaw ?? Array.Empty<string>()).Select(s =>
+                    bool ok = ValidateScriptSyntax(fileText, chosen, out string[] diagsRaw);
+                    var diags = (diagsRaw ?? Array.Empty<string>())
+                        .Select(s =>
                         {
                             var m = Regex.Match(
                                 s,
@@ -226,13 +234,19 @@ namespace MCPForUnity.Editor.Tools
                             string severity = m.Success ? m.Groups[1].Value.ToLowerInvariant() : "info";
                             string message = m.Success ? m.Groups[2].Value : s;
                             int lineNum = m.Success && int.TryParse(m.Groups[3].Value, out var l) ? l : 0;
-                            return new { line = lineNum, col = 0, severity, message };
-                        }).ToArray();
+                            return new
+                            {
+                                line = lineNum,
+                                col = 0,
+                                severity,
+                                message,
+                            };
+                        })
+                        .ToArray();
 
-                        var result = new { diagnostics = diags };
-                        return ok ? new SuccessResponse("Validation completed.", result)
-                                   : new ErrorResponse("Validation failed.", result);
-                    }
+                    var result = new { diagnostics = diags };
+                    return ok ? new SuccessResponse("Validation completed.", result) : new ErrorResponse("Validation failed.", result);
+                }
                 case "edit":
                 case "preview_edit":
                     McpLog.Warn("manage_script.edit is deprecated; prefer apply_text_edits. Serving structured edit for backward compatibility.");
@@ -240,33 +254,39 @@ namespace MCPForUnity.Editor.Tools
                     var options = @params["options"] as JObject;
                     return EditScript(fullPath, relativePath, name, structEdits, options, action == "preview_edit");
                 case "get_sha":
+                {
+                    try
                     {
+                        if (!File.Exists(fullPath))
+                            return new ErrorResponse($"Script not found at '{relativePath}'.");
+
+                        string text = ReadScriptContents(fullPath);
+                        string sha = ComputeSha256(text);
+                        var fi = new FileInfo(fullPath);
+                        long lengthBytes;
                         try
                         {
-                            if (!File.Exists(fullPath))
-                                return new ErrorResponse($"Script not found at '{relativePath}'.");
-
-                            string text = ReadScriptContents(fullPath);
-                            string sha = ComputeSha256(text);
-                            var fi = new FileInfo(fullPath);
-                            long lengthBytes;
-                            try { lengthBytes = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetByteCount(text); }
-                            catch { lengthBytes = fi.Exists ? fi.Length : 0; }
-                            var data = new
-                            {
-                                uri = $"mcpforunity://path/{relativePath}",
-                                path = relativePath,
-                                sha256 = sha,
-                                lengthBytes,
-                                lastModifiedUtc = fi.Exists ? fi.LastWriteTimeUtc.ToString("o") : string.Empty
-                            };
-                            return new SuccessResponse($"SHA computed for '{relativePath}'.", data);
+                            lengthBytes = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetByteCount(text);
                         }
-                        catch (Exception ex)
+                        catch
                         {
-                            return new ErrorResponse($"Failed to compute SHA: {ex.Message}");
+                            lengthBytes = fi.Exists ? fi.Length : 0;
                         }
+                        var data = new
+                        {
+                            uri = $"mcpforunity://path/{relativePath}",
+                            path = relativePath,
+                            sha256 = sha,
+                            lengthBytes,
+                            lastModifiedUtc = fi.Exists ? fi.LastWriteTimeUtc.ToString("o") : string.Empty,
+                        };
+                        return new SuccessResponse($"SHA computed for '{relativePath}'.", data);
                     }
+                    catch (Exception ex)
+                    {
+                        return new ErrorResponse($"Failed to compute SHA: {ex.Message}");
+                    }
+                }
                 default:
                     return new ErrorResponse(
                         $"Unknown action: '{action}'. Valid actions are: create, delete, apply_text_edits, validate, read (deprecated), update (deprecated), edit (deprecated)."
@@ -292,21 +312,12 @@ namespace MCPForUnity.Editor.Tools
             return Convert.ToBase64String(data);
         }
 
-        private static object CreateScript(
-            string fullPath,
-            string relativePath,
-            string name,
-            string contents,
-            string scriptType,
-            string namespaceName
-        )
+        private static object CreateScript(string fullPath, string relativePath, string name, string contents, string scriptType, string namespaceName)
         {
             // Check if script already exists
             if (File.Exists(fullPath))
             {
-                return new ErrorResponse(
-                    $"Script already exists at '{relativePath}'. Use 'update' action to modify."
-                );
+                return new ErrorResponse($"Script already exists at '{relativePath}'. Use 'update' action to modify.");
             }
 
             // Generate default content if none provided
@@ -336,10 +347,7 @@ namespace MCPForUnity.Editor.Tools
                 WriteScriptFile(fullPath, contents, overwrite: false);
 
                 var uri = $"mcpforunity://path/{relativePath}";
-                var ok = new SuccessResponse(
-                    $"Script '{name}.cs' created successfully at '{relativePath}'.",
-                    new { uri, scheduledRefresh = false }
-                );
+                var ok = new SuccessResponse($"Script '{name}.cs' created successfully at '{relativePath}'.", new { uri, scheduledRefresh = false });
 
                 ManageScriptRefreshHelpers.ImportAndRequestCompile(relativePath);
                 folders.Complete();
@@ -393,12 +401,22 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (ownsTemp)
                 {
-                    try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+                    try
+                    {
+                        if (File.Exists(tempPath))
+                            File.Delete(tempPath);
+                    }
+                    catch { }
                 }
                 // Keep this attempt's recovery backup if replacement/fallback failed.
                 if (writeCompleted)
                 {
-                    try { if (File.Exists(backupPath)) File.Delete(backupPath); } catch { }
+                    try
+                    {
+                        if (File.Exists(backupPath))
+                            File.Delete(backupPath);
+                    }
+                    catch { }
                 }
             }
         }
@@ -427,10 +445,7 @@ namespace MCPForUnity.Editor.Tools
                     contentsEncoded = isLarge,
                 };
 
-                return new SuccessResponse(
-                    $"Script '{Path.GetFileName(relativePath)}' read successfully.",
-                    responseData
-                );
+                return new SuccessResponse($"Script '{Path.GetFileName(relativePath)}' read successfully.", responseData);
             }
             catch (Exception e)
             {
@@ -470,18 +485,11 @@ namespace MCPForUnity.Editor.Tools
             return encoding.GetString(bytes, offset, bytes.Length - offset);
         }
 
-        private static object UpdateScript(
-            string fullPath,
-            string relativePath,
-            string name,
-            string contents
-        )
+        private static object UpdateScript(string fullPath, string relativePath, string name, string contents)
         {
             if (!File.Exists(fullPath))
             {
-                return new ErrorResponse(
-                    $"Script not found at '{relativePath}'. Use 'create' action to add a new script."
-                );
+                return new ErrorResponse($"Script not found at '{relativePath}'. Use 'create' action to add a new script.");
             }
             if (string.IsNullOrEmpty(contents))
             {
@@ -509,7 +517,12 @@ namespace MCPForUnity.Editor.Tools
                 var uri = $"mcpforunity://path/{relativePath}";
                 var ok = new SuccessResponse(
                     $"Script '{name}.cs' updated successfully at '{relativePath}'.",
-                    new { uri, path = relativePath, scheduledRefresh = true }
+                    new
+                    {
+                        uri,
+                        path = relativePath,
+                        scheduledRefresh = true,
+                    }
                 );
 
                 // Schedule a debounced import/compile on next editor tick to avoid stalling the reply
@@ -537,25 +550,46 @@ namespace MCPForUnity.Editor.Tools
             string preconditionSha256,
             string refreshModeFromCaller = null,
             string validateMode = null,
-            bool preview = false)
+            bool preview = false
+        )
         {
             if (!File.Exists(fullPath))
                 return new ErrorResponse($"Script not found at '{relativePath}'.");
-            try { fullPath = AssetPathUtility.GetFullAssetPath(relativePath); }
-            catch (Exception) { return new ErrorResponse("Unsafe script path: linked or unreadable paths are not permitted."); }
+            try
+            {
+                fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
+            }
+            catch (Exception)
+            {
+                return new ErrorResponse("Unsafe script path: linked or unreadable paths are not permitted.");
+            }
             if (edits == null || edits.Count == 0)
                 return new ErrorResponse("No edits provided.");
 
             string original;
-            try { original = ReadScriptContents(fullPath); }
-            catch (Exception ex) { return new ErrorResponse($"Failed to read script: {ex.Message}"); }
+            try
+            {
+                original = ReadScriptContents(fullPath);
+            }
+            catch (Exception ex)
+            {
+                return new ErrorResponse($"Failed to read script: {ex.Message}");
+            }
 
             // Require precondition to avoid drift on large files
             string currentSha = ComputeSha256(original);
             if (string.IsNullOrEmpty(preconditionSha256))
                 return new ErrorResponse("precondition_required", new { status = "precondition_required", current_sha256 = currentSha });
             if (!preconditionSha256.Equals(currentSha, StringComparison.OrdinalIgnoreCase))
-                return new ErrorResponse("stale_file", new { status = "stale_file", expected_sha256 = preconditionSha256, current_sha256 = currentSha });
+                return new ErrorResponse(
+                    "stale_file",
+                    new
+                    {
+                        status = "stale_file",
+                        expected_sha256 = preconditionSha256,
+                        current_sha256 = currentSha,
+                    }
+                );
 
             // Convert edits to absolute index ranges
             var spans = new List<(int start, int end, string text)>();
@@ -564,10 +598,13 @@ namespace MCPForUnity.Editor.Tools
             {
                 try
                 {
-                    if (!(e is JObject edit)
-                        || new[] { "startLine", "startCol", "endLine", "endCol", "newText" }
-                            .Any(field => edit[field] == null || edit[field].Type == JTokenType.Null)
-                        || edit["newText"].Type != JTokenType.String)
+                    if (
+                        !(e is JObject edit)
+                        || new[] { "startLine", "startCol", "endLine", "endCol", "newText" }.Any(field =>
+                            edit[field] == null || edit[field].Type == JTokenType.Null
+                        )
+                        || edit["newText"].Type != JTokenType.String
+                    )
                         return new ErrorResponse("Invalid edit payload: requires startLine/startCol/endLine/endCol and a string newText (empty for deletion).");
 
                     int sl = Math.Max(1, e.ReadScalar<int>("startLine"));
@@ -580,7 +617,8 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse($"apply_text_edits: start out of range (line {sl}, col {sc})");
                     if (!TryIndexFromLineCol(original, el, ec, out int eidx))
                         return new ErrorResponse($"apply_text_edits: end out of range (line {el}, col {ec})");
-                    if (eidx < sidx) (sidx, eidx) = (eidx, sidx);
+                    if (eidx < sidx)
+                        (sidx, eidx) = (eidx, sidx);
 
                     spans.Add((sidx, eidx, newText));
                     checked
@@ -611,13 +649,28 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (sp.start < headerBoundary)
                 {
-                    return new ErrorResponse("using_guard", new { status = "using_guard", hint = "Refusing to edit before the first 'using'. Use anchor_insert near a method or a structured edit." });
+                    return new ErrorResponse(
+                        "using_guard",
+                        new
+                        {
+                            status = "using_guard",
+                            hint = "Refusing to edit before the first 'using'. Use anchor_insert near a method or a structured edit.",
+                        }
+                    );
                 }
             }
 
             if (totalBytes > MaxEditPayloadBytes)
             {
-                return new ErrorResponse("too_large", new { status = "too_large", limitBytes = MaxEditPayloadBytes, hint = "split into smaller edits" });
+                return new ErrorResponse(
+                    "too_large",
+                    new
+                    {
+                        status = "too_large",
+                        limitBytes = MaxEditPayloadBytes,
+                        hint = "split into smaller edits",
+                    }
+                );
             }
 
             // Ensure non-overlap and apply from back to front
@@ -626,8 +679,25 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (spans[i].end > spans[i - 1].start)
                 {
-                    var conflict = new[] { new { startA = spans[i].start, endA = spans[i].end, startB = spans[i - 1].start, endB = spans[i - 1].end } };
-                    return new ErrorResponse("overlap", new { status = "overlap", conflicts = conflict, hint = "Sort ranges descending by start and compute from the same snapshot." });
+                    var conflict = new[]
+                    {
+                        new
+                        {
+                            startA = spans[i].start,
+                            endA = spans[i].end,
+                            startB = spans[i - 1].start,
+                            endB = spans[i - 1].end,
+                        },
+                    };
+                    return new ErrorResponse(
+                        "overlap",
+                        new
+                        {
+                            status = "overlap",
+                            conflicts = conflict,
+                            hint = "Sort ranges descending by start and compute from the same snapshot.",
+                        }
+                    );
                 }
             }
 
@@ -641,7 +711,8 @@ namespace MCPForUnity.Editor.Tools
             // No-op guard: if resulting text is identical, avoid writes and return explicit no-op
             if (string.Equals(working, original, StringComparison.Ordinal))
             {
-                if (preview) return ScriptPreviewResponse(fullPath, relativePath, original, working, 0);
+                if (preview)
+                    return ScriptPreviewResponse(fullPath, relativePath, original, working, 0);
                 string noChangeSha = ComputeSha256(original);
                 return new SuccessResponse(
                     $"No-op: contents unchanged for '{relativePath}'.",
@@ -652,7 +723,7 @@ namespace MCPForUnity.Editor.Tools
                         editsApplied = 0,
                         no_op = true,
                         sha256 = noChangeSha,
-                        evidence = new { reason = "identical_content" }
+                        evidence = new { reason = "identical_content" },
                     }
                 );
             }
@@ -662,27 +733,49 @@ namespace MCPForUnity.Editor.Tools
             {
                 int startLine = Math.Max(1, line - 5);
                 int endLine = line + 5;
-                string hint = $"unbalanced_braces at line {line}. Call resources/read for lines {startLine}-{endLine} and resend a smaller apply_text_edits that restores balance.";
-                return new ErrorResponse(hint, new { status = "unbalanced_braces", line, expected = expected.ToString(), evidenceWindow = new { startLine, endLine } });
+                string hint =
+                    $"unbalanced_braces at line {line}. Call resources/read for lines {startLine}-{endLine} and resend a smaller apply_text_edits that restores balance.";
+                return new ErrorResponse(
+                    hint,
+                    new
+                    {
+                        status = "unbalanced_braces",
+                        line,
+                        expected = expected.ToString(),
+                        evidenceWindow = new { startLine, endLine },
+                    }
+                );
             }
 
 #if USE_ROSLYN
             if (!syntaxOnly)
             {
                 var tree = CSharpSyntaxTree.ParseText(working);
-                var diagnostics = tree.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Take(3)
-                    .Select(d => new {
+                var diagnostics = tree.GetDiagnostics()
+                    .Where(d => d.Severity == DiagnosticSeverity.Error)
+                    .Take(3)
+                    .Select(d => new
+                    {
                         line = d.Location.GetLineSpan().StartLinePosition.Line + 1,
                         col = d.Location.GetLineSpan().StartLinePosition.Character + 1,
                         code = d.Id,
-                        message = d.GetMessage()
-                    }).ToArray();
+                        message = d.GetMessage(),
+                    })
+                    .ToArray();
                 if (diagnostics.Length > 0)
                 {
                     int firstLine = diagnostics[0].line;
                     int startLineRos = Math.Max(1, firstLine - 5);
                     int endLineRos = firstLine + 5;
-                    return new ErrorResponse("syntax_error", new { status = "syntax_error", diagnostics, evidenceWindow = new { startLine = startLineRos, endLine = endLineRos } });
+                    return new ErrorResponse(
+                        "syntax_error",
+                        new
+                        {
+                            status = "syntax_error",
+                            diagnostics,
+                            evidenceWindow = new { startLine = startLineRos, endLine = endLineRos },
+                        }
+                    );
                 }
             }
 #endif
@@ -690,21 +783,20 @@ namespace MCPForUnity.Editor.Tools
             string newSha = ComputeSha256(working);
 
             // Atomic write and schedule refresh
-            if (preview) return ScriptPreviewResponse(fullPath, relativePath, original, working, spans.Count);
+            if (preview)
+                return ScriptPreviewResponse(fullPath, relativePath, original, working, spans.Count);
             try
             {
                 WriteScriptFile(fullPath, working, overwrite: true);
 
                 // Respect refresh mode: immediate vs debounced
-                bool immediate = string.Equals(refreshModeFromCaller, "immediate", StringComparison.OrdinalIgnoreCase) ||
-                                  string.Equals(refreshModeFromCaller, "sync", StringComparison.OrdinalIgnoreCase);
+                bool immediate =
+                    string.Equals(refreshModeFromCaller, "immediate", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(refreshModeFromCaller, "sync", StringComparison.OrdinalIgnoreCase);
                 if (immediate)
                 {
                     McpLog.Info($"[ManageScript] ApplyTextEdits: immediate refresh for '{relativePath}'");
-                    AssetDatabase.ImportAsset(
-                        relativePath,
-                        ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate
-                    );
+                    AssetDatabase.ImportAsset(relativePath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
 #if UNITY_EDITOR
                     UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation();
 #endif
@@ -723,7 +815,7 @@ namespace MCPForUnity.Editor.Tools
                         path = relativePath,
                         editsApplied = spans.Count,
                         sha256 = newSha,
-                        scheduledRefresh = !immediate
+                        scheduledRefresh = !immediate,
                     }
                 );
             }
@@ -737,41 +829,54 @@ namespace MCPForUnity.Editor.Tools
         {
             long textBytes = (long)System.Text.Encoding.UTF8.GetByteCount(original) + System.Text.Encoding.UTF8.GetByteCount(candidate);
             if (textBytes > MaxPreviewTextBytes)
-                return new ErrorResponse("too_large", new { status = "too_large", preview = true, limitBytes = MaxPreviewTextBytes, hint = "Inline preparation is limited to 1 MiB of combined original and candidate UTF-8 text." });
+                return new ErrorResponse(
+                    "too_large",
+                    new
+                    {
+                        status = "too_large",
+                        preview = true,
+                        limitBytes = MaxPreviewTextBytes,
+                        hint = "Inline preparation is limited to 1 MiB of combined original and candidate UTF-8 text.",
+                    }
+                );
 
             bool noOp = string.Equals(original, candidate, StringComparison.Ordinal);
             string originalSha = ComputeSha256(original);
             string candidateSha = ComputeSha256(candidate);
-            return new SuccessResponse(noOp ? $"Preview no-op for '{relativePath}'." : $"Prepared {preparedCount} edit(s) for '{relativePath}' without writing.", new
-            {
-                path = relativePath,
-                uri = $"mcpforunity://path/{relativePath}",
-                absolute_path = Path.GetFullPath(fullPath),
-                project_root = Path.GetDirectoryName(Path.GetFullPath(Application.dataPath)),
-                preview = true,
-                no_op = noOp,
-                editsApplied = 0,
-                editsPrepared = noOp ? 0 : preparedCount,
-                scheduledRefresh = false,
-                complete = true,
-                truncated = false,
-                original_contents = original,
-                new_contents = candidate,
-                original_sha256 = originalSha,
-                sha256 = originalSha,
-                candidate_sha256 = candidateSha,
-                // Direct writes use UTF-8 without BOM, so these declared bytes share
-                // the logical candidate hash. Original hashes exclude any input BOM.
-                candidate_bytes_sha256 = candidateSha,
-                encoding = "utf-8",
-                bom = false
-            });
+            return new SuccessResponse(
+                noOp ? $"Preview no-op for '{relativePath}'." : $"Prepared {preparedCount} edit(s) for '{relativePath}' without writing.",
+                new
+                {
+                    path = relativePath,
+                    uri = $"mcpforunity://path/{relativePath}",
+                    absolute_path = Path.GetFullPath(fullPath),
+                    project_root = Path.GetDirectoryName(Path.GetFullPath(Application.dataPath)),
+                    preview = true,
+                    no_op = noOp,
+                    editsApplied = 0,
+                    editsPrepared = noOp ? 0 : preparedCount,
+                    scheduledRefresh = false,
+                    complete = true,
+                    truncated = false,
+                    original_contents = original,
+                    new_contents = candidate,
+                    original_sha256 = originalSha,
+                    sha256 = originalSha,
+                    candidate_sha256 = candidateSha,
+                    // Direct writes use UTF-8 without BOM, so these declared bytes share
+                    // the logical candidate hash. Original hashes exclude any input BOM.
+                    candidate_bytes_sha256 = candidateSha,
+                    encoding = "utf-8",
+                    bom = false,
+                }
+            );
         }
 
         private static bool TryIndexFromLineCol(string text, int line1, int col1, out int index)
         {
             // 1-based line/col to absolute index (0-based), col positions are counted in code points
-            int line = 1, col = 1;
+            int line = 1,
+                col = 1;
             for (int i = 0; i <= text.Length; i++)
             {
                 if (line == line1 && col == col1)
@@ -779,7 +884,8 @@ namespace MCPForUnity.Editor.Tools
                     index = i;
                     return true;
                 }
-                if (i == text.Length) break;
+                if (i == text.Length)
+                    break;
                 char c = text[i];
                 if (c == '\r')
                 {
@@ -841,7 +947,8 @@ namespace MCPForUnity.Editor.Tools
                 _line = 1;
                 // count newlines before start
                 for (int i = 0; i < start && i < text.Length; i++)
-                    if (text[i] == '\n') _line++;
+                    if (text[i] == '\n')
+                        _line++;
                 _inSingleComment = false;
                 _inMultiComment = false;
                 InNonCode = false;
@@ -857,7 +964,11 @@ namespace MCPForUnity.Editor.Tools
             /// </summary>
             public bool Advance(out char c)
             {
-                if (_pos >= _end) { c = '\0'; return false; }
+                if (_pos >= _end)
+                {
+                    c = '\0';
+                    return false;
+                }
 
                 c = _text[_pos];
                 char next = _pos + 1 < _end ? _text[_pos + 1] : '\0';
@@ -865,37 +976,67 @@ namespace MCPForUnity.Editor.Tools
                 if (c == '\n')
                 {
                     _line++;
-                    if (_inSingleComment) _inSingleComment = false;
+                    if (_inSingleComment)
+                        _inSingleComment = false;
                 }
 
                 // Inside single-line comment
-                if (_inSingleComment) { InNonCode = true; _pos++; return true; }
+                if (_inSingleComment)
+                {
+                    InNonCode = true;
+                    _pos++;
+                    return true;
+                }
 
                 // Inside multi-line comment
                 if (_inMultiComment)
                 {
-                    if (c == '*' && next == '/') { _inMultiComment = false; InNonCode = true; _pos += 2; c = '/'; return true; }
-                    InNonCode = true; _pos++; return true;
+                    if (c == '*' && next == '/')
+                    {
+                        _inMultiComment = false;
+                        InNonCode = true;
+                        _pos += 2;
+                        c = '/';
+                        return true;
+                    }
+                    InNonCode = true;
+                    _pos++;
+                    return true;
                 }
 
                 // Start of comment
-                if (c == '/' && next == '/') { _inSingleComment = true; InNonCode = true; _pos += 2; return true; }
-                if (c == '/' && next == '*') { _inMultiComment = true; InNonCode = true; _pos += 2; return true; }
+                if (c == '/' && next == '/')
+                {
+                    _inSingleComment = true;
+                    InNonCode = true;
+                    _pos += 2;
+                    return true;
+                }
+                if (c == '/' && next == '*')
+                {
+                    _inMultiComment = true;
+                    InNonCode = true;
+                    _pos += 2;
+                    return true;
+                }
 
                 // Interpolated raw string: $"""...""" or $$"""...""" etc. (C# 11)
                 // Must check BEFORE regular $" and BEFORE plain """
                 if (c == '$')
                 {
                     int dollarCount = 1;
-                    while (_pos + dollarCount < _end && _text[_pos + dollarCount] == '$') dollarCount++;
+                    while (_pos + dollarCount < _end && _text[_pos + dollarCount] == '$')
+                        dollarCount++;
                     int afterDollars = _pos + dollarCount;
                     if (afterDollars + 2 < _end && _text[afterDollars] == '"' && _text[afterDollars + 1] == '"' && _text[afterDollars + 2] == '"')
                     {
                         int q = 3;
-                        while (afterDollars + q < _end && _text[afterDollars + q] == '"') q++;
+                        while (afterDollars + q < _end && _text[afterDollars + q] == '"')
+                            q++;
                         _pos = afterDollars + q; // past all opening quotes
                         SkipInterpolatedRawStringBody(dollarCount, q);
-                        InNonCode = true; return true;
+                        InNonCode = true;
+                        return true;
                     }
                 }
 
@@ -903,28 +1044,43 @@ namespace MCPForUnity.Editor.Tools
                 if (c == '"' && next == '"' && _pos + 2 < _end && _text[_pos + 2] == '"')
                 {
                     int q = 3;
-                    while (_pos + q < _end && _text[_pos + q] == '"') q++;
+                    while (_pos + q < _end && _text[_pos + q] == '"')
+                        q++;
                     _pos += q; // past opening quotes
                     int closeCount = 0;
                     while (_pos < _end)
                     {
-                        if (_text[_pos] == '\n') _line++;
-                        if (_text[_pos] == '"') { closeCount++; if (closeCount >= q) { _pos++; break; } }
-                        else closeCount = 0;
+                        if (_text[_pos] == '\n')
+                            _line++;
+                        if (_text[_pos] == '"')
+                        {
+                            closeCount++;
+                            if (closeCount >= q)
+                            {
+                                _pos++;
+                                break;
+                            }
+                        }
+                        else
+                            closeCount = 0;
                         _pos++;
                     }
-                    InNonCode = true; return true;
+                    InNonCode = true;
+                    return true;
                 }
 
                 // Interpolated string: $"..." or $@"..." or @$"..."
-                if ((c == '$' && next == '"') ||
-                    (c == '$' && next == '@' && _pos + 2 < _end && _text[_pos + 2] == '"') ||
-                    (c == '@' && next == '$' && _pos + 2 < _end && _text[_pos + 2] == '"'))
+                if (
+                    (c == '$' && next == '"')
+                    || (c == '$' && next == '@' && _pos + 2 < _end && _text[_pos + 2] == '"')
+                    || (c == '@' && next == '$' && _pos + 2 < _end && _text[_pos + 2] == '"')
+                )
                 {
                     bool isVerbatim = (next == '@') || (c == '@');
                     _pos += (c == '$' && next == '"') ? 2 : 3;
                     SkipInterpolatedStringBody(isVerbatim);
-                    InNonCode = true; return true;
+                    InNonCode = true;
+                    return true;
                 }
 
                 // Verbatim string: @"..."
@@ -933,15 +1089,22 @@ namespace MCPForUnity.Editor.Tools
                     _pos += 2;
                     while (_pos < _end)
                     {
-                        if (_text[_pos] == '\n') _line++;
+                        if (_text[_pos] == '\n')
+                            _line++;
                         if (_text[_pos] == '"')
                         {
-                            if (_pos + 1 < _end && _text[_pos + 1] == '"') { _pos += 2; continue; }
-                            _pos++; break;
+                            if (_pos + 1 < _end && _text[_pos + 1] == '"')
+                            {
+                                _pos += 2;
+                                continue;
+                            }
+                            _pos++;
+                            break;
                         }
                         _pos++;
                     }
-                    InNonCode = true; return true;
+                    InNonCode = true;
+                    return true;
                 }
 
                 // Regular string: "..."
@@ -950,12 +1113,22 @@ namespace MCPForUnity.Editor.Tools
                     _pos++;
                     while (_pos < _end)
                     {
-                        if (_text[_pos] == '\\') { _pos += 2; continue; }
-                        if (_text[_pos] == '"') { _pos++; break; }
-                        if (_text[_pos] == '\n') _line++;
+                        if (_text[_pos] == '\\')
+                        {
+                            _pos += 2;
+                            continue;
+                        }
+                        if (_text[_pos] == '"')
+                        {
+                            _pos++;
+                            break;
+                        }
+                        if (_text[_pos] == '\n')
+                            _line++;
                         _pos++;
                     }
-                    InNonCode = true; return true;
+                    InNonCode = true;
+                    return true;
                 }
 
                 // Char literal: '...'
@@ -964,11 +1137,20 @@ namespace MCPForUnity.Editor.Tools
                     _pos++;
                     while (_pos < _end)
                     {
-                        if (_text[_pos] == '\\') { _pos += 2; continue; }
-                        if (_text[_pos] == '\'') { _pos++; break; }
+                        if (_text[_pos] == '\\')
+                        {
+                            _pos += 2;
+                            continue;
+                        }
+                        if (_text[_pos] == '\'')
+                        {
+                            _pos++;
+                            break;
+                        }
                         _pos++;
                     }
-                    InNonCode = true; return true;
+                    InNonCode = true;
+                    return true;
                 }
 
                 InNonCode = false;
@@ -986,20 +1168,68 @@ namespace MCPForUnity.Editor.Tools
                 while (_pos < _end)
                 {
                     char ch = _text[_pos];
-                    if (ch == '\n') _line++;
+                    if (ch == '\n')
+                        _line++;
 
                     if (interpDepth > 0)
                     {
                         // Inside interpolation hole — this is code, scan for nested strings/braces
-                        if (ch == '{') { interpDepth++; _pos++; continue; }
-                        if (ch == '}') { interpDepth--; _pos++; continue; }
-                        if (SkipNestedInterpolationLiteral()) continue;
+                        if (ch == '{')
+                        {
+                            interpDepth++;
+                            _pos++;
+                            continue;
+                        }
+                        if (ch == '}')
+                        {
+                            interpDepth--;
+                            _pos++;
+                            continue;
+                        }
+                        if (SkipNestedInterpolationLiteral())
+                            continue;
                         if (ch == '/' && _pos + 1 < _end)
                         {
-                            if (_text[_pos + 1] == '/') { _pos += 2; while (_pos < _end && _text[_pos] != '\n') _pos++; continue; }
-                            if (_text[_pos + 1] == '*') { _pos += 2; while (_pos + 1 < _end && !(_text[_pos] == '*' && _text[_pos + 1] == '/')) { if (_text[_pos] == '\n') _line++; _pos++; } if (_pos + 1 < _end) _pos += 2; continue; }
+                            if (_text[_pos + 1] == '/')
+                            {
+                                _pos += 2;
+                                while (_pos < _end && _text[_pos] != '\n')
+                                    _pos++;
+                                continue;
+                            }
+                            if (_text[_pos + 1] == '*')
+                            {
+                                _pos += 2;
+                                while (_pos + 1 < _end && !(_text[_pos] == '*' && _text[_pos + 1] == '/'))
+                                {
+                                    if (_text[_pos] == '\n')
+                                        _line++;
+                                    _pos++;
+                                }
+                                if (_pos + 1 < _end)
+                                    _pos += 2;
+                                continue;
+                            }
                         }
-                        if (ch == '\'') { _pos++; while (_pos < _end) { if (_text[_pos] == '\\') { _pos += 2; continue; } if (_text[_pos] == '\'') { _pos++; break; } _pos++; } continue; }
+                        if (ch == '\'')
+                        {
+                            _pos++;
+                            while (_pos < _end)
+                            {
+                                if (_text[_pos] == '\\')
+                                {
+                                    _pos += 2;
+                                    continue;
+                                }
+                                if (_text[_pos] == '\'')
+                                {
+                                    _pos++;
+                                    break;
+                                }
+                                _pos++;
+                            }
+                            continue;
+                        }
                         _pos++;
                         continue;
                     }
@@ -1007,21 +1237,41 @@ namespace MCPForUnity.Editor.Tools
                     // interpDepth == 0: inside string content
                     if (ch == '{')
                     {
-                        if (_pos + 1 < _end && _text[_pos + 1] == '{') { _pos += 2; continue; } // escaped {{
-                        interpDepth = 1; _pos++; continue;
+                        if (_pos + 1 < _end && _text[_pos + 1] == '{')
+                        {
+                            _pos += 2;
+                            continue;
+                        } // escaped {{
+                        interpDepth = 1;
+                        _pos++;
+                        continue;
                     }
                     if (ch == '}')
                     {
-                        if (_pos + 1 < _end && _text[_pos + 1] == '}') { _pos += 2; continue; } // escaped }}
+                        if (_pos + 1 < _end && _text[_pos + 1] == '}')
+                        {
+                            _pos += 2;
+                            continue;
+                        } // escaped }}
                         // Stray } at depth 0 — shouldn't happen in valid code, just advance
-                        _pos++; continue;
+                        _pos++;
+                        continue;
                     }
                     if (ch == '"')
                     {
-                        if (isVerbatim && _pos + 1 < _end && _text[_pos + 1] == '"') { _pos += 2; continue; } // doubled quote
-                        _pos++; return; // closing quote
+                        if (isVerbatim && _pos + 1 < _end && _text[_pos + 1] == '"')
+                        {
+                            _pos += 2;
+                            continue;
+                        } // doubled quote
+                        _pos++;
+                        return; // closing quote
                     }
-                    if (!isVerbatim && ch == '\\') { _pos += 2; continue; } // escape in regular interpolated
+                    if (!isVerbatim && ch == '\\')
+                    {
+                        _pos += 2;
+                        continue;
+                    } // escape in regular interpolated
                     _pos++;
                 }
             }
@@ -1038,18 +1288,48 @@ namespace MCPForUnity.Editor.Tools
                 while (_pos < _end)
                 {
                     char ch = _text[_pos];
-                    if (ch == '\n') _line++;
+                    if (ch == '\n')
+                        _line++;
 
                     if (interpDepth > 0)
                     {
                         // Inside interpolation hole — code context
-                        if (ch == '{') { interpDepth++; _pos++; continue; }
-                        if (ch == '}') { interpDepth--; _pos++; continue; }
-                        if (SkipNestedInterpolationLiteral()) continue;
+                        if (ch == '{')
+                        {
+                            interpDepth++;
+                            _pos++;
+                            continue;
+                        }
+                        if (ch == '}')
+                        {
+                            interpDepth--;
+                            _pos++;
+                            continue;
+                        }
+                        if (SkipNestedInterpolationLiteral())
+                            continue;
                         if (ch == '/' && _pos + 1 < _end)
                         {
-                            if (_text[_pos + 1] == '/') { _pos += 2; while (_pos < _end && _text[_pos] != '\n') _pos++; continue; }
-                            if (_text[_pos + 1] == '*') { _pos += 2; while (_pos + 1 < _end && !(_text[_pos] == '*' && _text[_pos + 1] == '/')) { if (_text[_pos] == '\n') _line++; _pos++; } if (_pos + 1 < _end) _pos += 2; continue; }
+                            if (_text[_pos + 1] == '/')
+                            {
+                                _pos += 2;
+                                while (_pos < _end && _text[_pos] != '\n')
+                                    _pos++;
+                                continue;
+                            }
+                            if (_text[_pos + 1] == '*')
+                            {
+                                _pos += 2;
+                                while (_pos + 1 < _end && !(_text[_pos] == '*' && _text[_pos + 1] == '/'))
+                                {
+                                    if (_text[_pos] == '\n')
+                                        _line++;
+                                    _pos++;
+                                }
+                                if (_pos + 1 < _end)
+                                    _pos += 2;
+                                continue;
+                            }
                         }
                         _pos++;
                         continue;
@@ -1060,8 +1340,13 @@ namespace MCPForUnity.Editor.Tools
                     if (ch == '"')
                     {
                         int qc = 1;
-                        while (_pos + qc < _end && _text[_pos + qc] == '"') qc++;
-                        if (qc >= quoteCount) { _pos += quoteCount; return; }
+                        while (_pos + qc < _end && _text[_pos + qc] == '"')
+                            qc++;
+                        if (qc >= quoteCount)
+                        {
+                            _pos += quoteCount;
+                            return;
+                        }
                         // Fewer quotes than needed — literal content
                         _pos += qc;
                         continue;
@@ -1071,7 +1356,8 @@ namespace MCPForUnity.Editor.Tools
                     if (ch == '{')
                     {
                         int bc = 1;
-                        while (_pos + bc < _end && _text[_pos + bc] == '{') bc++;
+                        while (_pos + bc < _end && _text[_pos + bc] == '{')
+                            bc++;
                         if (bc >= dollarCount)
                         {
                             // Exactly dollarCount opens an interpolation hole; extras are literal
@@ -1090,7 +1376,8 @@ namespace MCPForUnity.Editor.Tools
                     if (ch == '}')
                     {
                         int bc = 1;
-                        while (_pos + bc < _end && _text[_pos + bc] == '}') bc++;
+                        while (_pos + bc < _end && _text[_pos + bc] == '}')
+                            bc++;
                         _pos += bc; // all literal at depth 0
                         continue;
                     }
@@ -1098,17 +1385,29 @@ namespace MCPForUnity.Editor.Tools
                     _pos++;
                 }
             }
+
             private bool SkipNestedInterpolationLiteral()
             {
                 char c = _text[_pos];
-                if (c != '"' && c != '\'' && c != '@' && c != '$') return false;
+                if (c != '"' && c != '\'' && c != '@' && c != '$')
+                    return false;
                 // Unusually deep nested literals are left opaque and rejected by the
                 // existing delimiter guard, rather than risking unbounded recursion.
-                if (_literalDepth >= 64) { _pos = _end; return true; }
+                if (_literalDepth >= 64)
+                {
+                    _pos = _end;
+                    return true;
+                }
                 var nested = new CSharpLexer(_text, _pos, _end, _literalDepth + 1);
-                if (!nested.Advance(out _) || !nested.InNonCode || nested.Position <= _pos + 1) return false;
+                if (!nested.Advance(out _) || !nested.InNonCode || nested.Position <= _pos + 1)
+                    return false;
                 int end = Math.Min(_end, nested.Position);
-                while (_pos < end) { if (_text[_pos] == '\n') _line++; _pos++; }
+                while (_pos < end)
+                {
+                    if (_text[_pos] == '\n')
+                        _line++;
+                    _pos++;
+                }
                 return true;
             }
         }
@@ -1116,29 +1415,45 @@ namespace MCPForUnity.Editor.Tools
         private static bool CheckBalancedDelimiters(string text, out int line, out char expected)
         {
             var delimiters = new Stack<(char closing, int line)>();
-            line = 1; expected = '\0';
+            line = 1;
+            expected = '\0';
 
             var lexer = new CSharpLexer(text);
             while (lexer.Advance(out char c))
             {
-                if (lexer.InNonCode) continue;
+                if (lexer.InNonCode)
+                    continue;
 
                 switch (c)
                 {
-                    case '{': delimiters.Push(('}', lexer.Line)); break;
-                    case '(': delimiters.Push((')', lexer.Line)); break;
-                    case '[': delimiters.Push((']', lexer.Line)); break;
+                    case '{':
+                        delimiters.Push(('}', lexer.Line));
+                        break;
+                    case '(':
+                        delimiters.Push((')', lexer.Line));
+                        break;
+                    case '[':
+                        delimiters.Push((']', lexer.Line));
+                        break;
                     case '}':
                     case ')':
                     case ']':
                         if (delimiters.Count == 0)
                         {
                             line = lexer.Line;
-                            expected = c == '}' ? '{' : c == ')' ? '(' : '[';
+                            expected =
+                                c == '}' ? '{'
+                                : c == ')' ? '('
+                                : '[';
                             return false;
                         }
                         var opening = delimiters.Pop();
-                        if (c != opening.closing) { line = lexer.Line; expected = opening.closing; return false; }
+                        if (c != opening.closing)
+                        {
+                            line = lexer.Line;
+                            expected = opening.closing;
+                            return false;
+                        }
                         break;
                 }
             }
@@ -1146,7 +1461,9 @@ namespace MCPForUnity.Editor.Tools
             if (delimiters.Count > 0)
             {
                 var opening = delimiters.Peek();
-                line = opening.line; expected = opening.closing; return false;
+                line = opening.line;
+                expected = opening.closing;
+                return false;
             }
 
             return true;
@@ -1166,17 +1483,12 @@ namespace MCPForUnity.Editor.Tools
                 if (deleted)
                 {
                     AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-                    return new SuccessResponse(
-                        $"Script '{Path.GetFileName(relativePath)}' moved to trash successfully.",
-                        new { deleted = true }
-                    );
+                    return new SuccessResponse($"Script '{Path.GetFileName(relativePath)}' moved to trash successfully.", new { deleted = true });
                 }
                 else
                 {
                     // Fallback or error if MoveAssetToTrash fails
-                    return new ErrorResponse(
-                        $"Failed to move script '{relativePath}' to trash. It might be locked or in use."
-                    );
+                    return new ErrorResponse($"Failed to move script '{relativePath}' to trash. It might be locked or in use.");
                 }
             }
             catch (Exception e)
@@ -1190,24 +1502,30 @@ namespace MCPForUnity.Editor.Tools
         /// Supports class-level replace/delete with Roslyn span computation if USE_ROSLYN is defined,
         /// otherwise falls back to a conservative balanced-brace scan.
         /// </summary>
-        private static object EditScript(
-            string fullPath,
-            string relativePath,
-            string name,
-            JArray edits,
-            JObject options,
-            bool preview = false)
+        private static object EditScript(string fullPath, string relativePath, string name, JArray edits, JObject options, bool preview = false)
         {
             if (!File.Exists(fullPath))
                 return new ErrorResponse($"Script not found at '{relativePath}'.");
-            try { fullPath = AssetPathUtility.GetFullAssetPath(relativePath); }
-            catch (Exception) { return new ErrorResponse("Unsafe script path: linked or unreadable paths are not permitted."); }
+            try
+            {
+                fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
+            }
+            catch (Exception)
+            {
+                return new ErrorResponse("Unsafe script path: linked or unreadable paths are not permitted.");
+            }
             if (edits == null || edits.Count == 0)
                 return new ErrorResponse("No edits provided.");
 
             string original;
-            try { original = ReadScriptContents(fullPath); }
-            catch (Exception ex) { return new ErrorResponse($"Failed to read script: {ex.Message}"); }
+            try
+            {
+                original = ReadScriptContents(fullPath);
+            }
+            catch (Exception ex)
+            {
+                return new ErrorResponse($"Failed to read script: {ex.Message}");
+            }
 
             string working = original;
 
@@ -1231,305 +1549,375 @@ namespace MCPForUnity.Editor.Tools
                     switch (mode)
                     {
                         case "replace_class":
+                        {
+                            string className = op.Value<string>("className");
+                            string ns = op.Value<string>("namespace");
+                            string replacement = ExtractReplacement(op);
+
+                            if (string.IsNullOrWhiteSpace(className))
+                                return new ErrorResponse("replace_class requires 'className'.");
+                            if (replacement == null)
+                                return new ErrorResponse("replace_class requires 'replacement' (inline or base64).");
+
+                            if (!TryComputeClassSpan(working, className, ns, out var spanStart, out var spanLength, out var why))
+                                return new ErrorResponse($"replace_class failed: {why}");
+
+                            if (!ValidateClassSnippet(replacement, className, out var vErr))
+                                return new ErrorResponse($"Replacement snippet invalid: {vErr}");
+
+                            replacement = FormatStructuralReplacement(working, spanStart, spanLength, replacement);
+
+                            if (applySequentially)
                             {
-                                string className = op.Value<string>("className");
-                                string ns = op.Value<string>("namespace");
-                                string replacement = ExtractReplacement(op);
-
-                                if (string.IsNullOrWhiteSpace(className))
-                                    return new ErrorResponse("replace_class requires 'className'.");
-                                if (replacement == null)
-                                    return new ErrorResponse("replace_class requires 'replacement' (inline or base64).");
-
-                                if (!TryComputeClassSpan(working, className, ns, out var spanStart, out var spanLength, out var why))
-                                    return new ErrorResponse($"replace_class failed: {why}");
-
-                                if (!ValidateClassSnippet(replacement, className, out var vErr))
-                                    return new ErrorResponse($"Replacement snippet invalid: {vErr}");
-
-                                replacement = FormatStructuralReplacement(working, spanStart, spanLength, replacement);
-
-                                if (applySequentially)
-                                {
-                                    working = working.Remove(spanStart, spanLength).Insert(spanStart, replacement);
-                                    appliedCount++;
-                                }
-                                else
-                                {
-                                    replacements.Add((spanStart, spanLength, replacement));
-                                }
-                                break;
+                                working = working.Remove(spanStart, spanLength).Insert(spanStart, replacement);
+                                appliedCount++;
                             }
+                            else
+                            {
+                                replacements.Add((spanStart, spanLength, replacement));
+                            }
+                            break;
+                        }
 
                         case "delete_class":
+                        {
+                            string className = op.Value<string>("className");
+                            string ns = op.Value<string>("namespace");
+                            if (string.IsNullOrWhiteSpace(className))
+                                return new ErrorResponse("delete_class requires 'className'.");
+
+                            if (!TryComputeClassSpan(working, className, ns, out var s, out var l, out var why))
+                                return new ErrorResponse($"delete_class failed: {why}");
+
+                            if (applySequentially)
                             {
-                                string className = op.Value<string>("className");
-                                string ns = op.Value<string>("namespace");
-                                if (string.IsNullOrWhiteSpace(className))
-                                    return new ErrorResponse("delete_class requires 'className'.");
-
-                                if (!TryComputeClassSpan(working, className, ns, out var s, out var l, out var why))
-                                    return new ErrorResponse($"delete_class failed: {why}");
-
-                                if (applySequentially)
-                                {
-                                    working = working.Remove(s, l);
-                                    appliedCount++;
-                                }
-                                else
-                                {
-                                    replacements.Add((s, l, string.Empty));
-                                }
-                                break;
+                                working = working.Remove(s, l);
+                                appliedCount++;
                             }
+                            else
+                            {
+                                replacements.Add((s, l, string.Empty));
+                            }
+                            break;
+                        }
 
                         case "replace_method":
+                        {
+                            string className = op.Value<string>("className");
+                            string ns = op.Value<string>("namespace");
+                            string methodName = op.Value<string>("methodName");
+                            string replacement = ExtractReplacement(op);
+                            string returnType = op.Value<string>("returnType");
+                            string parametersSignature = op.Value<string>("parametersSignature");
+                            string attributesContains = op.Value<string>("attributesContains");
+
+                            if (string.IsNullOrWhiteSpace(className))
+                                return new ErrorResponse("replace_method requires 'className'.");
+                            if (string.IsNullOrWhiteSpace(methodName))
+                                return new ErrorResponse("replace_method requires 'methodName'.");
+                            if (replacement == null)
+                                return new ErrorResponse("replace_method requires 'replacement' (inline or base64).");
+
+                            if (!TryComputeClassSpan(working, className, ns, out var clsStart, out var clsLen, out var whyClass))
+                                return new ErrorResponse($"replace_method failed to locate class: {whyClass}");
+
+                            if (
+                                !TryComputeMethodSpan(
+                                    working,
+                                    clsStart,
+                                    clsLen,
+                                    methodName,
+                                    returnType,
+                                    parametersSignature,
+                                    attributesContains,
+                                    out var mStart,
+                                    out var mLen,
+                                    out var whyMethod
+                                )
+                            )
                             {
-                                string className = op.Value<string>("className");
-                                string ns = op.Value<string>("namespace");
-                                string methodName = op.Value<string>("methodName");
-                                string replacement = ExtractReplacement(op);
-                                string returnType = op.Value<string>("returnType");
-                                string parametersSignature = op.Value<string>("parametersSignature");
-                                string attributesContains = op.Value<string>("attributesContains");
-
-                                if (string.IsNullOrWhiteSpace(className)) return new ErrorResponse("replace_method requires 'className'.");
-                                if (string.IsNullOrWhiteSpace(methodName)) return new ErrorResponse("replace_method requires 'methodName'.");
-                                if (replacement == null) return new ErrorResponse("replace_method requires 'replacement' (inline or base64).");
-
-                                if (!TryComputeClassSpan(working, className, ns, out var clsStart, out var clsLen, out var whyClass))
-                                    return new ErrorResponse($"replace_method failed to locate class: {whyClass}");
-
-                                if (!TryComputeMethodSpan(working, clsStart, clsLen, methodName, returnType, parametersSignature, attributesContains, out var mStart, out var mLen, out var whyMethod))
-                                {
-                                    bool hasDependentInsert = edits.Any(j => j is JObject jo &&
-                                        string.Equals(jo.Value<string>("className"), className, StringComparison.Ordinal) &&
-                                        string.Equals(jo.Value<string>("methodName"), methodName, StringComparison.Ordinal) &&
-                                        ((jo.Value<string>("mode") ?? jo.Value<string>("op") ?? string.Empty).ToLowerInvariant() == "insert_method"));
-                                    string hint = hasDependentInsert && !applySequentially ? " Hint: This batch inserts this method. Use options.applyMode='sequential' or split into separate calls." : string.Empty;
-                                    return new ErrorResponse($"replace_method failed: {whyMethod}.{hint}");
-                                }
-
-                                replacement = FormatStructuralReplacement(working, mStart, mLen, replacement, clsStart, clsLen);
-                                if (applySequentially)
-                                {
-                                    working = working.Remove(mStart, mLen).Insert(mStart, replacement);
-                                    appliedCount++;
-                                }
-                                else
-                                {
-                                    replacements.Add((mStart, mLen, replacement));
-                                }
-                                break;
+                                bool hasDependentInsert = edits.Any(j =>
+                                    j is JObject jo
+                                    && string.Equals(jo.Value<string>("className"), className, StringComparison.Ordinal)
+                                    && string.Equals(jo.Value<string>("methodName"), methodName, StringComparison.Ordinal)
+                                    && ((jo.Value<string>("mode") ?? jo.Value<string>("op") ?? string.Empty).ToLowerInvariant() == "insert_method")
+                                );
+                                string hint =
+                                    hasDependentInsert && !applySequentially
+                                        ? " Hint: This batch inserts this method. Use options.applyMode='sequential' or split into separate calls."
+                                        : string.Empty;
+                                return new ErrorResponse($"replace_method failed: {whyMethod}.{hint}");
                             }
+
+                            replacement = FormatStructuralReplacement(working, mStart, mLen, replacement, clsStart, clsLen);
+                            if (applySequentially)
+                            {
+                                working = working.Remove(mStart, mLen).Insert(mStart, replacement);
+                                appliedCount++;
+                            }
+                            else
+                            {
+                                replacements.Add((mStart, mLen, replacement));
+                            }
+                            break;
+                        }
 
                         case "delete_method":
+                        {
+                            string className = op.Value<string>("className");
+                            string ns = op.Value<string>("namespace");
+                            string methodName = op.Value<string>("methodName");
+                            string returnType = op.Value<string>("returnType");
+                            string parametersSignature = op.Value<string>("parametersSignature");
+                            string attributesContains = op.Value<string>("attributesContains");
+
+                            if (string.IsNullOrWhiteSpace(className))
+                                return new ErrorResponse("delete_method requires 'className'.");
+                            if (string.IsNullOrWhiteSpace(methodName))
+                                return new ErrorResponse("delete_method requires 'methodName'.");
+
+                            if (!TryComputeClassSpan(working, className, ns, out var clsStart, out var clsLen, out var whyClass))
+                                return new ErrorResponse($"delete_method failed to locate class: {whyClass}");
+
+                            if (
+                                !TryComputeMethodSpan(
+                                    working,
+                                    clsStart,
+                                    clsLen,
+                                    methodName,
+                                    returnType,
+                                    parametersSignature,
+                                    attributesContains,
+                                    out var mStart,
+                                    out var mLen,
+                                    out var whyMethod
+                                )
+                            )
                             {
-                                string className = op.Value<string>("className");
-                                string ns = op.Value<string>("namespace");
-                                string methodName = op.Value<string>("methodName");
-                                string returnType = op.Value<string>("returnType");
-                                string parametersSignature = op.Value<string>("parametersSignature");
-                                string attributesContains = op.Value<string>("attributesContains");
+                                bool hasDependentInsert = edits.Any(j =>
+                                    j is JObject jo
+                                    && string.Equals(jo.Value<string>("className"), className, StringComparison.Ordinal)
+                                    && string.Equals(jo.Value<string>("methodName"), methodName, StringComparison.Ordinal)
+                                    && ((jo.Value<string>("mode") ?? jo.Value<string>("op") ?? string.Empty).ToLowerInvariant() == "insert_method")
+                                );
+                                string hint =
+                                    hasDependentInsert && !applySequentially
+                                        ? " Hint: This batch inserts this method. Use options.applyMode='sequential' or split into separate calls."
+                                        : string.Empty;
+                                return new ErrorResponse($"delete_method failed: {whyMethod}.{hint}");
+                            }
 
-                                if (string.IsNullOrWhiteSpace(className)) return new ErrorResponse("delete_method requires 'className'.");
-                                if (string.IsNullOrWhiteSpace(methodName)) return new ErrorResponse("delete_method requires 'methodName'.");
+                            if (applySequentially)
+                            {
+                                working = working.Remove(mStart, mLen);
+                                appliedCount++;
+                            }
+                            else
+                            {
+                                replacements.Add((mStart, mLen, string.Empty));
+                            }
+                            break;
+                        }
 
-                                if (!TryComputeClassSpan(working, className, ns, out var clsStart, out var clsLen, out var whyClass))
-                                    return new ErrorResponse($"delete_method failed to locate class: {whyClass}");
+                        case "insert_method":
+                        {
+                            string className = op.Value<string>("className");
+                            string ns = op.Value<string>("namespace");
+                            string position = (op.Value<string>("position") ?? "end").ToLowerInvariant();
+                            string afterMethodName = op.Value<string>("afterMethodName");
+                            string afterReturnType = op.Value<string>("afterReturnType");
+                            string afterParameters = op.Value<string>("afterParametersSignature");
+                            string afterAttributesContains = op.Value<string>("afterAttributesContains");
+                            string snippet = ExtractReplacement(op);
+                            // Harden: refuse empty replacement for inserts
+                            if (snippet == null || snippet.Trim().Length == 0)
+                                return new ErrorResponse("insert_method requires a non-empty 'replacement' text.");
 
-                                if (!TryComputeMethodSpan(working, clsStart, clsLen, methodName, returnType, parametersSignature, attributesContains, out var mStart, out var mLen, out var whyMethod))
+                            if (string.IsNullOrWhiteSpace(className))
+                                return new ErrorResponse("insert_method requires 'className'.");
+                            if (snippet == null)
+                                return new ErrorResponse("insert_method requires 'replacement' (inline or base64) containing a full method declaration.");
+
+                            if (!TryComputeClassSpan(working, className, ns, out var clsStart, out var clsLen, out var whyClass))
+                                return new ErrorResponse($"insert_method failed to locate class: {whyClass}");
+
+                            if (position == "after" || position == "before")
+                            {
+                                if (position == "before")
                                 {
-                                    bool hasDependentInsert = edits.Any(j => j is JObject jo &&
-                                        string.Equals(jo.Value<string>("className"), className, StringComparison.Ordinal) &&
-                                        string.Equals(jo.Value<string>("methodName"), methodName, StringComparison.Ordinal) &&
-                                        ((jo.Value<string>("mode") ?? jo.Value<string>("op") ?? string.Empty).ToLowerInvariant() == "insert_method"));
-                                    string hint = hasDependentInsert && !applySequentially ? " Hint: This batch inserts this method. Use options.applyMode='sequential' or split into separate calls." : string.Empty;
-                                    return new ErrorResponse($"delete_method failed: {whyMethod}.{hint}");
+                                    afterMethodName = op.Value<string>("beforeMethodName");
+                                    afterReturnType = afterParameters = afterAttributesContains = null;
                                 }
-
+                                if (string.IsNullOrEmpty(afterMethodName))
+                                    return new ErrorResponse($"insert_method with position='{position}' requires '{position}MethodName'.");
+                                if (
+                                    !TryComputeMethodSpan(
+                                        working,
+                                        clsStart,
+                                        clsLen,
+                                        afterMethodName,
+                                        afterReturnType,
+                                        afterParameters,
+                                        afterAttributesContains,
+                                        out var aStart,
+                                        out var aLen,
+                                        out var whyAfter
+                                    )
+                                )
+                                    return new ErrorResponse($"insert_method(after) failed to locate anchor method: {whyAfter}");
+                                int insAt = position == "after" ? aStart + aLen : aStart;
+                                if (position == "before")
+                                    insAt = BeforeMethodTrivia(working, clsStart, insAt);
+                                string text = FormatMethodInsertion(working, clsStart, clsLen, ref insAt, snippet);
                                 if (applySequentially)
                                 {
-                                    working = working.Remove(mStart, mLen);
+                                    working = working.Insert(insAt, text);
                                     appliedCount++;
                                 }
                                 else
                                 {
-                                    replacements.Add((mStart, mLen, string.Empty));
+                                    QueueStructuralInsertion(replacements, structuralInsertions, insAt, text);
                                 }
-                                break;
                             }
-
-                        case "insert_method":
+                            else if (!TryFindClassInsertionPoint(working, clsStart, clsLen, position, out var insAt, out var whyIns))
+                                return new ErrorResponse($"insert_method failed: {whyIns}");
+                            else
                             {
-                                string className = op.Value<string>("className");
-                                string ns = op.Value<string>("namespace");
-                                string position = (op.Value<string>("position") ?? "end").ToLowerInvariant();
-                                string afterMethodName = op.Value<string>("afterMethodName");
-                                string afterReturnType = op.Value<string>("afterReturnType");
-                                string afterParameters = op.Value<string>("afterParametersSignature");
-                                string afterAttributesContains = op.Value<string>("afterAttributesContains");
-                                string snippet = ExtractReplacement(op);
-                                // Harden: refuse empty replacement for inserts
-                                if (snippet == null || snippet.Trim().Length == 0)
-                                    return new ErrorResponse("insert_method requires a non-empty 'replacement' text.");
-
-                                if (string.IsNullOrWhiteSpace(className)) return new ErrorResponse("insert_method requires 'className'.");
-                                if (snippet == null) return new ErrorResponse("insert_method requires 'replacement' (inline or base64) containing a full method declaration.");
-
-                                if (!TryComputeClassSpan(working, className, ns, out var clsStart, out var clsLen, out var whyClass))
-                                    return new ErrorResponse($"insert_method failed to locate class: {whyClass}");
-
-                                if (position == "after" || position == "before")
+                                string text = FormatMethodInsertion(working, clsStart, clsLen, ref insAt, snippet);
+                                if (applySequentially)
                                 {
-                                    if (position == "before")
-                                    {
-                                        afterMethodName = op.Value<string>("beforeMethodName");
-                                        afterReturnType = afterParameters = afterAttributesContains = null;
-                                    }
-                                    if (string.IsNullOrEmpty(afterMethodName)) return new ErrorResponse($"insert_method with position='{position}' requires '{position}MethodName'.");
-                                    if (!TryComputeMethodSpan(working, clsStart, clsLen, afterMethodName, afterReturnType, afterParameters, afterAttributesContains, out var aStart, out var aLen, out var whyAfter))
-                                        return new ErrorResponse($"insert_method(after) failed to locate anchor method: {whyAfter}");
-                                    int insAt = position == "after" ? aStart + aLen : aStart;
-                                    if (position == "before") insAt = BeforeMethodTrivia(working, clsStart, insAt);
-                                    string text = FormatMethodInsertion(working, clsStart, clsLen, ref insAt, snippet);
-                                    if (applySequentially)
-                                    {
-                                        working = working.Insert(insAt, text);
-                                        appliedCount++;
-                                    }
-                                    else
-                                    {
-                                        QueueStructuralInsertion(replacements, structuralInsertions, insAt, text);
-                                    }
+                                    working = working.Insert(insAt, text);
+                                    appliedCount++;
                                 }
-                                else if (!TryFindClassInsertionPoint(working, clsStart, clsLen, position, out var insAt, out var whyIns))
-                                    return new ErrorResponse($"insert_method failed: {whyIns}");
                                 else
                                 {
-                                    string text = FormatMethodInsertion(working, clsStart, clsLen, ref insAt, snippet);
-                                    if (applySequentially)
-                                    {
-                                        working = working.Insert(insAt, text);
-                                        appliedCount++;
-                                    }
-                                    else
-                                    {
-                                        QueueStructuralInsertion(replacements, structuralInsertions, insAt, text);
-                                    }
+                                    QueueStructuralInsertion(replacements, structuralInsertions, insAt, text);
                                 }
-                                break;
                             }
+                            break;
+                        }
 
                         case "anchor_insert":
+                        {
+                            string anchor = op.Value<string>("anchor");
+                            string position = (op.Value<string>("position") ?? "before").ToLowerInvariant();
+                            string text = op.Value<string>("text") ?? ExtractReplacement(op);
+                            if (string.IsNullOrWhiteSpace(anchor))
+                                return new ErrorResponse("anchor_insert requires 'anchor' (regex).");
+                            if (string.IsNullOrEmpty(text))
+                                return new ErrorResponse("anchor_insert requires non-empty 'text'.");
+
+                            try
                             {
-                                string anchor = op.Value<string>("anchor");
-                                string position = (op.Value<string>("position") ?? "before").ToLowerInvariant();
-                                string text = op.Value<string>("text") ?? ExtractReplacement(op);
-                                if (string.IsNullOrWhiteSpace(anchor)) return new ErrorResponse("anchor_insert requires 'anchor' (regex).");
-                                if (string.IsNullOrEmpty(text)) return new ErrorResponse("anchor_insert requires non-empty 'text'.");
+                                var rx = new Regex(anchor, RegexOptions.Multiline, TimeSpan.FromSeconds(2));
+                                var allMatches = rx.Matches(working);
+                                if (allMatches.Count == 0)
+                                    return new ErrorResponse($"anchor_insert: anchor not found: {anchor}");
+                                var m = FindBestAnchorMatch(allMatches, working, anchor);
+                                if (m == null)
+                                    return new ErrorResponse($"anchor_insert: anchor not found (filtered): {anchor}");
+                                int insAt = position == "after" ? m.Index + m.Length : m.Index;
+                                string norm = text;
 
-                                try
+                                // Duplicate guard: if identical snippet already exists within this class, skip insert
+                                if (TryComputeClassSpan(working, name, null, out var clsStartDG, out var clsLenDG, out _))
                                 {
-                                    var rx = new Regex(anchor, RegexOptions.Multiline, TimeSpan.FromSeconds(2));
-                                    var allMatches = rx.Matches(working);
-                                    if (allMatches.Count == 0) return new ErrorResponse($"anchor_insert: anchor not found: {anchor}");
-                                    var m = FindBestAnchorMatch(allMatches, working, anchor);
-                                    if (m == null) return new ErrorResponse($"anchor_insert: anchor not found (filtered): {anchor}");
-                                    int insAt = position == "after" ? m.Index + m.Length : m.Index;
-                                    string norm = text;
-
-                                    // Duplicate guard: if identical snippet already exists within this class, skip insert
-                                    if (TryComputeClassSpan(working, name, null, out var clsStartDG, out var clsLenDG, out _))
+                                    string classSlice = working.Substring(clsStartDG, Math.Min(clsLenDG, working.Length - clsStartDG));
+                                    if (classSlice.IndexOf(norm, StringComparison.Ordinal) >= 0)
                                     {
-                                        string classSlice = working.Substring(clsStartDG, Math.Min(clsLenDG, working.Length - clsStartDG));
-                                        if (classSlice.IndexOf(norm, StringComparison.Ordinal) >= 0)
-                                        {
-                                            // Do not insert duplicate; treat as no-op
-                                            break;
-                                        }
-                                    }
-                                    if (applySequentially)
-                                    {
-                                        working = working.Insert(insAt, norm);
-                                        appliedCount++;
-                                    }
-                                    else
-                                    {
-                                        replacements.Add((insAt, 0, norm));
+                                        // Do not insert duplicate; treat as no-op
+                                        break;
                                     }
                                 }
-                                catch (Exception ex)
+                                if (applySequentially)
                                 {
-                                    return new ErrorResponse($"anchor_insert failed: {ex.Message}");
+                                    working = working.Insert(insAt, norm);
+                                    appliedCount++;
                                 }
-                                break;
+                                else
+                                {
+                                    replacements.Add((insAt, 0, norm));
+                                }
                             }
+                            catch (Exception ex)
+                            {
+                                return new ErrorResponse($"anchor_insert failed: {ex.Message}");
+                            }
+                            break;
+                        }
 
                         case "anchor_delete":
+                        {
+                            string anchor = op.Value<string>("anchor");
+                            if (string.IsNullOrWhiteSpace(anchor))
+                                return new ErrorResponse("anchor_delete requires 'anchor' (regex).");
+                            try
                             {
-                                string anchor = op.Value<string>("anchor");
-                                if (string.IsNullOrWhiteSpace(anchor)) return new ErrorResponse("anchor_delete requires 'anchor' (regex).");
-                                try
+                                var rx = new Regex(anchor, RegexOptions.Multiline, TimeSpan.FromSeconds(2));
+                                var allDelMatches = rx.Matches(working);
+                                if (allDelMatches.Count == 0)
+                                    return new ErrorResponse($"anchor_delete: anchor not found: {anchor}");
+                                var m = FindBestAnchorMatch(allDelMatches, working, anchor);
+                                if (m == null)
+                                    return new ErrorResponse($"anchor_delete: anchor not found (filtered): {anchor}");
+                                int delAt = m.Index;
+                                int delLen = m.Length;
+                                if (applySequentially)
                                 {
-                                    var rx = new Regex(anchor, RegexOptions.Multiline, TimeSpan.FromSeconds(2));
-                                    var allDelMatches = rx.Matches(working);
-                                    if (allDelMatches.Count == 0) return new ErrorResponse($"anchor_delete: anchor not found: {anchor}");
-                                    var m = FindBestAnchorMatch(allDelMatches, working, anchor);
-                                    if (m == null) return new ErrorResponse($"anchor_delete: anchor not found (filtered): {anchor}");
-                                    int delAt = m.Index;
-                                    int delLen = m.Length;
-                                    if (applySequentially)
-                                    {
-                                        working = working.Remove(delAt, delLen);
-                                        appliedCount++;
-                                    }
-                                    else
-                                    {
-                                        replacements.Add((delAt, delLen, string.Empty));
-                                    }
+                                    working = working.Remove(delAt, delLen);
+                                    appliedCount++;
                                 }
-                                catch (Exception ex)
+                                else
                                 {
-                                    return new ErrorResponse($"anchor_delete failed: {ex.Message}");
+                                    replacements.Add((delAt, delLen, string.Empty));
                                 }
-                                break;
                             }
+                            catch (Exception ex)
+                            {
+                                return new ErrorResponse($"anchor_delete failed: {ex.Message}");
+                            }
+                            break;
+                        }
 
                         case "anchor_replace":
+                        {
+                            string anchor = op.Value<string>("anchor");
+                            string replacement = op.Value<string>("text") ?? op.Value<string>("replacement") ?? ExtractReplacement(op) ?? string.Empty;
+                            if (string.IsNullOrWhiteSpace(anchor))
+                                return new ErrorResponse("anchor_replace requires 'anchor' (regex).");
+                            try
                             {
-                                string anchor = op.Value<string>("anchor");
-                                string replacement = op.Value<string>("text") ?? op.Value<string>("replacement") ?? ExtractReplacement(op) ?? string.Empty;
-                                if (string.IsNullOrWhiteSpace(anchor)) return new ErrorResponse("anchor_replace requires 'anchor' (regex).");
-                                try
+                                var rx = new Regex(anchor, RegexOptions.Multiline, TimeSpan.FromSeconds(2));
+                                var allReplMatches = rx.Matches(working);
+                                if (allReplMatches.Count == 0)
+                                    return new ErrorResponse($"anchor_replace: anchor not found: {anchor}");
+                                var m = FindBestAnchorMatch(allReplMatches, working, anchor);
+                                if (m == null)
+                                    return new ErrorResponse($"anchor_replace: anchor not found (filtered): {anchor}");
+                                int at = m.Index;
+                                int len = m.Length;
+                                string norm = replacement;
+                                if (applySequentially)
                                 {
-                                    var rx = new Regex(anchor, RegexOptions.Multiline, TimeSpan.FromSeconds(2));
-                                    var allReplMatches = rx.Matches(working);
-                                    if (allReplMatches.Count == 0) return new ErrorResponse($"anchor_replace: anchor not found: {anchor}");
-                                    var m = FindBestAnchorMatch(allReplMatches, working, anchor);
-                                    if (m == null) return new ErrorResponse($"anchor_replace: anchor not found (filtered): {anchor}");
-                                    int at = m.Index;
-                                    int len = m.Length;
-                                    string norm = replacement;
-                                    if (applySequentially)
-                                    {
-                                        working = working.Remove(at, len).Insert(at, norm);
-                                        appliedCount++;
-                                    }
-                                    else
-                                    {
-                                        replacements.Add((at, len, norm));
-                                    }
+                                    working = working.Remove(at, len).Insert(at, norm);
+                                    appliedCount++;
                                 }
-                                catch (Exception ex)
+                                else
                                 {
-                                    return new ErrorResponse($"anchor_replace failed: {ex.Message}");
+                                    replacements.Add((at, len, norm));
                                 }
-                                break;
                             }
+                            catch (Exception ex)
+                            {
+                                return new ErrorResponse($"anchor_replace failed: {ex.Message}");
+                            }
+                            break;
+                        }
 
                         default:
-                            return new ErrorResponse($"Unknown edit mode: '{mode}'. Allowed: replace_class, delete_class, replace_method, delete_method, insert_method, anchor_insert, anchor_delete, anchor_replace.");
+                            return new ErrorResponse(
+                                $"Unknown edit mode: '{mode}'. Allowed: replace_class, delete_class, replace_method, delete_method, insert_method, anchor_insert, anchor_delete, anchor_replace."
+                            );
                     }
                 }
 
@@ -1542,8 +1930,25 @@ namespace MCPForUnity.Editor.Tools
                         {
                             if (ordered[i].start + ordered[i].length > ordered[i - 1].start)
                             {
-                                var conflict = new[] { new { startA = ordered[i].start, endA = ordered[i].start + ordered[i].length, startB = ordered[i - 1].start, endB = ordered[i - 1].start + ordered[i - 1].length } };
-                                return new ErrorResponse("overlap", new { status = "overlap", conflicts = conflict, hint = "Sort ranges descending by start and compute from the same snapshot." });
+                                var conflict = new[]
+                                {
+                                    new
+                                    {
+                                        startA = ordered[i].start,
+                                        endA = ordered[i].start + ordered[i].length,
+                                        startB = ordered[i - 1].start,
+                                        endB = ordered[i - 1].start + ordered[i - 1].length,
+                                    },
+                                };
+                                return new ErrorResponse(
+                                    "overlap",
+                                    new
+                                    {
+                                        status = "overlap",
+                                        conflicts = conflict,
+                                        hint = "Sort ranges descending by start and compute from the same snapshot.",
+                                    }
+                                );
                             }
                         }
                         return new ErrorResponse("overlap", new { status = "overlap" });
@@ -1556,12 +1961,21 @@ namespace MCPForUnity.Editor.Tools
 
                 // Guard against structural imbalance before validation
                 if (!CheckBalancedDelimiters(working, out int lineBal, out char expectedBal))
-                    return new ErrorResponse("unbalanced_braces", new { status = "unbalanced_braces", line = lineBal, expected = expectedBal.ToString() });
+                    return new ErrorResponse(
+                        "unbalanced_braces",
+                        new
+                        {
+                            status = "unbalanced_braces",
+                            line = lineBal,
+                            expected = expectedBal.ToString(),
+                        }
+                    );
 
                 // No-op guard for structured edits: if text unchanged, return explicit no-op
                 if (string.Equals(working, original, StringComparison.Ordinal))
                 {
-                    if (preview) return ScriptPreviewResponse(fullPath, relativePath, original, working, 0);
+                    if (preview)
+                        return ScriptPreviewResponse(fullPath, relativePath, original, working, 0);
                     var sameSha = ComputeSha256(original);
                     return new SuccessResponse(
                         $"No-op: contents unchanged for '{relativePath}'.",
@@ -1572,7 +1986,7 @@ namespace MCPForUnity.Editor.Tools
                             editsApplied = 0,
                             no_op = true,
                             sha256 = sameSha,
-                            evidence = new { reason = "identical_content" }
+                            evidence = new { reason = "identical_content" },
                         }
                     );
                 }
@@ -1590,7 +2004,7 @@ namespace MCPForUnity.Editor.Tools
                             "standard" => ValidationLevel.Standard,
                             "comprehensive" => ValidationLevel.Comprehensive,
                             "strict" => ValidationLevel.Strict,
-                            _ => level
+                            _ => level,
                         };
                     }
                 }
@@ -1601,7 +2015,8 @@ namespace MCPForUnity.Editor.Tools
                     McpLog.Warn($"Script validation warnings for {name}:\n" + string.Join("\n", errors));
 
                 // Atomic write with backup; schedule refresh
-                if (preview) return ScriptPreviewResponse(fullPath, relativePath, original, working, appliedCount);
+                if (preview)
+                    return ScriptPreviewResponse(fullPath, relativePath, original, working, appliedCount);
                 // Decide refresh behavior
                 string refreshMode = options?["refresh"]?.ToString()?.ToLowerInvariant();
                 bool immediate = refreshMode == "immediate" || refreshMode == "sync";
@@ -1618,7 +2033,7 @@ namespace MCPForUnity.Editor.Tools
                         uri = $"mcpforunity://path/{relativePath}",
                         editsApplied = appliedCount,
                         scheduledRefresh = !immediate,
-                        sha256 = newSha
+                        sha256 = newSha,
                     }
                 );
 
@@ -1653,13 +2068,20 @@ namespace MCPForUnity.Editor.Tools
         private static string ExtractReplacement(JObject op)
         {
             var inline = op.Value<string>("replacement");
-            if (!string.IsNullOrEmpty(inline)) return inline;
+            if (!string.IsNullOrEmpty(inline))
+                return inline;
 
             var b64 = op.Value<string>("replacementBase64");
             if (!string.IsNullOrEmpty(b64))
             {
-                try { return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(b64)); }
-                catch { return null; }
+                try
+                {
+                    return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(b64));
+                }
+                catch
+                {
+                    return null;
+                }
             }
             return null;
         }
@@ -1672,22 +2094,26 @@ namespace MCPForUnity.Editor.Tools
             while (lexer.Position < text.Length)
             {
                 int start = lexer.Position;
-                if (!lexer.Advance(out _)) break;
+                if (!lexer.Advance(out _))
+                    break;
                 char c = text[start];
                 if (lexer.InNonCode && (!literalsOnly || (lexer.Position > start + 1 && (c == '"' || c == '\'' || c == '@' || c == '$'))))
-                    for (int i = start; i < Math.Min(text.Length, lexer.Position); i++) protectedBytes[i] = true;
+                    for (int i = start; i < Math.Min(text.Length, lexer.Position); i++)
+                        protectedBytes[i] = true;
             }
             return protectedBytes;
         }
 
         private static IEnumerable<(int start, int end, int next)> FormattingLines(string text)
         {
-            for (int start = 0; start < text.Length;)
+            for (int start = 0; start < text.Length; )
             {
                 int end = start;
-                while (end < text.Length && text[end] != '\r' && text[end] != '\n') end++;
+                while (end < text.Length && text[end] != '\r' && text[end] != '\n')
+                    end++;
                 int next = end;
-                if (next < text.Length && text[next++] == '\r' && next < text.Length && text[next] == '\n') next++;
+                if (next < text.Length && text[next++] == '\r' && next < text.Length && text[next] == '\n')
+                    next++;
                 yield return (start, end, next);
                 start = next;
             }
@@ -1696,7 +2122,8 @@ namespace MCPForUnity.Editor.Tools
         private static string LineIndent(string text, int start)
         {
             int end = start;
-            while (end < text.Length && (text[end] == ' ' || text[end] == '\t')) end++;
+            while (end < text.Length && (text[end] == ' ' || text[end] == '\t'))
+                end++;
             return text.Substring(start, end - start);
         }
 
@@ -1706,7 +2133,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 string indent = LineIndent(text, line.start);
                 int token = line.start + indent.Length;
-                if (token < line.end && !protectedBytes[line.start] && text[token] != '#') return indent;
+                if (token < line.end && !protectedBytes[line.start] && text[token] != '#')
+                    return indent;
             }
             return string.Empty;
         }
@@ -1715,12 +2143,14 @@ namespace MCPForUnity.Editor.Tools
         {
             var nonCode = ProtectedLiteralBytes(text, literalsOnly: false);
             var indents = new HashSet<string>();
-            if (includeZero) indents.Add(string.Empty);
+            if (includeZero)
+                indents.Add(string.Empty);
             foreach (var line in FormattingLines(text))
             {
                 string indent = LineIndent(text, line.start);
                 int token = line.start + indent.Length;
-                if (token < line.end && !protectedBytes[line.start] && !nonCode[token] && text[token] != '#') indents.Add(indent);
+                if (token < line.end && !protectedBytes[line.start] && !nonCode[token] && text[token] != '#')
+                    indents.Add(indent);
             }
             string unit = null;
             string outer = includeZero ? string.Empty : FormattingBaseIndent(text, protectedBytes);
@@ -1730,7 +2160,8 @@ namespace MCPForUnity.Editor.Tools
                     // Compare to the declaration base, not differences between deeper
                     // aligned expressions (e.g. a six-space initializer under a four-space body).
                     string delta = inner.Substring(outer.Length);
-                    if (unit == null || delta.Length < unit.Length) unit = delta;
+                    if (unit == null || delta.Length < unit.Length)
+                        unit = delta;
                 }
             return unit;
         }
@@ -1745,7 +2176,10 @@ namespace MCPForUnity.Editor.Tools
             {
                 int distance = Math.Abs(line.end - position);
                 if (line.end < source.Length && !protectedBytes[line.end] && distance < closest)
-                { closest = distance; newline = source.Substring(line.end, line.next - line.end); }
+                {
+                    closest = distance;
+                    newline = source.Substring(line.end, line.next - line.end);
+                }
             }
             return newline;
         }
@@ -1762,14 +2196,22 @@ namespace MCPForUnity.Editor.Tools
             var result = new System.Text.StringBuilder(snippet.Length);
             var lines = FormattingLines(snippet).ToList();
             int first = 0;
-            while (first < lines.Count && string.IsNullOrWhiteSpace(snippet.Substring(lines[first].start, lines[first].end - lines[first].start)) && !protectedBytes[lines[first].start]) first++;
+            while (
+                first < lines.Count
+                && string.IsNullOrWhiteSpace(snippet.Substring(lines[first].start, lines[first].end - lines[first].start))
+                && !protectedBytes[lines[first].start]
+            )
+                first++;
             int last = snippet.Length;
-            while (last > 0 && char.IsWhiteSpace(snippet[last - 1]) && !protectedBytes[last - 1]) last--;
+            while (last > 0 && char.IsWhiteSpace(snippet[last - 1]) && !protectedBytes[last - 1])
+                last--;
             foreach (var line in lines.Skip(first))
             {
-                if (line.start >= last) break;
+                if (line.start >= last)
+                    break;
                 int end = Math.Min(line.end, last);
-                if (protectedBytes[line.start]) result.Append(snippet, line.start, end - line.start);
+                if (protectedBytes[line.start])
+                    result.Append(snippet, line.start, end - line.start);
                 else
                 {
                     string leading = LineIndent(snippet, line.start);
@@ -1781,14 +2223,21 @@ namespace MCPForUnity.Editor.Tools
                         if (snippetUnit == null)
                         {
                             int closing = 0;
-                            while (token + closing < end && snippet[token + closing] == '}' && !nonCode[token + closing]) closing++;
-                            for (int depth = 0; depth < Math.Max(0, braceDepth - closing); depth++) result.Append(unit);
+                            while (token + closing < end && snippet[token + closing] == '}' && !nonCode[token + closing])
+                                closing++;
+                            for (int depth = 0; depth < Math.Max(0, braceDepth - closing); depth++)
+                                result.Append(unit);
                         }
                         else
-                            while (relative.StartsWith(snippetUnit, StringComparison.Ordinal)) { result.Append(unit); relative = relative.Substring(snippetUnit.Length); }
+                            while (relative.StartsWith(snippetUnit, StringComparison.Ordinal))
+                            {
+                                result.Append(unit);
+                                relative = relative.Substring(snippetUnit.Length);
+                            }
                         result.Append(relative).Append(snippet, token, end - token);
                     }
-                    else result.Append(snippet, line.start, end - line.start);
+                    else
+                        result.Append(snippet, line.start, end - line.start);
                 }
                 if (nonCode != null)
                 {
@@ -1797,14 +2246,18 @@ namespace MCPForUnity.Editor.Tools
                         for (int i = line.start; i < end; i++)
                             if (!nonCode[i])
                             {
-                                if (snippet[i] == '{') braceDepth++;
-                                else if (snippet[i] == '}') braceDepth = Math.Max(0, braceDepth - 1);
+                                if (snippet[i] == '{')
+                                    braceDepth++;
+                                else if (snippet[i] == '}')
+                                    braceDepth = Math.Max(0, braceDepth - 1);
                             }
                 }
                 if (line.end < last)
                 {
-                    if (protectedBytes[line.end]) result.Append(snippet, line.end, line.next - line.end);
-                    else result.Append(newline);
+                    if (protectedBytes[line.end])
+                        result.Append(snippet, line.end, line.next - line.end);
+                    else
+                        result.Append(newline);
                 }
             }
             return result.ToString();
@@ -1816,15 +2269,20 @@ namespace MCPForUnity.Editor.Tools
             var protectedBytes = ProtectedLiteralBytes(old);
             string indent = FormattingBaseIndent(old, protectedBytes);
             string context = contextStart >= 0 ? source.Substring(contextStart, contextLength) : old;
-            string unit = FormattingIndentUnit(context, ProtectedLiteralBytes(context), includeZero: false) ?? FormattingIndentUnit(source, ProtectedLiteralBytes(source)) ?? "    ";
+            string unit =
+                FormattingIndentUnit(context, ProtectedLiteralBytes(context), includeZero: false)
+                ?? FormattingIndentUnit(source, ProtectedLiteralBytes(source))
+                ?? "    ";
             int first = 0;
             foreach (var line in FormattingLines(old))
             {
-                if (!string.IsNullOrWhiteSpace(old.Substring(line.start, line.end - line.start))) break;
+                if (!string.IsNullOrWhiteSpace(old.Substring(line.start, line.end - line.start)))
+                    break;
                 first = line.next;
             }
             int last = old.Length;
-            while (last > first && char.IsWhiteSpace(old[last - 1]) && !protectedBytes[last - 1]) last--;
+            while (last > first && char.IsWhiteSpace(old[last - 1]) && !protectedBytes[last - 1])
+                last--;
             return old.Substring(0, first) + FormatStructuralSnippet(snippet, indent, unit, LocalFormattingNewline(source, start)) + old.Substring(last);
         }
 
@@ -1835,17 +2293,23 @@ namespace MCPForUnity.Editor.Tools
             while (position > classStart)
             {
                 int end = position;
-                if (end > 0 && source[end - 1] == '\n') end--;
-                if (end > 0 && source[end - 1] == '\r') end--;
+                if (end > 0 && source[end - 1] == '\n')
+                    end--;
+                if (end > 0 && source[end - 1] == '\r')
+                    end--;
                 int start = end;
-                while (start > classStart && source[start - 1] != '\r' && source[start - 1] != '\n') start--;
+                while (start > classStart && source[start - 1] != '\r' && source[start - 1] != '\n')
+                    start--;
                 string line = source.Substring(start, end - start).Trim();
-                if (line.EndsWith("*/", StringComparison.Ordinal)) block = true;
-                if (!block && !line.StartsWith("//", StringComparison.Ordinal)) break;
+                if (line.EndsWith("*/", StringComparison.Ordinal))
+                    block = true;
+                if (!block && !line.StartsWith("//", StringComparison.Ordinal))
+                    break;
                 int opening = line.IndexOf("/*", StringComparison.Ordinal);
                 if (block && opening >= 0)
                 {
-                    if (!string.IsNullOrWhiteSpace(line.Substring(0, opening))) return originalPosition;
+                    if (!string.IsNullOrWhiteSpace(line.Substring(0, opening)))
+                        return originalPosition;
                     block = false;
                 }
                 position = start;
@@ -1853,7 +2317,12 @@ namespace MCPForUnity.Editor.Tools
             return block ? originalPosition : position;
         }
 
-        private static void QueueStructuralInsertion(List<(int start, int length, string text)> replacements, HashSet<int> structuralInsertions, int position, string text)
+        private static void QueueStructuralInsertion(
+            List<(int start, int length, string text)> replacements,
+            HashSet<int> structuralInsertions,
+            int position,
+            string text
+        )
         {
             // Equal-position inserts keep the existing stable order (last edit appears first).
             // A line break needed against the original prefix belongs only to that first final snippet.
@@ -1861,8 +2330,12 @@ namespace MCPForUnity.Editor.Tools
                 if (structuralInsertions.Contains(i) && replacements[i].start == position)
                 {
                     var previous = replacements[i];
-                    int prefix = previous.text.StartsWith("\r\n", StringComparison.Ordinal) ? 2 : previous.text.StartsWith("\r", StringComparison.Ordinal) || previous.text.StartsWith("\n", StringComparison.Ordinal) ? 1 : 0;
-                    if (prefix > 0) replacements[i] = (previous.start, previous.length, previous.text.Substring(prefix));
+                    int prefix =
+                        previous.text.StartsWith("\r\n", StringComparison.Ordinal) ? 2
+                        : previous.text.StartsWith("\r", StringComparison.Ordinal) || previous.text.StartsWith("\n", StringComparison.Ordinal) ? 1
+                        : 0;
+                    if (prefix > 0)
+                        replacements[i] = (previous.start, previous.length, previous.text.Substring(prefix));
                 }
             structuralInsertions.Add(replacements.Count);
             replacements.Add((position, 0, text));
@@ -1873,20 +2346,26 @@ namespace MCPForUnity.Editor.Tools
             string classText = source.Substring(classStart, classLength);
             var protectedBytes = ProtectedLiteralBytes(classText);
             string classIndent = FormattingBaseIndent(classText, protectedBytes);
-            string unit = FormattingIndentUnit(classText, protectedBytes, includeZero: false) ?? FormattingIndentUnit(source, ProtectedLiteralBytes(source)) ?? "    ";
+            string unit =
+                FormattingIndentUnit(classText, protectedBytes, includeZero: false) ?? FormattingIndentUnit(source, ProtectedLiteralBytes(source)) ?? "    ";
             int lineStart = insertAt;
-            while (lineStart > 0 && source[lineStart - 1] != '\r' && source[lineStart - 1] != '\n') lineStart--;
-            if (source.Substring(lineStart, insertAt - lineStart).All(c => c == ' ' || c == '\t')) insertAt = lineStart;
+            while (lineStart > 0 && source[lineStart - 1] != '\r' && source[lineStart - 1] != '\n')
+                lineStart--;
+            if (source.Substring(lineStart, insertAt - lineStart).All(c => c == ' ' || c == '\t'))
+                insertAt = lineStart;
             else
             {
                 int end = insertAt;
-                while (end < source.Length && (source[end] == ' ' || source[end] == '\t')) end++;
+                while (end < source.Length && (source[end] == ' ' || source[end] == '\t'))
+                    end++;
                 if (end + 1 < source.Length && source[end] == '/' && source[end + 1] == '/')
-                    while (end < source.Length && source[end] != '\r' && source[end] != '\n') end++;
+                    while (end < source.Length && source[end] != '\r' && source[end] != '\n')
+                        end++;
                 if (end < source.Length && (source[end] == '\r' || source[end] == '\n'))
                 {
                     insertAt = end + 1;
-                    if (source[end] == '\r' && insertAt < source.Length && source[insertAt] == '\n') insertAt++;
+                    if (source[end] == '\r' && insertAt < source.Length && source[insertAt] == '\n')
+                        insertAt++;
                 }
             }
             string newline = LocalFormattingNewline(source, insertAt);
@@ -1903,15 +2382,29 @@ namespace MCPForUnity.Editor.Tools
                 var tree = CSharpSyntaxTree.ParseText(snippet);
                 var root = tree.GetRoot();
                 var classes = root.DescendantNodes().OfType<Microsoft.CodeAnalysis.CSharp.Syntax.ClassDeclarationSyntax>().ToList();
-                if (classes.Count != 1) { err = "snippet must contain exactly one class declaration"; return false; }
+                if (classes.Count != 1)
+                {
+                    err = "snippet must contain exactly one class declaration";
+                    return false;
+                }
                 // Optional: enforce expected name
                 // if (classes[0].Identifier.ValueText != expectedName) { err = $"snippet declares '{classes[0].Identifier.ValueText}', expected '{expectedName}'"; return false; }
-                err = null; return true;
+                err = null;
+                return true;
             }
-            catch (Exception ex) { err = ex.Message; return false; }
+            catch (Exception ex)
+            {
+                err = ex.Message;
+                return false;
+            }
 #else
-            if (string.IsNullOrWhiteSpace(snippet) || !snippet.Contains("class ")) { err = "no 'class' keyword found in snippet"; return false; }
-            err = null; return true;
+            if (string.IsNullOrWhiteSpace(snippet) || !snippet.Contains("class "))
+            {
+                err = "no 'class' keyword found in snippet";
+                return false;
+            }
+            err = null;
+            return true;
 #endif
         }
 
@@ -1930,16 +2423,30 @@ namespace MCPForUnity.Editor.Tools
                 {
                     classes = classes.Where(c =>
                         (c.FirstAncestorOrSelf<Microsoft.CodeAnalysis.CSharp.Syntax.NamespaceDeclarationSyntax>()?.Name?.ToString() ?? "") == ns
-                        || (c.FirstAncestorOrSelf<Microsoft.CodeAnalysis.CSharp.Syntax.FileScopedNamespaceDeclarationSyntax>()?.Name?.ToString() ?? "") == ns);
+                        || (c.FirstAncestorOrSelf<Microsoft.CodeAnalysis.CSharp.Syntax.FileScopedNamespaceDeclarationSyntax>()?.Name?.ToString() ?? "") == ns
+                    );
                 }
 
                 var list = classes.ToList();
-                if (list.Count == 0) { start = length = 0; why = $"class '{className}' not found" + (ns != null ? $" in namespace '{ns}'" : ""); return false; }
-                if (list.Count > 1) { start = length = 0; why = $"class '{className}' matched {list.Count} declarations (partial/nested?). Disambiguate."; return false; }
+                if (list.Count == 0)
+                {
+                    start = length = 0;
+                    why = $"class '{className}' not found" + (ns != null ? $" in namespace '{ns}'" : "");
+                    return false;
+                }
+                if (list.Count > 1)
+                {
+                    start = length = 0;
+                    why = $"class '{className}' matched {list.Count} declarations (partial/nested?). Disambiguate.";
+                    return false;
+                }
 
                 var cls = list[0];
                 var span = cls.FullSpan; // includes attributes & leading trivia
-                start = span.Start; length = span.Length; why = null; return true;
+                start = span.Start;
+                length = span.Length;
+                why = null;
+                return true;
             }
             catch
             {
@@ -1951,36 +2458,64 @@ namespace MCPForUnity.Editor.Tools
 
         private static bool TryComputeClassSpanBalanced(string source, string className, string ns, out int start, out int length, out string why)
         {
-            start = length = 0; why = null;
+            start = length = 0;
+            why = null;
             var idx = IndexOfClassToken(source, className);
-            if (idx < 0) { why = $"class '{className}' not found (balanced scan)"; return false; }
+            if (idx < 0)
+            {
+                why = $"class '{className}' not found (balanced scan)";
+                return false;
+            }
 
             if (!string.IsNullOrEmpty(ns) && !AppearsWithinNamespaceHeader(source, idx, ns))
-            { why = $"class '{className}' not under namespace '{ns}' (balanced scan)"; return false; }
+            {
+                why = $"class '{className}' not under namespace '{ns}' (balanced scan)";
+                return false;
+            }
 
             // Include modifiers/attributes on the same line: back up to the start of line
             int lineStart = idx;
-            while (lineStart > 0 && source[lineStart - 1] != '\n' && source[lineStart - 1] != '\r') lineStart--;
+            while (lineStart > 0 && source[lineStart - 1] != '\n' && source[lineStart - 1] != '\r')
+                lineStart--;
 
             int i = idx;
-            while (i < source.Length && source[i] != '{') i++;
-            if (i >= source.Length) { why = "no opening brace after class header"; return false; }
+            while (i < source.Length && source[i] != '{')
+                i++;
+            if (i >= source.Length)
+            {
+                why = "no opening brace after class header";
+                return false;
+            }
 
             int depth = 0;
             int startSpan = lineStart;
             var lexer = new CSharpLexer(source, i);
             while (lexer.Advance(out char c))
             {
-                if (lexer.InNonCode) continue;
-                if (c == '{') { depth++; }
+                if (lexer.InNonCode)
+                    continue;
+                if (c == '{')
+                {
+                    depth++;
+                }
                 else if (c == '}')
                 {
                     depth--;
-                    if (depth == 0) { start = startSpan; length = (lexer.Position - 1 - startSpan) + 1; return true; }
-                    if (depth < 0) { why = "brace underflow"; return false; }
+                    if (depth == 0)
+                    {
+                        start = startSpan;
+                        length = (lexer.Position - 1 - startSpan) + 1;
+                        return true;
+                    }
+                    if (depth < 0)
+                    {
+                        why = "brace underflow";
+                        return false;
+                    }
                 }
             }
-            why = "unterminated class block"; return false;
+            why = "unterminated class block";
+            return false;
         }
 
         private static bool TryComputeMethodSpan(
@@ -1993,9 +2528,11 @@ namespace MCPForUnity.Editor.Tools
             string attributesContains,
             out int start,
             out int length,
-            out string why)
+            out string why
+        )
         {
-            start = length = 0; why = null;
+            start = length = 0;
+            why = null;
             int searchStart = classStart;
             int searchEnd = Math.Min(source.Length, classStart + classLength);
 
@@ -2020,15 +2557,21 @@ namespace MCPForUnity.Editor.Tools
                 paramsPattern = Regex.Escape(ps);
             }
             string pattern =
-                @"(?m)^[\t ]*(?:\[[^\]]+\][\t ]*)*[\t ]*" +
-                @"(?:(?:public|private|protected|internal|static|virtual|override|sealed|async|extern|unsafe|new|partial|readonly|volatile|event|abstract|ref|in|out)\s+)*" +
-                rtPattern + @"[\t ]+" + namePattern + @"\s*(?:<[^>]+>)?\s*\(" + paramsPattern + @"\)";
+                @"(?m)^[\t ]*(?:\[[^\]]+\][\t ]*)*[\t ]*"
+                + @"(?:(?:public|private|protected|internal|static|virtual|override|sealed|async|extern|unsafe|new|partial|readonly|volatile|event|abstract|ref|in|out)\s+)*"
+                + rtPattern
+                + @"[\t ]+"
+                + namePattern
+                + @"\s*(?:<[^>]+>)?\s*\("
+                + paramsPattern
+                + @"\)";
 
             string slice = source.Substring(searchStart, searchEnd - searchStart);
             var headerMatch = Regex.Match(slice, pattern, RegexOptions.Multiline, TimeSpan.FromSeconds(2));
             if (!headerMatch.Success)
             {
-                why = $"method '{methodName}' header not found in class"; return false;
+                why = $"method '{methodName}' header not found in class";
+                return false;
             }
             int headerIndex = searchStart + headerMatch.Index;
 
@@ -2039,21 +2582,28 @@ namespace MCPForUnity.Editor.Tools
                 while (attrScanStart > searchStart)
                 {
                     int prevNl = source.LastIndexOf('\n', attrScanStart - 1);
-                    if (prevNl < 0 || prevNl < searchStart) break;
+                    if (prevNl < 0 || prevNl < searchStart)
+                        break;
                     string prevLine = source.Substring(prevNl + 1, attrScanStart - (prevNl + 1));
-                    if (prevLine.TrimStart().StartsWith("[")) { attrScanStart = prevNl; continue; }
+                    if (prevLine.TrimStart().StartsWith("["))
+                    {
+                        attrScanStart = prevNl;
+                        continue;
+                    }
                     break;
                 }
                 string attrBlock = source.Substring(attrScanStart, headerIndex - attrScanStart);
                 if (attrBlock.IndexOf(attributesContains, StringComparison.Ordinal) < 0)
                 {
-                    why = $"method '{methodName}' found but attributes filter did not match"; return false;
+                    why = $"method '{methodName}' found but attributes filter did not match";
+                    return false;
                 }
             }
 
             // backtrack to the very start of header/attributes to include in span
             int lineStart = headerIndex;
-            while (lineStart > searchStart && source[lineStart - 1] != '\n' && source[lineStart - 1] != '\r') lineStart--;
+            while (lineStart > searchStart && source[lineStart - 1] != '\n' && source[lineStart - 1] != '\r')
+                lineStart--;
             // If previous lines are attributes, include them
             int attrStart = lineStart;
             int probe = lineStart - 1;
@@ -2062,29 +2612,51 @@ namespace MCPForUnity.Editor.Tools
                 // Skip past line-ending chars so LastIndexOf finds the *previous* newline
                 while (probe > searchStart && (source[probe] == '\n' || source[probe] == '\r'))
                     probe--;
-                if (probe <= searchStart) break;
+                if (probe <= searchStart)
+                    break;
                 int prevNl = source.LastIndexOf('\n', probe);
-                if (prevNl < 0 || prevNl < searchStart) break;
+                if (prevNl < 0 || prevNl < searchStart)
+                    break;
                 string prev = source.Substring(prevNl + 1, attrStart - (prevNl + 1));
-                if (prev.TrimStart().StartsWith("[")) { attrStart = prevNl + 1; probe = prevNl - 1; }
-                else break;
+                if (prev.TrimStart().StartsWith("["))
+                {
+                    attrStart = prevNl + 1;
+                    probe = prevNl - 1;
+                }
+                else
+                    break;
             }
 
             // 2) Walk from the end of signature to detect body style ('{' or '=> ...;') and compute end
             // Find the '(' that belongs to the method signature, not attributes
             int nameTokenIdx = IndexOfTokenWithin(source, methodName, headerIndex, searchEnd);
-            if (nameTokenIdx < 0) { why = $"method '{methodName}' token not found after header"; return false; }
+            if (nameTokenIdx < 0)
+            {
+                why = $"method '{methodName}' token not found after header";
+                return false;
+            }
             int sigOpenParen = IndexOfTokenWithin(source, "(", nameTokenIdx, searchEnd);
-            if (sigOpenParen < 0) { why = "method parameter list '(' not found"; return false; }
+            if (sigOpenParen < 0)
+            {
+                why = "method parameter list '(' not found";
+                return false;
+            }
 
             int i = sigOpenParen;
             int parenDepth = 0;
             var parenLexer = new CSharpLexer(source, i, searchEnd);
             while (parenLexer.Advance(out char pc))
             {
-                if (parenLexer.InNonCode) continue;
-                if (pc == '(') parenDepth++;
-                if (pc == ')') { parenDepth--; if (parenDepth == 0) break; }
+                if (parenLexer.InNonCode)
+                    continue;
+                if (pc == '(')
+                    parenDepth++;
+                if (pc == ')')
+                {
+                    parenDepth--;
+                    if (parenDepth == 0)
+                        break;
+                }
             }
             i = parenLexer.Position;
 
@@ -2094,9 +2666,22 @@ namespace MCPForUnity.Editor.Tools
             {
                 char c = source[i];
                 char n = i + 1 < searchEnd ? source[i + 1] : '\0';
-                if (char.IsWhiteSpace(c)) continue;
-                if (c == '/' && n == '/') { while (i < searchEnd && source[i] != '\n') i++; continue; }
-                if (c == '/' && n == '*') { i += 2; while (i + 1 < searchEnd && !(source[i] == '*' && source[i + 1] == '/')) i++; i++; continue; }
+                if (char.IsWhiteSpace(c))
+                    continue;
+                if (c == '/' && n == '/')
+                {
+                    while (i < searchEnd && source[i] != '\n')
+                        i++;
+                    continue;
+                }
+                if (c == '/' && n == '*')
+                {
+                    i += 2;
+                    while (i + 1 < searchEnd && !(source[i] == '*' && source[i + 1] == '/'))
+                        i++;
+                    i++;
+                    continue;
+                }
                 break;
             }
 
@@ -2108,9 +2693,22 @@ namespace MCPForUnity.Editor.Tools
                 {
                     char c = source[i];
                     char n = i + 1 < searchEnd ? source[i + 1] : '\0';
-                    if (char.IsWhiteSpace(c)) continue;
-                    if (c == '/' && n == '/') { while (i < searchEnd && source[i] != '\n') i++; continue; }
-                    if (c == '/' && n == '*') { i += 2; while (i + 1 < searchEnd && !(source[i] == '*' && source[i + 1] == '/')) i++; i++; continue; }
+                    if (char.IsWhiteSpace(c))
+                        continue;
+                    if (c == '/' && n == '/')
+                    {
+                        while (i < searchEnd && source[i] != '\n')
+                            i++;
+                        continue;
+                    }
+                    if (c == '/' && n == '*')
+                    {
+                        i += 2;
+                        while (i + 1 < searchEnd && !(source[i] == '*' && source[i + 1] == '/'))
+                            i++;
+                        i++;
+                        continue;
+                    }
                     break;
                 }
 
@@ -2125,17 +2723,20 @@ namespace MCPForUnity.Editor.Tools
                         if (i - 1 >= 0)
                         {
                             char lb = source[i - 1];
-                            if (char.IsLetterOrDigit(lb) || lb == '_') hasWhere = false;
+                            if (char.IsLetterOrDigit(lb) || lb == '_')
+                                hasWhere = false;
                         }
                         // Right boundary
                         if (hasWhere && i + 5 < searchEnd)
                         {
                             char rb = source[i + 5];
-                            if (char.IsLetterOrDigit(rb) || rb == '_') hasWhere = false;
+                            if (char.IsLetterOrDigit(rb) || rb == '_')
+                                hasWhere = false;
                         }
                     }
                 }
-                if (!hasWhere) break;
+                if (!hasWhere)
+                    break;
 
                 // Advance past the entire where-constraint clause until we hit '{' or '=>' or ';'
                 i += 5; // past 'where'
@@ -2143,10 +2744,23 @@ namespace MCPForUnity.Editor.Tools
                 {
                     char c = source[i];
                     char n = i + 1 < searchEnd ? source[i + 1] : '\0';
-                    if (c == '{' || c == ';' || (c == '=' && n == '>')) break;
+                    if (c == '{' || c == ';' || (c == '=' && n == '>'))
+                        break;
                     // Skip comments inline
-                    if (c == '/' && n == '/') { while (i < searchEnd && source[i] != '\n') i++; continue; }
-                    if (c == '/' && n == '*') { i += 2; while (i + 1 < searchEnd && !(source[i] == '*' && source[i + 1] == '/')) i++; i++; continue; }
+                    if (c == '/' && n == '/')
+                    {
+                        while (i < searchEnd && source[i] != '\n')
+                            i++;
+                        continue;
+                    }
+                    if (c == '/' && n == '*')
+                    {
+                        i += 2;
+                        while (i + 1 < searchEnd && !(source[i] == '*' && source[i + 1] == '/'))
+                            i++;
+                        i++;
+                        continue;
+                    }
                     i++;
                 }
             }
@@ -2160,30 +2774,56 @@ namespace MCPForUnity.Editor.Tools
                 while (j < searchEnd)
                 {
                     char c = source[j];
-                    if (c == ';') { done = true; break; }
+                    if (c == ';')
+                    {
+                        done = true;
+                        break;
+                    }
                     j++;
                 }
-                if (!done) { why = "unterminated expression-bodied method"; return false; }
-                start = attrStart; length = (j - attrStart) + 1; return true;
+                if (!done)
+                {
+                    why = "unterminated expression-bodied method";
+                    return false;
+                }
+                start = attrStart;
+                length = (j - attrStart) + 1;
+                return true;
             }
 
-            if (i >= searchEnd || source[i] != '{') { why = "no opening brace after method signature"; return false; }
+            if (i >= searchEnd || source[i] != '{')
+            {
+                why = "no opening brace after method signature";
+                return false;
+            }
 
             int depth = 0;
             int startSpan = attrStart;
             var bodyLexer = new CSharpLexer(source, i, searchEnd);
             while (bodyLexer.Advance(out char bc))
             {
-                if (bodyLexer.InNonCode) continue;
-                if (bc == '{') depth++;
+                if (bodyLexer.InNonCode)
+                    continue;
+                if (bc == '{')
+                    depth++;
                 else if (bc == '}')
                 {
                     depth--;
-                    if (depth == 0) { start = startSpan; length = (bodyLexer.Position - 1 - startSpan) + 1; return true; }
-                    if (depth < 0) { why = "brace underflow in method"; return false; }
+                    if (depth == 0)
+                    {
+                        start = startSpan;
+                        length = (bodyLexer.Position - 1 - startSpan) + 1;
+                        return true;
+                    }
+                    if (depth < 0)
+                    {
+                        why = "brace underflow in method";
+                        return false;
+                    }
                 }
             }
-            why = "unterminated method block"; return false;
+            why = "unterminated method block";
+            return false;
         }
 
         private static int IndexOfTokenWithin(string s, string token, int start, int end)
@@ -2194,7 +2834,8 @@ namespace MCPForUnity.Editor.Tools
 
         private static bool TryFindClassInsertionPoint(string source, int classStart, int classLength, string position, out int insertAt, out string why)
         {
-            insertAt = 0; why = null;
+            insertAt = 0;
+            why = null;
             int searchStart = classStart;
             int searchEnd = Math.Min(source.Length, classStart + classLength);
 
@@ -2202,28 +2843,48 @@ namespace MCPForUnity.Editor.Tools
             {
                 // find first '{' after class header, insert just after with a newline
                 int i = IndexOfTokenWithin(source, "{", searchStart, searchEnd);
-                if (i < 0) { why = "could not find class opening brace"; return false; }
-                insertAt = i + 1; return true;
+                if (i < 0)
+                {
+                    why = "could not find class opening brace";
+                    return false;
+                }
+                insertAt = i + 1;
+                return true;
             }
             else // end
             {
                 // walk to matching closing brace of class and insert just before it
                 int i = IndexOfTokenWithin(source, "{", searchStart, searchEnd);
-                if (i < 0) { why = "could not find class opening brace"; return false; }
+                if (i < 0)
+                {
+                    why = "could not find class opening brace";
+                    return false;
+                }
                 int depth = 0;
                 var lexer = new CSharpLexer(source, i, searchEnd);
                 while (lexer.Advance(out char c))
                 {
-                    if (lexer.InNonCode) continue;
-                    if (c == '{') depth++;
+                    if (lexer.InNonCode)
+                        continue;
+                    if (c == '{')
+                        depth++;
                     else if (c == '}')
                     {
                         depth--;
-                        if (depth == 0) { insertAt = lexer.Position - 1; return true; }
-                        if (depth < 0) { why = "brace underflow while scanning class"; return false; }
+                        if (depth == 0)
+                        {
+                            insertAt = lexer.Position - 1;
+                            return true;
+                        }
+                        if (depth < 0)
+                        {
+                            why = "brace underflow while scanning class";
+                            return false;
+                        }
                     }
                 }
-                why = "could not find class closing brace"; return false;
+                why = "could not find class closing brace";
+                return false;
             }
         }
 
@@ -2235,11 +2896,12 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static Match FindBestAnchorMatch(MatchCollection matches, string text, string pattern)
         {
-            if (matches.Count == 0) return null;
-            if (matches.Count == 1) return matches[0];
+            if (matches.Count == 0)
+                return null;
+            if (matches.Count == 1)
+                return matches[0];
 
-            bool isClosingBracePattern = pattern.Contains("}") &&
-                (pattern.Contains("$") || pattern.EndsWith(@"\s*"));
+            bool isClosingBracePattern = pattern.Contains("}") && (pattern.Contains("$") || pattern.EndsWith(@"\s*"));
 
             if (isClosingBracePattern)
             {
@@ -2254,8 +2916,10 @@ namespace MCPForUnity.Editor.Tools
                 var lexer = new CSharpLexer(text);
                 while (lexer.Advance(out char c))
                 {
-                    if (lexer.InNonCode) continue;
-                    if (c == '{') depth++;
+                    if (lexer.InNonCode)
+                        continue;
+                    if (c == '{')
+                        depth++;
                     else if (c == '}')
                     {
                         depthMap[lexer.Position - 1] = depth;
@@ -2269,10 +2933,16 @@ namespace MCPForUnity.Editor.Tools
                     int bracePos = -1;
                     for (int k = m.Index; k < m.Index + m.Length && k < text.Length; k++)
                     {
-                        if (text[k] == '}') { bracePos = k; break; }
+                        if (text[k] == '}')
+                        {
+                            bracePos = k;
+                            break;
+                        }
                     }
-                    if (bracePos < 0) continue;
-                    if (!depthMap.TryGetValue(bracePos, out int d)) continue; // in string/comment
+                    if (bracePos < 0)
+                        continue;
+                    if (!depthMap.TryGetValue(bracePos, out int d))
+                        continue; // in string/comment
 
                     // Prefer shallowest depth, then latest position
                     if (d < bestDepth || (d == bestDepth && bracePos > bestPos))
@@ -2296,13 +2966,18 @@ namespace MCPForUnity.Editor.Tools
             while (searchFrom < s.Length)
             {
                 int idx = s.IndexOf(pattern, searchFrom, StringComparison.Ordinal);
-                if (idx < 0) return -1;
+                if (idx < 0)
+                    return -1;
 
                 // Word boundary on left: char before "class" must not be letter/digit/_
                 if (idx > 0)
                 {
                     char left = s[idx - 1];
-                    if (char.IsLetterOrDigit(left) || left == '_') { searchFrom = idx + 1; continue; }
+                    if (char.IsLetterOrDigit(left) || left == '_')
+                    {
+                        searchFrom = idx + 1;
+                        continue;
+                    }
                 }
 
                 // Word boundary on right: char after className must not be letter/digit/_
@@ -2310,7 +2985,11 @@ namespace MCPForUnity.Editor.Tools
                 if (afterEnd < s.Length)
                 {
                     char right = s[afterEnd];
-                    if (char.IsLetterOrDigit(right) || right == '_') { searchFrom = idx + 1; continue; }
+                    if (char.IsLetterOrDigit(right) || right == '_')
+                    {
+                        searchFrom = idx + 1;
+                        continue;
+                    }
                 }
 
                 // Check that this position is not inside a string or comment
@@ -2321,7 +3000,11 @@ namespace MCPForUnity.Editor.Tools
                     inNonCode = lexer.InNonCode;
                 }
                 // After advancing to idx+1, check if the last character processed was in non-code
-                if (inNonCode) { searchFrom = idx + 1; continue; }
+                if (inNonCode)
+                {
+                    searchFrom = idx + 1;
+                    continue;
+                }
 
                 return idx;
             }
@@ -2338,11 +3021,7 @@ namespace MCPForUnity.Editor.Tools
         /// <summary>
         /// Generates basic C# script content based on name and type.
         /// </summary>
-        private static string GenerateDefaultScriptContent(
-            string name,
-            string scriptType,
-            string namespaceName
-        )
+        private static string GenerateDefaultScriptContent(string name, string scriptType, string namespaceName)
         {
             string usingStatements = "using UnityEngine;\nusing System.Collections;\n";
             string classDeclaration;
@@ -2360,8 +3039,7 @@ namespace MCPForUnity.Editor.Tools
                     body = ""; // ScriptableObjects don't usually need Start/Update
                 }
                 else if (
-                    scriptType.Equals("Editor", StringComparison.OrdinalIgnoreCase)
-                    || scriptType.Equals("EditorWindow", StringComparison.OrdinalIgnoreCase)
+                    scriptType.Equals("Editor", StringComparison.OrdinalIgnoreCase) || scriptType.Equals("EditorWindow", StringComparison.OrdinalIgnoreCase)
                 )
                 {
                     usingStatements += "using UnityEditor;\n";
@@ -2483,10 +3161,10 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private enum ValidationLevel
         {
-            Basic,        // Only syntax errors
-            Standard,     // Syntax + Unity best practices
+            Basic, // Only syntax errors
+            Standard, // Syntax + Unity best practices
             Comprehensive, // All checks + semantic analysis
-            Strict        // Treat all issues as errors
+            Strict, // Treat all issues as errors
         }
 
 #if USE_ROSLYN
@@ -2506,18 +3184,18 @@ namespace MCPForUnity.Editor.Tools
             {
                 var syntaxTree = CSharpSyntaxTree.ParseText(contents);
                 var diagnostics = syntaxTree.GetDiagnostics();
-                
+
                 bool hasErrors = false;
                 foreach (var diagnostic in diagnostics)
                 {
                     string severity = diagnostic.Severity.ToString().ToUpperInvariant();
                     string message = $"{severity}: {diagnostic.GetMessage()}";
-                    
+
                     if (diagnostic.Severity == DiagnosticSeverity.Error)
                     {
                         hasErrors = true;
                     }
-                    
+
                     // Include warnings in comprehensive mode
                     if (level >= ValidationLevel.Standard || diagnostic.Severity == DiagnosticSeverity.Error) //Also use Standard for now
                     {
@@ -2529,7 +3207,7 @@ namespace MCPForUnity.Editor.Tools
                         errors.Add(message);
                     }
                 }
-                
+
                 return !hasErrors;
             }
             catch (Exception ex)
@@ -2567,7 +3245,7 @@ namespace MCPForUnity.Editor.Tools
 
                 // Get semantic diagnostics - this catches all the issues you mentioned!
                 var diagnostics = compilation.GetDiagnostics();
-                
+
                 bool hasErrors = false;
                 foreach (var diagnostic in diagnostics)
                 {
@@ -2575,9 +3253,10 @@ namespace MCPForUnity.Editor.Tools
                     {
                         hasErrors = true;
                         var location = diagnostic.Location.GetLineSpan();
-                        string locationInfo = location.IsValid ? 
-                            $" (Line {location.StartLinePosition.Line + 1}, Column {location.StartLinePosition.Character + 1})" : "";
-                        
+                        string locationInfo = location.IsValid
+                            ? $" (Line {location.StartLinePosition.Line + 1}, Column {location.StartLinePosition.Character + 1})"
+                            : "";
+
                         // Include diagnostic ID for better error identification
                         string diagnosticId = !string.IsNullOrEmpty(diagnostic.Id) ? $" [{diagnostic.Id}]" : "";
                         errors.Add($"ERROR: {diagnostic.GetMessage()}{diagnosticId}{locationInfo}");
@@ -2585,14 +3264,15 @@ namespace MCPForUnity.Editor.Tools
                     else if (diagnostic.Severity == DiagnosticSeverity.Warning)
                     {
                         var location = diagnostic.Location.GetLineSpan();
-                        string locationInfo = location.IsValid ? 
-                            $" (Line {location.StartLinePosition.Line + 1}, Column {location.StartLinePosition.Character + 1})" : "";
-                        
+                        string locationInfo = location.IsValid
+                            ? $" (Line {location.StartLinePosition.Line + 1}, Column {location.StartLinePosition.Character + 1})"
+                            : "";
+
                         string diagnosticId = !string.IsNullOrEmpty(diagnostic.Id) ? $" [{diagnostic.Id}]" : "";
                         errors.Add($"WARNING: {diagnostic.GetMessage()}{diagnosticId}{locationInfo}");
                     }
                 }
-                
+
                 return !hasErrors;
             }
             catch (Exception ex)
@@ -2682,13 +3362,18 @@ namespace MCPForUnity.Editor.Tools
 
         private static int CountTopLevelParams(string paramStr)
         {
-            if (string.IsNullOrWhiteSpace(paramStr)) return 0;
-            int depth = 0, count = 1;
+            if (string.IsNullOrWhiteSpace(paramStr))
+                return 0;
+            int depth = 0,
+                count = 1;
             foreach (char c in paramStr)
             {
-                if (c == '<' || c == '(' || c == '[') depth++;
-                else if (c == '>' || c == ')' || c == ']') depth--;
-                else if (c == ',' && depth == 0) count++;
+                if (c == '<' || c == '(' || c == '[')
+                    depth++;
+                else if (c == '>' || c == ')' || c == ']')
+                    depth--;
+                else if (c == ',' && depth == 0)
+                    count++;
             }
             return count;
         }
@@ -2699,19 +3384,24 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static string ExtractParamTypes(string paramStr)
         {
-            if (string.IsNullOrWhiteSpace(paramStr)) return "";
+            if (string.IsNullOrWhiteSpace(paramStr))
+                return "";
             var types = new System.Text.StringBuilder();
             // Split at top-level commas (respecting <> depth)
-            int depth = 0, start = 0;
+            int depth = 0,
+                start = 0;
             for (int i = 0; i <= paramStr.Length; i++)
             {
                 char c = i < paramStr.Length ? paramStr[i] : ','; // sentinel
-                if (c == '<' || c == '(' || c == '[') depth++;
-                else if (c == '>' || c == ')' || c == ']') depth--;
+                if (c == '<' || c == '(' || c == '[')
+                    depth++;
+                else if (c == '>' || c == ')' || c == ']')
+                    depth--;
                 else if (c == ',' && depth == 0)
                 {
                     string param = paramStr.Substring(start, i - start).Trim();
-                    if (types.Length > 0) types.Append(", ");
+                    if (types.Length > 0)
+                        types.Append(", ");
                     // The type is everything except the last token (the name).
                     // But if the last token ends with '>' or ']', it's all type (e.g. "List<int>").
                     // Find the last whitespace that is NOT inside <> brackets.
@@ -2720,9 +3410,12 @@ namespace MCPForUnity.Editor.Tools
                     for (int j = 0; j < param.Length; j++)
                     {
                         char pc = param[j];
-                        if (pc == '<' || pc == '(' || pc == '[') d2++;
-                        else if (pc == '>' || pc == ')' || pc == ']') d2--;
-                        else if (d2 == 0 && char.IsWhiteSpace(pc)) lastSplit = j;
+                        if (pc == '<' || pc == '(' || pc == '[')
+                            d2++;
+                        else if (pc == '>' || pc == ')' || pc == ']')
+                            d2--;
+                        else if (d2 == 0 && char.IsWhiteSpace(pc))
+                            lastSplit = j;
                     }
                     types.Append(lastSplit > 0 ? param.Substring(0, lastSplit).Trim() : param);
                     start = i + 1;
@@ -2794,7 +3487,6 @@ namespace MCPForUnity.Editor.Tools
             {
                 errors.Add("WARNING: String concatenation in Update() can cause garbage collection issues");
             }
-
         }
 
         /// <summary>
@@ -2811,20 +3503,20 @@ namespace MCPForUnity.Editor.Tools
                 while (true)
                 {
                     int startPos = lexer.Position;
-                    if (!lexer.Advance(out _)) break;
+                    if (!lexer.Advance(out _))
+                        break;
                     if (lexer.InNonCode)
                     {
                         for (int i = startPos; i < lexer.Position && i < codeChars.Length; i++)
-                            if (codeChars[i] != '\n') codeChars[i] = ' ';
+                            if (codeChars[i] != '\n')
+                                codeChars[i] = ' ';
                     }
                 }
             }
             var codeOnly = new string(codeChars);
 
             // Step 2: Build containing type name at each position via single pass
-            var typePattern = new Regex(
-                @"\b(?:class|struct|interface|record)\s+(\w+)",
-                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
+            var typePattern = new Regex(@"\b(?:class|struct|interface|record)\s+(\w+)", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
             // Map opening-brace position -> fully qualified type name
             var typeBraceMap = new System.Collections.Generic.Dictionary<int, string>();
             {
@@ -2899,48 +3591,105 @@ namespace MCPForUnity.Editor.Tools
             // Step 3: Match method signatures on code-only text (includes => for expression-bodied)
             var methodSigPattern = new Regex(
                 @"(?:(?:public|private|protected|internal)\s+)?(?:(?:static|virtual|override|abstract|sealed|async|new)\s+)*(\S+)\s+(\w+)\s*\(([^)]*)\)\s*(?:where\s+\S+\s*:\s*\S+\s*)?(?:[{;]|=>)",
-                RegexOptions.Multiline | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
+                RegexOptions.Multiline | RegexOptions.CultureInvariant,
+                TimeSpan.FromSeconds(2)
+            );
             var sigMatches = methodSigPattern.Matches(codeOnly);
             var seen = new System.Collections.Generic.Dictionary<string, int>(System.StringComparer.Ordinal);
             foreach (Match sm in sigMatches)
             {
                 string returnType = sm.Groups[1].Value;
                 string methodName = sm.Groups[2].Value;
-                if (string.Equals(returnType, "new", StringComparison.Ordinal)) continue; // constructor invocation, not a method declaration
+                if (string.Equals(returnType, "new", StringComparison.Ordinal))
+                    continue; // constructor invocation, not a method declaration
                 // A punctuation "return type" means this match is a CALL, not a declaration:
                 // the opening brace of a method body ("{ Foo();") or an expression-bodied
                 // member ("=> Foo();"). Both sit at class-member depth, so the brace-depth
                 // guard below cannot reject them.
-                if (returnType.Length == 0) continue;
+                if (returnType.Length == 0)
+                    continue;
                 char returnTypeStart = returnType[0];
-                if (!char.IsLetter(returnTypeStart) && returnTypeStart != '_'
-                    && returnTypeStart != '@' && returnTypeStart != '(') continue;
-                if (IsCSharpKeyword(methodName)) continue;
+                if (!char.IsLetter(returnTypeStart) && returnTypeStart != '_' && returnTypeStart != '@' && returnTypeStart != '(')
+                    continue;
+                if (IsCSharpKeyword(methodName))
+                    continue;
                 int paramCount = CountTopLevelParams(sm.Groups[3].Value);
                 string paramTypes = ExtractParamTypes(sm.Groups[3].Value);
                 string containingType = containingTypeArr[sm.Index];
-                if (string.IsNullOrEmpty(containingType)) continue;
-                if (braceDepthArr[sm.Index] != typeMemberDepthArr[sm.Index]) continue;
+                if (string.IsNullOrEmpty(containingType))
+                    continue;
+                if (braceDepthArr[sm.Index] != typeMemberDepthArr[sm.Index])
+                    continue;
                 string key = $"{containingType}/{methodName}/{paramCount}/{paramTypes}";
                 if (seen.TryGetValue(key, out _))
-                    errors.Add($"ERROR: Duplicate method signature detected: '{methodName}' with {paramCount} parameter(s). This may indicate a corrupted edit.");
+                    errors.Add(
+                        $"ERROR: Duplicate method signature detected: '{methodName}' with {paramCount} parameter(s). This may indicate a corrupted edit."
+                    );
                 else
                     seen[key] = 1;
             }
         }
 
-        private static readonly System.Collections.Generic.HashSet<string> CSharpKeywords =
-            new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal)
-            {
-                "if", "else", "for", "foreach", "while", "do", "switch", "case",
-                "try", "catch", "finally", "throw", "return", "yield", "await",
-                "lock", "using", "fixed", "checked", "unchecked", "typeof", "sizeof",
-                "nameof", "default", "new", "stackalloc", "when", "in", "is", "as",
-                "ref", "out", "params", "this", "base", "null", "true", "false",
-                "get", "set", "var", "dynamic", "where", "from", "select", "group",
-                "into", "orderby", "join", "let", "on", "equals", "by", "ascending",
-                "descending"
-            };
+        private static readonly System.Collections.Generic.HashSet<string> CSharpKeywords = new System.Collections.Generic.HashSet<string>(
+            System.StringComparer.Ordinal
+        )
+        {
+            "if",
+            "else",
+            "for",
+            "foreach",
+            "while",
+            "do",
+            "switch",
+            "case",
+            "try",
+            "catch",
+            "finally",
+            "throw",
+            "return",
+            "yield",
+            "await",
+            "lock",
+            "using",
+            "fixed",
+            "checked",
+            "unchecked",
+            "typeof",
+            "sizeof",
+            "nameof",
+            "default",
+            "new",
+            "stackalloc",
+            "when",
+            "in",
+            "is",
+            "as",
+            "ref",
+            "out",
+            "params",
+            "this",
+            "base",
+            "null",
+            "true",
+            "false",
+            "get",
+            "set",
+            "var",
+            "dynamic",
+            "where",
+            "from",
+            "select",
+            "group",
+            "into",
+            "orderby",
+            "join",
+            "let",
+            "on",
+            "equals",
+            "by",
+            "ascending",
+            "descending",
+        };
 
         private static bool IsCSharpKeyword(string name) => CSharpKeywords.Contains(name);
 
@@ -2964,7 +3713,11 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Check for long methods (simple line count check)
-            var methodPattern = new Regex(@"(public|private|protected|internal)?\s*(static)?\s*\w+\s+\w+\s*\([^)]*\)\s*{", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
+            var methodPattern = new Regex(
+                @"(public|private|protected|internal)?\s*(static)?\s*\w+\s+\w+\s*\([^)]*\)\s*{",
+                RegexOptions.CultureInvariant,
+                TimeSpan.FromSeconds(2)
+            );
             var methodMatches = methodPattern.Matches(contents);
             foreach (Match match in methodMatches)
             {
@@ -3059,7 +3812,7 @@ namespace MCPForUnity.Editor.Tools
         //         warningCount = warnings.Length,
         //         errors = errors,
         //         warnings = warnings,
-        //         summary = isValid 
+        //         summary = isValid
         //             ? (warnings.Length > 0 ? $"Validation passed with {warnings.Length} warnings" : "Validation passed with no issues")
         //             : $"Validation failed with {errors.Length} errors and {warnings.Length} warnings"
         //     };
@@ -3134,7 +3887,11 @@ namespace MCPForUnity.Editor.Tools
             if (Interlocked.Exchange(ref _pending, 0) == 1)
             {
                 string[] toImport;
-                lock (_lock) { toImport = _paths.ToArray(); _paths.Clear(); }
+                lock (_lock)
+                {
+                    toImport = _paths.ToArray();
+                    _paths.Clear();
+                }
                 foreach (var p in toImport)
                 {
                     var sp = ManageScriptRefreshHelpers.SanitizeAssetsPath(p);
@@ -3153,7 +3910,8 @@ namespace MCPForUnity.Editor.Tools
     {
         public static string SanitizeAssetsPath(string p)
         {
-            if (string.IsNullOrEmpty(p)) return p;
+            if (string.IsNullOrEmpty(p))
+                return p;
             p = AssetPathUtility.NormalizeSeparators(p).Trim();
             if (p.StartsWith("mcpforunity://path/", StringComparison.OrdinalIgnoreCase))
                 p = p.Substring("mcpforunity://path/".Length);
@@ -3174,7 +3932,8 @@ namespace MCPForUnity.Editor.Tools
         {
             var sp = SanitizeAssetsPath(relPath);
             var opts = ImportAssetOptions.ForceUpdate;
-            if (synchronous) opts |= ImportAssetOptions.ForceSynchronousImport;
+            if (synchronous)
+                opts |= ImportAssetOptions.ForceSynchronousImport;
             AssetDatabase.ImportAsset(sp, opts);
 #if UNITY_EDITOR
             UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation();

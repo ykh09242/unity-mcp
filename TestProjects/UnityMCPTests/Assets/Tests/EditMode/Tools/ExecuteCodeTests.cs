@@ -3,10 +3,10 @@ using System.CodeDom.Compiler;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using MCPForUnity.Editor.Tools;
 using Microsoft.CSharp;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
-using MCPForUnity.Editor.Tools;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -64,12 +64,16 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("codedom")]
         public void Execute_ConditionalReturn_AllowsFallthrough(string compiler)
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "execute",
-                ["code"] = "int x = 1; if (x == 2) return x; // final comment",
-                ["compiler"] = compiler,
-            }));
+            var result = ToJObject(
+                ExecuteCode.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "execute",
+                        ["code"] = "int x = 1; if (x == 2) return x; // final comment",
+                        ["compiler"] = compiler,
+                    }
+                )
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsNull(result["data"]["result"]);
@@ -78,8 +82,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Execute_NestedUnityValue_PreservesStructureAndPrecision()
         {
-            var result = Execute(
-                "return new { position = new Vector3(1.234567f, 2.345678f, 3.456789f), count = 42 };");
+            var result = Execute("return new { position = new Vector3(1.234567f, 2.345678f, 3.456789f), count = 42 };");
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var value = result["data"]["result"];
@@ -105,9 +108,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Execute_UnityAPI_CanAccessSceneManager()
         {
-            var result = Execute(
-                "var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();\n" +
-                "return scene.name;");
+            var result = Execute("var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();\n" + "return scene.name;");
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsNotNull(result["data"]["result"]);
@@ -116,10 +117,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Execute_Generics_ListOfString()
         {
-            var result = Execute(
-                "var list = new System.Collections.Generic.List<string>();\n" +
-                "list.Add(\"a\"); list.Add(\"b\");\n" +
-                "return list;");
+            var result = Execute("var list = new System.Collections.Generic.List<string>();\n" + "list.Add(\"a\"); list.Add(\"b\");\n" + "return list;");
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var arr = result["data"]["result"] as JArray;
@@ -130,9 +128,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Execute_LINQ_SelectWorks()
         {
-            var result = Execute(
-                "var nums = new int[] { 1, 2, 3 };\n" +
-                "return nums.Select(n => n * 2).ToList();");
+            var result = Execute("var nums = new int[] { 1, 2, 3 };\n" + "return nums.Select(n => n * 2).ToList();");
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var arr = result["data"]["result"] as JArray;
@@ -145,9 +141,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Execute_Dictionary_ReturnsStructured()
         {
-            var result = Execute(
-                "var dict = new Dictionary<string, int> { { \"a\", 1 }, { \"b\", 2 } };\n" +
-                "return dict;");
+            var result = Execute("var dict = new Dictionary<string, int> { { \"a\", 1 }, { \"b\", 2 } };\n" + "return dict;");
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsNotNull(result["data"]["result"]);
@@ -177,10 +171,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Execute_MissingCode_ReturnsError()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "execute"
-            }));
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "execute" }));
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("code", result.Value<string>("error").ToLowerInvariant());
@@ -189,11 +180,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Execute_EmptyCode_ReturnsError()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "execute",
-                ["code"] = "   "
-            }));
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "execute", ["code"] = "   " }));
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
         }
@@ -202,12 +189,16 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("")]
         public void Execute_InvalidCompiler_RejectsBeforeExecuting(string compiler)
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "execute",
-                ["code"] = "return 1;",
-                ["compiler"] = compiler,
-            }));
+            var result = ToJObject(
+                ExecuteCode.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "execute",
+                        ["code"] = "return 1;",
+                        ["compiler"] = compiler,
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("compiler", result.Value<string>("error"));
@@ -246,12 +237,16 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Execute_SafetyChecksDisabled_AllowsBlockedPattern()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "execute",
-                ["code"] = "while (true) { break; }  return null;",
-                ["safety_checks"] = false
-            }));
+            var result = ToJObject(
+                ExecuteCode.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "execute",
+                        ["code"] = "while (true) { break; }  return null;",
+                        ["safety_checks"] = false,
+                    }
+                )
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
         }
@@ -261,12 +256,16 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(0.5)]
         public void Execute_NumericSafetyFlag_RejectsBeforeExecuting(object safetyChecks)
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "execute",
-                ["code"] = "while (true) { break; } return 1;",
-                ["safety_checks"] = JToken.FromObject(safetyChecks),
-            }));
+            var result = ToJObject(
+                ExecuteCode.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "execute",
+                        ["code"] = "while (true) { break; } return 1;",
+                        ["safety_checks"] = JToken.FromObject(safetyChecks),
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("safety_checks", result.Value<string>("error"));
@@ -278,10 +277,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void GetHistory_Empty_ReturnsZero()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "get_history"
-            }));
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "get_history" }));
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(0, result["data"]["total"].Value<int>());
@@ -292,10 +288,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             Execute("return 1;");
 
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "get_history"
-            }));
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "get_history" }));
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(1, result["data"]["total"].Value<int>());
@@ -312,11 +305,7 @@ namespace MCPForUnityTests.Editor.Tools
             Execute("return 2;");
             Execute("return 3;");
 
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "get_history",
-                ["limit"] = 2
-            }));
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "get_history", ["limit"] = 2 }));
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(3, result["data"]["total"].Value<int>());
@@ -328,11 +317,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(true)]
         public void GetHistory_NonIntegerLimit_ReturnsError(object limit)
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "get_history",
-                ["limit"] = JToken.FromObject(limit),
-            }));
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "get_history", ["limit"] = JToken.FromObject(limit) }));
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("limit", result.Value<string>("error"));
@@ -344,16 +329,10 @@ namespace MCPForUnityTests.Editor.Tools
             Execute("return 1;");
             Execute("return 2;");
 
-            var clearResult = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "clear_history"
-            }));
+            var clearResult = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "clear_history" }));
             Assert.IsTrue(clearResult.Value<bool>("success"), clearResult.ToString());
 
-            var historyResult = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "get_history"
-            }));
+            var historyResult = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "get_history" }));
             Assert.AreEqual(0, historyResult["data"]["total"].Value<int>());
         }
 
@@ -364,11 +343,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             Execute("return 42;");
 
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "replay",
-                ["index"] = 0
-            }));
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "replay", ["index"] = 0 }));
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(42, result["data"]["result"].Value<int>());
@@ -379,11 +354,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             Execute("return 1;");
 
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "replay",
-                ["index"] = 99
-            }));
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "replay", ["index"] = 99 }));
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("Invalid history index", result.Value<string>("error"));
@@ -400,11 +371,7 @@ namespace MCPForUnityTests.Editor.Tools
             Execute("return 2;");
             Execute("return 3;");
 
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "replay",
-                ["index"] = JToken.FromObject(index),
-            }));
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "replay", ["index"] = JToken.FromObject(index) }));
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("index", result.Value<string>("error"));
@@ -414,11 +381,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Replay_EmptyHistory_ReturnsError()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "replay",
-                ["index"] = 0
-            }));
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "replay", ["index"] = 0 }));
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
         }
@@ -428,10 +391,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void UnknownAction_ReturnsError()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "invalid_action"
-            }));
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "invalid_action" }));
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("Unknown action", result.Value<string>("error"));
@@ -454,12 +414,16 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Execute_CodedomBackend_CompilesAndRuns()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "execute",
-                ["code"] = "return 1 + 1;",
-                ["compiler"] = "codedom"
-            }));
+            var result = ToJObject(
+                ExecuteCode.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "execute",
+                        ["code"] = "return 1 + 1;",
+                        ["compiler"] = "codedom",
+                    }
+                )
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(2, result["data"]["result"].Value<int>());
@@ -469,12 +433,16 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Execute_CodedomBackend_ResolvesUnityTypes()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "execute",
-                ["code"] = "return UnityEngine.Application.unityVersion;",
-                ["compiler"] = "codedom"
-            }));
+            var result = ToJObject(
+                ExecuteCode.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "execute",
+                        ["code"] = "return UnityEngine.Application.unityVersion;",
+                        ["compiler"] = "codedom",
+                    }
+                )
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsNotNull(result["data"]["result"]);
@@ -488,16 +456,10 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 var netstandardPath = CompileVersionedAssembly(tempRoot, "netstandard", "2.0.0.0");
                 var securityFixturePath = CompileVersionedAssembly(tempRoot, "SystemSecurityFixture", "4.0.0.0");
-                var systemSecurityPath = Path.Combine(
-                    Path.GetDirectoryName(securityFixturePath),
-                    "System.Security.dll");
+                var systemSecurityPath = Path.Combine(Path.GetDirectoryName(securityFixturePath), "System.Security.dll");
                 File.Copy(securityFixturePath, systemSecurityPath);
 
-                var filtered = ExecuteCode.FilterAssemblyPathsForCodeDom(new[]
-                {
-                    netstandardPath,
-                    systemSecurityPath,
-                });
+                var filtered = ExecuteCode.FilterAssemblyPathsForCodeDom(new[] { netstandardPath, systemSecurityPath });
 
                 CollectionAssert.Contains(filtered, systemSecurityPath);
             }
@@ -518,11 +480,7 @@ namespace MCPForUnityTests.Editor.Tools
                 var newerPath = CompileVersionedAssembly(tempRoot, assemblyName, "2.0.0.0");
                 LoadAssemblyReferencing(referencedPath);
 
-                var filtered = ExecuteCode.FilterAssemblyPathsForCodeDom(new[]
-                {
-                    newerPath,
-                    referencedPath,
-                });
+                var filtered = ExecuteCode.FilterAssemblyPathsForCodeDom(new[] { newerPath, referencedPath });
 
                 Assert.AreEqual(1, filtered.Length);
                 Assert.AreEqual(referencedPath, filtered[0]);
@@ -537,15 +495,9 @@ namespace MCPForUnityTests.Editor.Tools
         public void FilterAssemblyPathsForCodeDom_CachedAssemblyPaths_ReusesResultUntilDomainReload()
         {
             var tempRoot = CreateTempDirectory();
-            var cachedAssemblyPathsField = typeof(ExecuteCode).GetField(
-                "_cachedAssemblyPaths",
-                BindingFlags.NonPublic | BindingFlags.Static);
-            var cachedCodeDomAssemblyPathsField = typeof(ExecuteCode).GetField(
-                "_cachedCodeDomAssemblyPaths",
-                BindingFlags.NonPublic | BindingFlags.Static);
-            var onDomainReload = typeof(ExecuteCode).GetMethod(
-                "OnDomainReload",
-                BindingFlags.NonPublic | BindingFlags.Static);
+            var cachedAssemblyPathsField = typeof(ExecuteCode).GetField("_cachedAssemblyPaths", BindingFlags.NonPublic | BindingFlags.Static);
+            var cachedCodeDomAssemblyPathsField = typeof(ExecuteCode).GetField("_cachedCodeDomAssemblyPaths", BindingFlags.NonPublic | BindingFlags.Static);
+            var onDomainReload = typeof(ExecuteCode).GetMethod("OnDomainReload", BindingFlags.NonPublic | BindingFlags.Static);
             Assert.IsNotNull(cachedAssemblyPathsField);
             Assert.IsNotNull(cachedCodeDomAssemblyPathsField);
             Assert.IsNotNull(onDomainReload);
@@ -584,8 +536,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static int GetHistoryTotal()
         {
-            return ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "get_history" }))
-                ["data"]["total"].Value<int>();
+            return ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "get_history" }))["data"]["total"].Value<int>();
         }
 
         private static string CreateTempDirectory()
@@ -600,10 +551,7 @@ namespace MCPForUnityTests.Editor.Tools
             var outputDirectory = Path.Combine(tempRoot, version);
             Directory.CreateDirectory(outputDirectory);
             var outputPath = Path.Combine(outputDirectory, assemblyName + ".dll");
-            var source =
-                "using System.Reflection;\n" +
-                "[assembly: AssemblyVersion(\"" + version + "\")]\n" +
-                "public sealed class VersionMarker { }";
+            var source = "using System.Reflection;\n" + "[assembly: AssemblyVersion(\"" + version + "\")]\n" + "public sealed class VersionMarker { }";
 
             using (var provider = new CSharpCodeProvider())
             {
@@ -624,17 +572,13 @@ namespace MCPForUnityTests.Editor.Tools
         {
             using (var provider = new CSharpCodeProvider())
             {
-                var parameters = new CompilerParameters
-                {
-                    GenerateExecutable = false,
-                    GenerateInMemory = true,
-                };
+                var parameters = new CompilerParameters { GenerateExecutable = false, GenerateInMemory = true };
                 parameters.ReferencedAssemblies.Add(referencedAssemblyPath);
 
                 var results = provider.CompileAssemblyFromSource(
                     parameters,
-                    "public static class ReferenceHolder { " +
-                    "public static System.Type Get() { return typeof(VersionMarker); } }");
+                    "public static class ReferenceHolder { " + "public static System.Type Get() { return typeof(VersionMarker); } }"
+                );
                 AssertCompilerSuccess(results);
                 Assert.IsNotNull(results.CompiledAssembly);
             }
@@ -642,23 +586,14 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static void AssertCompilerSuccess(CompilerResults results)
         {
-            var errors = results.Errors
-                .Cast<CompilerError>()
-                .Where(error => !error.IsWarning)
-                .Select(error => error.ToString())
-                .ToArray();
+            var errors = results.Errors.Cast<CompilerError>().Where(error => !error.IsWarning).Select(error => error.ToString()).ToArray();
             Assert.IsFalse(results.Errors.HasErrors, string.Join("\n", errors));
         }
 
         private static JObject Execute(string code)
         {
-            return ToJObject(ExecuteCode.HandleCommand(new JObject
-            {
-                ["action"] = "execute",
-                ["code"] = code
-            }));
+            return ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "execute", ["code"] = code }));
         }
-
 
         // ──────────────────── Compiled-assembly cache (issue #1351) ────────────────────
 
@@ -680,8 +615,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(42, second["data"]["result"].Value<int>());
 
             int loadedAfter = AppDomain.CurrentDomain.GetAssemblies().Length;
-            Assert.AreEqual(loadedBefore, loadedAfter,
-                "Re-executing an identical snippet loaded another assembly; the compile cache did not hit.");
+            Assert.AreEqual(loadedBefore, loadedAfter, "Re-executing an identical snippet loaded another assembly; the compile cache did not hit.");
         }
 
         [Test]
@@ -695,6 +629,5 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(1, a["data"]["result"].Value<int>());
             Assert.AreEqual(2, b["data"]["result"].Value<int>());
         }
-
     }
 }

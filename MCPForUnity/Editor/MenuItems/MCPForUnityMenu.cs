@@ -20,7 +20,6 @@ namespace MCPForUnity.Editor.MenuItems
             SetupWindowService.ShowSetupWindow();
         }
 
-
         [MenuItem(ProductInfo.MenuRoot + "/Edit EditorPrefs", priority = 3)]
         public static void ShowEditorPrefsWindow()
         {

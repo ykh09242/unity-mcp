@@ -14,7 +14,8 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>Resolve a project-relative ("Assets/...") path to an absolute, forward-slashed path.</summary>
         public static string ToAbsolute(string projectRelative)
         {
-            if (string.IsNullOrWhiteSpace(projectRelative)) return projectRelative;
+            if (string.IsNullOrWhiteSpace(projectRelative))
+                return projectRelative;
             string p = projectRelative.Replace('\\', '/');
             string abs = Path.IsPathRooted(p) ? p : Path.Combine(ProjectRoot(), p);
             return MCPForUnity.Runtime.Helpers.SafePathUtility.ResolveWithinRoot(Application.dataPath, abs).Replace('\\', '/');
@@ -23,7 +24,8 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>Convert an absolute (or already-relative) path to a project-relative ("Assets/...") path.</summary>
         public static string ToProjectRelative(string path)
         {
-            if (TryGetAssetsRelativePath(path, out string rel)) return rel;
+            if (TryGetAssetsRelativePath(path, out string rel))
+                return rel;
             return path?.Replace('\\', '/');
         }
 
@@ -34,7 +36,8 @@ namespace MCPForUnity.Editor.Helpers
         public static bool TryGetAssetsRelativePath(string path, out string projectRelative)
         {
             projectRelative = null;
-            if (string.IsNullOrWhiteSpace(path)) return false;
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
 
             try
             {
@@ -62,7 +65,8 @@ namespace MCPForUnity.Editor.Helpers
                 }
 
                 string prefix = dataPath + "/";
-                if (!full.StartsWith(prefix, StringComparison.Ordinal)) return false;
+                if (!full.StartsWith(prefix, StringComparison.Ordinal))
+                    return false;
 
                 projectRelative = "Assets/" + full.Substring(prefix.Length);
                 return true;
@@ -76,7 +80,8 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>Normalize an Assets folder path, trimming trailing slashes.</summary>
         public static bool TryGetAssetsFolder(string path, out string projectRelative)
         {
-            if (!TryGetAssetsRelativePath(path, out projectRelative)) return false;
+            if (!TryGetAssetsRelativePath(path, out projectRelative))
+                return false;
             projectRelative = projectRelative.TrimEnd('/');
             return true;
         }
@@ -90,8 +95,10 @@ namespace MCPForUnity.Editor.Helpers
         {
             normalized = outputFolder;
             error = null;
-            if (string.IsNullOrWhiteSpace(outputFolder)) return true;
-            if (TryGetAssetsFolder(outputFolder, out normalized)) return true;
+            if (string.IsNullOrWhiteSpace(outputFolder))
+                return true;
+            if (TryGetAssetsFolder(outputFolder, out normalized))
+                return true;
             error = "'output_folder' must resolve under the project's Assets folder.";
             return false;
         }

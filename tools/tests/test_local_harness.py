@@ -412,7 +412,9 @@ class TestResolveUnityVersion:
         json branch is exercised."""
         repo_json = lh.REPO_ROOT / "tools" / "unity-versions.json"
         default = lh.read_default_version(repo_json)
-        assert isinstance(default, str) and default, "unity-versions.json must have a defaultVersion"
+        assert isinstance(default, str) and default, (
+            "unity-versions.json must have a defaultVersion"
+        )
 
 
 # ===========================================================================
@@ -457,8 +459,7 @@ class TestClassifyEditorLog:
 
     def test_clean_ready_log_is_ok(self):
         log = (
-            "[MCPForUnity] Bridge listening on port 6400\n"
-            "AutoConnect started; bound to loopback\n"
+            "[MCPForUnity] Bridge listening on port 6400\nAutoConnect started; bound to loopback\n"
         )
         assert classify_editor_log(log, license_grace_elapsed=True) == "ready_ok"
 
@@ -674,7 +675,9 @@ class TestBuildArgParser:
 
     def test_boolean_flags(self):
         parser = build_arg_parser()
-        ns = parser.parse_args(["--ci", "--reuse", "--strict-playmode", "--no-warmup", "--keep-alive"])
+        ns = parser.parse_args(
+            ["--ci", "--reuse", "--strict-playmode", "--no-warmup", "--keep-alive"]
+        )
         assert ns.ci is True
         assert ns.reuse is True
         assert ns.strict_playmode is True
@@ -723,8 +726,11 @@ class TestParseLegs:
 # ===========================================================================
 class TestConsoleEntriesAndCompileProbe:
     def test_console_entries_bare_list_under_data(self):
-        resp = {"success": True, "message": "1 entry",
-                "data": [{"type": "Error", "message": "Assets/X.cs(1,1): error CS0103: bad"}]}
+        resp = {
+            "success": True,
+            "message": "1 entry",
+            "data": [{"type": "Error", "message": "Assets/X.cs(1,1): error CS0103: bad"}],
+        }
         entries = lh._console_entries(resp)
         assert isinstance(entries, list) and len(entries) == 1
 
@@ -739,20 +745,27 @@ class TestConsoleEntriesAndCompileProbe:
     def test_compile_probe_detects_cs_error(self):
         def fake_send(cmd, params, **kw):
             assert cmd == "read_console"
-            return {"success": True, "message": "1 error",
-                    "data": [{"type": "Error",
-                              "message": "Assets/Foo.cs(10,5): error CS0103: 'X' not found"}]}
+            return {
+                "success": True,
+                "message": "1 error",
+                "data": [
+                    {"type": "Error", "message": "Assets/Foo.cs(10,5): error CS0103: 'X' not found"}
+                ],
+            }
+
         assert lh.compile_probe("inst@hash", 1, 50, send=fake_send) is False
 
     def test_compile_probe_clean_project(self):
         def fake_send(cmd, params, **kw):
             return {"success": True, "message": "0 errors", "data": []}
+
         assert lh.compile_probe("inst@hash", 1, 50, send=fake_send) is True
 
     def test_compile_probe_inconclusive_does_not_block(self):
         # An errored probe is inconclusive -> treated as compiles-OK (do not block).
         def fake_send(cmd, params, **kw):
             return {"success": False, "error": "boom"}
+
         assert lh.compile_probe("inst@hash", 1, 50, send=fake_send) is True
 
 
@@ -769,8 +782,7 @@ class TestStartUtfTestsRunning:
         def fake_send(cmd, params, **kw):
             calls["n"] += 1
             if calls["n"] == 1:
-                return {"success": False, "error": "tests_running",
-                        "data": {"retry_after_ms": 10}}
+                return {"success": False, "error": "tests_running", "data": {"retry_after_ms": 10}}
             return {"success": True, "data": {"job_id": "J42"}}
 
         job_id, _ = lh._start_utf(fake_send, "EditMode", "inst@hash", 120000, 1, 50)
@@ -793,6 +805,7 @@ class TestStartUtfTestsRunning:
     def test_hard_start_failure_returns_immediately(self):
         def fake_send(cmd, params, **kw):
             return {"success": False, "error": "bridge_down"}
+
         job_id, _ = lh._start_utf(fake_send, "EditMode", "inst@hash", None, 1, 50)
         assert job_id is None
 
@@ -800,6 +813,7 @@ class TestStartUtfTestsRunning:
         def fake_send(cmd, params, **kw):
             assert params.get("initTimeout") == 120000
             return {"success": True, "data": {"job_id": 7}}
+
         job_id, _ = lh._start_utf(fake_send, "PlayMode", "inst@hash", 120000, 1, 50)
         assert job_id == "7"
 
@@ -818,8 +832,10 @@ class TestUtfTransportResilience:
             calls["n"] += 1
             if calls["n"] <= 3:
                 raise TimeoutError("Timeout receiving Unity response")
-            return {"success": True, "data": {"status": "succeeded",
-                                              "result": {"summary": {"total": 2, "passed": 2}}}}
+            return {
+                "success": True,
+                "data": {"status": "succeeded", "result": {"summary": {"total": 2, "passed": 2}}},
+            }
 
         terminal = lh._poll_utf(fake_send, "J1", "inst@hash", lh.time.time() + 1000, 8, 50)
         assert lh._dig(terminal, "status") == "succeeded"
@@ -886,10 +902,12 @@ class TestEditorDiagnostics:
     def test_snapshot_keeps_diagnostics_but_omits_credentials(self, tmp_path, capsys):
         from types import SimpleNamespace
 
-        raw = ("Scene(s) Have Been Modified\n"
-               "Serial number assigned to: 'private-serial'\n"
-               "password = private-password\n"
-               "Connected account developer@example.com\n")
+        raw = (
+            "Scene(s) Have Been Modified\n"
+            "Serial number assigned to: 'private-serial'\n"
+            "password = private-password\n"
+            "Connected account developer@example.com\n"
+        )
         launcher = SimpleNamespace(tail_log=lambda *_args: raw)
         lh.preserve_editor_diagnostics(launcher, lh.Handle(), tmp_path, "editmode")
         saved = (tmp_path / "unity-editor-editmode.log").read_text(encoding="utf-8")
@@ -904,15 +922,22 @@ class TestEditorDiagnostics:
     def test_first_failure_is_captured_before_relaunch_and_retry(self, monkeypatch):
         from types import SimpleNamespace
 
-        monkeypatch.setitem(sys.modules, "transport.legacy.unity_connection",
-                            SimpleNamespace(send_command_with_retry=lambda *_a, **_k: None))
+        monkeypatch.setitem(
+            sys.modules,
+            "transport.legacy.unity_connection",
+            SimpleNamespace(send_command_with_retry=lambda *_a, **_k: None),
+        )
         monkeypatch.setattr(lh, "_ensure_src_on_path", lambda: None)
         monkeypatch.setattr(lh, "_ensure_clean_editmode", lambda *_a: None)
         monkeypatch.setattr(lh, "_start_utf", lambda *_a: ("job", {}))
         monkeypatch.setattr(lh.time, "sleep", lambda *_a: None)
         events = []
-        attempts = iter([lh.LegOutcome("playmode", "fail", False, "wedge", 1),
-                         lh.LegOutcome("playmode", "pass", False, "completed", 0)])
+        attempts = iter(
+            [
+                lh.LegOutcome("playmode", "fail", False, "wedge", 1),
+                lh.LegOutcome("playmode", "pass", False, "completed", 0),
+            ]
+        )
         monkeypatch.setattr(lh, "_outcome_from_terminal", lambda *_a: next(attempts))
         monkeypatch.setattr(lh, "_poll_utf", lambda *_a: events.append("poll"))
 
@@ -921,8 +946,15 @@ class TestEditorDiagnostics:
             return "new-instance"
 
         outcome = lh.run_playmode_with_retry(
-            "instance", lh.time.time() + 100, 1, 10, 1000, False,
-            relaunch=relaunch, before_retry=lambda: events.append("snapshot"))
+            "instance",
+            lh.time.time() + 100,
+            1,
+            10,
+            1000,
+            False,
+            relaunch=relaunch,
+            before_retry=lambda: events.append("snapshot"),
+        )
         assert outcome.status == "pass"
         assert events == ["poll", "snapshot", "teardown-and-relaunch", "poll"]
 
@@ -930,19 +962,31 @@ class TestEditorDiagnostics:
 class TestTerminalJUnit:
     @staticmethod
     def terminal(rows, passed, failed=0, skipped=0, status="succeeded"):
-        return {"success": True, "data": {
-            "status": status,
-            "result": {"summary": {"total": passed + failed + skipped,
-                                    "passed": passed, "failed": failed, "skipped": skipped},
-                       "results": rows},
-        }}
+        return {
+            "success": True,
+            "data": {
+                "status": status,
+                "result": {
+                    "summary": {
+                        "total": passed + failed + skipped,
+                        "passed": passed,
+                        "failed": failed,
+                        "skipped": skipped,
+                    },
+                    "results": rows,
+                },
+            },
+        }
 
     def test_complete_ci_result_keeps_passes_and_qualified_ignored_tests(self):
-        rows = [{"fullName": f"Suite.Pass{i}", "state": "Passed", "durationSeconds": 0.01}
-                for i in range(1244)]
-        rows += [{"fullName": f"Suite.Ignore{i}", "state": "Skipped:Ignored"}
-                 for i in range(73)]
-        outcome = lh._outcome_from_terminal("editmode", "EditMode", self.terminal(rows, 1244, skipped=73), True)
+        rows = [
+            {"fullName": f"Suite.Pass{i}", "state": "Passed", "durationSeconds": 0.01}
+            for i in range(1244)
+        ]
+        rows += [{"fullName": f"Suite.Ignore{i}", "state": "Skipped:Ignored"} for i in range(73)]
+        outcome = lh._outcome_from_terminal(
+            "editmode", "EditMode", self.terminal(rows, 1244, skipped=73), True
+        )
         root = lh.merge_junit([outcome.junit_suite]).getroot()
         assert outcome.status == "pass"
         assert root.get("tests") == "1317"
@@ -953,17 +997,29 @@ class TestTerminalJUnit:
 
     def test_compact_nonpassing_rows_cannot_claim_complete_results(self):
         rows = [{"state": "Skipped:Ignored"} for _ in range(73)]
-        outcome = lh._outcome_from_terminal("editmode", "EditMode", self.terminal(rows, 1244, skipped=73), True)
+        outcome = lh._outcome_from_terminal(
+            "editmode", "EditMode", self.terminal(rows, 1244, skipped=73), True
+        )
         assert outcome.status == "fail"
         assert "do not match" in outcome.detail
 
     def test_failed_job_with_results_preserves_individual_failure_details(self):
-        rows = [{"fullName": "Suite.Passed", "state": "Passed"},
-                {"fullName": "Suite.Failed", "state": "Failed:Error", "message": "assertion",
-                 "stackTrace": "fixture.cs:42"},
-                {"fullName": "Suite.Ignored", "state": "Skipped:Ignored"}]
+        rows = [
+            {"fullName": "Suite.Passed", "state": "Passed"},
+            {
+                "fullName": "Suite.Failed",
+                "state": "Failed:Error",
+                "message": "assertion",
+                "stackTrace": "fixture.cs:42",
+            },
+            {"fullName": "Suite.Ignored", "state": "Skipped:Ignored"},
+        ]
         outcome = lh._outcome_from_terminal(
-            "editmode", "EditMode", self.terminal(rows, 1, failed=1, skipped=1, status="failed"), True)
+            "editmode",
+            "EditMode",
+            self.terminal(rows, 1, failed=1, skipped=1, status="failed"),
+            True,
+        )
         root = lh.merge_junit([outcome.junit_suite]).getroot()
         assert outcome.status == "fail"
         assert root.get("tests") == "3"
@@ -971,30 +1027,40 @@ class TestTerminalJUnit:
         failure = root.find(".//testcase[@name='Suite.Failed']/failure")
         assert "assertion" in failure.text and "fixture.cs:42" in failure.text
 
-    @pytest.mark.parametrize("rows,passed,skipped", [([], 0, 0),
-                              ([{"state": "Skipped:Ignored"}], 0, 1)])
+    @pytest.mark.parametrize(
+        "rows,passed,skipped", [([], 0, 0), ([{"state": "Skipped:Ignored"}], 0, 1)]
+    )
     def test_no_passing_test_cannot_report_success(self, rows, passed, skipped):
         outcome = lh._outcome_from_terminal(
-            "editmode", "EditMode", self.terminal(rows, passed, skipped=skipped), True)
+            "editmode", "EditMode", self.terminal(rows, passed, skipped=skipped), True
+        )
         assert outcome.status == "fail"
         assert "did not execute" in outcome.detail
 
     @pytest.mark.parametrize("state", ["Unknown", "", "Inconclusive"])
     def test_unrecognized_or_inconclusive_leaf_is_not_counted_as_a_pass(self, state):
         outcome = lh._outcome_from_terminal(
-            "editmode", "EditMode", self.terminal([{"state": state}], 1), True)
+            "editmode", "EditMode", self.terminal([{"state": state}], 1), True
+        )
         assert outcome.status == "fail"
         assert "unsupported" in outcome.detail
 
     def test_row_buckets_must_match_summary(self):
         outcome = lh._outcome_from_terminal(
-            "editmode", "EditMode", self.terminal([{"state": "Passed"}], 0, skipped=1), True)
+            "editmode", "EditMode", self.terminal([{"state": "Passed"}], 0, skipped=1), True
+        )
         assert outcome.status == "fail"
         assert "disagree" in outcome.detail
 
     def test_initialization_failure_without_results_retains_progress_errors(self):
-        response = {"status": "failed", "result": None, "error": "initialization timed out",
-                    "progress": {"failures_so_far": [{"full_name": "Suite.Start", "message": "callback error"}]}}
+        response = {
+            "status": "failed",
+            "result": None,
+            "error": "initialization timed out",
+            "progress": {
+                "failures_so_far": [{"full_name": "Suite.Start", "message": "callback error"}]
+            },
+        }
         outcome = lh._outcome_from_terminal("editmode", "EditMode", response, True)
         assert outcome.status == "fail"
         assert "callback error" in outcome.junit_suite.cases[0].failure

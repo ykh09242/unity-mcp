@@ -26,7 +26,7 @@ async def test_manage_gameobject_boolean_coercion(monkeypatch):
         target="Player",
         set_active="true",  # String should be coerced to bool
     )
-    
+
     assert resp.get("success") is True
     assert captured["params"]["action"] == "modify"
     assert captured["params"]["target"] == "Player"

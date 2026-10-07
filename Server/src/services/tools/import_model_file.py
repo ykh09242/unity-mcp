@@ -5,6 +5,7 @@ e.g. exported from Blender) into the Unity project.
 Thin pass-through: NO API keys and NO file bytes cross the bridge. The C# side copies
 the file under Assets/ and runs the shared model-import pipeline.
 """
+
 from typing import Annotated, Any, Literal
 from pathlib import PurePosixPath, PureWindowsPath
 
@@ -42,16 +43,21 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 )
 async def import_model_file(
     ctx: Context,
-    source_path: Annotated[str, "Assets-relative or absolute-within-Assets model file path (.fbx/.obj/.glb/.gltf/.zip)."],
+    source_path: Annotated[
+        str,
+        "Assets-relative or absolute-within-Assets model file path (.fbx/.obj/.glb/.gltf/.zip).",
+    ],
     name: Annotated[str, "Base name for the imported asset."] | None = None,
     output_folder: Annotated[str, "Destination folder under Assets/ for the import."] | None = None,
-    target_size: Annotated[float, "Normalize the largest dimension to this size (meters)."] | None = None,
+    target_size: Annotated[float, "Normalize the largest dimension to this size (meters)."]
+    | None = None,
     animation_type: Annotated[
         Literal["none", "generic", "humanoid", "legacy"],
         "FBX/OBJ only: rig/animation import mode. 'generic' or 'humanoid' surface the model's "
         "AnimationClips; 'legacy' selects Unity's legacy Animation system (rarely needed); "
         "omitted or 'none' imports no rig. Ignored for glTF/GLB.",
-    ] | None = None,
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     source = source_path.replace("\\", "/")
     windows_path = PureWindowsPath(source)
@@ -61,10 +67,19 @@ async def import_model_file(
         or ".." in source.split("/")
         or (windows_path.drive and not windows_path.is_absolute())
         or "://" in source
-        or (":" in source and not (len(source) >= 3 and source[0].isalpha() and source[1:3] == ":/"))
-        or not (source.startswith("Assets/") or PurePosixPath(source).is_absolute() or windows_path.is_absolute())
+        or (
+            ":" in source and not (len(source) >= 3 and source[0].isalpha() and source[1:3] == ":/")
+        )
+        or not (
+            source.startswith("Assets/")
+            or PurePosixPath(source).is_absolute()
+            or windows_path.is_absolute()
+        )
     ):
-        return {"success": False, "error": "'source_path' must be Assets-relative or an absolute path within Unity's Assets folder, without traversal or links."}
+        return {
+            "success": False,
+            "error": "'source_path' must be Assets-relative or an absolute path within Unity's Assets folder, without traversal or links.",
+        }
 
     unity_instance = await get_unity_instance_from_context(ctx)
 

@@ -48,7 +48,9 @@ def test_register_tools_route_is_not_exposed_in_remote_hosted_mode(monkeypatch):
 async def test_list_registered_tools_threads_user_id_to_plugin_hub():
     service = CustomToolService(_DummyMcp())
 
-    with patch("services.custom_tool_service.PluginHub.get_tools_for_project", new_callable=AsyncMock) as mock_get:
+    with patch(
+        "services.custom_tool_service.PluginHub.get_tools_for_project", new_callable=AsyncMock
+    ) as mock_get:
         mock_get.return_value = []
         await service.list_registered_tools("project-hash", user_id="user-1")
 
@@ -59,7 +61,9 @@ async def test_list_registered_tools_threads_user_id_to_plugin_hub():
 async def test_get_tool_definition_threads_user_id_to_plugin_hub():
     service = CustomToolService(_DummyMcp())
 
-    with patch("services.custom_tool_service.PluginHub.get_tool_definition", new_callable=AsyncMock) as mock_get:
+    with patch(
+        "services.custom_tool_service.PluginHub.get_tool_definition", new_callable=AsyncMock
+    ) as mock_get:
         mock_get.return_value = None
         await service.get_tool_definition("project-hash", "my_tool", user_id="user-1")
 
@@ -74,19 +78,23 @@ async def test_same_named_tools_use_selected_projects_polling_metadata(monkeypat
     monkeypatch.setattr(PluginHub, "_registry", registry)
     service = CustomToolService(FastMCP("project-runtime-metadata"))
     first = ToolDefinitionModel(name="fixture_job", requires_polling=False)
-    selected = ToolDefinitionModel(name="fixture_job", requires_polling=True,
-                                   poll_action="check_b", max_poll_seconds=30)
+    selected = ToolDefinitionModel(
+        name="fixture_job", requires_polling=True, poll_action="check_b", max_poll_seconds=30
+    )
     for session, project, project_hash, definition in [
-        ("a-session", "A", "a-hash", first), ("b-session", "B", "b-hash", selected),
+        ("a-session", "A", "a-hash", first),
+        ("b-session", "B", "b-hash", selected),
     ]:
         await registry.register(session, project, project_hash, "6000.0")
         await registry.register_tools_for_session(session, [definition])
         service.register_global_tools([definition])
     monkeypatch.setattr(module.asyncio, "sleep", AsyncMock())
-    send = AsyncMock(side_effect=[
-        {"_mcp_status": "pending", "data": {"job_id": "b-job"}},
-        {"_mcp_status": "complete", "data": {"job_id": "b-job", "value": 42}},
-    ])
+    send = AsyncMock(
+        side_effect=[
+            {"_mcp_status": "pending", "data": {"job_id": "b-job"}},
+            {"_mcp_status": "complete", "data": {"job_id": "b-job", "value": 42}},
+        ]
+    )
     monkeypatch.setattr(module, "send_with_unity_instance", send)
 
     # When: the second project's tool executes after the first global registration.
@@ -136,8 +144,12 @@ async def test_execute_tool_threads_user_id_to_definition_lookup_and_transport()
     service = CustomToolService(_DummyMcp())
     definition = ToolDefinitionModel(name="my_tool", description="My tool", requires_polling=False)
 
-    with patch.object(service, "get_tool_definition", new_callable=AsyncMock) as mock_get_definition:
-        with patch("services.custom_tool_service.send_with_unity_instance", new_callable=AsyncMock) as mock_send:
+    with patch.object(
+        service, "get_tool_definition", new_callable=AsyncMock
+    ) as mock_get_definition:
+        with patch(
+            "services.custom_tool_service.send_with_unity_instance", new_callable=AsyncMock
+        ) as mock_send:
             mock_get_definition.return_value = definition
             mock_send.return_value = {"success": True, "message": "ok"}
 
@@ -165,8 +177,14 @@ async def test_execute_custom_tool_threads_user_id_from_context(monkeypatch):
     service = Mock()
     service.execute_tool = AsyncMock(return_value=MCPResponse(success=True, message="ok"))
 
-    with patch("services.tools.execute_custom_tool.resolve_project_id_for_unity_instance", return_value="project-hash"):
-        with patch("services.tools.execute_custom_tool.CustomToolService.get_instance", return_value=service):
+    with patch(
+        "services.tools.execute_custom_tool.resolve_project_id_for_unity_instance",
+        return_value="project-hash",
+    ):
+        with patch(
+            "services.tools.execute_custom_tool.CustomToolService.get_instance",
+            return_value=service,
+        ):
             await execute_custom_tool(ctx, "my_tool", {})
 
     service.execute_tool.assert_awaited_once_with(
@@ -191,8 +209,13 @@ async def test_custom_tools_resource_threads_user_id_from_context(monkeypatch):
         return_value=[ToolDefinitionModel(name="my_tool", description="My tool")]
     )
 
-    with patch("services.resources.custom_tools.resolve_project_id_for_unity_instance", return_value="project-hash"):
-        with patch("services.resources.custom_tools.CustomToolService.get_instance", return_value=service):
+    with patch(
+        "services.resources.custom_tools.resolve_project_id_for_unity_instance",
+        return_value="project-hash",
+    ):
+        with patch(
+            "services.resources.custom_tools.CustomToolService.get_instance", return_value=service
+        ):
             await get_custom_tools(ctx)
 
     service.list_registered_tools.assert_awaited_once_with("project-hash", user_id="user-1")

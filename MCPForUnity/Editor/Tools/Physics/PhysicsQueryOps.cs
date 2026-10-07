@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
-using Newtonsoft.Json.Linq;
-using UnityEngine;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json.Linq;
+using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools.Physics
 {
@@ -40,10 +40,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (dirArr.Count < 3)
                 return new ErrorResponse("3D raycast 'direction' requires [x, y, z].");
 
-            var origin = new Vector3(
-                originArr[0].ReadScalar<float>(), originArr[1].ReadScalar<float>(), originArr[2].ReadScalar<float>());
-            var direction = new Vector3(
-                dirArr[0].ReadScalar<float>(), dirArr[1].ReadScalar<float>(), dirArr[2].ReadScalar<float>());
+            var origin = new Vector3(originArr[0].ReadScalar<float>(), originArr[1].ReadScalar<float>(), originArr[2].ReadScalar<float>());
+            var direction = new Vector3(dirArr[0].ReadScalar<float>(), dirArr[1].ReadScalar<float>(), dirArr[2].ReadScalar<float>());
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
@@ -65,7 +63,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     success = true,
                     message = "Raycast did not hit anything.",
-                    data = new { hit = false }
+                    data = new { hit = false },
                 };
             }
 
@@ -81,8 +79,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                     distance = hitInfo.distance,
                     gameObject = hitInfo.collider.gameObject.name,
                     instanceID = hitInfo.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = hitInfo.collider.GetType().Name
-                }
+                    collider_type = hitInfo.collider.GetType().Name,
+                },
             };
         }
 
@@ -111,7 +109,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     success = true,
                     message = "2D Raycast did not hit anything.",
-                    data = new { hit = false }
+                    data = new { hit = false },
                 };
             }
 
@@ -127,8 +125,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                     distance = hit.distance,
                     gameObject = hit.collider.gameObject.name,
                     instanceID = hit.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = hit.collider.GetType().Name
-                }
+                    collider_type = hit.collider.GetType().Name,
+                },
             };
         }
 
@@ -164,8 +162,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (posArr.Count < 3)
                 return new ErrorResponse("3D overlap 'position' requires [x, y, z].");
 
-            var position = new Vector3(
-                posArr[0].ReadScalar<float>(), posArr[1].ReadScalar<float>(), posArr[2].ReadScalar<float>());
+            var position = new Vector3(posArr[0].ReadScalar<float>(), posArr[1].ReadScalar<float>(), posArr[2].ReadScalar<float>());
 
             Collider[] results;
 
@@ -182,8 +179,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     Vector3 halfExtents;
                     if (sizeToken is JArray sizeArr && sizeArr.Count >= 3)
-                        halfExtents = new Vector3(
-                            sizeArr[0].ReadScalar<float>(), sizeArr[1].ReadScalar<float>(), sizeArr[2].ReadScalar<float>());
+                        halfExtents = new Vector3(sizeArr[0].ReadScalar<float>(), sizeArr[1].ReadScalar<float>(), sizeArr[2].ReadScalar<float>());
                     else
                         return new ErrorResponse("3D box overlap 'size' requires [halfX, halfY, halfZ].");
                     UnityEngine.Physics.SyncTransforms();
@@ -198,7 +194,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                         float height = capsuleObj["height"]?.ReadScalar<float?>() ?? 2f;
                         int direction = capsuleObj["direction"]?.ReadScalar<int?>() ?? 1;
 
-                        Vector3 point0, point1;
+                        Vector3 point0,
+                            point1;
                         float halfHeight = Mathf.Max(0, height / 2f - radius);
                         switch (direction)
                         {
@@ -292,19 +289,21 @@ namespace MCPForUnity.Editor.Tools.Physics
             var colliders = new List<object>();
             foreach (var col in results)
             {
-                colliders.Add(new
-                {
-                    gameObject = col.gameObject.name,
-                    instanceID = col.gameObject.GetInstanceIDCompat(),
-                    collider_type = col.GetType().Name
-                });
+                colliders.Add(
+                    new
+                    {
+                        gameObject = col.gameObject.name,
+                        instanceID = col.gameObject.GetInstanceIDCompat(),
+                        collider_type = col.GetType().Name,
+                    }
+                );
             }
 
             return new
             {
                 success = true,
                 message = $"Overlap query found {colliders.Count} collider(s) ({dimension}).",
-                data = new { colliders }
+                data = new { colliders },
             };
         }
 
@@ -313,19 +312,21 @@ namespace MCPForUnity.Editor.Tools.Physics
             var colliders = new List<object>();
             foreach (var col in results)
             {
-                colliders.Add(new
-                {
-                    gameObject = col.gameObject.name,
-                    instanceID = col.gameObject.GetInstanceIDCompat(),
-                    collider_type = col.GetType().Name
-                });
+                colliders.Add(
+                    new
+                    {
+                        gameObject = col.gameObject.name,
+                        instanceID = col.gameObject.GetInstanceIDCompat(),
+                        collider_type = col.GetType().Name,
+                    }
+                );
             }
 
             return new
             {
                 success = true,
                 message = $"Overlap query found {colliders.Count} collider(s) ({dimension}).",
-                data = new { colliders }
+                data = new { colliders },
             };
         }
 
@@ -363,10 +364,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (dirArr.Count < 3)
                 return new ErrorResponse("3D shapecast 'direction' requires [x, y, z].");
 
-            var origin = new Vector3(
-                originArr[0].ReadScalar<float>(), originArr[1].ReadScalar<float>(), originArr[2].ReadScalar<float>());
-            var direction = new Vector3(
-                dirArr[0].ReadScalar<float>(), dirArr[1].ReadScalar<float>(), dirArr[2].ReadScalar<float>());
+            var origin = new Vector3(originArr[0].ReadScalar<float>(), originArr[1].ReadScalar<float>(), originArr[2].ReadScalar<float>());
+            var direction = new Vector3(dirArr[0].ReadScalar<float>(), dirArr[1].ReadScalar<float>(), dirArr[2].ReadScalar<float>());
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
@@ -398,18 +397,27 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     Vector3 halfExtents;
                     if (sizeToken is JArray sizeArr && sizeArr.Count >= 3)
-                        halfExtents = new Vector3(
-                            sizeArr[0].ReadScalar<float>(), sizeArr[1].ReadScalar<float>(), sizeArr[2].ReadScalar<float>());
+                        halfExtents = new Vector3(sizeArr[0].ReadScalar<float>(), sizeArr[1].ReadScalar<float>(), sizeArr[2].ReadScalar<float>());
                     else
                         return new ErrorResponse("3D box shapecast 'size' requires [halfX, halfY, halfZ].");
                     UnityEngine.Physics.SyncTransforms();
-                    hit = UnityEngine.Physics.BoxCast(origin, halfExtents, direction, out hitInfo, Quaternion.identity, maxDistance, layerMask, triggerInteraction);
+                    hit = UnityEngine.Physics.BoxCast(
+                        origin,
+                        halfExtents,
+                        direction,
+                        out hitInfo,
+                        Quaternion.identity,
+                        maxDistance,
+                        layerMask,
+                        triggerInteraction
+                    );
                     break;
                 }
                 case "capsule":
                 {
                     float radius = sizeToken.ReadScalar<float>();
-                    Vector3 pt1, pt2;
+                    Vector3 pt1,
+                        pt2;
 
                     var pt1Arr = p.GetRaw("point1") as JArray;
                     var pt2Arr = p.GetRaw("point2") as JArray;
@@ -456,7 +464,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     success = true,
                     message = "Shapecast did not hit anything.",
-                    data = new { hit = false }
+                    data = new { hit = false },
                 };
             }
 
@@ -472,8 +480,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                     distance = hitInfo.distance,
                     gameObject = hitInfo.collider.gameObject.name,
                     instanceID = hitInfo.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = hitInfo.collider.GetType().Name
-                }
+                    collider_type = hitInfo.collider.GetType().Name,
+                },
             };
         }
 
@@ -525,9 +533,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     if (sizeToken is JObject sizeObj)
                     {
-                        var capsuleSize = new Vector2(
-                            sizeObj["width"]?.ReadScalar<float?>() ?? 1f,
-                            sizeObj["height"]?.ReadScalar<float?>() ?? 2f);
+                        var capsuleSize = new Vector2(sizeObj["width"]?.ReadScalar<float?>() ?? 1f, sizeObj["height"]?.ReadScalar<float?>() ?? 2f);
                         var capsuleDir = CapsuleDirection2D.Vertical;
                         string dirStr = sizeObj["direction"]?.ToString();
                         if (dirStr != null && dirStr.ToLowerInvariant() == "horizontal")
@@ -553,7 +559,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     success = true,
                     message = "2D Shapecast did not hit anything.",
-                    data = new { hit = false }
+                    data = new { hit = false },
                 };
             }
 
@@ -569,8 +575,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                     distance = hit.distance,
                     gameObject = hit.collider.gameObject.name,
                     instanceID = hit.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = hit.collider.GetType().Name
-                }
+                    collider_type = hit.collider.GetType().Name,
+                },
             };
         }
 
@@ -605,10 +611,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (dirArr.Count < 3)
                 return new ErrorResponse("3D RaycastAll 'direction' requires [x, y, z].");
 
-            var origin = new Vector3(
-                originArr[0].ReadScalar<float>(), originArr[1].ReadScalar<float>(), originArr[2].ReadScalar<float>());
-            var direction = new Vector3(
-                dirArr[0].ReadScalar<float>(), dirArr[1].ReadScalar<float>(), dirArr[2].ReadScalar<float>());
+            var origin = new Vector3(originArr[0].ReadScalar<float>(), originArr[1].ReadScalar<float>(), originArr[2].ReadScalar<float>());
+            var direction = new Vector3(dirArr[0].ReadScalar<float>(), dirArr[1].ReadScalar<float>(), dirArr[2].ReadScalar<float>());
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
@@ -628,22 +632,24 @@ namespace MCPForUnity.Editor.Tools.Physics
             var hitsArray = new List<object>();
             foreach (var h in hits)
             {
-                hitsArray.Add(new
-                {
-                    point = new[] { h.point.x, h.point.y, h.point.z },
-                    normal = new[] { h.normal.x, h.normal.y, h.normal.z },
-                    distance = h.distance,
-                    gameObject = h.collider.gameObject.name,
-                    instanceID = h.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = h.collider.GetType().Name
-                });
+                hitsArray.Add(
+                    new
+                    {
+                        point = new[] { h.point.x, h.point.y, h.point.z },
+                        normal = new[] { h.normal.x, h.normal.y, h.normal.z },
+                        distance = h.distance,
+                        gameObject = h.collider.gameObject.name,
+                        instanceID = h.collider.gameObject.GetInstanceIDCompat(),
+                        collider_type = h.collider.GetType().Name,
+                    }
+                );
             }
 
             return new
             {
                 success = true,
                 message = $"RaycastAll found {hits.Length} hit(s).",
-                data = new { hit_count = hits.Length, hits = hitsArray }
+                data = new { hit_count = hits.Length, hits = hitsArray },
             };
         }
 
@@ -678,22 +684,24 @@ namespace MCPForUnity.Editor.Tools.Physics
             var hitsArray = new List<object>();
             foreach (var h in hits)
             {
-                hitsArray.Add(new
-                {
-                    point = new[] { h.point.x, h.point.y },
-                    normal = new[] { h.normal.x, h.normal.y },
-                    distance = h.distance,
-                    gameObject = h.collider.gameObject.name,
-                    instanceID = h.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = h.collider.GetType().Name
-                });
+                hitsArray.Add(
+                    new
+                    {
+                        point = new[] { h.point.x, h.point.y },
+                        normal = new[] { h.normal.x, h.normal.y },
+                        distance = h.distance,
+                        gameObject = h.collider.gameObject.name,
+                        instanceID = h.collider.gameObject.GetInstanceIDCompat(),
+                        collider_type = h.collider.GetType().Name,
+                    }
+                );
             }
 
             return new
             {
                 success = true,
                 message = $"RaycastAll found {hits.Count} hit(s).",
-                data = new { hit_count = hits.Count, hits = hitsArray }
+                data = new { hit_count = hits.Count, hits = hitsArray },
             };
         }
 
@@ -726,10 +734,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (endArr.Count < 3)
                 return new ErrorResponse("3D linecast 'end' requires [x, y, z].");
 
-            var start = new Vector3(
-                startArr[0].ReadScalar<float>(), startArr[1].ReadScalar<float>(), startArr[2].ReadScalar<float>());
-            var end = new Vector3(
-                endArr[0].ReadScalar<float>(), endArr[1].ReadScalar<float>(), endArr[2].ReadScalar<float>());
+            var start = new Vector3(startArr[0].ReadScalar<float>(), startArr[1].ReadScalar<float>(), startArr[2].ReadScalar<float>());
+            var end = new Vector3(endArr[0].ReadScalar<float>(), endArr[1].ReadScalar<float>(), endArr[2].ReadScalar<float>());
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
@@ -751,7 +757,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     success = true,
                     message = "Linecast did not hit anything.",
-                    data = new { hit = false }
+                    data = new { hit = false },
                 };
             }
 
@@ -767,8 +773,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                     distance = hitInfo.distance,
                     gameObject = hitInfo.collider.gameObject.name,
                     instanceID = hitInfo.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = hitInfo.collider.GetType().Name
-                }
+                    collider_type = hitInfo.collider.GetType().Name,
+                },
             };
         }
 
@@ -797,7 +803,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     success = true,
                     message = "2D Linecast did not hit anything.",
-                    data = new { hit = false }
+                    data = new { hit = false },
                 };
             }
 
@@ -813,15 +819,17 @@ namespace MCPForUnity.Editor.Tools.Physics
                     distance = hit.distance,
                     gameObject = hit.collider.gameObject.name,
                     instanceID = hit.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = hit.collider.GetType().Name
-                }
+                    collider_type = hit.collider.GetType().Name,
+                },
             };
         }
 
         private static ContactFilter2D? ResolveTriggerFilter2D(ToolParams p, int layerMask)
         {
-            if (!Enum.TryParse(p.Get("query_trigger_interaction"), true, out QueryTriggerInteraction interaction)
-                || (interaction != QueryTriggerInteraction.Ignore && interaction != QueryTriggerInteraction.Collide))
+            if (
+                !Enum.TryParse(p.Get("query_trigger_interaction"), true, out QueryTriggerInteraction interaction)
+                || (interaction != QueryTriggerInteraction.Ignore && interaction != QueryTriggerInteraction.Collide)
+            )
                 return null;
 
             var filter = new ContactFilter2D { useTriggers = interaction == QueryTriggerInteraction.Collide };

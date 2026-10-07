@@ -16,13 +16,17 @@ def _run_scenario(source, tmp_path):
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],
         cwd=Path(__file__).resolve().parents[1],
-        env=env, capture_output=True, text=True, timeout=45,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=45,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_counter_category_schema_and_transport(tmp_path):
-    _run_scenario('''
+    _run_scenario(
+        """
         import socket
         import sys
         from unittest.mock import AsyncMock
@@ -73,11 +77,14 @@ def test_counter_category_schema_and_transport(tmp_path):
                     result = await client.call_tool("manage_graphics", {"action": "stats_list_counters", "category": 1}, raise_on_error=False)
                     assert result.is_error and len(captured) == before
         anyio.run(scenario)
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
 
 
 def test_rendering_resources_preserve_response_and_routing(tmp_path):
-    _run_scenario('''
+    _run_scenario(
+        """
         import json
         import socket
         import sys
@@ -132,4 +139,6 @@ def test_rendering_resources_preserve_response_and_routing(tmp_path):
                                 assert result["error"] == payload["error"] and result["hint"] == payload["hint"]
                             assert captured[-1] == command
         anyio.run(scenario)
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )

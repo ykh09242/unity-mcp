@@ -12,7 +12,7 @@ namespace MCPForUnity.Editor.Tools.Build
         Succeeded,
         Failed,
         Cancelled,
-        Skipped
+        Skipped,
     }
 
     public class BuildJob
@@ -44,7 +44,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 ["job_id"] = JobId,
                 ["result"] = State.ToString().ToLowerInvariant(),
                 ["platform"] = Target.ToString(),
-                ["output_path"] = OutputPath
+                ["output_path"] = OutputPath,
             };
 
             if (StartedAt != default)
@@ -91,8 +91,12 @@ namespace MCPForUnity.Editor.Tools.Build
 
             foreach (var child in Children)
             {
-                if (child.State == BuildJobState.Succeeded || child.State == BuildJobState.Failed
-                    || child.State == BuildJobState.Skipped || child.State == BuildJobState.Cancelled)
+                if (
+                    child.State == BuildJobState.Succeeded
+                    || child.State == BuildJobState.Failed
+                    || child.State == BuildJobState.Skipped
+                    || child.State == BuildJobState.Cancelled
+                )
                     completed++;
                 if (child.State == BuildJobState.Building)
                     currentBuild = child.JobId;
@@ -106,7 +110,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 ["completed"] = completed,
                 ["total"] = Children.Count,
                 ["current_build"] = currentBuild,
-                ["builds"] = builds
+                ["builds"] = builds,
             };
         }
     }
@@ -126,9 +130,11 @@ namespace MCPForUnity.Editor.Tools.Build
         private static BuildJob _lastCompletedJob;
 
         public static string CreateJobId() => $"build-{Guid.NewGuid():N}".Substring(0, 16);
+
         public static string CreateBatchId() => $"batch-{Guid.NewGuid():N}".Substring(0, 16);
 
         public static void AddBuildJob(BuildJob job) => _buildJobs[job.JobId] = job;
+
         public static void AddBatchJob(BatchJob job) => _batchJobs[job.JobId] = job;
 
         public static BuildJob GetBuildJob(string jobId)
@@ -170,20 +176,21 @@ namespace MCPForUnity.Editor.Tools.Build
 
         private static void PruneOldJobs()
         {
-            if (_buildJobs.Count <= MaxRetainedJobs) return;
+            if (_buildJobs.Count <= MaxRetainedJobs)
+                return;
 
             var toRemove = new List<string>();
             foreach (var kvp in _buildJobs)
             {
-                if (kvp.Value.State != BuildJobState.Building && kvp.Value.State != BuildJobState.Pending
-                    && kvp.Value != _lastCompletedJob)
+                if (kvp.Value.State != BuildJobState.Building && kvp.Value.State != BuildJobState.Pending && kvp.Value != _lastCompletedJob)
                     toRemove.Add(kvp.Key);
             }
 
             foreach (var key in toRemove)
             {
                 _buildJobs.Remove(key);
-                if (_buildJobs.Count <= MaxRetainedJobs / 2) break;
+                if (_buildJobs.Count <= MaxRetainedJobs / 2)
+                    break;
             }
 
             // Also prune batch jobs whose children are all terminal

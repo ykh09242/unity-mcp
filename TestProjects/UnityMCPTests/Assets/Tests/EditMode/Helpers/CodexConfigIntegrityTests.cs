@@ -45,9 +45,14 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("mcpServers")]
         public void ReadParser_PreservesCanonicalAndLegacyStdioCompatibility(string table)
         {
-            Assert.IsTrue(CodexConfigHelper.TryParseCodexServer(
-                "[" + table + ".unityMCP]\ncommand = \"synthetic-uvx\"\nargs = []",
-                out var command, out var args, out var url));
+            Assert.IsTrue(
+                CodexConfigHelper.TryParseCodexServer(
+                    "[" + table + ".unityMCP]\ncommand = \"synthetic-uvx\"\nargs = []",
+                    out var command,
+                    out var args,
+                    out var url
+                )
+            );
             Assert.AreEqual("synthetic-uvx", command);
             Assert.IsEmpty(args);
             Assert.IsNull(url);
@@ -56,9 +61,14 @@ namespace MCPForUnityTests.Editor.Helpers
         [Test]
         public void ReadParser_AcceptsInlineHttpTableWithoutEndpointLookup()
         {
-            Assert.IsTrue(CodexConfigHelper.TryParseCodexServer(
-                "mcp_servers = { unityMCP = { url = \"https://synthetic.invalid/mcp\", enabled = false } }",
-                out var command, out var args, out var url));
+            Assert.IsTrue(
+                CodexConfigHelper.TryParseCodexServer(
+                    "mcp_servers = { unityMCP = { url = \"https://synthetic.invalid/mcp\", enabled = false } }",
+                    out var command,
+                    out var args,
+                    out var url
+                )
+            );
             Assert.AreEqual("https://synthetic.invalid/mcp", url);
             Assert.IsNull(command);
             Assert.IsNull(args);

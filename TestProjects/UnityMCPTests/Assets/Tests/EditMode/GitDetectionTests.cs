@@ -20,10 +20,7 @@ namespace MCPForUnityTests.Editor
         [TestCase(null, false)]
         public void PlatformDetectors_EnforceMinimumPythonVersion(string version, bool supported)
         {
-            foreach (var detector in new PlatformDetectorBase[]
-            {
-                new WindowsPlatformDetector(), new MacOSPlatformDetector(), new LinuxPlatformDetector()
-            })
+            foreach (var detector in new PlatformDetectorBase[] { new WindowsPlatformDetector(), new MacOSPlatformDetector(), new LinuxPlatformDetector() })
             {
                 Assert.AreEqual(supported, detector.IsSupportedPythonVersion(version), detector.PlatformName);
             }
@@ -99,7 +96,7 @@ namespace MCPForUnityTests.Editor
             {
                 IsAvailable = false,
                 ErrorMessage = "git not found",
-                Details = "Only needed to add or update MCP for Unity from a Git URL in the Package Manager."
+                Details = "Only needed to add or update MCP for Unity from a Git URL in the Package Manager.",
             };
 
             MCPSetupWindow.UpdateDependencyStatus(indicator, version, details, dep);
@@ -140,7 +137,7 @@ namespace MCPForUnityTests.Editor
             {
                 IsAvailable = true,
                 Version = "2.45.1",
-                Details = "run git config --global --add safe.directory \"<your Unity project folder>\""
+                Details = "run git config --global --add safe.directory \"<your Unity project folder>\"",
             };
 
             MCPSetupWindow.UpdateDependencyStatus(indicator, version, details, dep);

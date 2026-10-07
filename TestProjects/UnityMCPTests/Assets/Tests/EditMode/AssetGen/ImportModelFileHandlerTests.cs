@@ -38,22 +38,31 @@ namespace MCPForUnityTests.Editor.AssetGen
             if (AssetDatabase.IsValidFolder(TestFolder))
                 AssetDatabase.DeleteAsset(TestFolder);
             string ownedAssetsFolder = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Application.dataPath), TestFolder));
-            Assert.IsTrue(ownedAssetsFolder.StartsWith(Path.GetFullPath(Application.dataPath) + Path.DirectorySeparatorChar,
-                StringComparison.OrdinalIgnoreCase), "cleanup must remain within Assets");
-            if (Directory.Exists(ownedAssetsFolder)) Directory.Delete(ownedAssetsFolder, true);
-            try { if (Directory.Exists(_tempDir)) Directory.Delete(_tempDir, true); } catch { /* ignore */ }
+            Assert.IsTrue(
+                ownedAssetsFolder.StartsWith(Path.GetFullPath(Application.dataPath) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase),
+                "cleanup must remain within Assets"
+            );
+            if (Directory.Exists(ownedAssetsFolder))
+                Directory.Delete(ownedAssetsFolder, true);
+            try
+            {
+                if (Directory.Exists(_tempDir))
+                    Directory.Delete(_tempDir, true);
+            }
+            catch { /* ignore */ }
         }
 
-        private static JObject Call(JObject p)
-            => JObject.Parse(JsonConvert.SerializeObject(ImportModelFile.HandleCommand(p)));
+        private static JObject Call(JObject p) => JObject.Parse(JsonConvert.SerializeObject(ImportModelFile.HandleCommand(p)));
 
         private string WriteCubeObj()
         {
             string path = _sourceFolder + "/cube.obj";
-            File.WriteAllText(Path.Combine(Path.GetDirectoryName(Application.dataPath), path),
-                "o Cube\n" +
-                "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 0 0 1\nv 1 0 1\nv 1 1 1\nv 0 1 1\n" +
-                "f 1 2 3 4\nf 5 6 7 8\nf 1 2 6 5\nf 2 3 7 6\nf 3 4 8 7\nf 4 1 5 8\n");
+            File.WriteAllText(
+                Path.Combine(Path.GetDirectoryName(Application.dataPath), path),
+                "o Cube\n"
+                    + "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 0 0 1\nv 1 0 1\nv 1 1 1\nv 0 1 1\n"
+                    + "f 1 2 3 4\nf 5 6 7 8\nf 1 2 6 5\nf 2 3 7 6\nf 3 4 8 7\nf 4 1 5 8\n"
+            );
             return path;
         }
 
@@ -79,8 +88,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         [TestCase(".gltf")]
         public void MissingGltfast_DoesNotStageDirectModel(string extension)
         {
-            var availability = typeof(ModelImportPipeline).GetField("_gltfastAvailable",
-                BindingFlags.Static | BindingFlags.NonPublic);
+            var availability = typeof(ModelImportPipeline).GetField("_gltfastAvailable", BindingFlags.Static | BindingFlags.NonPublic);
             Assert.IsNotNull(availability);
             object previous = availability.GetValue(null);
             string outputFolder = TestFolder + "/missing_gltf_" + Guid.NewGuid().ToString("N");
@@ -91,10 +99,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             try
             {
                 availability.SetValue(null, false);
-                JObject response = Call(new JObject
-                {
-                    ["sourcePath"] = source, ["outputFolder"] = outputFolder
-                });
+                JObject response = Call(new JObject { ["sourcePath"] = source, ["outputFolder"] = outputFolder });
                 Assert.AreEqual(false, (bool)response["success"]);
                 StringAssert.Contains("glTFast", (string)response["error"]);
                 Assert.IsFalse(Directory.Exists(absoluteOutput), "rejected input must not create a staging folder");
@@ -110,12 +115,14 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void ImportsObj_ReturnsAssetPathAndGuid()
         {
             string obj = WriteCubeObj();
-            JObject resp = Call(new JObject
-            {
-                ["sourcePath"] = obj,
-                ["name"] = "TestCube",
-                ["outputFolder"] = TestFolder,
-            });
+            JObject resp = Call(
+                new JObject
+                {
+                    ["sourcePath"] = obj,
+                    ["name"] = "TestCube",
+                    ["outputFolder"] = TestFolder,
+                }
+            );
             Assert.AreEqual(true, (bool)resp["success"], resp.ToString());
             string assetPath = (string)resp["data"]["asset_path"];
             StringAssert.StartsWith(TestFolder, assetPath);
@@ -159,10 +166,14 @@ namespace MCPForUnityTests.Editor.AssetGen
                 }
             }
 
-            JObject response = Call(new JObject
-            {
-                ["sourcePath"] = source, ["name"] = "failed_bundle", ["outputFolder"] = TestFolder
-            });
+            JObject response = Call(
+                new JObject
+                {
+                    ["sourcePath"] = source,
+                    ["name"] = "failed_bundle",
+                    ["outputFolder"] = TestFolder,
+                }
+            );
 
             Assert.AreEqual(false, (bool)response["success"], response.ToString());
             string extracted = TestFolder + "/failed_bundle";
@@ -184,16 +195,16 @@ namespace MCPForUnityTests.Editor.AssetGen
             {
                 File.WriteAllText(pending, "unrelated pending asset");
                 string source = WriteCubeObj();
-                if (archive) source = WriteArchive("model", "nested/cube.obj", File.ReadAllText(source));
-                JObject response = Call(new JObject
-                {
-                    ["sourcePath"] = source, ["outputFolder"] = TestFolder + "/New/Nested"
-                });
+                if (archive)
+                    source = WriteArchive("model", "nested/cube.obj", File.ReadAllText(source));
+                JObject response = Call(new JObject { ["sourcePath"] = source, ["outputFolder"] = TestFolder + "/New/Nested" });
 
                 Assert.AreEqual(true, (bool)response["success"], response.ToString());
                 Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<GameObject>((string)response["data"]["asset_path"]));
-                Assert.IsEmpty(AssetDatabase.AssetPathToGUID(pending, AssetPathToGUIDOptions.OnlyExistingAssets),
-                    "targeted imports must not scan unrelated pending files");
+                Assert.IsEmpty(
+                    AssetDatabase.AssetPathToGUID(pending, AssetPathToGUIDOptions.OnlyExistingAssets),
+                    "targeted imports must not scan unrelated pending files"
+                );
                 Assert.IsFalse(File.Exists(pending + ".meta"));
                 Assert.AreEqual("unrelated pending asset", File.ReadAllText(pending));
             }
@@ -213,10 +224,14 @@ namespace MCPForUnityTests.Editor.AssetGen
             string original = File.ReadAllText(Path.Combine(Path.GetDirectoryName(Application.dataPath), WriteCubeObj()));
             File.WriteAllText(existing, original);
             string source = WriteArchive("textures", "materials.mtl", "newmtl Unused\n");
-            JObject response = Call(new JObject
-            {
-                ["sourcePath"] = source, ["name"] = "bundle", ["outputFolder"] = TestFolder
-            });
+            JObject response = Call(
+                new JObject
+                {
+                    ["sourcePath"] = source,
+                    ["name"] = "bundle",
+                    ["outputFolder"] = TestFolder,
+                }
+            );
             Assert.AreEqual(false, (bool)response["success"], response.ToString());
             StringAssert.Contains("no model file", (string)response["error"]);
             Assert.AreEqual(original, File.ReadAllText(existing));
@@ -230,7 +245,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             string stem = Path.Combine(Path.GetDirectoryName(Application.dataPath), TestFolder, "bundle");
             Directory.CreateDirectory(Path.GetDirectoryName(stem));
             string existing;
-            if (fileCollision) existing = stem;
+            if (fileCollision)
+                existing = stem;
             else
             {
                 Directory.CreateDirectory(stem);
@@ -238,10 +254,14 @@ namespace MCPForUnityTests.Editor.AssetGen
             }
             File.WriteAllText(existing, "existing file must remain intact");
             string source = WriteArchive("new_model", "new.obj", File.ReadAllText(Path.Combine(Path.GetDirectoryName(Application.dataPath), WriteCubeObj())));
-            JObject response = Call(new JObject
-            {
-                ["sourcePath"] = source, ["name"] = "bundle", ["outputFolder"] = TestFolder
-            });
+            JObject response = Call(
+                new JObject
+                {
+                    ["sourcePath"] = source,
+                    ["name"] = "bundle",
+                    ["outputFolder"] = TestFolder,
+                }
+            );
             Assert.AreEqual(true, (bool)response["success"], response.ToString());
             Assert.AreEqual(TestFolder + "/bundle_1/new.obj", (string)response["data"]["asset_path"]);
             Assert.AreEqual("existing file must remain intact", File.ReadAllText(existing));
@@ -288,12 +308,14 @@ namespace MCPForUnityTests.Editor.AssetGen
             string escapedAbs = Path.Combine(Path.GetDirectoryName(Application.dataPath), escapeFolder, "Escaped.obj");
             try
             {
-                JObject resp = Call(new JObject
-                {
-                    ["sourcePath"] = obj,
-                    ["name"] = "Escaped",
-                    ["outputFolder"] = "Assets/../" + escapeFolder,
-                });
+                JObject resp = Call(
+                    new JObject
+                    {
+                        ["sourcePath"] = obj,
+                        ["name"] = "Escaped",
+                        ["outputFolder"] = "Assets/../" + escapeFolder,
+                    }
+                );
 
                 Assert.AreEqual(false, (bool)resp["success"]);
                 StringAssert.Contains("output_folder", ((string)resp["error"]).ToLowerInvariant());
@@ -302,7 +324,12 @@ namespace MCPForUnityTests.Editor.AssetGen
             finally
             {
                 string dir = Path.GetDirectoryName(escapedAbs);
-                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { /* ignore */ }
+                try
+                {
+                    if (Directory.Exists(dir))
+                        Directory.Delete(dir, true);
+                }
+                catch { /* ignore */ }
             }
         }
     }

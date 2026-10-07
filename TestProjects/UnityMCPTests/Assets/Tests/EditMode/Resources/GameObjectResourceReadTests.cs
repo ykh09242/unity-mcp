@@ -14,12 +14,17 @@ namespace MCPForUnityTests.Editor.Resources
 {
     public sealed class ResourceReadCounter : MonoBehaviour
     {
-        [NonSerialized] public int GetterCalls;
+        [NonSerialized]
+        public int GetterCalls;
         public DateTimeOffset Timestamp { get; set; }
         public DateTimeOffset TimestampField;
         public int ProbeValue
         {
-            get { GetterCalls++; return 7; }
+            get
+            {
+                GetterCalls++;
+                return 7;
+            }
         }
     }
 
@@ -68,10 +73,12 @@ namespace MCPForUnityTests.Editor.Resources
 
         private void CleanupOwnedScene()
         {
-            if (!_captured) return;
+            if (!_captured)
+                return;
             try
             {
-                if (_owned != null) Object.DestroyImmediate(_owned);
+                if (_owned != null)
+                    Object.DestroyImmediate(_owned);
             }
             finally
             {
@@ -136,7 +143,7 @@ namespace MCPForUnityTests.Editor.Resources
             {
                 [key] = _owned.GetInstanceIDCompat(),
                 ["componentName"] = "Transform",
-                ["includeProperties"] = false
+                ["includeProperties"] = false,
             };
             Assert.IsTrue(Json(GameObjectResource.HandleCommand(request)).Value<bool>("success"));
             Assert.IsTrue(Json(GameObjectComponentsResource.HandleCommand(request)).Value<bool>("success"));
@@ -227,7 +234,7 @@ namespace MCPForUnityTests.Editor.Resources
             var values = new[]
             {
                 new DateTimeOffset(2026, 10, 4, 1, 2, 3, TimeSpan.FromHours(9)).AddTicks(1234567),
-                new DateTimeOffset(2026, 10, 5, 4, 5, 6, TimeSpan.FromHours(-7)).AddTicks(7654321)
+                new DateTimeOffset(2026, 10, 5, 4, 5, 6, TimeSpan.FromHours(-7)).AddTicks(7654321),
             };
 
             foreach (var expected in values)
@@ -235,10 +242,10 @@ namespace MCPForUnityTests.Editor.Resources
                 _first.Timestamp = expected;
                 _first.TimestampField = expected;
                 var wire = JsonConvert.SerializeObject(GameObjectComponentResource.HandleCommand(request));
-                var response = JsonConvert.DeserializeObject<JObject>(wire, new JsonSerializerSettings
-                {
-                    DateParseHandling = DateParseHandling.DateTimeOffset
-                });
+                var response = JsonConvert.DeserializeObject<JObject>(
+                    wire,
+                    new JsonSerializerSettings { DateParseHandling = DateParseHandling.DateTimeOffset }
+                );
                 Assert.IsTrue(response.Value<bool>("success"));
                 var properties = response.SelectToken("data.component.properties");
                 foreach (var member in new[] { "Timestamp", "TimestampField" })

@@ -18,9 +18,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
         private readonly Func<string, Task<IPAddress[]>> _resolve;
         private readonly Func<Uri, IPAddress, CancellationToken, Task<HttpResult>> _send;
 
-        internal AssetDownloadTransport(
-            Func<string, Task<IPAddress[]>> resolve = null,
-            Func<Uri, IPAddress, CancellationToken, Task<HttpResult>> send = null)
+        internal AssetDownloadTransport(Func<string, Task<IPAddress[]>> resolve = null, Func<Uri, IPAddress, CancellationToken, Task<HttpResult>> send = null)
         {
             _resolve = resolve ?? Dns.GetHostAddressesAsync;
             _send = send ?? SendPinnedAsync;
@@ -46,18 +44,22 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                         result = await _send(uri, addresses[i], token).ConfigureAwait(false);
                         break;
                     }
-                    catch (WebException e) when (!token.IsCancellationRequested && i + 1 < addresses.Length
-                        && (e.Status == WebExceptionStatus.ConnectFailure || e.Status == WebExceptionStatus.Timeout))
+                    catch (WebException e)
+                        when (!token.IsCancellationRequested
+                            && i + 1 < addresses.Length
+                            && (e.Status == WebExceptionStatus.ConnectFailure || e.Status == WebExceptionStatus.Timeout)
+                        )
                     {
                         // Retry only the already validated DNS snapshot, never resolve again here.
                     }
                 }
-                if (result == null) throw new IOException("Provider download returned no response.");
-                if (!IsRedirect(result.Status)) return result;
+                if (result == null)
+                    throw new IOException("Provider download returned no response.");
+                if (!IsRedirect(result.Status))
+                    return result;
                 if (redirects >= MaxRedirects)
                     throw new InvalidOperationException("Provider download exceeded the redirect limit.");
-                if (string.IsNullOrWhiteSpace(result.RedirectLocation)
-                    || !Uri.TryCreate(uri, result.RedirectLocation, out Uri target))
+                if (string.IsNullOrWhiteSpace(result.RedirectLocation) || !Uri.TryCreate(uri, result.RedirectLocation, out Uri target))
                     throw new InvalidOperationException("Provider download returned an invalid redirect.");
                 uri = AssetDownloadPolicy.RequireAllowedUrl(provider, target.AbsoluteUri);
             }
@@ -75,16 +77,15 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
             }
         }
 
-        private static bool IsRedirect(int status)
-            => status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+        private static bool IsRedirect(int status) => status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
 
         internal static HttpWebRequest CreatePinnedRequest(Uri uri, IPAddress address)
         {
             AssetDownloadPolicy.RequirePublicAddresses(new[] { address });
-            if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+            if (address.IsIPv4MappedToIPv6)
+                address = address.MapToIPv4();
             // Preserve the escaped path/query of signed CDN URLs. No second hostname lookup.
-            string host = address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
-                ? "[" + address + "]" : address.ToString();
+            string host = address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? "[" + address + "]" : address.ToString();
             var request = (HttpWebRequest)WebRequest.Create("https://" + host + uri.PathAndQuery);
             request.Host = uri.IdnHost;
             request.Method = "GET";
@@ -125,10 +126,11 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                         {
                             Status = (int)response.StatusCode,
                             RedirectLocation = response.Headers[HttpResponseHeader.Location],
-                            IsSuccess = (int)response.StatusCode >= 200 && (int)response.StatusCode < 300
+                            IsSuccess = (int)response.StatusCode >= 200 && (int)response.StatusCode < 300,
                         };
                         // Redirect/error bodies are unnecessary and must not be staged as assets.
-                        if (!result.IsSuccess) return result;
+                        if (!result.IsSuccess)
+                            return result;
                         using Stream body = response.GetResponseStream();
                         result.Body = await ReadLimitedAsync(body, response.ContentLength, MaxDownloadBytes, ct).ConfigureAwait(false);
                         return result;

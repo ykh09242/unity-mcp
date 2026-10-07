@@ -1,6 +1,7 @@
 """
 Defines the read_console tool for accessing Unity Editor console messages.
 """
+
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -13,7 +14,7 @@ from services.tools.utils import coerce_int, coerce_bool, parse_json_payload
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
-ConsoleField = Literal['type', 'message', 'file', 'line', 'stackTrace']
+ConsoleField = Literal["type", "message", "file", "line", "stackTrace"]
 _CONSOLE_FIELDS = TypeAdapter(list[ConsoleField])
 
 
@@ -38,30 +39,44 @@ def _strip_stacktrace_from_list(items: list) -> None:
 )
 async def read_console(
     ctx: Context,
-    action: Annotated[Literal['get', 'clear'],
-                      "Get or clear the Unity Editor console. Defaults to 'get' if omitted."] | None = None,
-    types: Annotated[list[Literal['error', 'warning',
-                                  'log', 'all']] | str,
-                     "Message types to get (accepts list or JSON string)"] | None = None,
-    count: Annotated[int | str,
-                     "Max messages to return in non-paging mode (default 10; accepts int or string, e.g., 5 or '5'). Pass 'all' or '*' to return all matches. Ignored when paging with page_size/cursor."] | None = None,
+    action: Annotated[
+        Literal["get", "clear"],
+        "Get or clear the Unity Editor console. Defaults to 'get' if omitted.",
+    ]
+    | None = None,
+    types: Annotated[
+        list[Literal["error", "warning", "log", "all"]] | str,
+        "Message types to get (accepts list or JSON string)",
+    ]
+    | None = None,
+    count: Annotated[
+        int | str,
+        "Max messages to return in non-paging mode (default 10; accepts int or string, e.g., 5 or '5'). Pass 'all' or '*' to return all matches. Ignored when paging with page_size/cursor.",
+    ]
+    | None = None,
     filter_text: Annotated[str, "Text filter for messages"] | None = None,
-    page_size: Annotated[int | str,
-                         "Page size for paginated console reads. Defaults to 50 when omitted."] | None = None,
-    cursor: Annotated[int | str,
-                      "Opaque cursor for paging (0-based offset). Defaults to 0."] | None = None,
-    format: Annotated[Literal['plain', 'detailed',
-                              'json'], "Output format"] | None = None,
-    include_stacktrace: Annotated[bool | str,
-                                  "Include stack traces in output (accepts true/false or 'true'/'false')"] | None = None,
-    fields: Annotated[list[ConsoleField] | str,
-                      "Optional fields for get with json/detailed format; accepts a list or JSON list string. Must include type and message. stackTrace requires include_stacktrace=true. Omit to preserve the full existing entry schema."] | None = None,
+    page_size: Annotated[
+        int | str, "Page size for paginated console reads. Defaults to 50 when omitted."
+    ]
+    | None = None,
+    cursor: Annotated[int | str, "Opaque cursor for paging (0-based offset). Defaults to 0."]
+    | None = None,
+    format: Annotated[Literal["plain", "detailed", "json"], "Output format"] | None = None,
+    include_stacktrace: Annotated[
+        bool | str, "Include stack traces in output (accepts true/false or 'true'/'false')"
+    ]
+    | None = None,
+    fields: Annotated[
+        list[ConsoleField] | str,
+        "Optional fields for get with json/detailed format; accepts a list or JSON list string. Must include type and message. stackTrace requires include_stacktrace=true. Omit to preserve the full existing entry schema.",
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     # Get active instance from session state
     # Removed session_state import
     # Set defaults if values are None
-    action = action if action is not None else 'get'
-    
+    action = action if action is not None else "get"
+
     # Parse types if it's a JSON string (handles client compatibility issue #561)
     if isinstance(types, str):
         types = parse_json_payload(types)
@@ -71,8 +86,8 @@ async def read_console(
             "success": False,
             "message": (
                 f"types must be a list, got {type(types).__name__}. "
-                "If passing as JSON string, use format: '[\"error\", \"warning\"]'"
-            )
+                'If passing as JSON string, use format: \'["error", "warning"]\''
+            ),
         }
     if types is not None:
         allowed_types = {"error", "warning", "log", "all"}
@@ -81,23 +96,22 @@ async def read_console(
             if not isinstance(entry, str):
                 return {
                     "success": False,
-                    "message": f"types entries must be strings, got {type(entry).__name__}"
+                    "message": f"types entries must be strings, got {type(entry).__name__}",
                 }
             normalized = entry.strip().lower()
             if normalized not in allowed_types:
                 return {
                     "success": False,
                     "message": (
-                        f"invalid types entry '{entry}'. "
-                        f"Allowed values: {sorted(allowed_types)}"
-                    )
+                        f"invalid types entry '{entry}'. Allowed values: {sorted(allowed_types)}"
+                    ),
                 }
             normalized_types.append(normalized)
         types = normalized_types
     else:
-        types = ['error', 'warning', 'log']
-    
-    format = format if format is not None else 'plain'
+        types = ["error", "warning", "log"]
+
+    format = format if format is not None else "plain"
     # Coerce booleans defensively (strings like 'true'/'false')
 
     include_stacktrace = coerce_bool(include_stacktrace, default=False)
@@ -111,16 +125,33 @@ async def read_console(
     selected_fields = None
     if fields is not None:
         try:
-            selected_fields = _CONSOLE_FIELDS.validate_python(parse_json_payload(fields), strict=True)
+            selected_fields = _CONSOLE_FIELDS.validate_python(
+                parse_json_payload(fields), strict=True
+            )
         except ValidationError:
-            return {"success": False, "message": "fields must be a list of type, message, file, line, or stackTrace."}
-        if (not selected_fields or len(set(selected_fields)) != len(selected_fields)
-                or not {"type", "message"}.issubset(selected_fields)):
-            return {"success": False, "message": "fields must be unique and include both type and message."}
+            return {
+                "success": False,
+                "message": "fields must be a list of type, message, file, line, or stackTrace.",
+            }
+        if (
+            not selected_fields
+            or len(set(selected_fields)) != len(selected_fields)
+            or not {"type", "message"}.issubset(selected_fields)
+        ):
+            return {
+                "success": False,
+                "message": "fields must be unique and include both type and message.",
+            }
         if action != "get" or format not in ("json", "detailed"):
-            return {"success": False, "message": "fields is supported only for get with json or detailed format."}
+            return {
+                "success": False,
+                "message": "fields is supported only for get with json or detailed format.",
+            }
         if "stackTrace" in selected_fields and not include_stacktrace:
-            return {"success": False, "message": "The stackTrace field requires include_stacktrace=true."}
+            return {
+                "success": False,
+                "message": "The stackTrace field requires include_stacktrace=true.",
+            }
 
     # Read an integer count without boolean conversion or fractional truncation.
     # Important: leaving count unset previously meant "return all console entries", which can be extremely slow
@@ -145,23 +176,24 @@ async def read_console(
         "pageSize": coerced_page_size,
         "cursor": coerced_cursor,
         "format": format.lower() if isinstance(format, str) else format,
-        "includeStacktrace": include_stacktrace
+        "includeStacktrace": include_stacktrace,
     }
 
     # Remove None values unless it's 'count' (as None might mean 'all')
-    params_dict = {k: v for k, v in params_dict.items()
-                   if v is not None or k == 'count'}
+    params_dict = {k: v for k, v in params_dict.items() if v is not None or k == "count"}
 
     # Add count back if it was None, explicitly sending null might be important for C# logic
-    if 'count' not in params_dict:
-        params_dict['count'] = None
+    if "count" not in params_dict:
+        params_dict["count"] = None
 
     if selected_fields is not None:
-        params_dict['fields'] = selected_fields
+        params_dict["fields"] = selected_fields
 
     # Use centralized retry helper with instance routing
     unity_instance = await get_unity_instance_from_context(ctx)
-    resp = await send_with_unity_instance(async_send_command_with_retry, unity_instance, "read_console", params_dict)
+    resp = await send_with_unity_instance(
+        async_send_command_with_retry, unity_instance, "read_console", params_dict
+    )
     if isinstance(resp, dict) and resp.get("success") and not include_stacktrace:
         # Strip stacktrace fields from returned lines if present
         try:

@@ -17,10 +17,7 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("manage_ui", AutoRegister = false, Group = "ui")]
     public static class ManageUI
     {
-        private static readonly HashSet<string> ValidExtensions = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".uxml", ".uss"
-        };
+        private static readonly HashSet<string> ValidExtensions = new(StringComparer.OrdinalIgnoreCase) { ".uxml", ".uss" };
 
         // UTF-8 without BOM — UI Builder in Unity 6 can fail to open UXML files with a BOM.
         private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
@@ -35,9 +32,9 @@ namespace MCPForUnity.Editor.Tools
         {
             foreach (var kvp in s_panelRTs)
             {
-                if (kvp.Value == null) continue;
-                if (s_panelBindings.TryGetValue(kvp.Key, out var binding) && binding.panel != null
-                    && binding.panel.targetTexture == kvp.Value)
+                if (kvp.Value == null)
+                    continue;
+                if (s_panelBindings.TryGetValue(kvp.Key, out var binding) && binding.panel != null && binding.panel.targetTexture == kvp.Value)
                     binding.panel.targetTexture = binding.previousTarget;
                 string assetPath = AssetDatabase.GetAssetPath(kvp.Value);
                 kvp.Value.Release();
@@ -48,7 +45,8 @@ namespace MCPForUnity.Editor.Tools
             }
             s_panelRTs.Clear();
             s_panelBindings.Clear();
-            if (s_pendingCaptureTex != null) UnityEngine.Object.DestroyImmediate(s_pendingCaptureTex);
+            if (s_pendingCaptureTex != null)
+                UnityEngine.Object.DestroyImmediate(s_pendingCaptureTex);
             s_pendingCaptureTex = null;
             s_pendingCaptureDone = s_pendingCaptureStarted = false;
         }
@@ -147,7 +145,8 @@ namespace MCPForUnity.Editor.Tools
         {
             var p = new ToolParams(@params);
             string path = ValidatePath(p.Get("path"), out string pathError);
-            if (pathError != null) return new ErrorResponse(pathError);
+            if (pathError != null)
+                return new ErrorResponse(pathError);
 
             string contents;
             try
@@ -200,13 +199,13 @@ namespace MCPForUnity.Editor.Tools
             {
                 var response = new SuccessResponse(
                     $"Created {ext} file at {path} with {validationWarnings.Count} warning(s)",
-                    new { path, validationWarnings });
+                    new { path, validationWarnings }
+                );
                 folders.Complete();
                 return response;
             }
 
-            var created = new SuccessResponse($"Created {ext} file at {path}",
-                new { path });
+            var created = new SuccessResponse($"Created {ext} file at {path}", new { path });
             folders.Complete();
             return created;
         }
@@ -215,7 +214,8 @@ namespace MCPForUnity.Editor.Tools
         {
             var p = new ToolParams(@params);
             string path = ValidatePath(p.Get("path"), out string pathError);
-            if (pathError != null) return new ErrorResponse(pathError);
+            if (pathError != null)
+                return new ErrorResponse(pathError);
 
             string fullPath = AssetPathUtility.GetFullAssetPath(path);
 
@@ -227,22 +227,25 @@ namespace MCPForUnity.Editor.Tools
             string contents = File.ReadAllText(fullPath, Encoding.UTF8);
             string encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(contents));
 
-            return new SuccessResponse($"Read {Path.GetExtension(path).TrimStart('.')} file at {path}",
+            return new SuccessResponse(
+                $"Read {Path.GetExtension(path).TrimStart('.')} file at {path}",
                 new
                 {
                     path,
                     contents,
                     encodedContents = encoded,
                     contentsEncoded = true,
-                    lengthBytes = Encoding.UTF8.GetByteCount(contents)
-                });
+                    lengthBytes = Encoding.UTF8.GetByteCount(contents),
+                }
+            );
         }
 
         private static object UpdateFile(JObject @params)
         {
             var p = new ToolParams(@params);
             string path = ValidatePath(p.Get("path"), out string pathError);
-            if (pathError != null) return new ErrorResponse(pathError);
+            if (pathError != null)
+                return new ErrorResponse(pathError);
 
             string contents;
             try
@@ -290,13 +293,10 @@ namespace MCPForUnity.Editor.Tools
             string ext = Path.GetExtension(path).TrimStart('.');
             if (validationWarnings.Count > 0)
             {
-                return new SuccessResponse(
-                    $"Updated {ext} file at {path} with {validationWarnings.Count} warning(s)",
-                    new { path, validationWarnings });
+                return new SuccessResponse($"Updated {ext} file at {path} with {validationWarnings.Count} warning(s)", new { path, validationWarnings });
             }
 
-            return new SuccessResponse($"Updated {ext} file at {path}",
-                new { path });
+            return new SuccessResponse($"Updated {ext} file at {path}", new { path });
         }
 
         private static object AttachUIDocument(JObject @params)
@@ -305,11 +305,13 @@ namespace MCPForUnity.Editor.Tools
 
             var targetResult = p.GetRequired("target");
             var targetError = targetResult.GetOrError(out string target);
-            if (targetError != null) return targetError;
+            if (targetError != null)
+                return targetError;
 
             var sourceResult = p.GetRequired("source_asset");
             var sourceError = sourceResult.GetOrError(out string sourceAssetPath);
-            if (sourceError != null) return sourceError;
+            if (sourceError != null)
+                return sourceError;
 
             sourceAssetPath = AssetPathUtility.GetContainedAssetPath(sourceAssetPath);
             if (sourceAssetPath == null)
@@ -386,14 +388,16 @@ namespace MCPForUnity.Editor.Tools
 
             EditorUtility.SetDirty(go);
 
-            var response = new SuccessResponse($"Attached UIDocument to {go.name}",
+            var response = new SuccessResponse(
+                $"Attached UIDocument to {go.name}",
                 new
                 {
                     gameObject = go.name,
                     sourceAsset = sourceAssetPath,
                     panelSettings = AssetDatabase.GetAssetPath(panelSettings),
-                    sortOrder
-                });
+                    sortOrder,
+                }
+            );
             folders.Complete();
             return response;
         }
@@ -404,7 +408,8 @@ namespace MCPForUnity.Editor.Tools
 
             var pathResult = p.GetRequired("path");
             var pathError = pathResult.GetOrError(out string path);
-            if (pathError != null) return pathError;
+            if (pathError != null)
+                return pathError;
 
             path = AssetPathUtility.GetContainedAssetPath(path);
             if (path == null)
@@ -417,41 +422,43 @@ namespace MCPForUnity.Editor.Tools
                 path += ".asset";
             }
 
-            if (File.Exists(AssetPathUtility.GetFullAssetPath(path))
-                || AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null)
+            if (File.Exists(AssetPathUtility.GetFullAssetPath(path)) || AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null)
             {
                 return new ErrorResponse($"Asset already exists at {path}");
             }
 
             var changes = new List<string>();
             using var folders = new AssetFolderScope();
-            var ps = CreateDefaultPanelSettings(path, folders, panel =>
-            {
-                JToken settingsToken = p.GetRaw("settings");
-                if (settingsToken is JObject settingsObj)
+            var ps = CreateDefaultPanelSettings(
+                path,
+                folders,
+                panel =>
                 {
-                    ApplyPanelSettingsProperties(panel, settingsObj, changes);
-                }
-                else
-                {
-                    // Legacy: support top-level scale_mode / reference_resolution
-                    string scaleMode = p.Get("scale_mode");
-                    if (!string.IsNullOrEmpty(scaleMode)
-                        && Enum.TryParse<PanelScaleMode>(scaleMode, true, out var mode))
+                    JToken settingsToken = p.GetRaw("settings");
+                    if (settingsToken is JObject settingsObj)
                     {
-                        panel.scaleMode = mode;
-                        changes.Add("scaleMode");
+                        ApplyPanelSettingsProperties(panel, settingsObj, changes);
                     }
+                    else
+                    {
+                        // Legacy: support top-level scale_mode / reference_resolution
+                        string scaleMode = p.Get("scale_mode");
+                        if (!string.IsNullOrEmpty(scaleMode) && Enum.TryParse<PanelScaleMode>(scaleMode, true, out var mode))
+                        {
+                            panel.scaleMode = mode;
+                            changes.Add("scaleMode");
+                        }
 
-                    if (p.GetRaw("reference_resolution") is JObject refRes)
-                    {
-                        int w = refRes["width"]?.ReadScalar<int?>() ?? 1920;
-                        int h = refRes["height"]?.ReadScalar<int?>() ?? 1080;
-                        panel.referenceResolution = new Vector2Int(w, h);
-                        changes.Add("referenceResolution");
+                        if (p.GetRaw("reference_resolution") is JObject refRes)
+                        {
+                            int w = refRes["width"]?.ReadScalar<int?>() ?? 1920;
+                            int h = refRes["height"]?.ReadScalar<int?>() ?? 1080;
+                            panel.referenceResolution = new Vector2Int(w, h);
+                            changes.Add("referenceResolution");
+                        }
                     }
                 }
-            });
+            );
             if (ps == null)
             {
                 return new ErrorResponse("Failed to create PanelSettings asset.");
@@ -460,8 +467,7 @@ namespace MCPForUnity.Editor.Tools
             EditorUtility.SetDirty(ps);
             AssetDatabase.SaveAssets();
 
-            var response = new SuccessResponse($"Created PanelSettings at {path}",
-                new { path, applied = changes });
+            var response = new SuccessResponse($"Created PanelSettings at {path}", new { path, applied = changes });
             folders.Complete();
             return response;
         }
@@ -472,7 +478,8 @@ namespace MCPForUnity.Editor.Tools
 
             var pathResult = p.GetRequired("path");
             var pathError = pathResult.GetOrError(out string path);
-            if (pathError != null) return pathError;
+            if (pathError != null)
+                return pathError;
 
             path = AssetPathUtility.GetContainedAssetPath(path);
             if (path == null)
@@ -498,15 +505,13 @@ namespace MCPForUnity.Editor.Tools
             EditorUtility.SetDirty(ps);
             AssetDatabase.SaveAssets();
 
-            return new SuccessResponse($"Updated PanelSettings at {path}",
-                new { path, applied = changes });
+            return new SuccessResponse($"Updated PanelSettings at {path}", new { path, applied = changes });
         }
 
         private static PanelSettings CreateDefaultPanelSettings(string path, AssetFolderScope folders, Action<PanelSettings> configure = null)
         {
             // This helper returns only a newly owned asset, never a borrowed one.
-            if (File.Exists(AssetPathUtility.GetFullAssetPath(path))
-                || AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null)
+            if (File.Exists(AssetPathUtility.GetFullAssetPath(path)) || AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null)
                 return null;
 
             var ps = ScriptableObject.CreateInstance<PanelSettings>();
@@ -516,9 +521,14 @@ namespace MCPForUnity.Editor.Tools
                 folders.EnsureParentDirectory(path);
                 AssetPathUtility.GetFullAssetPath(path);
                 AssetDatabase.CreateAsset(ps, path);
-                if (!AssetDatabase.Contains(ps)
-                    || !string.Equals(AssetPathUtility.NormalizeSeparators(AssetDatabase.GetAssetPath(ps)),
-                        AssetPathUtility.NormalizeSeparators(path), StringComparison.OrdinalIgnoreCase))
+                if (
+                    !AssetDatabase.Contains(ps)
+                    || !string.Equals(
+                        AssetPathUtility.NormalizeSeparators(AssetDatabase.GetAssetPath(ps)),
+                        AssetPathUtility.NormalizeSeparators(path),
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                )
                     return null;
 
                 AssetDatabase.SaveAssets();
@@ -526,7 +536,8 @@ namespace MCPForUnity.Editor.Tools
             }
             finally
             {
-                if (!AssetDatabase.Contains(ps)) UnityEngine.Object.DestroyImmediate(ps);
+                if (!AssetDatabase.Contains(ps))
+                    UnityEngine.Object.DestroyImmediate(ps);
             }
         }
 
@@ -558,32 +569,60 @@ namespace MCPForUnity.Editor.Tools
                 {
                     // ── Enum properties ─────────────────────────────────────
                     case "scalemode":
-                        if (TryParseEnum<PanelScaleMode>(val, out var sm)) { apply += () => ps.scaleMode = sm; changes.Add("scaleMode"); }
+                        if (TryParseEnum<PanelScaleMode>(val, out var sm))
+                        {
+                            apply += () => ps.scaleMode = sm;
+                            changes.Add("scaleMode");
+                        }
                         break;
 
                     case "screenmatchmode":
-                        if (TryParseEnum<PanelScreenMatchMode>(val, out var smm)) { apply += () => ps.screenMatchMode = smm; changes.Add("screenMatchMode"); }
+                        if (TryParseEnum<PanelScreenMatchMode>(val, out var smm))
+                        {
+                            apply += () => ps.screenMatchMode = smm;
+                            changes.Add("screenMatchMode");
+                        }
                         break;
 
                     // ── Numeric properties ──────────────────────────────────
                     case "match":
-                        if (TryFloat(val, out float matchVal)) { apply += () => ps.match = Mathf.Clamp01(matchVal); changes.Add("match"); }
+                        if (TryFloat(val, out float matchVal))
+                        {
+                            apply += () => ps.match = Mathf.Clamp01(matchVal);
+                            changes.Add("match");
+                        }
                         break;
 
                     case "referencedpi":
-                        if (TryFloat(val, out float refDpi)) { apply += () => ps.referenceDpi = refDpi; changes.Add("referenceDpi"); }
+                        if (TryFloat(val, out float refDpi))
+                        {
+                            apply += () => ps.referenceDpi = refDpi;
+                            changes.Add("referenceDpi");
+                        }
                         break;
 
                     case "fallbackdpi":
-                        if (TryFloat(val, out float fbDpi)) { apply += () => ps.fallbackDpi = fbDpi; changes.Add("fallbackDpi"); }
+                        if (TryFloat(val, out float fbDpi))
+                        {
+                            apply += () => ps.fallbackDpi = fbDpi;
+                            changes.Add("fallbackDpi");
+                        }
                         break;
 
                     case "sortingorder":
-                        if (TryInt(val, out int so)) { apply += () => ps.sortingOrder = so; changes.Add("sortingOrder"); }
+                        if (TryInt(val, out int so))
+                        {
+                            apply += () => ps.sortingOrder = so;
+                            changes.Add("sortingOrder");
+                        }
                         break;
 
                     case "targetdisplay":
-                        if (TryInt(val, out int td)) { apply += () => ps.targetDisplay = td; changes.Add("targetDisplay"); }
+                        if (TryInt(val, out int td))
+                        {
+                            apply += () => ps.targetDisplay = td;
+                            changes.Add("targetDisplay");
+                        }
                         break;
 
                     // ── Bool properties ──────────────────────────────────────
@@ -613,7 +652,11 @@ namespace MCPForUnity.Editor.Tools
                         break;
 
                     case "colorclearvalue":
-                        if (TryParseColor(val, out Color clr)) { apply += () => ps.colorClearValue = clr; changes.Add("colorClearValue"); }
+                        if (TryParseColor(val, out Color clr))
+                        {
+                            apply += () => ps.colorClearValue = clr;
+                            changes.Add("colorClearValue");
+                        }
                         break;
 
                     case "dynamicatlassettings":
@@ -640,7 +683,11 @@ namespace MCPForUnity.Editor.Tools
                         if (!string.IsNullOrEmpty(tsPath))
                         {
                             var ts = AssetDatabase.LoadAssetAtPath<ThemeStyleSheet>(AssetPathUtility.GetContainedAssetPath(tsPath));
-                            if (ts != null) { apply += () => ps.themeStyleSheet = ts; changes.Add("themeStyleSheet"); }
+                            if (ts != null)
+                            {
+                                apply += () => ps.themeStyleSheet = ts;
+                                changes.Add("themeStyleSheet");
+                            }
                         }
                         break;
                     }
@@ -660,7 +707,8 @@ namespace MCPForUnity.Editor.Tools
             return key.Replace("_", "").ToLowerInvariant();
         }
 
-        private static bool TryParseEnum<T>(JToken token, out T result) where T : struct, Enum
+        private static bool TryParseEnum<T>(JToken token, out T result)
+            where T : struct, Enum
         {
             result = default;
             string s = token?.ToString();
@@ -670,19 +718,24 @@ namespace MCPForUnity.Editor.Tools
         private static bool TryFloat(JToken token, out float result)
         {
             result = 0f;
-            if (token == null || token.Type == JTokenType.Null) return false;
+            if (token == null || token.Type == JTokenType.Null)
+                return false;
             try
             {
                 result = token.ReadScalar<float>();
                 return true;
             }
-            catch (ArgumentException) { return false; }
+            catch (ArgumentException)
+            {
+                return false;
+            }
         }
 
         private static bool TryInt(JToken token, out int result)
         {
             result = 0;
-            if (token == null) return false;
+            if (token == null)
+                return false;
             if (token.Type == JTokenType.Integer)
             {
                 result = token.ReadScalar<int>();
@@ -694,7 +747,8 @@ namespace MCPForUnity.Editor.Tools
         private static bool TryParseColor(JToken token, out Color color)
         {
             color = Color.clear;
-            if (token == null) return false;
+            if (token == null)
+                return false;
 
             // Accept "#RRGGBB", "#RRGGBBAA", or {r,g,b,a} object
             if (token.Type == JTokenType.String)
@@ -722,7 +776,8 @@ namespace MCPForUnity.Editor.Tools
 
             var targetResult = p.GetRequired("target");
             var targetError = targetResult.GetOrError(out string target);
-            if (targetError != null) return targetError;
+            if (targetError != null)
+                return targetError;
 
             int maxDepth = p.GetInt("max_depth") ?? 10;
 
@@ -742,28 +797,28 @@ namespace MCPForUnity.Editor.Tools
             var root = uiDoc.rootVisualElement;
             if (root == null)
             {
-                return new SuccessResponse($"UIDocument on {go.name} has no visual tree (not yet built).",
+                return new SuccessResponse(
+                    $"UIDocument on {go.name} has no visual tree (not yet built).",
                     new
                     {
                         gameObject = go.name,
-                        sourceAsset = uiDoc.visualTreeAsset != null
-                            ? AssetDatabase.GetAssetPath(uiDoc.visualTreeAsset)
-                            : null,
-                        tree = (object)null
-                    });
+                        sourceAsset = uiDoc.visualTreeAsset != null ? AssetDatabase.GetAssetPath(uiDoc.visualTreeAsset) : null,
+                        tree = (object)null,
+                    }
+                );
             }
 
             var tree = SerializeVisualElement(root, 0, maxDepth);
 
-            return new SuccessResponse($"Visual tree for UIDocument on {go.name}",
+            return new SuccessResponse(
+                $"Visual tree for UIDocument on {go.name}",
                 new
                 {
                     gameObject = go.name,
-                    sourceAsset = uiDoc.visualTreeAsset != null
-                        ? AssetDatabase.GetAssetPath(uiDoc.visualTreeAsset)
-                        : null,
-                    tree
-                });
+                    sourceAsset = uiDoc.visualTreeAsset != null ? AssetDatabase.GetAssetPath(uiDoc.visualTreeAsset) : null,
+                    tree,
+                }
+            );
         }
 
         private static object SerializeVisualElement(VisualElement element, int depth, int maxDepth)
@@ -779,13 +834,16 @@ namespace MCPForUnity.Editor.Tools
             var style = new Dictionary<string, object>();
             var resolved = element.resolvedStyle;
 
-            if (resolved.width > 0) style["width"] = resolved.width;
-            if (resolved.height > 0) style["height"] = resolved.height;
+            if (resolved.width > 0)
+                style["width"] = resolved.width;
+            if (resolved.height > 0)
+                style["height"] = resolved.height;
             if (resolved.color != Color.clear)
                 style["color"] = ColorToHex(resolved.color);
             if (resolved.backgroundColor != Color.clear)
                 style["backgroundColor"] = ColorToHex(resolved.backgroundColor);
-            if (resolved.fontSize > 0) style["fontSize"] = resolved.fontSize;
+            if (resolved.fontSize > 0)
+                style["fontSize"] = resolved.fontSize;
 
             if (style.Count > 0)
                 result["resolvedStyle"] = style;
@@ -830,9 +888,11 @@ namespace MCPForUnity.Editor.Tools
             int panels = 1;
             foreach (var entry in s_panelRTs)
             {
-                if (entry.Key == panelId) continue;
+                if (entry.Key == panelId)
+                    continue;
                 panels++;
-                if (entry.Value == null) continue;
+                if (entry.Value == null)
+                    continue;
                 long retained = (long)entry.Value.width * entry.Value.height;
                 if (retained > MaxCachedPanelPixels - pixels)
                     throw new ArgumentException("UI render textures exceed the cached pixel budget.");
@@ -868,8 +928,12 @@ namespace MCPForUnity.Editor.Tools
                 if (Application.isPlaying)
                     ScreenshotUtility.ValidateFrameDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height));
             }
-            catch (ArgumentException ex) { return new ErrorResponse(ex.Message); }
-            if (maxResolution == 0) maxResolution = 640;
+            catch (ArgumentException ex)
+            {
+                return new ErrorResponse(ex.Message);
+            }
+            if (maxResolution == 0)
+                maxResolution = 640;
 
             if (string.IsNullOrEmpty(target) && string.IsNullOrEmpty(uxmlPath))
             {
@@ -898,9 +962,7 @@ namespace MCPForUnity.Editor.Tools
             if (Application.isPlaying)
             {
                 // Build the output paths (used by both the pending and ready branches)
-                string resolvedPlayName = string.IsNullOrWhiteSpace(fileName)
-                    ? $"ui-render-{DateTime.Now:yyyyMMdd-HHmmss}.png"
-                    : fileName.Trim();
+                string resolvedPlayName = string.IsNullOrWhiteSpace(fileName) ? $"ui-render-{DateTime.Now:yyyyMMdd-HHmmss}.png" : fileName.Trim();
                 if (!resolvedPlayName.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
                     resolvedPlayName += ".png";
 
@@ -911,8 +973,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     s_pendingCaptureDone = false;
                     s_pendingCaptureStarted = false;
-                    return new ErrorResponse(
-                        "Play-mode screenshot timed out or captured nothing. Keep the Game view visible and the editor unpaused.");
+                    return new ErrorResponse("Play-mode screenshot timed out or captured nothing. Keep the Game view visible and the editor unpaused.");
                 }
 
                 // ── Case 1: capture is ready ──────────────────────────────────────
@@ -948,8 +1009,10 @@ namespace MCPForUnity.Editor.Tools
                         { "hasContent", true },
                     };
 
-                    if (!string.IsNullOrEmpty(target)) playData["gameObject"] = target;
-                    if (!string.IsNullOrEmpty(uxmlPath)) playData["sourceAsset"] = uxmlPath;
+                    if (!string.IsNullOrEmpty(target))
+                        playData["gameObject"] = target;
+                    if (!string.IsNullOrEmpty(uxmlPath))
+                        playData["sourceAsset"] = uxmlPath;
 
                     if (includeImage)
                     {
@@ -976,8 +1039,10 @@ namespace MCPForUnity.Editor.Tools
                         }
                         finally
                         {
-                            if (downscaled != null) UnityEngine.Object.DestroyImmediate(downscaled);
-                            if (fullTex != null) UnityEngine.Object.DestroyImmediate(fullTex);
+                            if (downscaled != null)
+                                UnityEngine.Object.DestroyImmediate(downscaled);
+                            if (fullTex != null)
+                                UnityEngine.Object.DestroyImmediate(fullTex);
                         }
                     }
 
@@ -991,7 +1056,8 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse(
                         "Cannot capture: another capture is already in progress.",
-                        new { retry_after_ms = 100, reason = "capture_in_progress" });
+                        new { retry_after_ms = 100, reason = "capture_in_progress" }
+                    );
                 }
 
                 s_pendingCaptureDone = false;
@@ -999,12 +1065,15 @@ namespace MCPForUnity.Editor.Tools
                 s_pendingCaptureStarted = true;
                 try
                 {
-                    ScreenshotCapturer.Begin(1, tex =>
-                    {
-                        s_pendingCaptureTex = tex;
-                        s_pendingCaptureDone = true;
-                        s_pendingCaptureStarted = false;
-                    });
+                    ScreenshotCapturer.Begin(
+                        1,
+                        tex =>
+                        {
+                            s_pendingCaptureTex = tex;
+                            s_pendingCaptureDone = true;
+                            s_pendingCaptureStarted = false;
+                        }
+                    );
                 }
                 catch
                 {
@@ -1018,8 +1087,9 @@ namespace MCPForUnity.Editor.Tools
                     {
                         { "pending", true },
                         { "gameObject", (object)target ?? uxmlPath },
-                        { "note", "A screen capture was scheduled for the end of this frame. Call render_ui once more to get the result." }
-                    });
+                        { "note", "A screen capture was scheduled for the end of this frame. Call render_ui once more to get the result." },
+                    }
+                );
             }
             // ── End play-mode branch ────────────────────────────────────────────────
 
@@ -1060,8 +1130,7 @@ namespace MCPForUnity.Editor.Tools
                     string[] guids = AssetDatabase.FindAssets("t:PanelSettings");
                     PanelSettings ps = null;
                     if (guids.Length > 0)
-                        ps = AssetDatabase.LoadAssetAtPath<PanelSettings>(
-                            AssetPathUtility.GetAssetPathFromGuid(guids[0], allowPackages: true));
+                        ps = AssetDatabase.LoadAssetAtPath<PanelSettings>(AssetPathUtility.GetAssetPathFromGuid(guids[0], allowPackages: true));
                     if (ps == null)
                     {
                         ps = CreateDefaultPanelSettings("Assets/UI/DefaultPanelSettings.asset", renderAssetFolders);
@@ -1078,10 +1147,8 @@ namespace MCPForUnity.Editor.Tools
                 var panelSettings = uiDoc.panelSettings;
                 int psId = panelSettings.GetInstanceIDCompat();
                 ValidateUICacheBudget(psId, width, height);
-                bool rememberBinding = !s_panelRTs.TryGetValue(psId, out var ownedTarget)
-                    || panelSettings.targetTexture != ownedTarget;
-                var previousTarget = rememberBinding
-                    ? panelSettings.targetTexture : s_panelBindings[psId].previousTarget;
+                bool rememberBinding = !s_panelRTs.TryGetValue(psId, out var ownedTarget) || panelSettings.targetTexture != ownedTarget;
+                var previousTarget = rememberBinding ? panelSettings.targetTexture : s_panelBindings[psId].previousTarget;
 
                 // Check if we already have a persistent RT assigned to this PanelSettings.
                 // If the RT exists and its size matches, the panel has been rendering into it.
@@ -1204,13 +1271,15 @@ namespace MCPForUnity.Editor.Tools
                 var pixels = tex.GetPixels32();
                 for (int i = 0; i < pixels.Length; i += Mathf.Max(1, pixels.Length / 100))
                 {
-                    if (pixels[i].a > 0) { hasContent = true; break; }
+                    if (pixels[i].a > 0)
+                    {
+                        hasContent = true;
+                        break;
+                    }
                 }
 
                 // Save to Screenshots folder
-                string resolvedName = string.IsNullOrWhiteSpace(fileName)
-                    ? $"ui-render-{DateTime.Now:yyyyMMdd-HHmmss}.png"
-                    : fileName.Trim();
+                string resolvedName = string.IsNullOrWhiteSpace(fileName) ? $"ui-render-{DateTime.Now:yyyyMMdd-HHmmss}.png" : fileName.Trim();
                 if (!resolvedName.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
                     resolvedName += ".png";
 
@@ -1262,15 +1331,15 @@ namespace MCPForUnity.Editor.Tools
                     }
                     finally
                     {
-                        if (downscaled != null) UnityEngine.Object.DestroyImmediate(downscaled);
+                        if (downscaled != null)
+                            UnityEngine.Object.DestroyImmediate(downscaled);
                     }
                 }
 
-                string msg = hasContent
-                    ? $"UI rendered to '{projectRelPath}'."
-                    : rtJustAssigned
-                        ? $"RenderTexture assigned to PanelSettings. Call render_ui again to capture the rendered content."
-                        : $"UI render saved to '{projectRelPath}' (no visible content detected).";
+                string msg =
+                    hasContent ? $"UI rendered to '{projectRelPath}'."
+                    : rtJustAssigned ? $"RenderTexture assigned to PanelSettings. Call render_ui again to capture the rendered content."
+                    : $"UI render saved to '{projectRelPath}' (no visible content detected).";
 
                 renderAssetFolders.Complete();
                 return new SuccessResponse(msg, data);
@@ -1279,8 +1348,10 @@ namespace MCPForUnity.Editor.Tools
             {
                 try
                 {
-                    if (tex != null) UnityEngine.Object.DestroyImmediate(tex);
-                    if (tempGo != null) UnityEngine.Object.DestroyImmediate(tempGo);
+                    if (tex != null)
+                        UnityEngine.Object.DestroyImmediate(tex);
+                    if (tempGo != null)
+                        UnityEngine.Object.DestroyImmediate(tempGo);
                     if (tempPs != null)
                     {
                         string tempPsPath = AssetDatabase.GetAssetPath(tempPs);
@@ -1305,7 +1376,8 @@ namespace MCPForUnity.Editor.Tools
 
             string uxmlPathRaw = p.Get("path");
             string uxmlPath = ValidatePath(uxmlPathRaw, out string pathError);
-            if (pathError != null) return new ErrorResponse(pathError);
+            if (pathError != null)
+                return new ErrorResponse(pathError);
 
             // Validate the UXML path is actually a .uxml
             if (!uxmlPath.EndsWith(".uxml", StringComparison.OrdinalIgnoreCase))
@@ -1331,11 +1403,17 @@ namespace MCPForUnity.Editor.Tools
             string content = File.ReadAllText(fullPath, Encoding.UTF8);
 
             // Check if stylesheet is already linked
-            if (content.Contains($"src=\"{stylesheetPath}\"") ||
-                content.Contains($"src=\"project://database/{stylesheetPath}\""))
+            if (content.Contains($"src=\"{stylesheetPath}\"") || content.Contains($"src=\"project://database/{stylesheetPath}\""))
             {
-                return new SuccessResponse($"Stylesheet already linked in '{uxmlPath}'.",
-                    new { path = uxmlPath, stylesheet = stylesheetPath, alreadyLinked = true });
+                return new SuccessResponse(
+                    $"Stylesheet already linked in '{uxmlPath}'.",
+                    new
+                    {
+                        path = uxmlPath,
+                        stylesheet = stylesheetPath,
+                        alreadyLinked = true,
+                    }
+                );
             }
 
             // Find the insertion point (after the opening <ui:UXML ...> or <UXML ...> tag)
@@ -1349,8 +1427,7 @@ namespace MCPForUnity.Editor.Tools
             File.WriteAllText(fullPath, content, Utf8NoBom);
             AssetDatabase.ImportAsset(uxmlPath, ImportAssetOptions.ForceUpdate);
 
-            return new SuccessResponse($"Linked stylesheet '{stylesheetPath}' to '{uxmlPath}'.",
-                new { path = uxmlPath, stylesheet = stylesheetPath });
+            return new SuccessResponse($"Linked stylesheet '{stylesheetPath}' to '{uxmlPath}'.", new { path = uxmlPath, stylesheet = stylesheetPath });
         }
 
         // ---- Delete ----
@@ -1359,7 +1436,8 @@ namespace MCPForUnity.Editor.Tools
         {
             var p = new ToolParams(@params);
             string path = ValidatePath(p.Get("path"), out string pathError);
-            if (pathError != null) return new ErrorResponse(pathError);
+            if (pathError != null)
+                return new ErrorResponse(pathError);
 
             string fullPath = AssetPathUtility.GetFullAssetPath(path);
 
@@ -1382,8 +1460,7 @@ namespace MCPForUnity.Editor.Tools
                     File.Delete(fullPath);
                 }
 
-                return new SuccessResponse($"Deleted {Path.GetExtension(path).TrimStart('.')} file at {path}",
-                    new { path });
+                return new SuccessResponse($"Deleted {Path.GetExtension(path).TrimStart('.')} file at {path}", new { path });
             }
             catch (Exception e)
             {
@@ -1398,10 +1475,26 @@ namespace MCPForUnity.Editor.Tools
             var p = new ToolParams(@params);
             string scope = p.Get("path") ?? "Assets";
             string filterType = p.Get("filter_type") ?? p.Get("filterType");
-            if (!PaginationBounds.TryRead(@params["page_size"] ?? @params["pageSize"], 50,
-                    1, PaginationBounds.MaxPageSize, "pageSize", out int pageSize, out string pageError)
-                || !PaginationBounds.TryRead(@params["page_number"] ?? @params["pageNumber"], 1,
-                    1, int.MaxValue, "pageNumber", out int pageNumber, out pageError))
+            if (
+                !PaginationBounds.TryRead(
+                    @params["page_size"] ?? @params["pageSize"],
+                    50,
+                    1,
+                    PaginationBounds.MaxPageSize,
+                    "pageSize",
+                    out int pageSize,
+                    out string pageError
+                )
+                || !PaginationBounds.TryRead(
+                    @params["page_number"] ?? @params["pageNumber"],
+                    1,
+                    1,
+                    int.MaxValue,
+                    "pageNumber",
+                    out int pageNumber,
+                    out pageError
+                )
+            )
                 return new ErrorResponse(pageError);
             long startIndex = PaginationBounds.StartIndex(pageNumber, pageSize);
 
@@ -1422,28 +1515,41 @@ namespace MCPForUnity.Editor.Tools
             void AddPage(string guid, string type)
             {
                 string assetPath;
-                try { assetPath = AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: true); }
-                catch (ArgumentException) { return; }
-                catch (InvalidOperationException) { return; }
-                if (string.IsNullOrEmpty(assetPath)) return;
+                try
+                {
+                    assetPath = AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: true);
+                }
+                catch (ArgumentException)
+                {
+                    return;
+                }
+                catch (InvalidOperationException)
+                {
+                    return;
+                }
+                if (string.IsNullOrEmpty(assetPath))
+                    return;
                 if (total >= startIndex && paged.Count < pageSize)
-                    paged.Add(new Dictionary<string, object>
-                    {
-                        ["path"] = assetPath,
-                        ["type"] = type,
-                        ["name"] = Path.GetFileName(assetPath),
-                    });
+                    paged.Add(
+                        new Dictionary<string, object>
+                        {
+                            ["path"] = assetPath,
+                            ["type"] = type,
+                            ["name"] = Path.GetFileName(assetPath),
+                        }
+                    );
                 total++;
             }
 
-            bool includeUxml = string.IsNullOrEmpty(filterType) ||
-                               filterType.Equals("uxml", StringComparison.OrdinalIgnoreCase) ||
-                               filterType.Equals("VisualTreeAsset", StringComparison.OrdinalIgnoreCase);
-            bool includeUss = string.IsNullOrEmpty(filterType) ||
-                              filterType.Equals("uss", StringComparison.OrdinalIgnoreCase) ||
-                              filterType.Equals("StyleSheet", StringComparison.OrdinalIgnoreCase);
-            bool includePanelSettings = string.IsNullOrEmpty(filterType) ||
-                                        filterType.Equals("PanelSettings", StringComparison.OrdinalIgnoreCase);
+            bool includeUxml =
+                string.IsNullOrEmpty(filterType)
+                || filterType.Equals("uxml", StringComparison.OrdinalIgnoreCase)
+                || filterType.Equals("VisualTreeAsset", StringComparison.OrdinalIgnoreCase);
+            bool includeUss =
+                string.IsNullOrEmpty(filterType)
+                || filterType.Equals("uss", StringComparison.OrdinalIgnoreCase)
+                || filterType.Equals("StyleSheet", StringComparison.OrdinalIgnoreCase);
+            bool includePanelSettings = string.IsNullOrEmpty(filterType) || filterType.Equals("PanelSettings", StringComparison.OrdinalIgnoreCase);
 
             if (includeUxml)
             {
@@ -1481,7 +1587,8 @@ namespace MCPForUnity.Editor.Tools
                     pageNumber,
                     maxPageSize = PaginationBounds.MaxPageSize,
                     assets = paged,
-                });
+                }
+            );
         }
 
         // ---- Detach UIDocument ----
@@ -1492,7 +1599,8 @@ namespace MCPForUnity.Editor.Tools
 
             var targetResult = p.GetRequired("target");
             var targetError = targetResult.GetOrError(out string target);
-            if (targetError != null) return targetError;
+            if (targetError != null)
+                return targetError;
 
             var goInstruction = new JObject { ["find"] = target };
             GameObject go = ObjectResolver.Resolve(goInstruction, typeof(GameObject)) as GameObject;
@@ -1507,19 +1615,12 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"GameObject '{go.name}' has no UIDocument component.");
             }
 
-            string sourceAsset = uiDoc.visualTreeAsset != null
-                ? AssetDatabase.GetAssetPath(uiDoc.visualTreeAsset)
-                : null;
+            string sourceAsset = uiDoc.visualTreeAsset != null ? AssetDatabase.GetAssetPath(uiDoc.visualTreeAsset) : null;
 
             Undo.DestroyObjectImmediate(uiDoc);
             EditorUtility.SetDirty(go);
 
-            return new SuccessResponse($"Removed UIDocument from {go.name}",
-                new
-                {
-                    gameObject = go.name,
-                    removedSourceAsset = sourceAsset,
-                });
+            return new SuccessResponse($"Removed UIDocument from {go.name}", new { gameObject = go.name, removedSourceAsset = sourceAsset });
         }
 
         // ---- Modify Visual Element ----
@@ -1530,7 +1631,8 @@ namespace MCPForUnity.Editor.Tools
 
             var targetResult = p.GetRequired("target");
             var targetError = targetResult.GetOrError(out string target);
-            if (targetError != null) return targetError;
+            if (targetError != null)
+                return targetError;
 
             string elementName = p.Get("element_name") ?? p.Get("elementName");
             if (string.IsNullOrEmpty(elementName))
@@ -1571,8 +1673,7 @@ namespace MCPForUnity.Editor.Tools
             // Parse all style values before changing text, classes or earlier styles.
             JToken styleToken = p.GetRaw("style") ?? p.GetRaw("inline_style") ?? p.GetRaw("inlineStyle");
             var styleModifications = new List<string>();
-            var inlineStyles = styleToken is JObject styleObj
-                ? PrepareInlineStyles(styleObj, styleModifications) : null;
+            var inlineStyles = styleToken is JObject styleObj ? PrepareInlineStyles(styleObj, styleModifications) : null;
             bool? enabled = p.GetNullableBool("enabled");
             bool? visibility = p.GetNullableBool("visible");
             var modifications = new List<string>();
@@ -1629,7 +1730,8 @@ namespace MCPForUnity.Editor.Tools
             // Set inline styles
             if (inlineStyles != null)
             {
-                foreach (var apply in inlineStyles) apply(element);
+                foreach (var apply in inlineStyles)
+                    apply(element);
                 modifications.AddRange(styleModifications);
             }
 
@@ -1662,9 +1764,10 @@ namespace MCPForUnity.Editor.Tools
 
             if (applied.Count == 0)
             {
-                string msg = skipped.Count > 0
-                    ? $"No modifications applied. Skipped unsupported styles: {string.Join(", ", skipped)}"
-                    : "No modifications specified. Provide at least one of: text, add_classes, remove_classes, toggle_classes, style, enabled, visible, tooltip.";
+                string msg =
+                    skipped.Count > 0
+                        ? $"No modifications applied. Skipped unsupported styles: {string.Join(", ", skipped)}"
+                        : "No modifications specified. Provide at least one of: text, add_classes, remove_classes, toggle_classes, style, enabled, visible, tooltip.";
                 return new ErrorResponse(msg);
             }
 
@@ -1679,9 +1782,7 @@ namespace MCPForUnity.Editor.Tools
             if (skipped.Count > 0)
                 responseData["skipped"] = skipped;
 
-            return new SuccessResponse(
-                $"Modified element '{elementName}' on {go.name}: {string.Join(", ", applied)}",
-                responseData);
+            return new SuccessResponse($"Modified element '{elementName}' on {go.name}: {string.Join(", ", applied)}", responseData);
         }
 
         private static List<Action<VisualElement>> PrepareInlineStyles(JObject styleObj, List<string> modifications)
@@ -1876,9 +1977,11 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 int closeTag = content.IndexOf('>', idx);
-                if (closeTag < 0) return -1;
+                if (closeTag < 0)
+                    return -1;
                 // Self-closing tag cannot have children
-                if (closeTag > 0 && content[closeTag - 1] == '/') return -1;
+                if (closeTag > 0 && content[closeTag - 1] == '/')
+                    return -1;
 
                 return closeTag + 1;
             }
@@ -1888,7 +1991,8 @@ namespace MCPForUnity.Editor.Tools
 
         private static string EnsureUniqueFilePath(string path)
         {
-            if (!File.Exists(path)) return path;
+            if (!File.Exists(path))
+                return path;
             string dir = Path.GetDirectoryName(path) ?? string.Empty;
             string baseName = Path.GetFileNameWithoutExtension(path);
             string ext = Path.GetExtension(path);
@@ -1922,9 +2026,7 @@ namespace MCPForUnity.Editor.Tools
                     }
                     catch (FormatException ex)
                     {
-                        throw new ArgumentException(
-                            "Parameter 'encodedContents' must be valid base64 when 'contentsEncoded' is true.",
-                            ex);
+                        throw new ArgumentException("Parameter 'encodedContents' must be valid base64 when 'contentsEncoded' is true.", ex);
                     }
                 }
             }
@@ -1939,7 +2041,6 @@ namespace MCPForUnity.Editor.Tools
         /// Uses XmlParserContext to pre-declare common UXML namespace prefixes
         /// (ui, uie, engine, editor) since Unity's parser is more lenient than System.Xml.
         /// </summary>
-
         /// <summary>
         /// Ensures the root UXML element has editor-extension-mode attribute.
         /// UI Builder requires this to open the file. Injects "False" if missing.
@@ -1962,9 +2063,7 @@ namespace MCPForUnity.Editor.Tools
             bool selfClosing = contents[closeTag - 1] == '/';
             int insertPos = selfClosing ? closeTag - 1 : closeTag;
 
-            return contents.Substring(0, insertPos)
-                 + " editor-extension-mode=\"False\""
-                 + contents.Substring(insertPos);
+            return contents.Substring(0, insertPos) + " editor-extension-mode=\"False\"" + contents.Substring(insertPos);
         }
 
         private static string ValidateUxmlContent(string contents, List<string> warnings)
@@ -2005,8 +2104,7 @@ namespace MCPForUnity.Editor.Tools
 
             if (!contents.Contains("UnityEngine.UIElements"))
             {
-                warnings.Add("Missing namespace declaration xmlns:ui=\"UnityEngine.UIElements\". " +
-                              "UI Builder may fail to open this file.");
+                warnings.Add("Missing namespace declaration xmlns:ui=\"UnityEngine.UIElements\". " + "UI Builder may fail to open this file.");
             }
 
             return null;
@@ -2020,9 +2118,11 @@ namespace MCPForUnity.Editor.Tools
             var asset = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(assetPath);
             if (asset == null)
             {
-                warnings.Add("Unity failed to parse the UXML file. " +
-                              "The file was written but UI Builder will not be able to open it. " +
-                              "Check the console for details.");
+                warnings.Add(
+                    "Unity failed to parse the UXML file. "
+                        + "The file was written but UI Builder will not be able to open it. "
+                        + "Check the console for details."
+                );
             }
         }
     }

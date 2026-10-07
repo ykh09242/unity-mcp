@@ -52,9 +52,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
             if (visionOSAvailable)
             {
                 Assert.IsTrue(BuildTargetMapping.TryResolveBuildTarget("visionos", out _));
-                Assert.IsTrue(
-                    error == null || error.Contains("VisionOS"),
-                    $"Expected no error or a VisionOS-specific error, got: {error}");
+                Assert.IsTrue(error == null || error.Contains("VisionOS"), $"Expected no error or a VisionOS-specific error, got: {error}");
             }
             else
             {

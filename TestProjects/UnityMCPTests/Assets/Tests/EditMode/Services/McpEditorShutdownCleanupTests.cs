@@ -1,6 +1,6 @@
 using System;
-using NUnit.Framework;
 using MCPForUnity.Editor.Services;
+using NUnit.Framework;
 using UnityEngine;
 
 namespace MCPForUnityTests.Editor.Services
@@ -41,8 +41,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             // Proves the wiring to Application.isBatchMode / UNITY_MCP_ALLOW_BATCH is correct
             // without assuming how this test run was launched (GUI Test Runner vs -batchmode CI).
-            bool expected = !Application.isBatchMode
-                || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH"));
+            bool expected = !Application.isBatchMode || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH"));
             Assert.AreEqual(expected, McpEditorShutdownCleanup.ShouldRunCleanup());
         }
     }

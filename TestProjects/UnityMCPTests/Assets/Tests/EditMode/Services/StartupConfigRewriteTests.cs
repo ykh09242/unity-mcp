@@ -28,8 +28,7 @@ namespace MCPForUnityTests.Editor.Services
         public void StartupConfigRewrite_RunOncePerSession_GuardKey()
         {
             var t = System.Type.GetType("MCPForUnity.Editor.Services.StartupConfigRewrite, MCPForUnity.Editor");
-            var keyField = t?.GetField("SESSION_GUARD_KEY",
-                BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Public);
+            var keyField = t?.GetField("SESSION_GUARD_KEY", BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Public);
             Assert.IsNotNull(keyField);
             string val = (string)keyField.GetValue(null);
             StringAssert.StartsWith("MCPForUnity.", val);

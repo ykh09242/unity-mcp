@@ -26,12 +26,10 @@ def component():
     "--search-method",
     type=SEARCH_METHOD_CHOICE_BASIC,
     default=None,
-    help="How to find the target GameObject."
+    help="How to find the target GameObject.",
 )
 @click.option(
-    "--properties", "-p",
-    default=None,
-    help='Initial properties as JSON (e.g., \'{"mass": 5.0}\').'
+    "--properties", "-p", default=None, help="Initial properties as JSON (e.g., '{\"mass\": 5.0}')."
 )
 @handle_unity_errors
 def add(target: str, component_type: str, search_method: Optional[str], properties: Optional[str]):
@@ -69,21 +67,24 @@ def add(target: str, component_type: str, search_method: Optional[str], properti
     "--search-method",
     type=SEARCH_METHOD_CHOICE_BASIC,
     default=None,
-    help="How to find the target GameObject."
+    help="How to find the target GameObject.",
 )
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt.")
 @click.option(
-    "--force", "-f",
-    is_flag=True,
-    help="Skip confirmation prompt."
-)
-@click.option(
-    "--component-index", "-i",
+    "--component-index",
+    "-i",
     type=int,
     default=None,
-    help="Zero-based index when multiple components of the same type exist."
+    help="Zero-based index when multiple components of the same type exist.",
 )
 @handle_unity_errors
-def remove(target: str, component_type: str, search_method: Optional[str], force: bool, component_index: Optional[int]):
+def remove(
+    target: str,
+    component_type: str,
+    search_method: Optional[str],
+    force: bool,
+    component_index: Optional[int],
+):
     """Remove a component from a GameObject.
 
     \b
@@ -122,16 +123,24 @@ def remove(target: str, component_type: str, search_method: Optional[str], force
     "--search-method",
     type=SEARCH_METHOD_CHOICE_BASIC,
     default=None,
-    help="How to find the target GameObject."
+    help="How to find the target GameObject.",
 )
 @click.option(
-    "--component-index", "-i",
+    "--component-index",
+    "-i",
     type=int,
     default=None,
-    help="Zero-based index when multiple components of the same type exist."
+    help="Zero-based index when multiple components of the same type exist.",
 )
 @handle_unity_errors
-def set_property(target: str, component_type: str, property_name: str, value: str, search_method: Optional[str], component_index: Optional[int]):
+def set_property(
+    target: str,
+    component_type: str,
+    property_name: str,
+    value: str,
+    search_method: Optional[str],
+    component_index: Optional[int],
+):
     """Set a single property on a component.
 
     \b
@@ -169,24 +178,32 @@ def set_property(target: str, component_type: str, property_name: str, value: st
 @click.argument("target")
 @click.argument("component_type")
 @click.option(
-    "--properties", "-p",
+    "--properties",
+    "-p",
     required=True,
-    help='Properties to set as JSON (e.g., \'{"mass": 5.0, "useGravity": false}\').'
+    help='Properties to set as JSON (e.g., \'{"mass": 5.0, "useGravity": false}\').',
 )
 @click.option(
     "--search-method",
     type=SEARCH_METHOD_CHOICE_BASIC,
     default=None,
-    help="How to find the target GameObject."
+    help="How to find the target GameObject.",
 )
 @click.option(
-    "--component-index", "-i",
+    "--component-index",
+    "-i",
     type=int,
     default=None,
-    help="Zero-based index when multiple components of the same type exist."
+    help="Zero-based index when multiple components of the same type exist.",
 )
 @handle_unity_errors
-def modify(target: str, component_type: str, properties: str, search_method: Optional[str], component_index: Optional[int]):
+def modify(
+    target: str,
+    component_type: str,
+    properties: str,
+    search_method: Optional[str],
+    component_index: Optional[int],
+):
     """Set multiple properties on a component at once.
 
     \b

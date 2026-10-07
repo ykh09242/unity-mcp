@@ -1,8 +1,8 @@
-using System.Collections.Generic;
 using System;
+using System.Collections.Generic;
+using MCPForUnity.Runtime.Serialization;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using MCPForUnity.Runtime.Serialization;
 
 namespace MCPForUnity.Editor.Helpers
 {
@@ -16,22 +16,24 @@ namespace MCPForUnity.Editor.Helpers
         /// Shared JsonSerializer instance with converters for Unity types.
         /// Use this for all JToken-to-Unity-type conversions.
         /// </summary>
-        public static readonly JsonSerializer Instance = JsonSerializer.Create(new JsonSerializerSettings
-        {
-            Converters = new List<JsonConverter>
+        public static readonly JsonSerializer Instance = JsonSerializer.Create(
+            new JsonSerializerSettings
             {
-                new StrictScalarConverter(),
-                new Vector2Converter(),
-                new Vector3Converter(),
-                new Vector4Converter(),
-                new QuaternionConverter(),
-                new ColorConverter(),
-                new RectConverter(),
-                new BoundsConverter(),
-                new Matrix4x4Converter(),
-                new UnityEngineObjectConverter()
+                Converters = new List<JsonConverter>
+                {
+                    new StrictScalarConverter(),
+                    new Vector2Converter(),
+                    new Vector3Converter(),
+                    new Vector4Converter(),
+                    new QuaternionConverter(),
+                    new ColorConverter(),
+                    new RectConverter(),
+                    new BoundsConverter(),
+                    new Matrix4x4Converter(),
+                    new UnityEngineObjectConverter(),
+                },
             }
-        });
+        );
 
         // Json.NET otherwise converts numeric flags to Boolean, rounds floating
         // tokens for integer members, and accepts Boolean values as numbers.
@@ -39,7 +41,9 @@ namespace MCPForUnity.Editor.Helpers
         private sealed class StrictScalarConverter : JsonConverter
         {
             public override bool CanWrite => false;
+
             public override bool CanConvert(Type objectType) => objectType == typeof(byte[]) || JsonScalarConversion.Supports(objectType);
+
             public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
             {
                 JToken token = JToken.Load(reader);
@@ -51,15 +55,19 @@ namespace MCPForUnity.Editor.Helpers
                 // converters and rounding floats. Preserve base64 output/input.
                 if (objectType == typeof(byte[]))
                 {
-                    if (token.Type == JTokenType.Null) return null;
-                    if (token.Type == JTokenType.Bytes) return token.Value<byte[]>();
-                    if (token.Type == JTokenType.String) return Convert.FromBase64String(token.Value<string>());
+                    if (token.Type == JTokenType.Null)
+                        return null;
+                    if (token.Type == JTokenType.Bytes)
+                        return token.Value<byte[]>();
+                    if (token.Type == JTokenType.String)
+                        return Convert.FromBase64String(token.Value<string>());
                     if (token is JArray array)
                     {
                         var bytes = new byte[array.Count];
                         for (int i = 0; i < array.Count; i++)
                         {
-                            if (array[i].Type == JTokenType.Null) throw new JsonSerializationException($"Cannot assign null to Byte at '{array[i].Path}'.");
+                            if (array[i].Type == JTokenType.Null)
+                                throw new JsonSerializationException($"Cannot assign null to Byte at '{array[i].Path}'.");
                             bytes[i] = (byte)JsonScalarConversion.Read(array[i], typeof(byte));
                         }
                         return bytes;
@@ -68,9 +76,8 @@ namespace MCPForUnity.Editor.Helpers
                 }
                 return JsonScalarConversion.Read(token, objectType);
             }
-            public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
-                => throw new NotSupportedException();
+
+            public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer) => throw new NotSupportedException();
         }
     }
 }
-

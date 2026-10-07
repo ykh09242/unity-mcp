@@ -2,12 +2,12 @@ using System;
 using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -70,7 +70,8 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (!capturedState) return;
+            if (!capturedState)
+                return;
             try
             {
                 if (target != null)
@@ -100,13 +101,21 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
-        private JObject Request(string action) => new JObject
-        {
-            ["action"] = action, ["target"] = target.GetInstanceIDCompat(), ["searchMethod"] = "by_id",
-            ["componentType"] = "BoxCollider", ["property"] = "isTrigger", ["value"] = false
-        };
+        private JObject Request(string action) =>
+            new JObject
+            {
+                ["action"] = action,
+                ["target"] = target.GetInstanceIDCompat(),
+                ["searchMethod"] = "by_id",
+                ["componentType"] = "BoxCollider",
+                ["property"] = "isTrigger",
+                ["value"] = false,
+            };
+
         private static JObject Call(JObject request) => JObject.FromObject(ManageComponents.HandleCommand(request));
+
         private static void Success(JObject response) => Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+
         private void Unchanged()
         {
             CollectionAssert.AreEqual(new[] { first, second }, target.GetComponents<BoxCollider>());
@@ -126,8 +135,12 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("remove", "overflow")]
         public void InvalidExplicitIndex_PreservesBothComponentsAndCleanScene(string action, string kind)
         {
-            JToken index = kind == "string" ? new JValue("bad") : kind == "boolean" ? new JValue(true)
-                : kind == "array" ? new JArray(1) : kind == "object" ? new JObject() : new JValue(2147483648L);
+            JToken index =
+                kind == "string" ? new JValue("bad")
+                : kind == "boolean" ? new JValue(true)
+                : kind == "array" ? new JArray(1)
+                : kind == "object" ? new JObject()
+                : new JValue(2147483648L);
             JObject request = Request(action);
             request["componentIndex"] = index;
             Assert.IsFalse(Call(request).Value<bool>("success"));
@@ -145,8 +158,13 @@ namespace MCPForUnityTests.Editor.Tools
             request["componentIndex"] = JValue.CreateNull();
             request["component_index"] = 1;
             Success(Call(request));
-            if (action == "remove") CollectionAssert.AreEqual(new[] { second }, target.GetComponents<BoxCollider>());
-            else { Assert.IsFalse(first.isTrigger); Assert.IsTrue(second.isTrigger); }
+            if (action == "remove")
+                CollectionAssert.AreEqual(new[] { second }, target.GetComponents<BoxCollider>());
+            else
+            {
+                Assert.IsFalse(first.isTrigger);
+                Assert.IsTrue(second.isTrigger);
+            }
         }
 
         [TestCase("set_property", "omitted")]
@@ -166,12 +184,18 @@ namespace MCPForUnityTests.Editor.Tools
         public void ExistingIndexConversions_SelectOnlyRequestedComponent(string action, string kind)
         {
             JObject request = Request(action);
-            if (kind != "omitted") request["componentIndex"] = kind == "null" ? JValue.CreateNull()
-                : kind == "blank" ? new JValue("  ") : kind == "zero" ? new JValue(0)
-                : kind == "one" ? new JValue(1) : kind == "string" ? new JValue("1") : new JValue(1.9);
+            if (kind != "omitted")
+                request["componentIndex"] =
+                    kind == "null" ? JValue.CreateNull()
+                    : kind == "blank" ? new JValue("  ")
+                    : kind == "zero" ? new JValue(0)
+                    : kind == "one" ? new JValue(1)
+                    : kind == "string" ? new JValue("1")
+                    : new JValue(1.9);
             bool selectsSecond = kind == "one" || kind == "string" || kind == "fraction";
             Success(Call(request));
-            if (action == "remove") CollectionAssert.AreEqual(new[] { selectsSecond ? first : second }, target.GetComponents<BoxCollider>());
+            if (action == "remove")
+                CollectionAssert.AreEqual(new[] { selectsSecond ? first : second }, target.GetComponents<BoxCollider>());
             else
             {
                 Assert.AreEqual(selectsSecond, first.isTrigger);
@@ -187,8 +211,10 @@ namespace MCPForUnityTests.Editor.Tools
         public void MalformedAddProperties_DoesNotAllocateOrDirty(string kind)
         {
             JObject request = Request("add");
-            request[kind == "secondary" ? "componentProperties" : "properties"] = kind == "array" ? new JArray()
-                : kind == "string" ? new JValue("bad") : new JValue(false);
+            request[kind == "secondary" ? "componentProperties" : "properties"] =
+                kind == "array" ? new JArray()
+                : kind == "string" ? new JValue("bad")
+                : new JValue(false);
             Assert.IsFalse(Call(request).Value<bool>("success"));
             Unchanged();
         }
@@ -202,11 +228,19 @@ namespace MCPForUnityTests.Editor.Tools
         public void ValidAddPropertiesDefaultsAndAliasPrecedence_ArePreserved(string kind)
         {
             JObject request = Request("add");
-            if (kind == "null") request["properties"] = JValue.CreateNull();
-            if (kind == "empty" || kind == "empty_primary") request["properties"] = new JObject();
-            if (kind == "fallback") request["properties"] = false;
-            if (kind == "fallback" || kind == "empty_primary") request["componentProperties"] = new JObject { ["isTrigger"] = !boxDefaultTrigger };
-            if (kind == "ignored_secondary") { request["properties"] = new JObject { ["isTrigger"] = !boxDefaultTrigger }; request["componentProperties"] = false; }
+            if (kind == "null")
+                request["properties"] = JValue.CreateNull();
+            if (kind == "empty" || kind == "empty_primary")
+                request["properties"] = new JObject();
+            if (kind == "fallback")
+                request["properties"] = false;
+            if (kind == "fallback" || kind == "empty_primary")
+                request["componentProperties"] = new JObject { ["isTrigger"] = !boxDefaultTrigger };
+            if (kind == "ignored_secondary")
+            {
+                request["properties"] = new JObject { ["isTrigger"] = !boxDefaultTrigger };
+                request["componentProperties"] = false;
+            }
             Success(Call(request));
             BoxCollider[] components = target.GetComponents<BoxCollider>();
             Assert.AreEqual(3, components.Length);
@@ -228,7 +262,8 @@ namespace MCPForUnityTests.Editor.Tools
             BoxCollider[] components = target.GetComponents<BoxCollider>();
             Assert.AreEqual(action == "add" ? 3 : 2, components.Length);
             Assert.AreEqual(expectedValue, components[action == "add" ? 2 : 0].isTrigger);
-            if (action == "add") Assert.IsTrue(response["data"].Value<bool>("componentAdded"));
+            if (action == "add")
+                Assert.IsTrue(response["data"].Value<bool>("componentAdded"));
             Assert.IsTrue(ownedScene.isDirty);
         }
 

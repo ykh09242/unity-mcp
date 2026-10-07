@@ -28,12 +28,9 @@ BRIDGE_SUBPATH = "MCPForUnity"
 
 
 def run_git(repo: pathlib.Path, *args: str) -> str:
-    result = subprocess.run([
-        "git", "-C", str(repo), *args
-    ], capture_output=True, text=True)
+    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip()
-                           or f"git {' '.join(args)} failed")
+        raise RuntimeError(result.stderr.strip() or f"git {' '.join(args)} failed")
     return result.stdout.strip()
 
 
@@ -83,7 +80,8 @@ def find_manifest(explicit: str | None) -> pathlib.Path:
         if candidate.exists():
             return candidate
     raise FileNotFoundError(
-        "Could not find Packages/manifest.json from current directory. Use --manifest to specify a path.")
+        "Could not find Packages/manifest.json from current directory. Use --manifest to specify a path."
+    )
 
 
 def read_json(path: pathlib.Path) -> dict:
@@ -114,19 +112,15 @@ def build_options(repo_root: pathlib.Path, branch: str | None, origin_https: str
         ("[1] Upstream main", upstream_main),
         ("[2] Upstream beta", upstream_beta),
         (remote_label, remote_source),
-        (f"[4] Local {branch or 'workspace'}",
-         f"file:{(repo_root / BRIDGE_SUBPATH).as_posix()}"),
+        (f"[4] Local {branch or 'workspace'}", f"file:{(repo_root / BRIDGE_SUBPATH).as_posix()}"),
     ]
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="Switch MCP for Unity package source")
+    p = argparse.ArgumentParser(description="Switch MCP for Unity package source")
     p.add_argument("--manifest", help="Path to Packages/manifest.json")
-    p.add_argument(
-        "--repo", help="Path to unity-mcp repo root (for local file option)")
-    p.add_argument(
-        "--choice", choices=["1", "2", "3", "4"], help="Pick option non-interactively")
+    p.add_argument("--repo", help="Path to unity-mcp repo root (for local file option)")
+    p.add_argument("--choice", choices=["1", "2", "3", "4"], help="Pick option non-interactively")
     return p.parse_args()
 
 
@@ -172,20 +166,23 @@ def main() -> None:
     idx = int(choice) - 1
     _, chosen = options[idx]
     if chosen is None:
-        print("Error: Remote source requires an origin and a checked-out revision.", file=sys.stderr)
+        print(
+            "Error: Remote source requires an origin and a checked-out revision.", file=sys.stderr
+        )
         sys.exit(1)
 
     data = read_json(manifest_path)
     deps = data.get("dependencies", {})
     package_names = {PKG_NAME, UPSTREAM_PKG_NAME}
     if not package_names.intersection(deps):
-        print(
-            f"Error: '{PKG_NAME}' not found in manifest dependencies.", file=sys.stderr)
+        print(f"Error: '{PKG_NAME}' not found in manifest dependencies.", file=sys.stderr)
         sys.exit(1)
 
     parsed = urlsplit(chosen)
-    upstream = (parsed.hostname == "github.com"
-                and parsed.path.removesuffix(".git").casefold() == "/coplaydev/unity-mcp")
+    upstream = (
+        parsed.hostname == "github.com"
+        and parsed.path.removesuffix(".git").casefold() == "/coplaydev/unity-mcp"
+    )
     selected_name = UPSTREAM_PKG_NAME if upstream else PKG_NAME
     print(f"\nUpdating {selected_name} → {chosen}")
     for name in package_names:
@@ -193,8 +190,11 @@ def main() -> None:
     deps[selected_name] = chosen
     data["dependencies"] = deps
     if "testables" in data:
-        data["testables"] = list(dict.fromkeys(
-            selected_name if name in package_names else name for name in data["testables"]))
+        data["testables"] = list(
+            dict.fromkeys(
+                selected_name if name in package_names else name for name in data["testables"]
+            )
+        )
     write_json(manifest_path, data)
     print(f"Done. Wrote to: {manifest_path}")
     print("Tip: In Unity, open Package Manager and Refresh to re-resolve packages.")

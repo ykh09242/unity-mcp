@@ -1,6 +1,7 @@
 """
 Defines the manage_texture tool for procedural texture generation in Unity.
 """
+
 import base64
 import json
 from typing import Annotated, Any, Literal
@@ -10,7 +11,13 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.utils import parse_json_payload, coerce_bool, coerce_int, coerce_float, normalize_color
+from services.tools.utils import (
+    parse_json_payload,
+    coerce_bool,
+    coerce_int,
+    coerce_float,
+    normalize_color,
+)
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
@@ -116,7 +123,10 @@ def _normalize_palette(value: Any) -> tuple[list[list[int]] | None, str | None]:
         elif parsed == value:
             return None, f"palette must be a list of colors, got invalid string: '{value}'"
         else:
-            return None, f"palette must be a list of colors (list), got string that parsed to {type(parsed).__name__}"
+            return (
+                None,
+                f"palette must be a list of colors (list), got string that parsed to {type(parsed).__name__}",
+            )
 
     # Validate and normalize each color in the palette
     if not isinstance(value, list):
@@ -132,7 +142,9 @@ def _normalize_palette(value: Any) -> tuple[list[list[int]] | None, str | None]:
     return normalized, None
 
 
-def _normalize_pixels(value: Any, width: int, height: int) -> tuple[list[list[int]] | str | None, str | None]:
+def _normalize_pixels(
+    value: Any, width: int, height: int
+) -> tuple[list[list[int]] | str | None, str | None]:
     """
     Normalize pixel data to list of [r, g, b, a] colors or base64 string.
     Returns (pixels, error_message).
@@ -157,7 +169,10 @@ def _normalize_pixels(value: Any, width: int, height: int) -> tuple[list[list[in
     if isinstance(value, list):
         expected_count = width * height
         if len(value) != expected_count:
-            return None, f"pixels array must have {expected_count} entries for {width}x{height} texture, got {len(value)}"
+            return (
+                None,
+                f"pixels array must have {expected_count} entries for {width}x{height} texture, got {len(value)}",
+            )
 
         normalized = []
         for i, pixel in enumerate(value):
@@ -288,14 +303,22 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
 
     # Texture type
     if "texture_type" in value:
-        tt = value["texture_type"].lower() if isinstance(value["texture_type"], str) else value["texture_type"]
+        tt = (
+            value["texture_type"].lower()
+            if isinstance(value["texture_type"], str)
+            else value["texture_type"]
+        )
         if not isinstance(tt, str) or tt not in _TEXTURE_TYPES:
             return None, f"Invalid texture_type '{tt}'. Valid: {list(_TEXTURE_TYPES.keys())}"
         result["textureType"] = _TEXTURE_TYPES[tt]
 
     # Texture shape
     if "texture_shape" in value:
-        ts = value["texture_shape"].lower() if isinstance(value["texture_shape"], str) else value["texture_shape"]
+        ts = (
+            value["texture_shape"].lower()
+            if isinstance(value["texture_shape"], str)
+            else value["texture_shape"]
+        )
         if not isinstance(ts, str) or ts not in _TEXTURE_SHAPES:
             return None, f"Invalid texture_shape '{ts}'. Valid: {list(_TEXTURE_SHAPES.keys())}"
         result["textureShape"] = _TEXTURE_SHAPES[ts]
@@ -317,13 +340,21 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
 
     # Alpha source
     if "alpha_source" in value:
-        alpha = value["alpha_source"].lower() if isinstance(value["alpha_source"], str) else value["alpha_source"]
+        alpha = (
+            value["alpha_source"].lower()
+            if isinstance(value["alpha_source"], str)
+            else value["alpha_source"]
+        )
         if not isinstance(alpha, str) or alpha not in _ALPHA_SOURCES:
             return None, f"Invalid alpha_source '{alpha}'. Valid: {list(_ALPHA_SOURCES.keys())}"
         result["alphaSource"] = _ALPHA_SOURCES[alpha]
 
     # Wrap modes
-    for snake, camel in [("wrap_mode", "wrapMode"), ("wrap_mode_u", "wrapModeU"), ("wrap_mode_v", "wrapModeV")]:
+    for snake, camel in [
+        ("wrap_mode", "wrapMode"),
+        ("wrap_mode_u", "wrapModeU"),
+        ("wrap_mode_v", "wrapModeV"),
+    ]:
         if snake in value:
             wm = value[snake].lower() if isinstance(value[snake], str) else value[snake]
             if not isinstance(wm, str) or wm not in _WRAP_MODES:
@@ -332,21 +363,33 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
 
     # Filter mode
     if "filter_mode" in value:
-        fm = value["filter_mode"].lower() if isinstance(value["filter_mode"], str) else value["filter_mode"]
+        fm = (
+            value["filter_mode"].lower()
+            if isinstance(value["filter_mode"], str)
+            else value["filter_mode"]
+        )
         if not isinstance(fm, str) or fm not in _FILTER_MODES:
             return None, f"Invalid filter_mode '{fm}'. Valid: {list(_FILTER_MODES.keys())}"
         result["filterMode"] = _FILTER_MODES[fm]
 
     # Mipmap filter
     if "mipmap_filter" in value:
-        mf = value["mipmap_filter"].lower() if isinstance(value["mipmap_filter"], str) else value["mipmap_filter"]
+        mf = (
+            value["mipmap_filter"].lower()
+            if isinstance(value["mipmap_filter"], str)
+            else value["mipmap_filter"]
+        )
         if not isinstance(mf, str) or mf not in _MIPMAP_FILTERS:
             return None, f"Invalid mipmap_filter '{mf}'. Valid: {list(_MIPMAP_FILTERS.keys())}"
         result["mipmapFilter"] = _MIPMAP_FILTERS[mf]
 
     # Compression
     if "compression" in value:
-        comp = value["compression"].lower() if isinstance(value["compression"], str) else value["compression"]
+        comp = (
+            value["compression"].lower()
+            if isinstance(value["compression"], str)
+            else value["compression"]
+        )
         if not isinstance(comp, str) or comp not in _COMPRESSIONS:
             return None, f"Invalid compression '{comp}'. Valid: {list(_COMPRESSIONS.keys())}"
         result["textureCompression"] = _COMPRESSIONS[comp]
@@ -394,7 +437,11 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
 
     # Sprite-specific settings
     if "sprite_mode" in value:
-        sm = value["sprite_mode"].lower() if isinstance(value["sprite_mode"], str) else value["sprite_mode"]
+        sm = (
+            value["sprite_mode"].lower()
+            if isinstance(value["sprite_mode"], str)
+            else value["sprite_mode"]
+        )
         if not isinstance(sm, str) or sm not in _SPRITE_MODES:
             return None, f"Invalid sprite_mode '{sm}'. Valid: {list(_SPRITE_MODES.keys())}"
         result["spriteImportMode"] = _SPRITE_MODES[sm]
@@ -416,9 +463,16 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
             result["spritePivot"] = pivot
 
     if "sprite_mesh_type" in value:
-        mt = value["sprite_mesh_type"].lower() if isinstance(value["sprite_mesh_type"], str) else value["sprite_mesh_type"]
+        mt = (
+            value["sprite_mesh_type"].lower()
+            if isinstance(value["sprite_mesh_type"], str)
+            else value["sprite_mesh_type"]
+        )
         if not isinstance(mt, str) or mt not in _SPRITE_MESH_TYPES:
-            return None, f"Invalid sprite_mesh_type '{mt}'. Valid: {list(_SPRITE_MESH_TYPES.keys())}"
+            return (
+                None,
+                f"Invalid sprite_mesh_type '{mt}'. Valid: {list(_SPRITE_MESH_TYPES.keys())}",
+            )
         result["spriteMeshType"] = _SPRITE_MESH_TYPES[mt]
 
     if "sprite_extrude" in value:
@@ -452,70 +506,86 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
 )
 async def manage_texture(
     ctx: Context,
-    action: Annotated[Literal[
-        "create",
-        "modify",
-        "delete",
-        "create_sprite",
-        "apply_pattern",
-        "apply_gradient",
-        "apply_noise",
-        "set_import_settings"
-    ], "Action to perform."],
-
+    action: Annotated[
+        Literal[
+            "create",
+            "modify",
+            "delete",
+            "create_sprite",
+            "apply_pattern",
+            "apply_gradient",
+            "apply_noise",
+            "set_import_settings",
+        ],
+        "Action to perform.",
+    ],
     # Required for most actions
-    path: Annotated[str,
-                    "Output texture path (e.g., 'Assets/Textures/MyTexture.png')"] | None = None,
-
+    path: Annotated[str, "Output texture path (e.g., 'Assets/Textures/MyTexture.png')"]
+    | None = None,
     # Dimensions (defaults to 64x64)
     width: Annotated[int, "Texture width in pixels (1-4096, default: 64)"] | None = None,
     height: Annotated[int, "Texture height in pixels (1-4096, default: 64)"] | None = None,
-
     # Solid fill (accepts both 0-255 integers and 0.0-1.0 normalized floats)
-    fill_color: Annotated[list[int | float] | dict[str, int | float] | str,
-                          "Fill color as [r, g, b] or [r, g, b, a] array, {r, g, b, a} object, or hex string. Accepts both 0-255 range (e.g., [255, 0, 0]) or 0.0-1.0 normalized range (e.g., [1.0, 0, 0])"] | None = None,
-
+    fill_color: Annotated[
+        list[int | float] | dict[str, int | float] | str,
+        "Fill color as [r, g, b] or [r, g, b, a] array, {r, g, b, a} object, or hex string. Accepts both 0-255 range (e.g., [255, 0, 0]) or 0.0-1.0 normalized range (e.g., [1.0, 0, 0])",
+    ]
+    | None = None,
     # Pattern-based generation
-    pattern: Annotated[Literal[
-        "checkerboard", "stripes", "stripes_h", "stripes_v", "stripes_diag",
-        "dots", "grid", "brick"
-    ], "Pattern type for apply_pattern action"] | None = None,
-
-    palette: Annotated[list[list[int | float]] | str,
-                       "Color palette as [[r,g,b,a], ...]. Accepts both 0-255 range or 0.0-1.0 normalized range"] | None = None,
-
-    pattern_size: Annotated[int,
-                            "Pattern cell size in pixels (default: 8)"] | None = None,
-
+    pattern: Annotated[
+        Literal[
+            "checkerboard",
+            "stripes",
+            "stripes_h",
+            "stripes_v",
+            "stripes_diag",
+            "dots",
+            "grid",
+            "brick",
+        ],
+        "Pattern type for apply_pattern action",
+    ]
+    | None = None,
+    palette: Annotated[
+        list[list[int | float]] | str,
+        "Color palette as [[r,g,b,a], ...]. Accepts both 0-255 range or 0.0-1.0 normalized range",
+    ]
+    | None = None,
+    pattern_size: Annotated[int, "Pattern cell size in pixels (default: 8)"] | None = None,
     # Direct pixel data
-    pixels: Annotated[list[list[int]] | str,
-                      "Pixel data as JSON array of [r,g,b,a] values or base64 string"] | None = None,
-
-    image_path: Annotated[str,
-                          "Source PNG/JPG/JPEG for create/create_sprite (up to 4096 per side and 96 MiB encoded)."] | None = None,
-
+    pixels: Annotated[
+        list[list[int]] | str, "Pixel data as JSON array of [r,g,b,a] values or base64 string"
+    ]
+    | None = None,
+    image_path: Annotated[
+        str,
+        "Source PNG/JPG/JPEG for create/create_sprite (up to 4096 per side and 96 MiB encoded).",
+    ]
+    | None = None,
     # Gradient settings
-    gradient_type: Annotated[Literal["linear", "radial"],
-                             "Gradient type (default: linear)"] | None = None,
-    gradient_angle: Annotated[float,
-                              "Gradient angle in degrees for linear gradient (default: 0)"] | None = None,
-
+    gradient_type: Annotated[Literal["linear", "radial"], "Gradient type (default: linear)"]
+    | None = None,
+    gradient_angle: Annotated[float, "Gradient angle in degrees for linear gradient (default: 0)"]
+    | None = None,
     # Noise settings
-    noise_scale: Annotated[float,
-                           "Noise scale/frequency (default: 0.1)"] | None = None,
-    octaves: Annotated[int,
-                       "Number of noise octaves (default: 1); width * height * octaves must not exceed 33,554,432 samples."] | None = None,
-
+    noise_scale: Annotated[float, "Noise scale/frequency (default: 0.1)"] | None = None,
+    octaves: Annotated[
+        int,
+        "Number of noise octaves (default: 1); width * height * octaves must not exceed 33,554,432 samples.",
+    ]
+    | None = None,
     # Modify action
-    set_pixels: Annotated[dict,
-                          "Region to modify: {x, y, width, height, color or pixels}"] | None = None,
-
+    set_pixels: Annotated[dict, "Region to modify: {x, y, width, height, color or pixels}"]
+    | None = None,
     # Sprite creation (legacy, prefer import_settings)
-    as_sprite: Annotated[dict | bool,
-                         "Configure as sprite: {pivot: [x,y], pixels_per_unit: 100} or true for defaults"] | None = None,
-
+    as_sprite: Annotated[
+        dict | bool,
+        "Configure as sprite: {pivot: [x,y], pixels_per_unit: 100} or true for defaults",
+    ]
+    | None = None,
     # TextureImporter settings
-    import_settings: Annotated[dict,
+    import_settings: Annotated[
+        dict,
         "TextureImporter settings dict. Keys: texture_type (default/normal_map/sprite/etc), "
         "texture_shape (2d/cube), srgb (bool), alpha_source (none/from_input/from_gray_scale), "
         "alpha_is_transparency (bool), readable (bool), generate_mipmaps (bool), "
@@ -523,8 +593,9 @@ async def manage_texture(
         "filter_mode (point/bilinear/trilinear), aniso_level (0-16), max_texture_size (32-16384), "
         "compression (none/low_quality/normal_quality/high_quality), compression_quality (0-100), "
         "sprite_mode (single/multiple/polygon), sprite_pixels_per_unit, sprite_pivot, "
-        "sprite_mesh_type (full_rect/tight), sprite_extrude (0-32)"] | None = None,
-
+        "sprite_mesh_type (full_rect/tight), sprite_extrude (0-32)",
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     # --- Normalize parameters ---
     if not path:
@@ -541,13 +612,27 @@ async def manage_texture(
     action_lower = action.lower()
 
     if image_path is not None and action_lower not in ("create", "create_sprite"):
-        return {"success": False, "message": "image_path is only supported for create/create_sprite."}
+        return {
+            "success": False,
+            "message": "image_path is only supported for create/create_sprite.",
+        }
 
-    if image_path is not None and (fill_color is not None or pattern is not None or pixels is not None):
-        return {"success": False, "message": "image_path cannot be combined with fill_color, pattern, or pixels."}
+    if image_path is not None and (
+        fill_color is not None or pattern is not None or pixels is not None
+    ):
+        return {
+            "success": False,
+            "message": "image_path cannot be combined with fill_color, pattern, or pixels.",
+        }
 
     # Default to white for create action if nothing else specified
-    if action == "create" and fill_color is None and pattern is None and pixels is None and image_path is None:
+    if (
+        action == "create"
+        and fill_color is None
+        and pattern is None
+        and pixels is None
+        and image_path is None
+    ):
         fill_color = [255, 255, 255, 255]
 
     palette, palette_error = _normalize_palette(palette)
@@ -573,7 +658,10 @@ async def manage_texture(
         if octaves_error:
             return {"success": False, "message": octaves_error}
         if action_lower == "apply_noise" and (octaves or 1) > MAX_NOISE_WORK // (width * height):
-            return {"success": False, "message": f"noise workload must not exceed {MAX_NOISE_WORK} samples"}
+            return {
+                "success": False,
+                "message": f"noise workload must not exceed {MAX_NOISE_WORK} samples",
+            }
     else:
         width = None
         height = None
@@ -594,10 +682,17 @@ async def manage_texture(
     import_settings_normalized, import_error = _normalize_import_settings(import_settings)
     if import_error:
         return {"success": False, "message": import_error}
-    if (action_lower in ("modify", "set_import_settings")
-            and import_settings_normalized is not None and sprite_settings is not None):
+    if (
+        action_lower in ("modify", "set_import_settings")
+        and import_settings_normalized is not None
+        and sprite_settings is not None
+    ):
         return {"success": False, "message": "Cannot specify both import_settings and as_sprite."}
-    if action_lower == "set_import_settings" and not import_settings_normalized and not sprite_settings:
+    if (
+        action_lower == "set_import_settings"
+        and not import_settings_normalized
+        and not sprite_settings
+    ):
         return {"success": False, "message": "Either import_settings or as_sprite is required."}
 
     # Normalize set_pixels for modify action
@@ -615,13 +710,19 @@ async def manage_texture(
 
         set_pixels_normalized = set_pixels.copy()
         for field in ("x", "y"):
-            coordinate, error = _normalize_integer_setting(set_pixels_normalized.get(field), f"set_pixels.{field}")
+            coordinate, error = _normalize_integer_setting(
+                set_pixels_normalized.get(field), f"set_pixels.{field}"
+            )
             if error:
                 return {"success": False, "message": error}
             coordinate = 0 if coordinate is None else coordinate
             set_pixels_normalized[field] = coordinate
-        region_width, region_width_error = _normalize_dimension(set_pixels_normalized.get("width"), "set_pixels.width", 1)
-        region_height, region_height_error = _normalize_dimension(set_pixels_normalized.get("height"), "set_pixels.height", 1)
+        region_width, region_width_error = _normalize_dimension(
+            set_pixels_normalized.get("width"), "set_pixels.width", 1
+        )
+        region_height, region_height_error = _normalize_dimension(
+            set_pixels_normalized.get("height"), "set_pixels.height", 1
+        )
         region_error = region_width_error or region_height_error
         if not region_error:
             region_error = _validate_dimensions(region_width, region_height)

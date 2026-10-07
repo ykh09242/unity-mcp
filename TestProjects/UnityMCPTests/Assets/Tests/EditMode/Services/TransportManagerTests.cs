@@ -1,6 +1,6 @@
 using System.Threading.Tasks;
-using NUnit.Framework;
 using MCPForUnity.Editor.Services.Transport;
+using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -28,7 +28,9 @@ namespace MCPForUnityTests.Editor.Services
             }
 
             public Task StopAsync() => Task.CompletedTask;
+
             public Task<bool> VerifyAsync() => Task.FromResult(false);
+
             public Task ReregisterToolsAsync() => Task.CompletedTask;
         }
 
@@ -60,9 +62,8 @@ namespace MCPForUnityTests.Editor.Services
 
             public bool IsConnected => Connected;
             public string TransportName => "stdio";
-            public TransportState State => Connected
-                ? TransportState.Connected("stdio", port: Port)
-                : TransportState.Disconnected("stdio", "Bridge not running");
+            public TransportState State =>
+                Connected ? TransportState.Connected("stdio", port: Port) : TransportState.Disconnected("stdio", "Bridge not running");
 
             public Task<bool> StartAsync()
             {
@@ -77,6 +78,7 @@ namespace MCPForUnityTests.Editor.Services
             }
 
             public Task<bool> VerifyAsync() => Task.FromResult(Connected);
+
             public Task ReregisterToolsAsync() => Task.CompletedTask;
         }
 
@@ -85,9 +87,13 @@ namespace MCPForUnityTests.Editor.Services
             public TransportState State { get; set; } = TransportState.Connected("websocket", sessionId: "pending");
             public bool IsConnected => State.IsConnected;
             public string TransportName => "websocket";
+
             public Task<bool> StartAsync() => Task.FromResult(true);
+
             public Task StopAsync() => Task.CompletedTask;
+
             public Task<bool> VerifyAsync() => Task.FromResult(IsConnected);
+
             public Task ReregisterToolsAsync() => Task.CompletedTask;
         }
 
@@ -132,8 +138,7 @@ namespace MCPForUnityTests.Editor.Services
 
             client.Connected = true; // bridge bound via editor-idle retry, no StartAsync involved
 
-            Assert.IsTrue(manager.IsRunning(TransportMode.Stdio),
-                "manager must report the live bridge even when it started outside StartAsync");
+            Assert.IsTrue(manager.IsRunning(TransportMode.Stdio), "manager must report the live bridge even when it started outside StartAsync");
             TransportState state = manager.GetState(TransportMode.Stdio);
             Assert.IsTrue(state.IsConnected);
             Assert.AreEqual(6400, state.Port, "reconciled state comes from the client, port included");
@@ -156,8 +161,7 @@ namespace MCPForUnityTests.Editor.Services
 
             client.Connected = false; // listener died without StopAsync (e.g. socket teardown on reload)
 
-            Assert.IsFalse(manager.IsRunning(TransportMode.Stdio),
-                "manager must not report a bridge that is no longer listening");
+            Assert.IsFalse(manager.IsRunning(TransportMode.Stdio), "manager must not report a bridge that is no longer listening");
         }
 
         /// <summary>

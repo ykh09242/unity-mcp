@@ -1,4 +1,5 @@
 """Authenticate the entire remote MCP/control protocol before parsing or dispatch."""
+
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -17,8 +18,11 @@ class RemoteControlAuthMiddleware:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
-        if scope["type"] == "http" and scope["method"] == "GET" and scope["path"] in (
-                "/health", "/api/auth/login-url"):
+        if (
+            scope["type"] == "http"
+            and scope["method"] == "GET"
+            and scope["path"] in ("/health", "/api/auth/login-url")
+        ):
             await self.app(scope, receive, send)
             return
 
@@ -29,7 +33,8 @@ class RemoteControlAuthMiddleware:
             try:
                 peer = scope.get("client")
                 result = await ApiKeyService.get_instance().validate(
-                    keys[0], source_id=peer[0] if peer else "unknown",
+                    keys[0],
+                    source_id=peer[0] if peer else "unknown",
                 )
                 overloaded = result.overloaded
                 if result.valid and isinstance(result.user_id, str) and result.user_id:
@@ -39,17 +44,37 @@ class RemoteControlAuthMiddleware:
         if user_id is None:
             if overloaded:
                 if scope["type"] == "websocket":
-                    await send({"type": "websocket.close", "code": 1013, "reason": "Authentication temporarily busy"})
+                    await send(
+                        {
+                            "type": "websocket.close",
+                            "code": 1013,
+                            "reason": "Authentication temporarily busy",
+                        }
+                    )
                 else:
-                    await JSONResponse({"error": "Authentication temporarily busy"}, status_code=429,
-                                       headers={"Retry-After": "1"})(scope, receive, send)
+                    await JSONResponse(
+                        {"error": "Authentication temporarily busy"},
+                        status_code=429,
+                        headers={"Retry-After": "1"},
+                    )(scope, receive, send)
                 return
             if scope["type"] == "websocket":
-                await send({"type": "websocket.close", "code": 1008, "reason": "API key authentication required"})
+                await send(
+                    {
+                        "type": "websocket.close",
+                        "code": 1008,
+                        "reason": "API key authentication required",
+                    }
+                )
             else:
-                await JSONResponse({"error": "API key authentication required"}, status_code=401)(scope, receive, send)
+                await JSONResponse({"error": "API key authentication required"}, status_code=401)(
+                    scope, receive, send
+                )
             return
 
         # Copy request state; never persist identity in shared/session routing state.
-        authenticated_scope = {**scope, "state": {**scope.get("state", {}), AUTHENTICATED_USER_STATE: user_id}}
+        authenticated_scope = {
+            **scope,
+            "state": {**scope.get("state", {}), AUTHENTICATED_USER_STATE: user_id},
+        }
         await self.app(authenticated_scope, receive, send)

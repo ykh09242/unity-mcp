@@ -3,6 +3,7 @@ Tests for the find_gameobjects tool.
 
 This tool provides paginated GameObject search, returning instance IDs only.
 """
+
 import pytest
 
 from .test_helpers import DummyContext
@@ -197,4 +198,3 @@ async def test_find_gameobjects_by_path(monkeypatch):
     assert resp.get("success") is True
     assert captured["params"]["searchMethod"] == "by_path"
     assert captured["params"]["searchTerm"] == "Canvas/Panel/Button"
-

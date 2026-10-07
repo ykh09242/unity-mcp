@@ -34,17 +34,18 @@ namespace MCPForUnity.Editor.Windows.Components.Branding
         private const float SvgSize = 140f;
 
         // Brand palette (hex values lifted directly from logo-mark.svg).
-        private static readonly Color LeftFill = FromHex(0x2563EB);   // blue cube faces
+        private static readonly Color LeftFill = FromHex(0x2563EB); // blue cube faces
         private static readonly Color LeftStroke = FromHex(0x60A5FA); // blue cube outline
-        private static readonly Color RightFill = FromHex(0x0D9488);  // teal cube faces
-        private static readonly Color RightStroke = FromHex(0x2DD4BF);// teal cube outline
-        private static readonly Color Bridge = FromHex(0x22D3EE);     // cyan bridge
+        private static readonly Color RightFill = FromHex(0x0D9488); // teal cube faces
+        private static readonly Color RightStroke = FromHex(0x2DD4BF); // teal cube outline
+        private static readonly Color Bridge = FromHex(0x22D3EE); // cyan bridge
 
         private void OnGenerateVisualContent(MeshGenerationContext mgc)
         {
             Rect rect = contentRect;
             float box = Mathf.Min(rect.width, rect.height);
-            if (box <= 1f) return; // not laid out yet / too small to draw
+            if (box <= 1f)
+                return; // not laid out yet / too small to draw
 
             float scale = box / SvgSize;
             Vector2 P(float x, float y) => MapSvgPoint(x, y, rect);
@@ -86,7 +87,8 @@ namespace MCPForUnity.Editor.Windows.Components.Branding
             p.fillColor = color;
             p.BeginPath();
             p.MoveTo(pts[0]);
-            for (int i = 1; i < pts.Length; i++) p.LineTo(pts[i]);
+            for (int i = 1; i < pts.Length; i++)
+                p.LineTo(pts[i]);
             p.ClosePath();
             p.Fill();
         }
@@ -97,14 +99,17 @@ namespace MCPForUnity.Editor.Windows.Components.Branding
             p.lineWidth = width;
             p.BeginPath();
             p.MoveTo(pts[0]);
-            for (int i = 1; i < pts.Length; i++) p.LineTo(pts[i]);
-            if (closed) p.ClosePath();
+            for (int i = 1; i < pts.Length; i++)
+                p.LineTo(pts[i]);
+            if (closed)
+                p.ClosePath();
             p.Stroke();
         }
 
         private static void FillDot(Painter2D p, Color color, Vector2 center, float radius)
         {
-            if (radius <= 0.01f) return;
+            if (radius <= 0.01f)
+                return;
             p.fillColor = color;
             p.BeginPath();
             p.Arc(center, radius, new Angle(0f, AngleUnit.Degree), new Angle(360f, AngleUnit.Degree));
@@ -124,23 +129,18 @@ namespace MCPForUnity.Editor.Windows.Components.Branding
             float scale = box / SvgSize;
             float offsetX = (content.width - box) * 0.5f;
             float offsetY = (content.height - box) * 0.5f;
-            return new Vector2(
-                offsetX + (svgX - SvgOrigin) * scale,
-                offsetY + (svgY - SvgOrigin) * scale);
+            return new Vector2(offsetX + (svgX - SvgOrigin) * scale, offsetY + (svgY - SvgOrigin) * scale);
         }
 
         /// <summary>Convert a 0xRRGGBB literal into an opaque Color.</summary>
-        private static Color FromHex(int rgb) => new Color(
-            ((rgb >> 16) & 0xFF) / 255f,
-            ((rgb >> 8) & 0xFF) / 255f,
-            (rgb & 0xFF) / 255f,
-            1f);
+        private static Color FromHex(int rgb) => new Color(((rgb >> 16) & 0xFF) / 255f, ((rgb >> 8) & 0xFF) / 255f, (rgb & 0xFF) / 255f, 1f);
 #else
         // Painter2D is unavailable before Unity 2022.1 — show the raster brand icon instead.
         private void ApplyRasterFallback()
         {
             Texture2D tex = LoadBrandTexture();
-            if (tex == null) return;
+            if (tex == null)
+                return;
             style.backgroundImage = new StyleBackground(tex);
             style.unityBackgroundScaleMode = ScaleMode.ScaleToFit;
         }

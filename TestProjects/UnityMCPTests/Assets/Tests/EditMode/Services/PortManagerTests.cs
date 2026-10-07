@@ -1,8 +1,8 @@
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
-using NUnit.Framework;
 using MCPForUnity.Editor.Helpers;
+using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -19,9 +19,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             // Snapshot the on-disk port config so DiscoverNewPort tests don't
             // permanently alter the running bridge's persisted port.
-            string dir = Path.Combine(
-                System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
-                ".unity-mcp");
+            string dir = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile), ".unity-mcp");
             _legacyFilePath = Path.Combine(dir, "unity-mcp-port.json");
 
             // The hashed file uses a private helper; approximate the same hash.
@@ -65,8 +63,7 @@ namespace MCPForUnityTests.Editor.Services
 
             try
             {
-                Assert.IsFalse(PortManager.IsPortAvailable(port),
-                    "IsPortAvailable should return false for a port that is already bound");
+                Assert.IsFalse(PortManager.IsPortAvailable(port), "IsPortAvailable should return false for a port that is already bound");
             }
             finally
             {
@@ -82,8 +79,7 @@ namespace MCPForUnityTests.Editor.Services
             int port = ((IPEndPoint)listener.LocalEndpoint).Port;
             listener.Stop();
 
-            Assert.IsTrue(PortManager.IsPortAvailable(port),
-                "IsPortAvailable should return true for a port that is not bound");
+            Assert.IsTrue(PortManager.IsPortAvailable(port), "IsPortAvailable should return true for a port that is not bound");
         }
 
 #if UNITY_EDITOR_OSX
@@ -99,8 +95,7 @@ namespace MCPForUnityTests.Editor.Services
 
             try
             {
-                Assert.IsFalse(PortManager.IsPortAvailable(port),
-                    "IsPortAvailable should detect ports held with SO_REUSEADDR on macOS");
+                Assert.IsFalse(PortManager.IsPortAvailable(port), "IsPortAvailable should detect ports held with SO_REUSEADDR on macOS");
             }
             finally
             {
@@ -116,8 +111,7 @@ namespace MCPForUnityTests.Editor.Services
             // not-yet-released listener after a domain reload — keep retrying the same
             // port instead of silently switching and stranding the client (#1173).
             Assert.IsFalse(PortManager.ShouldAbandonBusyPort(0.0));
-            Assert.IsFalse(PortManager.ShouldAbandonBusyPort(
-                PortManager.BusyPortFallbackWindowSeconds - 0.5));
+            Assert.IsFalse(PortManager.ShouldAbandonBusyPort(PortManager.BusyPortFallbackWindowSeconds - 0.5));
         }
 
         [Test]
@@ -125,10 +119,8 @@ namespace MCPForUnityTests.Editor.Services
         {
             // A port that stays busy past the window is a foreign occupant — only then
             // does the bridge discover and switch to a new port.
-            Assert.IsTrue(PortManager.ShouldAbandonBusyPort(
-                PortManager.BusyPortFallbackWindowSeconds));
-            Assert.IsTrue(PortManager.ShouldAbandonBusyPort(
-                PortManager.BusyPortFallbackWindowSeconds + 5.0));
+            Assert.IsTrue(PortManager.ShouldAbandonBusyPort(PortManager.BusyPortFallbackWindowSeconds));
+            Assert.IsTrue(PortManager.ShouldAbandonBusyPort(PortManager.BusyPortFallbackWindowSeconds + 5.0));
         }
 
         [Test]
@@ -136,8 +128,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             int port = PortManager.DiscoverNewPort();
             Assert.Greater(port, 0, "DiscoverNewPort should return a positive port number");
-            Assert.IsTrue(PortManager.IsPortAvailable(port),
-                "The port returned by DiscoverNewPort should be available");
+            Assert.IsTrue(PortManager.IsPortAvailable(port), "The port returned by DiscoverNewPort should be available");
         }
 
         [Test]
@@ -149,7 +140,11 @@ namespace MCPForUnityTests.Editor.Services
             {
                 holder = new TcpListener(IPAddress.Loopback, 6400);
 #if UNITY_EDITOR_OSX
-                try { holder.Server.ExclusiveAddressUse = true; } catch { }
+                try
+                {
+                    holder.Server.ExclusiveAddressUse = true;
+                }
+                catch { }
 #endif
                 holder.Start();
             }
@@ -163,8 +158,7 @@ namespace MCPForUnityTests.Editor.Services
             try
             {
                 int port = PortManager.DiscoverNewPort();
-                Assert.AreNotEqual(6400, port,
-                    "DiscoverNewPort should not return the default port when it is occupied");
+                Assert.AreNotEqual(6400, port, "DiscoverNewPort should not return the default port when it is occupied");
                 Assert.Greater(port, 0);
             }
             finally

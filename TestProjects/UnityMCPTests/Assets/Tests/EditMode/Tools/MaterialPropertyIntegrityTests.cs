@@ -22,14 +22,19 @@ namespace MCPForUnityTests.EditMode.Tools
             _material = null;
             _texture = null;
             string name = "Hidden/McpMaterialPropertyIntegrity_" + Guid.NewGuid().ToString("N");
-            _shader = ShaderUtil.CreateShaderAsset("Shader \"" + name + "\" { Properties { " +
-                "_Color (\"Color\", Color) = (0,0,0,0) " +
-                "_Vector (\"Vector\", Vector) = (0,0,0,0) " +
-                "_Float (\"Float\", Float) = 0 " +
-                "_Metallic (\"Metallic\", Float) = 0 " +
-                "_Smoothness (\"Smoothness\", Range(0,1)) = 0 " +
-                "_Int (\"Integer\", Integer) = 17 " +
-                "_MainTex (\"Texture\", 2D) = \"white\" {} } SubShader { Pass {} } }", false);
+            _shader = ShaderUtil.CreateShaderAsset(
+                "Shader \""
+                    + name
+                    + "\" { Properties { "
+                    + "_Color (\"Color\", Color) = (0,0,0,0) "
+                    + "_Vector (\"Vector\", Vector) = (0,0,0,0) "
+                    + "_Float (\"Float\", Float) = 0 "
+                    + "_Metallic (\"Metallic\", Float) = 0 "
+                    + "_Smoothness (\"Smoothness\", Range(0,1)) = 0 "
+                    + "_Int (\"Integer\", Integer) = 17 "
+                    + "_MainTex (\"Texture\", 2D) = \"white\" {} } SubShader { Pass {} } }",
+                false
+            );
             Assert.That(_shader, Is.Not.Null);
             Assert.That(EditorUtility.IsPersistent(_shader), Is.False);
             Assert.That(_shader.GetPropertyType(_shader.FindPropertyIndex("_Int")), Is.EqualTo(ShaderPropertyType.Int));
@@ -42,9 +47,12 @@ namespace MCPForUnityTests.EditMode.Tools
         [TearDown]
         public void TearDown()
         {
-            if (_material != null) UnityEngine.Object.DestroyImmediate(_material);
-            if (_texture != null) UnityEngine.Object.DestroyImmediate(_texture);
-            if (_shader != null && !EditorUtility.IsPersistent(_shader)) UnityEngine.Object.DestroyImmediate(_shader);
+            if (_material != null)
+                UnityEngine.Object.DestroyImmediate(_material);
+            if (_texture != null)
+                UnityEngine.Object.DestroyImmediate(_texture);
+            if (_shader != null && !EditorUtility.IsPersistent(_shader))
+                UnityEngine.Object.DestroyImmediate(_shader);
         }
 
         [TestCase("[2,3,4,5]", 2f, 3f, 4f, 5f)]
@@ -56,7 +64,10 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             var before = _material.GetVector("_Vector");
             int dirty = EditorUtility.GetDirtyCount(_material);
-            Assert.That(MaterialOps.TryPrepareShaderProperty(_material, "_Vector", JToken.Parse(json), UnityJsonSerializer.Instance, out Action apply), Is.True);
+            Assert.That(
+                MaterialOps.TryPrepareShaderProperty(_material, "_Vector", JToken.Parse(json), UnityJsonSerializer.Instance, out Action apply),
+                Is.True
+            );
             Assert.That(_material.GetVector("_Vector"), Is.EqualTo(before));
             Assert.That(EditorUtility.GetDirtyCount(_material), Is.EqualTo(dirty));
             apply();
@@ -99,7 +110,10 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             string before = EditorJsonUtility.ToJson(_material);
             int dirty = EditorUtility.GetDirtyCount(_material);
-            Assert.That(MaterialOps.TryPrepareShaderProperty(_material, property, JToken.Parse(json), UnityJsonSerializer.Instance, out Action apply), Is.False);
+            Assert.That(
+                MaterialOps.TryPrepareShaderProperty(_material, property, JToken.Parse(json), UnityJsonSerializer.Instance, out Action apply),
+                Is.False
+            );
             Assert.That(apply, Is.Null);
             Assert.That(EditorJsonUtility.ToJson(_material), Is.EqualTo(before));
             Assert.That(EditorUtility.GetDirtyCount(_material), Is.EqualTo(dirty));
@@ -148,16 +162,27 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             _material.SetVector("_Vector", new Vector4(2, 3, 4, originalW));
             int dirty = EditorUtility.GetDirtyCount(_material);
-            Assert.That(MaterialOps.ApplyProperties(_material, JObject.Parse("{\"color\":{\"name\":\"_Vector\",\"value\":[2,3,4]}}"), UnityJsonSerializer.Instance), Is.EqualTo(expectedChange));
+            Assert.That(
+                MaterialOps.ApplyProperties(_material, JObject.Parse("{\"color\":{\"name\":\"_Vector\",\"value\":[2,3,4]}}"), UnityJsonSerializer.Instance),
+                Is.EqualTo(expectedChange)
+            );
             Assert.That(_material.GetVector("_Vector"), Is.EqualTo(new Vector4(2, 3, 4, 1)));
-            if (!expectedChange) Assert.That(EditorUtility.GetDirtyCount(_material), Is.EqualTo(dirty));
+            if (!expectedChange)
+                Assert.That(EditorUtility.GetDirtyCount(_material), Is.EqualTo(dirty));
             LogAssert.NoUnexpectedReceived();
         }
 
         [Test]
         public void BulkPropertiesRemainBestEffortAndSetStructuredIntegerZero()
         {
-            Assert.That(MaterialOps.ApplyProperties(_material, JObject.Parse("{\"_Unknown\":3,\"float\":{\"name\":\"_Int\",\"value\":0},\"metallic\":0.5}"), UnityJsonSerializer.Instance), Is.True);
+            Assert.That(
+                MaterialOps.ApplyProperties(
+                    _material,
+                    JObject.Parse("{\"_Unknown\":3,\"float\":{\"name\":\"_Int\",\"value\":0},\"metallic\":0.5}"),
+                    UnityJsonSerializer.Instance
+                ),
+                Is.True
+            );
             Assert.That(_material.GetInteger("_Int"), Is.Zero);
             Assert.That(_material.GetFloat("_Metallic"), Is.EqualTo(0.5f));
             Assert.That(_material.GetTexture("_MainTex"), Is.SameAs(_texture));
@@ -166,8 +191,16 @@ namespace MCPForUnityTests.EditMode.Tools
         private sealed class OwnedMaterial : IDisposable
         {
             public readonly Material Value;
-            public OwnedMaterial(Shader shader) { Value = new Material(shader); }
-            public void Dispose() { UnityEngine.Object.DestroyImmediate(Value); }
+
+            public OwnedMaterial(Shader shader)
+            {
+                Value = new Material(shader);
+            }
+
+            public void Dispose()
+            {
+                UnityEngine.Object.DestroyImmediate(Value);
+            }
         }
     }
 }

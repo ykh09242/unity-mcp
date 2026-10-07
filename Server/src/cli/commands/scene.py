@@ -20,31 +20,14 @@ def scene():
 @click.option(
     "--parent",
     default=None,
-    help="Parent GameObject to list children of (name, path, or instance ID)."
+    help="Parent GameObject to list children of (name, path, or instance ID).",
 )
+@click.option("--max-depth", "-d", default=None, type=int, help="Maximum depth to traverse.")
 @click.option(
-    "--max-depth", "-d",
-    default=None,
-    type=int,
-    help="Maximum depth to traverse."
+    "--include-transform", "-t", is_flag=True, help="Include transform data for each node."
 )
-@click.option(
-    "--include-transform", "-t",
-    is_flag=True,
-    help="Include transform data for each node."
-)
-@click.option(
-    "--limit", "-l",
-    default=50,
-    type=int,
-    help="Maximum nodes to return."
-)
-@click.option(
-    "--cursor", "-c",
-    default=0,
-    type=int,
-    help="Pagination cursor."
-)
+@click.option("--limit", "-l", default=50, type=int, help="Maximum nodes to return.")
+@click.option("--cursor", "-c", default=0, type=int, help="Pagination cursor.")
 @handle_unity_errors
 def hierarchy(
     parent: Optional[str],
@@ -92,11 +75,7 @@ def active():
 
 @scene.command("load")
 @click.argument("scene")
-@click.option(
-    "--by-index", "-i",
-    is_flag=True,
-    help="Load by build index instead of path/name."
-)
+@click.option("--by-index", "-i", is_flag=True, help="Load by build index instead of path/name.")
 @handle_unity_errors
 def load(scene: str, by_index: bool):
     """Load a scene.
@@ -130,11 +109,7 @@ def load(scene: str, by_index: bool):
 
 
 @scene.command("save")
-@click.option(
-    "--path",
-    default=None,
-    help="Path to save the scene to (for new scenes)."
-)
+@click.option("--path", default=None, help="Path to save the scene to (for new scenes).")
 @handle_unity_errors
 def save(path: Optional[str]):
     """Save the current scene.
@@ -158,16 +133,13 @@ def save(path: Optional[str]):
 
 @scene.command("create")
 @click.argument("name")
+@click.option("--path", default=None, help="Path to create the scene at.")
 @click.option(
-    "--path",
-    default=None,
-    help="Path to create the scene at."
-)
-@click.option(
-    "--template", "-t",
+    "--template",
+    "-t",
     default=None,
     type=click.Choice(["empty", "default", "3d_basic", "2d_basic"]),
-    help="Scene template (omit for empty scene)."
+    help="Scene template (omit for empty scene).",
 )
 @handle_unity_errors
 def create(name: str, path: Optional[str], template: Optional[str]):
@@ -241,11 +213,15 @@ def open_additive(scene_path: str):
         unity-mcp scene open-additive "Assets/Scenes/Level2.unity"
     """
     config = get_config()
-    result = run_command("manage_scene", {
-        "action": "load",
-        "path": scene_path,
-        "additive": True,
-    }, config)
+    result = run_command(
+        "manage_scene",
+        {
+            "action": "load",
+            "path": scene_path,
+            "additive": True,
+        },
+        config,
+    )
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Opened additively: {scene_path}")
@@ -287,10 +263,14 @@ def set_active(scene_name: str):
         unity-mcp scene set-active "Level2"
     """
     config = get_config()
-    result = run_command("manage_scene", {
-        "action": "set_active_scene",
-        "sceneName": scene_name,
-    }, config)
+    result = run_command(
+        "manage_scene",
+        {
+            "action": "set_active_scene",
+            "sceneName": scene_name,
+        },
+        config,
+    )
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Set active: {scene_name}")
@@ -308,11 +288,15 @@ def move_to(target: str, scene_name: str):
         unity-mcp scene move-to "Player" "Level2"
     """
     config = get_config()
-    result = run_command("manage_scene", {
-        "action": "move_to_scene",
-        "target": target,
-        "sceneName": scene_name,
-    }, config)
+    result = run_command(
+        "manage_scene",
+        {
+            "action": "move_to_scene",
+            "target": target,
+            "sceneName": scene_name,
+        },
+        config,
+    )
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Moved '{target}' to scene '{scene_name}'")
@@ -348,5 +332,3 @@ def validate(repair: bool):
             print_success(f"Found {total} issue(s), repaired {repaired}")
         else:
             print_warning(f"Found {total} issue(s), none repaired")
-
-

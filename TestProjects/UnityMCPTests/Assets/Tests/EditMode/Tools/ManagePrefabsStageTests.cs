@@ -36,10 +36,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void OpenPrefabStage_RequiresPrefabPath()
         {
-            var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-            {
-                ["action"] = "open_prefab_stage"
-            }));
+            var result = ToJObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "open_prefab_stage" }));
 
             Assert.IsFalse(result.Value<bool>("success"));
             StringAssert.Contains("prefabPath", result.Value<string>("error"));
@@ -48,11 +45,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void OpenPrefabStage_RejectsNonPrefabPath()
         {
-            var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-            {
-                ["action"] = "open_prefab_stage",
-                ["prefabPath"] = "Assets/Temp/NotPrefab.txt"
-            }));
+            var result = ToJObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "open_prefab_stage", ["prefabPath"] = "Assets/Temp/NotPrefab.txt" }));
 
             Assert.IsFalse(result.Value<bool>("success"));
             StringAssert.Contains(".prefab", result.Value<string>("error"));
@@ -65,11 +58,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "open_prefab_stage",
-                    ["prefabPath"] = prefabPath
-                }));
+                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "open_prefab_stage", ["prefabPath"] = prefabPath }));
 
                 Assert.IsTrue(result.Value<bool>("success"));
                 Assert.AreEqual(prefabPath, result["data"].Value<string>("prefabPath"));
@@ -80,10 +69,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsNotNull(stage);
                 Assert.AreEqual(prefabPath, stage.assetPath);
 
-                var closeResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "close_prefab_stage"
-                }));
+                var closeResult = ToJObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "close_prefab_stage" }));
                 Assert.IsTrue(closeResult.Value<bool>("success"));
                 Assert.IsNull(PrefabStageUtility.GetCurrentPrefabStage());
             }
@@ -101,11 +87,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "open_prefab_stage",
-                    ["path"] = prefabPath
-                }));
+                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "open_prefab_stage", ["path"] = prefabPath }));
 
                 Assert.IsTrue(result.Value<bool>("success"));
                 Assert.AreEqual(prefabPath, result["data"].Value<string>("openedPrefabPath"));
@@ -126,22 +108,22 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "open_prefab_stage",
-                    ["prefabPath"] = prefabPath,
-                    ["path"] = aliasPath
-                }));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "open_prefab_stage",
+                            ["prefabPath"] = prefabPath,
+                            ["path"] = aliasPath,
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"));
 
                 var currentStage = PrefabStageUtility.GetCurrentPrefabStage();
                 Assert.IsNotNull(currentStage, "Expected a prefab stage to be open.");
-                Assert.AreEqual(
-                    prefabPath,
-                    currentStage.assetPath,
-                    "prefabPath should take precedence over path when both are provided."
-                );
+                Assert.AreEqual(prefabPath, currentStage.assetPath, "prefabPath should take precedence over path when both are provided.");
             }
             finally
             {
@@ -166,10 +148,7 @@ namespace MCPForUnityTests.Editor.Tools
                 var child = new GameObject("SavedChild");
                 child.transform.SetParent(stage.prefabContentsRoot.transform, false);
 
-                var saveResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "save_prefab_stage"
-                }));
+                var saveResult = ToJObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "save_prefab_stage" }));
 
                 Assert.IsTrue(saveResult.Value<bool>("success"), $"Expected save to succeed but got: {saveResult}");
                 Assert.AreEqual(prefabPath, saveResult["data"].Value<string>("prefabPath"));
@@ -201,17 +180,16 @@ namespace MCPForUnityTests.Editor.Tools
                 var child = new GameObject("CloseSavedChild");
                 child.transform.SetParent(stage.prefabContentsRoot.transform, false);
 
-                var closeResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-                {
-                    ["action"] = "close_prefab_stage",
-                    ["saveBeforeClose"] = true
-                }));
+                var closeResult = ToJObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "close_prefab_stage", ["saveBeforeClose"] = true }));
 
                 Assert.IsTrue(closeResult.Value<bool>("success"), $"Expected close with save to succeed but got: {closeResult}");
                 Assert.IsNull(PrefabStageUtility.GetCurrentPrefabStage(), "Prefab stage should be closed after close_prefab_stage.");
 
                 GameObject reloaded = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
-                Assert.IsNotNull(reloaded.transform.Find("CloseSavedChild"), "Saved prefab should contain the new child after close_prefab_stage(saveBeforeClose: true).");
+                Assert.IsNotNull(
+                    reloaded.transform.Find("CloseSavedChild"),
+                    "Saved prefab should contain the new child after close_prefab_stage(saveBeforeClose: true)."
+                );
             }
             finally
             {
@@ -222,11 +200,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static void AssertOpenPrefabStage(string prefabPath)
         {
-            var openResult = ToJObject(ManagePrefabs.HandleCommand(new JObject
-            {
-                ["action"] = "open_prefab_stage",
-                ["prefabPath"] = prefabPath
-            }));
+            var openResult = ToJObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "open_prefab_stage", ["prefabPath"] = prefabPath }));
 
             Assert.IsTrue(openResult.Value<bool>("success"), $"Expected open to succeed but got: {openResult}");
         }

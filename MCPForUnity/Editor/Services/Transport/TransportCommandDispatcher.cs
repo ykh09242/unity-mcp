@@ -26,14 +26,11 @@ namespace MCPForUnity.Editor.Services.Transport
 
         private sealed class PendingCommand
         {
-            public PendingCommand(
-                string commandJson,
-                Command command,
-                CancellationToken cancellationToken,
-                CancellationTokenRegistration registration)
+            public PendingCommand(string commandJson, Command command, CancellationToken cancellationToken, CancellationTokenRegistration registration)
             {
                 CommandJson = commandJson;
-                if (commandJson != null) JsonResponseSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                if (commandJson != null)
+                    JsonResponseSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 Command = command;
                 CancellationToken = cancellationToken;
                 CancellationRegistration = registration;
@@ -115,7 +112,8 @@ namespace MCPForUnity.Editor.Services.Transport
 
         internal static TransportCommandOperation ExecuteCommandAsync(Command command, CancellationToken cancellationToken)
         {
-            if (command == null) throw new ArgumentNullException(nameof(command));
+            if (command == null)
+                throw new ArgumentNullException(nameof(command));
             return Enqueue(null, command, cancellationToken);
         }
 
@@ -125,9 +123,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
             var id = Guid.NewGuid().ToString("N");
 
-            var registration = cancellationToken.CanBeCanceled
-                ? cancellationToken.Register(() => CancelPending(id, cancellationToken))
-                : default;
+            var registration = cancellationToken.CanBeCanceled ? cancellationToken.Register(() => CancelPending(id, cancellationToken)) : default;
 
             var pending = new PendingCommand(commandJson, command, cancellationToken, registration);
             var operation = new TransportCommandOperation(pending.ResponseSource.Task, pending.ExecutionSource.Task, pending.JsonResponseSource?.Task);
@@ -162,9 +158,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
             var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            var registration = cancellationToken.CanBeCanceled
-                ? cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken))
-                : default;
+            var registration = cancellationToken.CanBeCanceled ? cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken)) : default;
 
             void Invoke()
             {
@@ -190,7 +184,11 @@ namespace MCPForUnity.Editor.Services.Transport
 
             // Best-effort nudge: if we're posting from a background thread (e.g., websocket receive),
             // encourage Unity to run a loop iteration so the posted callback can execute even when unfocused.
-            try { EditorApplication.QueuePlayerLoopUpdate(); } catch { }
+            try
+            {
+                EditorApplication.QueuePlayerLoopUpdate();
+            }
+            catch { }
 
             if (_mainThreadContext != null && Thread.CurrentThread.ManagedThreadId != _mainThreadId)
             {
@@ -200,7 +198,8 @@ namespace MCPForUnity.Editor.Services.Transport
 
             if (Thread.CurrentThread.ManagedThreadId != _mainThreadId)
             {
-                lock (PendingLock) MainThreadCallbacks.Enqueue(Invoke);
+                lock (PendingLock)
+                    MainThreadCallbacks.Enqueue(Invoke);
                 return tcs.Task;
             }
             Invoke();
@@ -230,7 +229,8 @@ namespace MCPForUnity.Editor.Services.Transport
                 return;
             }
 
-            if (Thread.CurrentThread.ManagedThreadId == _mainThreadId) Pump();
+            if (Thread.CurrentThread.ManagedThreadId == _mainThreadId)
+                Pump();
         }
 
         private static void EnsureInitialised()
@@ -247,7 +247,8 @@ namespace MCPForUnity.Editor.Services.Transport
         private static void HookUpdate()
         {
             // Deprecated: we keep the update hook installed permanently (see static ctor).
-            if (updateHooked) return;
+            if (updateHooked)
+                return;
             updateHooked = true;
             EditorApplication.update += ProcessQueue;
         }
@@ -261,7 +262,8 @@ namespace MCPForUnity.Editor.Services.Transport
 
         private static void ProcessQueue()
         {
-            if (Thread.CurrentThread.ManagedThreadId != _mainThreadId) return;
+            if (Thread.CurrentThread.ManagedThreadId != _mainThreadId)
+                return;
             if (Interlocked.Exchange(ref _processingFlag, 1) == 1)
             {
                 return;
@@ -269,34 +271,38 @@ namespace MCPForUnity.Editor.Services.Transport
 
             try
             {
-            while (true)
-            {
-                Action callback;
+                while (true)
+                {
+                    Action callback;
+                    lock (PendingLock)
+                    {
+                        if (MainThreadCallbacks.Count == 0)
+                            break;
+                        callback = MainThreadCallbacks.Dequeue();
+                    }
+                    callback();
+                }
+                List<(string id, PendingCommand pending)> ready = null;
+
                 lock (PendingLock)
                 {
-                    if (MainThreadCallbacks.Count == 0) break;
-                    callback = MainThreadCallbacks.Dequeue();
+                    if (Pending.Count == 0)
+                        return;
+                    foreach (var kvp in Pending)
+                    {
+                        if (kvp.Value.IsExecuting)
+                            continue;
+                        kvp.Value.IsExecuting = true;
+                        ready ??= new List<(string, PendingCommand)>(Pending.Count);
+                        ready.Add((kvp.Key, kvp.Value));
+                    }
+                    if (ready == null)
+                        return;
                 }
-                callback();
-            }
-            List<(string id, PendingCommand pending)> ready = null;
-
-            lock (PendingLock)
-            {
-                if (Pending.Count == 0) return;
-                foreach (var kvp in Pending)
+                foreach (var (id, pending) in ready)
                 {
-                    if (kvp.Value.IsExecuting) continue;
-                    kvp.Value.IsExecuting = true;
-                    ready ??= new List<(string, PendingCommand)>(Pending.Count);
-                    ready.Add((kvp.Key, kvp.Value));
+                    ProcessCommand(id, pending);
                 }
-                if (ready == null) return;
-            }
-            foreach (var (id, pending) in ready)
-            {
-                ProcessCommand(id, pending);
-            }
             }
             finally
             {
@@ -323,11 +329,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
             if (string.Equals(commandText, "ping", StringComparison.OrdinalIgnoreCase))
             {
-                var pingResponse = new
-                {
-                    status = "success",
-                    result = new { message = "pong" }
-                };
+                var pingResponse = new { status = "success", result = new { message = "pong" } };
                 pending.TrySetResult(pingResponse);
                 RemovePending(id, pending);
                 return;
@@ -339,7 +341,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 {
                     status = "error",
                     error = "Invalid JSON format",
-                    receivedText = commandText.Length > 50 ? commandText[..50] + "..." : commandText
+                    receivedText = commandText.Length > 50 ? commandText[..50] + "..." : commandText,
                 };
                 pending.TrySetResult(invalidJsonResponse);
                 RemovePending(id, pending);
@@ -365,11 +367,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
                 if (string.Equals(command.type, "ping", StringComparison.OrdinalIgnoreCase))
                 {
-                    var pingResponse = new
-                    {
-                        status = "success",
-                        result = new { message = "pong" }
-                    };
+                    var pingResponse = new { status = "success", result = new { message = "pong" } };
                     pending.TrySetResult(pingResponse);
                     RemovePending(id, pending);
                     return;
@@ -382,8 +380,9 @@ namespace MCPForUnity.Editor.Services.Transport
                 // an error and a stack trace to the user's console.
                 if (!CommandRegistry.HasHandler(command.type))
                 {
-                    string unknown = $"Unity has no tool or resource named '{command.type}'. If the MCP server " +
-                        "or CLI is newer than the MCP for Unity package in this project, update the package.";
+                    string unknown =
+                        $"Unity has no tool or resource named '{command.type}'. If the MCP server "
+                        + "or CLI is newer than the MCP for Unity package in this project, update the package.";
                     McpLog.Warn(unknown);
                     pending.TrySetResult(SerializeError(unknown, command.type));
                     RemovePending(id, pending);
@@ -394,8 +393,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 var resourceMeta = MCPServiceLocator.ResourceDiscovery.GetResourceMetadata(command.type);
                 if (resourceMeta != null && !MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(command.type))
                 {
-                    pending.TrySetResult(SerializeError(
-                        $"Resource '{command.type}' is disabled in the Unity Editor."));
+                    pending.TrySetResult(SerializeError($"Resource '{command.type}' is disabled in the Unity Editor."));
                     RemovePending(id, pending);
                     return;
                 }
@@ -404,13 +402,15 @@ namespace MCPForUnity.Editor.Services.Transport
                 var toolMeta = MCPServiceLocator.ToolDiscovery.GetToolMetadata(command.type);
                 if (toolMeta != null && !MCPServiceLocator.ToolDiscovery.IsToolEnabled(command.type))
                 {
-                    pending.TrySetResult(SerializeError(
-                        $"Tool '{command.type}' is disabled in the Unity Editor."));
+                    pending.TrySetResult(SerializeError($"Tool '{command.type}' is disabled in the Unity Editor."));
                     RemovePending(id, pending);
                     return;
                 }
 
-                var logType = resourceMeta != null ? "resource" : toolMeta != null ? "tool" : "unknown";
+                var logType =
+                    resourceMeta != null ? "resource"
+                    : toolMeta != null ? "tool"
+                    : "unknown";
                 var logName = resourceMeta?.Name ?? toolMeta?.Name ?? "unknown";
                 var sw = McpLogRecord.IsEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
                 var result = CommandRegistry.ExecuteCommand(command.type, parameters, pending.CompletionSource, pending.CancellationToken);
@@ -423,13 +423,15 @@ namespace MCPForUnity.Editor.Services.Transport
                     var capturedLogType = logType;
                     void Complete(Task<string> t)
                     {
-                        if (t.IsCanceled) pending.TrySetCanceled();
+                        if (t.IsCanceled)
+                            pending.TrySetCanceled();
                         else if (t.IsFaulted)
                         {
                             pending.ResponseSource.TrySetException(t.Exception.InnerExceptions);
                             pending.JsonResponseSource?.TrySetException(t.Exception.InnerExceptions);
                         }
-                        else pending.TrySetJsonResult(t.Result);
+                        else
+                            pending.TrySetJsonResult(t.Result);
                         sw?.Stop();
                         if (McpLogRecord.IsEnabled)
                         {
@@ -453,14 +455,15 @@ namespace MCPForUnity.Editor.Services.Transport
                                 }
                                 catch { }
                             }
-                            McpLogRecord.Log(capturedType, capturedParams, capturedLogType,
-                                logStatus, sw?.ElapsedMilliseconds ?? 0, logError);
+                            McpLogRecord.Log(capturedType, capturedParams, capturedLogType, logStatus, sw?.ElapsedMilliseconds ?? 0, logError);
                         }
                         RemovePending(id, pending);
                     }
                     var task = pending.CompletionSource.Task;
-                    if (task.IsCompleted) Complete(task);
-                    else _ = task.ContinueWith(Complete, TaskScheduler.Default);
+                    if (task.IsCompleted)
+                        Complete(task);
+                    else
+                        _ = task.ContinueWith(Complete, TaskScheduler.Default);
                     return;
                 }
 
@@ -499,7 +502,8 @@ namespace MCPForUnity.Editor.Services.Transport
             {
                 if (Pending.Remove(id, out pending))
                 {
-                    if (!pending.IsExecuting) pending.ExecutionSource.TrySetResult(true);
+                    if (!pending.IsExecuting)
+                        pending.ExecutionSource.TrySetResult(true);
                     UnhookUpdateIfIdle();
                 }
             }
@@ -527,7 +531,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 status = "error",
                 error = message,
                 command = commandType ?? "Unknown",
-                stackTrace
+                stackTrace,
             };
             return errorResponse;
         }

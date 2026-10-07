@@ -1,4 +1,5 @@
 """Build CLI settings and machine-readable pending responses."""
+
 import json
 from unittest.mock import patch
 
@@ -37,7 +38,10 @@ def test_pending_build_json_is_one_document(args):
 @pytest.mark.parametrize("args", [["run"], ["batch", "--targets", "windows64"]])
 def test_text_pending_build_retains_polling_guidance(args):
     with patch("cli.commands.build.get_config", return_value=CLIConfig(format="text")):
-        with patch("cli.commands.build.run_command", return_value={"success": True, "data": {"job_id": "fixture-build"}}):
+        with patch(
+            "cli.commands.build.run_command",
+            return_value={"success": True, "data": {"job_id": "fixture-build"}},
+        ):
             result = CliRunner().invoke(build, args)
     assert result.exit_code == 0, result.output
     assert "unity-mcp build status fixture-build" in result.output

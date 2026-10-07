@@ -8,7 +8,8 @@ namespace MCPForUnity.Editor.Helpers
 {
     internal static class CodexHttpAuth
     {
-        internal const string UnsupportedMessage = "Automatic HTTP authentication could not be confirmed for the installed Codex. "
+        internal const string UnsupportedMessage =
+            "Automatic HTTP authentication could not be confirmed for the installed Codex. "
             + "Update Codex and make its CLI available on PATH, or select stdio and configure again.";
 
         internal static Func<bool> SupportsHeadersHelper = DetectHeadersHelper;
@@ -32,8 +33,14 @@ namespace MCPForUnity.Editor.Helpers
                     : ExecPath.FindInPath("codex", "/opt/homebrew/bin:/usr/local/bin");
                 if (string.IsNullOrEmpty(executable) && windows)
                 {
-                    string bundled = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        "Programs", "OpenAI", "Codex", "bin", "codex.exe");
+                    string bundled = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "Programs",
+                        "OpenAI",
+                        "Codex",
+                        "bin",
+                        "codex.exe"
+                    );
                     if (File.Exists(bundled))
                     {
                         executable = bundled;
@@ -47,12 +54,23 @@ namespace MCPForUnity.Editor.Helpers
                 // mcp get parses but never executes this helper or opens an MCP connection.
                 directory = Path.Combine(Path.GetTempPath(), "unity-mcp-codex-capability-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(directory);
-                File.WriteAllText(Path.Combine(directory, "config.toml"),
+                File.WriteAllText(
+                    Path.Combine(directory, "config.toml"),
                     "[analytics]\nenabled = false\n[mcp_servers.unityMCP]\nurl = 'http://127.0.0.1:1/mcp'\n"
-                    + "http_headers_helper = 'unity-mcp-capability-probe'\n");
+                        + "http_headers_helper = 'unity-mcp-capability-probe'\n"
+                );
                 var environment = new Dictionary<string, string> { ["CODEX_HOME"] = directory };
-                if (!ExecPath.TryRun(executable, "--no-daemon mcp get unityMCP --json", directory,
-                    out string output, out _, timeoutMs: 2500, environmentOverrides: environment))
+                if (
+                    !ExecPath.TryRun(
+                        executable,
+                        "--no-daemon mcp get unityMCP --json",
+                        directory,
+                        out string output,
+                        out _,
+                        timeoutMs: 2500,
+                        environmentOverrides: environment
+                    )
+                )
                 {
                     return false;
                 }
@@ -93,6 +111,5 @@ namespace MCPForUnity.Editor.Helpers
                 return false;
             }
         }
-
     }
 }

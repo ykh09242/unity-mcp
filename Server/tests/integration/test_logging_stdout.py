@@ -63,7 +63,5 @@ def test_no_print_statements_in_codebase():
         rel_path = py_file.relative_to(SRC)
         if v.hit and rel_path not in ALLOWED_PRINT_FILES:
             offenders.append(rel_path)
-    assert not syntax_errors, "syntax errors in: " + \
-        ", ".join(str(e) for e in syntax_errors)
-    assert not offenders, "stdout writes found in: " + \
-        ", ".join(str(o) for o in offenders)
+    assert not syntax_errors, "syntax errors in: " + ", ".join(str(e) for e in syntax_errors)
+    assert not offenders, "stdout writes found in: " + ", ".join(str(o) for o in offenders)

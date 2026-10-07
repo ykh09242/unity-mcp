@@ -1,10 +1,10 @@
 using System;
-using System.Reflection;
 using System.Collections.Generic;
+using System.Reflection;
+using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Services;
 using NUnit.Framework;
 using UnityEditor;
-using MCPForUnity.Editor.Services;
-using MCPForUnity.Editor.Constants;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -30,12 +30,16 @@ namespace MCPForUnityTests.Editor.Services
             CleanupEditorPrefs();
         }
 
-        private static IEnumerable<string> CacheKeys() => new[]
-        {
-            TestLastCheckDateKey, TestCachedVersionKey,
-            TestLastCheckDateKey + ".beta", TestCachedVersionKey + ".beta",
-            TestAssetStoreLastCheckDateKey, TestAssetStoreCachedVersionKey
-        };
+        private static IEnumerable<string> CacheKeys() =>
+            new[]
+            {
+                TestLastCheckDateKey,
+                TestCachedVersionKey,
+                TestLastCheckDateKey + ".beta",
+                TestCachedVersionKey + ".beta",
+                TestAssetStoreLastCheckDateKey,
+                TestAssetStoreCachedVersionKey,
+            };
 
         [TearDown]
         public void TearDown()
@@ -43,12 +47,14 @@ namespace MCPForUnityTests.Editor.Services
             // Clean up test data
             CleanupEditorPrefs();
             foreach (var pref in _originalPrefs)
-                if (pref.Value != null) EditorPrefs.SetString(pref.Key, pref.Value);
+                if (pref.Value != null)
+                    EditorPrefs.SetString(pref.Key, pref.Value);
         }
 
         private void CleanupEditorPrefs()
         {
-            foreach (string key in CacheKeys()) EditorPrefs.DeleteKey(key);
+            foreach (string key in CacheKeys())
+                EditorPrefs.DeleteKey(key);
         }
 
         [Test]
@@ -205,19 +211,17 @@ namespace MCPForUnityTests.Editor.Services
 
             // Assert
             Assert.IsNotNull(result, "Should return a result");
-            
+
             // If the check succeeded (network available), verify it didn't use the expired cache
             if (result.CheckSucceeded)
             {
-                Assert.AreNotEqual(cachedVersion, result.LatestVersion, 
-                    "Should not return expired cached version when fresh fetch succeeds");
+                Assert.AreNotEqual(cachedVersion, result.LatestVersion, "Should not return expired cached version when fresh fetch succeeds");
                 Assert.IsNotNull(result.LatestVersion, "Should have fetched a new version");
             }
             else
             {
                 // If offline, check should fail (not succeed with cached data)
-                Assert.IsFalse(result.UpdateAvailable, 
-                    "Should not report update available when fetch fails and cache is expired");
+                Assert.IsFalse(result.UpdateAvailable, "Should not report update available when fetch fails and cache is expired");
             }
         }
 
@@ -230,11 +234,7 @@ namespace MCPForUnityTests.Editor.Services
             EditorPrefs.SetString(TestAssetStoreLastCheckDateKey, today);
             EditorPrefs.SetString(TestAssetStoreCachedVersionKey, cachedVersion);
 
-            var mockService = new TestablePackageUpdateService
-            {
-                IsGitInstallationResult = false,
-                AssetStoreFetchResult = "9.9.9"
-            };
+            var mockService = new TestablePackageUpdateService { IsGitInstallationResult = false, AssetStoreFetchResult = "9.9.9" };
 
             // Act
             var result = mockService.CheckForUpdate("9.0.0");
@@ -258,11 +258,7 @@ namespace MCPForUnityTests.Editor.Services
             EditorPrefs.SetString(TestLastCheckDateKey, DateTime.Now.ToString("yyyy-MM-dd"));
             EditorPrefs.SetString(TestCachedVersionKey, "99.0.0");
 
-            var mockService = new TestablePackageUpdateService
-            {
-                IsGitInstallationResult = false,
-                AssetStoreFetchResult = "9.1.0"
-            };
+            var mockService = new TestablePackageUpdateService { IsGitInstallationResult = false, AssetStoreFetchResult = "9.1.0" };
 
             // Act
             var result = mockService.CheckForUpdate("9.0.0");
@@ -278,11 +274,7 @@ namespace MCPForUnityTests.Editor.Services
         public void CheckForUpdate_ReturnsAssetStoreFailureMessage_WhenFetchFails()
         {
             // Arrange
-            var mockService = new TestablePackageUpdateService
-            {
-                IsGitInstallationResult = false,
-                AssetStoreFetchResult = null
-            };
+            var mockService = new TestablePackageUpdateService { IsGitInstallationResult = false, AssetStoreFetchResult = null };
 
             // Act
             var result = mockService.CheckForUpdate("9.0.0");
@@ -333,10 +325,14 @@ namespace MCPForUnityTests.Editor.Services
         public void UpdateMetadataUrls_TargetOnlyTheFork()
         {
             var flags = BindingFlags.Static | BindingFlags.NonPublic;
-            Assert.AreEqual("https://raw.githubusercontent.com/ykh09242/unity-mcp/main/MCPForUnity/package.json",
-                typeof(PackageUpdateService).GetField("MainPackageJsonUrl", flags).GetRawConstantValue());
-            Assert.AreEqual("https://raw.githubusercontent.com/ykh09242/unity-mcp/beta/MCPForUnity/package.json",
-                typeof(PackageUpdateService).GetField("BetaPackageJsonUrl", flags).GetRawConstantValue());
+            Assert.AreEqual(
+                "https://raw.githubusercontent.com/ykh09242/unity-mcp/main/MCPForUnity/package.json",
+                typeof(PackageUpdateService).GetField("MainPackageJsonUrl", flags).GetRawConstantValue()
+            );
+            Assert.AreEqual(
+                "https://raw.githubusercontent.com/ykh09242/unity-mcp/beta/MCPForUnity/package.json",
+                typeof(PackageUpdateService).GetField("BetaPackageJsonUrl", flags).GetRawConstantValue()
+            );
         }
 
         [TestCase("https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#v1.0.0", "beta")]
@@ -378,8 +374,14 @@ namespace MCPForUnityTests.Editor.Services
             }
             finally
             {
-                if (hadDate) EditorPrefs.SetString(upstreamDate, originalDate); else EditorPrefs.DeleteKey(upstreamDate);
-                if (hadVersion) EditorPrefs.SetString(upstreamVersion, originalVersion); else EditorPrefs.DeleteKey(upstreamVersion);
+                if (hadDate)
+                    EditorPrefs.SetString(upstreamDate, originalDate);
+                else
+                    EditorPrefs.DeleteKey(upstreamDate);
+                if (hadVersion)
+                    EditorPrefs.SetString(upstreamVersion, originalVersion);
+                else
+                    EditorPrefs.DeleteKey(upstreamVersion);
                 EditorPrefs.DeleteKey(TestLastCheckDateKey + ".beta");
                 EditorPrefs.DeleteKey(TestCachedVersionKey + ".beta");
             }

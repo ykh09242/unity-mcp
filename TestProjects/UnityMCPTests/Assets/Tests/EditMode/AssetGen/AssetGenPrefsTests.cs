@@ -29,7 +29,8 @@ namespace MCPForUnityTests.Editor.AssetGen
 
         private void Clear()
         {
-            foreach (string k in Keys) EditorPrefs.DeleteKey(k);
+            foreach (string k in Keys)
+                EditorPrefs.DeleteKey(k);
         }
 
         [SetUp]

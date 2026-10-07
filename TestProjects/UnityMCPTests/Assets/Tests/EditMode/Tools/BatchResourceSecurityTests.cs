@@ -19,20 +19,20 @@ namespace MCPForUnityTests.Editor.Tools
             discovery.SetResourceEnabled(name, false);
             try
             {
-                var task = BatchExecute.HandleCommand(new JObject
-                {
-                    ["failFast"] = true,
-                    ["commands"] = new JArray(
-                        new JObject { ["tool"] = name },
-                        new JObject { ["tool"] = name })
-                });
-                while (!task.IsCompleted) yield return null;
+                var task = BatchExecute.HandleCommand(
+                    new JObject { ["failFast"] = true, ["commands"] = new JArray(new JObject { ["tool"] = name }, new JObject { ["tool"] = name }) }
+                );
+                while (!task.IsCompleted)
+                    yield return null;
                 var result = JObject.FromObject(task.Result);
                 Assert.IsFalse(result.Value<bool>("success"));
                 StringAssert.Contains("disabled", result.ToString());
                 Assert.AreEqual(1, ((JArray)result.SelectToken("data.results")).Count);
             }
-            finally { discovery.SetResourceEnabled(name, wasEnabled); }
+            finally
+            {
+                discovery.SetResourceEnabled(name, wasEnabled);
+            }
         }
     }
 }

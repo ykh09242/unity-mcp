@@ -84,11 +84,9 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
             if (projectScopedToolsToggle != null)
             {
-                projectScopedToolsToggle.value = EditorPrefs.GetBool(
-                    EditorPrefKeys.ProjectScopedToolsLocalHttp,
-                    false
-                );
-                projectScopedToolsToggle.tooltip = "When enabled, register project-scoped tools with HTTP Local and stdio transports. Allows per-project tool customization.";
+                projectScopedToolsToggle.value = EditorPrefs.GetBool(EditorPrefKeys.ProjectScopedToolsLocalHttp, false);
+                projectScopedToolsToggle.tooltip =
+                    "When enabled, register project-scoped tools with HTTP Local and stdio transports. Allows per-project tool customization.";
                 projectScopedToolsToggle.RegisterValueChangedCallback(evt =>
                 {
                     EditorPrefs.SetBool(EditorPrefKeys.ProjectScopedToolsLocalHttp, evt.newValue);
@@ -141,9 +139,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             categoryContainer?.Clear();
 
             var service = MCPServiceLocator.ToolDiscovery;
-            allTools = service.DiscoverAllTools()
-                .OrderBy(tool => tool.Name, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            allTools = service.DiscoverAllTools().OrderBy(tool => tool.Name, StringComparer.OrdinalIgnoreCase).ToList();
 
             bool hasTools = allTools.Count > 0;
             enableAllButton?.SetEnabled(hasTools);
@@ -204,9 +200,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             if (GroupDisplayNames.TryGetValue(group, out var displayName))
                 return displayName;
             // Fallback: capitalize first letter
-            return string.IsNullOrEmpty(group)
-                ? "Other"
-                : char.ToUpper(group[0]) + group.Substring(1);
+            return string.IsNullOrEmpty(group) ? "Other" : char.ToUpper(group[0]) + group.Substring(1);
         }
 
         private void BuildCategory(string title, string prefsSuffix, IEnumerable<ToolMetadata> tools)
@@ -226,13 +220,14 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             var foldout = new Foldout
             {
                 text = $"{title} ({enabledCount}/{toolList.Count})",
-                value = EditorPrefs.GetBool(EditorPrefKeys.ToolFoldoutStatePrefix + prefsSuffix, defaultOpen)
+                value = EditorPrefs.GetBool(EditorPrefKeys.ToolFoldoutStatePrefix + prefsSuffix, defaultOpen),
             };
             foldout.AddToClassList("catalog-category");
 
             foldout.RegisterValueChangedCallback(evt =>
             {
-                if (evt.target != foldout || !string.IsNullOrWhiteSpace(searchField?.value)) return;
+                if (evt.target != foldout || !string.IsNullOrWhiteSpace(searchField?.value))
+                    return;
                 EditorPrefs.SetBool(EditorPrefKeys.ToolFoldoutStatePrefix + prefsSuffix, evt.newValue);
             });
 
@@ -262,10 +257,11 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             if (isExperimental)
             {
                 var warning = new HelpBox(
-                    "ProBuilder support is experimental. Mesh editing operations may produce " +
-                    "unexpected results on complex topologies. Always save your scene before " +
-                    "performing destructive operations.",
-                    HelpBoxMessageType.Warning);
+                    "ProBuilder support is experimental. Mesh editing operations may produce "
+                        + "unexpected results on complex topologies. Always save your scene before "
+                        + "performing destructive operations.",
+                    HelpBoxMessageType.Warning
+                );
                 warning.AddToClassList("catalog-group-warning");
                 foldout.Insert(0, warning);
             }
@@ -283,10 +279,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             var header = new VisualElement();
             header.AddToClassList("tool-item-header");
 
-            var toggle = new Toggle(tool.Name)
-            {
-                value = MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name)
-            };
+            var toggle = new Toggle(tool.Name) { value = MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name) };
             toggle.AddToClassList("tool-item-toggle");
             toggle.tooltip = string.IsNullOrWhiteSpace(tool.Description) ? tool.Name : tool.Description;
 
@@ -315,8 +308,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             row.Add(header);
 
             // Skip auto-generated placeholder descriptions like "Tool: find_gameobjects"
-            if (!string.IsNullOrWhiteSpace(tool.Description)
-                && !tool.Description.StartsWith("Tool: ", StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(tool.Description) && !tool.Description.StartsWith("Tool: ", StringComparison.OrdinalIgnoreCase))
             {
                 var description = new Label(tool.Description);
                 description.AddToClassList("tool-item-description");
@@ -325,8 +317,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
             if (tool.Parameters != null && tool.Parameters.Count > 0)
             {
-                var paramSummary = string.Join(", ", tool.Parameters.Select(p =>
-                    $"{p.Name}{(p.Required ? string.Empty : " (optional)")}: {p.Type}"));
+                var paramSummary = string.Join(", ", tool.Parameters.Select(p => $"{p.Name}{(p.Required ? string.Empty : " (optional)")}: {p.Type}"));
 
                 var parametersLabel = new Label(paramSummary);
                 parametersLabel.AddToClassList("tool-parameters");
@@ -346,11 +337,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             return row;
         }
 
-        private void HandleToggleChange(
-            ToolMetadata tool,
-            bool enabled,
-            bool updateSummary = true,
-            bool reregisterTools = true)
+        private void HandleToggleChange(ToolMetadata tool, bool enabled, bool updateSummary = true, bool reregisterTools = true)
         {
             MCPServiceLocator.ToolDiscovery.SetToolEnabled(tool.Name, enabled);
 
@@ -462,9 +449,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         {
             // We need the grouped tool lists to check states.
             var builtInTools = allTools.Where(IsBuiltIn).ToList();
-            var grouped = builtInTools
-                .GroupBy(t => t.Group ?? "core")
-                .ToDictionary(g => g.Key, g => g.ToList());
+            var grouped = builtInTools.GroupBy(t => t.Group ?? "core").ToDictionary(g => g.Key, g => g.ToList());
             var customTools = allTools.Where(t => !IsBuiltIn(t)).ToList();
 
             foreach (var kvp in groupToggleMap)
@@ -536,9 +521,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 }
 
                 string header = $"Reconfigured {success} client(s), skipped {skipped}.";
-                string body = messages.Count > 0
-                    ? header + "\n\n" + string.Join("\n", messages)
-                    : header;
+                string body = messages.Count > 0 ? header + "\n\n" + string.Join("\n", messages) : header;
 
                 EditorUtility.DisplayDialog("Reconfigure Clients", body, "OK");
             }
@@ -589,7 +572,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                     bool matches = MatchesSearch(tool, query);
                     if (toolRowMap.TryGetValue(tool.Name, out var row))
                         row.EnableInClassList("catalog-hidden", !matches);
-                    if (matches) groupVisibleCount++;
+                    if (matches)
+                        groupVisibleCount++;
                 }
 
                 visibleCount += groupVisibleCount;
@@ -606,7 +590,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 }
             }
 
-            if (!searching) foldoutStatesBeforeSearch.Clear();
+            if (!searching)
+                foldoutStatesBeforeSearch.Clear();
             if (visibleCountLabel != null)
                 visibleCountLabel.text = $"{visibleCount} / {allTools.Count} shown";
             if (emptyStateLabel != null)
@@ -618,9 +603,11 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
         private static bool MatchesSearch(ToolMetadata tool, string query)
         {
-            if (tool == null) return false;
+            if (tool == null)
+                return false;
             query = (query ?? string.Empty).Trim();
-            if (query.Length == 0) return true;
+            if (query.Length == 0)
+                return true;
             string group = tool.Group ?? "core";
             string category = IsBuiltIn(tool) ? GetGroupDisplayName(group) : "Custom Tools";
             return (tool.Name ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
@@ -634,27 +621,18 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             var actions = new VisualElement();
             actions.AddToClassList("tool-item-actions");
 
-            var gameViewButton = new Button(OnManageSceneScreenshotClicked)
-            {
-                text = "Game View"
-            };
+            var gameViewButton = new Button(OnManageSceneScreenshotClicked) { text = "Game View" };
             gameViewButton.AddToClassList("tool-action-button");
             gameViewButton.style.marginTop = 4;
             gameViewButton.tooltip = "Capture a game camera screenshot. Default: Assets/Screenshots (configurable in Advanced).";
 
-            var sceneViewButton = new Button(OnSceneViewScreenshotClicked)
-            {
-                text = "Scene View"
-            };
+            var sceneViewButton = new Button(OnSceneViewScreenshotClicked) { text = "Scene View" };
             sceneViewButton.AddToClassList("tool-action-button");
             sceneViewButton.style.marginTop = 4;
             sceneViewButton.style.marginLeft = 4;
             sceneViewButton.tooltip = "Capture the active Scene View viewport. Default: Assets/Screenshots (configurable in Advanced).";
 
-            var multiviewButton = new Button(OnManageSceneMultiviewClicked)
-            {
-                text = "Multiview"
-            };
+            var multiviewButton = new Button(OnManageSceneMultiviewClicked) { text = "Multiview" };
             multiviewButton.AddToClassList("tool-action-button");
             multiviewButton.style.marginTop = 4;
             multiviewButton.style.marginLeft = 4;
@@ -689,17 +667,11 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             label.style.unityFontStyleAndWeight = UnityEngine.FontStyle.Normal;
             container.Add(label);
 
-            int currentValue = EditorPrefs.GetInt(
-                EditorPrefKeys.BatchExecuteMaxCommands,
-                BatchExecute.DefaultMaxCommandsPerBatch
-            );
+            int currentValue = EditorPrefs.GetInt(EditorPrefKeys.BatchExecuteMaxCommands, BatchExecute.DefaultMaxCommandsPerBatch);
 
-            var field = new IntegerField
-            {
-                value = Math.Clamp(currentValue, 1, BatchExecute.AbsoluteMaxCommandsPerBatch),
-                style = { width = 60 }
-            };
-            field.tooltip = $"Number of commands allowed per batch_execute call (1–{BatchExecute.AbsoluteMaxCommandsPerBatch}). Default: {BatchExecute.DefaultMaxCommandsPerBatch}.";
+            var field = new IntegerField { value = Math.Clamp(currentValue, 1, BatchExecute.AbsoluteMaxCommandsPerBatch), style = { width = 60 } };
+            field.tooltip =
+                $"Number of commands allowed per batch_execute call (1–{BatchExecute.AbsoluteMaxCommandsPerBatch}). Default: {BatchExecute.DefaultMaxCommandsPerBatch}.";
 
             field.RegisterValueChangedCallback(evt =>
             {

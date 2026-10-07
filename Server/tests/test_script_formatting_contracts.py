@@ -1,4 +1,5 @@
 """Literal Python edit payloads and preview must agree with the Unity wire."""
+
 import difflib
 import importlib
 from unittest.mock import AsyncMock
@@ -13,12 +14,14 @@ def wire(monkeypatch):
     reader = AsyncMock()
     writer = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(tools, "get_unity_instance_from_context", AsyncMock(return_value=None))
+
     async def read_or_prepare(*args, **kwargs):
         response = await reader(*args, **kwargs)
         params = args[3]
         if not params.get("options", {}).get("preview"):
             return response
         from tests.test_script_preparation import prepared
+
         original = response["data"]["contents"]
         try:
             candidate = tools._preview_text_spans(original, params["edits"])
@@ -26,6 +29,7 @@ def wire(monkeypatch):
             return {"success": False, "code": "preview_failed"}
         proposal = prepared(original, candidate)
         return proposal
+
     monkeypatch.setattr(tools, "send_with_unity_instance", read_or_prepare)
     monkeypatch.setattr(tools, "send_mutation", writer)
     return reader, writer
@@ -73,14 +77,31 @@ async def test_preview_matches_production_regex_occurrence(wire):
     span = writer.await_args.args[3]["edits"][0]
     assert (span["startLine"], span["newText"]) == (2, "last=done\n")
     expected = "name=first\r\nlast=done\n\r\n"
-    diff = "".join(difflib.unified_diff(source.splitlines(keepends=True), expected.splitlines(keepends=True), fromfile="before", tofile="after", n=3))
+    diff = "".join(
+        difflib.unified_diff(
+            source.splitlines(keepends=True),
+            expected.splitlines(keepends=True),
+            fromfile="before",
+            tofile="after",
+            n=3,
+        )
+    )
     assert preview["data"]["diff"] == diff
 
 
 @pytest.mark.asyncio
 async def test_mixed_preview_rejects_before_io(wire):
     reader, writer = wire
-    result = await tools.script_apply_edits(AsyncMock(), "Foo", "Assets", [{"op": "insert_method", "replacement": "void M() {}"}, {"op": "append", "text": "// literal"}], {"preview": True})
+    result = await tools.script_apply_edits(
+        AsyncMock(),
+        "Foo",
+        "Assets",
+        [
+            {"op": "insert_method", "replacement": "void M() {}"},
+            {"op": "append", "text": "// literal"},
+        ],
+        {"preview": True},
+    )
     assert result["code"] == "unsupported_preview"
     reader.assert_not_awaited()
     writer.assert_not_awaited()
@@ -92,11 +113,22 @@ async def test_anchor_payload_is_forwarded_literally(wire, op):
     reader, writer = wire
     reader.return_value = {"success": True, "data": {"sha256": "previous"}}
     payload = 'inline\n\t@"raw\r\n  value"'
-    response = await tools.script_apply_edits(AsyncMock(), "Foo", "Assets", [{"op": op, "anchor": "target", "text": payload, "position": "before"}])
+    response = await tools.script_apply_edits(
+        AsyncMock(),
+        "Foo",
+        "Assets",
+        [{"op": op, "anchor": "target", "text": payload, "position": "before"}],
+    )
     assert response["success"] is True
     edit = writer.await_args.args[3]["edits"][0]
     assert (edit["text"], edit["position"]) == (payload, "before")
-    assert await tools._apply_edits_locally("target", [{"op": "anchor_insert", "anchor": "target", "text": payload, "position": "before"}]) == payload + "target"
+    assert (
+        await tools._apply_edits_locally(
+            "target",
+            [{"op": "anchor_insert", "anchor": "target", "text": payload, "position": "before"}],
+        )
+        == payload + "target"
+    )
 
 
 @pytest.mark.asyncio
@@ -104,19 +136,56 @@ async def test_range_literal_and_options_survive_wire(wire):
     reader, writer = wire
     reader.return_value = {"success": True, "data": {"contents": "\tline\r\n"}}
     payload = '\n  """\r\n    raw\n  """'
-    response = await tools.script_apply_edits(AsyncMock(), "Foo", "Assets", [{"op": "replace_range", "startLine": 1, "startCol": 2, "endLine": 1, "endCol": 6, "text": payload}], {"validate": "relaxed", "refresh": "none"})
+    response = await tools.script_apply_edits(
+        AsyncMock(),
+        "Foo",
+        "Assets",
+        [
+            {
+                "op": "replace_range",
+                "startLine": 1,
+                "startCol": 2,
+                "endLine": 1,
+                "endCol": 6,
+                "text": payload,
+            }
+        ],
+        {"validate": "relaxed", "refresh": "none"},
+    )
     assert response["success"] is True
     params = writer.await_args.args[3]
     assert params["edits"][0]["newText"] == payload
-    assert params["options"] == {"validate": "relaxed", "refresh": "none", "applyMode": "sequential"}
-    assert await tools._apply_edits_locally("x", [{"op": "append", "text": payload}] * 2) == "x" + payload * 2
+    assert params["options"] == {
+        "validate": "relaxed",
+        "refresh": "none",
+        "applyMode": "sequential",
+    }
+    assert (
+        await tools._apply_edits_locally("x", [{"op": "append", "text": payload}] * 2)
+        == "x" + payload * 2
+    )
 
 
 @pytest.mark.asyncio
 async def test_explicit_empty_literal_is_not_replaced_by_alias(wire):
     reader, writer = wire
     reader.return_value = {"success": True, "data": {"contents": "x"}}
-    response = await tools.script_apply_edits(AsyncMock(), "Foo", "Assets", [{"op": "replace_range", "startLine": 1, "startCol": 1, "endLine": 1, "endCol": 2, "text": "", "replacement": "fallback"}])
+    response = await tools.script_apply_edits(
+        AsyncMock(),
+        "Foo",
+        "Assets",
+        [
+            {
+                "op": "replace_range",
+                "startLine": 1,
+                "startCol": 1,
+                "endLine": 1,
+                "endCol": 2,
+                "text": "",
+                "replacement": "fallback",
+            }
+        ],
+    )
     assert response["success"] is True
     assert writer.await_args.args[3]["edits"][0]["newText"] == ""
 
@@ -130,7 +199,15 @@ async def test_same_position_preview_uses_unity_stable_insert_order(wire):
     preview = await tools.script_apply_edits(AsyncMock(), "Foo", "Assets", edits, {"preview": True})
     assert preview["success"] is True
     expected = source + "second\nfirst\n"
-    assert preview["data"]["diff"] == "".join(difflib.unified_diff(source.splitlines(keepends=True), expected.splitlines(keepends=True), fromfile="before", tofile="after", n=3))
+    assert preview["data"]["diff"] == "".join(
+        difflib.unified_diff(
+            source.splitlines(keepends=True),
+            expected.splitlines(keepends=True),
+            fromfile="before",
+            tofile="after",
+            n=3,
+        )
+    )
     writer.assert_not_awaited()
     response = await tools.script_apply_edits(AsyncMock(), "Foo", "Assets", edits)
     assert response["success"] is True
@@ -144,8 +221,22 @@ async def test_same_position_preview_uses_unity_stable_insert_order(wire):
 async def test_preview_overlap_matches_unity_same_start_order(wire, insert_first):
     reader, writer = wire
     reader.return_value = {"success": True, "data": {"contents": "abc"}}
-    insert = {"op": "replace_range", "startLine": 1, "startCol": 2, "endLine": 1, "endCol": 2, "text": "X"}
-    replace = {"op": "replace_range", "startLine": 1, "startCol": 2, "endLine": 1, "endCol": 3, "text": "Y"}
+    insert = {
+        "op": "replace_range",
+        "startLine": 1,
+        "startCol": 2,
+        "endLine": 1,
+        "endCol": 2,
+        "text": "X",
+    }
+    replace = {
+        "op": "replace_range",
+        "startLine": 1,
+        "startCol": 2,
+        "endLine": 1,
+        "endCol": 3,
+        "text": "Y",
+    }
     edits = [insert, replace] if insert_first else [replace, insert]
     preview = await tools.script_apply_edits(AsyncMock(), "Foo", "Assets", edits, {"preview": True})
     writer.assert_not_awaited()
@@ -156,9 +247,13 @@ async def test_preview_overlap_matches_unity_same_start_order(wire, insert_first
         writer.return_value = {"success": False, "data": {"status": "overlap"}}
     else:
         assert preview["success"] is True
-        assert preview["data"]["diff"] == "".join(difflib.unified_diff(["abc"], ["aXYc"], fromfile="before", tofile="after", n=3))
+        assert preview["data"]["diff"] == "".join(
+            difflib.unified_diff(["abc"], ["aXYc"], fromfile="before", tofile="after", n=3)
+        )
     response = await tools.script_apply_edits(AsyncMock(), "Foo", "Assets", edits)
     assert response["success"] is not insert_first
     params = writer.await_args.args[3]
     assert params["options"]["applyMode"] == "atomic"
-    assert [(edit["startCol"], edit["endCol"], edit["newText"]) for edit in params["edits"]] == [(item["startCol"], item["endCol"], item["text"]) for item in edits]
+    assert [(edit["startCol"], edit["endCol"], edit["newText"]) for edit in params["edits"]] == [
+        (item["startCol"], item["endCol"], item["text"]) for item in edits
+    ]

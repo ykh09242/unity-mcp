@@ -31,32 +31,29 @@ namespace MCPForUnityTests.EditMode.Tools
         [TearDown]
         public void TearDown()
         {
-            if (!string.IsNullOrEmpty(_root)) AssetDatabase.DeleteAsset(_root);
+            if (!string.IsNullOrEmpty(_root))
+                AssetDatabase.DeleteAsset(_root);
         }
 
         private JObject Send(string action, JObject properties)
         {
             properties["controller_path"] = _controllerPath;
             properties["state_name"] = "Tree";
-            return JObject.FromObject(ManageAnimation.HandleCommand(new JObject
-            {
-                ["action"] = action, ["properties"] = properties
-            }));
+            return JObject.FromObject(ManageAnimation.HandleCommand(new JObject { ["action"] = action, ["properties"] = properties }));
         }
 
         private BlendTree CreateTree(BlendTreeType type)
         {
-            JObject response = type == BlendTreeType.Simple1D
-                ? Send("controller_create_blend_tree_1d", new JObject { ["blend_parameter"] = "Speed" })
-                : Send("controller_create_blend_tree_2d", new JObject
-                {
-                    ["blend_parameter_x"] = "X", ["blend_parameter_y"] = "Y"
-                });
+            JObject response =
+                type == BlendTreeType.Simple1D
+                    ? Send("controller_create_blend_tree_1d", new JObject { ["blend_parameter"] = "Speed" })
+                    : Send("controller_create_blend_tree_2d", new JObject { ["blend_parameter_x"] = "X", ["blend_parameter_y"] = "Y" });
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var tree = (BlendTree)_controller.layers[0].stateMachine.states[0].state.motion;
             tree.blendType = type;
             // Manual thresholds are an explicit fixture choice, not a production policy change.
-            if (type == BlendTreeType.Simple1D) tree.useAutomaticThresholds = false;
+            if (type == BlendTreeType.Simple1D)
+                tree.useAutomaticThresholds = false;
             AssetDatabase.SaveAssets();
             return tree;
         }
@@ -69,10 +66,15 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             int assets = AssetDatabase.LoadAllAssetsAtPath(_controllerPath).Length;
             bool dirty = EditorUtility.IsDirty(_controller);
-            JObject response = Send("controller_create_blend_tree_2d", new JObject
-            {
-                ["blend_parameter_x"] = "X", ["blend_parameter_y"] = "Y", ["blend_type"] = type
-            });
+            JObject response = Send(
+                "controller_create_blend_tree_2d",
+                new JObject
+                {
+                    ["blend_parameter_x"] = "X",
+                    ["blend_parameter_y"] = "Y",
+                    ["blend_type"] = type,
+                }
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.IsEmpty(_controller.layers[0].stateMachine.states);
             Assert.AreEqual(assets, AssetDatabase.LoadAllAssetsAtPath(_controllerPath).Length);
@@ -85,10 +87,15 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("FreeformCartesian2D", BlendTreeType.FreeformCartesian2D)]
         public void SupportedCreationTypesRetainDefaultsAndCaseCompatibility(string type, BlendTreeType expected)
         {
-            JObject response = Send("controller_create_blend_tree_2d", new JObject
-            {
-                ["blend_parameter_x"] = "X", ["blend_parameter_y"] = "Y", ["blend_type"] = type
-            });
+            JObject response = Send(
+                "controller_create_blend_tree_2d",
+                new JObject
+                {
+                    ["blend_parameter_x"] = "X",
+                    ["blend_parameter_y"] = "Y",
+                    ["blend_type"] = type,
+                }
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var tree = (BlendTree)_controller.layers[0].stateMachine.states[0].state.motion;
             Assert.AreEqual(expected, tree.blendType);
@@ -104,7 +111,8 @@ namespace MCPForUnityTests.EditMode.Tools
         public void InvalidThresholdPreservesChildrenAndDirtyState(string json)
         {
             var tree = CreateTree(BlendTreeType.Simple1D);
-            bool treeDirty = EditorUtility.IsDirty(tree), controllerDirty = EditorUtility.IsDirty(_controller);
+            bool treeDirty = EditorUtility.IsDirty(tree),
+                controllerDirty = EditorUtility.IsDirty(_controller);
             var properties = JObject.Parse(json);
             properties["clip_path"] = _clipPath;
             JObject response = Send("controller_add_blend_tree_child", properties);
@@ -120,10 +128,7 @@ namespace MCPForUnityTests.EditMode.Tools
         public void FiniteThresholdRetainsItsValue(string json, float expected)
         {
             var tree = CreateTree(BlendTreeType.Simple1D);
-            JObject response = Send("controller_add_blend_tree_child", new JObject
-            {
-                ["clip_path"] = _clipPath, ["threshold"] = JToken.Parse(json)
-            });
+            JObject response = Send("controller_add_blend_tree_child", new JObject { ["clip_path"] = _clipPath, ["threshold"] = JToken.Parse(json) });
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(1, response["data"].Value<int>("childCount"));
             Assert.AreEqual(expected, tree.children[0].threshold);
@@ -155,10 +160,10 @@ namespace MCPForUnityTests.EditMode.Tools
         public void FinitePositionRetainsSourceValuesAndCompatibleExtraElements(BlendTreeType type)
         {
             var tree = CreateTree(type);
-            JObject response = Send("controller_add_blend_tree_child", new JObject
-            {
-                ["clip_path"] = _clipPath, ["position"] = new JArray("-2", 0, "ignored")
-            });
+            JObject response = Send(
+                "controller_add_blend_tree_child",
+                new JObject { ["clip_path"] = _clipPath, ["position"] = new JArray("-2", 0, "ignored") }
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(1, response["data"].Value<int>("childCount"));
             Assert.AreEqual(new Vector2(-2, 0), tree.children[0].position);
@@ -168,10 +173,7 @@ namespace MCPForUnityTests.EditMode.Tools
         public void DirectModeRejectsBeforeAddingAnyChild()
         {
             var tree = CreateTree(BlendTreeType.Direct);
-            JObject response = Send("controller_add_blend_tree_child", new JObject
-            {
-                ["clip_path"] = _clipPath, ["position"] = new JArray(0, 0)
-            });
+            JObject response = Send("controller_add_blend_tree_child", new JObject { ["clip_path"] = _clipPath, ["position"] = new JArray(0, 0) });
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.IsEmpty(tree.children);
         }

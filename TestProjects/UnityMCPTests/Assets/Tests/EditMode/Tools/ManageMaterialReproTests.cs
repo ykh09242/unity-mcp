@@ -1,9 +1,9 @@
 using System;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Tools;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -46,14 +46,14 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // Arrange
             // Malformed JSON string (missing closing brace)
-            string invalidJson = "{\"_Color\": [1,0,0,1]"; 
-            
+            string invalidJson = "{\"_Color\": [1,0,0,1]";
+
             var paramsObj = new JObject
             {
                 ["action"] = "create",
                 ["materialPath"] = _matPath,
                 ["shader"] = "Standard",
-                ["properties"] = invalidJson
+                ["properties"] = invalidJson,
             };
 
             // Act
@@ -61,7 +61,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             // Assert
             Assert.IsFalse(result.Value<bool>("success"));
-            
+
             // We expect more detailed error message after fix
             var message = result.Value<string>("error");
             Assert.IsTrue(message.StartsWith("Invalid JSON in properties"), "Message should start with prefix");
@@ -69,4 +69,3 @@ namespace MCPForUnityTests.Editor.Tools
         }
     }
 }
-

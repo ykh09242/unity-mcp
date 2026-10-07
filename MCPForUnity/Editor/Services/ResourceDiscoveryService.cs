@@ -23,8 +23,7 @@ namespace MCPForUnity.Editor.Services
 
             _cachedResources = new Dictionary<string, ResourceMetadata>();
 
-            var resourceTypes = ToolDiscoveryService.InRegistrationOrder(
-                TypeCache.GetTypesWithAttribute<McpForUnityResourceAttribute>());
+            var resourceTypes = ToolDiscoveryService.InRegistrationOrder(TypeCache.GetTypesWithAttribute<McpForUnityResourceAttribute>());
             foreach (var type in resourceTypes)
             {
                 McpForUnityResourceAttribute resourceAttr;
@@ -78,9 +77,7 @@ namespace MCPForUnity.Editor.Services
 
         public List<ResourceMetadata> GetEnabledResources()
         {
-            return DiscoverAllResources()
-                .Where(r => IsResourceEnabled(r.Name))
-                .ToList();
+            return DiscoverAllResources().Where(r => IsResourceEnabled(r.Name)).ToList();
         }
 
         public bool IsResourceEnabled(string resourceName)
@@ -134,11 +131,10 @@ namespace MCPForUnity.Editor.Services
                     Description = description,
                     ClassName = type.Name,
                     Namespace = type.Namespace ?? "",
-                    AssemblyName = type.Assembly.GetName().Name
+                    AssemblyName = type.Assembly.GetName().Name,
                 };
 
-                metadata.IsBuiltIn = StringCaseUtility.IsBuiltInMcpType(
-                    type, metadata.AssemblyName, "MCPForUnity.Editor.Resources");
+                metadata.IsBuiltIn = StringCaseUtility.IsBuiltInMcpType(type, metadata.AssemblyName, "MCPForUnity.Editor.Resources");
 
                 return metadata;
             }

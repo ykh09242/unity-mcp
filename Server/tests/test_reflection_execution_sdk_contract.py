@@ -8,7 +8,7 @@ import textwrap
 
 
 def test_reflection_execution_sdk_and_cli_contracts():
-    source = '''
+    source = """
         import sys
         from unittest.mock import AsyncMock
         import anyio
@@ -79,7 +79,7 @@ def test_reflection_execution_sdk_and_cli_contracts():
             result = runner.invoke(reflect, ["member", name, "Add"])
             assert result.exit_code == 0, result.output
             assert captured[-1] == ("unity_reflect", {"action": "get_member", "class_name": name, "member_name": "Add"})
-    '''
+    """
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],
         cwd=Path(__file__).resolve().parents[1],

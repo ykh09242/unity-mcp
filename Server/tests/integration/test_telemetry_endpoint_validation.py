@@ -9,7 +9,12 @@ def collector_factory(tmp_path, monkeypatch):
     for key in ("HOME", "USERPROFILE", "APPDATA", "XDG_DATA_HOME"):
         monkeypatch.setenv(key, str(tmp_path))
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    for key in ("DISABLE_TELEMETRY", "UNITY_MCP_DISABLE_TELEMETRY", "MCP_DISABLE_TELEMETRY", "UNITY_MCP_TELEMETRY_ENDPOINT"):
+    for key in (
+        "DISABLE_TELEMETRY",
+        "UNITY_MCP_DISABLE_TELEMETRY",
+        "MCP_DISABLE_TELEMETRY",
+        "UNITY_MCP_TELEMETRY_ENDPOINT",
+    ):
         monkeypatch.delenv(key, raising=False)
     telemetry = importlib.import_module("core.telemetry")
     config = importlib.import_module("core.config").config

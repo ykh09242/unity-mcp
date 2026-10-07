@@ -1,10 +1,10 @@
 #nullable disable
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.GameObjects
 {
@@ -23,8 +23,11 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             Vector3? offset = VectorParsing.ParseVector3(@params["offset"]);
             JToken parentToken = @params["parent"];
             GameObject newParent = null;
-            if (parentToken != null && parentToken.Type != JTokenType.Null &&
-                !(parentToken.Type == JTokenType.String && string.IsNullOrEmpty(parentToken.ToString())))
+            if (
+                parentToken != null
+                && parentToken.Type != JTokenType.Null
+                && !(parentToken.Type == JTokenType.String && string.IsNullOrEmpty(parentToken.ToString()))
+            )
             {
                 newParent = ManageGameObjectCommon.FindObjectInternal(parentToken, "by_id_or_name_or_path");
             }
@@ -84,7 +87,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 {
                     originalName = sourceGo.name,
                     originalId = sourceGo.GetInstanceIDCompat(),
-                    duplicatedObject = Helpers.GameObjectSerializer.GetGameObjectData(duplicatedGo)
+                    duplicatedObject = Helpers.GameObjectSerializer.GetGameObjectData(duplicatedGo),
                 }
             );
         }

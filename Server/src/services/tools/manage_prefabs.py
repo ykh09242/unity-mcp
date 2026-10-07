@@ -33,14 +33,14 @@ REQUIRED_PARAMS = {
         "(2) Interactive: use open_prefab_stage to open a prefab, then manage_gameobject/manage_components to edit objects inside the prefab stage, then save_prefab_stage to save and close_prefab_stage to return to the main scene. "
         "Use create_child parameter with modify_contents to add child GameObjects or nested prefab instances to a prefab "
         "(single object or array for batch creation in one save). "
-        "Example: create_child=[{\"name\": \"Child1\", \"primitive_type\": \"Sphere\", \"position\": [1,0,0]}, "
-        "{\"name\": \"Nested\", \"source_prefab_path\": \"Assets/Prefabs/Bullet.prefab\", \"position\": [0,2,0]}]. "
+        'Example: create_child=[{"name": "Child1", "primitive_type": "Sphere", "position": [1,0,0]}, '
+        '{"name": "Nested", "source_prefab_path": "Assets/Prefabs/Bullet.prefab", "position": [0,2,0]}]. '
         "Use delete_child parameter to remove child GameObjects from the prefab "
         "(single name/path or array of paths for batch deletion. "
-        "Example: delete_child=[\"Child1\", \"Child2/Grandchild\"]). "
+        'Example: delete_child=["Child1", "Child2/Grandchild"]). '
         "Use component_properties with modify_contents to set serialized fields on existing components "
-        "(e.g. component_properties={\"Rigidbody\": {\"mass\": 5.0}, \"MyScript\": {\"health\": 100}}). "
-        "Supports object references via {\"guid\": \"...\"}, {\"path\": \"Assets/...\"}, or {\"instanceID\": 123}. "
+        '(e.g. component_properties={"Rigidbody": {"mass": 5.0}, "MyScript": {"health": 100}}). '
+        'Supports object references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. '
         "Use manage_asset action=search filterType=Prefab to list prefabs."
     ),
     annotations=ToolAnnotations(
@@ -62,25 +62,59 @@ async def manage_prefabs(
         ],
         "Prefab operation to perform.",
     ],
-    prefab_path: Annotated[str, "Prefab asset path (e.g., Assets/Prefabs/MyPrefab.prefab)."] | None = None,
-    target: Annotated[str | int, "For create_from_gameobject: instance ID (integer or numeric string), unique name, or full hierarchy path (e.g. 'Parent/Child' or '/Parent/Child') in the active scene/current prefab stage. Stage names/paths take precedence. Numeric targets are IDs; ambiguous names/paths fail. For modify_contents: saved prefab object name or child path; omit to target the root. Use returned rootObjectName/rootObjectPath, which may differ from the source instance name. IDs do not apply to isolated prefab contents."] | None = None,
+    prefab_path: Annotated[str, "Prefab asset path (e.g., Assets/Prefabs/MyPrefab.prefab)."]
+    | None = None,
+    target: Annotated[
+        str | int,
+        "For create_from_gameobject: instance ID (integer or numeric string), unique name, or full hierarchy path (e.g. 'Parent/Child' or '/Parent/Child') in the active scene/current prefab stage. Stage names/paths take precedence. Numeric targets are IDs; ambiguous names/paths fail. For modify_contents: saved prefab object name or child path; omit to target the root. Use returned rootObjectName/rootObjectPath, which may differ from the source instance name. IDs do not apply to isolated prefab contents.",
+    ]
+    | None = None,
     allow_overwrite: Annotated[bool, "Allow replacing existing prefab."] | None = None,
     search_inactive: Annotated[bool, "Include inactive GameObjects in search."] | None = None,
-    unlink_if_instance: Annotated[bool, "Unlink from existing prefab before creating new one."] | None = None,
+    unlink_if_instance: Annotated[bool, "Unlink from existing prefab before creating new one."]
+    | None = None,
     # modify_contents parameters
-    position: Annotated[list[float] | dict[str, float] | str, "New local position [x, y, z] or {x, y, z} for modify_contents."] | None = None,
-    rotation: Annotated[list[float] | dict[str, float] | str, "New local rotation (euler angles) [x, y, z] or {x, y, z} for modify_contents."] | None = None,
-    scale: Annotated[list[float] | dict[str, float] | str, "New local scale [x, y, z] or {x, y, z} for modify_contents."] | None = None,
+    position: Annotated[
+        list[float] | dict[str, float] | str,
+        "New local position [x, y, z] or {x, y, z} for modify_contents.",
+    ]
+    | None = None,
+    rotation: Annotated[
+        list[float] | dict[str, float] | str,
+        "New local rotation (euler angles) [x, y, z] or {x, y, z} for modify_contents.",
+    ]
+    | None = None,
+    scale: Annotated[
+        list[float] | dict[str, float] | str,
+        "New local scale [x, y, z] or {x, y, z} for modify_contents.",
+    ]
+    | None = None,
     name: Annotated[str, "New name for the target object in modify_contents."] | None = None,
     tag: Annotated[str, "New tag for the target object in modify_contents."] | None = None,
     layer: Annotated[str, "New layer name for the target object in modify_contents."] | None = None,
-    set_active: Annotated[bool, "Set active state of target object in modify_contents."] | None = None,
-    parent: Annotated[str, "New parent object name/path within prefab for modify_contents."] | None = None,
-    components_to_add: Annotated[list[str], "Component types to add in modify_contents."] | None = None,
-    components_to_remove: Annotated[list[str], "Component types to remove in modify_contents."] | None = None,
-    create_child: Annotated[dict[str, Any] | list[dict[str, Any]], "Create child GameObject(s) in the prefab. Single object or array of objects, each with: name (required), parent (optional, defaults to target), source_prefab_path (optional: asset path to instantiate as nested prefab, e.g. 'Assets/Prefabs/Bullet.prefab'), primitive_type (optional: Cube, Sphere, Capsule, Cylinder, Plane, Quad), position, rotation, scale, components_to_add, tag, layer, set_active. source_prefab_path and primitive_type are mutually exclusive."] | None = None,
-    delete_child: Annotated[str | list[str], "Child name(s) or path(s) to remove from the prefab. Supports single string or array for batch deletion (e.g. 'Child1' or ['Child1', 'Child1/Grandchild'])."] | None = None,
-    component_properties: Annotated[dict[str, dict[str, Any]], "Set properties on existing components in modify_contents. Keys are component type names, values are dicts of property name to value. Example: {\"Rigidbody\": {\"mass\": 5.0}, \"MyScript\": {\"health\": 100}}. Supports object references via {\"guid\": \"...\"}, {\"path\": \"Assets/...\"}, or {\"instanceID\": 123}. For Sprite sub-assets: {\"guid\": \"...\", \"spriteName\": \"<name>\"}. Single-sprite textures auto-resolve."] | None = None,
+    set_active: Annotated[bool, "Set active state of target object in modify_contents."]
+    | None = None,
+    parent: Annotated[str, "New parent object name/path within prefab for modify_contents."]
+    | None = None,
+    components_to_add: Annotated[list[str], "Component types to add in modify_contents."]
+    | None = None,
+    components_to_remove: Annotated[list[str], "Component types to remove in modify_contents."]
+    | None = None,
+    create_child: Annotated[
+        dict[str, Any] | list[dict[str, Any]],
+        "Create child GameObject(s) in the prefab. Single object or array of objects, each with: name (required), parent (optional, defaults to target), source_prefab_path (optional: asset path to instantiate as nested prefab, e.g. 'Assets/Prefabs/Bullet.prefab'), primitive_type (optional: Cube, Sphere, Capsule, Cylinder, Plane, Quad), position, rotation, scale, components_to_add, tag, layer, set_active. source_prefab_path and primitive_type are mutually exclusive.",
+    ]
+    | None = None,
+    delete_child: Annotated[
+        str | list[str],
+        "Child name(s) or path(s) to remove from the prefab. Supports single string or array for batch deletion (e.g. 'Child1' or ['Child1', 'Child1/Grandchild']).",
+    ]
+    | None = None,
+    component_properties: Annotated[
+        dict[str, dict[str, Any]],
+        'Set properties on existing components in modify_contents. Keys are component type names, values are dicts of property name to value. Example: {"Rigidbody": {"mass": 5.0}, "MyScript": {"health": 100}}. Supports object references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. For Sprite sub-assets: {"guid": "...", "spriteName": "<name>"}. Single-sprite textures auto-resolve.',
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     if action not in {*REQUIRED_PARAMS, "save_prefab_stage", "close_prefab_stage"}:
         return {"success": False, "message": f"Unknown prefab action: '{action}'."}
@@ -97,7 +131,7 @@ async def manage_prefabs(
         if param_value is None or (isinstance(param_value, str) and not param_value.strip()):
             return {
                 "success": False,
-                "message": f"Action '{action}' requires parameter '{param_name}'."
+                "message": f"Action '{action}' requires parameter '{param_name}'.",
             }
 
     try:
@@ -158,20 +192,39 @@ async def manage_prefabs(
             params["componentProperties"] = component_properties
         if create_child is not None:
             # Normalize vector fields within create_child (handles single object or array)
-            def normalize_child_params(child: Any, index: int | None = None) -> tuple[dict | None, str | None]:
+            def normalize_child_params(
+                child: Any, index: int | None = None
+            ) -> tuple[dict | None, str | None]:
                 prefix = f"create_child[{index}]" if index is not None else "create_child"
                 if not isinstance(child, dict):
-                    return None, f"{prefix} must be a dict with child properties (name, primitive_type, position, etc.), got {type(child).__name__}"
+                    return (
+                        None,
+                        f"{prefix} must be a dict with child properties (name, primitive_type, position, etc.), got {type(child).__name__}",
+                    )
                 child_params = dict(child)
                 if not isinstance(child_params.get("name"), str) or not child_params["name"]:
                     return None, f"{prefix}.name is required."
-                for field in ("sourcePrefabPath", "source_prefab_path", "primitiveType", "primitive_type"):
-                    if field in child_params and child_params[field] is not None and not isinstance(child_params[field], str):
+                for field in (
+                    "sourcePrefabPath",
+                    "source_prefab_path",
+                    "primitiveType",
+                    "primitive_type",
+                ):
+                    if (
+                        field in child_params
+                        and child_params[field] is not None
+                        and not isinstance(child_params[field], str)
+                    ):
                         return None, f"{prefix}.{field} must be a string."
-                source = child_params.get("sourcePrefabPath", child_params.get("source_prefab_path"))
+                source = child_params.get(
+                    "sourcePrefabPath", child_params.get("source_prefab_path")
+                )
                 primitive = child_params.get("primitiveType", child_params.get("primitive_type"))
                 if source and primitive:
-                    return None, f"{prefix}.source_prefab_path and primitive_type are mutually exclusive."
+                    return (
+                        None,
+                        f"{prefix}.source_prefab_path and primitive_type are mutually exclusive.",
+                    )
                 primitive_error = primitive_type_error(primitive, f"{prefix}.primitive_type")
                 if primitive_error:
                     return None, primitive_error
@@ -181,19 +234,30 @@ async def manage_prefabs(
                             coerce_bool(child_params[flag])
                         except ValueError as exc:
                             return None, f"Invalid {prefix}.{flag}: {exc}"
-                components = child_params.get("componentsToAdd", child_params.get("components_to_add"))
+                components = child_params.get(
+                    "componentsToAdd", child_params.get("components_to_add")
+                )
                 if components is not None:
                     if not isinstance(components, list):
                         return None, f"{prefix}.components_to_add must be an array."
                     for item in components:
                         if isinstance(item, str) and item:
                             continue
-                        if isinstance(item, dict) and isinstance(item.get("typeName"), str) and item["typeName"]:
+                        if (
+                            isinstance(item, dict)
+                            and isinstance(item.get("typeName"), str)
+                            and item["typeName"]
+                        ):
                             continue
-                        return None, f"{prefix}.components_to_add entries must be strings or objects with typeName."
+                        return (
+                            None,
+                            f"{prefix}.components_to_add entries must be strings or objects with typeName.",
+                        )
                 for vec_field in ("position", "rotation", "scale"):
                     if vec_field in child_params and child_params[vec_field] is not None:
-                        vec_val, vec_err = normalize_vector3(child_params[vec_field], f"{prefix}.{vec_field}")
+                        vec_val, vec_err = normalize_vector3(
+                            child_params[vec_field], f"{prefix}.{vec_field}"
+                        )
                         if vec_err:
                             return None, vec_err
                         child_params[vec_field] = vec_val
@@ -232,24 +296,18 @@ async def manage_prefabs(
 
         # Return Unity response directly; ensure success field exists
         # Handle MCPResponse objects (returned on error) by converting to dict
-        if hasattr(response, 'model_dump'):
+        if hasattr(response, "model_dump"):
             return response.model_dump()
         if isinstance(response, dict):
             if "success" not in response:
                 response["success"] = False
             return response
-        return {
-            "success": False,
-            "message": f"Unexpected response type: {type(response).__name__}"
-        }
+        return {"success": False, "message": f"Unexpected response type: {type(response).__name__}"}
 
     except TimeoutError:
         return {
             "success": False,
-            "message": "Unity connection timeout. Please check if Unity is running and responsive."
+            "message": "Unity connection timeout. Please check if Unity is running and responsive.",
         }
     except Exception as exc:
-        return {
-            "success": False,
-            "message": f"Error managing prefabs: {exc}"
-        }
+        return {"success": False, "message": f"Error managing prefabs: {exc}"}

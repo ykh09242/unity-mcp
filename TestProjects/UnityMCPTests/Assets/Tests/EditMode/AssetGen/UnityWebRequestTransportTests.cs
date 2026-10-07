@@ -12,7 +12,12 @@ namespace MCPForUnityTests.Editor.AssetGen
         [TestCase("https://attacker.example/model.glb")]
         public void ArtifactRequest_UsesRestrictedDownloader(string url)
         {
-            var spec = new HttpRequestSpec { Method = "GET", Url = url, DownloadProvider = "meshy" };
+            var spec = new HttpRequestSpec
+            {
+                Method = "GET",
+                Url = url,
+                DownloadProvider = "meshy",
+            };
             // This fails before UnityWebRequest is constructed or any network request is sent.
             Assert.ThrowsAsync<InvalidOperationException>(() => new UnityWebRequestTransport().SendAsync(spec, CancellationToken.None));
         }

@@ -40,7 +40,11 @@ namespace MCPForUnityTests.Editor.AssetGen
             AssetGenJobManager.TransportOverrideForTests = _fake;
             AssetGenJobManager.PollIntervalSeconds = 0;
             // Stub import: mark the asset path without touching AssetDatabase.
-            AssetGenJobManager.ImportOverrideForTests = (job, path) => { job.AssetPath = path; return job; };
+            AssetGenJobManager.ImportOverrideForTests = (job, path) =>
+            {
+                job.AssetPath = path;
+                return job;
+            };
         }
 
         [TearDown]
@@ -52,8 +56,10 @@ namespace MCPForUnityTests.Editor.AssetGen
             try
             {
                 string abs = Path.Combine(ProjectRoot(), TestFolder);
-                if (Directory.Exists(abs)) Directory.Delete(abs, true);
-                if (File.Exists(abs + ".meta")) File.Delete(abs + ".meta");
+                if (Directory.Exists(abs))
+                    Directory.Delete(abs, true);
+                if (File.Exists(abs + ".meta"))
+                    File.Delete(abs + ".meta");
             }
             catch { /* ignore */ }
         }
@@ -64,26 +70,34 @@ namespace MCPForUnityTests.Editor.AssetGen
             return dp.Substring(0, dp.Length - "Assets".Length);
         }
 
-        private static HttpResult Json(string body) => new HttpResult { Status = 200, IsSuccess = true, Text = body };
+        private static HttpResult Json(string body) =>
+            new HttpResult
+            {
+                Status = 200,
+                IsSuccess = true,
+                Text = body,
+            };
 
-        private static ModelGenRequest Req() => new ModelGenRequest
-        {
-            Provider = "tripo",
-            Mode = "text",
-            Prompt = "a low-poly oak tree",
-            Format = "glb",
-            TargetSize = 1f,
-            Name = "jobtest",
-            OutputFolder = TestFolder,
-        };
+        private static ModelGenRequest Req() =>
+            new ModelGenRequest
+            {
+                Provider = "tripo",
+                Mode = "text",
+                Prompt = "a low-poly oak tree",
+                Format = "glb",
+                TargetSize = 1f,
+                Name = "jobtest",
+                OutputFolder = TestFolder,
+            };
 
-        private static AudioGenRequest AudioReq() => new AudioGenRequest
-        {
-            Provider = "fal",
-            Prompt = "gentle rain",
-            Name = "audiotest",
-            OutputFolder = TestFolder,
-        };
+        private static AudioGenRequest AudioReq() =>
+            new AudioGenRequest
+            {
+                Provider = "fal",
+                Prompt = "gentle rain",
+                Name = "audiotest",
+                OutputFolder = TestFolder,
+            };
 
         private static void Pump(string jobId)
         {
@@ -101,19 +115,41 @@ namespace MCPForUnityTests.Editor.AssetGen
             Environment.SetEnvironmentVariable(env, "test-key");
             try
             {
-                _fake.Handler = r => r.Method == "POST" ? Json(inline
-                    ? "{\"choices\":[{\"message\":{\"images\":[{\"image_url\":{\"url\":\"data:image/png;base64," + Convert.ToBase64String(jpeg) + "\"}}]}}]}"
-                    : "{\"response_url\":\"https://queue.fal.run/test/image/requests/r1\"}")
+                _fake.Handler = r =>
+                    r.Method == "POST"
+                        ? Json(
+                            inline
+                                ? "{\"choices\":[{\"message\":{\"images\":[{\"image_url\":{\"url\":\"data:image/png;base64,"
+                                    + Convert.ToBase64String(jpeg)
+                                    + "\"}}]}}]}"
+                                : "{\"response_url\":\"https://queue.fal.run/test/image/requests/r1\"}"
+                        )
                     : r.Url.EndsWith("/status") ? Json("{\"status\":\"COMPLETED\"}")
                     : r.Url.Contains("queue.fal.run") ? Json("{\"images\":[{\"url\":\"https://example.com/image.png\",\"content_type\":\"image/png\"}]}")
-                    : new HttpResult { Status = 200, IsSuccess = true, Body = jpeg };
-                var job = AssetGenJobManager.StartImageGeneration(new ImageGenRequest { Provider = inline ? "openrouter" : "fal", Model = "test/image", Prompt = "cat", OutputFolder = TestFolder });
+                    : new HttpResult
+                    {
+                        Status = 200,
+                        IsSuccess = true,
+                        Body = jpeg,
+                    };
+                var job = AssetGenJobManager.StartImageGeneration(
+                    new ImageGenRequest
+                    {
+                        Provider = inline ? "openrouter" : "fal",
+                        Model = "test/image",
+                        Prompt = "cat",
+                        OutputFolder = TestFolder,
+                    }
+                );
                 Pump(job.JobId);
                 Assert.AreEqual(AssetGenJobState.Done, job.State, job.Error);
                 StringAssert.EndsWith(".jpg", job.AssetPath);
                 Assert.AreEqual("jpg", job.Format);
             }
-            finally { Environment.SetEnvironmentVariable(env, old); }
+            finally
+            {
+                Environment.SetEnvironmentVariable(env, old);
+            }
         }
 
         [Test]
@@ -124,8 +160,15 @@ namespace MCPForUnityTests.Editor.AssetGen
                 if (spec.Method == "POST" && spec.Url.EndsWith("/openapi/task"))
                     return Json("{\"code\":0,\"data\":{\"task_id\":\"task_abc\"}}");
                 if (spec.Url.Contains("/openapi/task/"))
-                    return Json("{\"code\":0,\"data\":{\"status\":\"success\",\"progress\":100,\"output\":{\"pbr_model\":\"https://tripo-data.rg1.data.tripo3d.com/model.glb\"}}}");
-                return new HttpResult { Status = 200, IsSuccess = true, Body = new byte[] { 1, 2, 3, 4 } }; // download
+                    return Json(
+                        "{\"code\":0,\"data\":{\"status\":\"success\",\"progress\":100,\"output\":{\"pbr_model\":\"https://tripo-data.rg1.data.tripo3d.com/model.glb\"}}}"
+                    );
+                return new HttpResult
+                {
+                    Status = 200,
+                    IsSuccess = true,
+                    Body = new byte[] { 1, 2, 3, 4 },
+                }; // download
             };
 
             AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
@@ -146,10 +189,17 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             _fake.Handler = spec =>
             {
-                if (spec.Method == "POST") return Json("{\"response_url\":\"" + AudioResp + "\"}");
-                if (spec.Url.EndsWith("/status")) return Json("{\"status\":\"COMPLETED\"}");
+                if (spec.Method == "POST")
+                    return Json("{\"response_url\":\"" + AudioResp + "\"}");
+                if (spec.Url.EndsWith("/status"))
+                    return Json("{\"status\":\"COMPLETED\"}");
                 if (spec.Url.Contains("fal.media"))
-                    return new HttpResult { Status = 200, IsSuccess = true, Body = new byte[] { 1, 2, 3, 4 } };
+                    return new HttpResult
+                    {
+                        Status = 200,
+                        IsSuccess = true,
+                        Body = new byte[] { 1, 2, 3, 4 },
+                    };
                 return Json("{\"audio_file\":{\"url\":\"https://fal.media/a.wav\"}}"); // result payload
             };
 
@@ -170,10 +220,17 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             _fake.Handler = spec =>
             {
-                if (spec.Method == "POST") return Json("{\"response_url\":\"" + AudioResp + "\"}");
-                if (spec.Url.EndsWith("/status")) return Json("{\"status\":\"COMPLETED\"}");
+                if (spec.Method == "POST")
+                    return Json("{\"response_url\":\"" + AudioResp + "\"}");
+                if (spec.Url.EndsWith("/status"))
+                    return Json("{\"status\":\"COMPLETED\"}");
                 if (spec.Url.Contains("fal.media"))
-                    return new HttpResult { Status = 200, IsSuccess = true, Body = new byte[] { 1, 2, 3, 4 } };
+                    return new HttpResult
+                    {
+                        Status = 200,
+                        IsSuccess = true,
+                        Body = new byte[] { 1, 2, 3, 4 },
+                    };
                 return Json("{\"audio_file\":{\"url\":\"https://fal.media/track.mp3\"}}");
             };
 
@@ -199,7 +256,12 @@ namespace MCPForUnityTests.Editor.AssetGen
             finally
             {
                 MCPForUnity.Editor.Security.SecureKeyStore.ResetForTests();
-                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+                try
+                {
+                    if (Directory.Exists(dir))
+                        Directory.Delete(dir, true);
+                }
+                catch { }
             }
         }
 
@@ -257,10 +319,17 @@ namespace MCPForUnityTests.Editor.AssetGen
             // written under Assets/ — never a compilable/importable payload.
             _fake.Handler = spec =>
             {
-                if (spec.Method == "POST") return Json("{\"response_url\":\"" + AudioResp + "\"}");
-                if (spec.Url.EndsWith("/status")) return Json("{\"status\":\"COMPLETED\"}");
+                if (spec.Method == "POST")
+                    return Json("{\"response_url\":\"" + AudioResp + "\"}");
+                if (spec.Url.EndsWith("/status"))
+                    return Json("{\"status\":\"COMPLETED\"}");
                 if (spec.Url.Contains("fal.media"))
-                    return new HttpResult { Status = 200, IsSuccess = true, Body = new byte[] { 1, 2, 3, 4 } };
+                    return new HttpResult
+                    {
+                        Status = 200,
+                        IsSuccess = true,
+                        Body = new byte[] { 1, 2, 3, 4 },
+                    };
                 // Provider hands back a payload whose URL implies a .cs extension.
                 return Json("{\"audio_file\":{\"url\":\"https://fal.media/payload.cs\"}}");
             };
@@ -334,8 +403,10 @@ namespace MCPForUnityTests.Editor.AssetGen
                     ct.Register(() =>
                     {
                         CancellationCalls++;
-                        if (ThrowOnCancel) throw new InvalidOperationException("fixture cancellation callback");
-                        if (!IgnoreCancel) Pending.TrySetCanceled();
+                        if (ThrowOnCancel)
+                            throw new InvalidOperationException("fixture cancellation callback");
+                        if (!IgnoreCancel)
+                            Pending.TrySetCanceled();
                     });
                     return Pending.Task;
                 }
@@ -346,9 +417,16 @@ namespace MCPForUnityTests.Editor.AssetGen
 
             public static HttpResult ResultFor(int request)
             {
-                if (request == 1) return Json("{\"code\":0,\"data\":{\"task_id\":\"task_pending\"}}");
-                if (request == 2) return Json("{\"code\":0,\"data\":{\"status\":\"success\",\"output\":{\"model\":\"https://tripo-data.rg1.data.tripo3d.com/model.glb\"}}}");
-                return new HttpResult { Status = 200, IsSuccess = true, Body = new byte[] { 1, 2, 3 } };
+                if (request == 1)
+                    return Json("{\"code\":0,\"data\":{\"task_id\":\"task_pending\"}}");
+                if (request == 2)
+                    return Json("{\"code\":0,\"data\":{\"status\":\"success\",\"output\":{\"model\":\"https://tripo-data.rg1.data.tripo3d.com/model.glb\"}}}");
+                return new HttpResult
+                {
+                    Status = 200,
+                    IsSuccess = true,
+                    Body = new byte[] { 1, 2, 3 },
+                };
             }
         }
 
@@ -400,13 +478,18 @@ namespace MCPForUnityTests.Editor.AssetGen
             int imports = 0;
             var transport = new PendingTransport { PendingAt = pendingAt, IgnoreCancel = true };
             AssetGenJobManager.TransportOverrideForTests = transport;
-            AssetGenJobManager.ImportOverrideForTests = (job, path) => { imports++; return job; };
+            AssetGenJobManager.ImportOverrideForTests = (job, path) =>
+            {
+                imports++;
+                return job;
+            };
             AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
             PumpUntilPending(job, transport);
             AssetGenJobManager.TimeoutSeconds = -1;
             AssetGenJobManager.TryAdvanceForTests(job.JobId);
             transport.Pending.SetResult(PendingTransport.ResultFor(pendingAt));
-            for (int i = 0; i < 10; i++) AssetGenJobManager.TryAdvanceForTests(job.JobId);
+            for (int i = 0; i < 10; i++)
+                AssetGenJobManager.TryAdvanceForTests(job.JobId);
             Assert.AreEqual(AssetGenJobState.Failed, job.State);
             Assert.IsTrue(transport.PendingToken.IsCancellationRequested);
             Assert.AreEqual(pendingAt, transport.Requests);
@@ -460,7 +543,12 @@ namespace MCPForUnityTests.Editor.AssetGen
             finally
             {
                 MCPForUnity.Editor.Security.SecureKeyStore.ResetForTests();
-                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+                try
+                {
+                    if (Directory.Exists(dir))
+                        Directory.Delete(dir, true);
+                }
+                catch { }
             }
         }
     }

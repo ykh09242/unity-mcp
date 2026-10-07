@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Cameras
 {
@@ -46,35 +46,38 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         }
                     }
 
-                    cameraList.Add(new
-                    {
-                        instanceID = cm.gameObject.GetInstanceIDCompat(),
-                        name = cm.gameObject.name,
-                        isLive = isLive is bool b && b,
-                        priority,
-                        follow = follow != null ? new { name = follow.gameObject.name, instanceID = follow.gameObject.GetInstanceIDCompat() } : null,
-                        lookAt = lookAt != null ? new { name = lookAt.gameObject.name, instanceID = lookAt.gameObject.GetInstanceIDCompat() } : null,
-                        body = body?.GetType().Name,
-                        aim = aim?.GetType().Name,
-                        noise = noise?.GetType().Name,
-                        extensions
-                    });
+                    cameraList.Add(
+                        new
+                        {
+                            instanceID = cm.gameObject.GetInstanceIDCompat(),
+                            name = cm.gameObject.name,
+                            isLive = isLive is bool b && b,
+                            priority,
+                            follow = follow != null ? new { name = follow.gameObject.name, instanceID = follow.gameObject.GetInstanceIDCompat() } : null,
+                            lookAt = lookAt != null ? new { name = lookAt.gameObject.name, instanceID = lookAt.gameObject.GetInstanceIDCompat() } : null,
+                            body = body?.GetType().Name,
+                            aim = aim?.GetType().Name,
+                            noise = noise?.GetType().Name,
+                            extensions,
+                        }
+                    );
                 }
             }
 
             // Unity cameras
             foreach (var cam in unityCameras)
             {
-                bool hasBrain = CameraHelpers.HasCinemachine &&
-                    cam.gameObject.GetComponent(CameraHelpers.CinemachineBrainType) != null;
-                unityCamList.Add(new
-                {
-                    instanceID = cam.gameObject.GetInstanceIDCompat(),
-                    name = cam.gameObject.name,
-                    depth = cam.depth,
-                    fieldOfView = cam.fieldOfView,
-                    hasBrain
-                });
+                bool hasBrain = CameraHelpers.HasCinemachine && cam.gameObject.GetComponent(CameraHelpers.CinemachineBrainType) != null;
+                unityCamList.Add(
+                    new
+                    {
+                        instanceID = cam.gameObject.GetInstanceIDCompat(),
+                        name = cam.gameObject.name,
+                        depth = cam.depth,
+                        fieldOfView = cam.fieldOfView,
+                        hasBrain,
+                    }
+                );
             }
 
             // Brain info
@@ -105,7 +108,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         instanceID = brain.gameObject.GetInstanceIDCompat(),
                         activeCameraName = activeName,
                         activeCameraID = activeID,
-                        isBlending = isBlending is bool bl && bl
+                        isBlending = isBlending is bool bl && bl,
                     };
                 }
             }
@@ -118,8 +121,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     brain = brainInfo,
                     cinemachineCameras = cameraList,
                     unityCameras = unityCamList,
-                    cinemachineInstalled = CameraHelpers.HasCinemachine
-                }
+                    cinemachineInstalled = CameraHelpers.HasCinemachine,
+                },
             };
         }
 
@@ -160,8 +163,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     activeCameraName = activeName,
                     activeCameraID = activeID,
                     isBlending = isBlending is bool b && b,
-                    blendDescription = blendDesc
-                }
+                    blendDescription = blendDesc,
+                },
             };
         }
 
@@ -182,8 +185,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             string style = ParamCoercion.CoerceString(props["style"], null);
             if (style != null)
             {
-                var styleProp = defaultBlendProp.FindPropertyRelative("Style")
-                             ?? defaultBlendProp.FindPropertyRelative("m_Style");
+                var styleProp = defaultBlendProp.FindPropertyRelative("Style") ?? defaultBlendProp.FindPropertyRelative("m_Style");
                 if (styleProp != null && styleProp.propertyType == SerializedPropertyType.Enum)
                 {
                     // Try to parse the style enum
@@ -197,8 +199,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             float duration = ParamCoercion.CoerceFloat(props["duration"], -1f);
             if (duration >= 0)
             {
-                var timeProp = defaultBlendProp.FindPropertyRelative("Time")
-                            ?? defaultBlendProp.FindPropertyRelative("m_Time");
+                var timeProp = defaultBlendProp.FindPropertyRelative("Time") ?? defaultBlendProp.FindPropertyRelative("m_Time");
                 if (timeProp != null)
                     timeProp.floatValue = duration;
             }
@@ -210,7 +211,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = "Default blend configured on CinemachineBrain.",
-                data = new { instanceID = brain.gameObject.GetInstanceIDCompat() }
+                data = new { instanceID = brain.gameObject.GetInstanceIDCompat() },
             };
         }
 
@@ -233,20 +234,20 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             // Use SetCameraOverride via reflection
             var brainType = brain.GetType();
-            var method = brainType.GetMethod("SetCameraOverride",
-                BindingFlags.Public | BindingFlags.Instance);
+            var method = brainType.GetMethod("SetCameraOverride", BindingFlags.Public | BindingFlags.Instance);
 
             if (method == null)
             {
                 // Fallback: just set high priority
                 var error = CameraConfigure.SetPriority(cmCamera, 999);
-                if (error != null) return error;
+                if (error != null)
+                    return error;
                 CameraHelpers.MarkDirty(cmCamera.gameObject);
                 return new
                 {
                     success = true,
                     message = $"Set high priority on '{cmCamera.gameObject.name}' (SetCameraOverride not available).",
-                    data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat(), method = "priority" }
+                    data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat(), method = "priority" },
                 };
             }
 
@@ -255,28 +256,33 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 // CM3 signature: SetCameraOverride(int overrideId, int priority,
                 //   ICinemachineCamera camA, ICinemachineCamera camB, float weightB, float deltaTime)
                 // -1 for overrideId creates a new override; same cam for A+B with weight=1 = instant switch
-                _overrideId = (int)method.Invoke(brain, new object[]
-                {
-                    _overrideId >= 0 ? _overrideId : -1,
-                    999,      // high priority to win over all others
-                    cmCamera, // camA (at weight=0)
-                    cmCamera, // camB (at weight=1) — same camera = no blend
-                    1f,       // weightB = fully on camB
-                    -1f       // deltaTime = use default
-                });
+                _overrideId = (int)
+                    method.Invoke(
+                        brain,
+                        new object[]
+                        {
+                            _overrideId >= 0 ? _overrideId : -1,
+                            999, // high priority to win over all others
+                            cmCamera, // camA (at weight=0)
+                            cmCamera, // camB (at weight=1) — same camera = no blend
+                            1f, // weightB = fully on camB
+                            -1f, // deltaTime = use default
+                        }
+                    );
                 _overrideBrain = brain;
             }
             catch (Exception ex)
             {
                 // Fallback
                 var error = CameraConfigure.SetPriority(cmCamera, 999);
-                if (error != null) return error;
+                if (error != null)
+                    return error;
                 CameraHelpers.MarkDirty(cmCamera.gameObject);
                 return new
                 {
                     success = true,
                     message = $"Forced via priority (override failed: {ex.Message}).",
-                    data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat(), method = "priority" }
+                    data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat(), method = "priority" },
                 };
             }
 
@@ -288,8 +294,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 {
                     instanceID = cmCamera.gameObject.GetInstanceIDCompat(),
                     overrideId = _overrideId,
-                    method = "override"
-                }
+                    method = "override",
+                },
             };
         }
 
@@ -308,8 +314,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (brain == null)
                 return new ErrorResponse("The CinemachineBrain owning the active override is unavailable.");
 
-            var method = brain.GetType().GetMethod("ReleaseCameraOverride",
-                BindingFlags.Public | BindingFlags.Instance);
+            var method = brain.GetType().GetMethod("ReleaseCameraOverride", BindingFlags.Public | BindingFlags.Instance);
 
             if (method != null)
             {
@@ -321,7 +326,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 {
                     success = true,
                     message = "Camera override released.",
-                    data = new { releasedOverrideId = releasedId }
+                    data = new { releasedOverrideId = releasedId },
                 };
             }
 

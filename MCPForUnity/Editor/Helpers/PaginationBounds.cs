@@ -13,17 +13,21 @@ namespace MCPForUnity.Editor.Helpers
         public const int MaxPreviewPngBytes = 256 * 1024;
         public const int MaxPreviewBase64Bytes = 4 * 1024 * 1024;
 
-        public static bool TryRead(JToken token, int fallback, int minimum, int maximum,
-            string name, out int value, out string error)
+        public static bool TryRead(JToken token, int fallback, int minimum, int maximum, string name, out int value, out string error)
         {
             value = fallback;
             error = null;
-            if (token == null || token.Type == JTokenType.Null) return true;
+            if (token == null || token.Type == JTokenType.Null)
+                return true;
             string text = token.ToString();
-            if ((token.Type != JTokenType.Integer && token.Type != JTokenType.Float
-                && token.Type != JTokenType.String) || text.Length > 64
+            if (
+                (token.Type != JTokenType.Integer && token.Type != JTokenType.Float && token.Type != JTokenType.String)
+                || text.Length > 64
                 || !decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out decimal number)
-                || number != decimal.Truncate(number) || number < minimum || number > maximum)
+                || number != decimal.Truncate(number)
+                || number < minimum
+                || number > maximum
+            )
             {
                 error = $"'{name}' must be an integer between {minimum} and {maximum}.";
                 return false;
@@ -41,9 +45,11 @@ namespace MCPForUnity.Editor.Helpers
 
             public bool TryReserve(int pngBytes)
             {
-                if (pngBytes <= 0 || pngBytes > MaxPreviewPngBytes) return false;
+                if (pngBytes <= 0 || pngBytes > MaxPreviewPngBytes)
+                    return false;
                 int encodedBytes = ((pngBytes + 2) / 3) * 4;
-                if (encodedBytes > MaxPreviewBase64Bytes - Base64Bytes) return false;
+                if (encodedBytes > MaxPreviewBase64Bytes - Base64Bytes)
+                    return false;
                 Base64Bytes += encodedBytes;
                 return true;
             }

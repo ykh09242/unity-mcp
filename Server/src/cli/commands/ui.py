@@ -26,21 +26,22 @@ def _created_instance_id(result: dict) -> int:
                 return instance_id
         except ValueError:
             pass
-    raise UnityCommandError({
-        "success": False,
-        "error": "GameObject creation returned no valid instanceID; follow-up UI edits were not applied.",
-        "data": data,
-    })
+    raise UnityCommandError(
+        {
+            "success": False,
+            "error": "GameObject creation returned no valid instanceID; follow-up UI edits were not applied.",
+            "data": data,
+        }
+    )
 
 
 @ui.command("create-canvas")
 @click.argument("name")
 @click.option(
     "--render-mode",
-    type=click.Choice(
-        ["ScreenSpaceOverlay", "ScreenSpaceCamera", "WorldSpace"]),
+    type=click.Choice(["ScreenSpaceOverlay", "ScreenSpaceCamera", "WorldSpace"]),
     default="ScreenSpaceOverlay",
-    help="Canvas render mode."
+    help="Canvas render mode.",
 )
 @handle_unity_errors
 def create_canvas(name: str, render_mode: str):
@@ -54,10 +55,14 @@ def create_canvas(name: str, render_mode: str):
     config = get_config()
 
     # Step 1: Create empty GameObject
-    result = run_command("manage_gameobject", {
-        "action": "create",
-        "name": name,
-    }, config)
+    result = run_command(
+        "manage_gameobject",
+        {
+            "action": "create",
+            "name": name,
+        },
+        config,
+    )
 
     if not (result.get("success") or result.get("data") or result.get("result")):
         click.echo(format_output(result, config.format))
@@ -68,12 +73,16 @@ def create_canvas(name: str, render_mode: str):
     # Step 2: Add Canvas components
     failed_components = []
     for component in ["Canvas", "CanvasScaler", "GraphicRaycaster"]:
-        comp_result = run_command("manage_components", {
-            "action": "add",
-            "target": target_id,
-            "searchMethod": "by_id",
-            "componentType": component,
-        }, config)
+        comp_result = run_command(
+            "manage_components",
+            {
+                "action": "add",
+                "target": target_id,
+                "searchMethod": "by_id",
+                "componentType": component,
+            },
+            config,
+        )
         if not (comp_result.get("success") or comp_result.get("data")):
             failed_components.append((component, comp_result.get("error", "Unknown error")))
 
@@ -82,16 +91,21 @@ def create_canvas(name: str, render_mode: str):
         print_error(f"Failed to add components: {error_details}")
 
     # Step 3: Set render mode
-    render_mode_value = {"ScreenSpaceOverlay": 0,
-                         "ScreenSpaceCamera": 1, "WorldSpace": 2}.get(render_mode, 0)
-    run_command("manage_components", {
-        "action": "set_property",
-        "target": target_id,
-        "searchMethod": "by_id",
-        "componentType": "Canvas",
-        "property": "renderMode",
-        "value": render_mode_value,
-    }, config)
+    render_mode_value = {"ScreenSpaceOverlay": 0, "ScreenSpaceCamera": 1, "WorldSpace": 2}.get(
+        render_mode, 0
+    )
+    run_command(
+        "manage_components",
+        {
+            "action": "set_property",
+            "target": target_id,
+            "searchMethod": "by_id",
+            "componentType": "Canvas",
+            "property": "renderMode",
+            "value": render_mode_value,
+        },
+        config,
+    )
 
     click.echo(format_output(result, config.format))
     if config.format != "json":
@@ -100,23 +114,9 @@ def create_canvas(name: str, render_mode: str):
 
 @ui.command("create-text")
 @click.argument("name")
-@click.option(
-    "--parent", "-p",
-    required=True,
-    help="Parent Canvas or UI element."
-)
-@click.option(
-    "--text", "-t",
-    default="New Text",
-    help="Initial text content."
-)
-@click.option(
-    "--position",
-    nargs=2,
-    type=float,
-    default=None,
-    help="Anchored position X Y."
-)
+@click.option("--parent", "-p", required=True, help="Parent Canvas or UI element.")
+@click.option("--text", "-t", default="New Text", help="Initial text content.")
+@click.option("--position", nargs=2, type=float, default=None, help="Anchored position X Y.")
 @handle_unity_errors
 def create_text(name: str, parent: str, text: str, position: tuple[float, float] | None):
     """Create a UI Text element (TextMeshPro).
@@ -128,12 +128,16 @@ def create_text(name: str, parent: str, text: str, position: tuple[float, float]
     config = get_config()
 
     # Step 1: Create empty GameObject with parent
-    result = run_command("manage_gameobject", {
-        "action": "create",
-        "name": name,
-        "parent": parent,
-        "position": list(position if position is not None else (0, 0)),
-    }, config)
+    result = run_command(
+        "manage_gameobject",
+        {
+            "action": "create",
+            "name": name,
+            "parent": parent,
+            "position": list(position if position is not None else (0, 0)),
+        },
+        config,
+    )
 
     if not (result.get("success") or result.get("data") or result.get("result")):
         click.echo(format_output(result, config.format))
@@ -142,32 +146,44 @@ def create_text(name: str, parent: str, text: str, position: tuple[float, float]
     target_id = _created_instance_id(result)
 
     # Step 2: Add RectTransform and TextMeshProUGUI
-    run_command("manage_components", {
-        "action": "add",
-        "target": target_id,
-        "searchMethod": "by_id",
-        "componentType": "TextMeshProUGUI",
-    }, config)
+    run_command(
+        "manage_components",
+        {
+            "action": "add",
+            "target": target_id,
+            "searchMethod": "by_id",
+            "componentType": "TextMeshProUGUI",
+        },
+        config,
+    )
 
     if position is not None:
-        run_command("manage_components", {
+        run_command(
+            "manage_components",
+            {
+                "action": "set_property",
+                "target": target_id,
+                "searchMethod": "by_id",
+                "componentType": "RectTransform",
+                "property": "anchoredPosition",
+                "value": list(position),
+            },
+            config,
+        )
+
+    # Step 3: Set text content
+    run_command(
+        "manage_components",
+        {
             "action": "set_property",
             "target": target_id,
             "searchMethod": "by_id",
-            "componentType": "RectTransform",
-            "property": "anchoredPosition",
-            "value": list(position),
-        }, config)
-
-    # Step 3: Set text content
-    run_command("manage_components", {
-        "action": "set_property",
-        "target": target_id,
-        "searchMethod": "by_id",
-        "componentType": "TextMeshProUGUI",
-        "property": "text",
-        "value": text,
-    }, config)
+            "componentType": "TextMeshProUGUI",
+            "property": "text",
+            "value": text,
+        },
+        config,
+    )
 
     click.echo(format_output(result, config.format))
     if config.format != "json":
@@ -176,16 +192,8 @@ def create_text(name: str, parent: str, text: str, position: tuple[float, float]
 
 @ui.command("create-button")
 @click.argument("name")
-@click.option(
-    "--parent", "-p",
-    required=True,
-    help="Parent Canvas or UI element."
-)
-@click.option(
-    "--text", "-t",
-    default="Button",
-    help="Button label text."
-)
+@click.option("--parent", "-p", required=True, help="Parent Canvas or UI element.")
+@click.option("--text", "-t", default="Button", help="Button label text.")
 @handle_unity_errors
 def create_button(name: str, parent: str, text: str):  # text current placeholder
     """Create a UI Button.
@@ -197,11 +205,15 @@ def create_button(name: str, parent: str, text: str):  # text current placeholde
     config = get_config()
 
     # Step 1: Create empty GameObject with parent
-    result = run_command("manage_gameobject", {
-        "action": "create",
-        "name": name,
-        "parent": parent,
-    }, config)
+    result = run_command(
+        "manage_gameobject",
+        {
+            "action": "create",
+            "name": name,
+            "parent": parent,
+        },
+        config,
+    )
 
     if not (result.get("success") or result.get("data") or result.get("result")):
         click.echo(format_output(result, config.format))
@@ -211,38 +223,54 @@ def create_button(name: str, parent: str, text: str):  # text current placeholde
 
     # Step 2: Add Button and Image components
     for component in ["Image", "Button"]:
-        run_command("manage_components", {
-            "action": "add",
-            "target": target_id,
-            "searchMethod": "by_id",
-            "componentType": component,
-        }, config)
+        run_command(
+            "manage_components",
+            {
+                "action": "add",
+                "target": target_id,
+                "searchMethod": "by_id",
+                "componentType": component,
+            },
+            config,
+        )
 
     # Step 3: Create child label GameObject
     label_name = f"{name}_Label"
-    label_result = run_command("manage_gameobject", {
-        "action": "create",
-        "name": label_name,
-        "parent": target_id,
-    }, config)
+    label_result = run_command(
+        "manage_gameobject",
+        {
+            "action": "create",
+            "name": label_name,
+            "parent": target_id,
+        },
+        config,
+    )
 
     label_id = _created_instance_id(label_result)
 
     # Step 4: Add TextMeshProUGUI to label and set text
-    run_command("manage_components", {
-        "action": "add",
-        "target": label_id,
-        "searchMethod": "by_id",
-        "componentType": "TextMeshProUGUI",
-    }, config)
-    run_command("manage_components", {
-        "action": "set_property",
-        "target": label_id,
-        "searchMethod": "by_id",
-        "componentType": "TextMeshProUGUI",
-        "property": "text",
-        "value": text,
-    }, config)
+    run_command(
+        "manage_components",
+        {
+            "action": "add",
+            "target": label_id,
+            "searchMethod": "by_id",
+            "componentType": "TextMeshProUGUI",
+        },
+        config,
+    )
+    run_command(
+        "manage_components",
+        {
+            "action": "set_property",
+            "target": label_id,
+            "searchMethod": "by_id",
+            "componentType": "TextMeshProUGUI",
+            "property": "text",
+            "value": text,
+        },
+        config,
+    )
 
     click.echo(format_output(result, config.format))
     if config.format != "json":
@@ -251,16 +279,8 @@ def create_button(name: str, parent: str, text: str):  # text current placeholde
 
 @ui.command("create-image")
 @click.argument("name")
-@click.option(
-    "--parent", "-p",
-    required=True,
-    help="Parent Canvas or UI element."
-)
-@click.option(
-    "--sprite", "-s",
-    default=None,
-    help="Sprite asset path."
-)
+@click.option("--parent", "-p", required=True, help="Parent Canvas or UI element.")
+@click.option("--sprite", "-s", default=None, help="Sprite asset path.")
 @handle_unity_errors
 def create_image(name: str, parent: str, sprite: Optional[str]):
     """Create a UI Image.
@@ -273,11 +293,15 @@ def create_image(name: str, parent: str, sprite: Optional[str]):
     config = get_config()
 
     # Step 1: Create empty GameObject with parent
-    result = run_command("manage_gameobject", {
-        "action": "create",
-        "name": name,
-        "parent": parent,
-    }, config)
+    result = run_command(
+        "manage_gameobject",
+        {
+            "action": "create",
+            "name": name,
+            "parent": parent,
+        },
+        config,
+    )
 
     if not (result.get("success") or result.get("data") or result.get("result")):
         click.echo(format_output(result, config.format))
@@ -286,23 +310,31 @@ def create_image(name: str, parent: str, sprite: Optional[str]):
     target_id = _created_instance_id(result)
 
     # Step 2: Add Image component
-    run_command("manage_components", {
-        "action": "add",
-        "target": target_id,
-        "searchMethod": "by_id",
-        "componentType": "Image",
-    }, config)
-
-    # Step 3: Set sprite if provided
-    if sprite:
-        run_command("manage_components", {
-            "action": "set_property",
+    run_command(
+        "manage_components",
+        {
+            "action": "add",
             "target": target_id,
             "searchMethod": "by_id",
             "componentType": "Image",
-            "property": "sprite",
-            "value": sprite,
-        }, config)
+        },
+        config,
+    )
+
+    # Step 3: Set sprite if provided
+    if sprite:
+        run_command(
+            "manage_components",
+            {
+                "action": "set_property",
+                "target": target_id,
+                "searchMethod": "by_id",
+                "componentType": "Image",
+                "property": "sprite",
+                "value": sprite,
+            },
+            config,
+        )
 
     click.echo(format_output(result, config.format))
     if config.format != "json":

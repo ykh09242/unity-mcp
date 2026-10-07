@@ -19,22 +19,25 @@ namespace MCPForUnity.Editor.Services
         static McpEditorShutdownCleanup()
         {
             // Guard against duplicate subscriptions across domain reloads.
-            try { EditorApplication.quitting -= OnEditorQuitting; } catch { }
+            try
+            {
+                EditorApplication.quitting -= OnEditorQuitting;
+            }
+            catch { }
             EditorApplication.quitting += OnEditorQuitting;
         }
 
         // A -batchmode/CI instance resolves the interactive editor's server via the global
         // pidfile+port handshake, so cleanup there would stop another user's server. Mirror the
         // sibling guards (HttpAutoStartHandler, StdioBridgeHost): skip in batch unless opted in.
-        internal static bool ShouldRunCleanup() =>
-            ShouldRunCleanup(Application.isBatchMode, Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH"));
+        internal static bool ShouldRunCleanup() => ShouldRunCleanup(Application.isBatchMode, Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH"));
 
-        internal static bool ShouldRunCleanup(bool isBatchMode, string allowBatchEnv) =>
-            !isBatchMode || !string.IsNullOrWhiteSpace(allowBatchEnv);
+        internal static bool ShouldRunCleanup(bool isBatchMode, string allowBatchEnv) => !isBatchMode || !string.IsNullOrWhiteSpace(allowBatchEnv);
 
         private static void OnEditorQuitting()
         {
-            if (!ShouldRunCleanup()) return;
+            if (!ShouldRunCleanup())
+                return;
 
             // 1) Stop transports (best-effort, bounded wait).
             try
@@ -44,7 +47,11 @@ namespace MCPForUnity.Editor.Services
                 Task stopHttp = transport.StopAsync(TransportMode.Http);
                 Task stopStdio = transport.StopAsync(TransportMode.Stdio);
 
-                try { Task.WaitAll(new[] { stopHttp, stopStdio }, 750); } catch { }
+                try
+                {
+                    Task.WaitAll(new[] { stopHttp, stopStdio }, 750);
+                }
+                catch { }
             }
             catch (Exception ex)
             {
@@ -68,4 +75,3 @@ namespace MCPForUnity.Editor.Services
         }
     }
 }
-

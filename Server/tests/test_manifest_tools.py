@@ -2,6 +2,7 @@
 
 The six asset_gen tools shipped without entries because nothing compared the two lists.
 """
+
 import json
 from pathlib import Path
 
@@ -20,5 +21,9 @@ def test_manifest_lists_exactly_the_registered_tools():
     listed = [tool["name"] for tool in json.loads(MANIFEST.read_text(encoding="utf-8"))["tools"]]
 
     assert len(listed) == len(set(listed)), f"manifest.json lists a tool twice: {sorted(listed)}"
-    assert sorted(registered - set(listed)) == [], "registered tools that manifest.json does not list"
-    assert sorted(set(listed) - registered) == [], "manifest.json lists tools that are not registered"
+    assert sorted(registered - set(listed)) == [], (
+        "registered tools that manifest.json does not list"
+    )
+    assert sorted(set(listed) - registered) == [], (
+        "manifest.json lists tools that are not registered"
+    )

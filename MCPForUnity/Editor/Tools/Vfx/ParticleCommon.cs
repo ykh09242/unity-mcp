@@ -6,14 +6,11 @@ namespace MCPForUnity.Editor.Tools.Vfx
 {
     internal static class ParticleCommon
     {
-        public static ParticleSystem FindParticleSystem(JObject @params)
-            => ManageVfxCommon.FindComponent<ParticleSystem>(@params);
+        public static ParticleSystem FindParticleSystem(JObject @params) => ManageVfxCommon.FindComponent<ParticleSystem>(@params);
 
-        public static string FindParticleSystemError(JObject @params)
-            => ManageVfxCommon.FindComponentError<ParticleSystem>(@params);
+        public static string FindParticleSystemError(JObject @params) => ManageVfxCommon.FindComponentError<ParticleSystem>(@params);
 
-        public static ParticleSystemRenderer FindParticleSystemRenderer(ParticleSystem ps)
-            => ps != null ? ps.GetComponent<ParticleSystemRenderer>() : null;
+        public static ParticleSystemRenderer FindParticleSystemRenderer(ParticleSystem ps) => ps != null ? ps.GetComponent<ParticleSystemRenderer>() : null;
 
         public static ParticleSystem.MinMaxCurve ParseMinMaxCurve(JToken token, float defaultValue = 1f)
         {

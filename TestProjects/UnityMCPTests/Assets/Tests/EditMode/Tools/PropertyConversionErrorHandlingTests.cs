@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
-using Newtonsoft.Json.Linq;
-using MCPForUnity.Editor.Tools;
-using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -45,14 +45,18 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject SetNullableValue(string property, JToken value)
         {
-            return JObject.FromObject(ManageComponents.HandleCommand(new JObject
-            {
-                ["action"] = "set_property",
-                ["target"] = testGameObject.name,
-                ["componentType"] = typeof(NullableUnityValueProbe).FullName,
-                ["property"] = property,
-                ["value"] = value
-            }));
+            return JObject.FromObject(
+                ManageComponents.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_property",
+                        ["target"] = testGameObject.name,
+                        ["componentType"] = typeof(NullableUnityValueProbe).FullName,
+                        ["property"] = property,
+                        ["value"] = value,
+                    }
+                )
+            );
         }
 
         [TestCase("vector2", "[1,2]", "{\"x\":1.0,\"y\":2.0}")]
@@ -64,9 +68,7 @@ namespace MCPForUnityTests.Editor.Tools
             var component = testGameObject.AddComponent<NullableUnityValueProbe>();
             var response = SetNullableValue(member, JToken.Parse(input));
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
-            object value = member == "rotation"
-                ? (object)component.rotation
-                : typeof(NullableUnityValueProbe).GetField(member).GetValue(component);
+            object value = member == "rotation" ? (object)component.rotation : typeof(NullableUnityValueProbe).GetField(member).GetValue(component);
             Assert.IsTrue(JToken.DeepEquals(JToken.Parse(expected), JToken.FromObject(value, UnityJsonSerializer.Instance)));
         }
 
@@ -127,7 +129,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = testGameObject.name,
                 ["componentType"] = "AudioSource",
                 ["property"] = "clip",
-                ["value"] = 12345  // INCOMPATIBLE: int for AudioClip
+                ["value"] = 12345, // INCOMPATIBLE: int for AudioClip
             };
 
             var result = ManageComponents.HandleCommand(setPropertyParams);
@@ -164,7 +166,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = testGameObject.name,
                 ["componentType"] = "AudioSource",
                 ["property"] = "spatialBlend",
-                ["value"] = JArray.Parse("[0, 0]")  // INCOMPATIBLE: array for float
+                ["value"] = JArray.Parse("[0, 0]"), // INCOMPATIBLE: array for float
             };
 
             var result = ManageComponents.HandleCommand(setPropertyParams);
@@ -179,7 +181,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = testGameObject.name,
                 ["componentType"] = "AudioSource",
                 ["property"] = "volume",
-                ["value"] = 0.5f
+                ["value"] = 0.5f,
             };
 
             var followupResult = ManageComponents.HandleCommand(followupParams);
@@ -205,7 +207,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = testGameObject.name,
                 ["componentType"] = "AudioSource",
                 ["property"] = "clip",
-                ["value"] = 999  // bad: int for AudioClip
+                ["value"] = 999, // bad: int for AudioClip
             };
 
             var result1 = ManageComponents.HandleCommand(badParam1);
@@ -218,7 +220,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = testGameObject.name,
                 ["componentType"] = "AudioSource",
                 ["property"] = "rolloffFactor",
-                ["value"] = "invalid_string"  // bad: string for float
+                ["value"] = "invalid_string", // bad: string for float
             };
 
             var result2 = ManageComponents.HandleCommand(badParam2);
@@ -231,7 +233,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = testGameObject.name,
                 ["componentType"] = "AudioSource",
                 ["property"] = "volume",
-                ["value"] = 0.5f  // good: float for float - dispatcher should still work
+                ["value"] = 0.5f, // good: float for float - dispatcher should still work
             };
 
             var result3 = ManageComponents.HandleCommand(badParam3);
@@ -254,7 +256,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = testGameObject.name,
                 ["componentType"] = "AudioSource",
                 ["property"] = "clip",
-                ["value"] = 12345  // bad
+                ["value"] = 12345, // bad
             };
 
             var failResult = ManageComponents.HandleCommand(failParam);
@@ -267,7 +269,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = testGameObject.name,
                 ["componentType"] = "AudioSource",
                 ["property"] = "volume",
-                ["value"] = 0.5f  // valid: float for float
+                ["value"] = 0.5f, // valid: float for float
             };
 
             var validResult = ManageComponents.HandleCommand(validParam);
@@ -295,7 +297,7 @@ namespace MCPForUnityTests.Editor.Tools
                     ["target"] = testGameObject.name,
                     ["componentType"] = "AudioSource",
                     ["property"] = "clip",
-                    ["value"] = i * 1000  // bad
+                    ["value"] = i * 1000, // bad
                 };
                 ManageComponents.HandleCommand(badParam);
             }

@@ -1,4 +1,5 @@
 """Server shutdown closes its exact validator despite other cleanup failures."""
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -12,15 +13,22 @@ from services.api_key_service import ApiKeyService
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [None, "hub", "pool"])
 @pytest.mark.parametrize("replacement", [False, True])
-async def test_lifespan_closes_captured_validator_after_other_cleanup(monkeypatch, failure, replacement):
+async def test_lifespan_closes_captured_validator_after_other_cleanup(
+    monkeypatch, failure, replacement
+):
     import main
 
     actual_client = httpx.AsyncClient
     clients = []
 
     def factory(**kwargs):
-        client = actual_client(transport=httpx.MockTransport(lambda request: httpx.Response(
-            200, json={"valid": True, "user_id": "owned-user"})), trust_env=False, **kwargs)
+        client = actual_client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json={"valid": True, "user_id": "owned-user"})
+            ),
+            trust_env=False,
+            **kwargs,
+        )
         clients.append(client)
         return client
 

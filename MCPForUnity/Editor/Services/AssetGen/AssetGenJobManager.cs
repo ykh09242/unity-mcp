@@ -14,7 +14,15 @@ using UnityEngine;
 
 namespace MCPForUnity.Editor.Services.AssetGen
 {
-    public enum AssetGenJobState { Queued, Running, Importing, Done, Failed, Canceled }
+    public enum AssetGenJobState
+    {
+        Queued,
+        Running,
+        Importing,
+        Done,
+        Failed,
+        Canceled,
+    }
 
     /// <summary>
     /// Snapshot of a generation/import job. Persisted to SessionState so a `status` query
@@ -23,14 +31,14 @@ namespace MCPForUnity.Editor.Services.AssetGen
     public sealed class AssetGenJob
     {
         public string JobId;
-        public string Kind;       // model | image | audio | marketplace
+        public string Kind; // model | image | audio | marketplace
         public string Provider;
         public string Action;
         public AssetGenJobState State;
         public float Progress;
         public string Format;
         public float TargetSize = 1f;
-        public string AnimationType;   // FBX/OBJ rig mode: null/none | generic | humanoid | legacy
+        public string AnimationType; // FBX/OBJ rig mode: null/none | generic | humanoid | legacy
         public string AssetPath;
         public string AssetGuid;
         public string Error;
@@ -68,13 +76,16 @@ namespace MCPForUnity.Editor.Services.AssetGen
             try
             {
                 string index = SessionState.GetString(JobIndexKey, string.Empty);
-                if (string.IsNullOrEmpty(index)) return;
+                if (string.IsNullOrEmpty(index))
+                    return;
                 foreach (string id in index.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
                 {
                     string json = SessionState.GetString(JobKeyPrefix + id, string.Empty);
-                    if (string.IsNullOrEmpty(json)) continue;
+                    if (string.IsNullOrEmpty(json))
+                        continue;
                     var job = JsonConvert.DeserializeObject<AssetGenJob>(json);
-                    if (job == null) continue;
+                    if (job == null)
+                        continue;
                     if (!IsTerminal(job.State))
                     {
                         job.State = AssetGenJobState.Failed;
@@ -89,7 +100,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         public static AssetGenJob StartModelGeneration(ModelGenRequest req)
         {
-            if (req == null) throw new ArgumentNullException(nameof(req));
+            if (req == null)
+                throw new ArgumentNullException(nameof(req));
             string provider = string.IsNullOrEmpty(req.Provider) ? "tripo" : req.Provider;
             IModelProviderAdapter adapter = AssetGenProviders.Model(provider); // throws NotSupportedException if unimplemented
 
@@ -97,7 +109,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
             job.Format = string.IsNullOrEmpty(req.Format) ? "glb" : req.Format;
             job.TargetSize = req.TargetSize <= 0 ? 1f : req.TargetSize;
 
-            if (!TryResolveKey(provider, job, out string apiKey)) return job;
+            if (!TryResolveKey(provider, job, out string apiKey))
+                return job;
 
             IHttpTransport transport = TransportOverrideForTests ?? new UnityWebRequestTransport();
             var runner = new Runner
@@ -126,14 +139,16 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         public static AssetGenJob StartImageGeneration(ImageGenRequest req)
         {
-            if (req == null) throw new ArgumentNullException(nameof(req));
+            if (req == null)
+                throw new ArgumentNullException(nameof(req));
             string provider = string.IsNullOrEmpty(req.Provider) ? "fal" : req.Provider;
             IImageProviderAdapter adapter = AssetGenProviders.Image(provider); // throws NotSupportedException if unimplemented
 
             var job = NewJob("image", provider, "generate");
             job.Format = "png";
 
-            if (!TryResolveKey(provider, job, out string apiKey)) return job;
+            if (!TryResolveKey(provider, job, out string apiKey))
+                return job;
 
             IHttpTransport transport = TransportOverrideForTests ?? new UnityWebRequestTransport();
             bool asSprite = req.AsSprite;
@@ -169,14 +184,16 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         public static AssetGenJob StartAudioGeneration(AudioGenRequest req)
         {
-            if (req == null) throw new ArgumentNullException(nameof(req));
+            if (req == null)
+                throw new ArgumentNullException(nameof(req));
             string provider = string.IsNullOrEmpty(req.Provider) ? "fal" : req.Provider;
             IAudioProviderAdapter adapter = AssetGenProviders.Audio(provider); // throws NotSupportedException if unimplemented
 
             var job = NewJob("audio", provider, "generate");
             job.Format = "wav";
 
-            if (!TryResolveKey(provider, job, out string apiKey)) return job;
+            if (!TryResolveKey(provider, job, out string apiKey))
+                return job;
 
             IHttpTransport transport = TransportOverrideForTests ?? new UnityWebRequestTransport();
             var runner = new Runner
@@ -205,17 +222,28 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         public static AssetGenJob StartMarketplaceImport(string uid, float targetSize, string name, string outputFolder)
         {
-            if (string.IsNullOrEmpty(uid)) throw new ArgumentException("uid required");
+            if (string.IsNullOrEmpty(uid))
+                throw new ArgumentException("uid required");
             var adapter = AssetGenProviders.Marketplace("sketchfab"); // throws NotSupported if unimplemented
             var job = NewJob("marketplace", "sketchfab", "import");
             job.TargetSize = targetSize <= 0 ? 1f : targetSize;
-            if (!TryResolveKey("sketchfab", job, out string apiKey)) return job;
+            if (!TryResolveKey("sketchfab", job, out string apiKey))
+                return job;
             var transport = TransportOverrideForTests ?? new UnityWebRequestTransport();
             var runner = new Runner
             {
                 Job = job,
-                SubmitFn = ct => adapter.ResolveDownloadUrlAsync(uid, apiKey, transport, ct),   // returns the zip/gltf URL as providerJobId
-                PollFn = (pid, ct) => Task.FromResult(new ProviderPollResult { State = ProviderPollState.Succeeded, Progress = 1f, DownloadUrl = pid, ResultExt = "zip" }),
+                SubmitFn = ct => adapter.ResolveDownloadUrlAsync(uid, apiKey, transport, ct), // returns the zip/gltf URL as providerJobId
+                PollFn = (pid, ct) =>
+                    Task.FromResult(
+                        new ProviderPollResult
+                        {
+                            State = ProviderPollState.Succeeded,
+                            Progress = 1f,
+                            DownloadUrl = pid,
+                            ResultExt = "zip",
+                        }
+                    ),
                 ImportFn = ImportOverrideForTests ?? ModelImportPipeline.ImportInto,
                 Transport = transport,
                 OutputFolder = outputFolder,
@@ -227,8 +255,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             return job;
         }
 
-        public static AssetGenJob GetJob(string jobId)
-            => string.IsNullOrEmpty(jobId) ? null : (Jobs.TryGetValue(jobId, out var j) ? j : null);
+        public static AssetGenJob GetJob(string jobId) => string.IsNullOrEmpty(jobId) ? null : (Jobs.TryGetValue(jobId, out var j) ? j : null);
 
         /// <summary>Most-recent-first snapshot of known jobs (for the GUI readout). Never contains keys.</summary>
         public static IReadOnlyList<AssetGenJob> RecentJobs(int max = 20)
@@ -242,11 +269,16 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         public static bool Cancel(string jobId)
         {
-            if (string.IsNullOrEmpty(jobId)) return false;
+            if (string.IsNullOrEmpty(jobId))
+                return false;
             if (Runners.TryGetValue(jobId, out var r))
             {
                 r.Canceled = true;
-                try { r.Cts.Cancel(); } catch { }
+                try
+                {
+                    r.Cts.Cancel();
+                }
+                catch { }
                 return true;
             }
             if (Jobs.TryGetValue(jobId, out var job) && job.State == AssetGenJobState.Queued)
@@ -260,7 +292,16 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         // ---------- runner ----------
 
-        private enum RunnerPhase { Submit, AwaitSubmit, Poll, AwaitPoll, Download, AwaitDownload, Import }
+        private enum RunnerPhase
+        {
+            Submit,
+            AwaitSubmit,
+            Poll,
+            AwaitPoll,
+            Download,
+            AwaitDownload,
+            Import,
+        }
 
         private sealed class Runner
         {
@@ -312,7 +353,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         private static void EnsureTicking()
         {
-            if (_ticking) return;
+            if (_ticking)
+                return;
             EditorApplication.update += Tick;
             _ticking = true;
         }
@@ -331,7 +373,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
             _tickIds.AddRange(Runners.Keys);
             foreach (string id in _tickIds)
             {
-                if (Runners.TryGetValue(id, out var r)) Advance(r);
+                if (Runners.TryGetValue(id, out var r))
+                    Advance(r);
             }
         }
 
@@ -348,9 +391,23 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         private static void Advance(Runner r)
         {
-            if (IsTerminal(r.Job.State)) { Finalize(r); return; }
-            if (r.Canceled) { r.Job.State = AssetGenJobState.Canceled; Persist(r.Job); Finalize(r); return; }
-            if (Now() - r.StartedAt > TimeoutSeconds) { Fail(r, $"Timed out after {TimeoutSeconds:0}s."); return; }
+            if (IsTerminal(r.Job.State))
+            {
+                Finalize(r);
+                return;
+            }
+            if (r.Canceled)
+            {
+                r.Job.State = AssetGenJobState.Canceled;
+                Persist(r.Job);
+                Finalize(r);
+                return;
+            }
+            if (Now() - r.StartedAt > TimeoutSeconds)
+            {
+                Fail(r, $"Timed out after {TimeoutSeconds:0}s.");
+                return;
+            }
 
             try
             {
@@ -364,23 +421,38 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         break;
 
                     case RunnerPhase.AwaitSubmit:
-                        if (!r.SubmitTask.IsCompleted) break;
-                        if (Faulted(r.SubmitTask, out string subErr)) { Fail(r, subErr); break; }
+                        if (!r.SubmitTask.IsCompleted)
+                            break;
+                        if (Faulted(r.SubmitTask, out string subErr))
+                        {
+                            Fail(r, subErr);
+                            break;
+                        }
                         r.ProviderJobId = r.SubmitTask.Result;
-                        if (string.IsNullOrEmpty(r.ProviderJobId)) { Fail(r, "Provider returned no job id."); break; }
+                        if (string.IsNullOrEmpty(r.ProviderJobId))
+                        {
+                            Fail(r, "Provider returned no job id.");
+                            break;
+                        }
                         r.NextPollAt = Now();
                         r.Phase = RunnerPhase.Poll;
                         break;
 
                     case RunnerPhase.Poll:
-                        if (Now() < r.NextPollAt) break;
+                        if (Now() < r.NextPollAt)
+                            break;
                         r.PollTask = r.PollFn(r.ProviderJobId, r.Cts.Token);
                         r.Phase = RunnerPhase.AwaitPoll;
                         break;
 
                     case RunnerPhase.AwaitPoll:
-                        if (!r.PollTask.IsCompleted) break;
-                        if (Faulted(r.PollTask, out string pollErr)) { Fail(r, pollErr); break; }
+                        if (!r.PollTask.IsCompleted)
+                            break;
+                        if (Faulted(r.PollTask, out string pollErr))
+                        {
+                            Fail(r, pollErr);
+                            break;
+                        }
                         ProviderPollResult pr = r.PollTask.Result;
                         r.Job.Progress = Mathf.Clamp01(pr.Progress);
                         Persist(r.Job);
@@ -418,13 +490,25 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     case RunnerPhase.Download:
                         AssetDownloadPolicy.RequireAllowedUrl(r.Job.Provider, r.DownloadUrl);
                         r.DownloadTask = r.Transport.SendAsync(
-                            new HttpRequestSpec { Method = "GET", Url = r.DownloadUrl, DownloadProvider = r.Job.Provider }, r.Cts.Token);
+                            new HttpRequestSpec
+                            {
+                                Method = "GET",
+                                Url = r.DownloadUrl,
+                                DownloadProvider = r.Job.Provider,
+                            },
+                            r.Cts.Token
+                        );
                         r.Phase = RunnerPhase.AwaitDownload;
                         break;
 
                     case RunnerPhase.AwaitDownload:
-                        if (!r.DownloadTask.IsCompleted) break;
-                        if (Faulted(r.DownloadTask, out string dlErr)) { Fail(r, dlErr); break; }
+                        if (!r.DownloadTask.IsCompleted)
+                            break;
+                        if (Faulted(r.DownloadTask, out string dlErr))
+                        {
+                            Fail(r, dlErr);
+                            break;
+                        }
                         HttpResult res = r.DownloadTask.Result;
                         if (res == null || !res.IsSuccess || res.Body == null || res.Body.Length == 0)
                         {
@@ -440,7 +524,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     case RunnerPhase.Import:
                         // Each pipeline synchronously imports its output; no project-wide Refresh is needed.
                         AssetGenJob imported = r.ImportFn(r.Job, r.LocalPath);
-                        if (imported != null) r.Job = imported;
+                        if (imported != null)
+                            r.Job = imported;
                         if (r.Job.State != AssetGenJobState.Failed)
                         {
                             r.Job.State = AssetGenJobState.Done;
@@ -461,18 +546,34 @@ namespace MCPForUnity.Editor.Services.AssetGen
         // provider-controlled result URL (OverrideExt), so a rogue provider could otherwise land a
         // .cs/.asmdef/.meta/.asset under Assets/ and get it compiled/imported on Refresh — Editor
         // RCE. Anything outside these sets is rejected. Mirrors ModelImportPipeline's allowlist style.
-        private static readonly HashSet<string> AudioAllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
-        {
-            "wav", "mp3", "ogg", "aiff", "aif", "flac",
-        };
+        private static readonly HashSet<string> AudioAllowedExtensions = new(StringComparer.OrdinalIgnoreCase) { "wav", "mp3", "ogg", "aiff", "aif", "flac" };
         private static readonly HashSet<string> ImageAllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
-            "png", "jpg", "jpeg", "exr", "tga", "psd", "tiff", "webp", "gif", "bmp",
+            "png",
+            "jpg",
+            "jpeg",
+            "exr",
+            "tga",
+            "psd",
+            "tiff",
+            "webp",
+            "gif",
+            "bmp",
         };
         private static readonly HashSet<string> ModelAllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
-            "glb", "gltf", "fbx", "obj", "usd", "usdz", "dae", "ply", "stl", "zip",
+            "glb",
+            "gltf",
+            "fbx",
+            "obj",
+            "usd",
+            "usdz",
+            "dae",
+            "ply",
+            "stl",
+            "zip",
         };
+
         // Fail closed: an unexpected kind allows nothing, so the RCE boundary never opens by default.
         private static readonly HashSet<string> NoAllowedExtensions = new(StringComparer.OrdinalIgnoreCase);
 
@@ -481,18 +582,21 @@ namespace MCPForUnity.Editor.Services.AssetGen
         /// job <paramref name="kind"/> (audio | image | model | marketplace). Internal so the
         /// allowlist can be unit-tested directly.
         /// </summary>
-        internal static bool IsAllowedResultExtension(string kind, string ext)
-            => AllowedExtensionsFor(kind).Contains((ext ?? string.Empty).TrimStart('.'));
+        internal static bool IsAllowedResultExtension(string kind, string ext) => AllowedExtensionsFor(kind).Contains((ext ?? string.Empty).TrimStart('.'));
 
         private static HashSet<string> AllowedExtensionsFor(string kind)
         {
             switch ((kind ?? string.Empty).ToLowerInvariant())
             {
-                case "audio": return AudioAllowedExtensions;
-                case "image": return ImageAllowedExtensions;
+                case "audio":
+                    return AudioAllowedExtensions;
+                case "image":
+                    return ImageAllowedExtensions;
                 case "model":
-                case "marketplace": return ModelAllowedExtensions;
-                default: return NoAllowedExtensions; // fail closed for unexpected kinds
+                case "marketplace":
+                    return ModelAllowedExtensions;
+                default:
+                    return NoAllowedExtensions; // fail closed for unexpected kinds
             }
         }
 
@@ -507,12 +611,13 @@ namespace MCPForUnity.Editor.Services.AssetGen
             if (r.Job.Kind == "image")
             {
                 string actual = ImageResultFormat.FromBytes(bytes);
-                if (actual == "webp") throw new Exception("Provider returned WebP, which this Unity image importer does not support. Choose a PNG/JPEG model.");
-                if (actual != null) ext = actual;
+                if (actual == "webp")
+                    throw new Exception("Provider returned WebP, which this Unity image importer does not support. Choose a PNG/JPEG model.");
+                if (actual != null)
+                    ext = actual;
                 r.Job.Format = ext;
             }
-            string requestedRoot = !string.IsNullOrEmpty(r.OutputFolder) ? r.OutputFolder
-                                                                         : (AssetGenPrefs.OutputRoot + "/" + r.Subfolder);
+            string requestedRoot = !string.IsNullOrEmpty(r.OutputFolder) ? r.OutputFolder : (AssetGenPrefs.OutputRoot + "/" + r.Subfolder);
             if (!AssetGenPaths.TryGetAssetsFolder(requestedRoot, out string root))
                 root = AssetGenPrefs.DefaultOutputRoot + "/" + r.Subfolder;
             using var folders = new AssetFolderScope();
@@ -522,7 +627,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
             string fileName = baseName + "." + ext;
             string abs = Path.Combine(absRoot, fileName);
             int n = 1;
-            while (File.Exists(abs)) { fileName = baseName + "_" + n++ + "." + ext; abs = Path.Combine(absRoot, fileName); }
+            while (File.Exists(abs))
+            {
+                fileName = baseName + "_" + n++ + "." + ext;
+                abs = Path.Combine(absRoot, fileName);
+            }
             File.WriteAllBytes(abs, bytes);
             folders.Complete();
             return (root.TrimEnd('/') + "/" + fileName).Replace('\\', '/');
@@ -530,20 +639,26 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         private static string NameFrom(string explicitName, string prompt, string jobId)
         {
-            if (!string.IsNullOrWhiteSpace(explicitName)) return explicitName;
-            if (!string.IsNullOrWhiteSpace(prompt)) return prompt;
+            if (!string.IsNullOrWhiteSpace(explicitName))
+                return explicitName;
+            if (!string.IsNullOrWhiteSpace(prompt))
+                return prompt;
             return "asset_" + jobId.Substring(0, 8);
         }
 
         private static string SanitizeName(string raw)
         {
-            if (string.IsNullOrWhiteSpace(raw)) return "asset";
+            if (string.IsNullOrWhiteSpace(raw))
+                return "asset";
             var sb = new System.Text.StringBuilder();
             foreach (char c in raw.Trim())
             {
-                if (char.IsLetterOrDigit(c) || c == '_' || c == '-') sb.Append(c);
-                else if (c == ' ') sb.Append('_');
-                if (sb.Length >= 48) break;
+                if (char.IsLetterOrDigit(c) || c == '_' || c == '-')
+                    sb.Append(c);
+                else if (c == ' ')
+                    sb.Append('_');
+                if (sb.Length >= 48)
+                    break;
             }
             string s = sb.ToString().Trim('_', '-');
             return string.IsNullOrEmpty(s) ? "asset" : s;
@@ -564,9 +679,17 @@ namespace MCPForUnity.Editor.Services.AssetGen
             // Failed jobs (including timeouts) must stop it before releasing the source.
             if (r.Job.State == AssetGenJobState.Failed)
             {
-                try { r.Cts?.Cancel(); } catch { }
+                try
+                {
+                    r.Cts?.Cancel();
+                }
+                catch { }
             }
-            try { r.Cts?.Dispose(); } catch { }
+            try
+            {
+                r.Cts?.Dispose();
+            }
+            catch { }
         }
 
         private static AssetGenJob NewJob(string kind, string provider, string action)
@@ -603,13 +726,16 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 error = SecretRedactor.Scrub(ex?.Message ?? "request failed");
                 return true;
             }
-            if (t.IsCanceled) { error = "Canceled."; return true; }
+            if (t.IsCanceled)
+            {
+                error = "Canceled.";
+                return true;
+            }
             error = null;
             return false;
         }
 
-        private static bool IsTerminal(AssetGenJobState s)
-            => s == AssetGenJobState.Done || s == AssetGenJobState.Failed || s == AssetGenJobState.Canceled;
+        private static bool IsTerminal(AssetGenJobState s) => s == AssetGenJobState.Done || s == AssetGenJobState.Failed || s == AssetGenJobState.Canceled;
 
         private static double Now() => EditorApplication.timeSinceStartup;
 
@@ -617,7 +743,12 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             foreach (var r in new List<Runner>(Runners.Values))
             {
-                try { r.Cts?.Cancel(); r.Cts?.Dispose(); } catch { }
+                try
+                {
+                    r.Cts?.Cancel();
+                    r.Cts?.Dispose();
+                }
+                catch { }
             }
             Runners.Clear();
             string index = SessionState.GetString(JobIndexKey, string.Empty);

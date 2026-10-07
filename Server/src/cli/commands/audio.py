@@ -18,16 +18,9 @@ def audio():
 
 @audio.command("play")
 @click.argument("target")
+@click.option("--clip", "-c", default=None, help="Audio clip path to play.")
 @click.option(
-    "--clip", "-c",
-    default=None,
-    help="Audio clip path to play."
-)
-@click.option(
-    "--search-method",
-    type=SEARCH_METHOD_CHOICE_BASIC,
-    default=None,
-    help="How to find the target."
+    "--search-method", type=SEARCH_METHOD_CHOICE_BASIC, default=None, help="How to find the target."
 )
 @handle_unity_errors
 def play(target: str, clip: Optional[str], search_method: Optional[str]):
@@ -58,10 +51,7 @@ def play(target: str, clip: Optional[str], search_method: Optional[str]):
 @audio.command("stop")
 @click.argument("target")
 @click.option(
-    "--search-method",
-    type=SEARCH_METHOD_CHOICE_BASIC,
-    default=None,
-    help="How to find the target."
+    "--search-method", type=SEARCH_METHOD_CHOICE_BASIC, default=None, help="How to find the target."
 )
 @handle_unity_errors
 def stop(target: str, search_method: Optional[str]):
@@ -89,10 +79,7 @@ def stop(target: str, search_method: Optional[str]):
 @click.argument("target")
 @click.argument("level", type=float)
 @click.option(
-    "--search-method",
-    type=SEARCH_METHOD_CHOICE_BASIC,
-    default=None,
-    help="How to find the target."
+    "--search-method", type=SEARCH_METHOD_CHOICE_BASIC, default=None, help="How to find the target."
 )
 @handle_unity_errors
 def volume(target: str, level: float, search_method: Optional[str]):

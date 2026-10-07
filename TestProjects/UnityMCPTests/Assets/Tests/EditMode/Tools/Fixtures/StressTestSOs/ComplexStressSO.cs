@@ -1,5 +1,5 @@
-using UnityEngine;
 using System.Collections.Generic;
+using UnityEngine;
 
 [System.Serializable]
 public struct NestedData
@@ -21,7 +21,7 @@ public enum TestEnum
 {
     Alpha,
     Beta,
-    Gamma
+    Gamma,
 }
 
 [CreateAssetMenu(fileName = "ComplexStressSO", menuName = "StressTests/ComplexStressSO")]

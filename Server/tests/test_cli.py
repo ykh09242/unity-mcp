@@ -20,6 +20,7 @@ from cli.utils.connection import (
 # Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def runner():
     """Create a CLI test runner."""
@@ -41,11 +42,7 @@ def mock_config():
 @pytest.fixture
 def mock_unity_response():
     """Standard successful Unity response."""
-    return {
-        "success": True,
-        "message": "Operation successful",
-        "data": {"test": "data"}
-    }
+    return {"success": True, "message": "Operation successful", "data": {"test": "data"}}
 
 
 @pytest.fixture
@@ -61,13 +58,14 @@ def mock_instances_response():
                 "unity_version": "2022.3.10f1",
                 "connected_at": "2024-01-01T00:00:00Z",
             }
-        ]
+        ],
     }
 
 
 # =============================================================================
 # Config Tests
 # =============================================================================
+
 
 class TestConfig:
     """Tests for CLI configuration."""
@@ -108,6 +106,7 @@ class TestConfig:
 # Output Formatting Tests
 # =============================================================================
 
+
 class TestOutputFormatting:
     """Tests for output formatting utilities."""
 
@@ -121,17 +120,14 @@ class TestOutputFormatting:
     def test_format_as_json_with_complex_types(self):
         """Test JSON formatting with complex types."""
         from datetime import datetime
+
         data = {"timestamp": datetime(2024, 1, 1)}
         result = format_as_json(data)
         assert "2024" in result
 
     def test_format_as_text_success_response(self):
         """Test text formatting for success response."""
-        data = {
-            "success": True,
-            "message": "OK",
-            "data": {"name": "Player", "id": 123}
-        }
+        data = {"success": True, "message": "OK", "data": {"name": "Player", "id": 123}}
         result = format_as_text(data)
         assert "name" in result
         assert "Player" in result
@@ -177,6 +173,7 @@ class TestOutputFormatting:
 # =============================================================================
 # Connection Tests
 # =============================================================================
+
 
 class TestConnection:
     """Tests for connection utilities."""
@@ -240,6 +237,7 @@ class TestConnection:
 # CLI Command Tests
 # =============================================================================
 
+
 class TestCLICommands:
     """Tests for CLI commands."""
 
@@ -247,7 +245,9 @@ class TestCLICommands:
         """Test CLI help command."""
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
-        assert all(option in result.output for option in ("--host", "--port", "--format", "--instance"))
+        assert all(
+            option in result.output for option in ("--host", "--port", "--format", "--instance")
+        )
         assert all(command in result.output.split() for command in ("status", "instances", "raw"))
 
     def test_cli_version(self, runner):
@@ -279,8 +279,7 @@ class TestCLICommands:
     def test_raw_command(self, runner, mock_unity_response):
         """Test raw command."""
         with patch("cli.main.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["raw", "test_command", '{"param": "value"}'])
+            result = runner.invoke(cli, ["raw", "test_command", '{"param": "value"}'])
             assert result.exit_code == 0
 
     def test_raw_command_invalid_json(self, runner):
@@ -294,6 +293,7 @@ class TestCLICommands:
 # GameObject Command Tests
 # =============================================================================
 
+
 class TestGameObjectCommands:
     """Tests for GameObject CLI commands."""
 
@@ -306,12 +306,19 @@ class TestGameObjectCommands:
     def test_gameobject_find_with_options(self, runner, mock_unity_response):
         """Test gameobject find with options."""
         with patch("cli.commands.gameobject.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "gameobject", "find", "Enemy",
-                "--method", "by_tag",
-                "--include-inactive",
-                "--limit", "100"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "gameobject",
+                    "find",
+                    "Enemy",
+                    "--method",
+                    "by_tag",
+                    "--include-inactive",
+                    "--limit",
+                    "100",
+                ],
+            )
             assert result.exit_code == 0
 
     def test_gameobject_create(self, runner, mock_unity_response):
@@ -323,55 +330,78 @@ class TestGameObjectCommands:
     def test_gameobject_create_with_primitive(self, runner, mock_unity_response):
         """Test gameobject create with primitive."""
         with patch("cli.commands.gameobject.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "gameobject", "create", "MyCube",
-                "--primitive", "Cube",
-                "--position", "0", "1", "0"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "gameobject",
+                    "create",
+                    "MyCube",
+                    "--primitive",
+                    "Cube",
+                    "--position",
+                    "0",
+                    "1",
+                    "0",
+                ],
+            )
             assert result.exit_code == 0
 
     def test_gameobject_modify(self, runner, mock_unity_response):
         """Test gameobject modify command."""
         with patch("cli.commands.gameobject.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "gameobject", "modify", "Player",
-                "--position", "0", "5", "0"
-            ])
+            result = runner.invoke(
+                cli, ["gameobject", "modify", "Player", "--position", "0", "5", "0"]
+            )
             assert result.exit_code == 0
 
     def test_gameobject_delete(self, runner, mock_unity_response):
         """Test gameobject delete command."""
         with patch("cli.commands.gameobject.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["gameobject", "delete", "OldObject", "--force"])
+            result = runner.invoke(cli, ["gameobject", "delete", "OldObject", "--force"])
             assert result.exit_code == 0
 
     def test_gameobject_delete_confirmation(self, runner, mock_unity_response):
         """Test gameobject delete with confirmation prompt."""
         with patch("cli.commands.gameobject.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["gameobject", "delete", "OldObject"], input="y\n")
+            result = runner.invoke(cli, ["gameobject", "delete", "OldObject"], input="y\n")
             assert result.exit_code == 0
 
     def test_gameobject_duplicate(self, runner, mock_unity_response):
         """Test gameobject duplicate command."""
         with patch("cli.commands.gameobject.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "gameobject", "duplicate", "Player",
-                "--name", "Player2",
-                "--offset", "5", "0", "0"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "gameobject",
+                    "duplicate",
+                    "Player",
+                    "--name",
+                    "Player2",
+                    "--offset",
+                    "5",
+                    "0",
+                    "0",
+                ],
+            )
             assert result.exit_code == 0
 
     def test_gameobject_move(self, runner, mock_unity_response):
         """Test gameobject move command."""
         with patch("cli.commands.gameobject.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "gameobject", "move", "Chair",
-                "--reference", "Table",
-                "--direction", "right",
-                "--distance", "2"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "gameobject",
+                    "move",
+                    "Chair",
+                    "--reference",
+                    "Table",
+                    "--direction",
+                    "right",
+                    "--distance",
+                    "2",
+                ],
+            )
             assert result.exit_code == 0
 
 
@@ -379,43 +409,49 @@ class TestGameObjectCommands:
 # Component Command Tests
 # =============================================================================
 
+
 class TestComponentCommands:
     """Tests for Component CLI commands."""
 
     def test_component_add(self, runner, mock_unity_response):
         """Test component add command."""
         with patch("cli.commands.component.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["component", "add", "Player", "Rigidbody"])
+            result = runner.invoke(cli, ["component", "add", "Player", "Rigidbody"])
             assert result.exit_code == 0
 
     def test_component_remove(self, runner, mock_unity_response):
         """Test component remove command."""
         with patch("cli.commands.component.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["component", "remove", "Player", "Rigidbody", "--force"])
+            result = runner.invoke(cli, ["component", "remove", "Player", "Rigidbody", "--force"])
             assert result.exit_code == 0
 
     def test_component_set(self, runner, mock_unity_response):
         """Test component set command."""
         with patch("cli.commands.component.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["component", "set", "Player", "Rigidbody", "mass", "5.0"])
+            result = runner.invoke(cli, ["component", "set", "Player", "Rigidbody", "mass", "5.0"])
             assert result.exit_code == 0
 
     def test_component_modify(self, runner, mock_unity_response):
         """Test component modify command."""
         with patch("cli.commands.component.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "component", "modify", "Player", "Rigidbody",
-                "--properties", '{"mass": 5.0, "useGravity": false}'
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "component",
+                    "modify",
+                    "Player",
+                    "Rigidbody",
+                    "--properties",
+                    '{"mass": 5.0, "useGravity": false}',
+                ],
+            )
             assert result.exit_code == 0
 
 
 # =============================================================================
 # Scene Command Tests
 # =============================================================================
+
 
 class TestSceneCommands:
     """Tests for Scene CLI commands."""
@@ -429,11 +465,9 @@ class TestSceneCommands:
     def test_scene_hierarchy_with_options(self, runner, mock_unity_response):
         """Test scene hierarchy with options."""
         with patch("cli.commands.scene.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "scene", "hierarchy",
-                "--max-depth", "5",
-                "--include-transform"
-            ])
+            result = runner.invoke(
+                cli, ["scene", "hierarchy", "--max-depth", "5", "--include-transform"]
+            )
             assert result.exit_code == 0
 
     def test_scene_active(self, runner, mock_unity_response):
@@ -445,8 +479,7 @@ class TestSceneCommands:
     def test_scene_load(self, runner, mock_unity_response):
         """Test scene load command."""
         with patch("cli.commands.scene.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["scene", "load", "Assets/Scenes/Main.unity"])
+            result = runner.invoke(cli, ["scene", "load", "Assets/Scenes/Main.unity"])
             assert result.exit_code == 0
 
     def test_scene_save(self, runner, mock_unity_response):
@@ -467,12 +500,18 @@ class TestCameraCommands:
 
     def test_camera_screenshot_scene_view(self, runner, mock_unity_response):
         with patch("cli.commands.camera.run_command", return_value=mock_unity_response) as mock_run:
-            result = runner.invoke(cli, [
-                "camera", "screenshot",
-                "--capture-source", "scene_view",
-                "--view-target", "Canvas",
-                "--include-image",
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "camera",
+                    "screenshot",
+                    "--capture-source",
+                    "scene_view",
+                    "--view-target",
+                    "Canvas",
+                    "--include-image",
+                ],
+            )
             assert result.exit_code == 0
             mock_run.assert_called_once()
             assert mock_run.call_args[0][0] == "manage_camera"
@@ -481,7 +520,9 @@ class TestCameraCommands:
             assert params["viewTarget"] == "Canvas"
             assert params["includeImage"] is True
 
-    def test_camera_screenshot_position_view_target_reaches_unity_as_an_array(self, runner, mock_unity_response):
+    def test_camera_screenshot_position_view_target_reaches_unity_as_an_array(
+        self, runner, mock_unity_response
+    ):
         # Unity reads a JSON array as a position; the text "[0, 1, 2]" would be looked up as a GameObject name.
         with patch("cli.commands.camera.run_command", return_value=mock_unity_response) as mock_run:
             result = runner.invoke(cli, ["camera", "screenshot", "--view-target", "[0, 1, 2]"])
@@ -511,6 +552,7 @@ class TestCameraCommands:
 # Asset Command Tests
 # =============================================================================
 
+
 class TestAssetCommands:
     """Tests for Asset CLI commands."""
 
@@ -523,42 +565,36 @@ class TestAssetCommands:
     def test_asset_info(self, runner, mock_unity_response):
         """Test asset info command."""
         with patch("cli.commands.asset.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["asset", "info", "Assets/Materials/Red.mat"])
+            result = runner.invoke(cli, ["asset", "info", "Assets/Materials/Red.mat"])
             assert result.exit_code == 0
 
     def test_asset_create(self, runner, mock_unity_response):
         """Test asset create command."""
         with patch("cli.commands.asset.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["asset", "create", "Assets/Materials/New.mat", "Material"])
+            result = runner.invoke(cli, ["asset", "create", "Assets/Materials/New.mat", "Material"])
             assert result.exit_code == 0
 
     def test_asset_delete(self, runner, mock_unity_response):
         """Test asset delete command."""
         with patch("cli.commands.asset.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["asset", "delete", "Assets/Old.mat", "--force"])
+            result = runner.invoke(cli, ["asset", "delete", "Assets/Old.mat", "--force"])
             assert result.exit_code == 0
 
     def test_asset_duplicate(self, runner, mock_unity_response):
         """Test asset duplicate command."""
         with patch("cli.commands.asset.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "asset", "duplicate",
-                "Assets/Materials/Red.mat",
-                "Assets/Materials/RedCopy.mat"
-            ])
+            result = runner.invoke(
+                cli,
+                ["asset", "duplicate", "Assets/Materials/Red.mat", "Assets/Materials/RedCopy.mat"],
+            )
             assert result.exit_code == 0
 
     def test_asset_move(self, runner, mock_unity_response):
         """Test asset move command."""
         with patch("cli.commands.asset.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "asset", "move",
-                "Assets/Old/Mat.mat",
-                "Assets/New/Mat.mat"
-            ])
+            result = runner.invoke(
+                cli, ["asset", "move", "Assets/Old/Mat.mat", "Assets/New/Mat.mat"]
+            )
             assert result.exit_code == 0
 
     def test_asset_mkdir(self, runner, mock_unity_response):
@@ -571,6 +607,7 @@ class TestAssetCommands:
 # =============================================================================
 # Editor Command Tests
 # =============================================================================
+
 
 class TestEditorCommands:
     """Tests for Editor CLI commands."""
@@ -614,8 +651,7 @@ class TestEditorCommands:
     def test_editor_add_layer(self, runner, mock_unity_response):
         """Test editor add-layer command."""
         with patch("cli.commands.editor.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["editor", "add-layer", "Interactable"])
+            result = runner.invoke(cli, ["editor", "add-layer", "Interactable"])
             assert result.exit_code == 0
 
     def test_editor_menu(self, runner, mock_unity_response):
@@ -627,8 +663,7 @@ class TestEditorCommands:
     def test_editor_tests(self, runner, mock_unity_response):
         """Test editor tests command."""
         with patch("cli.commands.editor.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["editor", "tests", "--mode", "EditMode"])
+            result = runner.invoke(cli, ["editor", "tests", "--mode", "EditMode"])
             assert result.exit_code == 0
 
 
@@ -636,14 +671,14 @@ class TestEditorCommands:
 # Prefab Command Tests
 # =============================================================================
 
+
 class TestPrefabCommands:
     """Tests for Prefab CLI commands."""
 
     def test_prefab_open(self, runner, mock_unity_response):
         """Test prefab open command."""
         with patch("cli.commands.prefab.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["prefab", "open", "Assets/Prefabs/Player.prefab"])
+            result = runner.invoke(cli, ["prefab", "open", "Assets/Prefabs/Player.prefab"])
             assert result.exit_code == 0
 
     def test_prefab_close(self, runner, mock_unity_response):
@@ -661,19 +696,26 @@ class TestPrefabCommands:
     def test_prefab_create(self, runner, mock_unity_response):
         """Test prefab create command."""
         with patch("cli.commands.prefab.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "prefab", "create", "Player", "Assets/Prefabs/Player.prefab"
-            ])
+            result = runner.invoke(
+                cli, ["prefab", "create", "Player", "Assets/Prefabs/Player.prefab"]
+            )
             assert result.exit_code == 0
 
     def test_prefab_modify_delete_child(self, runner, mock_unity_response):
         """Test prefab modify delete-child command."""
         with patch("cli.commands.prefab.run_command", return_value=mock_unity_response) as mock_run:
-            result = runner.invoke(cli, [
-                "prefab", "modify", "Assets/Prefabs/Player.prefab",
-                "--delete-child", "Child1",
-                "--delete-child", "Turret/Barrel"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "prefab",
+                    "modify",
+                    "Assets/Prefabs/Player.prefab",
+                    "--delete-child",
+                    "Child1",
+                    "--delete-child",
+                    "Turret/Barrel",
+                ],
+            )
             assert result.exit_code == 0
             # Verify the correct params were sent
             call_args = mock_run.call_args[0]
@@ -685,13 +727,22 @@ class TestPrefabCommands:
     def test_prefab_modify_transform(self, runner, mock_unity_response):
         """Test prefab modify with transform options."""
         with patch("cli.commands.prefab.run_command", return_value=mock_unity_response) as mock_run:
-            result = runner.invoke(cli, [
-                "prefab", "modify", "Assets/Prefabs/Player.prefab",
-                "--target", "Weapon",
-                "--position", "1,2,3",
-                "--rotation", "45,0,90",
-                "--scale", "2,2,2"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "prefab",
+                    "modify",
+                    "Assets/Prefabs/Player.prefab",
+                    "--target",
+                    "Weapon",
+                    "--position",
+                    "1,2,3",
+                    "--rotation",
+                    "45,0,90",
+                    "--scale",
+                    "2,2,2",
+                ],
+            )
             assert result.exit_code == 0
             call_args = mock_run.call_args[0]
             params = call_args[1]
@@ -703,11 +754,18 @@ class TestPrefabCommands:
     def test_prefab_modify_set_property(self, runner, mock_unity_response):
         """Test prefab modify set-property command."""
         with patch("cli.commands.prefab.run_command", return_value=mock_unity_response) as mock_run:
-            result = runner.invoke(cli, [
-                "prefab", "modify", "Assets/Prefabs/Player.prefab",
-                "--set-property", "Rigidbody.mass=5",
-                "--set-property", "Rigidbody.useGravity=false"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "prefab",
+                    "modify",
+                    "Assets/Prefabs/Player.prefab",
+                    "--set-property",
+                    "Rigidbody.mass=5",
+                    "--set-property",
+                    "Rigidbody.useGravity=false",
+                ],
+            )
             assert result.exit_code == 0
             call_args = mock_run.call_args[0]
             params = call_args[1]
@@ -718,10 +776,16 @@ class TestPrefabCommands:
     def test_prefab_modify_set_property_float(self, runner, mock_unity_response):
         """Test prefab modify set-property with float values."""
         with patch("cli.commands.prefab.run_command", return_value=mock_unity_response) as mock_run:
-            result = runner.invoke(cli, [
-                "prefab", "modify", "Assets/Prefabs/Player.prefab",
-                "--set-property", "Rigidbody.mass=5.5"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "prefab",
+                    "modify",
+                    "Assets/Prefabs/Player.prefab",
+                    "--set-property",
+                    "Rigidbody.mass=5.5",
+                ],
+            )
             assert result.exit_code == 0
             call_args = mock_run.call_args[0]
             params = call_args[1]
@@ -730,12 +794,20 @@ class TestPrefabCommands:
     def test_prefab_modify_components(self, runner, mock_unity_response):
         """Test prefab modify add/remove components."""
         with patch("cli.commands.prefab.run_command", return_value=mock_unity_response) as mock_run:
-            result = runner.invoke(cli, [
-                "prefab", "modify", "Assets/Prefabs/Player.prefab",
-                "--add-component", "Rigidbody",
-                "--add-component", "BoxCollider",
-                "--remove-component", "SphereCollider"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "prefab",
+                    "modify",
+                    "Assets/Prefabs/Player.prefab",
+                    "--add-component",
+                    "Rigidbody",
+                    "--add-component",
+                    "BoxCollider",
+                    "--remove-component",
+                    "SphereCollider",
+                ],
+            )
             assert result.exit_code == 0
             call_args = mock_run.call_args[0]
             params = call_args[1]
@@ -745,10 +817,16 @@ class TestPrefabCommands:
     def test_prefab_modify_create_child(self, runner, mock_unity_response):
         """Test prefab modify create-child command."""
         with patch("cli.commands.prefab.run_command", return_value=mock_unity_response) as mock_run:
-            result = runner.invoke(cli, [
-                "prefab", "modify", "Assets/Prefabs/Player.prefab",
-                "--create-child", '{"name":"Spawn","primitive_type":"Sphere"}'
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "prefab",
+                    "modify",
+                    "Assets/Prefabs/Player.prefab",
+                    "--create-child",
+                    '{"name":"Spawn","primitive_type":"Sphere"}',
+                ],
+            )
             assert result.exit_code == 0
             call_args = mock_run.call_args[0]
             params = call_args[1]
@@ -757,29 +835,40 @@ class TestPrefabCommands:
 
     def test_prefab_modify_invalid_create_child_json(self, runner, mock_unity_response):
         """Test prefab modify with invalid JSON for create-child."""
-        result = runner.invoke(cli, [
-            "prefab", "modify", "Assets/Prefabs/Player.prefab",
-            "--create-child", "not valid json"
-        ])
+        result = runner.invoke(
+            cli,
+            [
+                "prefab",
+                "modify",
+                "Assets/Prefabs/Player.prefab",
+                "--create-child",
+                "not valid json",
+            ],
+        )
         assert result.exit_code != 0
         assert "Invalid JSON" in result.output
 
     def test_prefab_modify_create_child_non_object_json(self, runner, mock_unity_response):
         """Test prefab modify rejects non-object JSON for create-child."""
-        result = runner.invoke(cli, [
-            "prefab", "modify", "Assets/Prefabs/Player.prefab",
-            "--create-child", '"just a string"'
-        ])
+        result = runner.invoke(
+            cli,
+            [
+                "prefab",
+                "modify",
+                "Assets/Prefabs/Player.prefab",
+                "--create-child",
+                '"just a string"',
+            ],
+        )
         assert result.exit_code != 0
         assert "must be a JSON object" in result.output
 
     def test_prefab_modify_active_state(self, runner, mock_unity_response):
         """Test prefab modify active/inactive flag."""
         with patch("cli.commands.prefab.run_command", return_value=mock_unity_response) as mock_run:
-            result = runner.invoke(cli, [
-                "prefab", "modify", "Assets/Prefabs/Player.prefab",
-                "--inactive"
-            ])
+            result = runner.invoke(
+                cli, ["prefab", "modify", "Assets/Prefabs/Player.prefab", "--inactive"]
+            )
             assert result.exit_code == 0
             call_args = mock_run.call_args[0]
             params = call_args[1]
@@ -788,10 +877,9 @@ class TestPrefabCommands:
     def test_prefab_modify_active_flag(self, runner, mock_unity_response):
         """Test prefab modify --active flag."""
         with patch("cli.commands.prefab.run_command", return_value=mock_unity_response) as mock_run:
-            result = runner.invoke(cli, [
-                "prefab", "modify", "Assets/Prefabs/Player.prefab",
-                "--active"
-            ])
+            result = runner.invoke(
+                cli, ["prefab", "modify", "Assets/Prefabs/Player.prefab", "--active"]
+            )
             assert result.exit_code == 0
             call_args = mock_run.call_args[0]
             params = call_args[1]
@@ -800,14 +888,24 @@ class TestPrefabCommands:
     def test_prefab_modify_name_tag_layer_parent(self, runner, mock_unity_response):
         """Test prefab modify with name, tag, layer, and parent options."""
         with patch("cli.commands.prefab.run_command", return_value=mock_unity_response) as mock_run:
-            result = runner.invoke(cli, [
-                "prefab", "modify", "Assets/Prefabs/Player.prefab",
-                "--target", "Child1",
-                "--name", "RenamedChild",
-                "--tag", "Player",
-                "--layer", "UI",
-                "--parent", "NewParent"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "prefab",
+                    "modify",
+                    "Assets/Prefabs/Player.prefab",
+                    "--target",
+                    "Child1",
+                    "--name",
+                    "RenamedChild",
+                    "--tag",
+                    "Player",
+                    "--layer",
+                    "UI",
+                    "--parent",
+                    "NewParent",
+                ],
+            )
             assert result.exit_code == 0
             call_args = mock_run.call_args[0]
             params = call_args[1]
@@ -819,27 +917,31 @@ class TestPrefabCommands:
 
     def test_prefab_modify_invalid_vector_non_numeric(self, runner, mock_unity_response):
         """Test prefab modify rejects non-numeric vector components."""
-        result = runner.invoke(cli, [
-            "prefab", "modify", "Assets/Prefabs/Player.prefab",
-            "--position", "1,foo,3"
-        ])
+        result = runner.invoke(
+            cli, ["prefab", "modify", "Assets/Prefabs/Player.prefab", "--position", "1,foo,3"]
+        )
         assert result.exit_code != 0
 
     def test_prefab_modify_invalid_vector_wrong_count(self, runner, mock_unity_response):
         """Test prefab modify rejects vectors with wrong component count."""
-        result = runner.invoke(cli, [
-            "prefab", "modify", "Assets/Prefabs/Player.prefab",
-            "--position", "1,2"
-        ])
+        result = runner.invoke(
+            cli, ["prefab", "modify", "Assets/Prefabs/Player.prefab", "--position", "1,2"]
+        )
         assert result.exit_code != 0
 
     def test_prefab_modify_set_property_string_value(self, runner, mock_unity_response):
         """Test prefab modify set-property with string values."""
         with patch("cli.commands.prefab.run_command", return_value=mock_unity_response) as mock_run:
-            result = runner.invoke(cli, [
-                "prefab", "modify", "Assets/Prefabs/Player.prefab",
-                "--set-property", "MyScript.label=hello world"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "prefab",
+                    "modify",
+                    "Assets/Prefabs/Player.prefab",
+                    "--set-property",
+                    "MyScript.label=hello world",
+                ],
+            )
             assert result.exit_code == 0
             call_args = mock_run.call_args[0]
             params = call_args[1]
@@ -847,37 +949,38 @@ class TestPrefabCommands:
 
     def test_prefab_modify_set_property_empty_component(self, runner, mock_unity_response):
         """Test prefab modify rejects empty component name in set-property."""
-        result = runner.invoke(cli, [
-            "prefab", "modify", "Assets/Prefabs/Player.prefab",
-            "--set-property", ".mass=5"
-        ])
+        result = runner.invoke(
+            cli, ["prefab", "modify", "Assets/Prefabs/Player.prefab", "--set-property", ".mass=5"]
+        )
         assert result.exit_code != 0
         assert "non-empty" in result.output
 
     def test_prefab_modify_set_property_empty_prop(self, runner, mock_unity_response):
         """Test prefab modify rejects empty property name in set-property."""
-        result = runner.invoke(cli, [
-            "prefab", "modify", "Assets/Prefabs/Player.prefab",
-            "--set-property", "Rigidbody.=5"
-        ])
+        result = runner.invoke(
+            cli,
+            ["prefab", "modify", "Assets/Prefabs/Player.prefab", "--set-property", "Rigidbody.=5"],
+        )
         assert result.exit_code != 0
         assert "non-empty" in result.output
 
     def test_prefab_modify_no_options_sends_minimal_params(self, runner, mock_unity_response):
         """Test prefab modify with no options sends only action and prefabPath."""
         with patch("cli.commands.prefab.run_command", return_value=mock_unity_response) as mock_run:
-            result = runner.invoke(cli, [
-                "prefab", "modify", "Assets/Prefabs/Player.prefab"
-            ])
+            result = runner.invoke(cli, ["prefab", "modify", "Assets/Prefabs/Player.prefab"])
             assert result.exit_code == 0
             call_args = mock_run.call_args[0]
             params = call_args[1]
-            assert params == {"action": "modify_contents", "prefabPath": "Assets/Prefabs/Player.prefab"}
+            assert params == {
+                "action": "modify_contents",
+                "prefabPath": "Assets/Prefabs/Player.prefab",
+            }
 
 
 # =============================================================================
 # Material Command Tests
 # =============================================================================
+
 
 class TestMaterialCommands:
     """Tests for Material CLI commands."""
@@ -885,47 +988,42 @@ class TestMaterialCommands:
     def test_material_info(self, runner, mock_unity_response):
         """Test material info command."""
         with patch("cli.commands.material.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["material", "info", "Assets/Materials/Red.mat"])
+            result = runner.invoke(cli, ["material", "info", "Assets/Materials/Red.mat"])
             assert result.exit_code == 0
 
     def test_material_create(self, runner, mock_unity_response):
         """Test material create command."""
         with patch("cli.commands.material.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["material", "create", "Assets/Materials/New.mat"])
+            result = runner.invoke(cli, ["material", "create", "Assets/Materials/New.mat"])
             assert result.exit_code == 0
 
     def test_material_set_color(self, runner, mock_unity_response):
         """Test material set-color command."""
         with patch("cli.commands.material.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "material", "set-color", "Assets/Materials/Red.mat",
-                "1", "0", "0"
-            ])
+            result = runner.invoke(
+                cli, ["material", "set-color", "Assets/Materials/Red.mat", "1", "0", "0"]
+            )
             assert result.exit_code == 0
 
     def test_material_set_property(self, runner, mock_unity_response):
         """Test material set-property command."""
         with patch("cli.commands.material.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "material", "set-property", "Assets/Materials/Mat.mat",
-                "_Metallic", "0.5"
-            ])
+            result = runner.invoke(
+                cli, ["material", "set-property", "Assets/Materials/Mat.mat", "_Metallic", "0.5"]
+            )
             assert result.exit_code == 0
 
     def test_material_assign(self, runner, mock_unity_response):
         """Test material assign command."""
         with patch("cli.commands.material.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "material", "assign", "Assets/Materials/Red.mat", "Cube"
-            ])
+            result = runner.invoke(cli, ["material", "assign", "Assets/Materials/Red.mat", "Cube"])
             assert result.exit_code == 0
 
 
 # =============================================================================
 # Script Command Tests
 # =============================================================================
+
 
 class TestScriptCommands:
     """Tests for Script CLI commands."""
@@ -935,30 +1033,50 @@ class TestScriptCommands:
     def test_script_validate_calls_manage_script_validate(self, runner, mock_unity_response):
         # A Windows path splits into the same name and folder as a forward-slash one.
         with patch("cli.commands.script.run_command", return_value=mock_unity_response) as mock_run:
-            result = runner.invoke(cli, ["script", "validate", "Assets\\Scripts\\Player.cs", "--level", "standard"])
+            result = runner.invoke(
+                cli, ["script", "validate", "Assets\\Scripts\\Player.cs", "--level", "standard"]
+            )
             assert result.exit_code == 0, result.output
-            assert mock_run.call_args[0][:2] == ("manage_script", {
-                "action": "validate", "name": "Player", "path": "Assets/Scripts", "level": "standard"})
+            assert mock_run.call_args[0][:2] == (
+                "manage_script",
+                {
+                    "action": "validate",
+                    "name": "Player",
+                    "path": "Assets/Scripts",
+                    "level": "standard",
+                },
+            )
 
     def test_script_edit_reads_the_sha_then_applies_the_edits_with_it(self, runner):
         # Unity refuses an edit that does not name the version of the file it changes.
         edits = [{"startLine": 1, "startCol": 1, "endLine": 1, "endCol": 1, "newText": "// x"}]
-        replies = [{"success": True, "data": {"sha256": "a" * 64}},
-                   {"success": True}]
+        replies = [{"success": True, "data": {"sha256": "a" * 64}}, {"success": True}]
         with patch("cli.commands.script.run_command", side_effect=replies) as mock_run:
-            result = runner.invoke(cli, ["script", "edit", "Assets/Scripts/Player.cs", "--edits", json.dumps(edits)])
+            result = runner.invoke(
+                cli, ["script", "edit", "Assets/Scripts/Player.cs", "--edits", json.dumps(edits)]
+            )
             assert result.exit_code == 0, result.output
             assert [c[0][1] for c in mock_run.call_args_list] == [
                 {"action": "get_sha", "name": "Player", "path": "Assets/Scripts"},
-                {"action": "apply_text_edits", "name": "Player", "path": "Assets/Scripts",
-                 "edits": edits, "precondition_sha256": "a" * 64},
+                {
+                    "action": "apply_text_edits",
+                    "name": "Player",
+                    "path": "Assets/Scripts",
+                    "edits": edits,
+                    "precondition_sha256": "a" * 64,
+                },
             ]
 
     def test_script_edit_exits_with_an_error_when_the_sha_lookup_fails(self, runner):
         from cli.utils.connection import UnityCommandError
+
         missing = {"success": False, "error": "Script 'Player.cs' not found."}
-        with patch("cli.commands.script.run_command", side_effect=UnityCommandError(missing)) as mock_run:
-            result = runner.invoke(cli, ["script", "edit", "Assets/Scripts/Player.cs", "--edits", "[]"])
+        with patch(
+            "cli.commands.script.run_command", side_effect=UnityCommandError(missing)
+        ) as mock_run:
+            result = runner.invoke(
+                cli, ["script", "edit", "Assets/Scripts/Player.cs", "--edits", "[]"]
+            )
             assert result.exit_code == 1, result.output
             assert "not found" in result.output
             assert mock_run.call_count == 1
@@ -966,42 +1084,47 @@ class TestScriptCommands:
     def test_script_create(self, runner, mock_unity_response):
         """Test script create command."""
         with patch("cli.commands.script.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["script", "create", "PlayerController"])
+            result = runner.invoke(cli, ["script", "create", "PlayerController"])
             assert result.exit_code == 0
 
     def test_script_create_with_options(self, runner, mock_unity_response):
         """Test script create with options."""
         with patch("cli.commands.script.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "script", "create", "EnemyData",
-                "--type", "ScriptableObject",
-                "--namespace", "MyGame"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "script",
+                    "create",
+                    "EnemyData",
+                    "--type",
+                    "ScriptableObject",
+                    "--namespace",
+                    "MyGame",
+                ],
+            )
             assert result.exit_code == 0
 
     def test_script_read(self, runner):
         """Test script read command."""
         mock_response = {
             "success": True,
-            "data": {"content": "using UnityEngine;\n\npublic class Test {}"}
+            "data": {"content": "using UnityEngine;\n\npublic class Test {}"},
         }
         with patch("cli.commands.script.run_command", return_value=mock_response):
-            result = runner.invoke(
-                cli, ["script", "read", "Assets/Scripts/Test.cs"])
+            result = runner.invoke(cli, ["script", "read", "Assets/Scripts/Test.cs"])
             assert result.exit_code == 0
 
     def test_script_delete(self, runner, mock_unity_response):
         """Test script delete command."""
         with patch("cli.commands.script.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["script", "delete", "Assets/Scripts/Old.cs", "--force"])
+            result = runner.invoke(cli, ["script", "delete", "Assets/Scripts/Old.cs", "--force"])
             assert result.exit_code == 0
 
 
 # =============================================================================
 # Global Options Tests
 # =============================================================================
+
 
 class TestGlobalOptions:
     """Tests for global CLI options."""
@@ -1010,8 +1133,7 @@ class TestGlobalOptions:
         """Test custom host option."""
         with patch("cli.main.run_check_connection", return_value=True):
             with patch("cli.main.run_list_instances", return_value={"instances": []}):
-                result = runner.invoke(
-                    cli, ["--host", "192.168.1.100", "status"])
+                result = runner.invoke(cli, ["--host", "192.168.1.100", "status"])
                 assert result.exit_code == 0
 
     def test_custom_port(self, runner, mock_unity_response):
@@ -1024,15 +1146,13 @@ class TestGlobalOptions:
     def test_json_format(self, runner, mock_unity_response):
         """Test JSON output format."""
         with patch("cli.commands.scene.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["--format", "json", "scene", "active"])
+            result = runner.invoke(cli, ["--format", "json", "scene", "active"])
             assert result.exit_code == 0
 
     def test_table_format(self, runner, mock_unity_response):
         """Test table output format."""
         with patch("cli.commands.scene.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["--format", "table", "scene", "active"])
+            result = runner.invoke(cli, ["--format", "table", "scene", "active"])
             assert result.exit_code == 0
 
     def test_timeout_option(self, runner, mock_unity_response):
@@ -1044,7 +1164,9 @@ class TestGlobalOptions:
 
     def test_verbose_prints_request_and_response(self, runner, mock_unity_response, monkeypatch):
         """Test -v prints the command sent to Unity and the raw response to stderr."""
-        monkeypatch.setattr("cli.utils.connection.read_local_auth_token", lambda *_: "synthetic-test-token")
+        monkeypatch.setattr(
+            "cli.utils.connection.read_local_auth_token", lambda *_: "synthetic-test-token"
+        )
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.text = json.dumps(mock_unity_response)
@@ -1064,22 +1186,24 @@ class TestGlobalOptions:
 # Error Handling Tests
 # =============================================================================
 
+
 class TestErrorHandling:
     """Tests for error handling."""
 
     def test_connection_error_handling(self, runner):
         """Test connection error is handled gracefully."""
-        with patch("cli.commands.scene.run_command", side_effect=UnityConnectionError("Connection failed")):
+        with patch(
+            "cli.commands.scene.run_command", side_effect=UnityConnectionError("Connection failed")
+        ):
             result = runner.invoke(cli, ["scene", "hierarchy"])
             assert result.exit_code == 1
             assert "Connection failed" in result.output or "Error" in result.output
 
     def test_invalid_json_params(self, runner):
         """Test invalid JSON parameters are handled."""
-        result = runner.invoke(cli, [
-            "component", "modify", "Player", "Rigidbody",
-            "--properties", "not valid json"
-        ])
+        result = runner.invoke(
+            cli, ["component", "modify", "Player", "Rigidbody", "--properties", "not valid json"]
+        )
         assert result.exit_code == 1
         assert "Invalid JSON" in result.output
 
@@ -1094,6 +1218,7 @@ class TestErrorHandling:
 # Integration-style Tests (with mocked responses)
 # =============================================================================
 
+
 class TestIntegration:
     """Integration-style tests with realistic response data."""
 
@@ -1102,34 +1227,29 @@ class TestIntegration:
         create_response = {
             "success": True,
             "message": "GameObject created",
-            "data": {"instanceID": -12345, "name": "TestObject"}
+            "data": {"instanceID": -12345, "name": "TestObject"},
         }
-        modify_response = {
-            "success": True,
-            "message": "GameObject modified"
-        }
-        delete_response = {
-            "success": True,
-            "message": "GameObject deleted"
-        }
+        modify_response = {"success": True, "message": "GameObject modified"}
+        delete_response = {"success": True, "message": "GameObject deleted"}
 
         # Create
         with patch("cli.commands.gameobject.run_command", return_value=create_response):
             result = runner.invoke(
-                cli, ["gameobject", "create", "TestObject", "--primitive", "Cube"])
+                cli, ["gameobject", "create", "TestObject", "--primitive", "Cube"]
+            )
             assert result.exit_code == 0
             assert "Created" in result.output
 
         # Modify
         with patch("cli.commands.gameobject.run_command", return_value=modify_response):
             result = runner.invoke(
-                cli, ["gameobject", "modify", "TestObject", "--position", "0", "5", "0"])
+                cli, ["gameobject", "modify", "TestObject", "--position", "0", "5", "0"]
+            )
             assert result.exit_code == 0
 
         # Delete
         with patch("cli.commands.gameobject.run_command", return_value=delete_response):
-            result = runner.invoke(
-                cli, ["gameobject", "delete", "TestObject", "--force"])
+            result = runner.invoke(cli, ["gameobject", "delete", "TestObject", "--force"])
             assert result.exit_code == 0
             assert "Deleted" in result.output
 
@@ -1140,11 +1260,10 @@ class TestIntegration:
             "data": {
                 "nodes": [
                     {"name": "Main Camera", "instanceID": -100, "childCount": 0},
-                    {"name": "Directional Light",
-                        "instanceID": -200, "childCount": 0},
+                    {"name": "Directional Light", "instanceID": -200, "childCount": 0},
                     {"name": "Player", "instanceID": -300, "childCount": 2},
                 ]
-            }
+            },
         }
 
         with patch("cli.commands.scene.run_command", return_value=hierarchy_response):
@@ -1156,11 +1275,7 @@ class TestIntegration:
         find_response = {
             "success": True,
             "message": "Found 3 GameObjects",
-            "data": {
-                "instanceIDs": [-100, -200, -300],
-                "count": 3,
-                "hasMore": False
-            }
+            "data": {"instanceIDs": [-100, -200, -300], "count": 3, "hasMore": False},
         }
 
         with patch("cli.commands.gameobject.run_command", return_value=find_response):
@@ -1172,6 +1287,7 @@ class TestIntegration:
 # Instance Command Tests
 # =============================================================================
 
+
 class TestInstanceCommands:
     """Tests for instance management commands."""
 
@@ -1179,8 +1295,12 @@ class TestInstanceCommands:
         """Test listing Unity instances."""
         mock_instances = {
             "instances": [
-                {"project": "TestProject", "hash": "abc123",
-                    "unity_version": "2022.3.10f1", "session_id": "sess-1"}
+                {
+                    "project": "TestProject",
+                    "hash": "abc123",
+                    "unity_version": "2022.3.10f1",
+                    "session_id": "sess-1",
+                }
             ]
         }
         with patch("cli.commands.instance.run_list_instances", return_value=mock_instances):
@@ -1190,9 +1310,11 @@ class TestInstanceCommands:
 
     def test_instance_set(self, runner):
         """Stateless CLI selection is explained without forwarding a Unity command."""
-        with patch("cli.utils.connection.send_command", side_effect=AssertionError("Unsupported selection was sent")) as send:
-            result = runner.invoke(
-                cli, ["instance", "set", "TestProject@abc123"])
+        with patch(
+            "cli.utils.connection.send_command",
+            side_effect=AssertionError("Unsupported selection was sent"),
+        ) as send:
+            result = runner.invoke(cli, ["instance", "set", "TestProject@abc123"])
             assert result.exit_code == 1
             assert "--instance" in result.output and "UNITY_MCP_INSTANCE" in result.output
             send.assert_not_called()
@@ -1209,38 +1331,38 @@ class TestInstanceCommands:
 # Shader Command Tests
 # =============================================================================
 
+
 class TestShaderCommands:
     """Tests for shader commands."""
 
     def test_shader_read(self, runner):
         """Test reading a shader."""
-        read_response = {
-            "success": True,
-            "data": {"contents": "Shader \"Custom/Test\" { ... }"}
-        }
+        read_response = {"success": True, "data": {"contents": 'Shader "Custom/Test" { ... }'}}
         with patch("cli.commands.shader.run_command", return_value=read_response):
-            result = runner.invoke(
-                cli, ["shader", "read", "Assets/Shaders/Test.shader"])
+            result = runner.invoke(cli, ["shader", "read", "Assets/Shaders/Test.shader"])
             assert result.exit_code == 0
 
     def test_shader_create(self, runner, mock_unity_response):
         """Test creating a shader."""
         with patch("cli.commands.shader.run_command", return_value=mock_unity_response):
             result = runner.invoke(
-                cli, ["shader", "create", "NewShader", "--path", "Assets/Shaders"])
+                cli, ["shader", "create", "NewShader", "--path", "Assets/Shaders"]
+            )
             assert result.exit_code == 0
 
     def test_shader_delete(self, runner, mock_unity_response):
         """Test deleting a shader."""
         with patch("cli.commands.shader.run_command", return_value=mock_unity_response):
             result = runner.invoke(
-                cli, ["shader", "delete", "Assets/Shaders/Old.shader", "--force"])
+                cli, ["shader", "delete", "Assets/Shaders/Old.shader", "--force"]
+            )
             assert result.exit_code == 0
 
 
 # =============================================================================
 # VFX Command Tests
 # =============================================================================
+
 
 class TestVfxCommands:
     """Tests for VFX commands."""
@@ -1273,14 +1395,28 @@ class TestVfxCommands:
         """Test creating a line."""
         with patch("cli.commands.vfx.run_command", return_value=mock_unity_response):
             result = runner.invoke(
-                cli, ["vfx", "line", "create-line", "Line", "--start", "0", "0", "0", "--end", "10", "5", "0"])
+                cli,
+                [
+                    "vfx",
+                    "line",
+                    "create-line",
+                    "Line",
+                    "--start",
+                    "0",
+                    "0",
+                    "0",
+                    "--end",
+                    "10",
+                    "5",
+                    "0",
+                ],
+            )
             assert result.exit_code == 0
 
     def test_vfx_line_create_circle(self, runner, mock_unity_response):
         """Test creating a circle."""
         with patch("cli.commands.vfx.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["vfx", "line", "create-circle", "Circle", "--radius", "5"])
+            result = runner.invoke(cli, ["vfx", "line", "create-circle", "Circle", "--radius", "5"])
             assert result.exit_code == 0
 
     def test_vfx_trail_info(self, runner, mock_unity_response):
@@ -1292,21 +1428,22 @@ class TestVfxCommands:
     def test_vfx_trail_set_time(self, runner, mock_unity_response):
         """Test setting trail time."""
         with patch("cli.commands.vfx.run_command", return_value=mock_unity_response):
-            result = runner.invoke(
-                cli, ["vfx", "trail", "set-time", "Trail", "2.0"])
+            result = runner.invoke(cli, ["vfx", "trail", "set-time", "Trail", "2.0"])
             assert result.exit_code == 0
 
     def test_vfx_raw(self, runner, mock_unity_response):
         """Test raw VFX action."""
         with patch("cli.commands.vfx.run_command", return_value=mock_unity_response):
             result = runner.invoke(
-                cli, ["vfx", "raw", "particle_set_main", "Fire", "--params", '{"duration": 5}'])
+                cli, ["vfx", "raw", "particle_set_main", "Fire", "--params", '{"duration": 5}']
+            )
             assert result.exit_code == 0
 
     def test_vfx_raw_invalid_json(self, runner):
         """Test raw VFX action with invalid JSON."""
         result = runner.invoke(
-            cli, ["vfx", "raw", "particle_set_main", "Fire", "--params", "invalid json"])
+            cli, ["vfx", "raw", "particle_set_main", "Fire", "--params", "invalid json"]
+        )
         assert result.exit_code == 1
         assert "Invalid JSON" in result.output
 
@@ -1315,18 +1452,22 @@ class TestVfxCommands:
 # Batch Command Tests
 # =============================================================================
 
+
 class TestBatchCommands:
     """Tests for batch commands."""
 
     def test_batch_inline(self, runner, mock_unity_response):
         """Test inline batch execution."""
-        batch_response = {
-            "success": True,
-            "data": {"results": [{"success": True}]}
-        }
+        batch_response = {"success": True, "data": {"results": [{"success": True}]}}
         with patch("cli.commands.batch.run_command", return_value=batch_response):
             result = runner.invoke(
-                cli, ["batch", "inline", '[{"tool": "manage_scene", "params": {"action": "get_active"}}]'])
+                cli,
+                [
+                    "batch",
+                    "inline",
+                    '[{"tool": "manage_scene", "params": {"action": "get_active"}}]',
+                ],
+            )
             assert result.exit_code == 0
 
     def test_batch_inline_invalid_json(self, runner):
@@ -1341,6 +1482,7 @@ class TestBatchCommands:
         assert result.exit_code == 0
         # Template should be valid JSON
         import json
+
         template = json.loads(result.output)
         assert isinstance(template, list)
         assert len(template) > 0
@@ -1350,13 +1492,9 @@ class TestBatchCommands:
         """Test running batch from file."""
         # Create a temp batch file
         batch_file = tmp_path / "commands.json"
-        batch_file.write_text(
-            '[{"tool": "manage_scene", "params": {"action": "get_active"}}]')
+        batch_file.write_text('[{"tool": "manage_scene", "params": {"action": "get_active"}}]')
 
-        batch_response = {
-            "success": True,
-            "data": {"results": [{"success": True}]}
-        }
+        batch_response = {"success": True, "data": {"results": [{"success": True}]}}
         with patch("cli.commands.batch.run_command", return_value=batch_response):
             result = runner.invoke(cli, ["batch", "run", str(batch_file)])
             assert result.exit_code == 0
@@ -1365,6 +1503,7 @@ class TestBatchCommands:
 # =============================================================================
 # Enhanced Editor Command Tests
 # =============================================================================
+
 
 class TestEditorEnhancedCommands:
     """Tests for new editor subcommands."""
@@ -1393,22 +1532,19 @@ class TestEditorEnhancedCommands:
         """Test executing custom tool with parameters."""
         with patch("cli.commands.editor.run_command", return_value=mock_unity_response):
             result = runner.invoke(
-                cli, ["editor", "custom-tool", "BuildTool", "--params", '{"target": "Android"}'])
+                cli, ["editor", "custom-tool", "BuildTool", "--params", '{"target": "Android"}']
+            )
             assert result.exit_code == 0
 
     def test_editor_custom_tool_invalid_json(self, runner):
         """Test custom tool with invalid JSON params."""
-        result = runner.invoke(
-            cli, ["editor", "custom-tool", "MyTool", "--params", "bad json"])
+        result = runner.invoke(cli, ["editor", "custom-tool", "MyTool", "--params", "bad json"])
         assert result.exit_code == 1
         assert "Invalid JSON" in result.output
 
     def test_editor_tests_async(self, runner):
         """Test async test execution."""
-        async_response = {
-            "success": True,
-            "data": {"job_id": "test-job-123", "status": "running"}
-        }
+        async_response = {"success": True, "data": {"job_id": "test-job-123", "status": "running"}}
         with patch("cli.commands.editor.run_command", return_value=async_response):
             result = runner.invoke(cli, ["editor", "tests", "--async"])
             assert result.exit_code == 0
@@ -1421,18 +1557,18 @@ class TestEditorEnhancedCommands:
             "data": {
                 "job_id": "test-job-123",
                 "status": "succeeded",
-                "result": {"summary": {"total": 10, "passed": 10, "failed": 0}}
-            }
+                "result": {"summary": {"total": 10, "passed": 10, "failed": 0}},
+            },
         }
         with patch("cli.commands.editor.run_command", return_value=poll_response):
-            result = runner.invoke(
-                cli, ["editor", "poll-test", "test-job-123"])
+            result = runner.invoke(cli, ["editor", "poll-test", "test-job-123"])
             assert result.exit_code == 0
 
 
 # =============================================================================
 # Code Search Tests
 # =============================================================================
+
 
 class TestCodeSearchCommand:
     """Tests for code search command."""
@@ -1447,12 +1583,13 @@ class TestCodeSearchCommand:
                 "data": {
                     "contents": "using UnityEngine;\n\npublic class Player : MonoBehaviour\n{\n    void Start() {}\n}\n",
                     "contentsEncoded": False,
-                }
-            }
+                },
+            },
         }
         with patch("cli.commands.code.run_command", return_value=read_response):
             result = runner.invoke(
-                cli, ["code", "search", "class.*Player", "Assets/Scripts/Player.cs"])
+                cli, ["code", "search", "class.*Player", "Assets/Scripts/Player.cs"]
+            )
             assert result.exit_code == 0
             assert "Line 3" in result.output
             assert "class Player" in result.output
@@ -1466,12 +1603,11 @@ class TestCodeSearchCommand:
                 "data": {
                     "contents": "using UnityEngine;\n\npublic class Test : MonoBehaviour {}\n",
                     "contentsEncoded": False,
-                }
-            }
+                },
+            },
         }
         with patch("cli.commands.code.run_command", return_value=read_response):
-            result = runner.invoke(
-                cli, ["code", "search", "nonexistent", "Assets/Scripts/Test.cs"])
+            result = runner.invoke(cli, ["code", "search", "nonexistent", "Assets/Scripts/Test.cs"])
             assert result.exit_code == 0
             assert "No matches" in result.output
 
@@ -1484,21 +1620,30 @@ class TestCodeSearchCommand:
                 "data": {
                     "contents": "// TODO: implement this\n// FIXME: bug here\nclass Test {}\n",
                     "contentsEncoded": False,
-                }
-            }
+                },
+            },
         }
         with patch("cli.commands.code.run_command", return_value=read_response):
             result = runner.invoke(
-                cli, ["code", "search", "TODO", "Assets/Utils.cs", "--max-results", "100", "--case-sensitive"])
+                cli,
+                [
+                    "code",
+                    "search",
+                    "TODO",
+                    "Assets/Utils.cs",
+                    "--max-results",
+                    "100",
+                    "--case-sensitive",
+                ],
+            )
             assert result.exit_code == 0
             assert "Line 1" in result.output
-
-
 
 
 # =============================================================================
 # Texture Command Tests
 # =============================================================================
+
 
 class TestTextureCommands:
     """Tests for Texture CLI commands."""
@@ -1506,110 +1651,127 @@ class TestTextureCommands:
     def test_texture_create_basic(self, runner, mock_unity_response):
         """Test basic texture create command."""
         with patch("cli.commands.texture.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "texture", "create", "Assets/Textures/Red.png",
-                "--color", "[255,0,0,255]"
-            ])
+            result = runner.invoke(
+                cli, ["texture", "create", "Assets/Textures/Red.png", "--color", "[255,0,0,255]"]
+            )
             assert result.exit_code == 0
 
     def test_texture_create_with_hex_color(self, runner, mock_unity_response):
         """Test texture create with hex color."""
         with patch("cli.commands.texture.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "texture", "create", "Assets/Textures/Blue.png",
-                "--color", "#0000FF"
-            ])
+            result = runner.invoke(
+                cli, ["texture", "create", "Assets/Textures/Blue.png", "--color", "#0000FF"]
+            )
             assert result.exit_code == 0
 
     def test_texture_create_with_pattern(self, runner, mock_unity_response):
         """Test texture create with pattern."""
         with patch("cli.commands.texture.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "texture", "create", "Assets/Textures/Checker.png",
-                "--pattern", "checkerboard",
-                "--width", "128",
-                "--height", "128"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "texture",
+                    "create",
+                    "Assets/Textures/Checker.png",
+                    "--pattern",
+                    "checkerboard",
+                    "--width",
+                    "128",
+                    "--height",
+                    "128",
+                ],
+            )
             assert result.exit_code == 0
 
     def test_texture_create_with_import_settings(self, runner, mock_unity_response):
         """Test texture create with import settings."""
         with patch("cli.commands.texture.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "texture", "create", "Assets/Textures/Sprite.png",
-                "--import-settings", '{"texture_type": "sprite", "filter_mode": "point"}'
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "texture",
+                    "create",
+                    "Assets/Textures/Sprite.png",
+                    "--import-settings",
+                    '{"texture_type": "sprite", "filter_mode": "point"}',
+                ],
+            )
             assert result.exit_code == 0
 
     def test_texture_sprite_basic(self, runner, mock_unity_response):
         """Test sprite create command."""
         with patch("cli.commands.texture.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "texture", "sprite", "Assets/Sprites/Player.png"
-            ])
+            result = runner.invoke(cli, ["texture", "sprite", "Assets/Sprites/Player.png"])
             assert result.exit_code == 0
 
     def test_texture_sprite_with_color(self, runner, mock_unity_response):
         """Test sprite create with solid color."""
         with patch("cli.commands.texture.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "texture", "sprite", "Assets/Sprites/Green.png",
-                "--color", "[0,255,0,255]"
-            ])
+            result = runner.invoke(
+                cli, ["texture", "sprite", "Assets/Sprites/Green.png", "--color", "[0,255,0,255]"]
+            )
             assert result.exit_code == 0
 
     def test_texture_sprite_with_pattern(self, runner, mock_unity_response):
         """Test sprite create with pattern."""
         with patch("cli.commands.texture.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "texture", "sprite", "Assets/Sprites/Dots.png",
-                "--pattern", "dots",
-                "--ppu", "50"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "texture",
+                    "sprite",
+                    "Assets/Sprites/Dots.png",
+                    "--pattern",
+                    "dots",
+                    "--ppu",
+                    "50",
+                ],
+            )
             assert result.exit_code == 0
 
     def test_texture_sprite_with_custom_pivot(self, runner, mock_unity_response):
         """Test sprite create with custom pivot."""
         with patch("cli.commands.texture.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "texture", "sprite", "Assets/Sprites/Custom.png",
-                "--pivot", "[0.25,0.75]"
-            ])
+            result = runner.invoke(
+                cli, ["texture", "sprite", "Assets/Sprites/Custom.png", "--pivot", "[0.25,0.75]"]
+            )
             assert result.exit_code == 0
 
     def test_texture_modify(self, runner, mock_unity_response):
         """Test texture modify command."""
         with patch("cli.commands.texture.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "texture", "modify", "Assets/Textures/Test.png",
-                "--set-pixels", '{"x":0,"y":0,"width":10,"height":10,"color":[255,0,0,255]}'
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "texture",
+                    "modify",
+                    "Assets/Textures/Test.png",
+                    "--set-pixels",
+                    '{"x":0,"y":0,"width":10,"height":10,"color":[255,0,0,255]}',
+                ],
+            )
             assert result.exit_code == 0
 
     def test_texture_delete(self, runner, mock_unity_response):
         """Test texture delete command."""
         with patch("cli.commands.texture.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "texture", "delete", "Assets/Textures/Old.png", "--force"
-            ])
+            result = runner.invoke(cli, ["texture", "delete", "Assets/Textures/Old.png", "--force"])
             assert result.exit_code == 0
 
     def test_texture_create_invalid_json(self, runner):
         """Test texture create with invalid JSON."""
-        result = runner.invoke(cli, [
-            "texture", "create", "Assets/Test.png",
-            "--import-settings", "not valid json"
-        ])
+        result = runner.invoke(
+            cli, ["texture", "create", "Assets/Test.png", "--import-settings", "not valid json"]
+        )
         assert result.exit_code == 1
         assert "Invalid JSON" in result.output
 
     def test_texture_sprite_color_and_pattern_precedence(self, runner, mock_unity_response):
         """Test that color takes precedence over default pattern in sprite command."""
         with patch("cli.commands.texture.run_command", return_value=mock_unity_response):
-            result = runner.invoke(cli, [
-                "texture", "sprite", "Assets/Sprites/Solid.png",
-                "--color", "[255,0,0,255]"
-            ])
+            result = runner.invoke(
+                cli, ["texture", "sprite", "Assets/Sprites/Solid.png", "--color", "[255,0,0,255]"]
+            )
             assert result.exit_code == 0
 
 

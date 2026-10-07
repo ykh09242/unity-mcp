@@ -47,15 +47,22 @@ from core.logging_decorator import log_execution
 from core.telemetry_decorator import telemetry_tool, telemetry_resource
 from core.config import ServerConfig
 from core.telemetry import (
-    TelemetryCollector, TelemetryConfig, RecordType, MilestoneType,
-    record_tool_usage, record_resource_usage, record_milestone,
-    is_telemetry_enabled, get_telemetry
+    TelemetryCollector,
+    TelemetryConfig,
+    RecordType,
+    MilestoneType,
+    record_tool_usage,
+    record_resource_usage,
+    record_milestone,
+    is_telemetry_enabled,
+    get_telemetry,
 )
 
 
 # =============================================================================
 # Fixtures
 # =============================================================================
+
 
 @pytest.fixture(autouse=True)
 def reset_decorator_log_budget(monkeypatch):
@@ -89,6 +96,7 @@ def mock_telemetry_config(temp_telemetry_data):
 def reset_telemetry():
     """Reset global telemetry instance between tests, properly shutting down worker."""
     import core.telemetry
+
     original = core.telemetry._telemetry_collector
     # Properly reset telemetry to shut down any running worker thread
     core.telemetry.reset_telemetry()
@@ -101,6 +109,7 @@ def reset_telemetry():
 # =============================================================================
 # SECTION 1: Logging Decorator Tests
 # =============================================================================
+
 
 class TestLoggingDecoratorBasics:
     """Tests for log_execution decorator basic behavior."""
@@ -169,6 +178,7 @@ class TestLoggingDecoratorBasics:
 
     def test_decorator_preserves_function_metadata(self):
         """Verify @functools.wraps preserves original function metadata."""
+
         @log_execution("metadata_func", "MetaType")
         def original_func():
             """Original docstring."""
@@ -179,6 +189,7 @@ class TestLoggingDecoratorBasics:
 
     def test_decorator_sync_wrapper_selection(self):
         """Verify decorator returns sync wrapper for sync functions."""
+
         @log_execution("sync_test", "SyncTest")
         def is_sync():
             return "sync"
@@ -189,6 +200,7 @@ class TestLoggingDecoratorBasics:
 
     def test_decorator_async_wrapper_selection(self):
         """Verify decorator returns async wrapper for async functions."""
+
         @log_execution("async_test", "AsyncTest")
         async def is_async():
             return "async"
@@ -204,6 +216,7 @@ class TestLoggingDecoratorExceptionHandling:
 
     def test_decorator_exception_reraised_sync(self):
         """Verify exceptions are re-raised after logging (sync)."""
+
         @log_execution("error_test", "ErrorTest")
         def failing_func():
             raise RuntimeError("Original error")
@@ -213,6 +226,7 @@ class TestLoggingDecoratorExceptionHandling:
 
     def test_decorator_exception_reraised_async(self):
         """Verify exceptions are re-raised after logging (async)."""
+
         @log_execution("async_error", "AsyncError")
         async def async_failing_func():
             raise RuntimeError("Async original error")
@@ -240,6 +254,7 @@ class TestLoggingDecoratorExceptionHandling:
 
         class CustomError(Exception):
             """Custom exception for testing."""
+
             pass
 
         @log_execution("any_exc", "AnyExc")
@@ -265,6 +280,7 @@ class TestLoggingDecoratorComplex:
         def other_decorator(f):
             def wrapper(*args, **kwargs):
                 return f(*args, **kwargs)
+
             return wrapper
 
         @other_decorator
@@ -315,6 +331,7 @@ class TestLoggingDecoratorComplex:
 # =============================================================================
 # SECTION 2: Telemetry Decorator Tests
 # =============================================================================
+
 
 class TestTelemetryDecoratorBasics:
     """Tests for telemetry_tool and telemetry_resource decorators."""
@@ -462,6 +479,7 @@ class TestTelemetryDecoratorExceptionHandling:
 
     def test_telemetry_tool_exception_recorded(self):
         """Verify telemetry records exceptions in tool execution."""
+
         @telemetry_tool("failing_tool")
         def failing_tool():
             raise ValueError("Tool error")
@@ -478,6 +496,7 @@ class TestTelemetryDecoratorExceptionHandling:
 
     def test_telemetry_resource_exception_recorded(self):
         """Verify telemetry records exceptions in resource retrieval."""
+
         @telemetry_resource("failing_resource")
         def failing_resource():
             raise RuntimeError("Resource error")
@@ -502,7 +521,9 @@ class TestTelemetryDecoratorExceptionHandling:
         def func_with_recording_error():
             return "result"
 
-        with patch("core.telemetry_decorator.record_tool_usage", side_effect=Exception("Recording failed")):
+        with patch(
+            "core.telemetry_decorator.record_tool_usage", side_effect=Exception("Recording failed")
+        ):
             # Should not raise despite record_tool_usage error
             result = func_with_recording_error()
             assert result == "result"
@@ -512,7 +533,6 @@ class TestTelemetryDecoratorExceptionHandling:
 
 
 class TestTelemetrySubAction:
-
     @pytest.fixture(autouse=True)
     def setup(self, fresh_telemetry):
         """Reset telemetry before each test in this class."""
@@ -524,6 +544,7 @@ class TestTelemetrySubAction:
         """Verify telemetry_tool extracts 'action' parameter as sub_action."""
         import functools
         from services.tools.manage_script import manage_script
+
         @telemetry_tool("manage_script")
         @functools.wraps(manage_script)
         def tool_with_action(name, action=None):
@@ -540,6 +561,7 @@ class TestTelemetrySubAction:
 
     def test_telemetry_tool_missing_action_parameter(self):
         """Verify telemetry_tool handles missing action parameter gracefully."""
+
         @telemetry_tool("tool_no_action")
         def tool_no_action(name):
             return "result"
@@ -554,6 +576,7 @@ class TestTelemetrySubAction:
 
     def test_telemetry_tool_milestone_on_script_create(self):
         """Verify telemetry_tool records FIRST_SCRIPT_CREATION milestone."""
+
         @telemetry_tool("manage_script")
         def create_script(name, action=None):
             return "created"
@@ -564,12 +587,14 @@ class TestTelemetrySubAction:
             assert result == "created"
             # Should record FIRST_SCRIPT_CREATION milestone
             assert mock_milestone.called
-            milestone_calls = [c for c in mock_milestone.call_args_list
-                             if "FIRST_SCRIPT_CREATION" in str(c)]
+            milestone_calls = [
+                c for c in mock_milestone.call_args_list if "FIRST_SCRIPT_CREATION" in str(c)
+            ]
             assert len(milestone_calls) > 0
 
     def test_telemetry_tool_milestone_on_scene_modification(self):
         """Verify telemetry_tool records FIRST_SCENE_MODIFICATION milestone."""
+
         @telemetry_tool("manage_scene_hierarchy")
         def modify_scene(name, action=None):
             return "modified"
@@ -580,12 +605,12 @@ class TestTelemetrySubAction:
             assert result == "modified"
             # Should record milestone for scene modification
             assert mock_milestone.called
-            milestone_calls = [c for c in mock_milestone.call_args_list
-                             if c is not None]
+            milestone_calls = [c for c in mock_milestone.call_args_list if c is not None]
             assert len(milestone_calls) > 0
 
     def test_telemetry_tool_milestone_first_tool_usage(self):
         """Verify telemetry_tool always records FIRST_TOOL_USAGE milestone."""
+
         @telemetry_tool("any_tool")
         def any_tool():
             return "done"
@@ -596,13 +621,13 @@ class TestTelemetrySubAction:
             assert result == "done"
             # Should record FIRST_TOOL_USAGE
             assert mock_milestone.called
-            milestone_calls = [c for c in mock_milestone.call_args_list
-                             if "FIRST_TOOL_USAGE" in str(c)]
+            milestone_calls = [
+                c for c in mock_milestone.call_args_list if "FIRST_TOOL_USAGE" in str(c)
+            ]
             assert len(milestone_calls) > 0
 
 
 class TestTelemetryDuration:
-
     @pytest.fixture(autouse=True)
     def setup(self, fresh_telemetry):
         """Reset telemetry before each test in this class."""
@@ -618,9 +643,14 @@ class TestTelemetryDuration:
         def timed_execution():
             return "done"
 
-        with patch("core.telemetry_decorator.perf_counter_ns", side_effect=[10**18, 10**18 + 50_000_000]) as mock_clock, \
-                patch(f"core.telemetry_decorator.record_{kind}_usage") as mock_record, \
-                patch("core.telemetry_decorator.record_milestone"):
+        with (
+            patch(
+                "core.telemetry_decorator.perf_counter_ns",
+                side_effect=[10**18, 10**18 + 50_000_000],
+            ) as mock_clock,
+            patch(f"core.telemetry_decorator.record_{kind}_usage") as mock_record,
+            patch("core.telemetry_decorator.record_milestone"),
+        ):
             result = timed_execution()
 
             assert result == "done"
@@ -637,9 +667,14 @@ class TestTelemetryDuration:
             await asyncio.sleep(0)
             return "done"
 
-        with patch("core.telemetry_decorator.perf_counter_ns", side_effect=[10**18, 10**18 + 50_000_000]) as mock_clock, \
-                patch(f"core.telemetry_decorator.record_{kind}_usage") as mock_record, \
-                patch("core.telemetry_decorator.record_milestone"):
+        with (
+            patch(
+                "core.telemetry_decorator.perf_counter_ns",
+                side_effect=[10**18, 10**18 + 50_000_000],
+            ) as mock_clock,
+            patch(f"core.telemetry_decorator.record_{kind}_usage") as mock_record,
+            patch("core.telemetry_decorator.record_milestone"),
+        ):
             result = asyncio.run(timed_execution())
 
             assert result == "done"
@@ -660,10 +695,17 @@ class TestTelemetryDuration:
             await asyncio.sleep(0)
             raise expected_error
 
-        wrapped = decorator("error_execution")(async_error_execution if asynchronous else error_execution)
-        with patch("core.telemetry_decorator.perf_counter_ns", side_effect=[10**18, 10**18 + 20_000_000]) as mock_clock, \
-                patch(f"core.telemetry_decorator.record_{kind}_usage") as mock_record, \
-                patch("core.telemetry_decorator.record_milestone"):
+        wrapped = decorator("error_execution")(
+            async_error_execution if asynchronous else error_execution
+        )
+        with (
+            patch(
+                "core.telemetry_decorator.perf_counter_ns",
+                side_effect=[10**18, 10**18 + 20_000_000],
+            ) as mock_clock,
+            patch(f"core.telemetry_decorator.record_{kind}_usage") as mock_record,
+            patch("core.telemetry_decorator.record_milestone"),
+        ):
             with pytest.raises(ValueError) as raised:
                 if asynchronous:
                     asyncio.run(wrapped())
@@ -679,6 +721,7 @@ class TestTelemetryDuration:
 # =============================================================================
 # SECTION 3: Configuration Tests
 # =============================================================================
+
 
 class TestServerConfigDefaults:
     """Tests for ServerConfig default values."""
@@ -751,6 +794,7 @@ class TestServerConfigDefaults:
     def test_config_is_dataclass(self):
         """Verify ServerConfig is a dataclass."""
         from dataclasses import is_dataclass
+
         assert is_dataclass(ServerConfig)
 
 
@@ -761,6 +805,7 @@ class TestHttpDefaultHostFallbacks:
     def _build_parser():
         """Build the same argparser as main() for testing defaults."""
         import argparse
+
         parser = argparse.ArgumentParser()
         parser.add_argument("--http-url", type=str, default="http://127.0.0.1:8080")
         parser.add_argument("--http-host", type=str, default=None)
@@ -770,6 +815,7 @@ class TestHttpDefaultHostFallbacks:
     def test_default_http_url_uses_127_0_0_1(self):
         """With no flags, default URL should be http://127.0.0.1:8080."""
         from urllib.parse import urlparse
+
         args = self._build_parser().parse_args([])
         parsed = urlparse(args.http_url)
         assert parsed.hostname == "127.0.0.1"
@@ -778,6 +824,7 @@ class TestHttpDefaultHostFallbacks:
     def test_explicit_localhost_url_is_honored(self):
         """--http-url localhost should not be rewritten to 127.0.0.1."""
         from urllib.parse import urlparse
+
         args = self._build_parser().parse_args(["--http-url", "http://localhost:8080"])
         parsed = urlparse(args.http_url)
         assert parsed.hostname == "localhost"
@@ -785,6 +832,7 @@ class TestHttpDefaultHostFallbacks:
     def test_host_fallback_without_env(self, monkeypatch):
         """When no env vars or flags set host, fallback should be 127.0.0.1."""
         from urllib.parse import urlparse
+
         for key in ("UNITY_MCP_HTTP_URL", "UNITY_MCP_HTTP_HOST", "UNITY_MCP_HTTP_PORT"):
             monkeypatch.delenv(key, raising=False)
         args = self._build_parser().parse_args([])
@@ -800,11 +848,7 @@ class TestHttpDefaultHostFallbacks:
         """UNITY_MCP_HTTP_HOST=localhost should be used as-is."""
         monkeypatch.setenv("UNITY_MCP_HTTP_HOST", "localhost")
         args = self._build_parser().parse_args([])
-        http_host = (
-            args.http_host
-            or os.environ.get("UNITY_MCP_HTTP_HOST")
-            or "127.0.0.1"
-        )
+        http_host = args.http_host or os.environ.get("UNITY_MCP_HTTP_HOST") or "127.0.0.1"
         assert http_host == "localhost"
 
 
@@ -841,7 +885,6 @@ class TestServerConfigLogging:
 
 @pytest.mark.usefixtures("fresh_telemetry")
 class TestTelemetryConfigPrecedence:
-
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path, monkeypatch):
         """Keep telemetry configuration tests inside their temporary storage."""
@@ -892,7 +935,9 @@ class TestTelemetryConfigPrecedence:
 
     def test_telemetry_config_endpoint_env_override(self):
         """Verify telemetry endpoint can be overridden via env variable."""
-        with patch.dict(os.environ, {"UNITY_MCP_TELEMETRY_ENDPOINT": "https://env.endpoint.com/telemetry"}):
+        with patch.dict(
+            os.environ, {"UNITY_MCP_TELEMETRY_ENDPOINT": "https://env.endpoint.com/telemetry"}
+        ):
             with patch("core.telemetry.import_module", side_effect=Exception("No module")):
                 with patch("core.telemetry.TelemetryConfig._is_disabled", return_value=False):
                     config = TelemetryConfig()
@@ -921,7 +966,9 @@ class TestTelemetryConfigPrecedence:
         with patch("core.telemetry.import_module", side_effect=Exception("No module")):
             with patch("core.telemetry.TelemetryConfig._is_disabled", return_value=False):
                 # Invalid endpoint should fall back to default
-                with patch.dict(os.environ, {"UNITY_MCP_TELEMETRY_ENDPOINT": "invalid://localhost/path"}):
+                with patch.dict(
+                    os.environ, {"UNITY_MCP_TELEMETRY_ENDPOINT": "invalid://localhost/path"}
+                ):
                     config = TelemetryConfig()
 
                     # No configured destination means the invalid override stays inert.
@@ -932,7 +979,9 @@ class TestTelemetryConfigPrecedence:
         """Verify telemetry rejects localhost endpoints for security."""
         with patch("core.telemetry.import_module", side_effect=Exception("No module")):
             with patch("core.telemetry.TelemetryConfig._is_disabled", return_value=False):
-                with patch.dict(os.environ, {"UNITY_MCP_TELEMETRY_ENDPOINT": "http://localhost:8000/telemetry"}):
+                with patch.dict(
+                    os.environ, {"UNITY_MCP_TELEMETRY_ENDPOINT": "http://localhost:8000/telemetry"}
+                ):
                     config = TelemetryConfig()
 
                     assert config.endpoint == ""
@@ -943,8 +992,8 @@ class TestTelemetryConfigPrecedence:
 # SECTION 4: Telemetry Collection Tests
 # =============================================================================
 
-class TestTelemetryCollection:
 
+class TestTelemetryCollection:
     @pytest.fixture(autouse=True)
     def setup(self, fresh_telemetry):
         """Reset telemetry before each test in this class."""
@@ -973,7 +1022,9 @@ class TestTelemetryCollection:
             assert collector._customer_uuid is not None
             assert isinstance(collector._milestones, dict)
 
-    def test_telemetry_collector_has_worker_thread(self, mock_telemetry_config, temp_telemetry_data):
+    def test_telemetry_collector_has_worker_thread(
+        self, mock_telemetry_config, temp_telemetry_data
+    ):
         """Verify TelemetryCollector starts background worker thread."""
         # Explicitly reference fixture to suppress unused parameter warning
         _ = mock_telemetry_config
@@ -1020,7 +1071,9 @@ class TestTelemetryCollection:
                 # Event should be queued (won't be consumed since worker thread is mocked)
                 assert not collector._queue.empty()
 
-    def test_telemetry_collector_queue_full_drops_events(self, mock_telemetry_config, caplog_fixture, temp_telemetry_data):
+    def test_telemetry_collector_queue_full_drops_events(
+        self, mock_telemetry_config, caplog_fixture, temp_telemetry_data
+    ):
         """Verify TelemetryCollector drops events when queue is full."""
         caplog_fixture.clear()
 
@@ -1047,7 +1100,6 @@ class TestTelemetryCollection:
 
 
 class TestTelemetryRecordTypes:
-
     @pytest.fixture(autouse=True)
     def setup(self, fresh_telemetry):
         """Reset telemetry before each test in this class."""
@@ -1124,6 +1176,7 @@ class TestTelemetryRecordTypes:
     def test_record_tool_usage_with_sub_action(self):
         """Verify the helper retains actions from a registered built-in schema."""
         from services.tools.manage_script import manage_script
+
         telemetry_tool("manage_script")(manage_script)
         with patch("core.telemetry.get_telemetry") as mock_get:
             mock_collector = MagicMock()
@@ -1167,7 +1220,6 @@ class TestTelemetryRecordTypes:
 
 
 class TestTelemetryMilestones:
-
     @pytest.fixture(autouse=True)
     def setup(self, fresh_telemetry):
         """Reset telemetry before each test in this class."""
@@ -1219,7 +1271,9 @@ class TestTelemetryMilestones:
             result2 = collector.record_milestone(MilestoneType.FIRST_STARTUP)
             assert result2 is False
 
-    def test_record_milestone_sends_telemetry_event(self, mock_telemetry_config, temp_telemetry_data):
+    def test_record_milestone_sends_telemetry_event(
+        self, mock_telemetry_config, temp_telemetry_data
+    ):
         """Verify record_milestone sends telemetry event."""
         data_path = Path(temp_telemetry_data)
         (data_path / "customer_uuid.txt").write_text("test-uuid")
@@ -1306,8 +1360,8 @@ class TestTelemetryDisabled:
 # SECTION 5: Integration Tests
 # =============================================================================
 
-class TestDecoratorTelemetryIntegration:
 
+class TestDecoratorTelemetryIntegration:
     @pytest.fixture(autouse=True)
     def setup(self, fresh_telemetry):
         """Reset telemetry before each test in this class."""
@@ -1345,6 +1399,7 @@ class TestDecoratorTelemetryIntegration:
 
     def test_multiple_tools_record_telemetry_independently(self):
         """Verify multiple tools record telemetry independently."""
+
         @telemetry_tool("tool1")
         def tool1():
             return "result1"
@@ -1390,8 +1445,8 @@ class TestConfigurationEnvironmentInteraction:
 # SECTION 6: Error Handling and Edge Cases
 # =============================================================================
 
-class TestErrorHandlingEdgeCases:
 
+class TestErrorHandlingEdgeCases:
     @pytest.fixture(autouse=True)
     def setup(self, fresh_telemetry):
         """Reset telemetry before each test in this class."""

@@ -13,6 +13,7 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
     {
         // Keep fixtures undecorated so they do not become tools in the Editor catalog.
         private class CaptureScreenshotTool { }
+
         private class ToolSettingsTool { }
 
         private class BaseParameters
@@ -47,14 +48,19 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
             {
                 [ToolParameter("Concrete map")]
                 public Dictionary<string, object> map { get; set; }
+
                 [ToolParameter("Map interface")]
                 public IDictionary<string, object> mapInterface { get; set; }
+
                 [ToolParameter("Read only map")]
                 public IReadOnlyDictionary<string, object> readOnlyMap { get; set; }
+
                 [ToolParameter("Non generic map")]
                 public Hashtable nonGenericMap { get; set; }
+
                 [ToolParameter("List")]
                 public List<int> list { get; set; }
+
                 [ToolParameter("Array")]
                 public int[] array { get; set; }
             }
@@ -70,8 +76,7 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
         [Test]
         public void ExplicitToolName_IsPreserved()
         {
-            Assert.AreEqual("custom_name", ExtractMetadata(typeof(CaptureScreenshotTool),
-                new McpForUnityToolAttribute("custom_name")).Name);
+            Assert.AreEqual("custom_name", ExtractMetadata(typeof(CaptureScreenshotTool), new McpForUnityToolAttribute("custom_name")).Name);
         }
 
         [Test]
@@ -115,8 +120,7 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
 
         private static ToolMetadata ExtractMetadata(Type type, McpForUnityToolAttribute attribute)
         {
-            var method = typeof(ToolDiscoveryService).GetMethod("ExtractToolMetadata",
-                BindingFlags.Instance | BindingFlags.NonPublic);
+            var method = typeof(ToolDiscoveryService).GetMethod("ExtractToolMetadata", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.IsNotNull(method);
             return (ToolMetadata)method.Invoke(new ToolDiscoveryService(), new object[] { type, attribute });
         }

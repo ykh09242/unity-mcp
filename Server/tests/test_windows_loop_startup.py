@@ -15,6 +15,7 @@ def entry():
     before = dict(os.environ)
     try:
         import main
+
         yield main
     finally:
         os.environ.clear()
@@ -34,18 +35,26 @@ import main
 """
     result = subprocess.run(
         [sys.executable, "-W", "error", "-c", program],
-        env={**os.environ, "UNITY_MCP_LOG_DIR": str(tmp_path),
-             "UNITY_MCP_DISABLE_TELEMETRY": "true"},
-        capture_output=True, text=True, timeout=30,
+        env={
+            **os.environ,
+            "UNITY_MCP_LOG_DIR": str(tmp_path),
+            "UNITY_MCP_DISABLE_TELEMETRY": "true",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("transport, kwargs", [
-    (None, {}),
-    ("stdio", {"show_banner": False}),
-    ("http", {"host": "127.0.0.1", "port": 8099, "show_banner": True}),
-])
+@pytest.mark.parametrize(
+    "transport, kwargs",
+    [
+        (None, {}),
+        ("stdio", {"show_banner": False}),
+        ("http", {"host": "127.0.0.1", "port": 8099, "show_banner": True}),
+    ],
+)
 def test_windows_run_passes_factory_only_to_anyio(entry, monkeypatch, transport, kwargs):
     monkeypatch.setattr(entry.sys, "platform", "win32")
     runner = Mock(return_value=object())
@@ -73,9 +82,16 @@ def test_non_windows_run_delegates_unchanged(entry, monkeypatch):
 def test_cli_bootstrap_runs_and_closes_selector_loop(entry, monkeypatch):
     monkeypatch.setattr(entry.sys, "platform", "win32")
     monkeypatch.setattr(entry.sys, "argv", ["main", "--project-scoped-tools"])
-    for field in ("transport_mode", "http_remote_hosted", "http_behind_tls_proxy",
-                  "api_key_validation_url", "api_key_login_url", "api_key_cache_ttl",
-                  "api_key_service_token_header", "api_key_service_token"):
+    for field in (
+        "transport_mode",
+        "http_remote_hosted",
+        "http_behind_tls_proxy",
+        "api_key_validation_url",
+        "api_key_login_url",
+        "api_key_cache_ttl",
+        "api_key_service_token_header",
+        "api_key_service_token",
+    ):
         monkeypatch.setattr(entry.config, field, getattr(entry.config, field))
     for name in ("UNITY_MCP_HTTP_HOST", "UNITY_MCP_HTTP_PORT"):
         monkeypatch.setenv(name, os.environ.get(name, ""))

@@ -42,7 +42,9 @@ namespace MCPForUnityTests.Editor.Windows
         {
             foreach (string name in new[] { "_bridgeService", "_serverManagementService", "_transportManager" })
                 services[name] = typeof(MCPServiceLocator).GetField(name, StaticFlags).GetValue(null);
-            foreach (string key in new[] { EditorPrefKeys.HttpBaseUrl, EditorPrefKeys.HttpRemoteBaseUrl, EditorPrefKeys.HttpTransportScope, EditorPrefKeys.ApiKey })
+            foreach (
+                string key in new[] { EditorPrefKeys.HttpBaseUrl, EditorPrefKeys.HttpRemoteBaseUrl, EditorPrefKeys.HttpTransportScope, EditorPrefKeys.ApiKey }
+            )
                 stringPrefs[key] = (EditorPrefs.HasKey(key), EditorPrefs.GetString(key));
             hadHttp = EditorPrefs.HasKey(EditorPrefKeys.UseHttpTransport);
             previousHttp = EditorPrefs.GetBool(EditorPrefKeys.UseHttpTransport, true);
@@ -53,7 +55,9 @@ namespace MCPForUnityTests.Editor.Windows
             previousResume = EditorPrefs.GetBool(EditorPrefKeys.ResumeStdioAfterReload);
             previousGeneration = (int)typeof(McpConnectionSection).GetField("autoStartGeneration", StaticFlags).GetValue(null);
             typeof(McpConnectionSection).GetField("autoStartGeneration", StaticFlags).SetValue(null, 0);
-            foreach (string key in new[] { "MCPForUnity.ResumeHttpAfterReload", "HttpAutoStartHandler.ConnectPending", "MCPForUnity.ResumeHttpAfterReload.Migrated" })
+            foreach (
+                string key in new[] { "MCPForUnity.ResumeHttpAfterReload", "HttpAutoStartHandler.ConnectPending", "MCPForUnity.ResumeHttpAfterReload.Migrated" }
+            )
             {
                 bool value = SessionState.GetBool(key, false);
                 sessionPrefs[key] = (value == SessionState.GetBool(key, true), value);
@@ -77,23 +81,33 @@ namespace MCPForUnityTests.Editor.Windows
         public void TearDown()
         {
             EditorConfigurationCache.Instance.SetUseHttpTransport(previousHttp);
-            if (!hadHttp) EditorPrefs.DeleteKey(EditorPrefKeys.UseHttpTransport);
+            if (!hadHttp)
+                EditorPrefs.DeleteKey(EditorPrefKeys.UseHttpTransport);
             foreach (var pref in stringPrefs)
             {
-                if (pref.Value.exists) EditorPrefs.SetString(pref.Key, pref.Value.value);
-                else EditorPrefs.DeleteKey(pref.Key);
+                if (pref.Value.exists)
+                    EditorPrefs.SetString(pref.Key, pref.Value.value);
+                else
+                    EditorPrefs.DeleteKey(pref.Key);
             }
-            if (hadPort) EditorPrefs.SetInt(EditorPrefKeys.UnitySocketPort, previousPort);
-            else EditorPrefs.DeleteKey(EditorPrefKeys.UnitySocketPort);
-            if (hadResume) EditorPrefs.SetBool(EditorPrefKeys.ResumeStdioAfterReload, previousResume);
-            else EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
-            if (wasPinned) EditorConfigurationCache.Instance.PinStdioForSession();
+            if (hadPort)
+                EditorPrefs.SetInt(EditorPrefKeys.UnitySocketPort, previousPort);
+            else
+                EditorPrefs.DeleteKey(EditorPrefKeys.UnitySocketPort);
+            if (hadResume)
+                EditorPrefs.SetBool(EditorPrefKeys.ResumeStdioAfterReload, previousResume);
+            else
+                EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
+            if (wasPinned)
+                EditorConfigurationCache.Instance.PinStdioForSession();
             EditorConfigurationCache.Instance.Refresh();
             typeof(McpConnectionSection).GetField("autoStartGeneration", StaticFlags).SetValue(null, previousGeneration);
             foreach (var pref in sessionPrefs)
             {
-                if (pref.Value.exists) SessionState.SetBool(pref.Key, pref.Value.value);
-                else SessionState.EraseBool(pref.Key);
+                if (pref.Value.exists)
+                    SessionState.SetBool(pref.Key, pref.Value.value);
+                else
+                    SessionState.EraseBool(pref.Key);
             }
             foreach (var service in services)
                 typeof(MCPServiceLocator).GetField(service.Key, StaticFlags).SetValue(null, service.Value);
@@ -267,9 +281,12 @@ namespace MCPForUnityTests.Editor.Windows
             var response = new TaskCompletionSource<string>();
             Set(section, "loginUrlFetcher", new Func<string, Task<string>>(_ => response.Task));
             Task<string> pending = (Task<string>)Invoke(section, "GetLoginUrlAsync");
-            if (change == "url") HttpEndpointUtility.SaveRemoteBaseUrl("https://server-b.example");
-            else if (change == "stdio") EditorConfigurationCache.Instance.SetUseHttpTransport(false);
-            else UseHttp("local");
+            if (change == "url")
+                HttpEndpointUtility.SaveRemoteBaseUrl("https://server-b.example");
+            else if (change == "stdio")
+                EditorConfigurationCache.Instance.SetUseHttpTransport(false);
+            else
+                UseHttp("local");
             response.SetResult("memory-login-a");
             AssertCompleted(pending);
             Assert.IsNull(pending.Result);
@@ -282,11 +299,15 @@ namespace MCPForUnityTests.Editor.Windows
             var section = CreateSection();
             UseHttp("remote");
             int fetches = 0;
-            Set(section, "loginUrlFetcher", new Func<string, Task<string>>(url =>
-            {
-                fetches++;
-                return Task.FromResult(url + "/memory-login");
-            }));
+            Set(
+                section,
+                "loginUrlFetcher",
+                new Func<string, Task<string>>(url =>
+                {
+                    fetches++;
+                    return Task.FromResult(url + "/memory-login");
+                })
+            );
             var firstFetch = (Task<string>)Invoke(section, "GetLoginUrlAsync");
             AssertCompleted(firstFetch);
             string first = firstFetch.Result;
@@ -337,16 +358,21 @@ namespace MCPForUnityTests.Editor.Windows
 
         private static void ChangeContext(McpConnectionSection section, string change)
         {
-            if (change == "stdio") EditorConfigurationCache.Instance.SetUseHttpTransport(false);
-            else if (change == "remote") UseHttp("remote");
-            else if (change == "url") HttpEndpointUtility.SaveLocalBaseUrl("http://127.0.0.1:9090");
-            else Set(section, "autoStartGeneration", Get<int>(section, "autoStartGeneration") + 1);
+            if (change == "stdio")
+                EditorConfigurationCache.Instance.SetUseHttpTransport(false);
+            else if (change == "remote")
+                UseHttp("remote");
+            else if (change == "url")
+                HttpEndpointUtility.SaveLocalBaseUrl("http://127.0.0.1:9090");
+            else
+                Set(section, "autoStartGeneration", Get<int>(section, "autoStartGeneration") + 1);
         }
 
         private static IEnumerator Complete(Task pending)
         {
             double deadline = EditorApplication.timeSinceStartup + 3;
-            while (!pending.IsCompleted && EditorApplication.timeSinceStartup < deadline) yield return null;
+            while (!pending.IsCompleted && EditorApplication.timeSinceStartup < deadline)
+                yield return null;
             AssertCompleted(pending);
         }
 
@@ -378,7 +404,8 @@ namespace MCPForUnityTests.Editor.Windows
             foreach (string name in new[] { "httpUrlRow", "httpServerControlRow", "unitySocketPortRow", "statusIndicator" })
                 Set(section, name, new VisualElement());
             Set(section, "connectionStatusLabel", new Label());
-            foreach (string name in new[] { "unityPortField", "httpUrlField" }) Set(section, name, new TextField());
+            foreach (string name in new[] { "unityPortField", "httpUrlField" })
+                Set(section, name, new TextField());
             Set(section, "connectionToggleButton", new Button());
             Set(section, "getApiKeyButton", new Button());
             Invoke(section, "RegisterCallbacks");
@@ -390,29 +417,59 @@ namespace MCPForUnityTests.Editor.Windows
             var field = typeof(McpConnectionSection).GetField(name, InstanceFlags | StaticFlags);
             return (T)field.GetValue(field.IsStatic ? null : section);
         }
+
         private static void Set(McpConnectionSection section, string name, object value)
         {
             var field = typeof(McpConnectionSection).GetField(name, InstanceFlags | StaticFlags);
             field.SetValue(field.IsStatic ? null : section, value);
         }
-        private static object Invoke(McpConnectionSection section, string name)
-            => typeof(McpConnectionSection).GetMethod(name, InstanceFlags).Invoke(section, null);
+
+        private static object Invoke(McpConnectionSection section, string name) =>
+            typeof(McpConnectionSection).GetMethod(name, InstanceFlags).Invoke(section, null);
 
         private sealed class FakeBridge : IBridgeControlService
         {
             public bool Running;
-            public int StartCalls, StopCalls, VerifyCalls;
+            public int StartCalls,
+                StopCalls,
+                VerifyCalls;
             public TaskCompletionSource<bool> StartPending;
             public TaskCompletionSource<BridgeVerificationResult> VerifyPending;
             public bool IsRunning => Running;
             public int CurrentPort => 1234;
             public bool IsAutoConnectMode => false;
             public TransportMode? ActiveMode => TransportMode.Http;
-            public Task<bool> StartAsync() { StartCalls++; Running = true; return StartPending?.Task ?? Task.FromResult(true); }
-            public Task StopAsync() { StopCalls++; Running = false; return Task.CompletedTask; }
+
+            public Task<bool> StartAsync()
+            {
+                StartCalls++;
+                Running = true;
+                return StartPending?.Task ?? Task.FromResult(true);
+            }
+
+            public Task StopAsync()
+            {
+                StopCalls++;
+                Running = false;
+                return Task.CompletedTask;
+            }
+
             public BridgeVerificationResult Verify(int port) => Healthy();
-            public Task<BridgeVerificationResult> VerifyAsync() { VerifyCalls++; return VerifyPending?.Task ?? Task.FromResult(Healthy()); }
-            public static BridgeVerificationResult Healthy() => new() { Success = true, PingSucceeded = true, HandshakeValid = true, Message = "memory-only" };
+
+            public Task<BridgeVerificationResult> VerifyAsync()
+            {
+                VerifyCalls++;
+                return VerifyPending?.Task ?? Task.FromResult(Healthy());
+            }
+
+            public static BridgeVerificationResult Healthy() =>
+                new()
+                {
+                    Success = true,
+                    PingSucceeded = true,
+                    HandshakeValid = true,
+                    Message = "memory-only",
+                };
         }
 
         private sealed class FakeServer : IServerManagementService
@@ -421,17 +478,45 @@ namespace MCPForUnityTests.Editor.Windows
             public bool Alive = true;
             public int StopCalls;
             public bool HasManagedServerLaunchHandle => true;
+
             public bool ClearUvxCache() => false;
+
             public bool StartLocalHttpServer(bool quiet = false) => false;
+
             public string GetLocalHttpServerLaunchLogPath() => null;
+
             public bool IsManagedServerLaunchProcessAlive() => Alive;
-            public void LogLocalHttpServerLaunchFailure() { throw new InvalidOperationException("Unexpected launch failure path."); }
-            public bool StopLocalHttpServer() { StopCalls++; return true; }
-            public bool StopManagedLocalHttpServer() { StopCalls++; return true; }
+
+            public void LogLocalHttpServerLaunchFailure()
+            {
+                throw new InvalidOperationException("Unexpected launch failure path.");
+            }
+
+            public bool StopLocalHttpServer()
+            {
+                StopCalls++;
+                return true;
+            }
+
+            public bool StopManagedLocalHttpServer()
+            {
+                StopCalls++;
+                return true;
+            }
+
             public bool IsLocalHttpServerRunning() => Reachable;
+
             public bool IsLocalHttpServerReachable() => Reachable;
-            public bool TryGetLocalHttpServerCommand(out string command, out string error) { command = null; error = "memory-only"; return false; }
+
+            public bool TryGetLocalHttpServerCommand(out string command, out string error)
+            {
+                command = null;
+                error = "memory-only";
+                return false;
+            }
+
             public bool IsLocalUrl() => true;
+
             public bool CanStartLocalServer() => true;
         }
     }

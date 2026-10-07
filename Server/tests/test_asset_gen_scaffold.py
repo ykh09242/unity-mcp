@@ -1,4 +1,5 @@
 """Phase 0 scaffold: the asset_gen tool group exists and is off by default."""
+
 from services.registry.tool_registry import TOOL_GROUPS, DEFAULT_ENABLED_GROUPS
 
 

@@ -51,14 +51,17 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (!captured) return;
+            if (!captured)
+                return;
             try
             {
                 foreach (GameObject go in ownedObjects)
                 {
-                    if (go == null) continue;
+                    if (go == null)
+                        continue;
                     foreach (Component component in go.GetComponents<Component>())
-                        if (component != null) Undo.ClearUndo(component);
+                        if (component != null)
+                            Undo.ClearUndo(component);
                     Undo.ClearUndo(go);
                     UnityEngine.Object.DestroyImmediate(go);
                 }
@@ -74,7 +77,8 @@ namespace MCPForUnityTests.Editor.Tools
                 Cache("_hasCinemachine").SetValue(null, originalHas);
                 Cache("_cmCameraType").SetValue(null, originalCameraType);
                 Cache("_cmBrainType").SetValue(null, originalBrainType);
-                if (originalScene.IsValid() && originalScene.isLoaded) SceneManager.SetActiveScene(originalScene);
+                if (originalScene.IsValid() && originalScene.isLoaded)
+                    SceneManager.SetActiveScene(originalScene);
                 Selection.objects = originalSelection;
                 Selection.activeObject = originalActiveSelection;
                 captured = false;
@@ -99,10 +103,15 @@ namespace MCPForUnityTests.Editor.Tools
         public void BasicDefaultsAndMissingOptionalTargetsRemainAccepted()
         {
             BasicMode();
-            var response = Send("create_camera", new JObject
-            {
-                ["name"] = UniqueName(), ["follow"] = UniqueName(), ["look_at"] = UniqueName()
-            });
+            var response = Send(
+                "create_camera",
+                new JObject
+                {
+                    ["name"] = UniqueName(),
+                    ["follow"] = UniqueName(),
+                    ["look_at"] = UniqueName(),
+                }
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Camera camera = ReturnedObject(response).GetComponent<Camera>();
             Assert.AreEqual(60f, camera.fieldOfView);
@@ -131,12 +140,19 @@ namespace MCPForUnityTests.Editor.Tools
             var otherBrain = other.AddComponent<CameraCreationTestBrain>();
             GameObject target = NewObject();
             Camera camera = target.AddComponent<Camera>();
-            string reference = selector == "id" ? target.GetInstanceIDCompat().ToString()
-                : selector == "path" ? "/" + target.name : target.name;
-            var response = Send("ensure_brain", new JObject
-            {
-                ["camera"] = reference, ["defaultBlendStyle"] = "Cut", ["defaultBlendDuration"] = 0
-            });
+            string reference =
+                selector == "id" ? target.GetInstanceIDCompat().ToString()
+                : selector == "path" ? "/" + target.name
+                : target.name;
+            var response = Send(
+                "ensure_brain",
+                new JObject
+                {
+                    ["camera"] = reference,
+                    ["defaultBlendStyle"] = "Cut",
+                    ["defaultBlendDuration"] = 0,
+                }
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(target.GetInstanceIDCompat(), response["data"].Value<int>("instanceID"));
             Assert.IsFalse(response["data"].Value<bool>("alreadyExisted"));
@@ -167,10 +183,7 @@ namespace MCPForUnityTests.Editor.Tools
             GameObject target = NewObject();
             target.AddComponent<Camera>();
             var brain = target.AddComponent<CameraCreationTestBrain>();
-            var response = Send("ensure_brain", new JObject
-            {
-                ["camera"] = target.GetInstanceIDCompat().ToString(), ["defaultBlendDuration"] = 0
-            });
+            var response = Send("ensure_brain", new JObject { ["camera"] = target.GetInstanceIDCompat().ToString(), ["defaultBlendDuration"] = 0 });
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.IsTrue(response["data"].Value<bool>("alreadyExisted"));
             Assert.AreSame(brain, target.GetComponent<CameraCreationTestBrain>());
@@ -195,10 +208,16 @@ namespace MCPForUnityTests.Editor.Tools
         public void InstalledCinemachineCreationAppliesExplicitFieldOfView()
         {
             UseInstalledCinemachine();
-            var response = Send("create_camera", new JObject
-            {
-                ["name"] = UniqueName(), ["preset"] = "static", ["priority"] = 0, ["fieldOfView"] = 42
-            });
+            var response = Send(
+                "create_camera",
+                new JObject
+                {
+                    ["name"] = UniqueName(),
+                    ["preset"] = "static",
+                    ["priority"] = 0,
+                    ["fieldOfView"] = 42,
+                }
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             GameObject go = ReturnedObject(response);
             using var serialized = new SerializedObject(go.GetComponent(CameraHelpers.CinemachineCameraType));
@@ -217,10 +236,15 @@ namespace MCPForUnityTests.Editor.Tools
             UseInstalledCinemachine();
             Cache("_cmCameraType").SetValue(null, typeof(CameraCreationTestCamera));
             GameObject existing = NewObject();
-            var response = Send("create_camera", new JObject
-            {
-                ["name"] = UniqueName(), ["preset"] = "static", ["fieldOfView"] = 42
-            });
+            var response = Send(
+                "create_camera",
+                new JObject
+                {
+                    ["name"] = UniqueName(),
+                    ["preset"] = "static",
+                    ["fieldOfView"] = 42,
+                }
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             StringAssert.Contains("Priority", response.Value<string>("error"));
             Assert.AreEqual(1, ownedScene.rootCount, "Failed operation retained its newly allocated object.");
@@ -231,16 +255,14 @@ namespace MCPForUnityTests.Editor.Tools
         {
             try
             {
-                return JObject.FromObject(ManageCamera.HandleCommand(new JObject
-                {
-                    ["action"] = action, ["properties"] = properties
-                }));
+                return JObject.FromObject(ManageCamera.HandleCommand(new JObject { ["action"] = action, ["properties"] = properties }));
             }
             finally
             {
                 // Only roots created in this fixture's empty owned scene belong to its cleanup.
                 foreach (GameObject root in ownedScene.GetRootGameObjects())
-                    if (!ownedObjects.Contains(root)) ownedObjects.Add(root);
+                    if (!ownedObjects.Contains(root))
+                        ownedObjects.Add(root);
             }
         }
 
@@ -248,7 +270,8 @@ namespace MCPForUnityTests.Editor.Tools
         {
             int id = response["data"].Value<int>("instanceID");
             foreach (GameObject go in ownedObjects)
-                if (go.GetInstanceIDCompat() == id) return go;
+                if (go.GetInstanceIDCompat() == id)
+                    return go;
             Assert.Fail("Returned ID must identify the fixture-owned scene instance.");
             return null;
         }
@@ -262,8 +285,11 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         private static string UniqueName() => "McpCameraCreation_" + Guid.NewGuid().ToString("N");
+
         private static FieldInfo Cache(string name) => typeof(CameraHelpers).GetField(name, CacheFlags);
+
         private static void BasicMode() => Cache("_hasCinemachine").SetValue(null, false);
+
         private static void SyntheticBrainMode()
         {
             Cache("_hasCinemachine").SetValue(null, true);
@@ -284,12 +310,26 @@ namespace MCPForUnityTests.Editor.Tools
         }
     }
 
-    public enum CameraCreationTestBlendStyle { Cut, EaseInOut }
+    public enum CameraCreationTestBlendStyle
+    {
+        Cut,
+        EaseInOut,
+    }
+
     [Serializable]
-    public struct CameraCreationTestBlend { public CameraCreationTestBlendStyle Style; public float Time; }
+    public struct CameraCreationTestBlend
+    {
+        public CameraCreationTestBlendStyle Style;
+        public float Time;
+    }
+
     public class CameraCreationTestBrain : MonoBehaviour
     {
         public CameraCreationTestBlend DefaultBlend = new() { Style = CameraCreationTestBlendStyle.EaseInOut, Time = 2 };
     }
-    public class CameraCreationTestCamera : MonoBehaviour { public int Priority; }
+
+    public class CameraCreationTestCamera : MonoBehaviour
+    {
+        public int Priority;
+    }
 }

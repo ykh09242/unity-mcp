@@ -1,4 +1,5 @@
 """Exact built-in visits preserve charging and subclass side effects."""
+
 import json
 import sys
 
@@ -68,5 +69,13 @@ def test_subclasses_keep_sizeof_length_iterator_and_integer_hook_order():
 
     value = HookList([HookString("한🧪"), HookInt(1 << 13999)])
     assert limits.response_size(value) is not None
-    assert hooks == ["list_sizeof", "list_iter", "string_sizeof", "string_len", "string_len",
-                     "int_sizeof", "int_bit_length", "list_iter"]
+    assert hooks == [
+        "list_sizeof",
+        "list_iter",
+        "string_sizeof",
+        "string_len",
+        "string_len",
+        "int_sizeof",
+        "int_bit_length",
+        "list_iter",
+    ]

@@ -9,18 +9,15 @@ using MCPForUnity.Editor.Services.Transport;
 internal static class LargeResultHarness
 {
     private static readonly SemaphoreSlim SendLock = new SemaphoreSlim(1, 1);
-    private static readonly TaskCompletionSource<bool> FirstChunk =
-        new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    private static readonly TaskCompletionSource<bool> ControlQueued =
-        new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    private static readonly TaskCompletionSource<bool> FirstChunk = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    private static readonly TaskCompletionSource<bool> ControlQueued = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     private static int _binaryCount;
     private static bool _interleave;
     private static bool _cancel;
     private static CancellationTokenSource _cancellation;
     private static ClientWebSocket _socket;
 
-    private static async Task SendFrameAsync(ArraySegment<byte> bytes, WebSocketMessageType kind,
-        CancellationToken token)
+    private static async Task SendFrameAsync(ArraySegment<byte> bytes, WebSocketMessageType kind, CancellationToken token)
     {
         await SendLock.WaitAsync(token);
         try
@@ -38,10 +35,14 @@ internal static class LargeResultHarness
                     FirstChunk.SetResult(true);
                     await ControlQueued.Task;
                 }
-                if (_cancel) _cancellation.Cancel();
+                if (_cancel)
+                    _cancellation.Cancel();
             }
         }
-        finally { SendLock.Release(); }
+        finally
+        {
+            SendLock.Release();
+        }
     }
 
     private static async Task SendControlAsync()
@@ -74,7 +75,10 @@ internal static class LargeResultHarness
                 if (_socket != null)
                     await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "synthetic transfer complete", _cancellation.Token);
             }
-            catch (OperationCanceledException) { Console.WriteLine("CANCELLED"); }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("CANCELLED");
+            }
         }
         return 0;
     }

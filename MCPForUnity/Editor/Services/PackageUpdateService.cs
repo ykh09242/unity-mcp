@@ -28,7 +28,8 @@ namespace MCPForUnity.Editor.Services
         public UpdateCheckResult CheckForUpdate(string currentVersion)
         {
             bool isGitInstallation = IsGitInstallation();
-            if (!isGitInstallation) return UnsupportedLocalUpdate();
+            if (!isGitInstallation)
+                return UnsupportedLocalUpdate();
             string gitBranch = GetGitUpdateBranch(currentVersion);
             bool useBetaChannel = string.Equals(gitBranch, "beta", StringComparison.OrdinalIgnoreCase);
             string lastCheckKey = useBetaChannel ? LastBetaCheckDateKey : LastCheckDateKey;
@@ -44,7 +45,7 @@ namespace MCPForUnity.Editor.Services
                     CheckSucceeded = true,
                     LatestVersion = cachedLatestVersion,
                     UpdateAvailable = IsNewerVersion(cachedLatestVersion, currentVersion),
-                    Message = "Using cached version check"
+                    Message = "Using cached version check",
                 };
             }
 
@@ -61,7 +62,7 @@ namespace MCPForUnity.Editor.Services
                     CheckSucceeded = true,
                     LatestVersion = latestVersion,
                     UpdateAvailable = IsNewerVersion(latestVersion, currentVersion),
-                    Message = "Successfully checked for updates"
+                    Message = "Successfully checked for updates",
                 };
             }
 
@@ -71,7 +72,7 @@ namespace MCPForUnity.Editor.Services
                 UpdateAvailable = false,
                 Message = !string.IsNullOrEmpty(latestVersion)
                     ? "Failed to check for updates (invalid version metadata)"
-                    : "Failed to check for updates (network issue or offline)"
+                    : "Failed to check for updates (network issue or offline)",
             };
         }
 
@@ -79,7 +80,8 @@ namespace MCPForUnity.Editor.Services
         public UpdateCheckResult TryGetCachedResult(string currentVersion)
         {
             bool isGitInstallation = IsGitInstallation();
-            if (!isGitInstallation) return UnsupportedLocalUpdate();
+            if (!isGitInstallation)
+                return UnsupportedLocalUpdate();
             string gitBranch = GetGitUpdateBranch(currentVersion);
             bool useBetaChannel = string.Equals(gitBranch, "beta", StringComparison.OrdinalIgnoreCase);
             string lastCheckKey = useBetaChannel ? LastBetaCheckDateKey : LastCheckDateKey;
@@ -95,7 +97,7 @@ namespace MCPForUnity.Editor.Services
                     CheckSucceeded = true,
                     LatestVersion = cachedLatestVersion,
                     UpdateAvailable = IsNewerVersion(cachedLatestVersion, currentVersion),
-                    Message = "Using cached version check"
+                    Message = "Using cached version check",
                 };
             }
 
@@ -113,7 +115,8 @@ namespace MCPForUnity.Editor.Services
         /// <inheritdoc/>
         public UpdateCheckResult FetchAndCompare(string currentVersion, bool isGitInstallation, string gitBranch)
         {
-            if (!isGitInstallation) return UnsupportedLocalUpdate();
+            if (!isGitInstallation)
+                return UnsupportedLocalUpdate();
             string latestVersion = FetchLatestVersionFromGitHub(gitBranch);
 
             if (TryParseVersion(latestVersion, out _))
@@ -123,7 +126,7 @@ namespace MCPForUnity.Editor.Services
                     CheckSucceeded = true,
                     LatestVersion = latestVersion,
                     UpdateAvailable = IsNewerVersion(latestVersion, currentVersion),
-                    Message = "Successfully checked for updates"
+                    Message = "Successfully checked for updates",
                 };
             }
 
@@ -133,17 +136,19 @@ namespace MCPForUnity.Editor.Services
                 UpdateAvailable = false,
                 Message = !string.IsNullOrEmpty(latestVersion)
                     ? "Failed to check for updates (invalid version metadata)"
-                    : "Failed to check for updates (network issue or offline)"
+                    : "Failed to check for updates (network issue or offline)",
             };
         }
 
         /// <inheritdoc/>
         public void CacheFetchResult(string currentVersion, string fetchedVersion)
         {
-            if (!TryParseVersion(fetchedVersion, out _)) return;
+            if (!TryParseVersion(fetchedVersion, out _))
+                return;
 
             bool isGitInstallation = IsGitInstallation();
-            if (!isGitInstallation) return;
+            if (!isGitInstallation)
+                return;
             string gitBranch = GetGitUpdateBranch(currentVersion);
             bool useBetaChannel = string.Equals(gitBranch, "beta", StringComparison.OrdinalIgnoreCase);
             string lastCheckKey = useBetaChannel ? LastBetaCheckDateKey : LastCheckDateKey;
@@ -167,24 +172,32 @@ namespace MCPForUnity.Editor.Services
         private static int CompareVersions(ParsedVersion left, ParsedVersion right)
         {
             int cmp = left.Major.CompareTo(right.Major);
-            if (cmp != 0) return cmp;
+            if (cmp != 0)
+                return cmp;
 
             cmp = left.Minor.CompareTo(right.Minor);
-            if (cmp != 0) return cmp;
+            if (cmp != 0)
+                return cmp;
 
             cmp = left.Patch.CompareTo(right.Patch);
-            if (cmp != 0) return cmp;
+            if (cmp != 0)
+                return cmp;
 
             // Stable is newer than prerelease when core version matches.
-            if (!left.IsPrerelease && right.IsPrerelease) return 1;
-            if (left.IsPrerelease && !right.IsPrerelease) return -1;
-            if (!left.IsPrerelease && !right.IsPrerelease) return 0;
+            if (!left.IsPrerelease && right.IsPrerelease)
+                return 1;
+            if (left.IsPrerelease && !right.IsPrerelease)
+                return -1;
+            if (!left.IsPrerelease && !right.IsPrerelease)
+                return 0;
 
             cmp = GetPrereleaseRank(left.PrereleaseLabel).CompareTo(GetPrereleaseRank(right.PrereleaseLabel));
-            if (cmp != 0) return cmp;
+            if (cmp != 0)
+                return cmp;
 
             cmp = left.PrereleaseNumber.CompareTo(right.PrereleaseNumber);
-            if (cmp != 0) return cmp;
+            if (cmp != 0)
+                return cmp;
 
             return string.Compare(left.PrereleaseLabel, right.PrereleaseLabel, StringComparison.OrdinalIgnoreCase);
         }
@@ -223,26 +236,25 @@ namespace MCPForUnity.Editor.Services
             }
 
             string normalized = version.Trim().TrimStart('v', 'V');
-            var match = Regex.Match(
-                normalized,
-                @"^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?<label>[A-Za-z]+)(?:\.(?<number>\d+))?)?$");
+            var match = Regex.Match(normalized, @"^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?<label>[A-Za-z]+)(?:\.(?<number>\d+))?)?$");
 
             if (!match.Success)
             {
                 return false;
             }
 
-            if (!int.TryParse(match.Groups["major"].Value, out int major) ||
-                !int.TryParse(match.Groups["minor"].Value, out int minor) ||
-                !int.TryParse(match.Groups["patch"].Value, out int patch))
+            if (
+                !int.TryParse(match.Groups["major"].Value, out int major)
+                || !int.TryParse(match.Groups["minor"].Value, out int minor)
+                || !int.TryParse(match.Groups["patch"].Value, out int patch)
+            )
             {
                 return false;
             }
 
             string prereleaseLabel = match.Groups["label"].Success ? match.Groups["label"].Value : string.Empty;
             int prereleaseNumber = 0;
-            if (match.Groups["number"].Success &&
-                !int.TryParse(match.Groups["number"].Value, out prereleaseNumber))
+            if (match.Groups["number"].Success && !int.TryParse(match.Groups["number"].Value, out prereleaseNumber))
             {
                 return false;
             }
@@ -254,7 +266,7 @@ namespace MCPForUnity.Editor.Services
                 Patch = patch,
                 PrereleaseLabel = prereleaseLabel,
                 PrereleaseNumber = prereleaseNumber,
-                IsPrerelease = !string.IsNullOrEmpty(prereleaseLabel)
+                IsPrerelease = !string.IsNullOrEmpty(prereleaseLabel),
             };
             return true;
         }
@@ -279,7 +291,8 @@ namespace MCPForUnity.Editor.Services
         {
             int revisionStart = packageId?.IndexOf('#') ?? -1;
             string revision = revisionStart >= 0 ? packageId.Substring(revisionStart + 1) : string.Empty;
-            if (string.Equals(revision, "main", StringComparison.OrdinalIgnoreCase)) return "main";
+            if (string.Equals(revision, "main", StringComparison.OrdinalIgnoreCase))
+                return "main";
 
             // Tags and commits follow this fork's default branch, including stable releases.
             return "beta";
@@ -293,15 +306,20 @@ namespace MCPForUnity.Editor.Services
                 var packageInfo = PackageInfo.FindForAssembly(typeof(PackageUpdateService).Assembly);
                 return packageInfo != null && packageInfo.source == UnityEditor.PackageManager.PackageSource.Git;
             }
-            catch { return false; }
+            catch
+            {
+                return false;
+            }
         }
 
-        private static UpdateCheckResult UnsupportedLocalUpdate() => new UpdateCheckResult
-        {
-            CheckSucceeded = false,
-            UpdateAvailable = false,
-            Message = "Automatic updates for Unity MCP (ykh09242) require a Git Package Manager installation. Update local copies manually from https://github.com/ykh09242/unity-mcp."
-        };
+        private static UpdateCheckResult UnsupportedLocalUpdate() =>
+            new UpdateCheckResult
+            {
+                CheckSucceeded = false,
+                UpdateAvailable = false,
+                Message =
+                    "Automatic updates for Unity MCP (ykh09242) require a Git Package Manager installation. Update local copies manually from https://github.com/ykh09242/unity-mcp.",
+            };
 
         /// <inheritdoc/>
         public void ClearCache()
@@ -333,9 +351,7 @@ namespace MCPForUnity.Editor.Services
                 using (var client = CreateWebClient())
                 {
                     client.Headers.Add("User-Agent", "Unity-MCPForUnity-UpdateChecker");
-                    string packageJsonUrl = string.Equals(branch, "beta", StringComparison.OrdinalIgnoreCase)
-                        ? BetaPackageJsonUrl
-                        : MainPackageJsonUrl;
+                    string packageJsonUrl = string.Equals(branch, "beta", StringComparison.OrdinalIgnoreCase) ? BetaPackageJsonUrl : MainPackageJsonUrl;
                     string jsonContent = client.DownloadString(packageJsonUrl);
 
                     var packageJson = JObject.Parse(jsonContent);

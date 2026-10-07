@@ -1,9 +1,9 @@
-using NUnit.Framework;
 using System.Reflection;
-using UnityEngine;
+using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
-using MCPForUnity.Editor.Tools;
+using NUnit.Framework;
+using UnityEngine;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -17,7 +17,8 @@ namespace MCPForUnityTests.Editor.Tools
         {
             for (int i = 0; i < _created.Count; i++)
             {
-                if (_created[i] != null) Object.DestroyImmediate(_created[i]);
+                if (_created[i] != null)
+                    Object.DestroyImmediate(_created[i]);
             }
             _created.Clear();
 
@@ -47,11 +48,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
 
             // Act: request a small page to force truncation
-            var p1 = new JObject
-            {
-                ["action"] = "get_hierarchy",
-                ["pageSize"] = 10,
-            };
+            var p1 = new JObject { ["action"] = "get_hierarchy", ["pageSize"] = 10 };
             var raw1 = ManageScene.HandleCommand(p1);
             var res1 = raw1 as JObject ?? JObject.FromObject(raw1);
 
@@ -110,20 +107,30 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(11, 4, 100, 0, false, null)]
         [TestCase(int.MaxValue, 4, 100, 0, false, null)]
         public void GetHierarchy_ChildPagesPreserveOrderAndClampEndCursor(
-            int cursor, int pageSize, int maxNodes, int expectedCount, bool truncated, string nextCursor)
+            int cursor,
+            int pageSize,
+            int maxNodes,
+            int expectedCount,
+            bool truncated,
+            string nextCursor
+        )
         {
             _root = new GameObject("HS_PagedParent");
             for (int i = 0; i < 11; i++)
                 new GameObject($"HS_PagedChild_{i:D2}").transform.SetParent(_root.transform);
 
-            var response = JObject.FromObject(ManageScene.HandleCommand(new JObject
-            {
-                ["action"] = "get_hierarchy",
-                ["parent"] = _root.GetInstanceIDCompat(),
-                ["cursor"] = cursor,
-                ["pageSize"] = pageSize,
-                ["maxNodes"] = maxNodes
-            }));
+            var response = JObject.FromObject(
+                ManageScene.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "get_hierarchy",
+                        ["parent"] = _root.GetInstanceIDCompat(),
+                        ["cursor"] = cursor,
+                        ["pageSize"] = pageSize,
+                        ["maxNodes"] = maxNodes,
+                    }
+                )
+            );
 
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var data = (JObject)response["data"];
@@ -135,19 +142,20 @@ namespace MCPForUnityTests.Editor.Tools
             var items = (JArray)data["items"];
             Assert.AreEqual(expectedCount, items.Count);
             for (int i = 0; i < items.Count; i++)
-                Assert.AreEqual(_root.transform.GetChild(cursor + i).gameObject.GetInstanceIDCompat(),
-                    items[i].Value<int>("instanceID"));
+                Assert.AreEqual(_root.transform.GetChild(cursor + i).gameObject.GetInstanceIDCompat(), items[i].Value<int>("instanceID"));
         }
 
         [Test]
         public void Screenshot_SceneViewRejectsSupersizeAboveOne()
         {
-            var raw = ManageScene.HandleCommand(new JObject
-            {
-                ["action"] = "screenshot",
-                ["captureSource"] = "scene_view",
-                ["superSize"] = 2,
-            });
+            var raw = ManageScene.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "screenshot",
+                    ["captureSource"] = "scene_view",
+                    ["superSize"] = 2,
+                }
+            );
             var response = raw as JObject ?? JObject.FromObject(raw);
 
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
@@ -175,13 +183,14 @@ namespace MCPForUnityTests.Editor.Tools
                 sanitized = (string)sanitizeMethod.Invoke(null, new object[] { input });
                 string sanitizedStem = System.IO.Path.GetFileNameWithoutExtension(sanitized);
                 Assert.IsFalse(
-                    string.Equals(sanitizedStem, "CON", System.StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(sanitizedStem, "NUL", System.StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(sanitizedStem, "PRN", System.StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(sanitizedStem, "AUX", System.StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(sanitizedStem, "COM1", System.StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(sanitizedStem, "LPT9", System.StringComparison.OrdinalIgnoreCase),
-                    $"Expected reserved device name to be sanitized for input '{input}', got '{sanitized}'.");
+                    string.Equals(sanitizedStem, "CON", System.StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(sanitizedStem, "NUL", System.StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(sanitizedStem, "PRN", System.StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(sanitizedStem, "AUX", System.StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(sanitizedStem, "COM1", System.StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(sanitizedStem, "LPT9", System.StringComparison.OrdinalIgnoreCase),
+                    $"Expected reserved device name to be sanitized for input '{input}', got '{sanitized}'."
+                );
                 Assert.IsFalse(sanitized.Contains("/"));
                 Assert.IsFalse(sanitized.Contains("\\"));
                 Assert.IsFalse(sanitized.Contains(".."));
@@ -209,11 +218,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // view_target should be accepted for game_view (positioned capture path).
             // It will fail to resolve a non-existent GO, but should NOT reject the parameter itself.
-            var raw = ManageScene.HandleCommand(new JObject
-            {
-                ["action"] = "screenshot",
-                ["viewTarget"] = "NonExistentObject",
-            });
+            var raw = ManageScene.HandleCommand(new JObject { ["action"] = "screenshot", ["viewTarget"] = "NonExistentObject" });
             var response = raw as JObject ?? JObject.FromObject(raw);
 
             // Should attempt positioned capture and fail to resolve the GO — not reject the param

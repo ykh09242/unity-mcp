@@ -91,7 +91,8 @@ namespace MCPForUnity.Editor.Services
         private static void CoerceTransportFor(IMcpClientConfigurator configurator)
         {
             var supported = configurator.SupportedTransports;
-            if (supported == null || supported.Count == 0) return;
+            if (supported == null || supported.Count == 0)
+                return;
 
             bool currentlyHttp = EditorConfigurationCache.Instance.UseHttpTransport;
             var requested = currentlyHttp ? ConfiguredTransport.Http : ConfiguredTransport.Stdio;
@@ -99,7 +100,8 @@ namespace MCPForUnity.Editor.Services
             // Accept any HTTP variant (Http, HttpRemote) when the user wants HTTP — a client that
             // only supports HttpRemote should not get coerced to stdio just because Http isn't
             // explicitly listed.
-            if (SupportsRequested(supported, requested)) return;
+            if (SupportsRequested(supported, requested))
+                return;
 
             // Fall back in the direction of the user's intent: if they wanted HTTP, prefer any
             // HTTP variant the client does support; otherwise prefer stdio. Honors the
@@ -109,20 +111,19 @@ namespace MCPForUnity.Editor.Services
             if (EditorConfigurationCache.Instance.UseHttpTransport != needHttp)
             {
                 EditorConfigurationCache.Instance.SetUseHttpTransport(needHttp);
-                McpLog.Info(
-                    $"[{configurator.DisplayName}] auto-selected {chosen} transport (client does not support {requested}).");
+                McpLog.Info($"[{configurator.DisplayName}] auto-selected {chosen} transport (client does not support {requested}).");
             }
         }
 
-        private static bool IsHttpVariant(ConfiguredTransport t)
-            => t == ConfiguredTransport.Http || t == ConfiguredTransport.HttpRemote;
+        private static bool IsHttpVariant(ConfiguredTransport t) => t == ConfiguredTransport.Http || t == ConfiguredTransport.HttpRemote;
 
         private static bool SupportsRequested(IReadOnlyList<ConfiguredTransport> supported, ConfiguredTransport requested)
         {
             if (requested == ConfiguredTransport.Http)
             {
                 foreach (var t in supported)
-                    if (IsHttpVariant(t)) return true;
+                    if (IsHttpVariant(t))
+                        return true;
                 return false;
             }
             return supported.Contains(requested);
@@ -133,12 +134,14 @@ namespace MCPForUnity.Editor.Services
             if (requested == ConfiguredTransport.Http)
             {
                 foreach (var t in supported)
-                    if (IsHttpVariant(t)) return t;
+                    if (IsHttpVariant(t))
+                        return t;
             }
             else
             {
                 foreach (var t in supported)
-                    if (t == ConfiguredTransport.Stdio) return t;
+                    if (t == ConfiguredTransport.Stdio)
+                        return t;
             }
             return supported[0];
         }

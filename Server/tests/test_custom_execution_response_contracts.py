@@ -1,4 +1,5 @@
 """Custom public entry points preserve guidance produced by the real transport."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -7,7 +8,7 @@ import sys
 import pytest
 
 
-PROGRAM = r'''
+PROGRAM = r"""
 import asyncio
 import copy
 import json
@@ -95,17 +96,30 @@ async def main():
     print(json.dumps({"protocol": sys.argv[1], "cases": cases, "failed": sum(not c["passed"] for c in cases)}))
     assert all(c["passed"] for c in cases), [(c["entry"], c["case"], c["response"]) for c in cases if not c["passed"]]
 anyio.run(main)
-'''
+"""
 
 
 @pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
 def test_custom_execution_preserves_transport_and_terminal_hints(tmp_path, protocol):
     env = {key: value for key, value in os.environ.items() if not key.startswith("UNITY_MCP_")}
-    for key in ("HOME", "USERPROFILE", "APPDATA", "XDG_DATA_HOME", "UNITY_MCP_LOG_DIR", "TEMP", "TMP"):
+    for key in (
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "XDG_DATA_HOME",
+        "UNITY_MCP_LOG_DIR",
+        "TEMP",
+        "TMP",
+    ):
         env[key] = str(tmp_path)
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "true"
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
     env.pop("PYTEST_CURRENT_TEST", None)
-    result = subprocess.run([sys.executable, "-B", "-c", PROGRAM, protocol], env=env,
-                            capture_output=True, text=True, timeout=90)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", PROGRAM, protocol],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
     assert result.returncode == 0, result.stdout + result.stderr

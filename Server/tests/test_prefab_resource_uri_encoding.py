@@ -1,4 +1,5 @@
 """Registered actual SDK prefab URIs preserve already-decoded asset paths."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -8,17 +9,22 @@ import textwrap
 import pytest
 
 
-@pytest.mark.parametrize("resource_name,suffix,action", [
-    ("prefab_info", "", "get_info"),
-    ("prefab_hierarchy", "/hierarchy", "get_hierarchy"),
-])
-def test_prefab_resource_preserves_decoded_path_and_error_metadata(resource_name, suffix, action, tmp_path):
+@pytest.mark.parametrize(
+    "resource_name,suffix,action",
+    [
+        ("prefab_info", "", "get_info"),
+        ("prefab_hierarchy", "/hierarchy", "get_hierarchy"),
+    ],
+)
+def test_prefab_resource_preserves_decoded_path_and_error_metadata(
+    resource_name, suffix, action, tmp_path
+):
     env = {**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"}
     for key in ("APPDATA", "XDG_DATA_HOME", "UNITY_MCP_LOG_DIR"):
         directory = tmp_path / key
         directory.mkdir()
         env[key] = str(directory)
-    source = f'''
+    source = f"""
         import json, os, socket, sys
         from pathlib import Path
         from urllib.parse import quote
@@ -77,10 +83,13 @@ def test_prefab_resource_preserves_decoded_path_and_error_metadata(resource_name
                     reply = {{"success": True, "data": {{"extra_native_field": {{"keep": True}}}}}}
             assert len(requests) == 20
         anyio.run(scenario)
-    '''
+    """
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1], env=env,
-        capture_output=True, text=True, timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr

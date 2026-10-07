@@ -1,4 +1,5 @@
 """Script edit locator and replacement behavior at the Unity transport boundary."""
+
 import asyncio
 import importlib
 import re
@@ -13,7 +14,9 @@ script_edits = importlib.import_module("services.tools.script_apply_edits")
 @pytest.mark.asyncio
 async def test_advertised_payload_limit_matches_editor_contract():
     # Given: the actual Editor text-edit endpoint's byte budget.
-    source = (Path(__file__).resolve().parents[2] / "MCPForUnity/Editor/Tools/ManageScript.cs").read_text(encoding="utf-8-sig")
+    source = (
+        Path(__file__).resolve().parents[2] / "MCPForUnity/Editor/Tools/ManageScript.cs"
+    ).read_text(encoding="utf-8-sig")
     declared = re.search(r"const int MaxEditPayloadBytes\s*=\s*(\d+)\s*\*\s*(\d+)\s*;", source)
     assert declared is not None
     editor_limit = int(declared.group(1)) * int(declared.group(2))
@@ -24,14 +27,17 @@ async def test_advertised_payload_limit_matches_editor_contract():
     assert response["data"]["max_edit_payload_bytes"] == editor_limit
 
 
-@pytest.mark.parametrize("name,path,expected", [
-    ("Foo.cs", "Assets/Scripts", ("Foo", "Assets/Scripts")),
-    ("Foo.CS", "Assets/Scripts", ("Foo", "Assets/Scripts")),
-    ("Assets/Scripts/Foo.cs", "Assets/Other", ("Foo", "Assets/Scripts")),
-    ("", "Assets/Scripts/Foo.cs", ("Foo", "Assets/Scripts")),
-    ("file:///C:/Project/Assets/Scripts/Foo%20Bar.cs", "", ("Foo Bar", "Assets/Scripts")),
-    ("Foo.cs", r"Assets\Scripts", ("Foo", "Assets/Scripts")),
-])
+@pytest.mark.parametrize(
+    "name,path,expected",
+    [
+        ("Foo.cs", "Assets/Scripts", ("Foo", "Assets/Scripts")),
+        ("Foo.CS", "Assets/Scripts", ("Foo", "Assets/Scripts")),
+        ("Assets/Scripts/Foo.cs", "Assets/Other", ("Foo", "Assets/Scripts")),
+        ("", "Assets/Scripts/Foo.cs", ("Foo", "Assets/Scripts")),
+        ("file:///C:/Project/Assets/Scripts/Foo%20Bar.cs", "", ("Foo Bar", "Assets/Scripts")),
+        ("Foo.cs", r"Assets\Scripts", ("Foo", "Assets/Scripts")),
+    ],
+)
 def test_locator_preserves_explicit_script_directory(name, path, expected):
     # Given: a script supplied using a supported name/path form.
     # When: the structured editor normalizes its Unity locator.
@@ -42,7 +48,9 @@ def test_locator_preserves_explicit_script_directory(name, path, expected):
 
 @pytest.fixture
 def script_transport(monkeypatch):
-    monkeypatch.setattr(script_edits, "get_unity_instance_from_context", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        script_edits, "get_unity_instance_from_context", AsyncMock(return_value=None)
+    )
     reader = AsyncMock(return_value={"success": True, "data": {"contents": "name=abc"}})
     writer = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(script_edits, "send_with_unity_instance", reader)
@@ -56,7 +64,9 @@ async def test_regex_replacement_preserves_declared_replacement(script_transport
     _, writer = script_transport
     # When: the tool converts it into a Unity text edit.
     response = await script_edits.script_apply_edits(
-        AsyncMock(), "Foo", "Assets/Scripts",
+        AsyncMock(),
+        "Foo",
+        "Assets/Scripts",
         [{"op": "regex_replace", "pattern": r"name=(\w+)", "replacement": "$1=value"}],
     )
     # Then: the replacement text survives conversion instead of deleting the match.
@@ -66,23 +76,44 @@ async def test_regex_replacement_preserves_declared_replacement(script_transport
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("entrypoint", ["apply_text_edits", "script_apply_edits"])
-@pytest.mark.parametrize("contents,line,start,end,expected", [
-    ("😀x", 0, 2, 3, (1, 2, 1, 3)),
-    ("a\r\n🦊y", 1, 2, 3, (2, 2, 2, 3)),
-    ("abx", 0, 2, 3, (1, 3, 1, 4)),
-    ("😀x", 0, 99, 100, (1, 3, 1, 3)),
-])
+@pytest.mark.parametrize(
+    "contents,line,start,end,expected",
+    [
+        ("😀x", 0, 2, 3, (1, 2, 1, 3)),
+        ("a\r\n🦊y", 1, 2, 3, (2, 2, 2, 3)),
+        ("abx", 0, 2, 3, (1, 3, 1, 4)),
+        ("😀x", 0, 99, 100, (1, 3, 1, 3)),
+    ],
+)
 async def test_lsp_range_uses_utf16_input_and_codepoint_wire_coordinates(
-    monkeypatch, entrypoint, contents, line, start, end, expected,
+    monkeypatch,
+    entrypoint,
+    contents,
+    line,
+    start,
+    end,
+    expected,
 ):
     # Given: an LSP-style range uses UTF-16 offsets, with no encoding negotiation.
-    module = importlib.import_module("services.tools.manage_script") if entrypoint == "apply_text_edits" else script_edits
+    module = (
+        importlib.import_module("services.tools.manage_script")
+        if entrypoint == "apply_text_edits"
+        else script_edits
+    )
     reader = AsyncMock(return_value={"success": True, "data": {"contents": contents}})
     writer = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(module, "get_unity_instance_from_context", AsyncMock(return_value=None))
     monkeypatch.setattr(module, "send_with_unity_instance", reader)
     monkeypatch.setattr(module, "send_mutation", writer)
-    edits = [{"range": {"start": {"line": line, "character": start}, "end": {"line": line, "character": end}}, "newText": "Z"}]
+    edits = [
+        {
+            "range": {
+                "start": {"line": line, "character": start},
+                "end": {"line": line, "character": end},
+            },
+            "newText": "Z",
+        }
+    ]
     # When: either documented Python editing entrypoint normalizes that range.
     if entrypoint == "apply_text_edits":
         response = await module.apply_text_edits(AsyncMock(), "Assets/Scripts/Foo.cs", edits)
@@ -91,7 +122,9 @@ async def test_lsp_range_uses_utf16_input_and_codepoint_wire_coordinates(
     # Then: Unity receives 1-based codepoint coordinates for precisely the requested span.
     assert response["success"] is True
     span = writer.call_args.args[3]["edits"][0]
-    assert tuple(span[field] for field in ("startLine", "startCol", "endLine", "endCol")) == expected
+    assert (
+        tuple(span[field] for field in ("startLine", "startCol", "endLine", "endCol")) == expected
+    )
     assert span["newText"] == "Z"
 
 
@@ -100,9 +133,17 @@ async def test_lsp_range_uses_utf16_input_and_codepoint_wire_coordinates(
 @pytest.mark.parametrize("line,character", [(0, 1), (1, 0), (0, -1)])
 async def test_invalid_lsp_positions_do_not_write(monkeypatch, entrypoint, line, character):
     # Given: a range splits a surrogate pair or lies outside the document.
-    module = importlib.import_module("services.tools.manage_script") if entrypoint == "apply_text_edits" else script_edits
+    module = (
+        importlib.import_module("services.tools.manage_script")
+        if entrypoint == "apply_text_edits"
+        else script_edits
+    )
     monkeypatch.setattr(module, "get_unity_instance_from_context", AsyncMock(return_value=None))
-    monkeypatch.setattr(module, "send_with_unity_instance", AsyncMock(return_value={"success": True, "data": {"contents": "😀x"}}))
+    monkeypatch.setattr(
+        module,
+        "send_with_unity_instance",
+        AsyncMock(return_value={"success": True, "data": {"contents": "😀x"}}),
+    )
     writer = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(module, "send_mutation", writer)
     position = {"line": line, "character": character}
@@ -132,7 +173,9 @@ async def test_text_regex_timeout_does_not_block_event_loop(script_transport):
     pulse = asyncio.create_task(heartbeat())
     # When: the production text-only conversion runs the pattern.
     response = await script_edits.script_apply_edits(
-        AsyncMock(), "Foo", "Assets/Scripts",
+        AsyncMock(),
+        "Foo",
+        "Assets/Scripts",
         [{"op": "regex_replace", "pattern": r"(a+)+$", "replacement": "x"}],
     )
     responsive = bool(ticks)
@@ -148,14 +191,23 @@ async def test_text_regex_timeout_does_not_block_event_loop(script_transport):
 async def test_invalid_index_ranges_do_not_write(monkeypatch, span):
     module = importlib.import_module("services.tools.manage_script")
     monkeypatch.setattr(module, "get_unity_instance_from_context", AsyncMock(return_value=None))
-    monkeypatch.setattr(module, "send_with_unity_instance", AsyncMock(return_value={
-        "success": True, "data": {"contents": "a\r\nb"},
-    }))
+    monkeypatch.setattr(
+        module,
+        "send_with_unity_instance",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "data": {"contents": "a\r\nb"},
+            }
+        ),
+    )
     writer = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(module, "send_mutation", writer)
 
     response = await module.apply_text_edits(
-        AsyncMock(), "Assets/Scripts/Foo.cs", [{"range": span, "newText": "Z"}],
+        AsyncMock(),
+        "Assets/Scripts/Foo.cs",
+        [{"range": span, "newText": "Z"}],
     )
 
     assert response["success"] is False
@@ -164,38 +216,64 @@ async def test_invalid_index_ranges_do_not_write(monkeypatch, span):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("contents,span,expected", [
-    ("a\r\nb", [1, 1], (1, 2, 1, 2)),
-    ("a\r\nb", [3, 4], (2, 1, 2, 2)),
-    ("\U0001f600x", [2, 1], (1, 2, 1, 3)),
-    ("", [0, 0], (1, 1, 1, 1)),
-])
-async def test_valid_index_ranges_preserve_codepoint_boundaries(monkeypatch, contents, span, expected):
+@pytest.mark.parametrize(
+    "contents,span,expected",
+    [
+        ("a\r\nb", [1, 1], (1, 2, 1, 2)),
+        ("a\r\nb", [3, 4], (2, 1, 2, 2)),
+        ("\U0001f600x", [2, 1], (1, 2, 1, 3)),
+        ("", [0, 0], (1, 1, 1, 1)),
+    ],
+)
+async def test_valid_index_ranges_preserve_codepoint_boundaries(
+    monkeypatch, contents, span, expected
+):
     module = importlib.import_module("services.tools.manage_script")
     monkeypatch.setattr(module, "get_unity_instance_from_context", AsyncMock(return_value=None))
-    monkeypatch.setattr(module, "send_with_unity_instance", AsyncMock(return_value={
-        "success": True, "data": {"contents": contents},
-    }))
+    monkeypatch.setattr(
+        module,
+        "send_with_unity_instance",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "data": {"contents": contents},
+            }
+        ),
+    )
     writer = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(module, "send_mutation", writer)
 
     response = await module.apply_text_edits(
-        AsyncMock(), "Assets/Scripts/Foo.cs", [{"range": span, "newText": "Z"}],
+        AsyncMock(),
+        "Assets/Scripts/Foo.cs",
+        [{"range": span, "newText": "Z"}],
     )
 
     assert response["success"] is True
     edit = writer.call_args.args[3]["edits"][0]
-    assert tuple(edit[field] for field in ("startLine", "startCol", "endLine", "endCol")) == expected
+    assert (
+        tuple(edit[field] for field in ("startLine", "startCol", "endLine", "endCol")) == expected
+    )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("prefix", [[], [{"op": "append", "text": "Z"}], [
-    {"op": "insert_method", "replacement": "void M() {}"},
-]])
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        [],
+        [{"op": "append", "text": "Z"}],
+        [
+            {"op": "insert_method", "replacement": "void M() {}"},
+        ],
+    ],
+)
 async def test_unknown_script_operation_rejects_entire_batch(script_transport, prefix):
     reader, writer = script_transport
     response = await script_edits.script_apply_edits(
-        AsyncMock(), "Foo", "Assets/Scripts", [*prefix, {"op": "apend", "text": "X"}],
+        AsyncMock(),
+        "Foo",
+        "Assets/Scripts",
+        [*prefix, {"op": "apend", "text": "X"}],
     )
 
     assert isinstance(response, dict)

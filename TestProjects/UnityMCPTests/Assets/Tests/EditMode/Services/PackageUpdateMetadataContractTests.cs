@@ -50,8 +50,10 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsFalse(result.CheckSucceeded);
             Assert.IsFalse(result.UpdateAvailable);
             Assert.IsNull(result.LatestVersion);
-            Assert.AreEqual(git ? "Failed to check for updates (network issue or offline)"
-                : "Failed to check for Asset Store updates (network issue or offline)", result.Message);
+            Assert.AreEqual(
+                git ? "Failed to check for updates (network issue or offline)" : "Failed to check for Asset Store updates (network issue or offline)",
+                result.Message
+            );
         }
 
         [TestCase(true)]
@@ -83,10 +85,18 @@ namespace MCPForUnityTests.Editor.Services
         {
             public string Fetched;
             public int Fetches;
+
             protected override string FetchLatestVersionFromGitHub(string branch)
-            { Fetches++; return Fetched; }
+            {
+                Fetches++;
+                return Fetched;
+            }
+
             protected override string FetchLatestVersionFromAssetStoreJson()
-            { Fetches++; return Fetched; }
+            {
+                Fetches++;
+                return Fetched;
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 """Comparison fails closed on incompatible conditions and hidden regressions."""
+
 from __future__ import annotations
 
 import json
@@ -21,43 +22,112 @@ from tools.bench_transport_report import fingerprint
 @pytest.fixture
 def report() -> Capture:
     """Small coherent report exercises comparison guards without process timing."""
-    clean = {"shared_read_reserved_bytes": 0, "capacity_bytes": 64000000,
-             "stdio_delivery_observer_available": True}
-    status = {"registrations": 2, "commands": {"read_console": 7, "get_editor_state": 2, "get_test_job": 2},
-              "accounting": clean}
+    clean = {
+        "shared_read_reserved_bytes": 0,
+        "capacity_bytes": 64000000,
+        "stdio_delivery_observer_available": True,
+    }
+    status = {
+        "registrations": 2,
+        "commands": {"read_console": 7, "get_editor_state": 2, "get_test_job": 2},
+        "accounting": clean,
+    }
     rows = []
     for mode in ("stdio", "http"):
         commands = {**status["commands"], **({"ping": 9} if mode == "http" else {})}
-        lifecycle = {"cancel_requested": True, "after_cancel": status,
-                     "after_reconnect": {**status, "commands": commands}}
+        lifecycle = {
+            "cancel_requested": True,
+            "after_cancel": status,
+            "after_reconnect": {**status, "commands": commands},
+        }
         if mode == "http":
-            lifecycle["partial_cancel"] = {"held": {**clean, "assembler_buffer_bytes": 262144, "hub_reserved_bytes": 1314816},
-                                           "after_cancel": status, "after_late_chunks": {**status,
-                                               "commands": {**commands, "read_console": commands["read_console"] + 1, "ping": commands["ping"] + 1}},
-                                           "receiver_final_chunk_processed": True}
-        correlations = [f"{w}:{phase}" for w in ("small", "state", "large", "job") for phase in ("cold", "warm:0")]
+            lifecycle["partial_cancel"] = {
+                "held": {**clean, "assembler_buffer_bytes": 262144, "hub_reserved_bytes": 1314816},
+                "after_cancel": status,
+                "after_late_chunks": {
+                    **status,
+                    "commands": {
+                        **commands,
+                        "read_console": commands["read_console"] + 1,
+                        "ping": commands["ping"] + 1,
+                    },
+                },
+                "receiver_final_chunk_processed": True,
+            }
+        correlations = [
+            f"{w}:{phase}"
+            for w in ("small", "state", "large", "job")
+            for phase in ("cold", "warm:0")
+        ]
         correlations += ["small:after_cancel", "small:after_reconnect"]
-        rows.append({"mode": mode, "cold_launch_to_initialized_ms": 100,
-            "cold_first_calls": {w: 10 for w in ("small", "state", "large", "job")},
-            "observations": [{"correlation": c, "workload": c.split(":")[0], "phase": "warm" if "warm" in c else "cold",
-                              "client_total_ms": 10, "output_sha256": c.split(":")[0], "output_bytes": 300000}
-                             for c in correlations],
-            "warmed": {w: {"samples": 1, "output_sha256": [w], "output_bytes": 300000,
-                            "stages_ms": {"client_total_ms": {"p50": 10, "p95": 11, "p99": 12}}}
-                       for w in ("small", "state", "large", "job")},
-            "lifecycle": lifecycle, "tool_schemas": [{"name": "read_console", "inputSchema": {}}],
-            "fixture_metadata": {"product_imports": {"main": "main.py"}, "child_packages": {"mcp": "owned"},
-                                 "readiness_strategy": "per_call", "runner": "UnityMCP", "retention_middleware": True},
-            "client_rpc_counts": {"initialize": 1, "tools/list": 1, "tools/call": 17 + (mode == "http") * 7,
-                                  "public_tools/call": 11 + (mode == "http")},
-            "native_child_interpreter": "owned-python", "text_structured_parity": True})
-    return Capture.model_validate({"schema_id": "unity-mcp-transport-bench-v2", "runtime": {"packages": {"mcp": "owned"}},
-        "options": {"samples": 1, "warmup": 0, "large_bytes": 262144, "work_ms": 0, "concurrency": 1,
-                    "cohort_gate": False, "order": "stdio-first"},
-        "source": {"asserted_product_revision": "caller-label", "unchanged_during_measurement": True,
-                   "sha256_before": {"harness:owned.py": "a", "Server/src/main.py": "b"},
-                   "sha256_after": {"harness:owned.py": "a", "Server/src/main.py": "b"}},
-        "peer_profile": {"http_capabilities": ["large_result_v1"]}, "output_equivalent": True, "results": rows})
+        rows.append(
+            {
+                "mode": mode,
+                "cold_launch_to_initialized_ms": 100,
+                "cold_first_calls": {w: 10 for w in ("small", "state", "large", "job")},
+                "observations": [
+                    {
+                        "correlation": c,
+                        "workload": c.split(":")[0],
+                        "phase": "warm" if "warm" in c else "cold",
+                        "client_total_ms": 10,
+                        "output_sha256": c.split(":")[0],
+                        "output_bytes": 300000,
+                    }
+                    for c in correlations
+                ],
+                "warmed": {
+                    w: {
+                        "samples": 1,
+                        "output_sha256": [w],
+                        "output_bytes": 300000,
+                        "stages_ms": {"client_total_ms": {"p50": 10, "p95": 11, "p99": 12}},
+                    }
+                    for w in ("small", "state", "large", "job")
+                },
+                "lifecycle": lifecycle,
+                "tool_schemas": [{"name": "read_console", "inputSchema": {}}],
+                "fixture_metadata": {
+                    "product_imports": {"main": "main.py"},
+                    "child_packages": {"mcp": "owned"},
+                    "readiness_strategy": "per_call",
+                    "runner": "UnityMCP",
+                    "retention_middleware": True,
+                },
+                "client_rpc_counts": {
+                    "initialize": 1,
+                    "tools/list": 1,
+                    "tools/call": 17 + (mode == "http") * 7,
+                    "public_tools/call": 11 + (mode == "http"),
+                },
+                "native_child_interpreter": "owned-python",
+                "text_structured_parity": True,
+            }
+        )
+    return Capture.model_validate(
+        {
+            "schema_id": "unity-mcp-transport-bench-v2",
+            "runtime": {"packages": {"mcp": "owned"}},
+            "options": {
+                "samples": 1,
+                "warmup": 0,
+                "large_bytes": 262144,
+                "work_ms": 0,
+                "concurrency": 1,
+                "cohort_gate": False,
+                "order": "stdio-first",
+            },
+            "source": {
+                "asserted_product_revision": "caller-label",
+                "unchanged_during_measurement": True,
+                "sha256_before": {"harness:owned.py": "a", "Server/src/main.py": "b"},
+                "sha256_after": {"harness:owned.py": "a", "Server/src/main.py": "b"},
+            },
+            "peer_profile": {"http_capabilities": ["large_result_v1"]},
+            "output_equivalent": True,
+            "results": rows,
+        }
+    )
 
 
 def test_same_protocol_rows_when_product_source_fingerprint_changes(report: Capture) -> None:
@@ -73,13 +143,17 @@ def test_same_protocol_rows_when_product_source_fingerprint_changes(report: Capt
 
 
 @pytest.mark.parametrize("order", ["stdio-first", "http-first"])
-def test_transport_order_mismatch_is_rejected_before_output_comparison(report: Capture, monkeypatch, order: str) -> None:
+def test_transport_order_mismatch_is_rejected_before_output_comparison(
+    report: Capture, monkeypatch, order: str
+) -> None:
     baseline = report.model_dump(mode="json")
     candidate = report.model_dump(mode="json")
     baseline["options"]["order"] = order
     candidate["options"]["order"] = "http-first" if order == "stdio-first" else "stdio-first"
+
     def forbidden_fingerprint(*_args, **_kwargs):
         pytest.fail("Different transport positions must not reach output comparison")
+
     monkeypatch.setattr(comparator, "fingerprint", forbidden_fingerprint)
     with pytest.raises(ValueError, match="Transport order"):
         compare(Capture.model_validate(baseline), Capture.model_validate(candidate))
@@ -102,23 +176,55 @@ def test_declared_order_requires_matching_result_sequence(report: Capture) -> No
         compare(report, Capture.model_validate(raw))
 
 
-@pytest.mark.parametrize("policy,rounds,orders", [
-    (None, 3, ["stdio-first", "stdio-first", "http-first", "http-first", "stdio-first", "stdio-first"]),
-    ("alternating", 2, ["stdio-first", "stdio-first", "http-first", "http-first"]),
-    ("http-first", 2, ["http-first"] * 4),
-    ("stdio-first", 2, ["stdio-first"] * 4),
-])
-def test_serial_revision_schedule_and_transport_order(report: Capture, monkeypatch, tmp_path: Path,
-                                                     policy: str | None, rounds: int, orders: list[str]) -> None:
-    argv = ["--baseline-root", str(tmp_path / "baseline"), "--candidate-root", str(tmp_path / "candidate"),
-            "--baseline-revision", "baseline-pin", "--candidate-revision", "candidate-pin",
-            "--output", str(tmp_path / "comparison.json"), "--rounds", str(rounds),
-            "--samples", "1", "--warmup", "0", "--large-bytes", "262144"]
+@pytest.mark.parametrize(
+    "policy,rounds,orders",
+    [
+        (
+            None,
+            3,
+            [
+                "stdio-first",
+                "stdio-first",
+                "http-first",
+                "http-first",
+                "stdio-first",
+                "stdio-first",
+            ],
+        ),
+        ("alternating", 2, ["stdio-first", "stdio-first", "http-first", "http-first"]),
+        ("http-first", 2, ["http-first"] * 4),
+        ("stdio-first", 2, ["stdio-first"] * 4),
+    ],
+)
+def test_serial_revision_schedule_and_transport_order(
+    report: Capture, monkeypatch, tmp_path: Path, policy: str | None, rounds: int, orders: list[str]
+) -> None:
+    argv = [
+        "--baseline-root",
+        str(tmp_path / "baseline"),
+        "--candidate-root",
+        str(tmp_path / "candidate"),
+        "--baseline-revision",
+        "baseline-pin",
+        "--candidate-revision",
+        "candidate-pin",
+        "--output",
+        str(tmp_path / "comparison.json"),
+        "--rounds",
+        str(rounds),
+        "--samples",
+        "1",
+        "--warmup",
+        "0",
+        "--large-bytes",
+        "262144",
+    ]
     if policy is not None:
         argv.extend(("--order", policy))
     arguments = comparator.parse_args(argv)
     calls = []
     active = False
+
     async def owned_fake_run(options):
         nonlocal active
         assert not active, "Capture calls must remain serial"
@@ -127,12 +233,15 @@ def test_serial_revision_schedule_and_transport_order(report: Capture, monkeypat
         calls.append(options)
         raw = report.model_dump(mode="json")
         raw["options"].update(options.model_dump(mode="json"))
-        raw["results"].sort(key=lambda row: row["mode"] != ("stdio" if options.order == "stdio-first" else "http"))
+        raw["results"].sort(
+            key=lambda row: row["mode"] != ("stdio" if options.order == "stdio-first" else "http")
+        )
         raw["source"]["asserted_product_revision"] = options.product_revision
         for phase in ("sha256_before", "sha256_after"):
             raw["source"][phase]["Server/src/main.py"] = options.product_revision
         active = False
         return raw
+
     monkeypatch.setattr(comparator, "run", owned_fake_run)
     anyio.run(comparator.execute, arguments)
     labels = ["baseline-pin", "candidate-pin", "candidate-pin", "baseline-pin"]
@@ -140,33 +249,77 @@ def test_serial_revision_schedule_and_transport_order(report: Capture, monkeypat
         labels += ["baseline-pin", "candidate-pin"]
     assert [call.product_revision for call in calls] == labels
     assert [call.order for call in calls] == orders
-    assert all(not call.diagnostic and not call.resource_contract and not call.cohort_gate for call in calls)
+    assert all(
+        not call.diagnostic and not call.resource_contract and not call.cohort_gate
+        for call in calls
+    )
     saved = json.loads(arguments.output.read_text())
     assert saved["transport_order_policy"] == (policy or "alternating")
     assert [(item["label"], item["transport_order"]) for item in saved["capture_schedule"]] == [
-        ("baseline" if label == "baseline-pin" else "candidate", order) for label, order in zip(labels, orders)]
-    assert len(saved["rounds"]) == rounds and all(len(pair["same_protocol_rows"]) == 8 for pair in saved["rounds"])
+        ("baseline" if label == "baseline-pin" else "candidate", order)
+        for label, order in zip(labels, orders)
+    ]
+    assert len(saved["rounds"]) == rounds and all(
+        len(pair["same_protocol_rows"]) == 8 for pair in saved["rounds"]
+    )
 
 
-def test_same_source_control_rejects_different_pins_before_capture(monkeypatch, tmp_path: Path) -> None:
-    arguments = comparator.parse_args(["--baseline-root", str(tmp_path), "--baseline-revision", "baseline-pin",
-        "--candidate-revision", "other-pin", "--same-source-control", "--output", str(tmp_path / "control.json")])
+def test_same_source_control_rejects_different_pins_before_capture(
+    monkeypatch, tmp_path: Path
+) -> None:
+    arguments = comparator.parse_args(
+        [
+            "--baseline-root",
+            str(tmp_path),
+            "--baseline-revision",
+            "baseline-pin",
+            "--candidate-revision",
+            "other-pin",
+            "--same-source-control",
+            "--output",
+            str(tmp_path / "control.json"),
+        ]
+    )
+
     def forbidden_capture(*_args, **_kwargs):
         pytest.fail("A control with different asserted pins must not launch a child")
+
     monkeypatch.setattr(comparator, "run", forbidden_capture)
     with pytest.raises(ValueError, match="same revision"):
         anyio.run(comparator.execute, arguments)
 
 
 @pytest.mark.parametrize("mutation", [None, "product", "harness", "during", "later"])
-def test_same_source_control_requires_every_actual_source_map(report: Capture, monkeypatch,
-                                                            tmp_path: Path, mutation: str | None) -> None:
-    arguments = comparator.parse_args(["--baseline-root", str(tmp_path / "baseline"),
-        "--candidate-root", str(tmp_path / "copy"), "--baseline-revision", "same-pin",
-        "--candidate-revision", "same-pin", "--same-source-control", "--order", "http-first",
-        "--rounds", "2", "--samples", "1", "--warmup", "0", "--large-bytes", "262144",
-        "--output", str(tmp_path / "control.json")])
+def test_same_source_control_requires_every_actual_source_map(
+    report: Capture, monkeypatch, tmp_path: Path, mutation: str | None
+) -> None:
+    arguments = comparator.parse_args(
+        [
+            "--baseline-root",
+            str(tmp_path / "baseline"),
+            "--candidate-root",
+            str(tmp_path / "copy"),
+            "--baseline-revision",
+            "same-pin",
+            "--candidate-revision",
+            "same-pin",
+            "--same-source-control",
+            "--order",
+            "http-first",
+            "--rounds",
+            "2",
+            "--samples",
+            "1",
+            "--warmup",
+            "0",
+            "--large-bytes",
+            "262144",
+            "--output",
+            str(tmp_path / "control.json"),
+        ]
+    )
     calls = 0
+
     async def owned_fake_run(options):
         nonlocal calls
         calls += 1
@@ -180,6 +333,7 @@ def test_same_source_control_requires_every_actual_source_map(report: Capture, m
             if mutation != "during":
                 raw["source"]["sha256_before"][name] = "different-bytes"
         return raw
+
     monkeypatch.setattr(comparator, "run", owned_fake_run)
     if mutation is None:
         anyio.run(comparator.execute, arguments)
@@ -194,30 +348,52 @@ def test_same_source_control_requires_every_actual_source_map(report: Capture, m
         assert calls == (3 if mutation == "later" else 2)
 
 
-def concurrent_report(report: Capture, pings: int, *, strategy: str = "inflight_shared",
-                      gated: bool = False, private_state: bool = True) -> Capture:
+def concurrent_report(
+    report: Capture,
+    pings: int,
+    *,
+    strategy: str = "inflight_shared",
+    gated: bool = False,
+    private_state: bool = True,
+) -> Capture:
     """Coherent fixed 30-sample/3-warmup transcript; no subprocess or clock."""
     raw = report.model_dump(mode="json")
     raw["options"].update(samples=30, warmup=3, concurrency=2, cohort_gate=gated)
     for row in raw["results"]:
         row["observations"] = [
-            {**row["observations"][0], "correlation": f"{workload}:{phase}", "workload": workload,
-             "phase": phase.split(":")[0], "output_sha256": workload}
+            {
+                **row["observations"][0],
+                "correlation": f"{workload}:{phase}",
+                "workload": workload,
+                "phase": phase.split(":")[0],
+                "output_sha256": workload,
+            }
             for workload in row["warmed"]
-            for phase in ["cold", *(f"warmup:{i}" for i in range(3)), *(f"warm:{i}" for i in range(30))]
-        ] + [{**row["observations"][0], "correlation": f"small:{phase}", "phase": "recovery"}
-             for phase in ("after_cancel", "after_reconnect")]
+            for phase in [
+                "cold",
+                *(f"warmup:{i}" for i in range(3)),
+                *(f"warm:{i}" for i in range(30)),
+            ]
+        ] + [
+            {**row["observations"][0], "correlation": f"small:{phase}", "phase": "recovery"}
+            for phase in ("after_cancel", "after_reconnect")
+        ]
         for workload in row["warmed"].values():
             workload["samples"] = 30
         commands = {"read_console": 71, "get_editor_state": 34, "get_test_job": 34}
         row["client_rpc_counts"].update({"tools/call": 145, "public_tools/call": 139})
         if row["mode"] == "http":
             commands["ping"] = pings
-            row["fixture_metadata"].update(readiness_strategy=strategy,
-                readiness_private_workloads=["state"] if private_state else [])
+            row["fixture_metadata"].update(
+                readiness_strategy=strategy,
+                readiness_private_workloads=["state"] if private_state else [],
+            )
             row["client_rpc_counts"].update({"tools/call": 152, "public_tools/call": 140})
             row["lifecycle"]["partial_cancel"]["after_late_chunks"]["commands"] = {
-                **commands, "read_console": 72, "ping": pings + 1}
+                **commands,
+                "read_console": 72,
+                "ping": pings + 1,
+            }
         row["lifecycle"]["after_reconnect"]["commands"] = commands
     return Capture.model_validate(raw)
 
@@ -226,11 +402,23 @@ def test_missing_baseline_label_is_rejected_before_capture(monkeypatch, tmp_path
     # Given: a different root without any asserted baseline label or manifest.
     def forbidden_capture(*_args, **_kwargs):
         pytest.fail("Missing provenance must not start a child")
+
     monkeypatch.setattr(bench_transport, "run", forbidden_capture)
     monkeypatch.setattr(sys, "path", sys.path.copy())
     script = ROOT / "tools/bench_transport_compare.py"
-    monkeypatch.setattr(sys, "argv", [str(script), "--baseline-root", str(tmp_path),
-        "--candidate-revision", "owned-candidate", "--output", str(tmp_path / "result.json")])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--baseline-root",
+            str(tmp_path),
+            "--candidate-revision",
+            "owned-candidate",
+            "--output",
+            str(tmp_path / "result.json"),
+        ],
+    )
     # When/Then: CLI parsing rejects the omitted label, rather than supplying phase8.
     with pytest.raises(SystemExit) as error:
         runpy.run_path(str(script), run_name="__main__")
@@ -238,16 +426,32 @@ def test_missing_baseline_label_is_rejected_before_capture(monkeypatch, tmp_path
 
 
 @pytest.mark.parametrize("mismatch", ["root", "label"])
-def test_manifest_mismatch_is_rejected_before_capture(monkeypatch, tmp_path: Path, mismatch: str) -> None:
+def test_manifest_mismatch_is_rejected_before_capture(
+    monkeypatch, tmp_path: Path, mismatch: str
+) -> None:
     # Given: owned manifest claims that conflict with explicit caller arguments.
     manifest = tmp_path / "source.json"
-    manifest.write_text(json.dumps({"source_root": str(tmp_path), "revision": "owned-baseline"}), encoding="utf-8")
-    arguments = comparator.parse_args(["--baseline-manifest", str(manifest),
-        "--baseline-root", str(tmp_path / "different" if mismatch == "root" else tmp_path),
-        "--baseline-revision", "different" if mismatch == "label" else "owned-baseline",
-        "--candidate-revision", "owned-candidate", "--output", str(tmp_path / "result.json")])
+    manifest.write_text(
+        json.dumps({"source_root": str(tmp_path), "revision": "owned-baseline"}), encoding="utf-8"
+    )
+    arguments = comparator.parse_args(
+        [
+            "--baseline-manifest",
+            str(manifest),
+            "--baseline-root",
+            str(tmp_path / "different" if mismatch == "root" else tmp_path),
+            "--baseline-revision",
+            "different" if mismatch == "label" else "owned-baseline",
+            "--candidate-revision",
+            "owned-candidate",
+            "--output",
+            str(tmp_path / "result.json"),
+        ]
+    )
+
     def forbidden_capture(*_args, **_kwargs):
         pytest.fail("Mismatched manifest must not start a child")
+
     monkeypatch.setattr(comparator, "run", forbidden_capture)
     # When/Then: the existing root/label preflight fails before capture code runs.
     with pytest.raises(ValueError, match="manifest root/revision"):
@@ -261,11 +465,16 @@ def test_natural_shared_readiness_variation_preserves_both_counts(report: Captur
     result = compare(baseline, candidate)
     # Then: valid variation passes, with both measured counts retained visibly.
     http = next(row for row in result["initialization_counts_cleanup"] if row["mode"] == "http")
-    assert (http["baseline_peer_rpc_counts"]["ping"], http["candidate_peer_rpc_counts"]["ping"]) == (75, 76)
+    assert (
+        http["baseline_peer_rpc_counts"]["ping"],
+        http["candidate_peer_rpc_counts"]["ping"],
+    ) == (75, 76)
 
 
 @pytest.mark.parametrize("pings,gated,reason", [(106, False, "budget"), (76, True, "Cohort-gated")])
-def test_shared_readiness_still_rejects_invalid_budget_or_gate(report: Capture, pings: int, gated: bool, reason: str) -> None:
+def test_shared_readiness_still_rejects_invalid_budget_or_gate(
+    report: Capture, pings: int, gated: bool, reason: str
+) -> None:
     # Given: an extra RPC outside the natural ceiling or deterministic lower bound.
     baseline = concurrent_report(report, 75, gated=gated)
     candidate = concurrent_report(report, pings, gated=gated)
@@ -276,12 +485,18 @@ def test_shared_readiness_still_rejects_invalid_budget_or_gate(report: Capture, 
 
 @pytest.mark.parametrize("mode", ["stdio", "http"])
 @pytest.mark.parametrize("field", ["readiness_strategy", "ordinary_resource_strategy"])
-def test_declared_sharing_downgrade_is_rejected_without_gate(report: Capture, mode: str, field: str) -> None:
+def test_declared_sharing_downgrade_is_rejected_without_gate(
+    report: Capture, mode: str, field: str
+) -> None:
     # Given: individually valid counts but a declared sharing feature downgrade.
     baseline = concurrent_report(report, 75).model_dump(mode="json")
     candidate = concurrent_report(report, 105).model_dump(mode="json")
-    next(row for row in baseline["results"] if row["mode"] == mode)["fixture_metadata"][field] = "inflight_shared"
-    next(row for row in candidate["results"] if row["mode"] == mode)["fixture_metadata"][field] = "per_call"
+    next(row for row in baseline["results"] if row["mode"] == mode)["fixture_metadata"][field] = (
+        "inflight_shared"
+    )
+    next(row for row in candidate["results"] if row["mode"] == mode)["fixture_metadata"][field] = (
+        "per_call"
+    )
     # When/Then: natural budgets or disabled resource probes cannot hide the downgrade.
     with pytest.raises(ValueError, match="downgraded " + field):
         compare(Capture.model_validate(baseline), Capture.model_validate(candidate))
@@ -304,30 +519,61 @@ def test_per_call_to_shared_upgrade_remains_comparable(report: Capture) -> None:
     assert compare(baseline, candidate)["semantic_parity"] is True
 
 
-@pytest.mark.parametrize("mutation,reason", [
-    ("runtime", "Runtime"), ("harness", "harness"), ("options", "options"),
-    ("output", "outputs"), ("schema", "schemas"), ("readiness", "readiness"),
-    ("retained", "leaked"), ("partial", "positive"), ("observations", "missing"),
-    ("partial_rpc", "Partial-transfer"), ("receiver", "receiver_final_chunk_processed"),
-])
-def test_comparison_rejects_when_contract_regresses(report: Capture, mutation: str, reason: str) -> None:
+@pytest.mark.parametrize(
+    "mutation,reason",
+    [
+        ("runtime", "Runtime"),
+        ("harness", "harness"),
+        ("options", "options"),
+        ("output", "outputs"),
+        ("schema", "schemas"),
+        ("readiness", "readiness"),
+        ("retained", "leaked"),
+        ("partial", "positive"),
+        ("observations", "missing"),
+        ("partial_rpc", "Partial-transfer"),
+        ("receiver", "receiver_final_chunk_processed"),
+    ],
+)
+def test_comparison_rejects_when_contract_regresses(
+    report: Capture, mutation: str, reason: str
+) -> None:
     # Given: one baseline report and one altered candidate contract.
     candidate = json.loads(report.model_dump_json())
     match mutation:
-        case "runtime": candidate["runtime"]["platform"] = "different"
+        case "runtime":
+            candidate["runtime"]["platform"] = "different"
         case "harness":
             candidate["source"]["sha256_before"]["harness:owned.py"] = "different"
             candidate["source"]["sha256_after"]["harness:owned.py"] = "different"
-        case "options": candidate["options"]["work_ms"] = 2
-        case "output": candidate["results"][0]["observations"][0]["output_sha256"] = "drift"
-        case "schema": candidate["results"][0]["tool_schemas"][0]["inputSchema"] = {"type": "string"}
-        case "readiness": candidate["results"][1]["lifecycle"]["after_reconnect"]["commands"]["ping"] = 10
-        case "retained": candidate["results"][0]["lifecycle"]["after_cancel"]["accounting"]["shared_read_reserved_bytes"] = 1
-        case "partial": candidate["results"][1]["lifecycle"]["partial_cancel"]["held"]["assembler_buffer_bytes"] = 0
-        case "partial_rpc": candidate["results"][1]["lifecycle"]["partial_cancel"]["after_late_chunks"]["commands"]["read_console"] += 1
-        case "receiver": candidate["results"][1]["lifecycle"]["partial_cancel"]["receiver_final_chunk_processed"] = False
-        case "observations": candidate["results"][0]["observations"].pop()
-        case other: raise AssertionError(other)
+        case "options":
+            candidate["options"]["work_ms"] = 2
+        case "output":
+            candidate["results"][0]["observations"][0]["output_sha256"] = "drift"
+        case "schema":
+            candidate["results"][0]["tool_schemas"][0]["inputSchema"] = {"type": "string"}
+        case "readiness":
+            candidate["results"][1]["lifecycle"]["after_reconnect"]["commands"]["ping"] = 10
+        case "retained":
+            candidate["results"][0]["lifecycle"]["after_cancel"]["accounting"][
+                "shared_read_reserved_bytes"
+            ] = 1
+        case "partial":
+            candidate["results"][1]["lifecycle"]["partial_cancel"]["held"][
+                "assembler_buffer_bytes"
+            ] = 0
+        case "partial_rpc":
+            candidate["results"][1]["lifecycle"]["partial_cancel"]["after_late_chunks"]["commands"][
+                "read_console"
+            ] += 1
+        case "receiver":
+            candidate["results"][1]["lifecycle"]["partial_cancel"][
+                "receiver_final_chunk_processed"
+            ] = False
+        case "observations":
+            candidate["results"][0]["observations"].pop()
+        case other:
+            raise AssertionError(other)
     # When/Then: the altered contract fails before any performance ratio is accepted.
     with pytest.raises(ValueError, match=reason):
         compare(report, Capture.model_validate(candidate))
@@ -336,10 +582,22 @@ def test_comparison_rejects_when_contract_regresses(report: Capture, mutation: s
 @pytest.mark.parametrize("sequence,equal", [(1, True), (2, False)])
 def test_resource_parity_when_only_declared_time_fields_change(sequence: int, equal: bool) -> None:
     # Given: actual resource shape with two volatile timing fields.
-    first = {"success": True, "data": {"observed_at_unix_ms": 100, "sequence": 1,
-                                       "staleness": {"age_ms": 0, "is_stale": False}}}
-    second = {"success": True, "data": {"observed_at_unix_ms": 200, "sequence": sequence,
-                                        "staleness": {"age_ms": 5, "is_stale": False}}}
+    first = {
+        "success": True,
+        "data": {
+            "observed_at_unix_ms": 100,
+            "sequence": 1,
+            "staleness": {"age_ms": 0, "is_stale": False},
+        },
+    }
+    second = {
+        "success": True,
+        "data": {
+            "observed_at_unix_ms": 200,
+            "sequence": sequence,
+            "staleness": {"age_ms": 5, "is_stale": False},
+        },
+    }
     # When: apply the explicit normalization policy to copies of both raw values.
     same = fingerprint(normalize_resource(first)) == fingerprint(normalize_resource(second))
     # Then: semantic hashes match and raw evidence retains both original integers.

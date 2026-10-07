@@ -25,9 +25,14 @@ namespace MCPForUnityTests.Editor.Windows
         {
             var button = new Button { text = "Install" };
             IEnumerator routine = null;
-            RunAction(button, "Installing...", "Install", done =>
-                routine = (IEnumerator)typeof(MCPForUnityEditorWindow).GetMethod("PollUpmRequest", StaticFlags)
-                    .Invoke(null, new object[] { null, "install", done }));
+            RunAction(
+                button,
+                "Installing...",
+                "Install",
+                done =>
+                    routine = (IEnumerator)
+                        typeof(MCPForUnityEditorWindow).GetMethod("PollUpmRequest", StaticFlags).Invoke(null, new object[] { null, "install", done })
+            );
             try
             {
                 LogAssert.Expect(LogType.Error, new Regex("Package install failed:"));
@@ -35,7 +40,16 @@ namespace MCPForUnityTests.Editor.Windows
                 Assert.IsTrue(button.enabledSelf);
                 Assert.AreEqual("Install", button.text);
                 bool retry = false;
-                RunAction(new Button(), "Installing...", "Install", done => { retry = true; done(); });
+                RunAction(
+                    new Button(),
+                    "Installing...",
+                    "Install",
+                    done =>
+                    {
+                        retry = true;
+                        done();
+                    }
+                );
                 Assert.IsTrue(retry);
             }
             finally
@@ -96,7 +110,16 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.IsTrue(button.enabledSelf);
             Assert.AreEqual("Uninstall All", button.text);
             bool retried = false;
-            RunAction(button, "Removing...", "Uninstall All", done => { retried = true; done(); });
+            RunAction(
+                button,
+                "Removing...",
+                "Uninstall All",
+                done =>
+                {
+                    retried = true;
+                    done();
+                }
+            );
             Assert.IsTrue(retried);
         }
 
@@ -118,13 +141,21 @@ namespace MCPForUnityTests.Editor.Windows
                 UnityEngine.Object.DestroyImmediate(first);
                 first = null;
                 reopened = ScriptableObject.CreateInstance<MCPForUnityEditorWindow>();
-                typeof(MCPForUnityEditorWindow).GetMethod("BuildDependenciesSection", InstanceFlags)
-                    .Invoke(reopened, new object[] { new VisualElement() });
+                typeof(MCPForUnityEditorWindow).GetMethod("BuildDependenciesSection", InstanceFlags).Invoke(reopened, new object[] { new VisualElement() });
                 var reopenedSection = (VisualElement)typeof(MCPForUnityEditorWindow).GetField("dependencySection", InstanceFlags).GetValue(reopened);
                 Assert.IsFalse(reopenedSection.enabledSelf);
 
                 bool overlapping = false;
-                RunAction(new Button(), "Removing...", "Uninstall", done => { overlapping = true; done(); });
+                RunAction(
+                    new Button(),
+                    "Removing...",
+                    "Uninstall",
+                    done =>
+                    {
+                        overlapping = true;
+                        done();
+                    }
+                );
                 Assert.IsFalse(overlapping);
                 finish();
                 Assert.IsTrue(reopenedSection.enabledSelf);
@@ -134,8 +165,10 @@ namespace MCPForUnityTests.Editor.Windows
             finally
             {
                 finish?.Invoke();
-                if (first != null) UnityEngine.Object.DestroyImmediate(first);
-                if (reopened != null) UnityEngine.Object.DestroyImmediate(reopened);
+                if (first != null)
+                    UnityEngine.Object.DestroyImmediate(first);
+                if (reopened != null)
+                    UnityEngine.Object.DestroyImmediate(reopened);
             }
         }
 
@@ -151,7 +184,16 @@ namespace MCPForUnityTests.Editor.Windows
                 RunAction(new Button(), "Installing...", "Install", done => secondDone = done);
                 firstDone();
                 bool overlapped = false;
-                RunAction(new Button(), "Removing...", "Uninstall", done => { overlapped = true; done(); });
+                RunAction(
+                    new Button(),
+                    "Removing...",
+                    "Uninstall",
+                    done =>
+                    {
+                        overlapped = true;
+                        done();
+                    }
+                );
                 Assert.IsFalse(overlapped);
             }
             finally
@@ -175,8 +217,9 @@ namespace MCPForUnityTests.Editor.Windows
                 typeof(MCPSetupWindow).GetField("installationSection", InstanceFlags).SetValue(window, installation);
                 typeof(MCPSetupWindow).GetField("doneButton", InstanceFlags).SetValue(window, done);
 
-                typeof(MCPSetupWindow).GetMethod("SetDependencyResult", InstanceFlags).Invoke(window,
-                    new object[] { new DependencyCheckResult { IsSystemReady = true } });
+                typeof(MCPSetupWindow)
+                    .GetMethod("SetDependencyResult", InstanceFlags)
+                    .Invoke(window, new object[] { new DependencyCheckResult { IsSystemReady = true } });
 
                 Assert.AreEqual("System requirements met", status.text);
                 Assert.AreEqual("Next", done.text);
@@ -190,22 +233,30 @@ namespace MCPForUnityTests.Editor.Windows
 
         private static void RunAction(Button button, string busy, string idle, Action<Action> action)
         {
-            typeof(MCPForUnityEditorWindow).GetMethod("RunDependencyAction", StaticFlags)
-                .Invoke(null, new object[] { button, busy, idle, action });
+            typeof(MCPForUnityEditorWindow).GetMethod("RunDependencyAction", StaticFlags).Invoke(null, new object[] { button, busy, idle, action });
         }
 
         private sealed class FakeUpdateService : IPackageUpdateService
         {
             public string Branch = "beta";
             public bool Git = true;
+
             public UpdateCheckResult CheckForUpdate(string version) => null;
+
             public UpdateCheckResult TryGetCachedResult(string version) => null;
+
             public UpdateCheckResult FetchAndCompare(string version) => null;
+
             public UpdateCheckResult FetchAndCompare(string version, bool git, string branch) => null;
+
             public void CacheFetchResult(string current, string fetched) { }
+
             public bool IsNewerVersion(string left, string right) => false;
+
             public bool IsGitInstallation() => Git;
+
             public string GetGitUpdateBranch(string version) => Branch;
+
             public void ClearCache() { }
         }
     }

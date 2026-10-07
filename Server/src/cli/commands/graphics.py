@@ -137,7 +137,12 @@ def volume_list_effects():
 
 
 @graphics.command("volume-create-profile")
-@click.option("--path", "-p", required=True, help="Asset path for the VolumeProfile (e.g., Assets/Profiles/MyProfile.asset).")
+@click.option(
+    "--path",
+    "-p",
+    required=True,
+    help="Asset path for the VolumeProfile (e.g., Assets/Profiles/MyProfile.asset).",
+)
 @click.option("--name", "-n", default=None, help="Display name for the profile.")
 @handle_unity_errors
 def volume_create_profile(path, name):
@@ -181,8 +186,14 @@ def pipeline_settings():
 
 
 @graphics.command("pipeline-set-settings")
-@click.option("--setting", "-s", multiple=True, type=(str, str), required=True,
-              help="Setting key-value pair (e.g., -s renderScale 0.5 -s supportsHDR true).")
+@click.option(
+    "--setting",
+    "-s",
+    multiple=True,
+    type=(str, str),
+    required=True,
+    help="Setting key-value pair (e.g., -s renderScale 0.5 -s supportsHDR true).",
+)
 @handle_unity_errors
 def pipeline_set_settings(setting):
     """Set pipeline asset settings."""
@@ -194,6 +205,7 @@ def pipeline_set_settings(setting):
 
 
 # --- Bake commands ---
+
 
 @graphics.command("bake-start")
 @click.option("--sync", is_flag=True, help="Synchronous bake (blocks until done).")
@@ -243,7 +255,9 @@ def bake_settings():
 
 
 @graphics.command("bake-reflection-probe")
-@click.option("--target", "-t", required=True, help="Name or instance ID of GameObject with ReflectionProbe.")
+@click.option(
+    "--target", "-t", required=True, help="Name or instance ID of GameObject with ReflectionProbe."
+)
 @handle_unity_errors
 def bake_reflection_probe(target):
     """Bake a specific reflection probe."""
@@ -254,8 +268,14 @@ def bake_reflection_probe(target):
 
 
 @graphics.command("bake-set-settings")
-@click.option("--setting", "-s", multiple=True, type=(str, str), required=True,
-              help="Lighting setting key-value pair.")
+@click.option(
+    "--setting",
+    "-s",
+    multiple=True,
+    type=(str, str),
+    required=True,
+    help="Lighting setting key-value pair.",
+)
 @handle_unity_errors
 def bake_set_settings(setting):
     """Set lighting/bake settings."""
@@ -303,6 +323,7 @@ def bake_create_reflection(name, resolution, mode):
 
 # --- Stats commands ---
 
+
 @graphics.command("stats")
 @handle_unity_errors
 def stats():
@@ -322,7 +343,9 @@ def stats_memory():
 
 
 @graphics.command("stats-debug-mode")
-@click.option("--mode", "-m", required=True, help="Debug mode (Overdraw, Wireframe, Mipmaps, etc.).")
+@click.option(
+    "--mode", "-m", required=True, help="Debug mode (Overdraw, Wireframe, Mipmaps, etc.)."
+)
 @handle_unity_errors
 def stats_debug_mode(mode):
     """Set Scene view debug visualization mode."""
@@ -334,6 +357,7 @@ def stats_debug_mode(mode):
 
 # --- Feature commands ---
 
+
 @graphics.command("feature-list")
 @handle_unity_errors
 def feature_list():
@@ -344,7 +368,13 @@ def feature_list():
 
 
 @graphics.command("feature-add")
-@click.option("--type", "-t", "feature_type", required=True, help="Feature type (e.g., FullScreenPassRendererFeature).")
+@click.option(
+    "--type",
+    "-t",
+    "feature_type",
+    required=True,
+    help="Feature type (e.g., FullScreenPassRendererFeature).",
+)
 @click.option("--name", "-n", default=None, help="Display name.")
 @handle_unity_errors
 def feature_add(feature_type, name):
@@ -376,8 +406,9 @@ def feature_remove(index, name):
 @graphics.command("feature-configure")
 @click.option("--index", "-i", type=int, default=None, help="Feature index.")
 @click.option("--name", "-n", default=None, help="Feature name.")
-@click.option("--prop", "-p", multiple=True, type=(str, str), required=True,
-              help="Property key-value pair.")
+@click.option(
+    "--prop", "-p", multiple=True, type=(str, str), required=True, help="Property key-value pair."
+)
 @handle_unity_errors
 def feature_configure(index, name, prop):
     """Configure properties on a renderer feature."""
@@ -393,7 +424,9 @@ def feature_configure(index, name, prop):
 
 
 @graphics.command("feature-reorder")
-@click.option("--order", "-o", required=True, help="Comma-separated list of indices (e.g., '2,0,1').")
+@click.option(
+    "--order", "-o", required=True, help="Comma-separated list of indices (e.g., '2,0,1')."
+)
 @handle_unity_errors
 def feature_reorder(order):
     """Reorder renderer features."""
@@ -423,6 +456,7 @@ def feature_toggle(index, name, active):
 
 # --- Skybox / Environment commands ---
 
+
 @graphics.command("skybox-info")
 @handle_unity_errors
 def skybox_info():
@@ -444,8 +478,14 @@ def skybox_set_material(material):
 
 
 @graphics.command("skybox-set-properties")
-@click.option("--prop", "-p", multiple=True, type=(str, str), required=True,
-              help="Material property key-value pair (e.g., -p _Exposure 1.3).")
+@click.option(
+    "--prop",
+    "-p",
+    multiple=True,
+    type=(str, str),
+    required=True,
+    help="Material property key-value pair (e.g., -p _Exposure 1.3).",
+)
 @handle_unity_errors
 def skybox_set_properties(prop):
     """Set properties on the current skybox material."""
@@ -483,7 +523,9 @@ def skybox_set_ambient(mode, intensity, color, equator_color, ground_color):
 
 @graphics.command("skybox-set-fog")
 @click.option("--enable/--disable", "fog_enabled", default=None, help="Enable or disable fog.")
-@click.option("--mode", "-m", default=None, help="Fog mode: Linear, Exponential, ExponentialSquared.")
+@click.option(
+    "--mode", "-m", default=None, help="Fog mode: Linear, Exponential, ExponentialSquared."
+)
 @click.option("--color", "-c", default=None, help="Fog color as 'r,g,b[,a]'.")
 @click.option("--density", "-d", type=float, default=None, help="Fog density.")
 @click.option("--start", type=float, default=None, help="Fog start distance (Linear).")

@@ -60,8 +60,7 @@ class TestMultiUserSessionFiltering:
 
         sessions_b = await PluginHub.get_sessions(user_id="userB")
         assert len(sessions_b.sessions) == 1
-        assert next(iter(sessions_b.sessions.values())
-                    ).project == "ProjectBeta"
+        assert next(iter(sessions_b.sessions.values())).project == "ProjectBeta"
 
     @pytest.mark.asyncio
     async def test_get_sessions_no_filter_returns_all_in_local_mode(self):

@@ -51,7 +51,6 @@ namespace MCPForUnity.Editor.Services
         /// </summary>
         /// <returns>Verification result with detailed status</returns>
         Task<BridgeVerificationResult> VerifyAsync();
-
     }
 
     /// <summary>

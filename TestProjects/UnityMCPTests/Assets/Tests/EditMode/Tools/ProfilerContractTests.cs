@@ -2,11 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools.Profiler;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine.Profiling;
-using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Editor.Tools.Profiler;
 using UProfiler = UnityEngine.Profiling.Profiler;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -24,18 +24,29 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 UProfiler.enabled = initiallyEnabled;
-                var result = JObject.FromObject(ManageProfiler.HandleCommand(new JObject
-                {
-                    ["action"] = "profiler_start", ["enable_callstacks"] = true,
-                    ["log_file"] = Path.Combine(Path.GetTempPath(), "MissingProfilerContract_" + Guid.NewGuid().ToString("N"), "capture.raw")
-                }).GetAwaiter().GetResult());
+                var result = JObject.FromObject(
+                    ManageProfiler
+                        .HandleCommand(
+                            new JObject
+                            {
+                                ["action"] = "profiler_start",
+                                ["enable_callstacks"] = true,
+                                ["log_file"] = Path.Combine(Path.GetTempPath(), "MissingProfilerContract_" + Guid.NewGuid().ToString("N"), "capture.raw"),
+                            }
+                        )
+                        .GetAwaiter()
+                        .GetResult()
+                );
                 Assert.IsFalse(result.Value<bool>("success"), result.ToString());
                 Assert.AreEqual(initiallyEnabled, UProfiler.enabled);
                 Assert.AreEqual(previousRecording, UProfiler.enableBinaryLog);
                 Assert.AreEqual(previousCallstacks, UProfiler.enableAllocationCallstacks);
                 Assert.AreEqual(previousLogFile, UProfiler.logFile);
             }
-            finally { UProfiler.enabled = previousEnabled; }
+            finally
+            {
+                UProfiler.enabled = previousEnabled;
+            }
         }
 
         [TestCase("unknown")]
@@ -48,18 +59,24 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 var areas = new JObject { ["CPU"] = !previousCpu };
-                if (invalid == "unknown") areas["NotAProfilerArea"] = true;
-                else if (invalid == "value") areas["Memory"] = "bad";
-                else if (invalid == "null") areas["Memory"] = JValue.CreateNull();
-                else areas["12345"] = true;
-                var result = JObject.FromObject(ManageProfiler.HandleCommand(new JObject
-                {
-                    ["action"] = "profiler_set_areas", ["areas"] = areas
-                }).GetAwaiter().GetResult());
+                if (invalid == "unknown")
+                    areas["NotAProfilerArea"] = true;
+                else if (invalid == "value")
+                    areas["Memory"] = "bad";
+                else if (invalid == "null")
+                    areas["Memory"] = JValue.CreateNull();
+                else
+                    areas["12345"] = true;
+                var result = JObject.FromObject(
+                    ManageProfiler.HandleCommand(new JObject { ["action"] = "profiler_set_areas", ["areas"] = areas }).GetAwaiter().GetResult()
+                );
                 Assert.IsFalse(result.Value<bool>("success"), result.ToString());
                 Assert.AreEqual(previousCpu, UProfiler.GetAreaEnabled(ProfilerArea.CPU));
             }
-            finally { UProfiler.SetAreaEnabled(ProfilerArea.CPU, previousCpu); }
+            finally
+            {
+                UProfiler.SetAreaEnabled(ProfilerArea.CPU, previousCpu);
+            }
         }
 
         [Test]
@@ -69,11 +86,18 @@ namespace MCPForUnityTests.Editor.Tools
             bool previousMemory = UProfiler.GetAreaEnabled(ProfilerArea.Memory);
             try
             {
-                var result = JObject.FromObject(ManageProfiler.HandleCommand(new JObject
-                {
-                    ["action"] = "profiler_set_areas",
-                    ["areas"] = new JObject { ["cpu"] = true, ["Memory"] = false }
-                }).GetAwaiter().GetResult());
+                var result = JObject.FromObject(
+                    ManageProfiler
+                        .HandleCommand(
+                            new JObject
+                            {
+                                ["action"] = "profiler_set_areas",
+                                ["areas"] = new JObject { ["cpu"] = true, ["Memory"] = false },
+                            }
+                        )
+                        .GetAwaiter()
+                        .GetResult()
+                );
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 Assert.IsTrue(UProfiler.GetAreaEnabled(ProfilerArea.CPU));
                 Assert.IsFalse(UProfiler.GetAreaEnabled(ProfilerArea.Memory));
@@ -88,10 +112,9 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void EmptyAreas_RemainSuccessfulNoOp()
         {
-            var result = JObject.FromObject(ManageProfiler.HandleCommand(new JObject
-            {
-                ["action"] = "profiler_set_areas", ["areas"] = new JObject()
-            }).GetAwaiter().GetResult());
+            var result = JObject.FromObject(
+                ManageProfiler.HandleCommand(new JObject { ["action"] = "profiler_set_areas", ["areas"] = new JObject() }).GetAwaiter().GetResult()
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(0, ((JObject)result["data"]["areas"]).Count);
         }
@@ -115,11 +138,14 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("Owned_unit", "Owned", "Owned_unit")]
         public void CollidingCounterMetadataKeys_AreRejectedBeforeWaitingForFrames(string first, string second, string collision)
         {
-            var task = ManageProfiler.HandleCommand(new JObject
-            {
-                ["action"] = "get_counters", ["category"] = "Render",
-                ["counters"] = new JArray(first, second)
-            });
+            var task = ManageProfiler.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "get_counters",
+                    ["category"] = "Render",
+                    ["counters"] = new JArray(first, second),
+                }
+            );
 
             Assert.IsTrue(task.IsCompleted, "Collision preflight must finish before starting recorders or waiting for a frame.");
             var result = JObject.FromObject(task.GetAwaiter().GetResult());

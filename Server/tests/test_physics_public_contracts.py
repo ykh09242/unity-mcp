@@ -1,4 +1,5 @@
 """Physics contracts exercised through isolated real SDK and CLI transports."""
+
 import os
 import subprocess
 import sys
@@ -6,14 +7,26 @@ import textwrap
 
 
 def _run(code, tmp_path):
-    env = {**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true", "APPDATA": str(tmp_path), "XDG_DATA_HOME": str(tmp_path)}
-    result = subprocess.run([sys.executable, "-B", "-c", textwrap.dedent(code)], env=env, capture_output=True, text=True, timeout=60)
+    env = {
+        **os.environ,
+        "UNITY_MCP_DISABLE_TELEMETRY": "true",
+        "APPDATA": str(tmp_path),
+        "XDG_DATA_HOME": str(tmp_path),
+    }
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", textwrap.dedent(code)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
 
 def test_physics_cli_wire_validation_and_native_responses(tmp_path):
-    output = _run(r'''
+    output = _run(
+        r"""
         import copy
         import json
         import httpx
@@ -105,12 +118,15 @@ def test_physics_cli_wire_validation_and_native_responses(tmp_path):
             print("FULL_HELP",json.dumps(command),json.dumps(result.stdout))
         print(f"fresh physics CLI checks={checks} failures={len(failures)} requests={len(requests)}")
         assert not failures, failures
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
     assert "fresh physics CLI checks=" in output
 
 
 def test_physics_registered_sdk_payloads_schema_and_diagnostics(tmp_path):
-    output = _run(r'''
+    output = _run(
+        r"""
         import copy
         import json
         import anyio
@@ -233,5 +249,7 @@ def test_physics_registered_sdk_payloads_schema_and_diagnostics(tmp_path):
             print(f"fresh physics SDK checks={checks} failures={len(failures)} requests={len(requests)}")
             assert not failures, failures
         anyio.run(main)
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
     assert "fresh physics SDK checks=" in output

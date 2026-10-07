@@ -29,6 +29,7 @@ import tomllib
 
 try:
     import httpx
+
     HAS_HTTPX = True
 except ImportError:
     httpx = None  # type: ignore
@@ -86,6 +87,7 @@ MCP_VERSION = get_package_version()
 
 class RecordType(str, Enum):
     """Types of telemetry records we collect"""
+
     VERSION = "version"
     STARTUP = "startup"
     USAGE = "usage"
@@ -99,6 +101,7 @@ class RecordType(str, Enum):
 
 class MilestoneType(str, Enum):
     """Major user journey milestones"""
+
     FIRST_STARTUP = "first_startup"
     FIRST_TOOL_USAGE = "first_tool_usage"
     FIRST_SCRIPT_CREATION = "first_script_creation"
@@ -138,7 +141,11 @@ _tool_actions: dict[str, tuple[frozenset[str], bool]] = {}
 def register_tool_actions(tool_name: str, func: Callable) -> None:
     """Snapshot trusted built-in action contracts without importing tool modules."""
     original = inspect.unwrap(func)
-    if type(tool_name) is not str or original.__module__ != f"services.tools.{tool_name}" or original.__name__ != tool_name:
+    if (
+        type(tool_name) is not str
+        or original.__module__ != f"services.tools.{tool_name}"
+        or original.__name__ != tool_name
+    ):
         return  # Dynamic plugin schemas cannot add telemetry dimensions.
     labels: frozenset[str] = frozenset()
     normalize_case = False
@@ -185,6 +192,7 @@ def _metadata_only_error(data: dict[str, Any]) -> dict[str, Any]:
 @dataclass
 class TelemetryRecord:
     """Structure for telemetry data"""
+
     record_type: RecordType
     timestamp: float
     customer_uuid: str
@@ -218,11 +226,15 @@ class TelemetryConfig:
                 continue
 
         # Determine enabled flag: config -> env DISABLE_* opt-out
-        cfg_enabled = True if server_config is None else bool(
-            getattr(server_config, "telemetry_enabled", True))
+        cfg_enabled = (
+            True
+            if server_config is None
+            else bool(getattr(server_config, "telemetry_enabled", True))
+        )
         # No default destination: only explicit config or environment endpoints opt in.
-        cfg_default = None if server_config is None else getattr(
-            server_config, "telemetry_endpoint", None)
+        cfg_default = (
+            None if server_config is None else getattr(server_config, "telemetry_endpoint", None)
+        )
         default_ep = self._validated_endpoint(cfg_default, "") if cfg_default else ""
         self.default_endpoint = default_ep
         # Prefer config default; allow explicit env override only when set
@@ -234,7 +246,8 @@ class TelemetryConfig:
         self.enabled = cfg_enabled and bool(self.endpoint) and not self._is_disabled()
         try:
             logger.info(
-                f"Telemetry configured: endpoint={self.endpoint} (default={default_ep}), timeout_env={os.environ.get('UNITY_MCP_TELEMETRY_TIMEOUT') or '<unset>'}")
+                f"Telemetry configured: endpoint={self.endpoint} (default={default_ep}), timeout_env={os.environ.get('UNITY_MCP_TELEMETRY_TIMEOUT') or '<unset>'}"
+            )
         except Exception:
             pass
 
@@ -245,8 +258,7 @@ class TelemetryConfig:
 
         # Request timeout (small, fail fast). Override with UNITY_MCP_TELEMETRY_TIMEOUT
         try:
-            self.timeout = float(os.environ.get(
-                "UNITY_MCP_TELEMETRY_TIMEOUT", "1.5"))
+            self.timeout = float(os.environ.get("UNITY_MCP_TELEMETRY_TIMEOUT", "1.5"))
         except Exception:
             self.timeout = 1.5
         try:
@@ -259,11 +271,7 @@ class TelemetryConfig:
 
     def _is_disabled(self) -> bool:
         """Check if telemetry is disabled via environment variables"""
-        disable_vars = [
-            "DISABLE_TELEMETRY",
-            "UNITY_MCP_DISABLE_TELEMETRY",
-            "MCP_DISABLE_TELEMETRY"
-        ]
+        disable_vars = ["DISABLE_TELEMETRY", "UNITY_MCP_DISABLE_TELEMETRY", "MCP_DISABLE_TELEMETRY"]
 
         for var in disable_vars:
             if os.environ.get(var, "").lower() in ("true", "1", "yes", "on"):
@@ -272,20 +280,18 @@ class TelemetryConfig:
 
     def _get_data_directory(self) -> Path:
         """Get directory for storing telemetry data"""
-        if os.name == 'nt':  # Windows
-            base_dir = Path(os.environ.get(
-                'APPDATA', Path.home() / 'AppData' / 'Roaming'))
-        elif os.name == 'posix':  # macOS/Linux
+        if os.name == "nt":  # Windows
+            base_dir = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        elif os.name == "posix":  # macOS/Linux
             # uname exists on POSIX; Windows never reaches this branch.
-            if 'darwin' in os.uname().sysname.lower():  # pylint: disable=no-member
-                base_dir = Path.home() / 'Library' / 'Application Support'
+            if "darwin" in os.uname().sysname.lower():  # pylint: disable=no-member
+                base_dir = Path.home() / "Library" / "Application Support"
             else:  # Linux
-                base_dir = Path(os.environ.get('XDG_DATA_HOME',
-                                Path.home() / '.local' / 'share'))
+                base_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
         else:
-            base_dir = Path.home() / '.unity-mcp'
+            base_dir = Path.home() / ".unity-mcp"
 
-        data_dir = base_dir / 'UnityMCP'
+        data_dir = base_dir / "UnityMCP"
         if self.enabled:
             data_dir.mkdir(parents=True, exist_ok=True)
         return data_dir
@@ -304,8 +310,7 @@ class TelemetryConfig:
             # Reject localhost/loopback endpoints in production to avoid accidental local overrides
             host = parsed.hostname or ""
             if host in ("localhost", "127.0.0.1", "::1"):
-                raise ValueError(
-                    "Localhost endpoints are not allowed for telemetry")
+                raise ValueError("Localhost endpoints are not allowed for telemetry")
             return candidate
         except Exception as e:
             logger.debug(
@@ -331,8 +336,7 @@ class TelemetryCollector:
             return
         # Load persistent data before starting worker so first events have UUID
         self._load_persistent_data()
-        self._worker = threading.Thread(
-            target=self._worker_loop, daemon=True)
+        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker.start()
 
     def _load_persistent_data(self):
@@ -341,17 +345,16 @@ class TelemetryCollector:
         try:
             if self.config.uuid_file.exists():
                 self._customer_uuid = self.config.uuid_file.read_text(
-                    encoding="utf-8").strip() or str(uuid.uuid4())
+                    encoding="utf-8"
+                ).strip() or str(uuid.uuid4())
             else:
                 self._customer_uuid = str(uuid.uuid4())
                 try:
-                    self.config.uuid_file.write_text(
-                        self._customer_uuid, encoding="utf-8")
+                    self.config.uuid_file.write_text(self._customer_uuid, encoding="utf-8")
                     if os.name == "posix":
                         os.chmod(self.config.uuid_file, 0o600)
                 except OSError as e:
-                    logger.debug(
-                        f"Failed to persist customer UUID: {e}", exc_info=True)
+                    logger.debug(f"Failed to persist customer UUID: {e}", exc_info=True)
         except (OSError, UnicodeDecodeError) as e:
             logger.debug(f"Failed to load customer UUID: {e}", exc_info=True)
             self._customer_uuid = str(uuid.uuid4())
@@ -359,8 +362,7 @@ class TelemetryCollector:
         # Load milestones (failure here must not affect UUID)
         try:
             if self.config.milestones_file.exists():
-                content = self.config.milestones_file.read_text(
-                    encoding="utf-8")
+                content = self.config.milestones_file.read_text(encoding="utf-8")
                 self._milestones = json.loads(content) or {}
                 if not isinstance(self._milestones, dict):
                     self._milestones = {}
@@ -378,7 +380,9 @@ class TelemetryCollector:
         except OSError as e:
             logger.warning(f"Failed to save milestones: {e}", exc_info=True)
 
-    def record_milestone(self, milestone: MilestoneType, data: dict[str, Any] | None = None) -> bool:
+    def record_milestone(
+        self, milestone: MilestoneType, data: dict[str, Any] | None = None
+    ) -> bool:
         """Record a milestone event, returns True if this is the first occurrence"""
         if not self.config.enabled:
             return False
@@ -397,15 +401,14 @@ class TelemetryCollector:
         self.record(
             record_type=RecordType.USAGE,
             data={"milestone": milestone_key, **(data or {})},
-            milestone=milestone
+            milestone=milestone,
         )
 
         return True
 
-    def record(self,
-               record_type: RecordType,
-               data: dict[str, Any],
-               milestone: MilestoneType | None = None):
+    def record(
+        self, record_type: RecordType, data: dict[str, Any], milestone: MilestoneType | None = None
+    ):
         """Record a telemetry event (async, non-blocking)"""
         if not self.config.enabled:
             return
@@ -418,14 +421,13 @@ class TelemetryCollector:
             customer_uuid=self._customer_uuid or "unknown",
             session_id=self.config.session_id,
             data=_metadata_only_error(data),
-            milestone=milestone
+            milestone=milestone,
         )
         # Enqueue for background worker (non-blocking). Drop on backpressure.
         try:
             self._queue.put_nowait(record)
         except queue.Full:
-            logger.debug(
-                f"Telemetry queue full; dropping {record.record_type}")
+            logger.debug(f"Telemetry queue full; dropping {record.record_type}")
 
     def _worker_loop(self):
         """Background worker that serializes telemetry sends."""
@@ -453,8 +455,8 @@ class TelemetryCollector:
         """Send telemetry data to endpoint"""
         try:
             # System fingerprint (top-level remains concise; details stored in data JSON)
-            _platform = platform.system()          # 'Darwin' | 'Linux' | 'Windows'
-            _source = sys.platform                 # 'darwin' | 'linux' | 'win32'
+            _platform = platform.system()  # 'Darwin' | 'Linux' | 'Windows'
+            _source = sys.platform  # 'darwin' | 'linux' | 'win32'
             _platform_detail = f"{_platform} {platform.release()} ({platform.machine()})"
             _python_version = platform.python_version()
 
@@ -482,19 +484,21 @@ class TelemetryCollector:
                 with httpx.Client(timeout=self.config.timeout) as client:
                     # Re-validate endpoint at send time to handle dynamic changes
                     endpoint = self.config._validated_endpoint(
-                        self.config.endpoint, self.config.default_endpoint)
+                        self.config.endpoint, self.config.default_endpoint
+                    )
                     response = client.post(endpoint, json=payload)
                     if 200 <= response.status_code < 300:
                         logger.debug(f"Telemetry sent: {record.record_type}")
                     else:
-                        logger.warning(
-                            f"Telemetry failed: HTTP {response.status_code}")
+                        logger.warning(f"Telemetry failed: HTTP {response.status_code}")
             else:
                 import urllib.request
                 import urllib.error
+
                 data_bytes = json.dumps(payload).encode("utf-8")
                 endpoint = self.config._validated_endpoint(
-                    self.config.endpoint, self.config.default_endpoint)
+                    self.config.endpoint, self.config.default_endpoint
+                )
                 req = urllib.request.Request(
                     endpoint,
                     data=data_bytes,
@@ -504,11 +508,9 @@ class TelemetryCollector:
                 try:
                     with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
                         if 200 <= resp.getcode() < 300:
-                            logger.debug(
-                                f"Telemetry sent (urllib): {record.record_type}")
+                            logger.debug(f"Telemetry sent (urllib): {record.record_type}")
                         else:
-                            logger.warning(
-                                f"Telemetry failed (urllib): HTTP {resp.getcode()}")
+                            logger.warning(f"Telemetry failed (urllib): HTTP {resp.getcode()}")
                 except urllib.error.URLError as ue:
                     logger.warning(f"Telemetry send failed (urllib): {ue}")
 
@@ -537,9 +539,9 @@ def reset_telemetry():
         _telemetry_collector = None
 
 
-def record_telemetry(record_type: RecordType,
-                     data: dict[str, Any],
-                     milestone: MilestoneType | None = None):
+def record_telemetry(
+    record_type: RecordType, data: dict[str, Any], milestone: MilestoneType | None = None
+):
     """Convenience function to record telemetry"""
     get_telemetry().record(record_type, data, milestone)
 
@@ -549,7 +551,13 @@ def record_milestone(milestone: MilestoneType, data: dict[str, Any] | None = Non
     return get_telemetry().record_milestone(milestone, data)
 
 
-def record_tool_usage(tool_name: str, success: bool, duration_ms: float, error: Exception | str | None = None, sub_action: str | None = None):
+def record_tool_usage(
+    tool_name: str,
+    success: bool,
+    duration_ms: float,
+    error: Exception | str | None = None,
+    sub_action: str | None = None,
+):
     """Record tool usage telemetry
 
     Args:
@@ -559,11 +567,7 @@ def record_tool_usage(tool_name: str, success: bool, duration_ms: float, error: 
         error: Optional exception or stable class label; messages are never sent.
         sub_action: Only labels from the registered built-in action contract are emitted.
     """
-    data = {
-        "tool_name": tool_name,
-        "success": success,
-        "duration_ms": round(duration_ms, 2)
-    }
+    data = {"tool_name": tool_name, "success": success, "duration_ms": round(duration_ms, 2)}
 
     label = tool_action_label(tool_name, sub_action)
     if label is not None:
@@ -575,7 +579,9 @@ def record_tool_usage(tool_name: str, success: bool, duration_ms: float, error: 
     record_telemetry(RecordType.TOOL_EXECUTION, data)
 
 
-def record_resource_usage(resource_name: str, success: bool, duration_ms: float, error: Exception | str | None = None):
+def record_resource_usage(
+    resource_name: str, success: bool, duration_ms: float, error: Exception | str | None = None
+):
     """Record resource usage telemetry
 
     Args:
@@ -587,7 +593,7 @@ def record_resource_usage(resource_name: str, success: bool, duration_ms: float,
     data = {
         "resource_name": resource_name,
         "success": success,
-        "duration_ms": round(duration_ms, 2)
+        "duration_ms": round(duration_ms, 2),
     }
 
     if error:
@@ -598,10 +604,7 @@ def record_resource_usage(resource_name: str, success: bool, duration_ms: float,
 
 def record_latency(operation: str, duration_ms: float, metadata: dict[str, Any] | None = None):
     """Record latency telemetry"""
-    data = {
-        "operation": operation,
-        "duration_ms": round(duration_ms, 2)
-    }
+    data = {"operation": operation, "duration_ms": round(duration_ms, 2)}
 
     if metadata:
         data.update(metadata)
@@ -611,10 +614,7 @@ def record_latency(operation: str, duration_ms: float, metadata: dict[str, Any] 
 
 def record_failure(component: str, error: Exception | str, metadata: dict[str, Any] | None = None):
     """Record failure telemetry"""
-    data = {
-        "component": component,
-        "error": _error_class(error)
-    }
+    data = {"component": component, "error": _error_class(error)}
 
     if metadata:
         data.update(metadata)

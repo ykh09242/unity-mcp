@@ -27,7 +27,8 @@ def run_registration_scenario(source, tmp_path):
 
 
 def test_notification_observes_published_custom_tools(tmp_path):
-    run_registration_scenario('''
+    run_registration_scenario(
+        """
         import asyncio
         import sys
         import weakref
@@ -73,11 +74,14 @@ def test_notification_observes_published_custom_tools(tmp_path):
             await PluginHub.shutdown()
 
         asyncio.run(scenario())
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
 
 
 def test_unregistered_and_hosted_plugins_do_not_publish_global_tools(tmp_path):
-    run_registration_scenario('''
+    run_registration_scenario(
+        """
         import asyncio
         import sys
         from unittest.mock import AsyncMock, patch
@@ -117,4 +121,6 @@ def test_unregistered_and_hosted_plugins_do_not_publish_global_tools(tmp_path):
             await PluginHub.shutdown()
 
         asyncio.run(scenario())
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )

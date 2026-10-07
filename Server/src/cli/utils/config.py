@@ -30,21 +30,24 @@ class CLIConfig:
             port = HTTP_PORT_TYPE.convert(port_raw, None, None)
         except click.BadParameter as error:
             raise ValueError(
-                f"Invalid UNITY_MCP_HTTP_PORT value: {port_raw!r}. {error.message}") from error
+                f"Invalid UNITY_MCP_HTTP_PORT value: {port_raw!r}. {error.message}"
+            ) from error
 
         timeout_raw = os.environ.get("UNITY_MCP_TIMEOUT", "30")
         try:
             timeout = TIMEOUT_TYPE.convert(timeout_raw, None, None)
         except click.BadParameter as error:
             raise ValueError(
-                f"Invalid UNITY_MCP_TIMEOUT value: {timeout_raw!r}. {error.message}") from error
+                f"Invalid UNITY_MCP_TIMEOUT value: {timeout_raw!r}. {error.message}"
+            ) from error
 
         format_raw = os.environ.get("UNITY_MCP_FORMAT", "text")
         try:
             output_format = OUTPUT_FORMAT_TYPE.convert(format_raw, None, None)
         except click.BadParameter as error:
             raise ValueError(
-                f"Invalid UNITY_MCP_FORMAT value: {format_raw!r}. {error.message}") from error
+                f"Invalid UNITY_MCP_FORMAT value: {format_raw!r}. {error.message}"
+            ) from error
 
         return cls(
             host=os.environ.get("UNITY_MCP_HOST", "127.0.0.1"),

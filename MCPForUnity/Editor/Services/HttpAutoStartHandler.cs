@@ -40,8 +40,7 @@ namespace MCPForUnity.Editor.Services
 
         static HttpAutoStartHandler()
         {
-            if (Application.isBatchMode &&
-                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH")))
+            if (Application.isBatchMode && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH")))
             {
                 return;
             }
@@ -52,8 +51,7 @@ namespace MCPForUnity.Editor.Services
             // Cheap pre-check so the common case (auto-start off, nothing pending) costs one
             // EditorPrefs read per domain load instead of an update subscription. The pref is
             // re-read every domain load, so enabling it takes effect at the next reload.
-            if (!latched && !connectPending &&
-                !EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false))
+            if (!latched && !connectPending && !EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false))
             {
                 return;
             }
@@ -115,7 +113,8 @@ namespace MCPForUnity.Editor.Services
         // every frame for the whole session. A later domain reload retries with a fresh budget.
         private static void DeferOrGiveUp()
         {
-            if (++_serviceNotReadyRetries < MaxServiceNotReadyRetries) return;
+            if (++_serviceNotReadyRetries < MaxServiceNotReadyRetries)
+                return;
             EditorApplication.update -= WaitForEditorReady;
             McpLog.Warn("[HTTP Auto-Start] Editor services unavailable; giving up until the next domain reload");
         }
@@ -127,22 +126,26 @@ namespace MCPForUnity.Editor.Services
         /// </summary>
         internal static TickDecision TickCore(bool editorBusy)
         {
-            if (editorBusy) return TickDecision.DeferBusy;
+            if (editorBusy)
+                return TickDecision.DeferBusy;
 
             bool connectPending = SessionState.GetBool(ConnectPendingKey, false);
             if (!connectPending)
             {
-                if (SessionState.GetBool(SessionInitKey, false)) return TickDecision.Skip;
+                if (SessionState.GetBool(SessionInitKey, false))
+                    return TickDecision.Skip;
 
                 // Only check lightweight EditorPrefs here — heavier services are touched in
                 // TryBeginAutoStart once the editor is idle. No latch when disabled: the pref
                 // is re-read on the next domain load.
-                if (!EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false)) return TickDecision.Skip;
+                if (!EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false))
+                    return TickDecision.Skip;
             }
 
             // A pending reload-resume owns bridge revival — checked only when we would
             // otherwise act, so a plain Skip never waits out the resume window.
-            if (HttpBridgeReloadHandler.IsResumePending) return TickDecision.DeferToResume;
+            if (HttpBridgeReloadHandler.IsResumePending)
+                return TickDecision.DeferToResume;
 
             return connectPending ? TickDecision.ShouldReconnect : TickDecision.ShouldStart;
         }
@@ -156,10 +159,12 @@ namespace MCPForUnity.Editor.Services
         {
             try
             {
-                if (!EditorConfigurationCache.Instance.UseHttpTransport) return true;
+                if (!EditorConfigurationCache.Instance.UseHttpTransport)
+                    return true;
 
                 // Don't auto-start if bridge is already running.
-                if (MCPServiceLocator.TransportManager.IsRunning(TransportMode.Http)) return true;
+                if (MCPServiceLocator.TransportManager.IsRunning(TransportMode.Http))
+                    return true;
 
                 _ = AutoStartAsync();
                 return true;
@@ -181,7 +186,8 @@ namespace MCPForUnity.Editor.Services
             bool proceed;
             try
             {
-                proceed = EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false)
+                proceed =
+                    EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false)
                     && EditorConfigurationCache.Instance.UseHttpTransport
                     && !MCPServiceLocator.TransportManager.IsRunning(TransportMode.Http);
             }
@@ -212,8 +218,7 @@ namespace MCPForUnity.Editor.Services
                 {
                     // For HTTP Local: launch the server process first, then connect the bridge.
                     // This mirrors what the UI "Start Server" button does.
-                    if (!HttpEndpointUtility.IsHttpLocalUrlAllowedForLaunch(
-                            HttpEndpointUtility.GetLocalBaseUrl(), out string policyError))
+                    if (!HttpEndpointUtility.IsHttpLocalUrlAllowedForLaunch(HttpEndpointUtility.GetLocalBaseUrl(), out string policyError))
                     {
                         McpLog.Debug($"[HTTP Auto-Start] Local URL blocked by security policy: {policyError}");
                         return;
@@ -295,9 +300,12 @@ namespace MCPForUnity.Editor.Services
             while (true)
             {
                 // Abort if user changed settings while we were waiting.
-                if (!EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false)) return;
-                if (!EditorConfigurationCache.Instance.UseHttpTransport) return;
-                if (MCPServiceLocator.TransportManager.IsRunning(TransportMode.Http)) return;
+                if (!EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false))
+                    return;
+                if (!EditorConfigurationCache.Instance.UseHttpTransport)
+                    return;
+                if (MCPServiceLocator.TransportManager.IsRunning(TransportMode.Http))
+                    return;
 
                 if (server.IsLocalHttpServerReachable())
                 {
@@ -312,9 +320,7 @@ namespace MCPForUnity.Editor.Services
                 }
 
                 double elapsed = EditorApplication.timeSinceStartup - startTime;
-                bool launchProcessDied = server.HasManagedServerLaunchHandle
-                    && !server.IsManagedServerLaunchProcessAlive()
-                    && elapsed > 1.0;
+                bool launchProcessDied = server.HasManagedServerLaunchHandle && !server.IsManagedServerLaunchProcessAlive() && elapsed > 1.0;
 
                 if (launchProcessDied || elapsed > hardCap.TotalSeconds)
                 {
@@ -330,8 +336,14 @@ namespace MCPForUnity.Editor.Services
                     return;
                 }
 
-                try { await Task.Delay(pollDelay); }
-                catch { return; }
+                try
+                {
+                    await Task.Delay(pollDelay);
+                }
+                catch
+                {
+                    return;
+                }
             }
         }
 

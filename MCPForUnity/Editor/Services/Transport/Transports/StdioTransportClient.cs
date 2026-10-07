@@ -30,9 +30,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 int livePort = StdioBridgeHost.GetCurrentPort();
                 if (bridgeRunning != _state.IsConnected || (bridgeRunning && _state.Port != livePort))
                 {
-                    _state = bridgeRunning
-                        ? TransportState.Connected("stdio", port: livePort)
-                        : TransportState.Disconnected("stdio", "Bridge not running");
+                    _state = bridgeRunning ? TransportState.Connected("stdio", port: livePort) : TransportState.Disconnected("stdio", "Bridge not running");
                 }
                 return _state;
             }
@@ -47,8 +45,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         // Pure predicate (unit-testable): keep polling while the bridge is not yet ready and the
         // bounded window has not elapsed.
-        internal static bool ShouldKeepWaitingForReady(bool bridgeReady, double secondsWaited)
-            => !bridgeReady && secondsWaited < ReadyWaitTimeoutSeconds;
+        internal static bool ShouldKeepWaitingForReady(bool bridgeReady, double secondsWaited) => !bridgeReady && secondsWaited < ReadyWaitTimeoutSeconds;
 
         public async Task<bool> StartAsync()
         {
@@ -106,6 +103,5 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             // after domain reload. No proactive push mechanism exists over TCP.
             return Task.CompletedTask;
         }
-
     }
 }

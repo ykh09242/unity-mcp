@@ -1,4 +1,5 @@
 """Registered SDK searches must never silently switch a requested file extension."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -7,7 +8,7 @@ import sys
 import pytest
 
 
-PROGRAM = r'''
+PROGRAM = r"""
 import copy
 import json
 import os
@@ -82,18 +83,31 @@ async def main():
         assert json.loads(result.content[0].text) == reply
     print("PASS", sys.argv[1], "11 public calls")
 anyio.run(main)
-'''
+"""
 
 
 @pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
 def test_search_rejects_wrong_file_extension_before_transport(tmp_path, protocol):
     env = {key: value for key, value in os.environ.items() if not key.startswith("UNITY_MCP_")}
-    for key in ("HOME", "USERPROFILE", "APPDATA", "XDG_DATA_HOME", "UNITY_MCP_LOG_DIR", "TEMP", "TMP"):
+    for key in (
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "XDG_DATA_HOME",
+        "UNITY_MCP_LOG_DIR",
+        "TEMP",
+        "TMP",
+    ):
         env[key] = str(tmp_path)
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "true"
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
     env.pop("PYTEST_CURRENT_TEST", None)
-    result = subprocess.run([sys.executable, "-B", "-c", PROGRAM, protocol], env=env,
-                            capture_output=True, text=True, timeout=90)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", PROGRAM, protocol],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "11 public calls" in result.stdout

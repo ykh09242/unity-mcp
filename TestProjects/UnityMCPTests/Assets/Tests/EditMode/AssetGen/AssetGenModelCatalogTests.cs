@@ -17,24 +17,18 @@ namespace MCPForUnityTests.Editor.AssetGen
 
         [TearDown]
         public void TearDown() => AssetGenModelCatalog.ResetForTests();
+
         [Test]
         public void Curated_HasAllFourAudioModels()
         {
             IReadOnlyList<ModelEntry> audio = AssetGenModelCatalog.ForProvider("fal", "audio");
 
             CollectionAssert.AreEqual(
-                new[]
-                {
-                    "fal-ai/stable-audio-25/text-to-audio",
-                    "cassetteai/sound-effects-generator",
-                    "cassetteai/music-generator",
-                    "fal-ai/lyria2",
-                },
-                audio.Select(e => e.Id).ToList());
+                new[] { "fal-ai/stable-audio-25/text-to-audio", "cassetteai/sound-effects-generator", "cassetteai/music-generator", "fal-ai/lyria2" },
+                audio.Select(e => e.Id).ToList()
+            );
 
-            CollectionAssert.AreEqual(
-                new[] { 190f, 30f, 180f, 30f },
-                audio.Select(e => e.MaxDurationSeconds).ToList());
+            CollectionAssert.AreEqual(new[] { 190f, 30f, 180f, 30f }, audio.Select(e => e.MaxDurationSeconds).ToList());
 
             Assert.IsNotNull(audio[0].CommercialNote, "Stable Audio should carry a license caveat");
             Assert.IsNull(audio[1].CommercialNote);
@@ -48,9 +42,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             IReadOnlyList<ModelEntry> audio = AssetGenModelCatalog.ForProvider("fal", "audio");
 
             // stable-audio -> seconds_total; both cassette models -> duration; lyria -> no duration knob.
-            CollectionAssert.AreEqual(
-                new[] { "seconds_total", "duration", "duration", null },
-                audio.Select(e => e.DurationField).ToList());
+            CollectionAssert.AreEqual(new[] { "seconds_total", "duration", "duration", null }, audio.Select(e => e.DurationField).ToList());
 
             // The two required-duration models carry a non-zero default so a Duration=0 call still
             // sends a valid body (C2), and a floor >= 1 so fractional durations never send 0 (C3).

@@ -1,12 +1,12 @@
 using System;
 using System.IO;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.TestTools;
 using UnityEngine.UIElements;
-using MCPForUnity.Editor.Tools;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -43,10 +43,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void HandleCommand_UnknownAction_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "explode"
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "explode" }));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("Unknown action"));
         }
@@ -54,10 +51,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Ping_ReturnsPong()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "ping"
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "ping" }));
             Assert.IsTrue(result.Value<bool>("success"));
             Assert.AreEqual("pong", result.Value<string>("message"));
         }
@@ -70,18 +64,21 @@ namespace MCPForUnityTests.Editor.Tools
             string path = $"{TempRoot}/Test_{Guid.NewGuid():N}.uxml";
             string content = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\"><ui:Label text=\"Hi\" /></ui:UXML>";
 
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = path,
-                ["contents"] = content,
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["path"] = path,
+                        ["contents"] = content,
+                    }
+                )
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
             // Verify file was created on disk
-            string fullPath = Path.Combine(Application.dataPath,
-                path.Substring("Assets/".Length)).Replace('/', Path.DirectorySeparatorChar);
+            string fullPath = Path.Combine(Application.dataPath, path.Substring("Assets/".Length)).Replace('/', Path.DirectorySeparatorChar);
             Assert.IsTrue(File.Exists(fullPath), $"File should exist at {fullPath}");
 
             // EnsureEditorExtensionMode may inject editor-extension-mode attribute
@@ -96,12 +93,16 @@ namespace MCPForUnityTests.Editor.Tools
             string path = $"{TempRoot}/Test_{Guid.NewGuid():N}.uss";
             string content = ".root { background-color: red; }";
 
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = path,
-                ["contents"] = content,
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["path"] = path,
+                        ["contents"] = content,
+                    }
+                )
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
         }
@@ -109,12 +110,16 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Create_InvalidExtension_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = $"{TempRoot}/Test.txt",
-                ["contents"] = "hello",
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["path"] = $"{TempRoot}/Test.txt",
+                        ["contents"] = "hello",
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain(".uxml or .uss"));
@@ -123,11 +128,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Create_MissingContents_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = $"{TempRoot}/Test.uxml",
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "create", ["path"] = $"{TempRoot}/Test.uxml" }));
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("contents"));
@@ -140,20 +141,26 @@ namespace MCPForUnityTests.Editor.Tools
             string content = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\" />";
 
             // Create first time
-            ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = path,
-                ["contents"] = content,
-            });
+            ManageUI.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["path"] = path,
+                    ["contents"] = content,
+                }
+            );
 
             // Try to create again
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = path,
-                ["contents"] = content,
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["path"] = path,
+                        ["contents"] = content,
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("already exists"));
@@ -166,18 +173,21 @@ namespace MCPForUnityTests.Editor.Tools
             string content = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\" />";
             string encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
 
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = path,
-                ["encodedContents"] = encoded,
-                ["contentsEncoded"] = true,
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["path"] = path,
+                        ["encodedContents"] = encoded,
+                        ["contentsEncoded"] = true,
+                    }
+                )
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
-            string fullPath = Path.Combine(Application.dataPath,
-                path.Substring("Assets/".Length)).Replace('/', Path.DirectorySeparatorChar);
+            string fullPath = Path.Combine(Application.dataPath, path.Substring("Assets/".Length)).Replace('/', Path.DirectorySeparatorChar);
             string actual = File.ReadAllText(fullPath);
             // EnsureEditorExtensionMode may inject editor-extension-mode attribute
             Assert.That(actual, Does.Contain("ui:UXML"));
@@ -192,18 +202,16 @@ namespace MCPForUnityTests.Editor.Tools
             string path = $"{TempRoot}/ReadTest_{Guid.NewGuid():N}.uxml";
             string content = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\" />";
 
-            ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = path,
-                ["contents"] = content,
-            });
+            ManageUI.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["path"] = path,
+                    ["contents"] = content,
+                }
+            );
 
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "read",
-                ["path"] = path,
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "read", ["path"] = path }));
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var data = result["data"] as JObject;
@@ -215,11 +223,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Read_NonExistentFile_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "read",
-                ["path"] = $"{TempRoot}/DoesNotExist.uxml",
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "read", ["path"] = $"{TempRoot}/DoesNotExist.uxml" }));
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("not found"));
@@ -234,40 +238,46 @@ namespace MCPForUnityTests.Editor.Tools
             string original = ".root { color: red; }";
             string updated = ".root { color: blue; font-size: 20px; }";
 
-            ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = path,
-                ["contents"] = original,
-            });
+            ManageUI.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["path"] = path,
+                    ["contents"] = original,
+                }
+            );
 
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "update",
-                ["path"] = path,
-                ["contents"] = updated,
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "update",
+                        ["path"] = path,
+                        ["contents"] = updated,
+                    }
+                )
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
             // Verify content was updated
-            var readResult = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "read",
-                ["path"] = path,
-            }));
+            var readResult = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "read", ["path"] = path }));
             Assert.AreEqual(updated, readResult["data"].Value<string>("contents"));
         }
 
         [Test]
         public void Update_NonExistentFile_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "update",
-                ["path"] = $"{TempRoot}/Missing.uxml",
-                ["contents"] = "<ui:UXML />",
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "update",
+                        ["path"] = $"{TempRoot}/Missing.uxml",
+                        ["contents"] = "<ui:UXML />",
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("not found"));
@@ -280,11 +290,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string path = $"{TempRoot}/TestPanel_{Guid.NewGuid():N}.asset";
 
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create_panel_settings",
-                ["path"] = path,
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "create_panel_settings", ["path"] = path }));
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
@@ -297,17 +303,9 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string path = $"{TempRoot}/ExistingPanel_{Guid.NewGuid():N}.asset";
 
-            ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create_panel_settings",
-                ["path"] = path,
-            });
+            ManageUI.HandleCommand(new JObject { ["action"] = "create_panel_settings", ["path"] = path });
 
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create_panel_settings",
-                ["path"] = path,
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "create_panel_settings", ["path"] = path }));
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("already exists"));
@@ -320,24 +318,30 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // Create a UXML file first
             string uxmlPath = $"{TempRoot}/Attach_{Guid.NewGuid():N}.uxml";
-            ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = uxmlPath,
-                ["contents"] = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\"><ui:Label text=\"Test\" /></ui:UXML>",
-            });
+            ManageUI.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["path"] = uxmlPath,
+                    ["contents"] = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\"><ui:Label text=\"Test\" /></ui:UXML>",
+                }
+            );
             AssetDatabase.Refresh();
 
             // Create a test GameObject
             var go = new GameObject("UITestObject_Attach");
             try
             {
-                var result = ToJObject(ManageUI.HandleCommand(new JObject
-                {
-                    ["action"] = "attach_ui_document",
-                    ["target"] = go.name,
-                    ["source_asset"] = uxmlPath,
-                }));
+                var result = ToJObject(
+                    ManageUI.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "attach_ui_document",
+                            ["target"] = go.name,
+                            ["source_asset"] = uxmlPath,
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
@@ -355,11 +359,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void AttachUIDocument_MissingTarget_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "attach_ui_document",
-                ["source_asset"] = "Assets/UI/Test.uxml",
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "attach_ui_document", ["source_asset"] = "Assets/UI/Test.uxml" }));
 
             Assert.IsFalse(result.Value<bool>("success"));
         }
@@ -367,11 +367,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void AttachUIDocument_MissingSourceAsset_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "attach_ui_document",
-                ["target"] = "SomeObject",
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "attach_ui_document", ["target"] = "SomeObject" }));
 
             Assert.IsFalse(result.Value<bool>("success"));
         }
@@ -381,10 +377,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void GetVisualTree_MissingTarget_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "get_visual_tree",
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "get_visual_tree" }));
 
             Assert.IsFalse(result.Value<bool>("success"));
         }
@@ -395,11 +388,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = new GameObject("UITestObject_NoDoc");
             try
             {
-                var result = ToJObject(ManageUI.HandleCommand(new JObject
-                {
-                    ["action"] = "get_visual_tree",
-                    ["target"] = go.name,
-                }));
+                var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "get_visual_tree", ["target"] = go.name }));
 
                 Assert.IsFalse(result.Value<bool>("success"));
                 Assert.That(result["error"].ToString(), Does.Contain("UIDocument"));
@@ -416,34 +405,27 @@ namespace MCPForUnityTests.Editor.Tools
         public void Delete_ExistingFile_DeletesFile()
         {
             string path = $"{TempRoot}/Delete_{Guid.NewGuid():N}.uss";
-            ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = path,
-                ["contents"] = ".root { color: red; }",
-            });
+            ManageUI.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["path"] = path,
+                    ["contents"] = ".root { color: red; }",
+                }
+            );
 
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "delete",
-                ["path"] = path,
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "delete", ["path"] = path }));
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
 
-            string fullPath = Path.Combine(Application.dataPath,
-                path.Substring("Assets/".Length)).Replace('/', Path.DirectorySeparatorChar);
+            string fullPath = Path.Combine(Application.dataPath, path.Substring("Assets/".Length)).Replace('/', Path.DirectorySeparatorChar);
             Assert.IsFalse(File.Exists(fullPath), "File should be deleted");
         }
 
         [Test]
         public void Delete_NonExistentFile_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "delete",
-                ["path"] = $"{TempRoot}/Missing.uxml",
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "delete", ["path"] = $"{TempRoot}/Missing.uxml" }));
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("not found"));
@@ -452,11 +434,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Delete_InvalidExtension_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "delete",
-                ["path"] = $"{TempRoot}/File.txt",
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "delete", ["path"] = $"{TempRoot}/File.txt" }));
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain(".uxml or .uss"));
@@ -470,24 +448,24 @@ namespace MCPForUnityTests.Editor.Tools
             string uxmlPath = $"{TempRoot}/ListTest_{Guid.NewGuid():N}.uxml";
             string ussPath = $"{TempRoot}/ListTest_{Guid.NewGuid():N}.uss";
 
-            ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = uxmlPath,
-                ["contents"] = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\" />",
-            });
-            ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = ussPath,
-                ["contents"] = ".root { }",
-            });
+            ManageUI.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["path"] = uxmlPath,
+                    ["contents"] = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\" />",
+                }
+            );
+            ManageUI.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["path"] = ussPath,
+                    ["contents"] = ".root { }",
+                }
+            );
 
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "list",
-                ["path"] = TempRoot,
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "list", ["path"] = TempRoot }));
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var data = result["data"] as JObject;
@@ -500,19 +478,25 @@ namespace MCPForUnityTests.Editor.Tools
         public void List_WithFilterType_FiltersResults()
         {
             string uxmlPath = $"{TempRoot}/FilterTest_{Guid.NewGuid():N}.uxml";
-            ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = uxmlPath,
-                ["contents"] = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\" />",
-            });
+            ManageUI.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["path"] = uxmlPath,
+                    ["contents"] = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\" />",
+                }
+            );
 
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "list",
-                ["path"] = TempRoot,
-                ["filterType"] = "uxml",
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "list",
+                        ["path"] = TempRoot,
+                        ["filterType"] = "uxml",
+                    }
+                )
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var assets = result["data"]["assets"] as JArray;
@@ -529,30 +513,30 @@ namespace MCPForUnityTests.Editor.Tools
         public void DetachUIDocument_RemovesComponent()
         {
             string uxmlPath = $"{TempRoot}/Detach_{Guid.NewGuid():N}.uxml";
-            ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = uxmlPath,
-                ["contents"] = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\"><ui:Label text=\"Test\" /></ui:UXML>",
-            });
+            ManageUI.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["path"] = uxmlPath,
+                    ["contents"] = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\"><ui:Label text=\"Test\" /></ui:UXML>",
+                }
+            );
             AssetDatabase.Refresh();
 
             var go = new GameObject("UITestObject_Detach");
             try
             {
-                ManageUI.HandleCommand(new JObject
-                {
-                    ["action"] = "attach_ui_document",
-                    ["target"] = go.name,
-                    ["source_asset"] = uxmlPath,
-                });
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "attach_ui_document",
+                        ["target"] = go.name,
+                        ["source_asset"] = uxmlPath,
+                    }
+                );
                 Assert.IsNotNull(go.GetComponent<UIDocument>(), "UIDocument should be attached");
 
-                var result = ToJObject(ManageUI.HandleCommand(new JObject
-                {
-                    ["action"] = "detach_ui_document",
-                    ["target"] = go.name,
-                }));
+                var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "detach_ui_document", ["target"] = go.name }));
 
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 Assert.IsNull(go.GetComponent<UIDocument>(), "UIDocument should be removed");
@@ -569,11 +553,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = new GameObject("UITestObject_DetachNoDoc");
             try
             {
-                var result = ToJObject(ManageUI.HandleCommand(new JObject
-                {
-                    ["action"] = "detach_ui_document",
-                    ["target"] = go.name,
-                }));
+                var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "detach_ui_document", ["target"] = go.name }));
 
                 Assert.IsFalse(result.Value<bool>("success"));
                 Assert.That(result["error"].ToString(), Does.Contain("UIDocument"));
@@ -587,10 +567,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void DetachUIDocument_MissingTarget_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "detach_ui_document",
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "detach_ui_document" }));
 
             Assert.IsFalse(result.Value<bool>("success"));
         }
@@ -600,11 +577,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void ModifyVisualElement_MissingTarget_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "modify_visual_element",
-                ["elementName"] = "test",
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "modify_visual_element", ["elementName"] = "test" }));
 
             Assert.IsFalse(result.Value<bool>("success"));
         }
@@ -615,11 +588,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = new GameObject("UITestObject_ModifyNoName");
             try
             {
-                var result = ToJObject(ManageUI.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_visual_element",
-                    ["target"] = go.name,
-                }));
+                var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "modify_visual_element", ["target"] = go.name }));
 
                 Assert.IsFalse(result.Value<bool>("success"));
                 Assert.That(result["error"].ToString(), Does.Contain("element_name"));
@@ -636,12 +605,16 @@ namespace MCPForUnityTests.Editor.Tools
             var go = new GameObject("UITestObject_ModifyNoDoc");
             try
             {
-                var result = ToJObject(ManageUI.HandleCommand(new JObject
-                {
-                    ["action"] = "modify_visual_element",
-                    ["target"] = go.name,
-                    ["elementName"] = "test",
-                }));
+                var result = ToJObject(
+                    ManageUI.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_visual_element",
+                            ["target"] = go.name,
+                            ["elementName"] = "test",
+                        }
+                    )
+                );
 
                 Assert.IsFalse(result.Value<bool>("success"));
                 Assert.That(result["error"].ToString(), Does.Contain("UIDocument"));
@@ -660,19 +633,22 @@ namespace MCPForUnityTests.Editor.Tools
             string path = $"{TempRoot}/Malformed_{Guid.NewGuid():N}.uxml";
             string badContent = "<ui:UXML><ui:Label text=\"unclosed\">";
 
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = path,
-                ["contents"] = badContent,
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["path"] = path,
+                        ["contents"] = badContent,
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("Malformed XML"));
 
             // Verify file was NOT written
-            string fullPath = Path.Combine(Application.dataPath,
-                path.Substring("Assets/".Length)).Replace('/', Path.DirectorySeparatorChar);
+            string fullPath = Path.Combine(Application.dataPath, path.Substring("Assets/".Length)).Replace('/', Path.DirectorySeparatorChar);
             Assert.IsFalse(File.Exists(fullPath), "Malformed UXML should not be written to disk");
         }
 
@@ -686,12 +662,16 @@ namespace MCPForUnityTests.Editor.Tools
             LogAssert.ignoreFailingMessages = true;
             try
             {
-                var result = ToJObject(ManageUI.HandleCommand(new JObject
-                {
-                    ["action"] = "create",
-                    ["path"] = path,
-                    ["contents"] = content,
-                }));
+                var result = ToJObject(
+                    ManageUI.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create",
+                            ["path"] = path,
+                            ["contents"] = content,
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 var data = result["data"] as JObject;
@@ -712,17 +692,20 @@ namespace MCPForUnityTests.Editor.Tools
             string path = $"{TempRoot}/Valid_{Guid.NewGuid():N}.uxml";
             string content = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\"><ui:Label text=\"ok\" /></ui:UXML>";
 
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = path,
-                ["contents"] = content,
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["path"] = path,
+                        ["contents"] = content,
+                    }
+                )
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var data = result["data"] as JObject;
-            Assert.IsNull(data?["validationWarnings"],
-                "Fully valid UXML should not have validationWarnings");
+            Assert.IsNull(data?["validationWarnings"], "Fully valid UXML should not have validationWarnings");
         }
 
         [Test]
@@ -735,12 +718,16 @@ namespace MCPForUnityTests.Editor.Tools
             LogAssert.ignoreFailingMessages = true;
             try
             {
-                var result = ToJObject(ManageUI.HandleCommand(new JObject
-                {
-                    ["action"] = "create",
-                    ["path"] = path,
-                    ["contents"] = content,
-                }));
+                var result = ToJObject(
+                    ManageUI.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create",
+                            ["path"] = path,
+                            ["contents"] = content,
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 var data = result["data"] as JObject;
@@ -759,12 +746,16 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string path = $"{TempRoot}/Empty_{Guid.NewGuid():N}.uxml";
 
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = path,
-                ["contents"] = "   ",
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["path"] = path,
+                        ["contents"] = "   ",
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("empty"));
@@ -776,27 +767,32 @@ namespace MCPForUnityTests.Editor.Tools
             string path = $"{TempRoot}/UpdateMalformed_{Guid.NewGuid():N}.uxml";
             string original = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\" />";
 
-            ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = path,
-                ["contents"] = original,
-            });
+            ManageUI.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["path"] = path,
+                    ["contents"] = original,
+                }
+            );
 
             string badContent = "<ui:UXML><broken>";
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "update",
-                ["path"] = path,
-                ["contents"] = badContent,
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "update",
+                        ["path"] = path,
+                        ["contents"] = badContent,
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("Malformed XML"));
 
             // Verify original content was preserved (EnsureEditorExtensionMode may have injected attribute)
-            string fullPath = Path.Combine(Application.dataPath,
-                path.Substring("Assets/".Length)).Replace('/', Path.DirectorySeparatorChar);
+            string fullPath = Path.Combine(Application.dataPath, path.Substring("Assets/".Length)).Replace('/', Path.DirectorySeparatorChar);
             string actual = File.ReadAllText(fullPath);
             Assert.That(actual, Does.Contain("ui:UXML"), "Original file content should be preserved");
             Assert.That(actual, Does.Not.Contain("<broken>"), "Malformed content should not be written");
@@ -815,12 +811,16 @@ namespace MCPForUnityTests.Editor.Tools
             LogAssert.ignoreFailingMessages = true;
             try
             {
-                var result = ToJObject(ManageUI.HandleCommand(new JObject
-                {
-                    ["action"] = "create",
-                    ["path"] = path,
-                    ["contents"] = content,
-                }));
+                var result = ToJObject(
+                    ManageUI.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create",
+                            ["path"] = path,
+                            ["contents"] = content,
+                        }
+                    )
+                );
 
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             }
@@ -835,12 +835,16 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Create_TraversalPath_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = "Assets/../etc/evil.uxml",
-                ["contents"] = "<ui:UXML />",
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["path"] = "Assets/../etc/evil.uxml",
+                        ["contents"] = "<ui:UXML />",
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("traversal"));
@@ -849,12 +853,16 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Create_DotDotInMiddle_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["path"] = "Assets/UI/../../secret.uxml",
-                ["contents"] = "<ui:UXML />",
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["path"] = "Assets/UI/../../secret.uxml",
+                        ["contents"] = "<ui:UXML />",
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("traversal"));
@@ -863,11 +871,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Read_TraversalPath_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "read",
-                ["path"] = "Assets/../secret.uxml",
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "read", ["path"] = "Assets/../secret.uxml" }));
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("traversal"));
@@ -876,12 +880,16 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Update_TraversalPath_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "update",
-                ["path"] = "Assets/../../etc/passwd.uxml",
-                ["contents"] = "overwrite",
-            }));
+            var result = ToJObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "update",
+                        ["path"] = "Assets/../../etc/passwd.uxml",
+                        ["contents"] = "overwrite",
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("traversal"));
@@ -890,11 +898,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Delete_TraversalPath_ReturnsError()
         {
-            var result = ToJObject(ManageUI.HandleCommand(new JObject
-            {
-                ["action"] = "delete",
-                ["path"] = "Assets/../outside.uxml",
-            }));
+            var result = ToJObject(ManageUI.HandleCommand(new JObject { ["action"] = "delete", ["path"] = "Assets/../outside.uxml" }));
 
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("traversal"));

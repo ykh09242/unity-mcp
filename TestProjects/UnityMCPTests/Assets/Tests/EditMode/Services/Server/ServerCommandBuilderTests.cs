@@ -1,7 +1,7 @@
-using NUnit.Framework;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Server;
-using MCPForUnity.Editor.Constants;
+using NUnit.Framework;
 using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Services.Server

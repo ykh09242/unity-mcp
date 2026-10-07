@@ -1,4 +1,5 @@
 """Cached readiness metadata must not wait for unrelated executor jobs."""
+
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import os
@@ -27,7 +28,9 @@ def local_scanner(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cached_snapshot_returns_while_executor_worker_is_occupied(local_scanner, monkeypatch):
+async def test_cached_snapshot_returns_while_executor_worker_is_occupied(
+    local_scanner, monkeypatch
+):
     scanner, _, asset, expected = local_scanner
     # A change inside the existing throttle window must still wait for the next scan.
     os.utime(asset, ns=(2_000_000_000, 2_000_000_000))
@@ -41,7 +44,9 @@ async def test_cached_snapshot_returns_while_executor_worker_is_occupied(local_s
         assert release.wait(5)
 
     with ThreadPoolExecutor(max_workers=1) as executor:
-        monkeypatch.setattr(loop, "run_in_executor", lambda _, fn, *args: run_in_executor(executor, fn, *args))
+        monkeypatch.setattr(
+            loop, "run_in_executor", lambda _, fn, *args: run_in_executor(executor, fn, *args)
+        )
         busy = executor.submit(occupy)
         await started
         read = asyncio.create_task(scanner.update_and_get_async("Selected@one"))

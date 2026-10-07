@@ -20,16 +20,12 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
 
         public override DependencyStatus DetectPython()
         {
-            var status = new DependencyStatus("Python", isRequired: true)
-            {
-                InstallationHint = GetPythonInstallUrl()
-            };
+            var status = new DependencyStatus("Python", isRequired: true) { InstallationHint = GetPythonInstallUrl() };
 
             try
             {
                 // Try running python directly first
-                if (TryValidatePython("python3", out string version, out string fullPath) ||
-                    TryValidatePython("python", out version, out fullPath))
+                if (TryValidatePython("python3", out string version, out string fullPath) || TryValidatePython("python", out version, out fullPath))
                 {
                     status.IsAvailable = true;
                     status.Version = version;
@@ -39,8 +35,7 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
                 }
 
                 // Fallback: try 'which' command
-                if (TryFindInPath("python3", out string pathResult) ||
-                    TryFindInPath("python", out pathResult))
+                if (TryFindInPath("python3", out string pathResult) || TryFindInPath("python", out pathResult))
                 {
                     if (TryValidatePython(pathResult, out version, out fullPath))
                     {
@@ -113,8 +108,10 @@ Note: Make sure ~/.local/bin is in your PATH for user-local installations.";
                 string augmentedPath = BuildAugmentedPath();
 
                 // Try uv first, then uvx, using ExecPath.TryRun for proper timeout handling
-                if (TryValidateUvWithPath("uv", augmentedPath, out string version, out string fullPath) ||
-                    TryValidateUvWithPath("uvx", augmentedPath, out version, out fullPath))
+                if (
+                    TryValidateUvWithPath("uv", augmentedPath, out string version, out string fullPath)
+                    || TryValidateUvWithPath("uvx", augmentedPath, out version, out fullPath)
+                )
                 {
                     status.IsAvailable = true;
                     status.Version = version;
@@ -151,8 +148,7 @@ Note: Make sure ~/.local/bin is in your PATH for user-local installations.";
                     commandToRun = resolvedPath;
                 }
 
-                if (!ExecPath.TryRun(commandToRun, "--version", null, out string stdout, out string stderr,
-                    5000, augmentedPath))
+                if (!ExecPath.TryRun(commandToRun, "--version", null, out string stdout, out string stderr, 5000, augmentedPath))
                     return false;
 
                 // Check stdout first, then stderr (some Python distributions output to stderr)
@@ -176,7 +172,8 @@ Note: Make sure ~/.local/bin is in your PATH for user-local installations.";
         protected string BuildAugmentedPath()
         {
             var additions = GetPathAdditions();
-            if (additions.Length == 0) return null;
+            if (additions.Length == 0)
+                return null;
 
             // Only return the additions - ExecPath.TryRun will prepend to existing PATH
             return string.Join(Path.PathSeparator, additions);
@@ -192,7 +189,7 @@ Note: Make sure ~/.local/bin is in your PATH for user-local installations.";
                 "/usr/bin",
                 "/bin",
                 "/snap/bin",
-                Path.Combine(homeDir, ".local", "bin")
+                Path.Combine(homeDir, ".local", "bin"),
             };
         }
 

@@ -43,14 +43,21 @@ async def test_debug_request_context_redacts_secret_argv(monkeypatch):
             return None
 
     monkeypatch.setattr(mod, "get_package_version", lambda: "9.9.9-test")
-    monkeypatch.setattr(mod.sys, "argv", [
-        "mcp-for-unity",
-        "--http-remote-hosted",
-        "--api-key-service-token", "s3cret-service-token",
-        "--api-key-validation-url=https://auth.example.com/validate?token=url-embedded",
-        "--api-key-service-token-header", "X-Service-Token",
-        "--http-port", "8080",
-    ])
+    monkeypatch.setattr(
+        mod.sys,
+        "argv",
+        [
+            "mcp-for-unity",
+            "--http-remote-hosted",
+            "--api-key-service-token",
+            "s3cret-service-token",
+            "--api-key-validation-url=https://auth.example.com/validate?token=url-embedded",
+            "--api-key-service-token-header",
+            "X-Service-Token",
+            "--http-port",
+            "8080",
+        ],
+    )
 
     res = await mod.debug_request_context(DummyCtx())
     argv = res["data"]["server"]["argv"]
@@ -72,6 +79,3 @@ def test_redact_argv_hides_the_value_even_when_it_starts_with_a_dash():
     assert mod._redact_argv(["--token", "abc", "--verbose"]) == ["--token", "***", "--verbose"]
     assert mod._redact_argv(["--password=hunter2"]) == ["--password=***"]
     assert mod._redact_argv(["positional", "--port", "1"]) == ["positional", "--port", "1"]
-
-
-

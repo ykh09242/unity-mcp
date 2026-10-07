@@ -13,7 +13,6 @@ namespace MCPForUnity.Editor.Services
     {
         private Dictionary<string, ToolMetadata> _cachedTools;
 
-
         public List<ToolMetadata> DiscoverAllTools()
         {
             if (_cachedTools != null)
@@ -79,9 +78,7 @@ namespace MCPForUnity.Editor.Services
         /// </summary>
         internal static IEnumerable<Type> InRegistrationOrder(IEnumerable<Type> types)
         {
-            return types
-                .OrderBy(type => type.FullName, StringComparer.Ordinal)
-                .ThenBy(type => type.Assembly.FullName, StringComparer.Ordinal);
+            return types.OrderBy(type => type.FullName, StringComparer.Ordinal).ThenBy(type => type.Assembly.FullName, StringComparer.Ordinal);
         }
 
         public ToolMetadata GetToolMetadata(string toolName)
@@ -96,9 +93,7 @@ namespace MCPForUnity.Editor.Services
 
         public List<ToolMetadata> GetEnabledTools()
         {
-            return DiscoverAllTools()
-                .Where(tool => IsToolEnabled(tool.Name))
-                .ToList();
+            return DiscoverAllTools().Where(tool => IsToolEnabled(tool.Name)).ToList();
         }
 
         public bool IsToolEnabled(string toolName)
@@ -109,8 +104,7 @@ namespace MCPForUnity.Editor.Services
             }
 
             var metadata = GetToolMetadata(toolName);
-            if (metadata?.RequiresExplicitConsent == true &&
-                !EditorPrefs.GetBool(GetConsentPreferenceKey(toolName), false))
+            if (metadata?.RequiresExplicitConsent == true && !EditorPrefs.GetBool(GetConsentPreferenceKey(toolName), false))
                 return false;
 
             string key = GetToolPreferenceKey(toolName);
@@ -167,14 +161,12 @@ namespace MCPForUnity.Editor.Services
                     RequiresPolling = toolAttr.RequiresPolling,
                     PollAction = string.IsNullOrEmpty(toolAttr.PollAction) ? "status" : toolAttr.PollAction,
                     MaxPollSeconds = toolAttr.MaxPollSeconds,
-                    Group = toolAttr.Group ?? "core"
+                    Group = toolAttr.Group ?? "core",
                 };
 
-                metadata.IsBuiltIn = StringCaseUtility.IsBuiltInMcpType(
-                    type, metadata.AssemblyName, "MCPForUnity.Editor.Tools");
+                metadata.IsBuiltIn = StringCaseUtility.IsBuiltInMcpType(type, metadata.AssemblyName, "MCPForUnity.Editor.Tools");
 
                 return metadata;
-
             }
             catch (Exception ex)
             {
@@ -206,14 +198,16 @@ namespace MCPForUnity.Editor.Services
                 string paramName = prop.Name;
                 string paramType = GetParameterType(prop.PropertyType);
 
-                parameters.Add(new ParameterMetadata
-                {
-                    Name = paramName,
-                    Description = paramAttr.Description,
-                    Type = paramType,
-                    Required = paramAttr.Required,
-                    DefaultValue = paramAttr.DefaultValue
-                });
+                parameters.Add(
+                    new ParameterMetadata
+                    {
+                        Name = paramName,
+                        Description = paramAttr.Description,
+                        Type = paramType,
+                        Required = paramAttr.Required,
+                        DefaultValue = paramAttr.DefaultValue,
+                    }
+                );
             }
 
             // ToolParameter also supports fields. Keep an annotated property's metadata
@@ -225,14 +219,16 @@ namespace MCPForUnity.Editor.Services
                 if (paramAttr == null || !parameterNames.Add(field.Name))
                     continue;
 
-                parameters.Add(new ParameterMetadata
-                {
-                    Name = field.Name,
-                    Description = paramAttr.Description,
-                    Type = GetParameterType(field.FieldType),
-                    Required = paramAttr.Required,
-                    DefaultValue = paramAttr.DefaultValue
-                });
+                parameters.Add(
+                    new ParameterMetadata
+                    {
+                        Name = field.Name,
+                        Description = paramAttr.Description,
+                        Type = GetParameterType(field.FieldType),
+                        Required = paramAttr.Required,
+                        DefaultValue = paramAttr.DefaultValue,
+                    }
+                );
             }
 
             return parameters;
@@ -255,11 +251,18 @@ namespace MCPForUnity.Editor.Services
                 return "number";
             if (type == typeof(bool))
                 return "boolean";
-            if (typeof(System.Collections.IDictionary).IsAssignableFrom(type) ||
-                type.GetInterfaces().Concat(new[] { type }).Any(candidate =>
-                    candidate.IsGenericType &&
-                    (candidate.GetGenericTypeDefinition() == typeof(IDictionary<,>) ||
-                     candidate.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>))))
+            if (
+                typeof(System.Collections.IDictionary).IsAssignableFrom(type)
+                || type.GetInterfaces()
+                    .Concat(new[] { type })
+                    .Any(candidate =>
+                        candidate.IsGenericType
+                        && (
+                            candidate.GetGenericTypeDefinition() == typeof(IDictionary<,>)
+                            || candidate.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>)
+                        )
+                    )
+            )
                 return "object";
             if (type.IsArray || typeof(System.Collections.IEnumerable).IsAssignableFrom(type))
                 return "array";
@@ -282,8 +285,7 @@ namespace MCPForUnity.Editor.Services
             }
 
             string key = GetToolPreferenceKey(metadata.Name);
-            if (metadata.RequiresExplicitConsent &&
-                !EditorPrefs.GetBool(GetConsentPreferenceKey(metadata.Name), false))
+            if (metadata.RequiresExplicitConsent && !EditorPrefs.GetBool(GetConsentPreferenceKey(metadata.Name), false))
             {
                 // Old versions initialized built-in tools to true without recording consent.
                 EditorPrefs.SetBool(key, false);
@@ -301,8 +303,6 @@ namespace MCPForUnity.Editor.Services
             return EditorPrefKeys.ToolEnabledPrefix + toolName;
         }
 
-        internal static string GetConsentPreferenceKey(string toolName)
-            => EditorPrefKeys.ToolEnabledPrefix + "ExplicitConsent." + toolName;
-
+        internal static string GetConsentPreferenceKey(string toolName) => EditorPrefKeys.ToolEnabledPrefix + "ExplicitConsent." + toolName;
     }
 }

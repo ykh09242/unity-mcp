@@ -30,13 +30,13 @@ namespace MCPForUnityTests.Editor.AssetGen
             return rel;
         }
 
-        private static HttpResult Json(string json, int status = 200)
-            => new HttpResult
+        private static HttpResult Json(string json, int status = 200) =>
+            new HttpResult
             {
                 Status = status,
                 IsSuccess = status >= 200 && status < 300,
                 Text = json,
-                Body = Encoding.UTF8.GetBytes(json)
+                Body = Encoding.UTF8.GetBytes(json),
             };
 
         [Test]
@@ -44,10 +44,15 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var http = new FakeHttpTransport { Handler = _ => Json("{\"result\":\"task_meshy_1\"}") };
             var adapter = new MeshyAdapter();
-            var req = new ModelGenRequest { Provider = "meshy", Mode = "text", Prompt = "a brass lantern", Format = "glb" };
+            var req = new ModelGenRequest
+            {
+                Provider = "meshy",
+                Mode = "text",
+                Prompt = "a brass lantern",
+                Format = "glb",
+            };
 
-            string taskId = adapter.SubmitAsync(req, "msy_secret_value", http, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            string taskId = adapter.SubmitAsync(req, "msy_secret_value", http, CancellationToken.None).GetAwaiter().GetResult();
 
             Assert.AreEqual("task_meshy_1", taskId);
             HttpRequestSpec rec = http.RecordedRequests[0];
@@ -66,7 +71,13 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var http = new FakeHttpTransport { Handler = _ => Json("{\"result\":\"t\"}") };
             var adapter = new MeshyAdapter();
-            var req = new ModelGenRequest { Provider = "meshy", Mode = "text", Prompt = "x", Model = "meshy-5" };
+            var req = new ModelGenRequest
+            {
+                Provider = "meshy",
+                Mode = "text",
+                Prompt = "x",
+                Model = "meshy-5",
+            };
 
             adapter.SubmitAsync(req, "k", http, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -79,7 +90,12 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var http = new FakeHttpTransport { Handler = _ => Json("{\"result\":\"t\"}") };
             var adapter = new MeshyAdapter();
-            var req = new ModelGenRequest { Provider = "meshy", Mode = "text", Prompt = "x" }; // Model null
+            var req = new ModelGenRequest
+            {
+                Provider = "meshy",
+                Mode = "text",
+                Prompt = "x",
+            }; // Model null
 
             adapter.SubmitAsync(req, "k", http, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -92,15 +108,26 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var http = new FakeHttpTransport
             {
-                Handler = _ => Json(
-                    "{\"status\":\"SUCCEEDED\",\"progress\":100," +
-                    "\"model_urls\":{\"glb\":\"https://assets.meshy.ai/model.glb\",\"fbx\":\"https://assets.meshy.ai/model.fbx\"}}")
+                Handler = _ =>
+                    Json(
+                        "{\"status\":\"SUCCEEDED\",\"progress\":100,"
+                            + "\"model_urls\":{\"glb\":\"https://assets.meshy.ai/model.glb\",\"fbx\":\"https://assets.meshy.ai/model.fbx\"}}"
+                    ),
             };
             var adapter = new MeshyAdapter();
             // Texture=false -> single-phase (no refine), so a SUCCEEDED preview surfaces directly.
-            var req = new ModelGenRequest { Provider = "meshy", Mode = "text", Prompt = "x", Format = "glb", Texture = false };
-            adapter.SubmitAsync(req, "k", new FakeHttpTransport { Handler = _ => Json("{\"result\":\"id1\"}") }, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            var req = new ModelGenRequest
+            {
+                Provider = "meshy",
+                Mode = "text",
+                Prompt = "x",
+                Format = "glb",
+                Texture = false,
+            };
+            adapter
+                .SubmitAsync(req, "k", new FakeHttpTransport { Handler = _ => Json("{\"result\":\"id1\"}") }, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
 
             ProviderPollResult res = adapter.PollAsync("id1", "k", http, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -114,10 +141,15 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var fake = new FakeHttpTransport { Handler = _ => Json("{\"message\":\"quota exceeded\"}") };
             var adapter = new MeshyAdapter();
-            var req = new ModelGenRequest { Provider = "meshy", Mode = "text", Prompt = "x", Texture = false };
+            var req = new ModelGenRequest
+            {
+                Provider = "meshy",
+                Mode = "text",
+                Prompt = "x",
+                Texture = false,
+            };
 
-            var ex = Assert.Throws<System.Exception>(() =>
-                adapter.SubmitAsync(req, "k", fake, CancellationToken.None).GetAwaiter().GetResult());
+            var ex = Assert.Throws<System.Exception>(() => adapter.SubmitAsync(req, "k", fake, CancellationToken.None).GetAwaiter().GetResult());
             StringAssert.Contains("quota exceeded", ex.Message);
         }
 
@@ -127,10 +159,21 @@ namespace MCPForUnityTests.Editor.AssetGen
             var http = new FakeHttpTransport { Handler = _ => Json("{\"status\":\"IN_PROGRESS\",\"progress\":37}") };
             var adapter = new MeshyAdapter();
             // Submit single-phase (Texture=false) so progress is reported raw (not split across refine).
-            adapter.SubmitAsync(
-                new ModelGenRequest { Provider = "meshy", Mode = "text", Prompt = "x", Texture = false },
-                "k", new FakeHttpTransport { Handler = _ => Json("{\"result\":\"id1\"}") }, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            adapter
+                .SubmitAsync(
+                    new ModelGenRequest
+                    {
+                        Provider = "meshy",
+                        Mode = "text",
+                        Prompt = "x",
+                        Texture = false,
+                    },
+                    "k",
+                    new FakeHttpTransport { Handler = _ => Json("{\"result\":\"id1\"}") },
+                    CancellationToken.None
+                )
+                .GetAwaiter()
+                .GetResult();
 
             ProviderPollResult res = adapter.PollAsync("id1", "k", http, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -144,10 +187,16 @@ namespace MCPForUnityTests.Editor.AssetGen
             var submitFake = new FakeHttpTransport { Handler = _ => Json("{\"result\":\"img1\"}") };
             var pollFake = new FakeHttpTransport
             {
-                Handler = _ => Json("{\"status\":\"SUCCEEDED\",\"progress\":100,\"model_urls\":{\"glb\":\"https://m/i.glb\"}}")
+                Handler = _ => Json("{\"status\":\"SUCCEEDED\",\"progress\":100,\"model_urls\":{\"glb\":\"https://m/i.glb\"}}"),
             };
             var adapter = new MeshyAdapter();
-            var req = new ModelGenRequest { Provider = "meshy", Mode = "image", ImageUrl = "https://ex.com/ref.png", Format = "glb" };
+            var req = new ModelGenRequest
+            {
+                Provider = "meshy",
+                Mode = "image",
+                ImageUrl = "https://ex.com/ref.png",
+                Format = "glb",
+            };
 
             string id = adapter.SubmitAsync(req, "k", submitFake, CancellationToken.None).GetAwaiter().GetResult();
             Assert.AreEqual("img1", id);
@@ -169,7 +218,13 @@ namespace MCPForUnityTests.Editor.AssetGen
             {
                 var fake = new FakeHttpTransport { Handler = _ => Json("{\"result\":\"id1\"}") };
                 var adapter = new MeshyAdapter();
-                var req = new ModelGenRequest { Provider = "meshy", Mode = "image", ImagePath = rel, Format = "glb" };
+                var req = new ModelGenRequest
+                {
+                    Provider = "meshy",
+                    Mode = "image",
+                    ImagePath = rel,
+                    Format = "glb",
+                };
 
                 adapter.SubmitAsync(req, "k", fake, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -177,7 +232,14 @@ namespace MCPForUnityTests.Editor.AssetGen
                 StringAssert.Contains("/openapi/v1/image-to-3d", rec.Url);
                 StringAssert.Contains("data:image/png;base64,", Encoding.UTF8.GetString(rec.Body));
             }
-            finally { try { Directory.Delete(Path.Combine(ProjectRoot(), "Assets/Generated/__assetgen_meshy_adapter"), true); } catch { } }
+            finally
+            {
+                try
+                {
+                    Directory.Delete(Path.Combine(ProjectRoot(), "Assets/Generated/__assetgen_meshy_adapter"), true);
+                }
+                catch { }
+            }
         }
 
         [Test]
@@ -186,13 +248,20 @@ namespace MCPForUnityTests.Editor.AssetGen
             var submitFake = new FakeHttpTransport { Handler = _ => Json("{\"result\":\"prev1\"}") };
             var pollFake = new FakeHttpTransport
             {
-                Handler = spec => spec.Method == "POST"
-                    ? Json("{\"result\":\"refine1\"}")                                   // refine submit
-                    : Json("{\"status\":\"SUCCEEDED\",\"progress\":100,\"model_urls\":{\"glb\":\"https://m/refined.glb\"}}")
+                Handler = spec =>
+                    spec.Method == "POST"
+                        ? Json("{\"result\":\"refine1\"}") // refine submit
+                        : Json("{\"status\":\"SUCCEEDED\",\"progress\":100,\"model_urls\":{\"glb\":\"https://m/refined.glb\"}}"),
             };
             var adapter = new MeshyAdapter();
             // Texture defaults to true -> two-phase preview+refine.
-            var req = new ModelGenRequest { Provider = "meshy", Mode = "text", Prompt = "a chair", Format = "glb" };
+            var req = new ModelGenRequest
+            {
+                Provider = "meshy",
+                Mode = "text",
+                Prompt = "a chair",
+                Format = "glb",
+            };
 
             string previewId = adapter.SubmitAsync(req, "k", submitFake, CancellationToken.None).GetAwaiter().GetResult();
             Assert.AreEqual("prev1", previewId);
@@ -207,7 +276,8 @@ namespace MCPForUnityTests.Editor.AssetGen
                 if (r.Method == "POST" && r.Body != null)
                 {
                     string b = Encoding.UTF8.GetString(r.Body);
-                    if (b.Contains("refine") && b.Contains("prev1")) refinePosted = true;
+                    if (b.Contains("refine") && b.Contains("prev1"))
+                        refinePosted = true;
                 }
             }
             Assert.IsTrue(refinePosted, "expected a refine POST carrying the preview_task_id");
@@ -224,15 +294,23 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void Poll_FallbackFormat_ReportsSelectedResultExtension(string requestedFormat, string returnedFormat)
         {
             var adapter = new MeshyAdapter();
-            adapter.SubmitAsync(
-                new ModelGenRequest { Mode = "text", Prompt = "x", Format = requestedFormat, Texture = false },
-                "synthetic-key", new FakeHttpTransport { Handler = _ => Json("{\"result\":\"id1\"}") }, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            adapter
+                .SubmitAsync(
+                    new ModelGenRequest
+                    {
+                        Mode = "text",
+                        Prompt = "x",
+                        Format = requestedFormat,
+                        Texture = false,
+                    },
+                    "synthetic-key",
+                    new FakeHttpTransport { Handler = _ => Json("{\"result\":\"id1\"}") },
+                    CancellationToken.None
+                )
+                .GetAwaiter()
+                .GetResult();
             string url = "https://assets.meshy.ai/model." + returnedFormat;
-            var http = new FakeHttpTransport
-            {
-                Handler = _ => Json("{\"status\":\"SUCCEEDED\",\"model_urls\":{\"" + returnedFormat + "\":\"" + url + "\"}}")
-            };
+            var http = new FakeHttpTransport { Handler = _ => Json("{\"status\":\"SUCCEEDED\",\"model_urls\":{\"" + returnedFormat + "\":\"" + url + "\"}}") };
 
             ProviderPollResult result = adapter.PollAsync("id1", "synthetic-key", http, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -247,13 +325,27 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void Poll_RequestedFormatAvailable_PreservesRequestedUrlAndExtension(string format)
         {
             var adapter = new MeshyAdapter();
-            adapter.SubmitAsync(
-                new ModelGenRequest { Mode = "text", Prompt = "x", Format = format, Texture = false },
-                "synthetic-key", new FakeHttpTransport { Handler = _ => Json("{\"result\":\"id1\"}") }, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            adapter
+                .SubmitAsync(
+                    new ModelGenRequest
+                    {
+                        Mode = "text",
+                        Prompt = "x",
+                        Format = format,
+                        Texture = false,
+                    },
+                    "synthetic-key",
+                    new FakeHttpTransport { Handler = _ => Json("{\"result\":\"id1\"}") },
+                    CancellationToken.None
+                )
+                .GetAwaiter()
+                .GetResult();
             var http = new FakeHttpTransport
             {
-                Handler = _ => Json("{\"status\":\"SUCCEEDED\",\"model_urls\":{\"glb\":\"https://assets.meshy.ai/model.glb\",\"fbx\":\"https://assets.meshy.ai/model.fbx\",\"obj\":\"https://assets.meshy.ai/model.obj\"}}")
+                Handler = _ =>
+                    Json(
+                        "{\"status\":\"SUCCEEDED\",\"model_urls\":{\"glb\":\"https://assets.meshy.ai/model.glb\",\"fbx\":\"https://assets.meshy.ai/model.fbx\",\"obj\":\"https://assets.meshy.ai/model.obj\"}}"
+                    ),
             };
 
             ProviderPollResult result = adapter.PollAsync("id1", "synthetic-key", http, CancellationToken.None).GetAwaiter().GetResult();
@@ -266,10 +358,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void Poll_Failed_MapsFailed_WithError()
         {
-            var http = new FakeHttpTransport
-            {
-                Handler = _ => Json("{\"status\":\"FAILED\",\"progress\":0,\"task_error\":{\"message\":\"render error\"}}")
-            };
+            var http = new FakeHttpTransport { Handler = _ => Json("{\"status\":\"FAILED\",\"progress\":0,\"task_error\":{\"message\":\"render error\"}}") };
             var adapter = new MeshyAdapter();
 
             ProviderPollResult res = adapter.PollAsync("id1", "k", http, CancellationToken.None).GetAwaiter().GetResult();

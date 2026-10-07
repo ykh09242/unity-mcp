@@ -1,10 +1,10 @@
 using System;
 using System.Linq;
 using System.Reflection;
-using NUnit.Framework;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Windows;
 using MCPForUnity.Editor.Windows.Components.Connection;
-using MCPForUnity.Editor.Constants;
+using NUnit.Framework;
 using UnityEngine.UIElements;
 
 namespace MCPForUnityTests.Editor.Windows.Characterization
@@ -59,7 +59,6 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             Assert.Contains("Int", enumValues);
             Assert.Contains("Float", enumValues);
             Assert.Contains("Bool", enumValues);
-
         }
 
         /// <summary>
@@ -92,7 +91,12 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             UnityEditor.EditorPrefs.SetString(key, "persisted value");
             try
             {
-                var item = new EditorPrefItem { Key = key, Value = "persisted value", Type = EditorPrefType.String };
+                var item = new EditorPrefItem
+                {
+                    Key = key,
+                    Value = "persisted value",
+                    Type = EditorPrefType.String,
+                };
                 var prefs = (System.Collections.Generic.List<EditorPrefItem>)type.GetField("currentPrefs", flags).GetValue(window);
                 prefs.Add(item);
                 var rows = (System.Collections.Generic.Dictionary<string, VisualElement>)type.GetField("prefRows", flags).GetValue(window);
@@ -158,21 +162,24 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             var fields = type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
 
             // Count VisualElement-related fields
-            var uiFields = fields.Where(f =>
-                f.FieldType == typeof(VisualElement) ||
-                f.FieldType == typeof(Label) ||
-                f.FieldType == typeof(Button)
-            ).ToArray();
+            var uiFields = fields.Where(f => f.FieldType == typeof(VisualElement) || f.FieldType == typeof(Label) || f.FieldType == typeof(Button)).ToArray();
 
             Assert.GreaterOrEqual(uiFields.Length, 10, "Should have 10+ UI element fields");
 
             var expectedFields = new[]
             {
-                "pythonIndicator", "pythonVersion", "pythonDetails",
-                "uvIndicator", "uvVersion", "uvDetails",
-                "statusMessage", "installationSection",
-                "openPythonLinkButton", "openUvLinkButton",
-                "refreshButton", "doneButton"
+                "pythonIndicator",
+                "pythonVersion",
+                "pythonDetails",
+                "uvIndicator",
+                "uvVersion",
+                "uvDetails",
+                "statusMessage",
+                "installationSection",
+                "openPythonLinkButton",
+                "openUvLinkButton",
+                "refreshButton",
+                "doneButton",
             };
 
             Assert.Pass($"MCPSetupWindow caches {uiFields.Length} UI elements including: {string.Join(", ", expectedFields.Take(5))}...");
@@ -189,8 +196,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             // Static as well as Instance: the method takes every element it touches as an argument,
             // so it carries no instance state and is declared static. Looking it up with Instance
             // alone returned null and failed this test rather than reporting a behaviour change.
-            var method = type.GetMethod("UpdateDependencyStatus",
-                BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
+            var method = type.GetMethod("UpdateDependencyStatus", BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
 
             Assert.IsNotNull(method, "Should have UpdateDependencyStatus method");
 
@@ -198,7 +204,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             {
                 "indicator.RemoveFromClassList(\"invalid\")",
                 "indicator.AddToClassList(\"valid\")",
-                "Or vice versa for unavailable dependencies"
+                "Or vice versa for unavailable dependencies",
             };
 
             Assert.Pass($"Class list modification: {string.Join("; ", classListPattern)}");
@@ -221,7 +227,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 "refreshButton.clicked += OnRefreshClicked",
                 "doneButton.clicked += OnDoneClicked",
                 "openPythonLinkButton.clicked += OnOpenPythonInstallClicked",
-                "openUvLinkButton.clicked += OnOpenUvInstallClicked"
+                "openUvLinkButton.clicked += OnOpenUvInstallClicked",
             };
 
             Assert.Pass($"Direct callback pattern: {string.Join("; ", pattern)}");
@@ -244,18 +250,24 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             Assert.IsNotNull(cacheMethod, "Should have CacheUIElements method");
 
             var fields = type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
-            var uiFields = fields.Where(f =>
-                typeof(VisualElement).IsAssignableFrom(f.FieldType) ||
-                typeof(Button).IsAssignableFrom(f.FieldType) ||
-                typeof(TextField).IsAssignableFrom(f.FieldType)
-            ).ToArray();
+            var uiFields = fields
+                .Where(f =>
+                    typeof(VisualElement).IsAssignableFrom(f.FieldType)
+                    || typeof(Button).IsAssignableFrom(f.FieldType)
+                    || typeof(TextField).IsAssignableFrom(f.FieldType)
+                )
+                .ToArray();
 
             Assert.GreaterOrEqual(uiFields.Length, 10, "Should have 10+ UI element fields");
 
             var examples = new[]
             {
-                "transportDropdown", "httpUrlField", "unityPortField",
-                "statusIndicator", "connectionStatusLabel", "connectionToggleButton"
+                "transportDropdown",
+                "httpUrlField",
+                "unityPortField",
+                "statusIndicator",
+                "connectionStatusLabel",
+                "connectionToggleButton",
             };
 
             Assert.Pass($"McpConnectionSection caches {uiFields.Length} UI elements. Examples: {string.Join(", ", examples)}");
@@ -268,12 +280,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
         [Test]
         public void McpConnectionSection_ReadsMultipleEditorPrefs_InInitializeUI()
         {
-            var prefKeys = new[]
-            {
-                EditorPrefKeys.UseHttpTransport,
-                EditorPrefKeys.HttpTransportScope,
-                EditorPrefKeys.UnitySocketPort
-            };
+            var prefKeys = new[] { EditorPrefKeys.UseHttpTransport, EditorPrefKeys.HttpTransportScope, EditorPrefKeys.UnitySocketPort };
 
             foreach (var key in prefKeys)
             {
@@ -304,7 +311,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 "5. Update UI visibility",
                 "6. Invoke OnManualConfigUpdateRequested event",
                 "7. Invoke OnTransportChanged event",
-                "8. Stop opposing transport if switching HTTP<->Stdio"
+                "8. Stop opposing transport if switching HTTP<->Stdio",
             };
 
             Assert.Pass($"Transport callback flow: {string.Join("; ", callbackSteps)}");
@@ -326,7 +333,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             {
                 "httpUrlField.RegisterCallback<FocusOutEvent>(_ => PersistHttpUrlFromField())",
                 "Avoids fighting user during typing",
-                "Normalizes URL on commit"
+                "Normalizes URL on commit",
             };
 
             Assert.Pass($"FocusOut pattern: {string.Join("; ", pattern)}");
@@ -343,7 +350,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             {
                 "field.RegisterCallback<KeyDownEvent>(evt => {...})",
                 "if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)",
-                "PersistValue(); evt.StopPropagation();"
+                "PersistValue(); evt.StopPropagation();",
             };
 
             Assert.Pass($"KeyDown pattern: {string.Join("; ", pattern)}");
@@ -378,8 +385,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
         public void McpAdvancedSection_CachesLargeUIElementSet_IfExists()
         {
             // Try to find McpAdvancedSection type
-            var type = typeof(MCPSetupWindow).Assembly.GetTypes()
-                .FirstOrDefault(t => t.Name == "McpAdvancedSection");
+            var type = typeof(MCPSetupWindow).Assembly.GetTypes().FirstOrDefault(t => t.Name == "McpAdvancedSection");
 
             if (type == null)
             {
@@ -388,12 +394,14 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             }
 
             var fields = type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
-            var uiFields = fields.Where(f =>
-                typeof(VisualElement).IsAssignableFrom(f.FieldType) ||
-                typeof(Button).IsAssignableFrom(f.FieldType) ||
-                typeof(TextField).IsAssignableFrom(f.FieldType) ||
-                typeof(Toggle).IsAssignableFrom(f.FieldType)
-            ).ToArray();
+            var uiFields = fields
+                .Where(f =>
+                    typeof(VisualElement).IsAssignableFrom(f.FieldType)
+                    || typeof(Button).IsAssignableFrom(f.FieldType)
+                    || typeof(TextField).IsAssignableFrom(f.FieldType)
+                    || typeof(Toggle).IsAssignableFrom(f.FieldType)
+                )
+                .ToArray();
 
             Assert.Pass($"McpAdvancedSection caches {uiFields.Length} UI elements");
         }
@@ -412,7 +420,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 EditorPrefKeys.DevModeForceServerRefresh,
                 EditorPrefKeys.PackageDeploySourcePath,
                 EditorPrefKeys.ClaudeCliPathOverride,
-                EditorPrefKeys.UvxPathOverride
+                EditorPrefKeys.UvxPathOverride,
             };
 
             foreach (var key in expectedPrefKeys)
@@ -434,7 +442,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             {
                 "toggle.RegisterValueChangedCallback(evt => {...})",
                 "EditorPrefs.SetBool(Key, evt.newValue)",
-                "Optional: invoke domain events or refresh UI"
+                "Optional: invoke domain events or refresh UI",
             };
 
             Assert.Pass($"Toggle callback pattern: {string.Join("; ", pattern)}");
@@ -451,7 +459,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             {
                 "element.AddToClassList(\"valid\")",
                 "element.RemoveFromClassList(\"invalid\")",
-                "Used for path validation, status indicators, etc."
+                "Used for path validation, status indicators, etc.",
             };
 
             Assert.Pass($"Dynamic class list pattern: {string.Join("; ", pattern)}");
@@ -469,8 +477,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
         public void McpClientConfigSection_CachesDropdownAndIndicators_PlusFields()
         {
             // Try to find McpClientConfigSection type
-            var type = typeof(MCPSetupWindow).Assembly.GetTypes()
-                .FirstOrDefault(t => t.Name == "McpClientConfigSection");
+            var type = typeof(MCPSetupWindow).Assembly.GetTypes().FirstOrDefault(t => t.Name == "McpClientConfigSection");
 
             if (type == null)
             {
@@ -479,12 +486,14 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             }
 
             var fields = type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
-            var uiFields = fields.Where(f =>
-                typeof(VisualElement).IsAssignableFrom(f.FieldType) ||
-                typeof(Button).IsAssignableFrom(f.FieldType) ||
-                typeof(DropdownField).IsAssignableFrom(f.FieldType) ||
-                typeof(Foldout).IsAssignableFrom(f.FieldType)
-            ).ToArray();
+            var uiFields = fields
+                .Where(f =>
+                    typeof(VisualElement).IsAssignableFrom(f.FieldType)
+                    || typeof(Button).IsAssignableFrom(f.FieldType)
+                    || typeof(DropdownField).IsAssignableFrom(f.FieldType)
+                    || typeof(Foldout).IsAssignableFrom(f.FieldType)
+                )
+                .ToArray();
 
             Assert.Pass($"McpClientConfigSection caches {uiFields.Length} UI elements");
         }
@@ -500,7 +509,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             {
                 "dropdown.choices = configuratorList",
                 "dropdown.index set from current selection",
-                "Choices populated from service/registry"
+                "Choices populated from service/registry",
             };
 
             Assert.Pass($"Dropdown initialization: {string.Join("; ", pattern)}");
@@ -517,7 +526,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             {
                 "element.style.display = DisplayStyle.None",
                 "element.style.display = DisplayStyle.Flex",
-                "Used for showing/hiding config fields based on dropdown selection"
+                "Used for showing/hiding config fields based on dropdown selection",
             };
 
             Assert.Pass($"DisplayStyle pattern: {string.Join("; ", pattern)}");
@@ -536,7 +545,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 "2. Load config for selected client",
                 "3. Update dependent fields (URL, status, etc.)",
                 "4. Show/hide sections based on selection",
-                "5. Invoke update events for other components"
+                "5. Invoke update events for other components",
             };
 
             Assert.Pass($"Cascading update flow: {string.Join("; ", updateFlow)}");
@@ -559,14 +568,14 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 "McpAdvancedSection (likely)",
                 "McpClientConfigSection (likely)",
                 "MCPSetupWindow (embedded in CreateGUI)",
-                "McpToolsSection (likely)"
+                "McpToolsSection (likely)",
             };
 
             var phases = new[]
             {
                 "Phase 1: CacheUIElements() - Root.Q<T>() queries",
                 "Phase 2: InitializeUI() - EditorPrefs reads + defaults",
-                "Phase 3: RegisterCallbacks() - Event handler setup"
+                "Phase 3: RegisterCallbacks() - Event handler setup",
             };
 
             Assert.Pass($"Pattern in {componentsWithPattern.Length} components: {string.Join(" -> ", phases)}");
@@ -585,7 +594,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 "2. String URL/Path: GetString/SetString with FocusOut",
                 "3. Integer Port: GetInt/SetInt with KeyDown validation",
                 "4. Key Deletion: DeleteKey() for clearing overrides",
-                "5. Scope-Aware: Conditional logic based on transport scope"
+                "5. Scope-Aware: Conditional logic based on transport scope",
             };
 
             Assert.Pass($"EditorPrefs variations: {string.Join("; ", variations)}");
@@ -605,7 +614,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 "3. Button.clicked += handler",
                 "4. RegisterCallback<FocusOutEvent>",
                 "5. RegisterCallback<KeyDownEvent> with KeyCode check",
-                "6. Event Signal Propagation (Action delegates)"
+                "6. Event Signal Propagation (Action delegates)",
             };
 
             Assert.Pass($"Callback patterns: {string.Join("; ", patterns)}");
@@ -624,7 +633,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 "2. Callback fires immediately",
                 "3. EditorPrefs.Set* called in callback",
                 "4. No batching or delayed persistence",
-                "5. Each change writes immediately to EditorPrefs"
+                "5. Each change writes immediately to EditorPrefs",
             };
 
             Assert.Pass($"Write-through sync: {string.Join(" -> ", syncFlow)}");
@@ -644,7 +653,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 "3. InitializeUI reads EditorPrefs once",
                 "4. SetValueWithoutNotify or .value = ... to populate UI",
                 "5. No automatic refresh if EditorPrefs change externally",
-                "6. Manual refresh requires RefreshUI() call"
+                "6. Manual refresh requires RefreshUI() call",
             };
 
             Assert.Pass($"One-time read sync: {string.Join(" -> ", syncFlow)}");
@@ -670,7 +679,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 "2. Set all panels to DisplayStyle.None",
                 "3. Set selected panel to DisplayStyle.Flex",
                 "4. On user switch: EditorPrefs.SetString(key, newPanel)",
-                "5. Persist survives domain reload"
+                "5. Persist survives domain reload",
             };
 
             Assert.Pass($"Panel switching: {string.Join("; ", pattern)}");
@@ -688,7 +697,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 "if (isHttpSelected) { httpRows.style.display = Flex; }",
                 "else { httpRows.style.display = None; }",
                 "Triggered by transport dropdown value change",
-                "UpdateHttpFieldVisibility() method pattern"
+                "UpdateHttpFieldVisibility() method pattern",
             };
 
             Assert.Pass($"Conditional visibility: {string.Join("; ", pattern)}");
@@ -716,7 +725,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 "2. Raises event: OnSomethingHappened?.Invoke();",
                 "3. Other component subscribes: connection.OnSomethingHappened += HandleIt;",
                 "4. Flow: ConnectionSection -> AdvancedSection or ClientConfigSection",
-                "5. Used for: transport changes, config updates, manual refresh requests"
+                "5. Used for: transport changes, config updates, manual refresh requests",
             };
 
             Assert.Pass($"Event signaling: {string.Join(" -> ", communicationFlow)}");
@@ -744,7 +753,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 "EditorPrefs Get Calls: 40+ (InitializeUI methods)",
                 "EditorPrefs Set Calls: 45+ (callback handlers)",
                 "Toggle Callbacks: 8+ (separate implementations)",
-                "Button Clicks: 15+ (separate implementations)"
+                "Button Clicks: 15+ (separate implementations)",
             };
 
             Assert.Pass($"Domain-wide metrics:\n{string.Join("\n", metrics)}");
@@ -764,10 +773,14 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
         {
             var type = typeof(MCPForUnity.Editor.Windows.Components.AssetGen.McpAssetGenSection);
 
-            Assert.IsNotNull(type.GetMethod("AddModelDropdown", BindingFlags.NonPublic | BindingFlags.Instance),
-                "expected a per-provider model dropdown builder");
-            Assert.IsNotNull(type.GetMethod("AddSharedFalRow", BindingFlags.NonPublic | BindingFlags.Instance),
-                "expected a shared-key fal row builder for audio and 3D");
+            Assert.IsNotNull(
+                type.GetMethod("AddModelDropdown", BindingFlags.NonPublic | BindingFlags.Instance),
+                "expected a per-provider model dropdown builder"
+            );
+            Assert.IsNotNull(
+                type.GetMethod("AddSharedFalRow", BindingFlags.NonPublic | BindingFlags.Instance),
+                "expected a shared-key fal row builder for audio and 3D"
+            );
 
             // AddProviderRow takes (parent, id, displayName, kind) so each row knows its catalog kind.
             var addRow = type.GetMethod("AddProviderRow", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -775,8 +788,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             Assert.AreEqual(4, addRow.GetParameters().Length, "AddProviderRow should take (parent, id, displayName, kind)");
 
             foreach (string phase in new[] { "CacheUIElements", "InitializeUI", "RegisterCallbacks" })
-                Assert.IsNotNull(type.GetMethod(phase, BindingFlags.NonPublic | BindingFlags.Instance),
-                    $"three-phase lifecycle method {phase} should remain");
+                Assert.IsNotNull(type.GetMethod(phase, BindingFlags.NonPublic | BindingFlags.Instance), $"three-phase lifecycle method {phase} should remain");
         }
 
         [Test]
@@ -784,12 +796,15 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
         {
             var type = typeof(MCPForUnity.Editor.Windows.Components.AssetGen.McpAssetGenSection);
 
-            Assert.IsNotNull(type.GetMethod("OnRefreshClicked", BindingFlags.NonPublic | BindingFlags.Instance),
-                "expected a Refresh click handler");
-            Assert.IsNotNull(type.GetField("refreshButton", BindingFlags.NonPublic | BindingFlags.Instance),
-                "expected the Refresh button to be cached (three-phase CacheUIElements)");
-            Assert.IsNotNull(type.GetField("refreshStatusLabel", BindingFlags.NonPublic | BindingFlags.Instance),
-                "expected the Refresh status label to be cached");
+            Assert.IsNotNull(type.GetMethod("OnRefreshClicked", BindingFlags.NonPublic | BindingFlags.Instance), "expected a Refresh click handler");
+            Assert.IsNotNull(
+                type.GetField("refreshButton", BindingFlags.NonPublic | BindingFlags.Instance),
+                "expected the Refresh button to be cached (three-phase CacheUIElements)"
+            );
+            Assert.IsNotNull(
+                type.GetField("refreshStatusLabel", BindingFlags.NonPublic | BindingFlags.Instance),
+                "expected the Refresh status label to be cached"
+            );
         }
 
         #endregion

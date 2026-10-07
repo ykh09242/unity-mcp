@@ -1,8 +1,8 @@
 using System;
-using NUnit.Framework;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Tools.Prefabs;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 
@@ -73,8 +73,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
             var lowerJo = ToJO(lowerResult);
 
             // Both should succeed or both should fail in the same way (action recognized)
-            Assert.AreEqual((bool)upperJo["success"], (bool)lowerJo["success"],
-                "Case normalization should make both behave identically");
+            Assert.AreEqual((bool)upperJo["success"], (bool)lowerJo["success"], "Case normalization should make both behave identically");
         }
 
         #endregion
@@ -85,11 +84,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_FindGameObjects_WithCamelCaseSearchMethod_Succeeds()
         {
             // Current behavior: Tools accept camelCase parameter names
-            var result = FindGameObjects.HandleCommand(new JObject
-            {
-                ["searchTerm"] = "TestObject",
-                ["searchMethod"] = "by_name"
-            });
+            var result = FindGameObjects.HandleCommand(new JObject { ["searchTerm"] = "TestObject", ["searchMethod"] = "by_name" });
             var jo = ToJO(result);
             // FindGameObjects should accept the parameter (may return empty results)
             Assert.IsTrue((bool)jo["success"], "Should accept camelCase parameter");
@@ -99,11 +94,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_FindGameObjects_WithSnakeCaseSearchMethod_Succeeds()
         {
             // Current behavior: Tools also accept snake_case parameter names
-            var result = FindGameObjects.HandleCommand(new JObject
-            {
-                ["searchTerm"] = "TestObject",
-                ["search_method"] = "by_name"
-            });
+            var result = FindGameObjects.HandleCommand(new JObject { ["searchTerm"] = "TestObject", ["search_method"] = "by_name" });
             var jo = ToJO(result);
             Assert.IsTrue((bool)jo["success"], "Should accept snake_case parameter");
         }
@@ -112,10 +103,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_FindGameObjects_WithoutSearchMethod_UsesDefault()
         {
             // Current behavior: searchMethod defaults to "by_name"
-            var result = FindGameObjects.HandleCommand(new JObject
-            {
-                ["searchTerm"] = "TestObject"
-            });
+            var result = FindGameObjects.HandleCommand(new JObject { ["searchTerm"] = "TestObject" });
             var jo = ToJO(result);
             Assert.IsTrue((bool)jo["success"], "Should use default search method");
         }
@@ -124,11 +112,13 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_FindGameObjects_ClampsPageSizeToValidRange()
         {
             // Current behavior: pageSize is clamped to 1-500 range
-            var result = FindGameObjects.HandleCommand(new JObject
-            {
-                ["searchTerm"] = "TestObject",
-                ["pageSize"] = 1000  // Exceeds max
-            });
+            var result = FindGameObjects.HandleCommand(
+                new JObject
+                {
+                    ["searchTerm"] = "TestObject",
+                    ["pageSize"] = 1000, // Exceeds max
+                }
+            );
             var jo = ToJO(result);
             Assert.IsTrue((bool)jo["success"], "Should clamp and succeed");
         }
@@ -137,11 +127,13 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_ManageEditor_SetActiveTool_RequiresToolNameParameter()
         {
             // Current behavior: set_active_tool requires tool_name parameter
-            var result = ManageEditor.HandleCommand(new JObject
-            {
-                ["action"] = "set_active_tool"
-                // Missing tool_name
-            });
+            var result = ManageEditor.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "set_active_tool",
+                    // Missing tool_name
+                }
+            );
             var jo = ToJO(result);
             Assert.IsFalse((bool)jo["success"], "Should require tool_name");
         }
@@ -151,10 +143,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         {
             // Current behavior: Valid actions are recognized and return response objects
             // Using telemetry_status (read-only) to avoid mutating editor state
-            var result = ManageEditor.HandleCommand(new JObject
-            {
-                ["action"] = "telemetry_status"
-            });
+            var result = ManageEditor.HandleCommand(new JObject { ["action"] = "telemetry_status" });
             // Action should be recognized and return valid response
             var jo = ToJO(result);
             Assert.IsNotNull(jo, "Should return a response object");
@@ -169,14 +158,10 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_ManageEditor_WithUnknownAction_ReturnsError()
         {
             // Current behavior: Unknown actions return error with descriptive message
-            var result = ManageEditor.HandleCommand(new JObject
-            {
-                ["action"] = "nonexistent_action_xyz"
-            });
+            var result = ManageEditor.HandleCommand(new JObject { ["action"] = "nonexistent_action_xyz" });
             var jo = ToJO(result);
             Assert.IsFalse((bool)jo["success"], "Should fail for unknown action");
-            StringAssert.Contains("nonexistent_action_xyz", jo["error"]?.ToString() ?? "",
-                "Error should mention the unknown action");
+            StringAssert.Contains("nonexistent_action_xyz", jo["error"]?.ToString() ?? "", "Error should mention the unknown action");
         }
 
         [Test]
@@ -196,10 +181,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_ManageMaterial_WithUnknownAction_ReturnsError()
         {
             // Current behavior: Material tool also returns error for unknown actions
-            var result = ManageMaterial.HandleCommand(new JObject
-            {
-                ["action"] = "unknown_material_action"
-            });
+            var result = ManageMaterial.HandleCommand(new JObject { ["action"] = "unknown_material_action" });
             var jo = ToJO(result);
             Assert.IsFalse((bool)jo["success"], "Should fail for unknown action");
         }
@@ -212,11 +194,13 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_ManagePrefabs_WithInvalidParameters_ReturnsError()
         {
             // Current behavior: Invalid parameters caught and returned as ErrorResponse
-            var result = ManagePrefabs.HandleCommand(new JObject
-            {
-                ["action"] = "create_from_gameobject"
-                // Missing required parameters
-            });
+            var result = ManagePrefabs.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create_from_gameobject",
+                    // Missing required parameters
+                }
+            );
             var jo = ToJO(result);
             Assert.IsFalse((bool)jo["success"], "Should fail with invalid params");
             Assert.IsNotNull(jo["error"], "Should have error description");
@@ -237,11 +221,13 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_ErrorMessages_AreContextSpecific()
         {
             // Current behavior: Error messages include context about what went wrong
-            var result = ManageEditor.HandleCommand(new JObject
-            {
-                ["action"] = "add_tag"
-                // Missing tag_name
-            });
+            var result = ManageEditor.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "add_tag",
+                    // Missing tag_name
+                }
+            );
             var jo = ToJO(result);
             var error = jo["error"]?.ToString() ?? "";
             // Error should mention what's missing or wrong
@@ -253,10 +239,13 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         {
             // Current behavior: Null-safe token access pattern prevents NullReferenceException
             // This test verifies ManageEditor doesn't crash on partial params
-            Assert.DoesNotThrow(() =>
-            {
-                ManageEditor.HandleCommand(new JObject { ["action"] = null });
-            }, "Should handle null action token without exception");
+            Assert.DoesNotThrow(
+                () =>
+                {
+                    ManageEditor.HandleCommand(new JObject { ["action"] = null });
+                },
+                "Should handle null action token without exception"
+            );
         }
 
         #endregion
@@ -267,10 +256,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_ManageEditor_AddTag_RequiresTagName()
         {
             // Current behavior: add_tag validates tag_name is present before mutation
-            var result = ManageEditor.HandleCommand(new JObject
-            {
-                ["action"] = "add_tag"
-            });
+            var result = ManageEditor.HandleCommand(new JObject { ["action"] = "add_tag" });
             var jo = ToJO(result);
             Assert.IsFalse((bool)jo["success"], "Should require tag_name parameter");
         }
@@ -279,11 +265,13 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_ManagePrefabs_WithoutRequiredPath_ReturnsError()
         {
             // Current behavior: Required path parameter validated before operation
-            var result = ManagePrefabs.HandleCommand(new JObject
-            {
-                ["action"] = "get_info"
-                // Missing path parameter
-            });
+            var result = ManagePrefabs.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "get_info",
+                    // Missing path parameter
+                }
+            );
             var jo = ToJO(result);
             Assert.IsFalse((bool)jo["success"], "Should require path parameter");
         }
@@ -292,11 +280,13 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_ManageMaterial_Create_RequiresNameParameter()
         {
             // Current behavior: create action requires name parameter
-            var result = ManageMaterial.HandleCommand(new JObject
-            {
-                ["action"] = "create"
-                // Missing name
-            });
+            var result = ManageMaterial.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create",
+                    // Missing name
+                }
+            );
             var jo = ToJO(result);
             Assert.IsFalse((bool)jo["success"], "Should require name parameter");
         }
@@ -306,11 +296,13 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         {
             // Current behavior: Parameters are validated before any state changes
             // This is verified by checking that invalid params don't cause side effects
-            var result = ManageEditor.HandleCommand(new JObject
-            {
-                ["action"] = "add_layer"
-                // Missing layer_name - should fail before attempting to add
-            });
+            var result = ManageEditor.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "add_layer",
+                    // Missing layer_name - should fail before attempting to add
+                }
+            );
             var jo = ToJO(result);
             Assert.IsFalse((bool)jo["success"], "Should validate before mutation");
         }
@@ -336,11 +328,13 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         {
             // Current behavior: Asset creation requires valid parameters
             // This documents that side effects only occur with valid params
-            var result = ManageMaterial.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["name"] = "" // Empty name should fail
-            });
+            var result = ManageMaterial.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["name"] = "", // Empty name should fail
+                }
+            );
             var jo = ToJO(result);
             // Either fails validation or succeeds (behavior may vary)
             Assert.IsTrue(jo.ContainsKey("success"), "Should return response");
@@ -354,11 +348,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_FindGameObjects_ReturnsPaginationMetadata()
         {
             // Current behavior: FindGameObjects returns pagination info
-            var result = FindGameObjects.HandleCommand(new JObject
-            {
-                ["searchTerm"] = "*",
-                ["pageSize"] = 10
-            });
+            var result = FindGameObjects.HandleCommand(new JObject { ["searchTerm"] = "*", ["pageSize"] = 10 });
             var jo = ToJO(result);
             if ((bool)jo["success"])
             {
@@ -375,11 +365,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
             string[] methods = { "by_name", "by_path", "by_tag", "by_layer", "by_component" };
             foreach (var method in methods)
             {
-                var result = FindGameObjects.HandleCommand(new JObject
-                {
-                    ["searchTerm"] = "TestQuery",
-                    ["searchMethod"] = method
-                });
+                var result = FindGameObjects.HandleCommand(new JObject { ["searchTerm"] = "TestQuery", ["searchMethod"] = method });
                 var jo = ToJO(result);
                 // All methods should be recognized and succeed
                 Assert.IsTrue((bool)jo["success"], $"Method {method} should be recognized and succeed");
@@ -391,16 +377,20 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         {
             // Current behavior: pageSize clamped to 1-500
             // Test with boundary values
-            var minResult = FindGameObjects.HandleCommand(new JObject
-            {
-                ["searchTerm"] = "Test",
-                ["pageSize"] = 0  // Should clamp to 1
-            });
-            var maxResult = FindGameObjects.HandleCommand(new JObject
-            {
-                ["searchTerm"] = "Test",
-                ["pageSize"] = 1000  // Should clamp to 500
-            });
+            var minResult = FindGameObjects.HandleCommand(
+                new JObject
+                {
+                    ["searchTerm"] = "Test",
+                    ["pageSize"] = 0, // Should clamp to 1
+                }
+            );
+            var maxResult = FindGameObjects.HandleCommand(
+                new JObject
+                {
+                    ["searchTerm"] = "Test",
+                    ["pageSize"] = 1000, // Should clamp to 500
+                }
+            );
 
             Assert.IsNotNull(ToJO(minResult), "Should handle min boundary");
             Assert.IsNotNull(ToJO(maxResult), "Should handle max boundary");
@@ -414,14 +404,10 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_ExecuteMenuItem_BlacklistsQuit()
         {
             // Current behavior: File/Quit is blacklisted for safety
-            var result = ExecuteMenuItem.HandleCommand(new JObject
-            {
-                ["menuPath"] = "File/Quit"
-            });
+            var result = ExecuteMenuItem.HandleCommand(new JObject { ["menuPath"] = "File/Quit" });
             var jo = ToJO(result);
             Assert.IsFalse((bool)jo["success"], "Quit should be blocked");
-            StringAssert.Contains("blocked", jo["error"]?.ToString()?.ToLower() ?? "",
-                "Error should mention blocking");
+            StringAssert.Contains("blocked", jo["error"]?.ToString()?.ToLower() ?? "", "Error should mention blocking");
         }
 
         [Test]
@@ -447,7 +433,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
                 p => FindGameObjects.HandleCommand(p),
                 p => ManagePrefabs.HandleCommand(p),
                 p => ManageMaterial.HandleCommand(p),
-                p => ExecuteMenuItem.HandleCommand(p)
+                p => ExecuteMenuItem.HandleCommand(p),
             };
 
             foreach (var tool in tools)
@@ -466,8 +452,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
             var jo = ToJO(result);
             if ((bool)jo["success"])
             {
-                Assert.IsTrue(jo.ContainsKey("message") || jo.ContainsKey("data"),
-                    "Success should have message or data");
+                Assert.IsTrue(jo.ContainsKey("message") || jo.ContainsKey("data"), "Success should have message or data");
             }
         }
 
@@ -492,14 +477,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         {
             // Current behavior: Tools are registered via McpForUnityTool attribute
             // This verifies the sampled tools have the attribute
-            var toolTypes = new[]
-            {
-                typeof(ManageEditor),
-                typeof(FindGameObjects),
-                typeof(ManagePrefabs),
-                typeof(ManageMaterial),
-                typeof(ExecuteMenuItem)
-            };
+            var toolTypes = new[] { typeof(ManageEditor), typeof(FindGameObjects), typeof(ManagePrefabs), typeof(ManageMaterial), typeof(ExecuteMenuItem) };
 
             foreach (var type in toolTypes)
             {
@@ -527,12 +505,14 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_ManageMaterial_ColorCoercion()
         {
             // Current behavior: Colors can be specified in multiple formats
-            var result = ManageMaterial.HandleCommand(new JObject
-            {
-                ["action"] = "set_material_color",
-                ["path"] = "NonExistent/Material",
-                ["color"] = new JArray(1.0f, 0.5f, 0.5f, 1.0f)
-            });
+            var result = ManageMaterial.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "set_material_color",
+                    ["path"] = "NonExistent/Material",
+                    ["color"] = new JArray(1.0f, 0.5f, 0.5f, 1.0f),
+                }
+            );
             // Even if material doesn't exist, the color parsing should not throw
             var jo = ToJO(result);
             Assert.IsNotNull(jo, "Should handle color array format");
@@ -542,10 +522,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_FindGameObjects_EmptyResultsAreValid()
         {
             // Current behavior: Finding no objects is a valid success case
-            var result = FindGameObjects.HandleCommand(new JObject
-            {
-                ["searchTerm"] = "DEFINITELY_NONEXISTENT_OBJECT_NAME_12345"
-            });
+            var result = FindGameObjects.HandleCommand(new JObject { ["searchTerm"] = "DEFINITELY_NONEXISTENT_OBJECT_NAME_12345" });
             var jo = ToJO(result);
             Assert.IsTrue((bool)jo["success"], "Empty results should still be success");
         }
@@ -554,10 +531,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_ManagePrefabs_GetInfo_RequiresPath()
         {
             // Current behavior: get_info needs path to prefab
-            var result = ManagePrefabs.HandleCommand(new JObject
-            {
-                ["action"] = "get_info"
-            });
+            var result = ManagePrefabs.HandleCommand(new JObject { ["action"] = "get_info" });
             var jo = ToJO(result);
             Assert.IsFalse((bool)jo["success"], "Should require path");
         }
@@ -566,10 +540,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         public void HandleCommand_ManagePrefabs_CreateFromGameObject_RequiresTargetAndPath()
         {
             // Current behavior: create_from_gameobject needs both target and path
-            var result = ManagePrefabs.HandleCommand(new JObject
-            {
-                ["action"] = "create_from_gameobject"
-            });
+            var result = ManagePrefabs.HandleCommand(new JObject { ["action"] = "create_from_gameobject" });
             var jo = ToJO(result);
             Assert.IsFalse((bool)jo["success"], "Should require target and path");
         }
@@ -580,10 +551,7 @@ namespace MCPForUnityTests.Editor.Tools.Characterization
         {
             // Current behavior: Non-blacklisted items are executed
             // NOTE: This test opens the Console window which steals focus from the terminal
-            var result = ExecuteMenuItem.HandleCommand(new JObject
-            {
-                ["menuPath"] = "Window/General/Console"
-            });
+            var result = ExecuteMenuItem.HandleCommand(new JObject { ["menuPath"] = "Window/General/Console" });
             var jo = ToJO(result);
             // Should attempt execution (success depends on menu existence)
             Assert.IsTrue((bool)jo["success"], "Non-blacklisted item should be attempted");

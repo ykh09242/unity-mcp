@@ -1,4 +1,5 @@
 """Exact-target discovery avoids unrelated probes without relaxing identity guards."""
+
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
@@ -24,13 +25,17 @@ def target_environment(monkeypatch, tmp_path):
     monkeypatch.setattr(uc.time, "time", lambda: clock[0])
     available = {6400, 6402}
     probes = []
-    monkeypatch.setattr(PortDiscovery, "_try_probe_unity_mcp", lambda port: probes.append(port) or port in available)
+    monkeypatch.setattr(
+        PortDiscovery, "_try_probe_unity_mcp", lambda port: probes.append(port) or port in available
+    )
     now = datetime.now(timezone.utc).timestamp()
 
     def write(name, hash_value, port, offset=0, **extra):
         path = tmp_path / f"unity-mcp-status-{hash_value}.json"
-        path.write_text(json.dumps({"project_path": f"/Owned/{name}/Assets",
-                                    "unity_port": port, **extra}), encoding="utf-8")
+        path.write_text(
+            json.dumps({"project_path": f"/Owned/{name}/Assets", "unity_port": port, **extra}),
+            encoding="utf-8",
+        )
         os.utime(path, (now + offset, now + offset))
         return path
 
@@ -87,7 +92,9 @@ def test_newer_selected_identity_wins_same_port_competition(target_environment):
     assert probes == [6400]
 
 
-@pytest.mark.parametrize("selector", ["Main", "dead", "6400", "/Owned/Main/Assets", "Main@dead", None])
+@pytest.mark.parametrize(
+    "selector", ["Main", "dead", "6400", "/Owned/Main/Assets", "Main@dead", None]
+)
 def test_noncanonical_selection_keeps_full_discovery(target_environment, selector):
     pool, _, probes, _, _ = target_environment
     assert pool.get_connection(selector).instance_id == "Main@deadbeef"
@@ -130,7 +137,9 @@ def test_parallel_exact_target_calls_share_refresh(target_environment):
     assert probes == [6400]
 
 
-def test_full_cache_precedes_target_cache_and_validated_sixteen_hex_id_is_supported(target_environment):
+def test_full_cache_precedes_target_cache_and_validated_sixteen_hex_id_is_supported(
+    target_environment,
+):
     pool, write, probes, _, _ = target_environment
     write("Long", "0123456789abcdef", 6402, offset=1)
     assert pool.get_connection("Long@0123456789abcdef").port == 6402
@@ -228,9 +237,12 @@ def test_exact_target_real_pong_does_not_override_newer_port_identity(monkeypatc
         listener.settimeout(2)
         port = listener.getsockname()[1]
         main_path = tmp_path / "unity-mcp-status-deadbeef.json"
-        main_path.write_text(json.dumps({"project_path": "/Owned/Main/Assets", "unity_port": port}), encoding="utf-8")
+        main_path.write_text(
+            json.dumps({"project_path": "/Owned/Main/Assets", "unity_port": port}), encoding="utf-8"
+        )
         os.utime(main_path, (10, 10))
         received = []
+
         def serve():
             for _ in range(2):
                 peer, _ = listener.accept()
@@ -239,18 +251,22 @@ def test_exact_target_real_pong_does_not_override_newer_port_identity(monkeypatc
                     peer.sendall(b"MCP/0.1 FRAMING=1\n")
                     request = bytearray()
                     while len(request) < 12:
-                        chunk = peer.recv(12-len(request))
+                        chunk = peer.recv(12 - len(request))
                         assert chunk
                         request.extend(chunk)
                     assert request == struct.pack(">Q", 4) + b"ping"
                     received.append(bytes(request))
                     response = b'{"status":"success","result":{"message":"pong"}}'
                     peer.sendall(struct.pack(">Q", len(response)) + response)
+
         with ThreadPoolExecutor(max_workers=1) as executor:
             server = executor.submit(serve)
             assert PortDiscovery.discover_unity_instance("Main@deadbeef").port == port
             other_path = tmp_path / "unity-mcp-status-cafebabe.json"
-            other_path.write_text(json.dumps({"project_path": "/Owned/Other/Assets", "unity_port": port}), encoding="utf-8")
+            other_path.write_text(
+                json.dumps({"project_path": "/Owned/Other/Assets", "unity_port": port}),
+                encoding="utf-8",
+            )
             os.utime(other_path, (20, 20))
             assert PortDiscovery.discover_unity_instance("Main@deadbeef") is None
             server.result(timeout=2)
@@ -258,13 +274,20 @@ def test_exact_target_real_pong_does_not_override_newer_port_identity(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_explicit_middleware_freshly_validates_target_without_connecting(target_environment, monkeypatch):
+async def test_explicit_middleware_freshly_validates_target_without_connecting(
+    target_environment, monkeypatch
+):
     from transport.unity_instance_middleware import UnityInstanceMiddleware, PluginHub
+
     pool, write, probes, _, _ = target_environment
     monkeypatch.setattr(config, "transport_mode", "stdio")
     monkeypatch.setattr(PluginHub, "is_configured", lambda: False)
     monkeypatch.setattr(uc, "get_unity_connection_pool", lambda: pool)
-    monkeypatch.setattr(uc.UnityConnection, "connect", lambda *a, **kw: pytest.fail("metadata lookup must not connect"))
+    monkeypatch.setattr(
+        uc.UnityConnection,
+        "connect",
+        lambda *a, **kw: pytest.fail("metadata lookup must not connect"),
+    )
     middleware = UnityInstanceMiddleware()
     assert await middleware._resolve_instance_value("Main@deadbeef", None) == "Main@deadbeef"
     write("Main", "deadbeef", 6402, offset=1)
@@ -275,8 +298,11 @@ async def test_explicit_middleware_freshly_validates_target_without_connecting(t
 
 
 @pytest.mark.asyncio
-async def test_middleware_missing_exact_target_keeps_exact_only_semantics(target_environment, monkeypatch):
+async def test_middleware_missing_exact_target_keeps_exact_only_semantics(
+    target_environment, monkeypatch
+):
     from transport.unity_instance_middleware import UnityInstanceMiddleware, PluginHub
+
     pool, write, probes, _, _ = target_environment
     write("Main", "deadbeef", 6400).unlink()
     write("Main", "deadbeef00112233", 6400)
@@ -289,17 +315,26 @@ async def test_middleware_missing_exact_target_keeps_exact_only_semantics(target
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("transport,remote,hub", [("http", False, False), ("stdio", True, False), ("stdio", False, True)])
-async def test_middleware_target_fast_path_preserves_http_and_pluginhub_routing(target_environment, monkeypatch, transport, remote, hub):
+@pytest.mark.parametrize(
+    "transport,remote,hub", [("http", False, False), ("stdio", True, False), ("stdio", False, True)]
+)
+async def test_middleware_target_fast_path_preserves_http_and_pluginhub_routing(
+    target_environment, monkeypatch, transport, remote, hub
+):
     from transport.unity_instance_middleware import UnityInstanceMiddleware, PluginHub
+
     _, _, probes, _, _ = target_environment
     monkeypatch.setattr(config, "transport_mode", transport)
     monkeypatch.setattr(config, "http_remote_hosted", remote)
     monkeypatch.setattr(PluginHub, "is_configured", lambda: hub)
     middleware = UnityInstanceMiddleware()
+
     async def discover(ctx):
         return [SimpleNamespace(id="Main@deadbeef", hash="deadbeef")]
+
     monkeypatch.setattr(middleware, "_discover_instances", discover)
-    monkeypatch.setattr(uc, "get_unity_connection_pool", lambda: pytest.fail("must retain existing discovery route"))
+    monkeypatch.setattr(
+        uc, "get_unity_connection_pool", lambda: pytest.fail("must retain existing discovery route")
+    )
     assert await middleware._resolve_instance_value("Main@deadbeef", None) == "Main@deadbeef"
     assert probes == []

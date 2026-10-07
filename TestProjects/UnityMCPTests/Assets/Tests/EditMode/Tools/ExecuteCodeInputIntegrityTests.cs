@@ -10,7 +10,8 @@ namespace MCPForUnityTests.Editor.Tools
     // Exercise the actual shared input conversion without executing code or touching history.
     public class ExecuteCodeInputIntegrityTests
     {
-        private static object[] Convert<T>(string json, string field, out bool accepted) where T : struct
+        private static object[] Convert<T>(string json, string field, out bool accepted)
+            where T : struct
         {
             var parameters = new JObject();
             if (json != null)

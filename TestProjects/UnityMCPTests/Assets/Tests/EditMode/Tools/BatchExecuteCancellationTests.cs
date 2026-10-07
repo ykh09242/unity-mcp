@@ -26,13 +26,40 @@ namespace MCPForUnityTests.Editor.Tools
             bool settled = false;
             int nextCalls = 0;
             handlers[first] = cooperative
-                ? HandlerInfo.Cooperative(first, async (_, token) =>
+                ? HandlerInfo.Cooperative(
+                    first,
+                    async (_, token) =>
+                    {
+                        try
+                        {
+                            await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true);
+                            return null;
+                        }
+                        finally
+                        {
+                            settled = true;
+                        }
+                    }
+                )
+                : new HandlerInfo(
+                    first,
+                    null,
+                    async _ =>
+                    {
+                        var value = await legacy.Task.ConfigureAwait(true);
+                        settled = true;
+                        return value;
+                    }
+                );
+            handlers[next] = new HandlerInfo(
+                next,
+                _ =>
                 {
-                    try { await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true); return null; }
-                    finally { settled = true; }
-                })
-                : new HandlerInfo(first, null, async _ => { var value = await legacy.Task.ConfigureAwait(true); settled = true; return value; });
-            handlers[next] = new HandlerInfo(next, _ => { nextCalls++; return new { done = true }; }, null);
+                    nextCalls++;
+                    return new { done = true };
+                },
+                null
+            );
             using var cancellation = new CancellationTokenSource();
             try
             {
@@ -52,8 +79,14 @@ namespace MCPForUnityTests.Editor.Tools
             finally
             {
                 legacy.TrySetResult(new { done = true });
-                if (previousFirst == null) handlers.Remove(first); else handlers[first] = previousFirst;
-                if (previousNext == null) handlers.Remove(next); else handlers[next] = previousNext;
+                if (previousFirst == null)
+                    handlers.Remove(first);
+                else
+                    handlers[first] = previousFirst;
+                if (previousNext == null)
+                    handlers.Remove(next);
+                else
+                    handlers[next] = previousNext;
             }
         }
 

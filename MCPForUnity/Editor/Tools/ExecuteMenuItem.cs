@@ -13,11 +13,7 @@ namespace MCPForUnity.Editor.Tools
     public static class ExecuteMenuItem
     {
         // Basic blacklist to prevent execution of disruptive menu items.
-        private static readonly HashSet<string> _menuPathBlacklist = new HashSet<string>(
-            StringComparer.OrdinalIgnoreCase)
-        {
-            "File/Quit",
-        };
+        private static readonly HashSet<string> _menuPathBlacklist = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "File/Quit" };
 
         public static object HandleCommand(JObject @params)
         {

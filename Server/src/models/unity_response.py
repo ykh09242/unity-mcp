@@ -1,4 +1,5 @@
 """Utilities for normalizing Unity transport responses."""
+
 from __future__ import annotations
 
 from typing import Any, Type
@@ -14,8 +15,11 @@ def normalize_unity_response(response: Any) -> Any:
         return response
 
     status = response.get("status")
-    result = response.get("result") if isinstance(
-        response.get("result"), dict) else response.get("result")
+    result = (
+        response.get("result")
+        if isinstance(response.get("result"), dict)
+        else response.get("result")
+    )
 
     # Already MCPResponse-shaped
     if "success" in response:
@@ -33,8 +37,7 @@ def normalize_unity_response(response: Any) -> Any:
 
     data = payload.get("data")
     if data is None and isinstance(payload, dict) and payload:
-        data = {k: v for k, v in payload.items() if k not in {
-            "message", "error", "status", "code"}}
+        data = {k: v for k, v in payload.items() if k not in {"message", "error", "status", "code"}}
         if not data:
             data = None
 

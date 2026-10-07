@@ -67,9 +67,7 @@ namespace MCPForUnity.Editor.Services
             try
             {
                 // Try uvx first, then uv
-                string[] commandNames = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                    ? new[] { "uvx.exe", "uv.exe" }
-                    : new[] { "uvx", "uv" };
+                string[] commandNames = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? new[] { "uvx.exe", "uv.exe" } : new[] { "uvx", "uv" };
 
                 foreach (string commandName in commandNames)
                 {
@@ -89,8 +87,6 @@ namespace MCPForUnity.Editor.Services
 
             return null;
         }
-
-
 
         public string GetClaudeCliPath()
         {
@@ -115,13 +111,7 @@ namespace MCPForUnity.Editor.Services
 
         public bool IsPythonDetected()
         {
-            return ExecPath.TryRun(
-                RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "python.exe" : "python3",
-                "--version",
-                null,
-                out _,
-                out _,
-                2000);
+            return ExecPath.TryRun(RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "python.exe" : "python3", "--version", null, out _, out _, 2000);
         }
 
         public bool IsClaudeCliDetected()
@@ -216,10 +206,7 @@ namespace MCPForUnity.Editor.Services
                         // Version is up to the first space or parenthesis
                         int nextSpace = afterCommand.IndexOf(' ');
                         int parenIndex = afterCommand.IndexOf('(');
-                        int endIndex = Math.Min(
-                            nextSpace >= 0 ? nextSpace : int.MaxValue,
-                            parenIndex >= 0 ? parenIndex : int.MaxValue
-                        );
+                        int endIndex = Math.Min(nextSpace >= 0 ? nextSpace : int.MaxValue, parenIndex >= 0 ? parenIndex : int.MaxValue);
                         version = endIndex < int.MaxValue ? afterCommand.Substring(0, endIndex).Trim() : afterCommand;
                         return true;
                     }
@@ -260,9 +247,7 @@ namespace MCPForUnity.Editor.Services
         /// </summary>
         private static IEnumerable<string> EnumerateCommandCandidates(string commandName)
         {
-            string exeName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !commandName.EndsWith(".exe")
-                ? commandName + ".exe"
-                : commandName;
+            string exeName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !commandName.EndsWith(".exe") ? commandName + ".exe" : commandName;
 
             // Search PATH first
             string pathEnv = Environment.GetEnvironmentVariable("PATH");
@@ -270,7 +255,8 @@ namespace MCPForUnity.Editor.Services
             {
                 foreach (string rawDir in pathEnv.Split(Path.PathSeparator))
                 {
-                    if (string.IsNullOrWhiteSpace(rawDir)) continue;
+                    if (string.IsNullOrWhiteSpace(rawDir))
+                        continue;
                     string dir = rawDir.Trim();
                     yield return Path.Combine(dir, exeName);
                 }

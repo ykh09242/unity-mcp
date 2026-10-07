@@ -20,7 +20,10 @@ import xml.etree.ElementTree as ET
 # Pin the implementation, including its capability-based older-editor fallback.
 GAME_CI_COMMIT = "75c5dcf81523f31b3cca9d7cd16228a2b53de9a8"
 GAME_CI_SCRIPTS = (
-    "activate.sh", "return_license.sh", "licensing_method.sh", "resolve_unity_path.sh",
+    "activate.sh",
+    "return_license.sh",
+    "licensing_method.sh",
+    "resolve_unity_path.sh",
 )
 
 
@@ -53,18 +56,24 @@ def prepare(directory: Path, environ: dict[str, str]) -> None:
         except ValueError:
             if not credentials:
                 raise
-            print("::warning::UNITY_LICENSE is not signed XML; trying the configured Unity account.")
+            print(
+                "::warning::UNITY_LICENSE is not signed XML; trying the configured Unity account."
+            )
         else:
             license_file.write_bytes(candidate)
             license_file.chmod(0o600)
     if not license_file.exists() and not credentials:
-        raise ValueError("Unity activation requires a license file or UNITY_EMAIL and UNITY_PASSWORD.")
+        raise ValueError(
+            "Unity activation requires a license file or UNITY_EMAIL and UNITY_PASSWORD."
+        )
 
     steps = directory / "steps"
     steps.mkdir(exist_ok=True)
     for name in GAME_CI_SCRIPTS:
-        url = (f"https://raw.githubusercontent.com/game-ci/cli/{GAME_CI_COMMIT}/"
-               f"dist/platforms/ubuntu/steps/{name}")
+        url = (
+            f"https://raw.githubusercontent.com/game-ci/cli/{GAME_CI_COMMIT}/"
+            f"dist/platforms/ubuntu/steps/{name}"
+        )
         with urllib.request.urlopen(url, timeout=30) as response:
             (steps / name).write_bytes(response.read())
     # A new identity for this job, shared by activation, both Editors and return.
@@ -74,7 +83,7 @@ def prepare(directory: Path, environ: dict[str, str]) -> None:
         identity.write_text(uuid.uuid4().hex + "\n", encoding="ascii")
 
 
-CONTAINER_SCRIPT = r'''
+CONTAINER_SCRIPT = r"""
 set +eux
 export STEPS_DIR="${STEPS_DIR:-/steps}" ACTIVATE_LICENSE_PATH="${ACTIVATE_LICENSE_PATH:-/activation}"
 # Match GameCI's headless editor launcher while retaining its licensing logic.
@@ -89,7 +98,7 @@ else
   source "$STEPS_DIR/return_license.sh" || exit $?
   exit "${RETURN_EXIT_CODE:-0}"
 fi
-'''
+"""
 
 
 def docker_args(directory: Path, image: str, operation: str) -> list[str]:
@@ -101,8 +110,13 @@ def docker_args(directory: Path, image: str, operation: str) -> list[str]:
     for name in ("UNITY_EMAIL", "UNITY_PASSWORD", "UNITY_SERIAL"):
         args.extend(["-e", name])
     args.extend(["-e", "UNITY_LICENSE=", "-e", "UNITY_LICENSING_SERVER="])
-    args.extend(["-e", "UNITY_LICENSE_FILE=" + (
-        "/activation/input.ulf" if (directory / "input.ulf").exists() else "")])
+    args.extend(
+        [
+            "-e",
+            "UNITY_LICENSE_FILE="
+            + ("/activation/input.ulf" if (directory / "input.ulf").exists() else ""),
+        ]
+    )
     for source, target in (
         (directory, "/activation"),
         (directory / "steps", "/steps:ro"),
@@ -120,8 +134,14 @@ def run_license(directory: Path, image: str, operation: str) -> int:
         return 0
     if operation == "activate":
         (directory / "activation-attempted").touch()
-    result = subprocess.run(docker_args(directory, image, operation), capture_output=True,
-                            text=True, encoding="utf-8", errors="replace", check=False)
+    result = subprocess.run(
+        docker_args(directory, image, operation),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     if result.returncode:
         output = (result.stdout + result.stderr).lower()
         reason = "Unity or Docker rejected the licensing operation"
@@ -134,9 +154,11 @@ def run_license(directory: Path, image: str, operation: str) -> int:
             if signature in output:
                 reason = description
                 break
-        print(f"::error::Unity license {operation} failed: {reason} (exit {result.returncode}). "
-              "Raw licensing output is withheld because it can contain credentials. "
-              "Check the configured Unity license/account and available seats.")
+        print(
+            f"::error::Unity license {operation} failed: {reason} (exit {result.returncode}). "
+            "Raw licensing output is withheld because it can contain credentials. "
+            "Check the configured Unity license/account and available seats."
+        )
         return 1
     print(f"Unity license {operation} completed.")
     return 0
@@ -155,7 +177,9 @@ def main() -> int:
     except (OSError, ValueError) as exc:
         # Only our constant validation messages are safe to expose; network and
         # filesystem exceptions can include paths or provider response content.
-        message = str(exc) if isinstance(exc, ValueError) else "Unable to prepare or run Unity licensing."
+        message = (
+            str(exc) if isinstance(exc, ValueError) else "Unable to prepare or run Unity licensing."
+        )
         print(f"::error::{message}")
         return 1
 

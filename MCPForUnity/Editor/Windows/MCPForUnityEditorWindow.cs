@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Setup;
 using MCPForUnity.Editor.Windows.Components.Advanced;
 using MCPForUnity.Editor.Windows.Components.AssetGen;
 using MCPForUnity.Editor.Windows.Components.Branding;
@@ -13,10 +14,9 @@ using MCPForUnity.Editor.Windows.Components.ClientConfig;
 using MCPForUnity.Editor.Windows.Components.Connection;
 using MCPForUnity.Editor.Windows.Components.Resources;
 using MCPForUnity.Editor.Windows.Components.Tools;
-using MCPForUnity.Editor.Setup;
 using MCPForUnity.Editor.Windows.Components.Validation;
-using UnityEditor;
 using Unity.EditorCoroutines.Editor;
+using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -71,7 +71,7 @@ namespace MCPForUnity.Editor.Windows
             Advanced,
             Tools,
             Resources,
-            AssetGen
+            AssetGen,
         }
 
         internal static void CloseAllWindows()
@@ -159,15 +159,11 @@ namespace MCPForUnity.Editor.Windows
             string basePath = AssetPathUtility.GetMcpPackageRootPath();
 
             // Load main window UXML
-            var visualTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
-                $"{basePath}/Editor/Windows/MCPForUnityEditorWindow.uxml"
-            );
+            var visualTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>($"{basePath}/Editor/Windows/MCPForUnityEditorWindow.uxml");
 
             if (visualTree == null)
             {
-                McpLog.Error(
-                    $"Failed to load UXML at: {basePath}/Editor/Windows/MCPForUnityEditorWindow.uxml"
-                );
+                McpLog.Error($"Failed to load UXML at: {basePath}/Editor/Windows/MCPForUnityEditorWindow.uxml");
                 return;
             }
 
@@ -252,18 +248,14 @@ namespace MCPForUnity.Editor.Windows
             SetupTabs();
 
             // Load and initialize Connection section
-            var connectionTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
-                $"{basePath}/Editor/Windows/Components/Connection/McpConnectionSection.uxml"
-            );
+            var connectionTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>($"{basePath}/Editor/Windows/Components/Connection/McpConnectionSection.uxml");
             if (connectionTree != null)
             {
                 var connectionRoot = connectionTree.Instantiate();
                 clientsContainer.Add(connectionRoot);
                 connectionSection = new McpConnectionSection(connectionRoot);
-                connectionSection.OnManualConfigUpdateRequested += () =>
-                    clientConfigSection?.UpdateManualConfiguration();
-                connectionSection.OnTransportChanged += () =>
-                    clientConfigSection?.RefreshSelectedClient(forceImmediate: true);
+                connectionSection.OnManualConfigUpdateRequested += () => clientConfigSection?.UpdateManualConfiguration();
+                connectionSection.OnTransportChanged += () => clientConfigSection?.RefreshSelectedClient(forceImmediate: true);
             }
 
             // Load and initialize Client Configuration section
@@ -291,9 +283,7 @@ namespace MCPForUnity.Editor.Windows
             BuildDependenciesSection(depsContainer);
 
             // Load and initialize Advanced section
-            var advancedTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
-                $"{basePath}/Editor/Windows/Components/Advanced/McpAdvancedSection.uxml"
-            );
+            var advancedTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>($"{basePath}/Editor/Windows/Components/Advanced/McpAdvancedSection.uxml");
             if (advancedTree != null)
             {
                 var advancedRoot = advancedTree.Instantiate();
@@ -301,8 +291,7 @@ namespace MCPForUnity.Editor.Windows
                 advancedSection = new McpAdvancedSection(advancedRoot);
 
                 // Wire up events from Advanced section
-                advancedSection.OnGitUrlChanged += () =>
-                    clientConfigSection?.UpdateManualConfiguration();
+                advancedSection.OnGitUrlChanged += () => clientConfigSection?.UpdateManualConfiguration();
                 advancedSection.OnHttpServerCommandUpdateRequested += () =>
                 {
                     connectionSection?.UpdateHttpServerCommandDisplay();
@@ -319,14 +308,11 @@ namespace MCPForUnity.Editor.Windows
                     QueueUpdateCheck();
                 };
                 // Wire up health status updates from Connection to Advanced
-                connectionSection?.SetHealthStatusUpdateCallback((isHealthy, statusText) =>
-                    advancedSection?.UpdateHealthStatus(isHealthy, statusText));
+                connectionSection?.SetHealthStatusUpdateCallback((isHealthy, statusText) => advancedSection?.UpdateHealthStatus(isHealthy, statusText));
             }
 
             // Load Validation section into Advanced tab
-            var validationTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
-                $"{basePath}/Editor/Windows/Components/Validation/McpValidationSection.uxml"
-            );
+            var validationTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>($"{basePath}/Editor/Windows/Components/Validation/McpValidationSection.uxml");
             if (validationTree != null)
             {
                 var validationRoot = validationTree.Instantiate();
@@ -335,9 +321,7 @@ namespace MCPForUnity.Editor.Windows
             }
 
             // Load and initialize Tools section
-            var toolsTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
-                $"{basePath}/Editor/Windows/Components/Tools/McpToolsSection.uxml"
-            );
+            var toolsTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>($"{basePath}/Editor/Windows/Components/Tools/McpToolsSection.uxml");
             if (toolsTree != null)
             {
                 var toolsRoot = toolsTree.Instantiate();
@@ -355,9 +339,7 @@ namespace MCPForUnity.Editor.Windows
             }
 
             // Load and initialize Resources section
-            var resourcesTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
-                $"{basePath}/Editor/Windows/Components/Resources/McpResourcesSection.uxml"
-            );
+            var resourcesTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>($"{basePath}/Editor/Windows/Components/Resources/McpResourcesSection.uxml");
             if (resourcesTree != null)
             {
                 var resourcesRoot = resourcesTree.Instantiate();
@@ -375,9 +357,7 @@ namespace MCPForUnity.Editor.Windows
             }
 
             // Load and initialize Asset Generation section
-            var assetGenTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
-                $"{basePath}/Editor/Windows/Components/AssetGen/McpAssetGenSection.uxml"
-            );
+            var assetGenTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>($"{basePath}/Editor/Windows/Components/AssetGen/McpAssetGenSection.uxml");
             if (assetGenTree != null)
             {
                 var assetGenRoot = assetGenTree.Instantiate();
@@ -506,9 +486,11 @@ namespace MCPForUnity.Editor.Windows
 
         private static bool IsUpdateCheckCurrent(IPackageUpdateService service, string version, bool isGitInstallation, string branch)
         {
-            if (!ReferenceEquals(service, MCPServiceLocator.Updates) ||
-                !string.Equals(version, AssetPathUtility.GetPackageVersion(), StringComparison.Ordinal) ||
-                isGitInstallation != service.IsGitInstallation())
+            if (
+                !ReferenceEquals(service, MCPServiceLocator.Updates)
+                || !string.Equals(version, AssetPathUtility.GetPackageVersion(), StringComparison.Ordinal)
+                || isGitInstallation != service.IsGitInstallation()
+            )
                 return false;
 
             return !isGitInstallation || string.Equals(branch, service.GetGitUpdateBranch(version), StringComparison.OrdinalIgnoreCase);
@@ -673,9 +655,9 @@ namespace MCPForUnity.Editor.Windows
 
             var savedPanel = EditorPrefs.GetString(EditorPrefKeys.EditorWindowActivePanel, ActivePanel.Clients.ToString());
             // Migrate old "Validation" saved value to "Deps"
-            if (savedPanel == "Validation") savedPanel = "Deps";
-            if (!Enum.TryParse(savedPanel, out ActivePanel initialPanel)
-                || !Enum.IsDefined(typeof(ActivePanel), initialPanel))
+            if (savedPanel == "Validation")
+                savedPanel = "Deps";
+            if (!Enum.TryParse(savedPanel, out ActivePanel initialPanel) || !Enum.IsDefined(typeof(ActivePanel), initialPanel))
             {
                 initialPanel = ActivePanel.Clients;
             }
@@ -790,22 +772,34 @@ namespace MCPForUnity.Editor.Windows
             Button installAllButton = null;
             installAllButton = new Button(() =>
             {
-                if (!EditorUtility.DisplayDialog("Install All Dependencies",
-                    "This will install Roslyn DLLs, ProBuilder, Cinemachine, VFX Graph, and glTFast. Continue?",
-                    "Install All", "Cancel")) return;
-                RunDependencyAction(installAllButton, "Installing...", "Install All", async done =>
-                {
-                    try
+                if (
+                    !EditorUtility.DisplayDialog(
+                        "Install All Dependencies",
+                        "This will install Roslyn DLLs, ProBuilder, Cinemachine, VFX Graph, and glTFast. Continue?",
+                        "Install All",
+                        "Cancel"
+                    )
+                )
+                    return;
+                RunDependencyAction(
+                    installAllButton,
+                    "Installing...",
+                    "Install All",
+                    async done =>
                     {
-                        if (!RoslynInstaller.IsInstalled()) await RoslynInstaller.InstallAsync(interactive: false);
-                        BatchUpmAdd(upmPackages, done);
+                        try
+                        {
+                            if (!RoslynInstaller.IsInstalled())
+                                await RoslynInstaller.InstallAsync(interactive: false);
+                            BatchUpmAdd(upmPackages, done);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError($"[MCP] Install failed: {ex.Message}");
+                            done();
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        Debug.LogError($"[MCP] Install failed: {ex.Message}");
-                        done();
-                    }
-                });
+                );
             });
             installAllButton.text = "Install All";
             installAllButton.AddToClassList("action-button");
@@ -814,14 +808,25 @@ namespace MCPForUnity.Editor.Windows
             Button uninstallAllButton = null;
             uninstallAllButton = new Button(() =>
             {
-                if (!EditorUtility.DisplayDialog("Uninstall All Dependencies",
-                    "This will remove Roslyn DLLs, ProBuilder, Cinemachine, VFX Graph, and glTFast. Continue?",
-                    "Uninstall All", "Cancel")) return;
-                RunDependencyAction(uninstallAllButton, "Removing...", "Uninstall All", done =>
-                {
-                    UninstallRoslyn();
-                    BatchUpmRemove(upmPackages, done);
-                });
+                if (
+                    !EditorUtility.DisplayDialog(
+                        "Uninstall All Dependencies",
+                        "This will remove Roslyn DLLs, ProBuilder, Cinemachine, VFX Graph, and glTFast. Continue?",
+                        "Uninstall All",
+                        "Cancel"
+                    )
+                )
+                    return;
+                RunDependencyAction(
+                    uninstallAllButton,
+                    "Removing...",
+                    "Uninstall All",
+                    done =>
+                    {
+                        UninstallRoslyn();
+                        BatchUpmRemove(upmPackages, done);
+                    }
+                );
             });
             uninstallAllButton.text = "Uninstall All";
             uninstallAllButton.AddToClassList("action-button");
@@ -833,7 +838,8 @@ namespace MCPForUnity.Editor.Windows
             // Check if Roslyn types are actually loaded (covers NuGet, Plugins folder, etc.)
             bool roslynLoaded = Type.GetType("Microsoft.CodeAnalysis.CSharp.CSharpCompilation, Microsoft.CodeAnalysis.CSharp") != null;
             bool roslynInstalledLocally = RoslynInstaller.IsInstalled();
-            AddDependencyRow(content,
+            AddDependencyRow(
+                content,
                 "Roslyn (C# 12+ Compiler)",
                 "Enables modern C# syntax in execute_code tool (scripting_ext group).",
                 roslynLoaded,
@@ -841,63 +847,96 @@ namespace MCPForUnity.Editor.Windows
                     ? "Installed via Plugins/Roslyn \u2014 execute_code uses Roslyn"
                     : "Available (loaded from NuGet/external) \u2014 execute_code uses Roslyn",
                 "Not installed \u2014 execute_code falls back to C# 6 (CodeDom)",
-                async done => { try { await RoslynInstaller.InstallAsync(interactive: true); } finally { done(); } },
+                async done =>
+                {
+                    try
+                    {
+                        await RoslynInstaller.InstallAsync(interactive: true);
+                    }
+                    finally
+                    {
+                        done();
+                    }
+                },
                 roslynInstalledLocally
-                    ? (Action<Action>)(done => { UninstallRoslyn(); done?.Invoke(); })
-                    : null);
+                    ? (Action<Action>)(
+                        done =>
+                        {
+                            UninstallRoslyn();
+                            done?.Invoke();
+                        }
+                    )
+                    : null
+            );
 
             // ProBuilder
             bool hasProBuilder = Type.GetType("UnityEngine.ProBuilder.ProBuilderMesh, Unity.ProBuilder") != null;
-            AddDependencyRow(content,
+            AddDependencyRow(
+                content,
                 "ProBuilder",
                 "Required for the manage_probuilder tool (probuilder group).",
                 hasProBuilder,
                 "Installed",
                 "Not installed",
                 done => InstallUpmPackage("com.unity.probuilder", done),
-                done => RemoveUpmPackage("com.unity.probuilder", done));
+                done => RemoveUpmPackage("com.unity.probuilder", done)
+            );
 
             // Cinemachine
-            bool hasCinemachine = Type.GetType("Unity.Cinemachine.CinemachineCamera, Unity.Cinemachine") != null
+            bool hasCinemachine =
+                Type.GetType("Unity.Cinemachine.CinemachineCamera, Unity.Cinemachine") != null
                 || Type.GetType("Cinemachine.CinemachineVirtualCamera, Cinemachine") != null;
-            AddDependencyRow(content,
+            AddDependencyRow(
+                content,
                 "Cinemachine",
                 "Enhances manage_camera with virtual camera support (core group).",
                 hasCinemachine,
                 "Installed",
                 "Not installed \u2014 camera tool works without it",
                 done => InstallUpmPackage("com.unity.cinemachine", done),
-                done => RemoveUpmPackage("com.unity.cinemachine", done));
+                done => RemoveUpmPackage("com.unity.cinemachine", done)
+            );
 
             // VFX Graph — uses preprocessor symbol, so check via UPM package list
             bool hasVfxGraph = IsUpmPackageInstalled("com.unity.visualeffectgraph");
-            AddDependencyRow(content,
+            AddDependencyRow(
+                content,
                 "VFX Graph",
                 "Enables VisualEffect support in manage_vfx tool (vfx group).",
                 hasVfxGraph,
                 "Installed",
                 "Not installed \u2014 VFX tool falls back to ParticleSystem/LineRenderer",
                 done => InstallUpmPackage("com.unity.visualeffectgraph", done),
-                done => RemoveUpmPackage("com.unity.visualeffectgraph", done));
+                done => RemoveUpmPackage("com.unity.visualeffectgraph", done)
+            );
 
             // glTFast — uses an assembly type, but also check via UPM package list
             bool hasGltfast = IsUpmPackageInstalled("com.unity.cloud.gltfast") || Type.GetType("GLTFast.GltfImport, glTFast") != null;
-            AddDependencyRow(content,
+            AddDependencyRow(
+                content,
                 "glTFast (glTF/GLB import)",
                 "Enables .glb/.gltf model import for the AI Asset Generation tools (asset_gen group).",
                 hasGltfast,
                 "Installed — GLB generation/import works",
                 "Not installed — GLB import is unavailable; FBX still works, or install to enable GLB",
                 done => InstallUpmPackage("com.unity.cloud.gltfast", done),
-                done => RemoveUpmPackage("com.unity.cloud.gltfast", done));
+                done => RemoveUpmPackage("com.unity.cloud.gltfast", done)
+            );
 
             section.Add(content);
             container.Add(section);
         }
 
-        private static void AddDependencyRow(VisualElement parent, string name, string description,
-            bool isInstalled, string installedText, string missingText,
-            Action<Action> installAction, Action<Action> uninstallAction)
+        private static void AddDependencyRow(
+            VisualElement parent,
+            string name,
+            string description,
+            bool isInstalled,
+            string installedText,
+            string missingText,
+            Action<Action> installAction,
+            Action<Action> uninstallAction
+        )
         {
             var row = new VisualElement();
             row.AddToClassList("package-row");
@@ -941,8 +980,8 @@ namespace MCPForUnity.Editor.Windows
                 Button btn = null;
                 btn = new Button(() =>
                 {
-                    if (!EditorUtility.DisplayDialog("Remove " + name,
-                        $"Are you sure you want to remove {name}?", "Remove", "Cancel")) return;
+                    if (!EditorUtility.DisplayDialog("Remove " + name, $"Are you sure you want to remove {name}?", "Remove", "Cancel"))
+                        return;
                     RunDependencyAction(btn, "Removing...", "Uninstall", uninstallAction);
                 });
                 btn.text = "Uninstall";
@@ -958,7 +997,8 @@ namespace MCPForUnity.Editor.Windows
 
         private static void RunDependencyAction(Button button, string busyText, string idleText, Action<Action> action)
         {
-            if (dependencyActionInFlight) return;
+            if (dependencyActionInFlight)
+                return;
             dependencyActionInFlight = true;
             button.SetEnabled(false);
             button.text = busyText;
@@ -968,7 +1008,8 @@ namespace MCPForUnity.Editor.Windows
             bool completed = false;
             Action restore = () =>
             {
-                if (completed) return;
+                if (completed)
+                    return;
                 completed = true;
                 dependencyActionInFlight = false;
                 button.SetEnabled(true);
@@ -976,7 +1017,10 @@ namespace MCPForUnity.Editor.Windows
                 foreach (var window in OpenWindows)
                     window.dependencySection?.SetEnabled(true);
             };
-            try { action(restore); }
+            try
+            {
+                action(restore);
+            }
             catch (Exception ex)
             {
                 Debug.LogError($"[MCP] Dependency action failed: {ex.Message}");
@@ -1016,14 +1060,19 @@ namespace MCPForUnity.Editor.Windows
                 {
                     bool completed = false;
                     bool failed = false;
-                    try { completed = request.IsCompleted; }
+                    try
+                    {
+                        completed = request.IsCompleted;
+                    }
                     catch (Exception ex)
                     {
                         Debug.LogError($"[MCP] Package {verb} failed: {ex.Message}");
                         failed = true;
                     }
-                    if (failed) yield break;
-                    if (completed) break;
+                    if (failed)
+                        yield break;
+                    if (completed)
+                        break;
                     yield return null;
                 }
 
@@ -1064,7 +1113,8 @@ namespace MCPForUnity.Editor.Windows
         {
             // Check manifest.json directly — faster than async UPM API
             string manifestPath = System.IO.Path.Combine(Application.dataPath, "../Packages/manifest.json");
-            if (!System.IO.File.Exists(manifestPath)) return false;
+            if (!System.IO.File.Exists(manifestPath))
+                return false;
             string manifest = System.IO.File.ReadAllText(manifestPath);
             return manifest.Contains($"\"{packageId}\"");
         }

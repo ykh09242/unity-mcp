@@ -25,16 +25,21 @@ def main() -> int:
         print(f"Pylint ({directory.name}): {', '.join(targets)}", flush=True)
         result = subprocess.run(
             [
-                sys.executable, "-m", "pylint",
+                sys.executable,
+                "-m",
+                "pylint",
                 f"--rcfile={SERVER / 'pyproject.toml'}",
                 f"--source-roots={directory},{SERVER / 'src'}",
                 *targets,
             ],
             cwd=directory,
             # Match the installed src layout and standalone tools' import paths.
-            env={**os.environ, "PYTHONPATH": os.pathsep.join(
-                str(path) for path in (directory, SERVER / "src", ROOT / "tools")
-            )},
+            env={
+                **os.environ,
+                "PYTHONPATH": os.pathsep.join(
+                    str(path) for path in (directory, SERVER / "src", ROOT / "tools")
+                ),
+            },
             check=False,
         )
         if result.returncode != 0:

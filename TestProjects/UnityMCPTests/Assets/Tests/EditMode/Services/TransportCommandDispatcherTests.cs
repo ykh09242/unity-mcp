@@ -19,7 +19,9 @@ namespace MCPForUnityTests.Editor.Services
     {
         private const BindingFlags StaticPrivate = BindingFlags.Static | BindingFlags.NonPublic;
         private static readonly Type Dispatcher = typeof(WebSocketTransportClient).Assembly.GetType(
-            "MCPForUnity.Editor.Services.Transport.TransportCommandDispatcher", true);
+            "MCPForUnity.Editor.Services.Transport.TransportCommandDispatcher",
+            true
+        );
         private static readonly FieldInfo ContextField = Dispatcher.GetField("_mainThreadContext", StaticPrivate);
         private static readonly FieldInfo ThreadIdField = Dispatcher.GetField("_mainThreadId", StaticPrivate);
         private static readonly MethodInfo Execute = Dispatcher.GetMethod("ExecuteCommandJsonAsync", BindingFlags.Static | BindingFlags.Public);
@@ -41,7 +43,10 @@ namespace MCPForUnityTests.Editor.Services
         [TearDown]
         public void TearDown()
         {
-            try { _context.Drain(); }
+            try
+            {
+                _context.Drain();
+            }
             finally
             {
                 ContextField.SetValue(null, _originalContext);
@@ -55,7 +60,13 @@ namespace MCPForUnityTests.Editor.Services
             using var cts = new CancellationTokenSource();
             cts.Cancel();
             Task<string> command = null;
-            Assert.IsTrue(Task.Run(() => { command = Dispatch("ping", cts.Token); }).Wait(TimeSpan.FromSeconds(5)));
+            Assert.IsTrue(
+                Task.Run(() =>
+                    {
+                        command = Dispatch("ping", cts.Token);
+                    })
+                    .Wait(TimeSpan.FromSeconds(5))
+            );
 
             Assert.IsTrue(command.IsCanceled, "Cancellation must complete even while the main-thread pump is paused.");
             Assert.IsFalse(IsPending(command), "Canceled commands must release the pending entry immediately.");
@@ -66,7 +77,13 @@ namespace MCPForUnityTests.Editor.Services
         {
             using var cts = new CancellationTokenSource();
             Task<string> command = null;
-            Assert.IsTrue(Task.Run(() => { command = Dispatch("ping", cts.Token); }).Wait(TimeSpan.FromSeconds(5)));
+            Assert.IsTrue(
+                Task.Run(() =>
+                    {
+                        command = Dispatch("ping", cts.Token);
+                    })
+                    .Wait(TimeSpan.FromSeconds(5))
+            );
             Assert.IsFalse(command.IsCompleted);
             cts.Cancel();
 
@@ -90,14 +107,18 @@ namespace MCPForUnityTests.Editor.Services
             {
                 command = Dispatch("{\"type\":\"" + name + "\"}", cts.Token);
                 Assert.IsTrue(command.IsCompleted, "The test handler should complete synchronously.");
-                Assert.IsTrue(SpinWait.SpinUntil(() => !IsPending(command), TimeSpan.FromSeconds(5)),
-                    "Completed async commands must release pending state without waiting for delayCall.");
+                Assert.IsTrue(
+                    SpinWait.SpinUntil(() => !IsPending(command), TimeSpan.FromSeconds(5)),
+                    "Completed async commands must release pending state without waiting for delayCall."
+                );
             }
             finally
             {
                 cts.Cancel();
-                if (previous == null) handlers.Remove(name);
-                else handlers[name] = previous;
+                if (previous == null)
+                    handlers.Remove(name);
+                else
+                    handlers[name] = previous;
             }
         }
 
@@ -123,20 +144,23 @@ namespace MCPForUnityTests.Editor.Services
                 var command = Dispatch("{\"type\":\"" + name + "\"}", cts.Token);
                 Assert.IsTrue(command.Wait(TimeSpan.FromSeconds(5)));
                 Assert.AreEqual("{\"status\":\"success\",\"result\":{\"payload\":\"" + payload + "\"}}", command.Result);
-                Assert.IsTrue(SpinWait.SpinUntil(() => !IsPending(command), TimeSpan.FromSeconds(5)),
-                    "Disabling async response logging must still release pending state without an editor frame.");
+                Assert.IsTrue(
+                    SpinWait.SpinUntil(() => !IsPending(command), TimeSpan.FromSeconds(5)),
+                    "Disabling async response logging must still release pending state without an editor frame."
+                );
             }
             finally
             {
                 cts.Cancel();
-                if (previousHandler == null) handlers.Remove(name);
-                else handlers[name] = previousHandler;
+                if (previousHandler == null)
+                    handlers.Remove(name);
+                else
+                    handlers[name] = previousHandler;
                 enabledField.SetValue(null, previousLogging);
             }
         }
 
-        private static Task<string> Dispatch(string json, CancellationToken token)
-            => (Task<string>)Execute.Invoke(null, new object[] { json, token });
+        private static Task<string> Dispatch(string json, CancellationToken token) => (Task<string>)Execute.Invoke(null, new object[] { json, token });
 
         private static bool IsPending(Task<string> command)
         {
@@ -145,7 +169,8 @@ namespace MCPForUnityTests.Editor.Services
                 foreach (var pending in Pending.Values)
                 {
                     var completion = (TaskCompletionSource<string>)pending.GetType().GetProperty("JsonResponseSource").GetValue(pending);
-                    if (ReferenceEquals(completion.Task, command)) return true;
+                    if (ReferenceEquals(completion.Task, command))
+                        return true;
                 }
                 return false;
             }
@@ -154,9 +179,11 @@ namespace MCPForUnityTests.Editor.Services
         private sealed class DeferredContext : SynchronizationContext
         {
             private readonly Queue<Action> _callbacks = new Queue<Action>();
+
             public override void Post(SendOrPostCallback callback, object state)
             {
-                lock (_callbacks) _callbacks.Enqueue(() => callback(state));
+                lock (_callbacks)
+                    _callbacks.Enqueue(() => callback(state));
             }
 
             public void Drain()
@@ -166,7 +193,8 @@ namespace MCPForUnityTests.Editor.Services
                     Action callback;
                     lock (_callbacks)
                     {
-                        if (_callbacks.Count == 0) return;
+                        if (_callbacks.Count == 0)
+                            return;
                         callback = _callbacks.Dequeue();
                     }
                     callback();
@@ -181,8 +209,7 @@ namespace MCPForUnityTests.Editor.Services
             // That reached the console as a red error with a stack trace, as if the Editor broke.
             LogAssert.Expect(LogType.Warning, new Regex("no_such_command.*update the package"));
 
-            var reply = Dispatch(
-                "{\"type\":\"no_such_command\",\"params\":{}}", CancellationToken.None);
+            var reply = Dispatch("{\"type\":\"no_such_command\",\"params\":{}}", CancellationToken.None);
             for (int frame = 0; frame < 600 && !reply.IsCompleted; frame++)
             {
                 yield return null;

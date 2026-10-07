@@ -22,7 +22,8 @@ namespace MCPForUnity.Editor.Tools.AssetGen
 
         public static object HandleCommand(JObject @params)
         {
-            if (@params == null) return new ErrorResponse("Parameters cannot be null.");
+            if (@params == null)
+                return new ErrorResponse("Parameters cannot be null.");
             var p = new ToolParams(@params);
             try
             {
@@ -36,8 +37,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
 
                 string ext = Path.GetExtension(srcAbs).ToLowerInvariant();
                 if (Array.IndexOf(SupportedExt, ext) < 0)
-                    return new ErrorResponse(
-                        $"Unsupported model extension '{ext}'. Supported: .fbx, .obj, .glb, .gltf, .zip.");
+                    return new ErrorResponse($"Unsupported model extension '{ext}'. Supported: .fbx, .obj, .glb, .gltf, .zip.");
                 if ((ext == ".glb" || ext == ".gltf") && !ModelImportPipeline.IsGltfastAvailable())
                     return new ErrorResponse("GLB import requires glTFast. Install it from the MCP for Unity → Dependencies tab, or choose FBX output.");
 
@@ -47,19 +47,13 @@ namespace MCPForUnity.Editor.Tools.AssetGen
 
                 string destRel = StageUnderAssets(srcAbs, baseName, ext, p.Get("outputFolder"));
 
-                var job = new AssetGenJob
-                {
-                    TargetSize = p.GetFloat("targetSize", 1f) ?? 1f,
-                    AnimationType = p.Get("animationType"),
-                };
+                var job = new AssetGenJob { TargetSize = p.GetFloat("targetSize", 1f) ?? 1f, AnimationType = p.Get("animationType") };
                 AssetGenJob result = ModelImportPipeline.ImportInto(job, destRel);
 
                 if (result == null || result.State == AssetGenJobState.Failed)
                     return new ErrorResponse(result?.Error ?? "Import failed.");
 
-                return new SuccessResponse(
-                    $"Imported model: {result.AssetPath}",
-                    new { asset_path = result.AssetPath, asset_guid = result.AssetGuid });
+                return new SuccessResponse($"Imported model: {result.AssetPath}", new { asset_path = result.AssetPath, asset_guid = result.AssetGuid });
             }
             catch (Exception e)
             {
@@ -70,9 +64,11 @@ namespace MCPForUnity.Editor.Tools.AssetGen
         private static string ResolveSource(string source)
         {
             string s = source.Replace('\\', '/');
-            if (Array.IndexOf(s.Split('/'), "..") >= 0 ||
-                (s.Length >= 2 && s[1] == ':' && (s.Length < 3 || s[2] != '/')) ||
-                !AssetGenPaths.TryGetAssetsRelativePath(s, out string relative))
+            if (
+                Array.IndexOf(s.Split('/'), "..") >= 0
+                || (s.Length >= 2 && s[1] == ':' && (s.Length < 3 || s[2] != '/'))
+                || !AssetGenPaths.TryGetAssetsRelativePath(s, out string relative)
+            )
                 throw new ArgumentException("'source_path' must resolve under the project's Assets folder without traversal or links.");
 
             // Validate the source's physical boundary before existence checks or staging.
@@ -82,9 +78,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
 
         private static string StageUnderAssets(string srcAbs, string baseName, string ext, string outputFolder)
         {
-            string root = !string.IsNullOrWhiteSpace(outputFolder)
-                ? outputFolder
-                : AssetGenPrefs.OutputRoot + "/Imported";
+            string root = !string.IsNullOrWhiteSpace(outputFolder) ? outputFolder : AssetGenPrefs.OutputRoot + "/Imported";
             if (!AssetGenPaths.TryGetAssetsFolder(root, out root))
             {
                 if (!string.IsNullOrWhiteSpace(outputFolder))
@@ -112,8 +106,10 @@ namespace MCPForUnity.Editor.Tools.AssetGen
 
         private static string SanitizeName(string raw)
         {
-            if (string.IsNullOrWhiteSpace(raw)) return "model";
-            foreach (char c in Path.GetInvalidFileNameChars()) raw = raw.Replace(c, '_');
+            if (string.IsNullOrWhiteSpace(raw))
+                return "model";
+            foreach (char c in Path.GetInvalidFileNameChars())
+                raw = raw.Replace(c, '_');
             return raw.Trim();
         }
     }

@@ -23,26 +23,37 @@ class CaptureCase(TypedDict):
 def _capture_cases() -> list[CaptureCase]:
     """Use compact scalar attacks and small controls; no capture is performed."""
     ui_rejections = [
-        {"width": 0}, {"height": -1}, {"width": 8193, "height": 1},
-        {"width": 1, "height": 8193}, {"width": 8192, "height": 4097},
+        {"width": 0},
+        {"height": -1},
+        {"width": 8193, "height": 1},
+        {"width": 1, "height": 8193},
+        {"width": 8192, "height": 4097},
         {"width": 2147483647, "height": 2147483647},
-        {"max_resolution": 8193}, {"max_resolution": -1},
+        {"max_resolution": 8193},
+        {"max_resolution": -1},
     ]
     camera_rejections = [
-        {"screenshot_super_size": 0}, {"screenshot_super_size": -1},
-        {"screenshot_super_size": 5}, {"screenshot_super_size": 2147483647},
-        {"screenshot_super_size": "5"}, {"max_resolution": 8193},
+        {"screenshot_super_size": 0},
+        {"screenshot_super_size": -1},
+        {"screenshot_super_size": 5},
+        {"screenshot_super_size": 2147483647},
+        {"screenshot_super_size": "5"},
+        {"max_resolution": 8193},
         {"max_resolution": "8193"},
     ]
     orbit_rejections = [
-        {"orbit_angles": 0}, {"orbit_angles": 37},
-        {"orbit_angles": 2147483647}, {"orbit_elevations": []},
+        {"orbit_angles": 0},
+        {"orbit_angles": 37},
+        {"orbit_angles": 2147483647},
+        {"orbit_elevations": []},
         {"orbit_elevations": [0.0] * 17},
         {"orbit_elevations": json.dumps([0.0] * 17)},
         {"orbit_angles": 36, "orbit_elevations": [0.0] * 4},
         {"orbit_angles": 9, "orbit_elevations": [0.0] * 15},
-        {"orbit_elevations": "[NaN]"}, {"orbit_elevations": "[Infinity]"},
-        {"orbit_elevations": "[1e500]"}, {"orbit_elevations": "[true]"},
+        {"orbit_elevations": "[NaN]"},
+        {"orbit_elevations": "[Infinity]"},
+        {"orbit_elevations": "[1e500]"},
+        {"orbit_elevations": "[true]"},
         {"orbit_elevations": "[" + "9" * 400 + "]"},
     ]
     cases: list[CaptureCase] = [
@@ -55,13 +66,20 @@ def _capture_cases() -> list[CaptureCase]:
         for values in camera_rejections
     )
     cases.extend(
-        {"tool": "manage_camera", "arguments": {"action": "screenshot", "batch": batch, **values}, "allowed": False}
+        {
+            "tool": "manage_camera",
+            "arguments": {"action": "screenshot", "batch": batch, **values},
+            "allowed": False,
+        }
         for batch in ("orbit", "ORBIT")
         for values in orbit_rejections
     )
     ui_controls = [
-        {}, {"width": 1, "height": 1}, {"width": 8192, "height": 4096},
-        {"width": 4096, "height": 8192}, {"width": 1, "height": 8192, "max_resolution": 8192},
+        {},
+        {"width": 1, "height": 1},
+        {"width": 8192, "height": 4096},
+        {"width": 4096, "height": 8192},
+        {"width": 1, "height": 8192, "max_resolution": 8192},
         {"width": None, "height": None, "max_resolution": None},
         {"include_image": False, "width": 2, "height": 2},
         {"max_resolution": 0},
@@ -71,8 +89,11 @@ def _capture_cases() -> list[CaptureCase]:
         for values in ui_controls
     )
     camera_controls = [
-        {}, {"screenshot_super_size": 1}, {"screenshot_super_size": "4"},
-        {"max_resolution": 8192}, {"include_image": False},
+        {},
+        {"screenshot_super_size": 1},
+        {"screenshot_super_size": "4"},
+        {"max_resolution": 8192},
+        {"include_image": False},
         {"capture_source": "scene_view", "screenshot_super_size": 1},
         {"properties": {"superSize": 2147483647, "orbitElevations": [0.0] * 17}},
         {"properties": '{"superSize":2147483647,"maxResolution":2147483647}'},
@@ -83,19 +104,47 @@ def _capture_cases() -> list[CaptureCase]:
         for values in camera_controls
     )
     orbit_controls = [
-        {}, {"orbit_angles": 36, "orbit_elevations": [0.0] * 3},
+        {},
+        {"orbit_angles": 36, "orbit_elevations": [0.0] * 3},
         {"orbit_angles": 8, "orbit_elevations": [0.0] * 16},
         {"orbit_angles": "1", "orbit_elevations": "[0, 30]", "max_resolution": "8192"},
     ]
     cases.extend(
-        {"tool": "manage_camera", "arguments": {"action": "screenshot", "batch": "orbit", **values}, "allowed": True}
+        {
+            "tool": "manage_camera",
+            "arguments": {"action": "screenshot", "batch": "orbit", **values},
+            "allowed": True,
+        }
         for values in orbit_controls
     )
-    cases.extend([
-        {"tool": "manage_camera", "arguments": {"action": "screenshot_multiview", "batch": "orbit", "orbit_angles": 37, "orbit_elevations": [0.0] * 17}, "allowed": True},
-        {"tool": "manage_camera", "arguments": {"action": "set_lens", "properties": {"fieldOfView": 60}, "screenshot_super_size": 2147483647}, "allowed": True},
-        {"tool": "manage_ui", "arguments": {"action": "ping", "width": 2147483647}, "allowed": True},
-    ])
+    cases.extend(
+        [
+            {
+                "tool": "manage_camera",
+                "arguments": {
+                    "action": "screenshot_multiview",
+                    "batch": "orbit",
+                    "orbit_angles": 37,
+                    "orbit_elevations": [0.0] * 17,
+                },
+                "allowed": True,
+            },
+            {
+                "tool": "manage_camera",
+                "arguments": {
+                    "action": "set_lens",
+                    "properties": {"fieldOfView": 60},
+                    "screenshot_super_size": 2147483647,
+                },
+                "allowed": True,
+            },
+            {
+                "tool": "manage_ui",
+                "arguments": {"action": "ping", "width": 2147483647},
+                "allowed": True,
+            },
+        ]
+    )
     return cases
 
 
@@ -105,7 +154,19 @@ def _own_child_environment(owned: Path) -> None:
     for name in tuple(os.environ):
         if name.startswith("UNITY_MCP_"):
             del os.environ[name]
-    for name in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "TEMP", "TMP", "UNITY_MCP_LOG_DIR", "UNITY_MCP_STATUS_DIR"):
+    for name in (
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "XDG_DATA_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+        "TEMP",
+        "TMP",
+        "UNITY_MCP_LOG_DIR",
+        "UNITY_MCP_STATUS_DIR",
+    ):
         os.environ[name] = str(owned)
     os.environ["DISABLE_TELEMETRY"] = "1"
     os.environ["UNITY_MCP_SKIP_STARTUP_CONNECT"] = "1"
@@ -128,7 +189,9 @@ def _own_child_environment(owned: Path) -> None:
 
     socket.socketpair = internal_pair
     socket.socket.connect = socket.socket.connect_ex = socket.socket.bind = denied
-    socket.create_connection = socket.getaddrinfo = socket.gethostbyname = socket.gethostbyname_ex = denied
+    socket.create_connection = socket.getaddrinfo = socket.gethostbyname = (
+        socket.gethostbyname_ex
+    ) = denied
 
 
 async def _exercise_registered_sdk(owned: Path) -> None:
@@ -182,17 +245,41 @@ async def _exercise_registered_sdk(owned: Path) -> None:
                     if case["tool"] == "manage_ui" and case["arguments"]["action"] == "render_ui":
                         expected_calls.append("ready")
                 passed = success is case["allowed"] and calls == expected_calls
-                if case["allowed"] and result.structured_content.get("data") != {"count": 0, "enabled": False, "reference": None}:
+                if case["allowed"] and result.structured_content.get("data") != {
+                    "count": 0,
+                    "enabled": False,
+                    "reference": None,
+                }:
                     passed = False
                 properties = case["arguments"].get("properties")
                 if properties is not None and (not sent or sent[0].get("properties") != properties):
                     passed = False
                 if not passed:
-                    failures.append(f"{mode} case {index}: allowed={case['allowed']} success={success} calls={calls}")
-                rows.append({"mode": mode, "index": index, "tool": case["tool"], "allowed": case["allowed"], "passed": passed, "calls": calls.copy()})
-    report = {"runtime": sys.version.split()[0], "checks": len(rows), "failures": failures, "results": rows}
+                    failures.append(
+                        f"{mode} case {index}: allowed={case['allowed']} success={success} calls={calls}"
+                    )
+                rows.append(
+                    {
+                        "mode": mode,
+                        "index": index,
+                        "tool": case["tool"],
+                        "allowed": case["allowed"],
+                        "passed": passed,
+                        "calls": calls.copy(),
+                    }
+                )
+    report = {
+        "runtime": sys.version.split()[0],
+        "checks": len(rows),
+        "failures": failures,
+        "results": rows,
+    }
     (owned / "sdk-report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(json.dumps({"checks": len(rows), "passed": len(rows) - len(failures), "failed": len(failures)}))
+    print(
+        json.dumps(
+            {"checks": len(rows), "passed": len(rows) - len(failures), "failed": len(failures)}
+        )
+    )
     assert not failures, "\n".join(failures)
 
 
@@ -202,7 +289,10 @@ def test_render_capture_limits_at_registered_sdk(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, "-B", str(Path(__file__).resolve()), "--sdk-child", str(owned)],
         cwd=Path(__file__).resolve().parents[2],
-        capture_output=True, text=True, timeout=60, check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     report = json.loads((owned / "sdk-report.json").read_text(encoding="utf-8"))

@@ -1,9 +1,9 @@
 using System;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Resources.Editor
 {
@@ -25,22 +25,16 @@ namespace MCPForUnity.Editor.Resources.Editor
                     activeTransform = UnityEditor.Selection.activeTransform?.name,
                     activeInstanceID = activeObject?.GetInstanceIDCompat() ?? 0,
                     count = UnityEditor.Selection.count,
-                    objects = UnityEditor.Selection.objects
-                        .Select(obj => new
+                    objects = UnityEditor
+                        .Selection.objects.Select(obj => new
                         {
                             name = obj?.name,
                             type = obj?.GetType().FullName,
-                            instanceID = obj?.GetInstanceIDCompat()
+                            instanceID = obj?.GetInstanceIDCompat(),
                         })
                         .ToList(),
-                    gameObjects = UnityEditor.Selection.gameObjects
-                        .Select(go => new
-                        {
-                            name = go?.name,
-                            instanceID = go?.GetInstanceIDCompat()
-                        })
-                        .ToList(),
-                    assetGUIDs = UnityEditor.Selection.assetGUIDs
+                    gameObjects = UnityEditor.Selection.gameObjects.Select(go => new { name = go?.name, instanceID = go?.GetInstanceIDCompat() }).ToList(),
+                    assetGUIDs = UnityEditor.Selection.assetGUIDs,
                 };
 
                 return new SuccessResponse("Retrieved current selection details.", selectionInfo);

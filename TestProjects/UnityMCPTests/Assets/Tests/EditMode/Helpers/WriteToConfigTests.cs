@@ -2,13 +2,13 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Models;
+using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
-using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Editor.Models;
-using MCPForUnity.Editor.Constants;
-using MCPForUnity.Editor.Services;
 using EditorConfigCache = MCPForUnity.Editor.Services.EditorConfigurationCache;
 
 namespace MCPForUnityTests.Editor.Helpers
@@ -41,8 +41,9 @@ namespace MCPForUnityTests.Editor.Helpers
             // restrictions when UseShellExecute=false for .cmd/.bat scripts.
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                Assert.Ignore("WriteToConfig tests are skipped on Windows (CI runs linux).\n" +
-                              "ValidateUvBinarySafe requires launching an actual exe on Windows.");
+                Assert.Ignore(
+                    "WriteToConfig tests are skipped on Windows (CI runs linux).\n" + "ValidateUvBinarySafe requires launching an actual exe on Windows."
+                );
             }
             _tempRoot = Path.Combine(Path.GetTempPath(), "UnityMCPTests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_tempRoot);
@@ -89,7 +90,12 @@ namespace MCPForUnityTests.Editor.Helpers
                 EditorPrefs.DeleteKey(HttpUrlPrefKey);
 
             // Remove temp files
-            try { if (Directory.Exists(_tempRoot)) Directory.Delete(_tempRoot, true); } catch { }
+            try
+            {
+                if (Directory.Exists(_tempRoot))
+                    Directory.Delete(_tempRoot, true);
+            }
+            catch { }
         }
 
         // --- Tests ---
@@ -105,7 +111,7 @@ namespace MCPForUnityTests.Editor.Helpers
                 name = "Windsurf",
                 HttpUrlProperty = "serverUrl",
                 DefaultUnityFields = { { "disabled", false } },
-                StripEnvWhenNotRequired = true
+                StripEnvWhenNotRequired = true,
             };
             InvokeWriteToConfig(configPath, client);
 
@@ -127,7 +133,7 @@ namespace MCPForUnityTests.Editor.Helpers
             {
                 name = "Kiro",
                 EnsureEnvObject = true,
-                DefaultUnityFields = { { "disabled", false } }
+                DefaultUnityFields = { { "disabled", false } },
             };
             InvokeWriteToConfig(configPath, client);
 
@@ -197,32 +203,35 @@ namespace MCPForUnityTests.Editor.Helpers
             var configPath = Path.Combine(_tempRoot, "claude-desktop.json");
             WriteInitialConfig(configPath, isVSCode: false, command: "uvx", directory: "/old/path");
 
-            WithTransportPreference(false, () =>
-            {
-                MCPServiceLocator.Paths.SetUvxPathOverride(_fakeUvPath);
-                try
+            WithTransportPreference(
+                false,
+                () =>
                 {
-                    var client = new McpClient
+                    MCPServiceLocator.Paths.SetUvxPathOverride(_fakeUvPath);
+                    try
                     {
-                        name = "Claude Desktop",
-                        SupportsHttpTransport = false,
-                        StripEnvWhenNotRequired = true
-                    };
+                        var client = new McpClient
+                        {
+                            name = "Claude Desktop",
+                            SupportsHttpTransport = false,
+                            StripEnvWhenNotRequired = true,
+                        };
 
-                    InvokeWriteToConfig(configPath, client);
+                        InvokeWriteToConfig(configPath, client);
 
-                    var root = JObject.Parse(File.ReadAllText(configPath));
-                    var unity = (JObject)root.SelectToken("mcpServers.unityMCP");
-                    Assert.NotNull(unity, "Expected mcpServers.unityMCP node");
-                    Assert.AreEqual(_fakeUvPath, (string)unity["command"], "Claude Desktop should use absolute uvx path");
-                    Assert.IsNull(unity["env"], "Claude Desktop config should not include env block when not required");
-                    AssertTransportConfiguration(unity, client);
+                        var root = JObject.Parse(File.ReadAllText(configPath));
+                        var unity = (JObject)root.SelectToken("mcpServers.unityMCP");
+                        Assert.NotNull(unity, "Expected mcpServers.unityMCP node");
+                        Assert.AreEqual(_fakeUvPath, (string)unity["command"], "Claude Desktop should use absolute uvx path");
+                        Assert.IsNull(unity["env"], "Claude Desktop config should not include env block when not required");
+                        AssertTransportConfiguration(unity, client);
+                    }
+                    finally
+                    {
+                        MCPServiceLocator.Paths.ClearUvxPathOverride();
+                    }
                 }
-                finally
-                {
-                    MCPServiceLocator.Paths.ClearUvxPathOverride();
-                }
-            });
+            );
         }
 
         [Test]
@@ -240,9 +249,9 @@ namespace MCPForUnityTests.Editor.Helpers
                         ["command"] = _fakeUvPath,
                         ["args"] = new JArray("run", "--directory", "/old/path", "server.py"),
                         ["env"] = new JObject { ["FOO"] = "bar" },
-                        ["disabled"] = true
-                    }
-                }
+                        ["disabled"] = true,
+                    },
+                },
             };
             File.WriteAllText(configPath, json.ToString());
 
@@ -250,7 +259,7 @@ namespace MCPForUnityTests.Editor.Helpers
             {
                 name = "Kiro",
                 EnsureEnvObject = true,
-                DefaultUnityFields = { { "disabled", false } }
+                DefaultUnityFields = { { "disabled", false } },
             };
             InvokeWriteToConfig(configPath, client);
 
@@ -276,9 +285,9 @@ namespace MCPForUnityTests.Editor.Helpers
                         ["command"] = _fakeUvPath,
                         ["args"] = new JArray("run", "--directory", "/old/path", "server.py"),
                         ["env"] = new JObject { ["SHOULD"] = "be removed" },
-                        ["disabled"] = true
-                    }
-                }
+                        ["disabled"] = true,
+                    },
+                },
             };
             File.WriteAllText(configPath, json.ToString());
 
@@ -287,7 +296,7 @@ namespace MCPForUnityTests.Editor.Helpers
                 name = "Windsurf",
                 HttpUrlProperty = "serverUrl",
                 DefaultUnityFields = { { "disabled", false } },
-                StripEnvWhenNotRequired = true
+                StripEnvWhenNotRequired = true,
             };
             InvokeWriteToConfig(configPath, client);
 
@@ -305,22 +314,25 @@ namespace MCPForUnityTests.Editor.Helpers
             var configPath = Path.Combine(_tempRoot, "stdio-non-vscode.json");
             WriteInitialConfig(configPath, isVSCode: false, command: _fakeUvPath, directory: "/old/path");
 
-            WithTransportPreference(false, () =>
-            {
-                var client = new McpClient
+            WithTransportPreference(
+                false,
+                () =>
                 {
-                    name = "Windsurf",
-                    HttpUrlProperty = "serverUrl",
-                    DefaultUnityFields = { { "disabled", false } },
-                    StripEnvWhenNotRequired = true
-                };
-                InvokeWriteToConfig(configPath, client);
+                    var client = new McpClient
+                    {
+                        name = "Windsurf",
+                        HttpUrlProperty = "serverUrl",
+                        DefaultUnityFields = { { "disabled", false } },
+                        StripEnvWhenNotRequired = true,
+                    };
+                    InvokeWriteToConfig(configPath, client);
 
-                var root = JObject.Parse(File.ReadAllText(configPath));
-                var unity = (JObject)root.SelectToken("mcpServers.unityMCP");
-                Assert.NotNull(unity, "Expected mcpServers.unityMCP node");
-                AssertTransportConfiguration(unity, client);
-            });
+                    var root = JObject.Parse(File.ReadAllText(configPath));
+                    var unity = (JObject)root.SelectToken("mcpServers.unityMCP");
+                    Assert.NotNull(unity, "Expected mcpServers.unityMCP node");
+                    AssertTransportConfiguration(unity, client);
+                }
+            );
         }
 
         [Test]
@@ -329,16 +341,19 @@ namespace MCPForUnityTests.Editor.Helpers
             var configPath = Path.Combine(_tempRoot, "stdio-vscode.json");
             WriteInitialConfig(configPath, isVSCode: true, command: _fakeUvPath, directory: "/old/path");
 
-            WithTransportPreference(false, () =>
-            {
-                var client = new McpClient { name = "VSCode", IsVsCodeLayout = true };
-                InvokeWriteToConfig(configPath, client);
+            WithTransportPreference(
+                false,
+                () =>
+                {
+                    var client = new McpClient { name = "VSCode", IsVsCodeLayout = true };
+                    InvokeWriteToConfig(configPath, client);
 
-                var root = JObject.Parse(File.ReadAllText(configPath));
-                var unity = (JObject)root.SelectToken("servers.unityMCP");
-                Assert.NotNull(unity, "Expected servers.unityMCP node");
-                AssertTransportConfiguration(unity, client);
-            });
+                    var root = JObject.Parse(File.ReadAllText(configPath));
+                    var unity = (JObject)root.SelectToken("servers.unityMCP");
+                    Assert.NotNull(unity, "Expected servers.unityMCP node");
+                    AssertTransportConfiguration(unity, client);
+                }
+            );
         }
 
         // --- Helpers ---
@@ -354,7 +369,7 @@ namespace MCPForUnityTests.Editor.Helpers
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
                 };
                 using var p = Process.Start(psi);
                 p?.WaitForExit(2000);
@@ -376,9 +391,9 @@ namespace MCPForUnityTests.Editor.Helpers
                         {
                             ["command"] = command,
                             ["args"] = new JArray("run", "--directory", directory, "server.py"),
-                            ["type"] = "stdio"
-                        }
-                    }
+                            ["type"] = "stdio",
+                        },
+                    },
                 };
             }
             else
@@ -387,12 +402,8 @@ namespace MCPForUnityTests.Editor.Helpers
                 {
                     ["mcpServers"] = new JObject
                     {
-                        ["unityMCP"] = new JObject
-                        {
-                            ["command"] = command,
-                            ["args"] = new JArray("run", "--directory", directory, "server.py")
-                        }
-                    }
+                        ["unityMCP"] = new JObject { ["command"] = command, ["args"] = new JArray("run", "--directory", directory, "server.py") },
+                    },
                 };
             }
             File.WriteAllText(configPath, root.ToString());
@@ -415,22 +426,19 @@ namespace MCPForUnityTests.Editor.Helpers
                 string expectedUrl = HttpEndpointUtility.GetMcpRpcUrl();
                 if (isWindsurf)
                 {
-                    Assert.AreEqual(expectedUrl, (string)unity["serverUrl"],
-                        "Windsurf should advertise HTTP using serverUrl");
+                    Assert.AreEqual(expectedUrl, (string)unity["serverUrl"], "Windsurf should advertise HTTP using serverUrl");
                     Assert.IsNull(unity["url"], "Windsurf configs should not use the url property");
                 }
                 else
                 {
-                    Assert.AreEqual(expectedUrl, (string)unity["url"],
-                        "HTTP transport should set url to the MCP endpoint");
+                    Assert.AreEqual(expectedUrl, (string)unity["url"], "HTTP transport should set url to the MCP endpoint");
                     Assert.IsNull(unity["serverUrl"], "serverUrl should be reserved for Windsurf");
                 }
                 Assert.IsNull(unity["command"], "HTTP transport should remove command");
                 Assert.IsNull(unity["args"], "HTTP transport should remove args");
 
                 // "type" is now included for all clients (standard MCP protocol field).
-                Assert.AreEqual("http", (string)unity["type"],
-                    "All entries should advertise HTTP transport type");
+                Assert.AreEqual("http", (string)unity["type"], "All entries should advertise HTTP transport type");
             }
             else
             {
@@ -445,14 +453,11 @@ namespace MCPForUnityTests.Editor.Helpers
 
                 int transportIndex = Array.IndexOf(args, "--transport");
                 Assert.GreaterOrEqual(transportIndex, 0, "args should include --transport flag");
-                Assert.Less(transportIndex + 1, args.Length,
-                    "--transport flag should be followed by a mode value");
-                Assert.AreEqual("stdio", args[transportIndex + 1],
-                    "--transport should be followed by stdio mode");
+                Assert.Less(transportIndex + 1, args.Length, "--transport flag should be followed by a mode value");
+                Assert.AreEqual("stdio", args[transportIndex + 1], "--transport should be followed by stdio mode");
 
                 // "type" is now included for all clients (standard MCP protocol field).
-                Assert.AreEqual("stdio", (string)unity["type"],
-                    "All entries should advertise stdio transport type");
+                Assert.AreEqual("stdio", (string)unity["type"], "All entries should advertise stdio transport type");
             }
         }
 

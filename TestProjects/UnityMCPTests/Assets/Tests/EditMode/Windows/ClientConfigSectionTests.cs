@@ -49,8 +49,7 @@ namespace MCPForUnityTests.Editor.Windows
             var client = new ManualClient { Steps = null };
             var section = CreateSection(client);
             section.UpdateManualConfiguration();
-            Assert.AreEqual("Configuration steps not available for this client.",
-                Get<Label>(section, "installationStepsLabel").text);
+            Assert.AreEqual("Configuration steps not available for this client.", Get<Label>(section, "installationStepsLabel").text);
             Assert.IsTrue(Get<Button>(section, "copyJsonButton").enabledSelf);
         }
 
@@ -70,7 +69,10 @@ namespace MCPForUnityTests.Editor.Windows
                 Assert.AreEqual(2, client.ConfigureCount, "A configured Codex client must not take the no-op Unregister path");
                 Assert.AreEqual("Configure", Get<Button>(section, "configureButton").text);
             }
-            finally { MCPServiceLocator.Register<IClientConfigurationService>(originalService); }
+            finally
+            {
+                MCPServiceLocator.Register<IClientConfigurationService>(originalService);
+            }
         }
 
         private static McpClientConfigSection CreateSection(IMcpClientConfigurator client)
@@ -91,28 +93,42 @@ namespace MCPForUnityTests.Editor.Windows
             return section;
         }
 
-        private static T Get<T>(McpClientConfigSection section, string field)
-            => (T)typeof(McpClientConfigSection).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(section);
+        private static T Get<T>(McpClientConfigSection section, string field) =>
+            (T)typeof(McpClientConfigSection).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(section);
 
-        private static void Set(McpClientConfigSection section, string field, object value)
-            => typeof(McpClientConfigSection).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(section, value);
+        private static void Set(McpClientConfigSection section, string field, object value) =>
+            typeof(McpClientConfigSection).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(section, value);
 
         private sealed class MemoryCodexClient : CodexMcpConfigurator
         {
             public int ConfigureCount;
-            public MemoryCodexClient(McpStatus status) : base(new McpClient { name = "Memory Codex" }) => client.SetStatus(status);
+
+            public MemoryCodexClient(McpStatus status)
+                : base(new McpClient { name = "Memory Codex" }) => client.SetStatus(status);
+
             public override string GetConfigPath() => "memory-config";
+
             public override string GetManualSnippet() => "memory-toml";
+
             public override McpStatus CheckStatus(bool attemptAutoRewrite = true) => Status;
-            public override void Configure() { ConfigureCount++; client.SetStatus(McpStatus.Configured); }
+
+            public override void Configure()
+            {
+                ConfigureCount++;
+                client.SetStatus(McpStatus.Configured);
+            }
         }
 
         private sealed class MemoryClientService : IClientConfigurationService
         {
             public void ConfigureClient(IMcpClientConfigurator configurator) => configurator.Configure();
+
             public bool CheckClientStatus(IMcpClientConfigurator configurator, bool attemptAutoRewrite = true) => false;
+
             public IReadOnlyList<IMcpClientConfigurator> GetAllClients() => Array.Empty<IMcpClientConfigurator>();
-            public ClientConfigurationSummary ConfigureAllDetectedClients() => throw new InvalidOperationException("Bulk configuration is forbidden in this test.");
+
+            public ClientConfigurationSummary ConfigureAllDetectedClients() =>
+                throw new InvalidOperationException("Bulk configuration is forbidden in this test.");
         }
 
         private sealed class ManualClient : IMcpClientConfigurator
@@ -127,17 +143,45 @@ namespace MCPForUnityTests.Editor.Windows
             public bool SupportsAutoConfigure => true;
             public bool SupportsSkills => false;
             public IReadOnlyList<ConfiguredTransport> SupportedTransports => new[] { ConfiguredTransport.Http };
+
             public string GetConfigureActionLabel() => "Configure";
+
             public string GetSkillInstallPath() => null;
-            public string GetConfigPath() { ThrowIf("path"); return "memory-config"; }
-            public string GetManualSnippet() { ThrowIf("snippet"); return "memory-json"; }
-            public IList<string> GetInstallationSteps() { ThrowIf("steps"); return Steps; }
+
+            public string GetConfigPath()
+            {
+                ThrowIf("path");
+                return "memory-config";
+            }
+
+            public string GetManualSnippet()
+            {
+                ThrowIf("snippet");
+                return "memory-json";
+            }
+
+            public IList<string> GetInstallationSteps()
+            {
+                ThrowIf("steps");
+                return Steps;
+            }
+
             public McpStatus CheckStatus(bool attemptAutoRewrite = true) => Status;
-            public void Configure() { throw new InvalidOperationException("Real configuration is forbidden in this test."); }
-            public void Unregister() { throw new InvalidOperationException("Real configuration is forbidden in this test."); }
+
+            public void Configure()
+            {
+                throw new InvalidOperationException("Real configuration is forbidden in this test.");
+            }
+
+            public void Unregister()
+            {
+                throw new InvalidOperationException("Real configuration is forbidden in this test.");
+            }
+
             private void ThrowIf(string stage)
             {
-                if (FailureStage == stage) throw new InvalidOperationException("synthetic configuration error");
+                if (FailureStage == stage)
+                    throw new InvalidOperationException("synthetic configuration error");
             }
         }
     }

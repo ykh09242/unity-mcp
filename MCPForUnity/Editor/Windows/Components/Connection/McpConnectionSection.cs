@@ -24,7 +24,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         {
             HTTPLocal,
             HTTPRemote,
-            Stdio
+            Stdio,
         }
 
         // UI Elements
@@ -59,6 +59,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
         private bool connectionToggleInProgress;
         private bool unityPortDirty;
+
         // Explicit actions in a recreated window also supersede detached launch continuations.
         private static int autoStartGeneration;
         private bool httpServerToggleInProgress;
@@ -197,7 +198,11 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 EditorConfigurationCache.Instance.SetUseHttpTransport(useHttp);
 
                 // Clear any stale resume flags when user manually changes transport
-                try { EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload); } catch { }
+                try
+                {
+                    EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
+                }
+                catch { }
                 HttpBridgeReloadHandler.CancelPendingResume();
                 HttpAutoStartHandler.CancelPendingReconnect();
 
@@ -226,18 +231,21 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     try
                     {
                         var stopTask = MCPServiceLocator.TransportManager.StopAsync(stopMode);
-                        stopTask.ContinueWith(t =>
-                        {
-                            try
+                        stopTask.ContinueWith(
+                            t =>
                             {
-                                if (t.IsFaulted)
+                                try
                                 {
-                                    var msg = t.Exception?.GetBaseException()?.Message ?? "Unknown error";
-                                    McpLog.Warn($"Async stop of {stopMode} transport failed: {msg}");
+                                    if (t.IsFaulted)
+                                    {
+                                        var msg = t.Exception?.GetBaseException()?.Message ?? "Unknown error";
+                                        McpLog.Warn($"Async stop of {stopMode} transport failed: {msg}");
+                                    }
                                 }
-                            }
-                            catch { }
-                        }, TaskScheduler.Default);
+                                catch { }
+                            },
+                            TaskScheduler.Default
+                        );
                     }
                     catch (Exception ex)
                     {
@@ -345,13 +353,10 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             bool sessionRunning,
             bool toggleInProgress,
             bool editorBusy,
-            int consecutiveDownPolls)
+            int consecutiveDownPolls
+        )
         {
-            return httpLocalSelected
-                && sessionRunning
-                && !toggleInProgress
-                && !editorBusy
-                && consecutiveDownPolls >= OrphanedSessionDownPollThreshold;
+            return httpLocalSelected && sessionRunning && !toggleInProgress && !editorBusy && consecutiveDownPolls >= OrphanedSessionDownPollThreshold;
         }
 
         // Consecutive failed bridge verifications required before the health indicator is
@@ -362,8 +367,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         // repeated failures before surfacing it.
         internal const int UnhealthyVerificationThreshold = 2;
 
-        internal static bool ShouldReportUnhealthy(int consecutiveVerifyFailures)
-            => consecutiveVerifyFailures >= UnhealthyVerificationThreshold;
+        internal static bool ShouldReportUnhealthy(int consecutiveVerifyFailures) => consecutiveVerifyFailures >= UnhealthyVerificationThreshold;
 
         public void UpdateConnectionStatus()
         {
@@ -392,8 +396,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             // Detect orphaned session: if HTTP Local session thinks it's running but the server is gone,
             // automatically end the session to keep UI in sync with reality.
             bool editorBusy = EditorApplication.isCompiling || EditorApplication.isUpdating;
-            if (ShouldEndOrphanedSession(showLocalServerControls, isRunning, connectionToggleInProgress,
-                    editorBusy, consecutiveServerDownPolls))
+            if (ShouldEndOrphanedSession(showLocalServerControls, isRunning, connectionToggleInProgress, editorBusy, consecutiveServerDownPolls))
             {
                 McpLog.Info("Server no longer running; ending orphaned session.");
                 _ = EndOrphanedSessionAsync();
@@ -415,10 +418,9 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 // Show instance name (project folder name) for better identification in multi-instance scenarios.
                 // Defensive: handle edge cases where path parsing might return null/empty.
                 string projectDir = System.IO.Path.GetDirectoryName(Application.dataPath);
-                string instanceName = !string.IsNullOrEmpty(projectDir)
-                    ? System.IO.Path.GetFileName(projectDir)
-                    : "Unity";
-                if (string.IsNullOrEmpty(instanceName)) instanceName = "Unity";
+                string instanceName = !string.IsNullOrEmpty(projectDir) ? System.IO.Path.GetFileName(projectDir) : "Unity";
+                if (string.IsNullOrEmpty(instanceName))
+                    instanceName = "Unity";
                 connectionStatusLabel.text = $"Session Active ({instanceName})";
                 statusIndicator.RemoveFromClassList("disconnected");
                 statusIndicator.AddToClassList("connected");
@@ -434,8 +436,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             {
                 // Check if we're resuming the stdio bridge after a domain reload.
                 // During this brief window, show "Resuming..." instead of "No Session" to avoid UI flicker.
-                bool isStdioResuming = stdioSelected
-                    && EditorPrefs.GetBool(EditorPrefKeys.ResumeStdioAfterReload, false);
+                bool isStdioResuming = stdioSelected && EditorPrefs.GetBool(EditorPrefKeys.ResumeStdioAfterReload, false);
 
                 if (isStdioResuming)
                 {
@@ -453,18 +454,14 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     statusIndicator.AddToClassList("disconnected");
                     connectionToggleButton.text = stdioSelected ? "Start Session" : "Connect";
 
-                    bool httpRemoteSelected = transportDropdown != null
-                        && (TransportProtocol)transportDropdown.value == TransportProtocol.HTTPRemote;
-                    bool httpRemoteNeedsKey = httpRemoteSelected
-                        && string.IsNullOrEmpty(EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty));
+                    bool httpRemoteSelected = transportDropdown != null && (TransportProtocol)transportDropdown.value == TransportProtocol.HTTPRemote;
+                    bool httpRemoteNeedsKey = httpRemoteSelected && string.IsNullOrEmpty(EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty));
                     string remoteUrlError = null;
-                    bool remoteUrlAllowed = !httpRemoteSelected
-                        || HttpEndpointUtility.IsCurrentRemoteUrlAllowed(out remoteUrlError);
+                    bool remoteUrlAllowed = !httpRemoteSelected || HttpEndpointUtility.IsCurrentRemoteUrlAllowed(out remoteUrlError);
 
                     bool httpLocalSelected = IsHttpLocalSelected();
                     string localUrlError = null;
-                    bool localUrlAllowed = !httpLocalSelected
-                        || TryGetLocalHttpLaunchPolicy(out _, out localUrlError);
+                    bool localUrlAllowed = !httpLocalSelected || TryGetLocalHttpLaunchPolicy(out _, out localUrlError);
 
                     bool blockedByRemoteUrlPolicy = httpRemoteSelected && !remoteUrlAllowed;
                     bool blockedByLocalUrlPolicy = httpLocalSelected && !localUrlAllowed;
@@ -494,9 +491,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 if (!unityPortDirty)
                 {
                     int savedPort = EditorPrefs.GetInt(EditorPrefKeys.UnitySocketPort, 0);
-                    unityPortField.SetValueWithoutNotify((savedPort == 0
-                        ? bridgeService.CurrentPort
-                        : savedPort).ToString());
+                    unityPortField.SetValueWithoutNotify((savedPort == 0 ? bridgeService.CurrentPort : savedPort).ToString());
                 }
             }
 
@@ -619,7 +614,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
         private void SyncUrlFieldToScope()
         {
-            if (httpUrlField == null) return;
+            if (httpUrlField == null)
+                return;
             httpUrlField.SetValueWithoutNotify(HttpEndpointUtility.GetBaseUrl());
             cachedLoginUrl = null;
             cachedLoginBaseUrl = null;
@@ -681,12 +677,13 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             // Note: Server logs may contain transient HTTP 400s on /mcp during startup probing and
             // CancelledError stack traces on shutdown when streaming requests are cancelled; this is expected.
             startHttpServerButton.EnableInClassList("server-running", localServerRunning);
-            startHttpServerButton.SetEnabled(
-                !httpServerToggleInProgress && (shouldShowStop || canStartLocalServer));
+            startHttpServerButton.SetEnabled(!httpServerToggleInProgress && (shouldShowStop || canStartLocalServer));
             startHttpServerButton.tooltip = httpLocalSelected
-                ? (canStartLocalServer
-                    ? string.Empty
-                    : localUrlError ?? $"HTTP Local requires a loopback URL ({HttpEndpointUtility.GetHttpLocalHostRequirementText()}).")
+                ? (
+                    canStartLocalServer
+                        ? string.Empty
+                        : localUrlError ?? $"HTTP Local requires a loopback URL ({HttpEndpointUtility.GetHttpLocalHostRequirementText()})."
+                )
                 : string.Empty;
         }
 
@@ -787,18 +784,22 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
             while (true)
             {
-                if (!IsAutoStartContextCurrent(generation, url)) return;
+                if (!IsAutoStartContextCurrent(generation, url))
+                    return;
                 if (server.IsLocalHttpServerReachable())
                 {
-                    if (!IsAutoStartContextCurrent(generation, url)) return;
+                    if (!IsAutoStartContextCurrent(generation, url))
+                        return;
                     McpLog.Info($"Server ready on {url}");
                     bool started = await bridgeService.StartAsync();
-                    if (!IsAutoStartContextCurrent(generation, url)) return;
+                    if (!IsAutoStartContextCurrent(generation, url))
+                        return;
                     if (started)
                     {
                         McpLog.Info("Session connected");
                         await VerifyBridgeConnectionAsync();
-                        if (!IsAutoStartContextCurrent(generation, url)) return;
+                        if (!IsAutoStartContextCurrent(generation, url))
+                            return;
                         UpdateConnectionStatus();
                         return;
                     }
@@ -809,15 +810,18 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
                 if ((!processAlive && elapsed > 1.0) || elapsed > hardCap.TotalSeconds)
                 {
-                    if (!IsAutoStartContextCurrent(generation, url)) return;
+                    if (!IsAutoStartContextCurrent(generation, url))
+                        return;
                     // Last-resort connect attempt in case reachability detection missed a live server.
                     bool started = await bridgeService.StartAsync();
-                    if (!IsAutoStartContextCurrent(generation, url)) return;
+                    if (!IsAutoStartContextCurrent(generation, url))
+                        return;
                     if (started)
                     {
                         McpLog.Info("Session connected");
                         await VerifyBridgeConnectionAsync();
-                        if (!IsAutoStartContextCurrent(generation, url)) return;
+                        if (!IsAutoStartContextCurrent(generation, url))
+                            return;
                         UpdateConnectionStatus();
                         return;
                     }
@@ -865,7 +869,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 EditorUtility.DisplayDialog(
                     "Port Unavailable",
                     $"The requested port could not be used:\n\n{ex.Message}\n\nReverting to the active Unity port.",
-                    "OK");
+                    "OK"
+                );
                 unityPortField.SetValueWithoutNotify(MCPServiceLocator.Bridge.CurrentPort.ToString());
             }
         }
@@ -884,15 +889,18 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
             try
             {
-                bool httpRemoteForLog = transportDropdown != null
-                    && (TransportProtocol)transportDropdown.value == TransportProtocol.HTTPRemote;
+                bool httpRemoteForLog = transportDropdown != null && (TransportProtocol)transportDropdown.value == TransportProtocol.HTTPRemote;
 
                 if (bridgeService.IsRunning)
                 {
                     // Clear any resume flags when user manually ends the session to prevent
                     // getting stuck in "Resuming..." state (the flag may have been set by a
                     // domain reload that started just before the user clicked End Session)
-                    try { EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload); } catch { }
+                    try
+                    {
+                        EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
+                    }
+                    catch { }
                     HttpBridgeReloadHandler.CancelPendingResume();
                     HttpAutoStartHandler.CancelPendingReconnect();
 
@@ -905,8 +913,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 else
                 {
                     bool httpRemoteSelected = httpRemoteForLog;
-                    if (httpRemoteSelected
-                        && !HttpEndpointUtility.IsCurrentRemoteUrlAllowed(out string remotePolicyError))
+                    if (httpRemoteSelected && !HttpEndpointUtility.IsCurrentRemoteUrlAllowed(out string remotePolicyError))
                     {
                         string errorMsg = remotePolicyError ?? "HTTP Remote URL is blocked by current security settings.";
                         EditorUtility.DisplayDialog("Connection Blocked", errorMsg, "OK");
@@ -915,8 +922,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     }
 
                     bool httpLocalSelected = IsHttpLocalSelected();
-                    if (httpLocalSelected
-                        && !TryGetLocalHttpLaunchPolicy(out _, out string localPolicyError))
+                    if (httpLocalSelected && !TryGetLocalHttpLaunchPolicy(out _, out string localPolicyError))
                     {
                         string errorMsg = localPolicyError ?? "HTTP Local URL is blocked by current security settings.";
                         EditorUtility.DisplayDialog("Connection Blocked", errorMsg, "OK");
@@ -946,11 +952,9 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     }
                     else
                     {
-                        var mode = EditorConfigurationCache.Instance.UseHttpTransport
-                            ? TransportMode.Http : TransportMode.Stdio;
+                        var mode = EditorConfigurationCache.Instance.UseHttpTransport ? TransportMode.Http : TransportMode.Stdio;
                         var state = MCPServiceLocator.TransportManager.GetState(mode);
-                        string errorMsg = state?.Error
-                            ?? "Failed to start the MCP session. Check the server URL and that the server is running.";
+                        string errorMsg = state?.Error ?? "Failed to start the MCP session. Check the server URL and that the server is running.";
                         EditorUtility.DisplayDialog("Connection Failed", errorMsg, "OK");
                         if (httpRemoteSelected)
                         {
@@ -966,9 +970,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             catch (Exception ex)
             {
                 McpLog.Error($"Connection toggle failed: {ex.Message}");
-                EditorUtility.DisplayDialog("Connection Error",
-                    $"Failed to toggle the MCP connection:\n\n{ex.Message}",
-                    "OK");
+                EditorUtility.DisplayDialog("Connection Error", $"Failed to toggle the MCP connection:\n\n{ex.Message}", "OK");
             }
             finally
             {
@@ -988,7 +990,11 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 connectionToggleButton?.SetEnabled(false);
 
                 // Clear resume flags to prevent getting stuck in "Resuming..." state
-                try { EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload); } catch { }
+                try
+                {
+                    EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
+                }
+                catch { }
                 HttpBridgeReloadHandler.CancelPendingResume();
                 HttpAutoStartHandler.CancelPendingReconnect();
 
@@ -1028,7 +1034,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private async void OnGetApiKeyClicked()
         {
             string baseUrl = HttpEndpointUtility.GetBaseUrl();
-            if (!IsLoginContextCurrent(baseUrl)) return;
+            if (!IsLoginContextCurrent(baseUrl))
+                return;
             if (getApiKeyButton != null)
             {
                 getApiKeyButton.SetEnabled(false);
@@ -1037,23 +1044,21 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             try
             {
                 string loginUrl = await GetLoginUrlAsync();
-                if (!IsLoginContextCurrent(baseUrl)) return;
+                if (!IsLoginContextCurrent(baseUrl))
+                    return;
                 if (string.IsNullOrEmpty(loginUrl))
                 {
-                    EditorUtility.DisplayDialog("API Key",
-                        "API key management is not available for this server. Contact your server administrator.",
-                        "OK");
+                    EditorUtility.DisplayDialog("API Key", "API key management is not available for this server. Contact your server administrator.", "OK");
                     return;
                 }
                 Application.OpenURL(loginUrl);
             }
             catch (Exception ex)
             {
-                if (!IsLoginContextCurrent(baseUrl)) return;
+                if (!IsLoginContextCurrent(baseUrl))
+                    return;
                 McpLog.Error($"Failed to get login URL: {ex.Message}");
-                EditorUtility.DisplayDialog("Error",
-                    $"Failed to get API key login URL:\n\n{ex.Message}",
-                    "OK");
+                EditorUtility.DisplayDialog("Error", $"Failed to get API key login URL:\n\n{ex.Message}", "OK");
             }
             finally
             {
@@ -1067,9 +1072,9 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private async Task<string> GetLoginUrlAsync()
         {
             string baseUrl = HttpEndpointUtility.GetBaseUrl();
-            if (!IsLoginContextCurrent(baseUrl)) return null;
-            if (!string.IsNullOrEmpty(cachedLoginUrl)
-                && string.Equals(cachedLoginBaseUrl, baseUrl, StringComparison.Ordinal))
+            if (!IsLoginContextCurrent(baseUrl))
+                return null;
+            if (!string.IsNullOrEmpty(cachedLoginUrl) && string.Equals(cachedLoginBaseUrl, baseUrl, StringComparison.Ordinal))
             {
                 return cachedLoginUrl;
             }
@@ -1077,7 +1082,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             try
             {
                 string loginUrl = await loginUrlFetcher(baseUrl);
-                if (!IsLoginContextCurrent(baseUrl)) return null;
+                if (!IsLoginContextCurrent(baseUrl))
+                    return null;
                 cachedLoginUrl = loginUrl;
                 cachedLoginBaseUrl = baseUrl;
                 return loginUrl;
@@ -1167,10 +1173,13 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             }
 
             var result = await bridgeService.VerifyAsync();
-            if (generation != autoStartGeneration
+            if (
+                generation != autoStartGeneration
                 || useHttp != EditorConfigurationCache.Instance.UseHttpTransport
                 || remoteScope != HttpEndpointUtility.IsRemoteScope()
-                || !string.Equals(baseUrl, HttpEndpointUtility.GetBaseUrl(), StringComparison.Ordinal)) return;
+                || !string.Equals(baseUrl, HttpEndpointUtility.GetBaseUrl(), StringComparison.Ordinal)
+            )
+                return;
 
             string newStatus;
             bool isHealthy;
@@ -1212,8 +1221,9 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 if (!ShouldReportUnhealthy(consecutiveVerifyFailures))
                 {
                     McpLog.Debug(
-                        $"Connection verification miss {consecutiveVerifyFailures}/{UnhealthyVerificationThreshold} " +
-                        $"(transient, not surfacing): {result.Message}");
+                        $"Connection verification miss {consecutiveVerifyFailures}/{UnhealthyVerificationThreshold} "
+                            + $"(transient, not surfacing): {result.Message}"
+                    );
                     return;
                 }
 
@@ -1269,8 +1279,9 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 string clientTransportName = TransportDisplayName(clientTransport);
                 string serverTransportName = TransportDisplayName(serverTransport);
 
-                transportMismatchText.text = $"⚠ {clientName} is configured for \"{clientTransportName}\" but server is set to \"{serverTransportName}\". " +
-                    "Click \"Configure\" in Client Configuration to update.";
+                transportMismatchText.text =
+                    $"⚠ {clientName} is configured for \"{clientTransportName}\" but server is set to \"{serverTransportName}\". "
+                    + "Click \"Configure\" in Client Configuration to update.";
                 transportMismatchWarning.AddToClassList("visible");
             }
             else
@@ -1323,7 +1334,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 ConfiguredTransport.Stdio => "stdio",
                 ConfiguredTransport.Http => "HTTP Local",
                 ConfiguredTransport.HttpRemote => "HTTP Remote",
-                _ => "unknown"
+                _ => "unknown",
             };
         }
     }

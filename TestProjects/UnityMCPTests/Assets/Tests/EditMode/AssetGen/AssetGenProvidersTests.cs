@@ -52,12 +52,16 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void List_HasExactlyOneFalImage_AndOneFalAudio()
         {
-            int image = 0, audio = 0;
+            int image = 0,
+                audio = 0;
             foreach (ProviderInfo p in AssetGenProviders.List())
             {
-                if (p.Id != "fal") continue;
-                if (p.Kind == "image") image++;
-                else if (p.Kind == "audio") audio++;
+                if (p.Id != "fal")
+                    continue;
+                if (p.Kind == "image")
+                    image++;
+                else if (p.Kind == "audio")
+                    audio++;
             }
             Assert.AreEqual(1, image, "exactly one fal image row");
             Assert.AreEqual(1, audio, "exactly one fal audio row");
@@ -89,7 +93,12 @@ namespace MCPForUnityTests.Editor.AssetGen
             {
                 Environment.SetEnvironmentVariable(envName, original);
                 SecureKeyStore.ResetForTests();
-                try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch { /* ignore */ }
+                try
+                {
+                    if (Directory.Exists(tempDir))
+                        Directory.Delete(tempDir, true);
+                }
+                catch { /* ignore */ }
             }
         }
 
@@ -97,7 +106,8 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             foreach (ProviderInfo p in AssetGenProviders.List())
             {
-                if (p.Id == "tripo") return p;
+                if (p.Id == "tripo")
+                    return p;
             }
             return null;
         }
@@ -106,7 +116,8 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             foreach (ProviderInfo p in AssetGenProviders.List())
             {
-                if (p.Id == id && p.Kind == kind) return p;
+                if (p.Id == id && p.Kind == kind)
+                    return p;
             }
             return null;
         }

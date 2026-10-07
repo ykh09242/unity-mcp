@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass
 
 from core.config import config
+
 logger = logging.getLogger(__name__)
 
 
@@ -71,7 +72,10 @@ class _FrontmostAppInfo:
 
 def _is_disabled() -> bool:
     return os.environ.get("UNITY_MCP_DISABLE_FOCUS_NUDGE", "").strip().lower() in {
-        "1", "true", "yes", "on",
+        "1",
+        "true",
+        "yes",
+        "on",
     }
 
 
@@ -102,7 +106,7 @@ def _get_current_nudge_interval() -> float:
         return _BASE_NUDGE_INTERVAL_S
 
     # Exponential backoff: interval = base * (2 ^ consecutive_nudges)
-    interval = _BASE_NUDGE_INTERVAL_S * (2 ** _consecutive_nudges)
+    interval = _BASE_NUDGE_INTERVAL_S * (2**_consecutive_nudges)
     return min(interval, _MAX_NUDGE_INTERVAL_S)
 
 
@@ -122,7 +126,9 @@ def _get_current_focus_duration() -> float:
     # Scale by ratio of configured to default duration (if UNITY_MCP_NUDGE_DURATION_S is set)
     scale = 1.0
     if os.environ.get("UNITY_MCP_NUDGE_DURATION_S") is not None:
-        configured_duration = _parse_env_float("UNITY_MCP_NUDGE_DURATION_S", _DEFAULT_FOCUS_DURATION_S)
+        configured_duration = _parse_env_float(
+            "UNITY_MCP_NUDGE_DURATION_S", _DEFAULT_FOCUS_DURATION_S
+        )
         if _DEFAULT_FOCUS_DURATION_S > 0:
             scale = configured_duration / _DEFAULT_FOCUS_DURATION_S
     duration = base_duration * scale
@@ -153,17 +159,18 @@ def _get_frontmost_app_macos() -> _FrontmostAppInfo | None:
     try:
         result = subprocess.run(
             [
-                "osascript", "-e",
+                "osascript",
+                "-e",
                 'tell application "System Events"\n'
-                '    set frontProc to first process whose frontmost is true\n'
-                '    set procName to name of frontProc\n'
+                "    set frontProc to first process whose frontmost is true\n"
+                "    set procName to name of frontProc\n"
                 '    set bundleID to ""\n'
-                '    try\n'
-                '        set bID to bundle identifier of frontProc\n'
-                '        if bID is not missing value then set bundleID to bID\n'
-                '    end try\n'
+                "    try\n"
+                "        set bID to bundle identifier of frontProc\n"
+                "        if bID is not missing value then set bundleID to bID\n"
+                "    end try\n"
                 '    return procName & "|" & bundleID\n'
-                'end tell',
+                "end tell",
             ],
             capture_output=True,
             text=True,
@@ -229,7 +236,11 @@ def _find_unity_pid_by_project_path(project_path: str) -> int | None:
                     # Extract the path after -projectpath
                     try:
                         parts = line.split("-projectpath", 1)[1].split()[0]
-                        if not parts.endswith(f"/{project_path}") and not parts.endswith(f"\\{project_path}") and parts != project_path:
+                        if (
+                            not parts.endswith(f"/{project_path}")
+                            and not parts.endswith(f"\\{project_path}")
+                            and parts != project_path
+                        ):
                             continue
                     except (IndexError, ValueError):
                         continue
@@ -276,13 +287,15 @@ def _focus_app_macos(
                 # Find specific Unity instance by project path
                 pid = _find_unity_pid_by_project_path(unity_project_path)
                 if pid is None:
-                    logger.warning(f"Could not find Unity PID for project {unity_project_path}, falling back to any Unity")
+                    logger.warning(
+                        f"Could not find Unity PID for project {unity_project_path}, falling back to any Unity"
+                    )
                     return _focus_any_unity_macos()
 
                 # Two-step activation for full Unity wake-up:
                 # 1. Bring window to front
                 # 2. Activate the application bundle (triggers full app activation like cmd+tab or clicking)
-                script = f'''
+                script = f"""
 tell application "System Events"
     set targetProc to first process whose unix id is {pid}
     set frontmost of targetProc to true
@@ -293,7 +306,7 @@ end tell
 
 -- Activate using bundle identifier (ensures Unity wakes up and starts processing)
 tell application id bundleID to activate
-'''
+"""
                 result = subprocess.run(
                     ["osascript", "-e", script],
                     capture_output=True,
@@ -303,7 +316,9 @@ tell application id bundleID to activate
                 if result.returncode != 0:
                     logger.debug(f"Failed to activate Unity PID {pid}: {result.stderr}")
                     return False
-                logger.info(f"Activated Unity instance with PID {pid} for project {unity_project_path}")
+                logger.info(
+                    f"Activated Unity instance with PID {pid} for project {unity_project_path}"
+                )
                 return True
             else:
                 # No project path provided - activate any Unity process
@@ -345,12 +360,12 @@ tell application id bundleID to activate
 def _focus_any_unity_macos() -> bool:
     """Focus any Unity process on macOS (fallback when no project path specified)."""
     try:
-        script = '''
+        script = """
 tell application "System Events"
     set unityProc to first process whose name contains "Unity"
     set frontmost of unityProc to true
 end tell
-'''
+"""
         result = subprocess.run(
             ["osascript", "-e", script],
             capture_output=True,
@@ -369,7 +384,7 @@ end tell
 def _get_frontmost_app_windows() -> _FrontmostAppInfo | None:
     """Capture the foreground HWND and title without mixing native return values."""
     try:
-        script = '''
+        script = """
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $ErrorActionPreference = 'Stop'
 Add-Type @"
@@ -390,7 +405,7 @@ $length = [Win32]::GetWindowTextLengthW($hwnd) + 1
 $sb = New-Object System.Text.StringBuilder $length
 [void][Win32]::GetWindowTextW($hwnd, $sb, $length)
 @{ name = $sb.ToString(); window_handle = $hwnd.ToInt64() } | ConvertTo-Json -Compress
-'''
+"""
         result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True,
@@ -416,7 +431,7 @@ def _find_unity_pid_by_project_path_windows(project_path: str) -> int | None:
     try:
         # Native tokenization distinguishes a real flag from text inside another
         # quoted argument and handles Windows quote/backslash escaping.
-        script = '''
+        script = """
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $ErrorActionPreference = 'Stop'
 Add-Type @"
@@ -452,11 +467,14 @@ $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'Unity.exe'" | ForE
     }
 })
 ConvertTo-Json -InputObject $processes -Depth 3 -Compress
-'''
+"""
         result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-            capture_output=True, text=True, encoding="utf-8",
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=5,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            timeout=5,
         )
         if result.returncode != 0 or not result.stdout.strip():
             return None
@@ -469,12 +487,16 @@ ConvertTo-Json -InputObject $processes -Depth 3 -Compress
         matches = set()
         for process in processes:
             arguments = process.get("Arguments")
-            if not isinstance(arguments, list) or not all(isinstance(arg, str) for arg in arguments):
+            if not isinstance(arguments, list) or not all(
+                isinstance(arg, str) for arg in arguments
+            ):
                 continue
             project_arguments = []
             for index, argument in enumerate(arguments[1:], start=1):
                 if argument.lower() == "-projectpath":
-                    project_arguments.append(arguments[index + 1] if index + 1 < len(arguments) else "")
+                    project_arguments.append(
+                        arguments[index + 1] if index + 1 < len(arguments) else ""
+                    )
                 elif argument.lower().startswith("-projectpath="):
                     project_arguments.append(argument.split("=", 1)[1])
             # Multiple flags are ambiguous even if they happen to agree.
@@ -500,18 +522,27 @@ def _focus_app_windows(
     """Activate a saved HWND or the editor uniquely matching a project path."""
     try:
         if window_handle is not None:
-            if not isinstance(window_handle, int) or isinstance(window_handle, bool) or window_handle <= 0:
+            if (
+                not isinstance(window_handle, int)
+                or isinstance(window_handle, bool)
+                or window_handle <= 0
+            ):
                 return False
             target_script = f"$targetHwnd = [IntPtr]{window_handle}"
         elif window_title == "Unity" and unity_project_path:
             pid = _find_unity_pid_by_project_path_windows(unity_project_path)
             if pid is None:
-                logger.debug("Skipping focus nudge: no unique Unity process for %s", unity_project_path)
+                logger.debug(
+                    "Skipping focus nudge: no unique Unity process for %s", unity_project_path
+                )
                 return False
-            target_script = f"$targetHwnd = (Get-Process -Id {pid} -ErrorAction Stop).MainWindowHandle"
+            target_script = (
+                f"$targetHwnd = (Get-Process -Id {pid} -ErrorAction Stop).MainWindowHandle"
+            )
         else:
             return False
-        script = '''
+        script = (
+            """
 $ErrorActionPreference = 'Stop'
 Add-Type @"
 using System;
@@ -529,7 +560,9 @@ public class Win32 {
     public static extern IntPtr GetForegroundWindow();
 }
 "@
-''' + target_script + '''
+"""
+            + target_script
+            + """
 if (-not [Win32]::IsWindow($targetHwnd)) { exit 1 }
 if ([Win32]::IsIconic($targetHwnd)) {
     [void][Win32]::ShowWindow($targetHwnd, 9)
@@ -537,7 +570,8 @@ if ([Win32]::IsIconic($targetHwnd)) {
 if (-not [Win32]::SetForegroundWindow($targetHwnd)) { exit 1 }
 if ([Win32]::GetForegroundWindow() -ne $targetHwnd) { exit 1 }
 exit 0
-'''
+"""
+        )
         result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True,
@@ -676,7 +710,9 @@ async def nudge_unity_focus(
     now = time.monotonic()
     current_interval = 0.0 if force else _get_current_nudge_interval()
     if not force and (now - _last_nudge_time) < current_interval:
-        logger.debug(f"Skipping nudge - too soon since last nudge (interval: {current_interval:.1f}s)")
+        logger.debug(
+            f"Skipping nudge - too soon since last nudge (interval: {current_interval:.1f}s)"
+        )
         return False
 
     # Pollers may overlap before the first activation wait updates the backoff.
@@ -696,7 +732,9 @@ async def nudge_unity_focus(
             return False
 
         project_info = f" for {unity_project_path}" if unity_project_path else ""
-        logger.info(f"Nudging Unity focus{project_info} (interval: {current_interval:.1f}s, consecutive: {_consecutive_nudges}, duration: {focus_duration_s:.1f}s, will return to {original_app})")
+        logger.info(
+            f"Nudging Unity focus{project_info} (interval: {current_interval:.1f}s, consecutive: {_consecutive_nudges}, duration: {focus_duration_s:.1f}s, will return to {original_app})"
+        )
 
         # ShowWindow can change focus even if the later activation check fails.
         # Restore after every attempt, including a subprocess failure or timeout.

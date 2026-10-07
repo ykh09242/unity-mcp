@@ -28,8 +28,7 @@ namespace MCPForUnityTests.Editor.Tools
             originalActiveObject = Selection.activeObject;
             ownedScene = default;
             assetRoot = null;
-            if (Enumerable.Range(0, SceneManager.sceneCount).Select(SceneManager.GetSceneAt)
-                .Any(scene => scene.isLoaded && string.IsNullOrEmpty(scene.path)))
+            if (Enumerable.Range(0, SceneManager.sceneCount).Select(SceneManager.GetSceneAt).Any(scene => scene.isLoaded && string.IsNullOrEmpty(scene.path)))
                 Assert.Ignore("Requires saved open scenes so an isolated additive test scene can be created without saving user scenes.");
             ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
             SceneManager.SetActiveScene(ownedScene);
@@ -57,7 +56,8 @@ namespace MCPForUnityTests.Editor.Tools
                 SceneManager.SetActiveScene(originalScene);
             Selection.objects = originalSelection;
             Selection.activeObject = originalActiveObject;
-            if (!string.IsNullOrEmpty(assetRoot) && AssetDatabase.IsValidFolder(assetRoot)) AssetDatabase.DeleteAsset(assetRoot);
+            if (!string.IsNullOrEmpty(assetRoot) && AssetDatabase.IsValidFolder(assetRoot))
+                AssetDatabase.DeleteAsset(assetRoot);
         }
 
         [TestCase(false)]
@@ -75,8 +75,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(!active, asset.activeSelf);
             Assert.AreEqual(asset, PrefabUtility.GetCorrespondingObjectFromSource(instance));
             Assert.IsTrue(PrefabUtility.IsPartOfPrefabInstance(instance));
-            Assert.IsTrue(PrefabUtility.GetPropertyModifications(instance)
-                .Any(modification => modification.propertyPath == "m_IsActive"));
+            Assert.IsTrue(PrefabUtility.GetPropertyModifications(instance).Any(modification => modification.propertyPath == "m_IsActive"));
         }
 
         [TestCase(false)]
@@ -99,7 +98,8 @@ namespace MCPForUnityTests.Editor.Tools
             var instance = ResponseObject(response);
             Assert.IsFalse(instance.activeSelf);
             Assert.IsFalse(response["data"].Value<bool>("activeSelf"));
-            if (primitive != null) Assert.IsNotNull(instance.GetComponent<BoxCollider>());
+            if (primitive != null)
+                Assert.IsNotNull(instance.GetComponent<BoxCollider>());
         }
 
         [Test]
@@ -190,14 +190,19 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 return PrefabUtility.SaveAsPrefabAsset(source, assetRoot + "/Source.prefab");
             }
-            finally { Object.DestroyImmediate(source); }
+            finally
+            {
+                Object.DestroyImmediate(source);
+            }
         }
 
-        private static JObject Request(GameObject asset = null) => new JObject
-        {
-            ["action"] = "create", ["name"] = "PrefabCreateCopy",
-            ["prefabPath"] = asset == null ? null : AssetDatabase.GetAssetPath(asset)
-        };
+        private static JObject Request(GameObject asset = null) =>
+            new JObject
+            {
+                ["action"] = "create",
+                ["name"] = "PrefabCreateCopy",
+                ["prefabPath"] = asset == null ? null : AssetDatabase.GetAssetPath(asset),
+            };
 
         private static JObject Call(JObject request)
         {
@@ -206,9 +211,11 @@ namespace MCPForUnityTests.Editor.Tools
             return response;
         }
 
-        private GameObject ResponseObject(JObject response) => ownedScene.GetRootGameObjects()
-            .SelectMany(root => root.GetComponentsInChildren<Transform>(true))
-            .Select(transform => transform.gameObject)
-            .Single(go => go.GetInstanceIDCompat() == response["data"].Value<long>("instanceID"));
+        private GameObject ResponseObject(JObject response) =>
+            ownedScene
+                .GetRootGameObjects()
+                .SelectMany(root => root.GetComponentsInChildren<Transform>(true))
+                .Select(transform => transform.gameObject)
+                .Single(go => go.GetInstanceIDCompat() == response["data"].Value<long>("instanceID"));
     }
 }

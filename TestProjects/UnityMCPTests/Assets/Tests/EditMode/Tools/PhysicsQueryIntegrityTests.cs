@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Tools.Physics;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -62,7 +62,8 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 if (owned != null)
                     foreach (var gameObject in owned)
-                        if (gameObject != null) UnityEngine.Object.DestroyImmediate(gameObject);
+                        if (gameObject != null)
+                            UnityEngine.Object.DestroyImmediate(gameObject);
             }
             finally
             {
@@ -78,22 +79,23 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("2d", "[false]")]
         public void MalformedCollidePreservesMatrixAndSettingsDirtyState(string dimension, string collide)
         {
-            bool before = dimension == "2d"
-                ? Physics2D.GetIgnoreLayerCollision(0, 31)
-                : UnityEngine.Physics.GetIgnoreLayerCollision(0, 31);
+            bool before = dimension == "2d" ? Physics2D.GetIgnoreLayerCollision(0, 31) : UnityEngine.Physics.GetIgnoreLayerCollision(0, 31);
             string path = dimension == "2d" ? "ProjectSettings/Physics2DSettings.asset" : "ProjectSettings/DynamicsManager.asset";
             var settings = AssetDatabase.LoadAllAssetsAtPath(path);
             var dirtyCounts = settings.Select(EditorUtility.GetDirtyCount).ToArray();
-            JObject response = Call(new JObject
-            {
-                ["action"] = "set_collision_matrix", ["dimension"] = dimension,
-                ["layer_a"] = 0, ["layer_b"] = 31, ["collide"] = JToken.Parse(collide)
-            });
+            JObject response = Call(
+                new JObject
+                {
+                    ["action"] = "set_collision_matrix",
+                    ["dimension"] = dimension,
+                    ["layer_a"] = 0,
+                    ["layer_b"] = 31,
+                    ["collide"] = JToken.Parse(collide),
+                }
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.That(response.Value<string>("error"), Does.Contain("collide"));
-            bool after = dimension == "2d"
-                ? Physics2D.GetIgnoreLayerCollision(0, 31)
-                : UnityEngine.Physics.GetIgnoreLayerCollision(0, 31);
+            bool after = dimension == "2d" ? Physics2D.GetIgnoreLayerCollision(0, 31) : UnityEngine.Physics.GetIgnoreLayerCollision(0, 31);
             Assert.AreEqual(before, after);
             CollectionAssert.AreEqual(dirtyCounts, settings.Select(EditorUtility.GetDirtyCount).ToArray());
         }
@@ -156,7 +158,8 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 JObject parameters = Query("raycast");
-                if (trigger != null) parameters["query_trigger_interaction"] = trigger;
+                if (trigger != null)
+                    parameters["query_trigger_interaction"] = trigger;
                 JObject response = Call(parameters);
                 Assert.IsTrue(response.Value<bool>("success"), response.ToString());
                 Assert.AreEqual(owned[global ? 0 : 1].GetInstanceIDCompat(), response["data"].Value<int>("instanceID"));
@@ -210,15 +213,23 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Query(string action, string shape = null)
         {
-            JToken size = shape == "box" ? (JToken)new JArray(0.2f, 0.2f)
+            JToken size =
+                shape == "box" ? (JToken)new JArray(0.2f, 0.2f)
                 : shape == "capsule" ? new JObject { ["width"] = 0.2f, ["height"] = 0.4f }
                 : (JToken)0.1f;
             return new JObject
             {
-                ["action"] = action, ["dimension"] = "2d", ["layer_mask"] = Mask, ["max_distance"] = 10,
-                ["origin"] = new JArray(origin.x, origin.y), ["direction"] = new JArray(1, 0),
-                ["start"] = new JArray(origin.x, origin.y), ["end"] = new JArray(origin.x + 10, origin.y),
-                ["position"] = new JArray(origin.x, origin.y, 0), ["shape"] = shape, ["size"] = size
+                ["action"] = action,
+                ["dimension"] = "2d",
+                ["layer_mask"] = Mask,
+                ["max_distance"] = 10,
+                ["origin"] = new JArray(origin.x, origin.y),
+                ["direction"] = new JArray(1, 0),
+                ["start"] = new JArray(origin.x, origin.y),
+                ["end"] = new JArray(origin.x + 10, origin.y),
+                ["position"] = new JArray(origin.x, origin.y, 0),
+                ["shape"] = shape,
+                ["size"] = size,
             };
         }
 

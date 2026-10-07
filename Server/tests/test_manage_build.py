@@ -33,6 +33,7 @@ def mock_unity(monkeypatch):
 
 # ── action validation ───────────────────────────────────────────────
 
+
 def test_all_actions_count():
     assert len(ALL_ACTIONS) == 8
 
@@ -45,6 +46,7 @@ def test_unknown_action_returns_error(mock_unity):
 
 
 # ── build action ────────────────────────────────────────────────────
+
 
 def test_build_forwards_params(mock_unity):
     result = asyncio.run(
@@ -98,6 +100,7 @@ def test_build_with_scenes(mock_unity):
 
 # ── status action ──────────────────────────────────────────────────
 
+
 def test_status_forwards_job_id(mock_unity):
     asyncio.run(manage_build(SimpleNamespace(), action="status", job_id="build-abc123"))
     params = mock_unity["params"]
@@ -112,6 +115,7 @@ def test_status_without_job_id(mock_unity):
 
 
 # ── platform action ────────────────────────────────────────────────
+
 
 def test_platform_read(mock_unity):
     asyncio.run(manage_build(SimpleNamespace(), action="platform"))
@@ -130,10 +134,9 @@ def test_platform_switch(mock_unity):
 
 # ── settings action ────────────────────────────────────────────────
 
+
 def test_settings_read(mock_unity):
-    asyncio.run(
-        manage_build(SimpleNamespace(), action="settings", property="product_name")
-    )
+    asyncio.run(manage_build(SimpleNamespace(), action="settings", property="product_name"))
     params = mock_unity["params"]
     assert params["action"] == "settings"
     assert params["property"] == "product_name"
@@ -156,6 +159,7 @@ def test_settings_write(mock_unity):
 
 # ── scenes action ──────────────────────────────────────────────────
 
+
 def test_scenes_read(mock_unity):
     asyncio.run(manage_build(SimpleNamespace(), action="scenes"))
     params = mock_unity["params"]
@@ -170,6 +174,7 @@ def test_scenes_write(mock_unity):
 
 
 # ── profiles action ────────────────────────────────────────────────
+
 
 def test_profiles_list(mock_unity):
     asyncio.run(manage_build(SimpleNamespace(), action="profiles"))
@@ -192,6 +197,7 @@ def test_profiles_activate(mock_unity):
 
 
 # ── batch action ────────────────────────────────────────────────────
+
 
 def test_batch_with_targets(mock_unity):
     asyncio.run(
@@ -222,6 +228,7 @@ def test_batch_with_profiles(mock_unity):
 
 # ── cancel action ──────────────────────────────────────────────────
 
+
 def test_cancel_forwards_job_id(mock_unity):
     asyncio.run(manage_build(SimpleNamespace(), action="cancel", job_id="batch-xyz789"))
     params = mock_unity["params"]
@@ -230,6 +237,7 @@ def test_cancel_forwards_job_id(mock_unity):
 
 
 # ── minimal param forwarding ────────────────────────────────────────
+
 
 def test_batch_without_targets_sends_minimal_params(mock_unity):
     asyncio.run(manage_build(SimpleNamespace(), action="batch"))
@@ -250,6 +258,7 @@ def test_cancel_without_job_id_sends_minimal_params(mock_unity):
 
 
 # ── transport ───────────────────────────────────────────────────────
+
 
 def test_sends_to_correct_tool_name(mock_unity):
     asyncio.run(manage_build(SimpleNamespace(), action="status"))

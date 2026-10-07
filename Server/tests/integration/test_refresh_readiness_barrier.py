@@ -39,7 +39,9 @@ async def test_refresh_waits_for_canonical_asset_refresh(
         elapsed += seconds
 
     monkeypatch.setattr(refresh_module, "time", SimpleNamespace(monotonic=lambda: elapsed))
-    monkeypatch.setattr(refresh_module, "asyncio", SimpleNamespace(sleep=advance, wait_for=asyncio.wait_for))
+    monkeypatch.setattr(
+        refresh_module, "asyncio", SimpleNamespace(sleep=advance, wait_for=asyncio.wait_for)
+    )
 
     async def transport(send, target, command, params, **kwargs):
         nonlocal polls, refreshes
@@ -59,7 +61,9 @@ async def test_refresh_waits_for_canonical_asset_refresh(
             "data": {
                 "observed_at_unix_ms": 5_000 if stale else 10_000,
                 "unity": {"instance_id": instance},
-                "assets": {"refresh": {"is_refresh_in_progress": busy_polls is None or polls <= busy_polls}},
+                "assets": {
+                    "refresh": {"is_refresh_in_progress": busy_polls is None or polls <= busy_polls}
+                },
             },
         }
 

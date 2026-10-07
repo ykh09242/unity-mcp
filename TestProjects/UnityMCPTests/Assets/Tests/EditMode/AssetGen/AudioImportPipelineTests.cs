@@ -11,14 +11,15 @@ namespace MCPForUnityTests.Editor.AssetGen
     /// </summary>
     public class AudioImportPipelineTests
     {
-        private static AssetGenJob Job() => new AssetGenJob
-        {
-            JobId = "test",
-            Kind = "audio",
-            Provider = "fal",
-            State = AssetGenJobState.Importing,
-            Format = "wav",
-        };
+        private static AssetGenJob Job() =>
+            new AssetGenJob
+            {
+                JobId = "test",
+                Kind = "audio",
+                Provider = "fal",
+                State = AssetGenJobState.Importing,
+                Format = "wav",
+            };
 
         [Test]
         public void ImportInto_NullPath_Fails()

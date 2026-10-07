@@ -8,7 +8,7 @@ namespace MCPForUnity.Editor.Helpers
     /// <summary>
     /// Utility class for parsing JSON tokens into Unity vector, math, and animation types.
     /// Supports both array format [x, y, z] and object format {x: 1, y: 2, z: 3}.
-   /// </summary>
+    /// </summary>
     public static class VectorParsing
     {
         /// <summary>
@@ -26,24 +26,19 @@ namespace MCPForUnity.Editor.Helpers
                 // Array format: [x, y, z]
                 if (token is JArray array && array.Count >= 3)
                 {
-                    return new Vector3(
-                        array[0].ReadScalar<float>(),
-                        array[1].ReadScalar<float>(),
-                        array[2].ReadScalar<float>()
-                    );
+                    return new Vector3(array[0].ReadScalar<float>(), array[1].ReadScalar<float>(), array[2].ReadScalar<float>());
                 }
 
                 // Object format: {x: 1, y: 2, z: 3}
                 if (token is JObject obj && obj.ContainsKey("x") && obj.ContainsKey("y") && obj.ContainsKey("z"))
                 {
-                    return new Vector3(
-                        obj["x"].ReadScalar<float>(),
-                        obj["y"].ReadScalar<float>(),
-                        obj["z"].ReadScalar<float>()
-                    );
+                    return new Vector3(obj["x"].ReadScalar<float>(), obj["y"].ReadScalar<float>(), obj["z"].ReadScalar<float>());
                 }
             }
-            catch (ArgumentException) { throw; }
+            catch (ArgumentException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Vector3 from '{token}': {ex.Message}");
@@ -75,22 +70,19 @@ namespace MCPForUnity.Editor.Helpers
                 // Array format: [x, y]
                 if (token is JArray array && array.Count >= 2)
                 {
-                    return new Vector2(
-                        array[0].ReadScalar<float>(),
-                        array[1].ReadScalar<float>()
-                    );
+                    return new Vector2(array[0].ReadScalar<float>(), array[1].ReadScalar<float>());
                 }
 
                 // Object format: {x: 1, y: 2}
                 if (token is JObject obj && obj.ContainsKey("x") && obj.ContainsKey("y"))
                 {
-                    return new Vector2(
-                        obj["x"].ReadScalar<float>(),
-                        obj["y"].ReadScalar<float>()
-                    );
+                    return new Vector2(obj["x"].ReadScalar<float>(), obj["y"].ReadScalar<float>());
                 }
             }
-            catch (ArgumentException) { throw; }
+            catch (ArgumentException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Vector2 from '{token}': {ex.Message}");
@@ -114,27 +106,19 @@ namespace MCPForUnity.Editor.Helpers
                 // Array format: [x, y, z, w]
                 if (token is JArray array && array.Count >= 4)
                 {
-                    return new Vector4(
-                        array[0].ReadScalar<float>(),
-                        array[1].ReadScalar<float>(),
-                        array[2].ReadScalar<float>(),
-                        array[3].ReadScalar<float>()
-                    );
+                    return new Vector4(array[0].ReadScalar<float>(), array[1].ReadScalar<float>(), array[2].ReadScalar<float>(), array[3].ReadScalar<float>());
                 }
 
                 // Object format: {x: 1, y: 2, z: 3, w: 4}
-                if (token is JObject obj && obj.ContainsKey("x") && obj.ContainsKey("y") && 
-                    obj.ContainsKey("z") && obj.ContainsKey("w"))
+                if (token is JObject obj && obj.ContainsKey("x") && obj.ContainsKey("y") && obj.ContainsKey("z") && obj.ContainsKey("w"))
                 {
-                    return new Vector4(
-                        obj["x"].ReadScalar<float>(),
-                        obj["y"].ReadScalar<float>(),
-                        obj["z"].ReadScalar<float>(),
-                        obj["w"].ReadScalar<float>()
-                    );
+                    return new Vector4(obj["x"].ReadScalar<float>(), obj["y"].ReadScalar<float>(), obj["z"].ReadScalar<float>(), obj["w"].ReadScalar<float>());
                 }
             }
-            catch (ArgumentException) { throw; }
+            catch (ArgumentException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 Debug.LogWarning($"[VectorParsing] Failed to parse Vector4 from '{token}': {ex.Message}");
@@ -175,11 +159,7 @@ namespace MCPForUnity.Editor.Helpers
                     // Euler angles: [x, y, z]
                     if (array.Count >= 3 && asEulerAngles)
                     {
-                        return Quaternion.Euler(
-                            array[0].ReadScalar<float>(),
-                            array[1].ReadScalar<float>(),
-                            array[2].ReadScalar<float>()
-                        );
+                        return Quaternion.Euler(array[0].ReadScalar<float>(), array[1].ReadScalar<float>(), array[2].ReadScalar<float>());
                     }
                 }
 
@@ -199,15 +179,14 @@ namespace MCPForUnity.Editor.Helpers
                     // Euler format in object: {x: 45, y: 90, z: 0} (as euler angles)
                     if (obj.ContainsKey("x") && obj.ContainsKey("y") && obj.ContainsKey("z") && asEulerAngles)
                     {
-                        return Quaternion.Euler(
-                            obj["x"].ReadScalar<float>(),
-                            obj["y"].ReadScalar<float>(),
-                            obj["z"].ReadScalar<float>()
-                        );
+                        return Quaternion.Euler(obj["x"].ReadScalar<float>(), obj["y"].ReadScalar<float>(), obj["z"].ReadScalar<float>());
                     }
                 }
             }
-            catch (ArgumentException) { throw; }
+            catch (ArgumentException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Quaternion from '{token}': {ex.Message}");
@@ -256,15 +235,13 @@ namespace MCPForUnity.Editor.Helpers
                 if (token is JObject obj && obj.ContainsKey("r") && obj.ContainsKey("g") && obj.ContainsKey("b"))
                 {
                     float a = obj.ContainsKey("a") ? obj["a"].ReadScalar<float>() : 1f;
-                    return new Color(
-                        obj["r"].ReadScalar<float>(),
-                        obj["g"].ReadScalar<float>(),
-                        obj["b"].ReadScalar<float>(),
-                        a
-                    );
+                    return new Color(obj["r"].ReadScalar<float>(), obj["g"].ReadScalar<float>(), obj["b"].ReadScalar<float>(), a);
                 }
             }
-            catch (ArgumentException) { throw; }
+            catch (ArgumentException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Color from '{token}': {ex.Message}");
@@ -277,7 +254,7 @@ namespace MCPForUnity.Editor.Helpers
         /// Parses a JToken into a Color, returning Color.white if parsing fails and no default is specified.
         /// </summary>
         public static Color ParseColorOrDefault(JToken token) => ParsedOrDefault(token, ParseColor(token), Color.white);
-        
+
         /// <summary>
         /// Parses a JToken into a Color, returning the specified default if parsing fails.
         /// </summary>
@@ -319,7 +296,7 @@ namespace MCPForUnity.Editor.Helpers
                         Color endColor = ParseColorOrDefault(obj["endColor"] ?? obj["startColor"]);
                         float startAlpha = obj["startAlpha"]?.ReadScalar<float>() ?? startColor.a;
                         float endAlpha = obj["endAlpha"]?.ReadScalar<float>() ?? endColor.a;
-                        
+
                         gradient.SetKeys(
                             new GradientColorKey[] { new GradientColorKey(startColor, 0f), new GradientColorKey(endColor, 1f) },
                             new GradientAlphaKey[] { new GradientAlphaKey(startAlpha, 0f), new GradientAlphaKey(endAlpha, 1f) }
@@ -368,7 +345,10 @@ namespace MCPForUnity.Editor.Helpers
                     return gradient;
                 }
             }
-            catch (ArgumentException) { throw; }
+            catch (ArgumentException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Gradient from '{token}': {ex.Message}");
@@ -384,7 +364,8 @@ namespace MCPForUnity.Editor.Helpers
         public static Gradient ParseGradientOrDefault(JToken token)
         {
             var result = ParseGradient(token);
-            if (result != null) return result;
+            if (result != null)
+                return result;
             if (token != null && token.Type != JTokenType.Null)
                 throw new ArgumentException("Invalid Gradient value.");
 
@@ -399,14 +380,14 @@ namespace MCPForUnity.Editor.Helpers
 
         /// <summary>
         /// Parses a JToken into an AnimationCurve.
-        /// 
+        ///
         /// <para><b>Supported formats:</b></para>
         /// <list type="bullet">
         ///   <item>Constant: <c>1.0</c> (number) - Creates constant curve at that value</item>
         ///   <item>Simple: <c>{start: 0.0, end: 1.0}</c> or <c>{startValue: 0.0, endValue: 1.0}</c></item>
         ///   <item>Full: <c>{keys: [{time: 0, value: 1, inTangent: 0, outTangent: 0}, ...]}</c></item>
         /// </list>
-        /// 
+        ///
         /// <para><b>Keyframe field defaults (for Full format):</b></para>
         /// <list type="bullet">
         ///   <item><c>time</c> (float): <b>Default: 0</b></item>
@@ -414,7 +395,7 @@ namespace MCPForUnity.Editor.Helpers
         ///   <item><c>inTangent</c> (float): <b>Default: 0</b></item>
         ///   <item><c>outTangent</c> (float): <b>Default: 0</b></item>
         /// </list>
-        /// 
+        ///
         /// <para><b>Note:</b> This method is used by ManageVFX. For ScriptableObject patching,
         /// see <see cref="MCPForUnity.Editor.Tools.ManageScriptableObject"/> which has slightly different defaults.</para>
         /// </summary>
@@ -462,7 +443,10 @@ namespace MCPForUnity.Editor.Helpers
                     }
                 }
             }
-            catch (ArgumentException) { throw; }
+            catch (ArgumentException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse AnimationCurve from '{token}': {ex.Message}");
@@ -483,11 +467,11 @@ namespace MCPForUnity.Editor.Helpers
                 return AnimationCurve.Constant(0f, 1f, defaultValue);
             return ParseAnimationCurve(token) ?? throw new ArgumentException("Invalid AnimationCurve value.");
         }
-        
+
         /// <summary>
         /// Validates AnimationCurve JSON format without parsing it.
         /// Used by dry-run validation to provide early feedback on format errors.
-        /// 
+        ///
         /// <para><b>Validated formats:</b></para>
         /// <list type="bullet">
         ///   <item>Wrapped: <c>{ "keys": [ { "time": 0, "value": 1.0 }, ... ] }</c></item>
@@ -501,15 +485,15 @@ namespace MCPForUnity.Editor.Helpers
         public static bool ValidateAnimationCurveFormat(JToken valueToken, out string message)
         {
             message = null;
-            
+
             if (valueToken == null || valueToken.Type == JTokenType.Null)
             {
                 message = "Value format valid (will set empty curve).";
                 return true;
             }
-            
+
             JArray keysArray = null;
-            
+
             if (valueToken is JObject curveObj)
             {
                 keysArray = curveObj["keys"] as JArray;
@@ -525,11 +509,12 @@ namespace MCPForUnity.Editor.Helpers
             }
             else
             {
-                message = "AnimationCurve requires object with 'keys' or array of keyframes. " +
-                          "Expected: { \"keys\": [ { \"time\": 0, \"value\": 0, \"inSlope\": 0, \"outSlope\": 0 }, ... ] }";
+                message =
+                    "AnimationCurve requires object with 'keys' or array of keyframes. "
+                    + "Expected: { \"keys\": [ { \"time\": 0, \"value\": 0, \"inSlope\": 0, \"outSlope\": 0 }, ... ] }";
                 return false;
             }
-            
+
             // Validate each keyframe
             for (int i = 0; i < keysArray.Count; i++)
             {
@@ -539,7 +524,7 @@ namespace MCPForUnity.Editor.Helpers
                     message = $"Keyframe at index {i} must be an object with 'time' and 'value'.";
                     return false;
                 }
-                
+
                 // Validate numeric fields if present
                 string[] numericFields = { "time", "value", "inSlope", "outSlope", "inTangent", "outTangent", "inWeight", "outWeight" };
                 foreach (var field in numericFields)
@@ -550,23 +535,24 @@ namespace MCPForUnity.Editor.Helpers
                         return false;
                     }
                 }
-                
+
                 if (!ParamCoercion.ValidateIntegerField(keyObj, "weightedMode", out var weightedModeError))
                 {
                     message = $"Keyframe[{i}].weightedMode: {weightedModeError}";
                     return false;
                 }
             }
-            
-            message = $"Value format valid (AnimationCurve with {keysArray.Count} keyframes). " +
-                      "Note: Missing keyframe fields default to 0 (time, value, inSlope, outSlope, inWeight, outWeight).";
+
+            message =
+                $"Value format valid (AnimationCurve with {keysArray.Count} keyframes). "
+                + "Note: Missing keyframe fields default to 0 (time, value, inSlope, outSlope, inWeight, outWeight).";
             return true;
         }
-        
+
         /// <summary>
         /// Validates Quaternion JSON format without parsing it.
         /// Used by dry-run validation to provide early feedback on format errors.
-        /// 
+        ///
         /// <para><b>Validated formats:</b></para>
         /// <list type="bullet">
         ///   <item>Euler array: <c>[x, y, z]</c> - 3 numeric elements</item>
@@ -582,13 +568,13 @@ namespace MCPForUnity.Editor.Helpers
         public static bool ValidateQuaternionFormat(JToken valueToken, out string message)
         {
             message = null;
-            
+
             if (valueToken == null || valueToken.Type == JTokenType.Null)
             {
                 message = "Value format valid (will set identity quaternion).";
                 return true;
             }
-            
+
             if (valueToken is JArray arr)
             {
                 if (arr.Count == 3)
@@ -646,12 +632,16 @@ namespace MCPForUnity.Editor.Helpers
                     message = "Value format valid (Quaternion from { euler: [x, y, z] }).";
                     return true;
                 }
-                
+
                 // Object format { x, y, z, w }
                 if (obj["x"] != null && obj["y"] != null && obj["z"] != null && obj["w"] != null)
                 {
-                    if (!ParamCoercion.IsNumericToken(obj["x"]) || !ParamCoercion.IsNumericToken(obj["y"]) || 
-                        !ParamCoercion.IsNumericToken(obj["z"]) || !ParamCoercion.IsNumericToken(obj["w"]))
+                    if (
+                        !ParamCoercion.IsNumericToken(obj["x"])
+                        || !ParamCoercion.IsNumericToken(obj["y"])
+                        || !ParamCoercion.IsNumericToken(obj["z"])
+                        || !ParamCoercion.IsNumericToken(obj["w"])
+                    )
                     {
                         message = "Quaternion { x, y, z, w } fields must all be numbers.";
                         return false;
@@ -659,7 +649,7 @@ namespace MCPForUnity.Editor.Helpers
                     message = "Value format valid (Quaternion from { x, y, z, w }).";
                     return true;
                 }
-                
+
                 message = "Quaternion object must have { x, y, z, w } or { euler: [x, y, z] }.";
                 return false;
             }
@@ -681,9 +671,7 @@ namespace MCPForUnity.Editor.Helpers
 
             try
             {
-                if (token is JObject obj && 
-                    obj.ContainsKey("x") && obj.ContainsKey("y") && 
-                    obj.ContainsKey("width") && obj.ContainsKey("height"))
+                if (token is JObject obj && obj.ContainsKey("x") && obj.ContainsKey("y") && obj.ContainsKey("width") && obj.ContainsKey("height"))
                 {
                     return new Rect(
                         obj["x"].ReadScalar<float>(),
@@ -696,15 +684,13 @@ namespace MCPForUnity.Editor.Helpers
                 // Array format: [x, y, width, height]
                 if (token is JArray array && array.Count >= 4)
                 {
-                    return new Rect(
-                        array[0].ReadScalar<float>(),
-                        array[1].ReadScalar<float>(),
-                        array[2].ReadScalar<float>(),
-                        array[3].ReadScalar<float>()
-                    );
+                    return new Rect(array[0].ReadScalar<float>(), array[1].ReadScalar<float>(), array[2].ReadScalar<float>(), array[3].ReadScalar<float>());
                 }
             }
-            catch (ArgumentException) { throw; }
+            catch (ArgumentException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Rect from '{token}': {ex.Message}");
@@ -732,7 +718,10 @@ namespace MCPForUnity.Editor.Helpers
                         return new Bounds(center.Value, size.Value);
                 }
             }
-            catch (ArgumentException) { throw; }
+            catch (ArgumentException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Bounds from '{token}': {ex.Message}");
@@ -741,9 +730,11 @@ namespace MCPForUnity.Editor.Helpers
             return null;
         }
 
-        private static T ParsedOrDefault<T>(JToken token, T? parsed, T defaultValue) where T : struct
+        private static T ParsedOrDefault<T>(JToken token, T? parsed, T defaultValue)
+            where T : struct
         {
-            if (token == null || token.Type == JTokenType.Null) return defaultValue;
+            if (token == null || token.Type == JTokenType.Null)
+                return defaultValue;
             return parsed ?? throw new ArgumentException($"Invalid {typeof(T).Name} value.");
         }
 
@@ -754,16 +745,18 @@ namespace MCPForUnity.Editor.Helpers
             if (token?.Type == JTokenType.Float)
             {
                 double number = token.Value<double>();
-                if (double.IsInfinity(number)) return (float)number;
+                if (double.IsInfinity(number))
+                    return (float)number;
             }
             else if (token?.Type == JTokenType.String)
             {
                 string text = token.Value<string>().Trim();
-                if (text == "Infinity" || text == "+Infinity") return float.PositiveInfinity;
-                if (text == "-Infinity") return float.NegativeInfinity;
+                if (text == "Infinity" || text == "+Infinity")
+                    return float.PositiveInfinity;
+                if (text == "-Infinity")
+                    return float.NegativeInfinity;
             }
             return token.ReadScalar<float>();
         }
     }
 }
-

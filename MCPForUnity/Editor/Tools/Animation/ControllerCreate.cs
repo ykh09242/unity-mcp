@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -26,8 +26,10 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
 
-            if (AssetDatabase.LoadMainAssetAtPath(controllerPath) != null
-                || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(controllerPath, AssetPathToGUIDOptions.OnlyExistingAssets)))
+            if (
+                AssetDatabase.LoadMainAssetAtPath(controllerPath) != null
+                || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(controllerPath, AssetPathToGUIDOptions.OnlyExistingAssets))
+            )
                 return new { success = false, message = $"An asset already exists at '{controllerPath}'. Delete it first or use a different path." };
 
             using var folders = new AssetFolderScope();
@@ -62,8 +64,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     path = controllerPath,
                     name = controller.name,
                     layerCount = controller.layers.Length,
-                    parameterCount = controller.parameters.Length
-                }
+                    parameterCount = controller.parameters.Length,
+                },
             };
         }
 
@@ -127,8 +129,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     layerIndex,
                     hasMotion = state.motion != null,
                     speed = state.speed,
-                    isDefault
-                }
+                    isDefault,
+                },
             };
         }
 
@@ -150,14 +152,16 @@ namespace MCPForUnity.Editor.Tools.Animation
             var rootStateMachine = controller.layers[layerIndex].stateMachine;
 
             // Check for AnyState as source
-            bool isAnyState = string.Equals(fromStateName, "AnyState", StringComparison.OrdinalIgnoreCase)
-                           || string.Equals(fromStateName, "Any", StringComparison.OrdinalIgnoreCase)
-                           || string.Equals(fromStateName, "Any State", StringComparison.OrdinalIgnoreCase);
+            bool isAnyState =
+                string.Equals(fromStateName, "AnyState", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fromStateName, "Any", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fromStateName, "Any State", StringComparison.OrdinalIgnoreCase);
 
             AnimatorState toState = null;
             foreach (var cs in rootStateMachine.states)
             {
-                if (cs.state.name == toStateName) toState = cs.state;
+                if (cs.state.name == toStateName)
+                    toState = cs.state;
             }
 
             if (toState == null)
@@ -168,12 +172,12 @@ namespace MCPForUnity.Editor.Tools.Animation
             {
                 foreach (var cs in rootStateMachine.states)
                 {
-                    if (cs.state.name == fromStateName) fromState = cs.state;
+                    if (cs.state.name == fromStateName)
+                        fromState = cs.state;
                 }
 
                 if (fromState == null)
                     return new { success = false, message = $"State '{fromStateName}' not found in layer {layerIndex}" };
-
             }
 
             bool hasExitTime = @params["hasExitTime"]?.ReadScalar<bool?>() ?? true;
@@ -187,10 +191,12 @@ namespace MCPForUnity.Editor.Tools.Animation
             {
                 foreach (var condItem in conditionsArray)
                 {
-                    if (condItem is not JObject condObj) continue;
+                    if (condItem is not JObject condObj)
+                        continue;
 
                     string paramName = condObj["parameter"]?.ToString();
-                    if (string.IsNullOrEmpty(paramName)) continue;
+                    if (string.IsNullOrEmpty(paramName))
+                        continue;
 
                     string modeStr = condObj["mode"]?.ToString()?.ToLowerInvariant() ?? "greater";
                     float threshold = condObj["threshold"]?.ReadScalar<float?>() ?? 0f;
@@ -198,20 +204,41 @@ namespace MCPForUnity.Editor.Tools.Animation
                     AnimatorConditionMode mode;
                     switch (modeStr)
                     {
-                        case "greater": mode = AnimatorConditionMode.Greater; break;
-                        case "less": mode = AnimatorConditionMode.Less; break;
-                        case "equals": mode = AnimatorConditionMode.Equals; break;
+                        case "greater":
+                            mode = AnimatorConditionMode.Greater;
+                            break;
+                        case "less":
+                            mode = AnimatorConditionMode.Less;
+                            break;
+                        case "equals":
+                            mode = AnimatorConditionMode.Equals;
+                            break;
                         case "notequal":
-                        case "not_equal": mode = AnimatorConditionMode.NotEqual; break;
+                        case "not_equal":
+                            mode = AnimatorConditionMode.NotEqual;
+                            break;
                         case "if":
-                        case "true": mode = AnimatorConditionMode.If; break;
+                        case "true":
+                            mode = AnimatorConditionMode.If;
+                            break;
                         case "ifnot":
                         case "if_not":
-                        case "false": mode = AnimatorConditionMode.IfNot; break;
-                        default: mode = AnimatorConditionMode.Greater; break;
+                        case "false":
+                            mode = AnimatorConditionMode.IfNot;
+                            break;
+                        default:
+                            mode = AnimatorConditionMode.Greater;
+                            break;
                     }
 
-                    conditions.Add(new AnimatorCondition { mode = mode, threshold = threshold, parameter = paramName });
+                    conditions.Add(
+                        new AnimatorCondition
+                        {
+                            mode = mode,
+                            threshold = threshold,
+                            parameter = paramName,
+                        }
+                    );
                 }
             }
 
@@ -246,8 +273,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     toState = toStateName,
                     hasExitTime,
                     duration,
-                    conditionCount
-                }
+                    conditionCount,
+                },
             };
         }
 
@@ -266,12 +293,20 @@ namespace MCPForUnity.Editor.Tools.Animation
             AnimatorControllerParameterType paramType;
             switch (typeStr)
             {
-                case "float": paramType = AnimatorControllerParameterType.Float; break;
+                case "float":
+                    paramType = AnimatorControllerParameterType.Float;
+                    break;
                 case "int":
-                case "integer": paramType = AnimatorControllerParameterType.Int; break;
+                case "integer":
+                    paramType = AnimatorControllerParameterType.Int;
+                    break;
                 case "bool":
-                case "boolean": paramType = AnimatorControllerParameterType.Bool; break;
-                case "trigger": paramType = AnimatorControllerParameterType.Trigger; break;
+                case "boolean":
+                    paramType = AnimatorControllerParameterType.Bool;
+                    break;
+                case "trigger":
+                    paramType = AnimatorControllerParameterType.Trigger;
+                    break;
                 default:
                     return new { success = false, message = $"Unknown parameter type '{typeStr}'. Valid: float, int, bool, trigger" };
             }
@@ -311,9 +346,15 @@ namespace MCPForUnity.Editor.Tools.Animation
                 var addedParam = allParams[allParams.Length - 1];
                 switch (paramType)
                 {
-                    case AnimatorControllerParameterType.Float: addedParam.defaultFloat = defaultFloat; break;
-                    case AnimatorControllerParameterType.Int: addedParam.defaultInt = defaultInt; break;
-                    case AnimatorControllerParameterType.Bool: addedParam.defaultBool = defaultBool; break;
+                    case AnimatorControllerParameterType.Float:
+                        addedParam.defaultFloat = defaultFloat;
+                        break;
+                    case AnimatorControllerParameterType.Int:
+                        addedParam.defaultInt = defaultInt;
+                        break;
+                    case AnimatorControllerParameterType.Bool:
+                        addedParam.defaultBool = defaultBool;
+                        break;
                 }
                 controller.parameters = allParams;
             }
@@ -329,8 +370,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 {
                     parameterName = paramName,
                     parameterType = typeStr,
-                    totalParameters = controller.parameters.Length
-                }
+                    totalParameters = controller.parameters.Length,
+                },
             };
         }
 
@@ -358,57 +399,67 @@ namespace MCPForUnity.Editor.Tools.Animation
                         var conditions = new List<object>();
                         foreach (var c in transitionConditions)
                         {
-                            conditions.Add(new
-                            {
-                                parameter = c.parameter,
-                                mode = c.mode.ToString(),
-                                threshold = c.threshold
-                            });
+                            conditions.Add(
+                                new
+                                {
+                                    parameter = c.parameter,
+                                    mode = c.mode.ToString(),
+                                    threshold = c.threshold,
+                                }
+                            );
                         }
 
-                        transitions.Add(new
-                        {
-                            destinationState = t.destinationState?.name,
-                            hasExitTime = t.hasExitTime,
-                            exitTime = t.exitTime,
-                            duration = t.duration,
-                            conditionCount = transitionConditions.Length,
-                            conditions
-                        });
+                        transitions.Add(
+                            new
+                            {
+                                destinationState = t.destinationState?.name,
+                                hasExitTime = t.hasExitTime,
+                                exitTime = t.exitTime,
+                                duration = t.duration,
+                                conditionCount = transitionConditions.Length,
+                                conditions,
+                            }
+                        );
                     }
 
-                    states.Add(new
-                    {
-                        name = cs.state.name,
-                        speed = cs.state.speed,
-                        hasMotion = cs.state.motion != null,
-                        motionName = cs.state.motion?.name,
-                        isDefault = layer.stateMachine.defaultState == cs.state,
-                        transitionCount = stateTransitions.Length,
-                        transitions
-                    });
+                    states.Add(
+                        new
+                        {
+                            name = cs.state.name,
+                            speed = cs.state.speed,
+                            hasMotion = cs.state.motion != null,
+                            motionName = cs.state.motion?.name,
+                            isDefault = layer.stateMachine.defaultState == cs.state,
+                            transitionCount = stateTransitions.Length,
+                            transitions,
+                        }
+                    );
                 }
 
-                layers.Add(new
-                {
-                    index = i,
-                    name = layer.name,
-                    stateCount = layerStates.Length,
-                    states
-                });
+                layers.Add(
+                    new
+                    {
+                        index = i,
+                        name = layer.name,
+                        stateCount = layerStates.Length,
+                        states,
+                    }
+                );
             }
 
             var parameters = new List<object>();
             foreach (var p in controllerParameters)
             {
-                parameters.Add(new
-                {
-                    name = p.name,
-                    type = p.type.ToString(),
-                    defaultFloat = p.defaultFloat,
-                    defaultInt = p.defaultInt,
-                    defaultBool = p.defaultBool
-                });
+                parameters.Add(
+                    new
+                    {
+                        name = p.name,
+                        type = p.type.ToString(),
+                        defaultFloat = p.defaultFloat,
+                        defaultInt = p.defaultInt,
+                        defaultBool = p.defaultBool,
+                    }
+                );
             }
 
             return new
@@ -421,8 +472,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     layerCount = controllerLayers.Length,
                     parameterCount = controllerParameters.Length,
                     layers,
-                    parameters
-                }
+                    parameters,
+                },
             };
         }
 
@@ -456,8 +507,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 {
                     gameObject = go.name,
                     controllerName = controller.name,
-                    controllerPath = AssetDatabase.GetAssetPath(controller)
-                }
+                    controllerPath = AssetDatabase.GetAssetPath(controller),
+                },
             };
         }
 

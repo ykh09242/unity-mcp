@@ -90,7 +90,9 @@ def _project_with_local_package(tmp_path):
     (root / "Assets").mkdir(parents=True)
     (root / "Packages").mkdir()
     manifest = root / "Packages" / "manifest.json"
-    manifest.write_text(json.dumps({"dependencies": {"com.example.local": "file:../../LocalPkg"}}), encoding="utf-8")
+    manifest.write_text(
+        json.dumps({"dependencies": {"com.example.local": "file:../../LocalPkg"}}), encoding="utf-8"
+    )
     os.utime(manifest, ns=(1_000_000_000, 1_000_000_000))
     return root, manifest, tmp_path / "LocalPkg"
 
@@ -177,5 +179,3 @@ def test_late_package_detection_preserves_throttle_and_instance_isolation(tmp_pa
     scanner.clear_dirty("First@one")
     assert not scanner.update_and_get("First@one")["external_changes_dirty"]
     assert scanner.update_and_get("Second@two")["last_cleared_unix_ms"] is None
-
-

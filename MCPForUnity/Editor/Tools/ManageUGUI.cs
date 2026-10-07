@@ -19,12 +19,20 @@ namespace MCPForUnity.Editor.Tools
     {
         private const string Ui = "UnityEngine.UI.";
         private const string Tmp = "TMPro.TextMeshProUGUI";
-        private static readonly HashSet<string> RectKeys = Keys("anchorMin anchorMax pivot anchoredPosition sizeDelta offsetMin offsetMax localScale localEulerAngles");
+        private static readonly HashSet<string> RectKeys = Keys(
+            "anchorMin anchorMax pivot anchoredPosition sizeDelta offsetMin offsetMax localScale localEulerAngles"
+        );
         private static readonly HashSet<string> TextKeys = Keys("text fontSize color alignment enableAutoSizing fontSizeMin fontSizeMax raycastTarget");
-        private static readonly HashSet<string> CanvasKeys = Keys("renderMode sortingOrder overrideSorting pixelPerfect worldCamera planeDistance scaleFactor referencePixelsPerUnit uiScaleMode referenceResolution screenMatchMode matchWidthOrHeight");
-        private static readonly HashSet<string> LinearKeys = Keys("padding spacing childAlignment childControlWidth childControlHeight childForceExpandWidth childForceExpandHeight childScaleWidth childScaleHeight reverseArrangement");
+        private static readonly HashSet<string> CanvasKeys = Keys(
+            "renderMode sortingOrder overrideSorting pixelPerfect worldCamera planeDistance scaleFactor referencePixelsPerUnit uiScaleMode referenceResolution screenMatchMode matchWidthOrHeight"
+        );
+        private static readonly HashSet<string> LinearKeys = Keys(
+            "padding spacing childAlignment childControlWidth childControlHeight childForceExpandWidth childForceExpandHeight childScaleWidth childScaleHeight reverseArrangement"
+        );
         private static readonly HashSet<string> GridKeys = Keys("padding childAlignment cellSize spacing startCorner startAxis constraint constraintCount");
-        private static readonly HashSet<string> ElementKeys = Keys("ignoreLayout minWidth minHeight preferredWidth preferredHeight flexibleWidth flexibleHeight layoutPriority");
+        private static readonly HashSet<string> ElementKeys = Keys(
+            "ignoreLayout minWidth minHeight preferredWidth preferredHeight flexibleWidth flexibleHeight layoutPriority"
+        );
         private static readonly HashSet<string> FitterKeys = Keys("horizontalFit verticalFit");
 
         public static object HandleCommand(JObject @params)
@@ -38,23 +46,18 @@ namespace MCPForUnity.Editor.Tools
                 bool includeInactive = ReadBool(p.GetRaw("include_inactive"), false, "include_inactive");
                 int maxNodes = ReadInt(p.GetRaw("max_nodes"), 200, 1, 1000, "max_nodes");
                 if (action == "ping")
-                    return new SuccessResponse("pong", new
-                    {
-                        tool = "manage_ugui",
-                        ugui = TypeOf(Ui + "Image") != null,
-                        tmp = TypeOf(Tmp) != null
-                    });
+                    return new SuccessResponse(
+                        "pong",
+                        new
+                        {
+                            tool = "manage_ugui",
+                            ugui = TypeOf(Ui + "Image") != null,
+                            tmp = TypeOf(Tmp) != null,
+                        }
+                    );
                 if (action == "create")
                     return Create(p, includeInactive);
-                if (!new[]
-                {
-                    "get_hierarchy",
-                    "set_rect",
-                    "set_layout",
-                    "set_text",
-                    "set_canvas",
-                    "diagnose"
-                }.Contains(action))
+                if (!new[] { "get_hierarchy", "set_rect", "set_layout", "set_text", "set_canvas", "diagnose" }.Contains(action))
                     return new ErrorResponse("Valid actions: ping, get_hierarchy, create, set_rect, set_layout, set_text, set_canvas, diagnose.");
                 var go = Resolve(p.GetRaw("target"), includeInactive);
                 if (action == "get_hierarchy")
@@ -96,14 +99,7 @@ namespace MCPForUnity.Editor.Tools
         private static object Create(ToolParams p, bool includeInactive)
         {
             string kind = (p.Get("element_type") ?? "").ToLowerInvariant();
-            if (!new[]
-            {
-                "canvas",
-                "panel",
-                "image",
-                "button",
-                "text"
-            }.Contains(kind))
+            if (!new[] { "canvas", "panel", "image", "button", "text" }.Contains(kind))
                 throw new ArgumentException("element_type must be canvas, panel, image, button or text.");
             string name = p.Get("name", kind == "canvas" ? "Canvas" : CultureInfo.InvariantCulture.TextInfo.ToTitleCase(kind));
             if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(new[] { '/', '\\', '\0', '\r', '\n' }) >= 0)
@@ -130,96 +126,103 @@ namespace MCPForUnity.Editor.Tools
             JObject rectProps = Select(props, RectKeys);
             ValidateRect(null, rectProps, kind == "panel");
             if (rectProps.Count > 0 && parent != null && Enabled(Find(parent, Ui + "LayoutGroup")))
-                throw new ArgumentException("The requested parent has an active LayoutGroup. Create the child with default rect settings, then configure its LayoutElement.");
+                throw new ArgumentException(
+                    "The requested parent has an active LayoutGroup. Create the child with default rect settings, then configure its LayoutElement."
+                );
             var rectValues = Prepare(typeof(RectTransform), rectProps, RectKeys);
-            var componentValues = text != null
-                ? Prepare(text, Select(props, TextKeys), TextKeys)
-                : image != null
-                    ? Prepare(image, Select(props, Keys("color")), Keys("color"))
-                    : new List<Assignment>();
+            var componentValues =
+                text != null ? Prepare(text, Select(props, TextKeys), TextKeys)
+                : image != null ? Prepare(image, Select(props, Keys("color")), Keys("color"))
+                : new List<Assignment>();
             if (text != null)
                 ValidateTextRange(null, props);
-            return Mutate("Create uGUI " + kind, () =>
-            {
-                var go = new GameObject(name, typeof(RectTransform));
-                Undo.RegisterCreatedObjectUndo(go, "Create uGUI " + kind);
-                if (parent != null)
-                    Undo.SetTransformParent(go.transform, parent.transform, "Parent uGUI element");
-                else
+            return Mutate(
+                "Create uGUI " + kind,
+                () =>
                 {
-                    var stage = PrefabStageUtility.GetCurrentPrefabStage();
-                    if (stage != null)
-                        Undo.SetTransformParent(go.transform, stage.prefabContentsRoot.transform, "Parent uGUI canvas");
-                }
+                    var go = new GameObject(name, typeof(RectTransform));
+                    Undo.RegisterCreatedObjectUndo(go, "Create uGUI " + kind);
+                    if (parent != null)
+                        Undo.SetTransformParent(go.transform, parent.transform, "Parent uGUI element");
+                    else
+                    {
+                        var stage = PrefabStageUtility.GetCurrentPrefabStage();
+                        if (stage != null)
+                            Undo.SetTransformParent(go.transform, stage.prefabContentsRoot.transform, "Parent uGUI canvas");
+                    }
 
-                var rt = (RectTransform)go.transform;
-                rt.localScale = Vector3.one;
-                rt.localRotation = Quaternion.identity;
-                rt.localPosition = Vector3.zero;
-                rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(.5f, .5f);
-                rt.sizeDelta = new Vector2(kind == "text" ? 300 : 160, kind == "text" ? 60 : 80);
-                if (kind == "panel")
-                {
-                    rt.anchorMin = Vector2.zero;
-                    rt.anchorMax = Vector2.one;
-                    rt.offsetMin = rt.offsetMax = Vector2.zero;
-                }
+                    var rt = (RectTransform)go.transform;
+                    rt.localScale = Vector3.one;
+                    rt.localRotation = Quaternion.identity;
+                    rt.localPosition = Vector3.zero;
+                    rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(.5f, .5f);
+                    rt.sizeDelta = new Vector2(kind == "text" ? 300 : 160, kind == "text" ? 60 : 80);
+                    if (kind == "panel")
+                    {
+                        rt.anchorMin = Vector2.zero;
+                        rt.anchorMax = Vector2.one;
+                        rt.offsetMin = rt.offsetMax = Vector2.zero;
+                    }
 
-                if (kind == "canvas")
-                {
-                    var canvas = Undo.AddComponent<Canvas>(go);
-                    canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-                    var cs = Undo.AddComponent(go, scaler);
-                    cs.GetType().GetProperty("uiScaleMode").SetValue(
-                        cs,
-                        Enum.Parse(
-                            cs.GetType().GetProperty("uiScaleMode").PropertyType,
-                            "ScaleWithScreenSize"));
-                    cs.GetType().GetProperty("referenceResolution").SetValue(cs, new Vector2(1920, 1080));
-                    cs.GetType().GetProperty("matchWidthOrHeight").SetValue(cs, .5f);
-                    Undo.AddComponent(go, raycaster);
-                }
+                    if (kind == "canvas")
+                    {
+                        var canvas = Undo.AddComponent<Canvas>(go);
+                        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                        var cs = Undo.AddComponent(go, scaler);
+                        cs.GetType()
+                            .GetProperty("uiScaleMode")
+                            .SetValue(cs, Enum.Parse(cs.GetType().GetProperty("uiScaleMode").PropertyType, "ScaleWithScreenSize"));
+                        cs.GetType().GetProperty("referenceResolution").SetValue(cs, new Vector2(1920, 1080));
+                        cs.GetType().GetProperty("matchWidthOrHeight").SetValue(cs, .5f);
+                        Undo.AddComponent(go, raycaster);
+                    }
 
-                Component visual = null;
-                if (image != null)
-                {
-                    visual = Undo.AddComponent(go, image);
-                    image.GetProperty("color").SetValue(visual, kind == "panel" ? new Color(.12f, .12f, .12f, 1) : Color.white);
-                    image.GetProperty("raycastTarget").SetValue(visual, button != null);
-                }
+                    Component visual = null;
+                    if (image != null)
+                    {
+                        visual = Undo.AddComponent(go, image);
+                        image.GetProperty("color").SetValue(visual, kind == "panel" ? new Color(.12f, .12f, .12f, 1) : Color.white);
+                        image.GetProperty("raycastTarget").SetValue(visual, button != null);
+                    }
 
-                if (button != null)
-                {
-                    var b = Undo.AddComponent(go, button);
-                    button.GetProperty("targetGraphic").SetValue(b, visual);
-                }
+                    if (button != null)
+                    {
+                        var b = Undo.AddComponent(go, button);
+                        button.GetProperty("targetGraphic").SetValue(b, visual);
+                    }
 
-                if (text != null)
-                {
-                    visual = Undo.AddComponent(go, text);
-                    text.GetProperty("font").SetValue(visual, font);
-                    text.GetProperty("text").SetValue(visual, name);
-                    text.GetProperty("fontSize").SetValue(visual, 24f);
-                    text.GetProperty("fontSizeMin").SetValue(visual, 8f);
-                    text.GetProperty("fontSizeMax").SetValue(visual, 72f);
-                    text.GetProperty("color").SetValue(visual, Color.white);
-                    text.GetProperty("raycastTarget").SetValue(visual, false);
-                }
+                    if (text != null)
+                    {
+                        visual = Undo.AddComponent(go, text);
+                        text.GetProperty("font").SetValue(visual, font);
+                        text.GetProperty("text").SetValue(visual, name);
+                        text.GetProperty("fontSize").SetValue(visual, 24f);
+                        text.GetProperty("fontSizeMin").SetValue(visual, 8f);
+                        text.GetProperty("fontSizeMax").SetValue(visual, 72f);
+                        text.GetProperty("color").SetValue(visual, Color.white);
+                        text.GetProperty("raycastTarget").SetValue(visual, false);
+                    }
 
-                Apply(rt, rectValues);
-                if (visual != null)
-                    Apply(visual, componentValues);
-                Dirty(rt);
-                if (visual != null)
-                    Dirty(visual);
-                return new SuccessResponse("Created uGUI element.", new
-                {
-                    instance_id = go.GetInstanceIDCompat(),
-                    path = PathOf(go),
-                    element_type = kind,
-                    warnings = kind == "button" ? new[] { "Button requires an EventSystem and input module in the scene to receive input." } : Array.Empty<string>()
-                });
-            });
+                    Apply(rt, rectValues);
+                    if (visual != null)
+                        Apply(visual, componentValues);
+                    Dirty(rt);
+                    if (visual != null)
+                        Dirty(visual);
+                    return new SuccessResponse(
+                        "Created uGUI element.",
+                        new
+                        {
+                            instance_id = go.GetInstanceIDCompat(),
+                            path = PathOf(go),
+                            element_type = kind,
+                            warnings = kind == "button"
+                                ? new[] { "Button requires an EventSystem and input module in the scene to receive input." }
+                                : Array.Empty<string>(),
+                        }
+                    );
+                }
+            );
         }
 
         private static object SetRect(GameObject go, JObject props)
@@ -255,7 +258,8 @@ namespace MCPForUnity.Editor.Tools
             bool ownsScaling = canvas.isRootCanvas && scaler is Behaviour scalerBehaviour && scalerBehaviour.enabled;
             if (controlledKeys.Any(key => props[key] != null) && !ownsScaling)
                 throw new ArgumentException(
-                    "scaleFactor and referencePixelsPerUnit require an enabled CanvasScaler on the root Canvas for persistent, undoable edits. Target the root Canvas and enable its CanvasScaler.");
+                    "scaleFactor and referencePixelsPerUnit require an enabled CanvasScaler on the root Canvas for persistent, undoable edits. Target the root Canvas and enable its CanvasScaler."
+                );
             if (ownsScaling)
             {
                 canvasKeys.ExceptWith(controlledKeys);
@@ -267,16 +271,19 @@ namespace MCPForUnity.Editor.Tools
                 throw new ArgumentException("Target has no CanvasScaler.");
             var cv = Prepare(typeof(Canvas), Select(props, canvasKeys), canvasKeys);
             var sv = scalerProps.Count == 0 ? new List<Assignment>() : Prepare(scaler.GetType(), scalerProps, scalerKeys);
-            return Mutate("Set uGUI canvas", () =>
-            {
-                // Native mode changes can resize and reposition the Canvas rectangle.
-                if (cv.Any(value => value.Property.Name == "renderMode" && (RenderMode)value.Value != canvas.renderMode))
-                    Undo.RegisterCompleteObjectUndo(canvas.transform, "Set uGUI canvas");
-                Apply(canvas, cv);
-                if (scaler != null && sv.Count > 0)
-                    Apply(scaler, sv);
-                return Changed(go);
-            });
+            return Mutate(
+                "Set uGUI canvas",
+                () =>
+                {
+                    // Native mode changes can resize and reposition the Canvas rectangle.
+                    if (cv.Any(value => value.Property.Name == "renderMode" && (RenderMode)value.Value != canvas.renderMode))
+                        Undo.RegisterCompleteObjectUndo(canvas.transform, "Set uGUI canvas");
+                    Apply(canvas, cv);
+                    if (scaler != null && sv.Count > 0)
+                        Apply(scaler, sv);
+                    return Changed(go);
+                }
+            );
         }
 
         private static object SetLayout(GameObject go, JObject props)
@@ -329,28 +336,31 @@ namespace MCPForUnity.Editor.Tools
             var values = new JObject(props);
             values.Remove("type");
             var assignments = Prepare(type, values, allowed);
-            return Mutate("Set uGUI layout", () =>
-            {
-                var component = c != null ? c : Undo.AddComponent(go, type);
-                Apply(component, assignments);
-                return Changed(go);
-            });
+            return Mutate(
+                "Set uGUI layout",
+                () =>
+                {
+                    var component = c != null ? c : Undo.AddComponent(go, type);
+                    Apply(component, assignments);
+                    return Changed(go);
+                }
+            );
         }
 
         private static object Edit(Component component, List<Assignment> values, GameObject go, string label)
         {
-            return Mutate(label, () =>
-            {
-                Apply(component, values);
-                return Changed(go);
-            });
+            return Mutate(
+                label,
+                () =>
+                {
+                    Apply(component, values);
+                    return Changed(go);
+                }
+            );
         }
 
-        private static object Changed(GameObject go) => new SuccessResponse("Updated uGUI element.", new
-        {
-            instance_id = go.GetInstanceIDCompat(),
-            path = PathOf(go)
-        });
+        private static object Changed(GameObject go) =>
+            new SuccessResponse("Updated uGUI element.", new { instance_id = go.GetInstanceIDCompat(), path = PathOf(go) });
 
         private static object Mutate(string label, Func<object> change)
         {
@@ -400,10 +410,15 @@ namespace MCPForUnity.Editor.Tools
 
             // Offsets depend on anchors and pivot, irrespective of JSON property order.
             // Set TMP fontSize while auto-sizing is disabled so its setter updates the authored base.
-            return values.OrderBy(v =>
-                v.Property.Name == "enableAutoSizing" && v.Value is bool autoSize
-                    ? autoSize ? 3 : 1
-                    : RectOrder(v.Property.Name)).ToList();
+            return values
+                .OrderBy(v =>
+                    v.Property.Name == "enableAutoSizing" && v.Value is bool autoSize
+                        ? autoSize
+                            ? 3
+                            : 1
+                        : RectOrder(v.Property.Name)
+                )
+                .ToList();
         }
 
         private static int RectOrder(string key)
@@ -425,13 +440,16 @@ namespace MCPForUnity.Editor.Tools
             foreach (var value in values)
             {
                 value.Property.SetValue(component, value.Value);
-                if (value.Property.Name == "fontSize"
+                if (
+                    value.Property.Name == "fontSize"
                     && value.Property.DeclaringType?.FullName == "TMPro.TMP_Text"
-                    && !(bool)component.GetType().GetProperty("enableAutoSizing").GetValue(component))
+                    && !(bool)component.GetType().GetProperty("enableAutoSizing").GetValue(component)
+                )
                 {
                     // TMP skips its authored base update when the requested size equals the computed size.
                     var serialized = new SerializedObject(component);
-                    var authoredSize = serialized.FindProperty("m_fontSizeBase")
+                    var authoredSize =
+                        serialized.FindProperty("m_fontSizeBase")
                         ?? throw new ArgumentException("TMP authored font size is unavailable in this Unity version.");
                     if (authoredSize.floatValue != (float)value.Value)
                     {
@@ -488,19 +506,14 @@ namespace MCPForUnity.Editor.Tools
 
             if (type == typeof(RectOffset))
             {
-                if (!(token is JObject o) || o.Count != 4 || new[]
-                {
-                    "left",
-                    "right",
-                    "top",
-                    "bottom"
-                }.Any(k => o[k] == null))
+                if (!(token is JObject o) || o.Count != 4 || new[] { "left", "right", "top", "bottom" }.Any(k => o[k] == null))
                     throw new ArgumentException("padding must contain left, right, top and bottom integers.");
                 return new RectOffset(
                     ReadInt(o["left"], null, 0, 100000, key),
                     ReadInt(o["right"], null, 0, 100000, key),
                     ReadInt(o["top"], null, 0, 100000, key),
-                    ReadInt(o["bottom"], null, 0, 100000, key));
+                    ReadInt(o["bottom"], null, 0, 100000, key)
+                );
             }
 
             if (type == typeof(Camera))
@@ -515,10 +528,12 @@ namespace MCPForUnity.Editor.Tools
 
             if (type.IsEnum)
             {
-                if (token.Type != JTokenType.String
+                if (
+                    token.Type != JTokenType.String
                     || !Enum.GetNames(type).Any(n => string.Equals(n, token.ToString(), StringComparison.OrdinalIgnoreCase))
                     || !Enum.TryParse(type, token.ToString(), true, out object value)
-                    || !Enum.IsDefined(type, value))
+                    || !Enum.IsDefined(type, value)
+                )
                     throw new ArgumentException(key + " must be one of: " + string.Join(", ", Enum.GetNames(type)));
                 return value;
             }
@@ -530,15 +545,7 @@ namespace MCPForUnity.Editor.Tools
         {
             if (value is float f)
             {
-                if (new[]
-                {
-                    "fontSize",
-                    "fontSizeMin",
-                    "fontSizeMax",
-                    "scaleFactor",
-                    "referencePixelsPerUnit",
-                    "planeDistance"
-                }.Contains(key) && f <= 0)
+                if (new[] { "fontSize", "fontSizeMin", "fontSizeMax", "scaleFactor", "referencePixelsPerUnit", "planeDistance" }.Contains(key) && f <= 0)
                     throw new ArgumentException(key + " must be positive.");
                 if (key == "matchWidthOrHeight" && (f < 0 || f > 1))
                     throw new ArgumentException(key + " must be 0..1.");
@@ -557,16 +564,16 @@ namespace MCPForUnity.Editor.Tools
         private static void ValidateRect(RectTransform rt, JObject props, bool stretchDefaults = false)
         {
             CheckKeys(props, RectKeys);
-            Vector2 min = props["anchorMin"] != null
-                ? (Vector2)ConvertValue(props["anchorMin"], typeof(Vector2), "anchorMin")
-                : rt != null
-                    ? rt.anchorMin
-                    : stretchDefaults ? Vector2.zero : new Vector2(.5f, .5f);
-            Vector2 max = props["anchorMax"] != null
-                ? (Vector2)ConvertValue(props["anchorMax"], typeof(Vector2), "anchorMax")
-                : rt != null
-                    ? rt.anchorMax
-                    : stretchDefaults ? Vector2.one : new Vector2(.5f, .5f);
+            Vector2 min =
+                props["anchorMin"] != null ? (Vector2)ConvertValue(props["anchorMin"], typeof(Vector2), "anchorMin")
+                : rt != null ? rt.anchorMin
+                : stretchDefaults ? Vector2.zero
+                : new Vector2(.5f, .5f);
+            Vector2 max =
+                props["anchorMax"] != null ? (Vector2)ConvertValue(props["anchorMax"], typeof(Vector2), "anchorMax")
+                : rt != null ? rt.anchorMax
+                : stretchDefaults ? Vector2.one
+                : new Vector2(.5f, .5f);
             if (min.x > max.x || min.y > max.y)
                 throw new ArgumentException("anchorMin must not exceed anchorMax.");
             if (props["pivot"] != null)
@@ -580,18 +587,21 @@ namespace MCPForUnity.Editor.Tools
                 throw new ArgumentException("Use offsets or sizeDelta/anchoredPosition in one request, since these properties overlap.");
             // Offset setters derive position and size using float arithmetic. Individually
             // finite endpoints can still overflow those serialized fields.
-            Vector2 size = rt != null ? rt.sizeDelta : stretchDefaults ? Vector2.zero : new Vector2(160, 80);
+            Vector2 size =
+                rt != null ? rt.sizeDelta
+                : stretchDefaults ? Vector2.zero
+                : new Vector2(160, 80);
             Vector2 position = rt != null ? rt.anchoredPosition : Vector2.zero;
-            Vector2 projectedPivot = props["pivot"] != null
-                ? (Vector2)ConvertValue(props["pivot"], typeof(Vector2), "pivot")
-                : rt != null ? rt.pivot : new Vector2(.5f, .5f);
+            Vector2 projectedPivot =
+                props["pivot"] != null ? (Vector2)ConvertValue(props["pivot"], typeof(Vector2), "pivot")
+                : rt != null ? rt.pivot
+                : new Vector2(.5f, .5f);
             foreach (var entry in props.Properties().Where(p => p.Name == "offsetMin" || p.Name == "offsetMax"))
             {
                 Vector2 value = (Vector2)ConvertValue(entry.Value, typeof(Vector2), entry.Name);
                 bool isMin = entry.Name == "offsetMin";
-                Vector2 offset = value - (isMin
-                    ? position - Vector2.Scale(size, projectedPivot)
-                    : position + Vector2.Scale(size, Vector2.one - projectedPivot));
+                Vector2 offset =
+                    value - (isMin ? position - Vector2.Scale(size, projectedPivot) : position + Vector2.Scale(size, Vector2.one - projectedPivot));
                 size += isMin ? -offset : offset;
                 position += Vector2.Scale(offset, isMin ? Vector2.one - projectedPivot : projectedPivot);
                 if (!Finite(size) || !Finite(position))
@@ -603,19 +613,23 @@ namespace MCPForUnity.Editor.Tools
 
         private static void ValidateTextRange(Component c, JObject props)
         {
-            float? min = props["fontSizeMin"] == null
-                ? c == null ? 8f : ReadFloatProperty(c, "fontSizeMin")
-                : Number(props["fontSizeMin"], "fontSizeMin");
-            float? max = props["fontSizeMax"] == null
-                ? c == null ? 72f : ReadFloatProperty(c, "fontSizeMax")
-                : Number(props["fontSizeMax"], "fontSizeMax");
+            float? min =
+                props["fontSizeMin"] == null
+                    ? c == null
+                        ? 8f
+                        : ReadFloatProperty(c, "fontSizeMin")
+                    : Number(props["fontSizeMin"], "fontSizeMin");
+            float? max =
+                props["fontSizeMax"] == null
+                    ? c == null
+                        ? 72f
+                        : ReadFloatProperty(c, "fontSizeMax")
+                    : Number(props["fontSizeMax"], "fontSizeMax");
             if (min.HasValue && max.HasValue && min > max)
                 throw new ArgumentException("fontSizeMin must not exceed fontSizeMax.");
         }
 
-        private static float? ReadFloatProperty(Component c, string key) => c == null
-            ? null
-            : c.GetType().GetProperty(key)?.GetValue(c) as float?;
+        private static float? ReadFloatProperty(Component c, string key) => c == null ? null : c.GetType().GetProperty(key)?.GetValue(c) as float?;
 
         private static bool IsDriven(RectTransform rt, Dictionary<string, Type> types = null)
         {
@@ -635,9 +649,13 @@ namespace MCPForUnity.Editor.Tools
             {
                 foreach (var fitter in rt.GetComponents(fitterType))
                 {
-                    if (Enabled(fitter)
-                        && (Convert.ToInt32(fitter.GetType().GetProperty("horizontalFit").GetValue(fitter)) != 0
-                            || Convert.ToInt32(fitter.GetType().GetProperty("verticalFit").GetValue(fitter)) != 0))
+                    if (
+                        Enabled(fitter)
+                        && (
+                            Convert.ToInt32(fitter.GetType().GetProperty("horizontalFit").GetValue(fitter)) != 0
+                            || Convert.ToInt32(fitter.GetType().GetProperty("verticalFit").GetValue(fitter)) != 0
+                        )
+                    )
                         return true;
                 }
             }
@@ -679,13 +697,17 @@ namespace MCPForUnity.Editor.Tools
             {
                 font = settings?.GetProperty("defaultFontAsset", BindingFlags.Static | BindingFlags.Public)?.GetValue(null) as UnityEngine.Object;
             }
-            catch (TargetInvocationException e)when (e.InnerException is NullReferenceException)
+            catch (TargetInvocationException e) when (e.InnerException is NullReferenceException)
             {
-                throw new ArgumentException("TMP settings/default font are missing. Configure TMP essentials before creating text. No import dialog was opened.");
+                throw new ArgumentException(
+                    "TMP settings/default font are missing. Configure TMP essentials before creating text. No import dialog was opened."
+                );
             }
 
             if (font == null)
-                throw new ArgumentException("TMP default font is missing. Configure TMP essentials/defaultFontAsset before creating text. No import dialog was opened.");
+                throw new ArgumentException(
+                    "TMP default font is missing. Configure TMP essentials/defaultFontAsset before creating text. No import dialog was opened."
+                );
             return font;
         }
 
@@ -705,8 +727,9 @@ namespace MCPForUnity.Editor.Tools
             return type;
         }
 
-        private static Type RequireType(string name) => TypeOf(name) ?? throw new ArgumentException(
-            "Required optional component is unavailable: " + name + ". Install/enable the corresponding uGUI or TMP package.");
+        private static Type RequireType(string name) =>
+            TypeOf(name)
+            ?? throw new ArgumentException("Required optional component is unavailable: " + name + ". Install/enable the corresponding uGUI or TMP package.");
 
         private static GameObject Resolve(JToken target, bool includeInactive)
         {
@@ -722,10 +745,7 @@ namespace MCPForUnity.Editor.Tools
                 return go;
             }
 
-            var matches = SceneObjects(includeInactive)
-                .Where(go => name.Contains("/") ? PathOf(go) == name.TrimStart('/') : go.name == name)
-                .Take(2)
-                .ToArray();
+            var matches = SceneObjects(includeInactive).Where(go => name.Contains("/") ? PathOf(go) == name.TrimStart('/') : go.name == name).Take(2).ToArray();
             if (matches.Length == 0)
                 throw new ArgumentException("Target was not found in loaded scenes/current prefab stage: " + name);
             if (matches.Length > 1)
@@ -762,8 +782,8 @@ namespace MCPForUnity.Editor.Tools
                 if (!scene.IsValid() || !scene.isLoaded || EditorSceneManager.IsPreviewScene(scene))
                     continue;
                 foreach (var root in scene.GetRootGameObjects())
-                    foreach (var go in Descendants(root, includeInactive))
-                        yield return go;
+                foreach (var go in Descendants(root, includeInactive))
+                    yield return go;
             }
         }
 
@@ -823,7 +843,7 @@ namespace MCPForUnity.Editor.Tools
                     ["path"] = PathOf(go),
                     ["active"] = go.activeInHierarchy,
                     ["parent_id"] = go.transform.parent == null ? 0 : go.transform.parent.gameObject.GetInstanceIDCompat(),
-                    ["components"] = new JArray(go.GetComponents<Component>().Where(x => x != null).Select(x => x.GetType().FullName))
+                    ["components"] = new JArray(go.GetComponents<Component>().Where(x => x != null).Select(x => x.GetType().FullName)),
                 };
                 if (rt != null)
                     node["rect"] = new JObject
@@ -835,20 +855,23 @@ namespace MCPForUnity.Editor.Tools
                         ["sizeDelta"] = Vec(rt.sizeDelta),
                         ["width"] = rt.rect.width,
                         ["height"] = rt.rect.height,
-                        ["layout_driven"] = IsDriven(rt, types)
+                        ["layout_driven"] = IsDriven(rt, types),
                     };
                 if (c != null)
                     node["text"] = c.GetType().GetProperty("text")?.GetValue(c)?.ToString();
                 nodes.Add(node);
             }
 
-            return new SuccessResponse("Read uGUI hierarchy.", new
-            {
-                nodes,
-                count = nodes.Count,
-                truncated,
-                max_nodes = maxNodes
-            });
+            return new SuccessResponse(
+                "Read uGUI hierarchy.",
+                new
+                {
+                    nodes,
+                    count = nodes.Count,
+                    truncated,
+                    max_nodes = maxNodes,
+                }
+            );
         }
 
         private static JArray Vec(Vector2 v) => new JArray(v.x, v.y);
@@ -878,9 +901,8 @@ namespace MCPForUnity.Editor.Tools
 
         private static HashSet<string> Keys(string keys) => new HashSet<string>(keys.Split(' '), StringComparer.Ordinal);
 
-        private static JObject Select(JObject props, HashSet<string> keys) => new JObject(props.Properties()
-            .Where(p => keys.Contains(p.Name))
-            .Select(p => new JProperty(p.Name, p.Value.DeepClone())));
+        private static JObject Select(JObject props, HashSet<string> keys) =>
+            new JObject(props.Properties().Where(p => keys.Contains(p.Name)).Select(p => new JProperty(p.Name, p.Value.DeepClone())));
 
         private static void CheckKeys(JObject props, HashSet<string> allowed)
         {
@@ -906,20 +928,7 @@ namespace MCPForUnity.Editor.Tools
                 items = a.ToArray();
             else if (token is JObject o && o.Count == count)
             {
-                string[] names = color ? new[]
-                {
-                    "r",
-                    "g",
-                    "b",
-                    "a"
-                }
-
-                : new[]
-                {
-                    "x",
-                    "y",
-                    "z"
-                };
+                string[] names = color ? new[] { "r", "g", "b", "a" } : new[] { "x", "y", "z" };
                 items = names.Take(count).Select(n => o[n]).ToArray();
             }
             else
@@ -932,7 +941,13 @@ namespace MCPForUnity.Editor.Tools
             if (token == null && fallback.HasValue)
                 return fallback.Value;
             string value = token is JValue scalar ? scalar.ToString(CultureInfo.InvariantCulture) : token?.ToString();
-            if (token == null || token.Type != JTokenType.Integer || !int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) || n < min || n > max)
+            if (
+                token == null
+                || token.Type != JTokenType.Integer
+                || !int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n)
+                || n < min
+                || n > max
+            )
                 throw new ArgumentException(key + " must be an integer in " + min + ".." + max + ".");
             return n;
         }

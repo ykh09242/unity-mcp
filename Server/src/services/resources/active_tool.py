@@ -11,6 +11,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 
 class Vector3(BaseModel):
     """3D vector."""
+
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
@@ -18,6 +19,7 @@ class Vector3(BaseModel):
 
 class ActiveToolData(BaseModel):
     """Active tool data fields."""
+
     activeTool: str = ""
     isCustom: bool = False
     pivotMode: str = ""
@@ -28,21 +30,19 @@ class ActiveToolData(BaseModel):
 
 class ActiveToolResponse(MCPResponse):
     """Information about the currently active editor tool."""
+
     data: ActiveToolData = ActiveToolData()
 
 
 @mcp_for_unity_resource(
     uri="mcpforunity://editor/active-tool",
     name="editor_active_tool",
-    description="Currently active editor tool (Move, Rotate, Scale, etc.) and transform handle settings.\n\nURI: mcpforunity://editor/active-tool"
+    description="Currently active editor tool (Move, Rotate, Scale, etc.) and transform handle settings.\n\nURI: mcpforunity://editor/active-tool",
 )
 async def get_active_tool(ctx: Context) -> ActiveToolResponse | MCPResponse:
     """Get active editor tool information."""
     unity_instance = await get_unity_instance_from_context(ctx)
     response = await send_with_unity_instance(
-        async_send_command_with_retry,
-        unity_instance,
-        "get_active_tool",
-        {}
+        async_send_command_with_retry, unity_instance, "get_active_tool", {}
     )
     return parse_resource_response(response, ActiveToolResponse)

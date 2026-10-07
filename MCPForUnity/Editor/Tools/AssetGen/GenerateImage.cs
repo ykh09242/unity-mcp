@@ -18,24 +18,34 @@ namespace MCPForUnity.Editor.Tools.AssetGen
     {
         public static object HandleCommand(JObject @params)
         {
-            if (@params == null) return new ErrorResponse("Parameters cannot be null.");
+            if (@params == null)
+                return new ErrorResponse("Parameters cannot be null.");
             var p = new ToolParams(@params);
             string action = (p.Get("action") ?? string.Empty).ToLowerInvariant();
             try
             {
                 switch (action)
                 {
-                    case "generate": return Generate(p);
+                    case "generate":
+                        return Generate(p);
                     case "remove_background":
                         return new ErrorResponse("remove_background is not implemented in this version.");
-                    case "status": return AssetGenToolHelpers.Status(p, "Image", 2.0);
-                    case "cancel": return AssetGenToolHelpers.Cancel(p);
-                    case "list_providers": return AssetGenToolHelpers.ListProviders("image");
-                    case "list_models": return AssetGenToolHelpers.ListModels(p, "image");
-                    case "refresh_models": return AssetGenToolHelpers.ListModels(p, "image", true);
-                    case "": return new ErrorResponse("'action' parameter is required.");
+                    case "status":
+                        return AssetGenToolHelpers.Status(p, "Image", 2.0);
+                    case "cancel":
+                        return AssetGenToolHelpers.Cancel(p);
+                    case "list_providers":
+                        return AssetGenToolHelpers.ListProviders("image");
+                    case "list_models":
+                        return AssetGenToolHelpers.ListModels(p, "image");
+                    case "refresh_models":
+                        return AssetGenToolHelpers.ListModels(p, "image", true);
+                    case "":
+                        return new ErrorResponse("'action' parameter is required.");
                     default:
-                        return new ErrorResponse($"Unknown action: '{action}'. Supported: generate, remove_background, status, cancel, list_providers, list_models, refresh_models.");
+                        return new ErrorResponse(
+                            $"Unknown action: '{action}'. Supported: generate, remove_background, status, cancel, list_providers, list_models, refresh_models."
+                        );
                 }
             }
             catch (NotSupportedException nse)
@@ -75,7 +85,8 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 Name = p.Get("name"),
                 OutputFolder = p.Get("outputFolder"),
             };
-            if (string.IsNullOrWhiteSpace(req.Mode)) req.Mode = "text";
+            if (string.IsNullOrWhiteSpace(req.Mode))
+                req.Mode = "text";
             if (req.Mode != "text" && req.Mode != "image")
                 return new ErrorResponse("'mode' must be 'text' or 'image'.");
             if (!AssetGenPaths.NormalizeOutputFolder(req.OutputFolder, out req.OutputFolder, out string outputErr))
@@ -99,7 +110,13 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             return new PendingResponse(
                 $"Image generation started with '{provider}'. Poll the status action with this job_id.",
                 pollIntervalSeconds: 2.0,
-                data: new { job_id = job.JobId, provider, status = "pending" });
+                data: new
+                {
+                    job_id = job.JobId,
+                    provider,
+                    status = "pending",
+                }
+            );
         }
     }
 }

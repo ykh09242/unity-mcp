@@ -32,12 +32,20 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             AssetGenJobManager.ResetForTests();
             SecureKeyStore.ResetForTests();
-            try { if (Directory.Exists(_dir)) Directory.Delete(_dir, true); } catch { }
-            try { Directory.Delete(Path.Combine(ProjectRoot(), "Assets/Generated/__assetgen_model_handler"), true); } catch { }
+            try
+            {
+                if (Directory.Exists(_dir))
+                    Directory.Delete(_dir, true);
+            }
+            catch { }
+            try
+            {
+                Directory.Delete(Path.Combine(ProjectRoot(), "Assets/Generated/__assetgen_model_handler"), true);
+            }
+            catch { }
         }
 
-        private static JObject Call(JObject p)
-            => JObject.Parse(JsonConvert.SerializeObject(GenerateModel.HandleCommand(p)));
+        private static JObject Call(JObject p) => JObject.Parse(JsonConvert.SerializeObject(GenerateModel.HandleCommand(p)));
 
         private static string ProjectRoot()
         {
@@ -58,7 +66,15 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             _store.Set("tripo", "handlerkey123");
 
-            JObject gen = Call(new JObject { ["action"] = "generate", ["provider"] = "tripo", ["mode"] = "text", ["prompt"] = "a tree" });
+            JObject gen = Call(
+                new JObject
+                {
+                    ["action"] = "generate",
+                    ["provider"] = "tripo",
+                    ["mode"] = "text",
+                    ["prompt"] = "a tree",
+                }
+            );
             Assert.AreEqual("pending", (string)gen["_mcp_status"]);
             string jobId = (string)gen["data"]["job_id"];
             Assert.IsFalse(string.IsNullOrEmpty(jobId));
@@ -71,7 +87,15 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void Generate_NoKey_ReturnsError()
         {
-            JObject resp = Call(new JObject { ["action"] = "generate", ["provider"] = "tripo", ["mode"] = "text", ["prompt"] = "a tree" });
+            JObject resp = Call(
+                new JObject
+                {
+                    ["action"] = "generate",
+                    ["provider"] = "tripo",
+                    ["mode"] = "text",
+                    ["prompt"] = "a tree",
+                }
+            );
             Assert.AreEqual(false, (bool)resp["success"]);
             StringAssert.Contains("No API key", (string)resp["error"]);
         }
@@ -80,7 +104,15 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void Generate_UnimplementedProvider_ReturnsError()
         {
             _store.Set("hunyuan", "k");
-            JObject resp = Call(new JObject { ["action"] = "generate", ["provider"] = "hunyuan", ["mode"] = "text", ["prompt"] = "a tree" });
+            JObject resp = Call(
+                new JObject
+                {
+                    ["action"] = "generate",
+                    ["provider"] = "hunyuan",
+                    ["mode"] = "text",
+                    ["prompt"] = "a tree",
+                }
+            );
             Assert.AreEqual(false, (bool)resp["success"]);
         }
 
@@ -90,7 +122,15 @@ namespace MCPForUnityTests.Editor.AssetGen
             // Use a provider that supports local images (Meshy) so we exercise the file-existence
             // check; Tripo short-circuits on any local path (covered separately).
             _store.Set("meshy", "k");
-            JObject resp = Call(new JObject { ["action"] = "generate", ["provider"] = "meshy", ["mode"] = "image", ["imagePath"] = "Assets/does_not_exist_zzz.png" });
+            JObject resp = Call(
+                new JObject
+                {
+                    ["action"] = "generate",
+                    ["provider"] = "meshy",
+                    ["mode"] = "image",
+                    ["imagePath"] = "Assets/does_not_exist_zzz.png",
+                }
+            );
             Assert.AreEqual(false, (bool)resp["success"]);
             StringAssert.Contains("not found", ((string)resp["error"]).ToLowerInvariant());
         }
@@ -103,11 +143,26 @@ namespace MCPForUnityTests.Editor.AssetGen
             File.WriteAllBytes(tmp, new byte[] { 137, 80, 78, 71 });
             try
             {
-                JObject resp = Call(new JObject { ["action"] = "generate", ["provider"] = "meshy", ["mode"] = "image", ["imagePath"] = tmp });
+                JObject resp = Call(
+                    new JObject
+                    {
+                        ["action"] = "generate",
+                        ["provider"] = "meshy",
+                        ["mode"] = "image",
+                        ["imagePath"] = tmp,
+                    }
+                );
                 Assert.AreEqual(false, (bool)resp["success"]);
                 StringAssert.Contains("Assets", (string)resp["error"]);
             }
-            finally { try { File.Delete(tmp); } catch { } }
+            finally
+            {
+                try
+                {
+                    File.Delete(tmp);
+                }
+                catch { }
+            }
         }
 
         [Test]
@@ -116,7 +171,15 @@ namespace MCPForUnityTests.Editor.AssetGen
             _store.Set("meshy", "k");
             string rel = WriteProjectFile("Assets/Generated/__assetgen_model_handler/ref.png", new byte[] { 137, 80, 78, 71 });
 
-            JObject gen = Call(new JObject { ["action"] = "generate", ["provider"] = "meshy", ["mode"] = "image", ["imagePath"] = rel });
+            JObject gen = Call(
+                new JObject
+                {
+                    ["action"] = "generate",
+                    ["provider"] = "meshy",
+                    ["mode"] = "image",
+                    ["imagePath"] = rel,
+                }
+            );
 
             Assert.AreEqual("pending", (string)gen["_mcp_status"]);
         }
@@ -129,18 +192,40 @@ namespace MCPForUnityTests.Editor.AssetGen
             File.WriteAllBytes(tmp, new byte[] { 137, 80, 78, 71 });
             try
             {
-                JObject resp = Call(new JObject { ["action"] = "generate", ["provider"] = "tripo", ["mode"] = "image", ["imagePath"] = tmp });
-                Assert.AreEqual(false, (bool)resp["success"]);                 // synchronous error, not a fake 'pending'
+                JObject resp = Call(
+                    new JObject
+                    {
+                        ["action"] = "generate",
+                        ["provider"] = "tripo",
+                        ["mode"] = "image",
+                        ["imagePath"] = tmp,
+                    }
+                );
+                Assert.AreEqual(false, (bool)resp["success"]); // synchronous error, not a fake 'pending'
                 StringAssert.Contains("Tripo", (string)resp["error"]);
             }
-            finally { try { File.Delete(tmp); } catch { } }
+            finally
+            {
+                try
+                {
+                    File.Delete(tmp);
+                }
+                catch { }
+            }
         }
 
         [Test]
         public void Generate_TextMode_RequiresPrompt()
         {
             _store.Set("tripo", "k");
-            JObject resp = Call(new JObject { ["action"] = "generate", ["provider"] = "tripo", ["mode"] = "text" });
+            JObject resp = Call(
+                new JObject
+                {
+                    ["action"] = "generate",
+                    ["provider"] = "tripo",
+                    ["mode"] = "text",
+                }
+            );
             Assert.AreEqual(false, (bool)resp["success"]);
             StringAssert.Contains("prompt", ((string)resp["error"]).ToLowerInvariant());
         }
@@ -169,11 +254,15 @@ namespace MCPForUnityTests.Editor.AssetGen
             _store.Set(provider, "fixture-only");
             var transport = new FakeHttpTransport();
             AssetGenJobManager.TransportOverrideForTests = transport;
-            JObject response = Call(new JObject
-            {
-                ["action"] = "generate", ["provider"] = provider,
-                ["mode"] = mode, ["prompt"] = "a tree"
-            });
+            JObject response = Call(
+                new JObject
+                {
+                    ["action"] = "generate",
+                    ["provider"] = provider,
+                    ["mode"] = mode,
+                    ["prompt"] = "a tree",
+                }
+            );
             Assert.AreEqual(false, (bool)response["success"]);
             StringAssert.Contains("mode", (string)response["error"]);
             Assert.AreEqual(0, AssetGenJobManager.RecentJobs().Count);
@@ -189,11 +278,16 @@ namespace MCPForUnityTests.Editor.AssetGen
             _store.Set("tripo", "fixture-only");
             var transport = new FakeHttpTransport();
             AssetGenJobManager.TransportOverrideForTests = transport;
-            JObject response = Call(new JObject
-            {
-                ["action"] = "generate", ["mode"] = mode, ["prompt"] = "a tree",
-                ["imageUrl"] = "https://fixture.invalid/source.png", ["texture"] = false
-            });
+            JObject response = Call(
+                new JObject
+                {
+                    ["action"] = "generate",
+                    ["mode"] = mode,
+                    ["prompt"] = "a tree",
+                    ["imageUrl"] = "https://fixture.invalid/source.png",
+                    ["texture"] = false,
+                }
+            );
             Assert.AreEqual(true, (bool)response["success"]);
             Assert.AreEqual(1, AssetGenJobManager.RecentJobs().Count);
             AssetGenJobManager.TryAdvanceForTests((string)response["data"]["job_id"]);

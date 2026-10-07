@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Physics
 {
@@ -16,7 +16,8 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             var nameResult = p.GetRequired("name");
             var nameErr = nameResult.GetOrError(out string name);
-            if (nameErr != null) return nameErr;
+            if (nameErr != null)
+                return nameErr;
 
             string folder = p.Get("path") ?? "Assets/Physics Materials";
             folder = AssetPathUtility.GetContainedAssetPath(folder);
@@ -26,8 +27,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (dimension != "3d" && dimension != "2d")
                 return new ErrorResponse($"Invalid dimension: '{dimension}'. Use '3d' or '2d'.");
 
-            AssetPathUtility.GetFullAssetPath($"{folder}/{name}" +
-                (dimension == "2d" ? ".physicsMaterial2D" : ".physicMaterial"));
+            AssetPathUtility.GetFullAssetPath($"{folder}/{name}" + (dimension == "2d" ? ".physicsMaterial2D" : ".physicMaterial"));
 
             if (dimension == "2d")
                 return Create2D(name, folder, p);
@@ -42,7 +42,8 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             var pathResult = p.GetRequired("path");
             var pathErr = pathResult.GetOrError(out string path);
-            if (pathErr != null) return pathErr;
+            if (pathErr != null)
+                return pathErr;
 
             path = AssetPathUtility.GetContainedAssetPath(path);
             if (string.IsNullOrEmpty(path))
@@ -71,7 +72,8 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             var matPathResult = p.GetRequired("material_path");
             var matPathErr = matPathResult.GetOrError(out string materialPath);
-            if (matPathErr != null) return matPathErr;
+            if (matPathErr != null)
+                return matPathErr;
 
             materialPath = AssetPathUtility.GetAssetReferencePath(materialPath, allowPackages: true);
             if (string.IsNullOrEmpty(materialPath))
@@ -113,8 +115,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                         {
                             gameObject = go.name,
                             collider = collider3D.GetType().Name,
-                            materialPath
-                        }
+                            materialPath,
+                        },
                     };
                 }
                 if (componentIndex.HasValue)
@@ -123,7 +125,9 @@ namespace MCPForUnity.Editor.Tools.Physics
                     if (type3D != null && typeof(Collider).IsAssignableFrom(type3D))
                     {
                         int count3D = go.GetComponents(type3D).Length;
-                        return new ErrorResponse($"component_index {componentIndex.Value} out of range. Found {count3D} '{type3D.Name}' collider(s) on '{go.name}'.");
+                        return new ErrorResponse(
+                            $"component_index {componentIndex.Value} out of range. Found {count3D} '{type3D.Name}' collider(s) on '{go.name}'."
+                        );
                     }
                     else if (!string.IsNullOrEmpty(colliderType))
                     {
@@ -149,8 +153,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                         {
                             gameObject = go.name,
                             collider = collider2D.GetType().Name,
-                            materialPath
-                        }
+                            materialPath,
+                        },
                     };
                 }
                 if (componentIndex.HasValue)
@@ -159,7 +163,9 @@ namespace MCPForUnity.Editor.Tools.Physics
                     if (type2D != null && typeof(Collider2D).IsAssignableFrom(type2D))
                     {
                         int count2D = go.GetComponents(type2D).Length;
-                        return new ErrorResponse($"component_index {componentIndex.Value} out of range. Found {count2D} '{type2D.Name}' collider(s) on '{go.name}'.");
+                        return new ErrorResponse(
+                            $"component_index {componentIndex.Value} out of range. Found {count2D} '{type2D.Name}' collider(s) on '{go.name}'."
+                        );
                     }
                     else if (!string.IsNullOrEmpty(colliderType))
                     {
@@ -203,30 +209,26 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 dynamicFriction = dynamicFriction,
                 staticFriction = staticFriction,
-                bounciness = bounciness
+                bounciness = bounciness,
             };
 
-            if (!string.IsNullOrEmpty(frictionCombine) &&
-                Enum.TryParse<PhysicsMaterialCombine>(frictionCombine, true, out var fc))
+            if (!string.IsNullOrEmpty(frictionCombine) && Enum.TryParse<PhysicsMaterialCombine>(frictionCombine, true, out var fc))
                 mat.frictionCombine = fc;
 
-            if (!string.IsNullOrEmpty(bounceCombine) &&
-                Enum.TryParse<PhysicsMaterialCombine>(bounceCombine, true, out var bc))
+            if (!string.IsNullOrEmpty(bounceCombine) && Enum.TryParse<PhysicsMaterialCombine>(bounceCombine, true, out var bc))
                 mat.bounceCombine = bc;
 #else
             var mat = new PhysicMaterial(name)
             {
                 dynamicFriction = dynamicFriction,
                 staticFriction = staticFriction,
-                bounciness = bounciness
+                bounciness = bounciness,
             };
 
-            if (!string.IsNullOrEmpty(frictionCombine) &&
-                Enum.TryParse<PhysicMaterialCombine>(frictionCombine, true, out var fc))
+            if (!string.IsNullOrEmpty(frictionCombine) && Enum.TryParse<PhysicMaterialCombine>(frictionCombine, true, out var fc))
                 mat.frictionCombine = fc;
 
-            if (!string.IsNullOrEmpty(bounceCombine) &&
-                Enum.TryParse<PhysicMaterialCombine>(bounceCombine, true, out var bc))
+            if (!string.IsNullOrEmpty(bounceCombine) && Enum.TryParse<PhysicMaterialCombine>(bounceCombine, true, out var bc))
                 mat.bounceCombine = bc;
 #endif
 
@@ -251,8 +253,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                         staticFriction,
                         bounciness,
                         frictionCombine = mat.frictionCombine.ToString(),
-                        bounceCombine = mat.bounceCombine.ToString()
-                    }
+                        bounceCombine = mat.bounceCombine.ToString(),
+                    },
                 };
             }
             finally
@@ -282,11 +284,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return new ErrorResponse(ex.Message);
             }
 
-            var mat = new PhysicsMaterial2D(name)
-            {
-                friction = friction,
-                bounciness = bounciness
-            };
+            var mat = new PhysicsMaterial2D(name) { friction = friction, bounciness = bounciness };
 
             try
             {
@@ -306,8 +304,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                         path = assetPath,
                         dimension = "2d",
                         friction,
-                        bounciness
-                    }
+                        bounciness,
+                    },
                 };
             }
             finally
@@ -323,7 +321,11 @@ namespace MCPForUnity.Editor.Tools.Physics
 
         private static readonly HashSet<string> Valid3DMatKeys = new HashSet<string>
         {
-            "dynamicfriction", "staticfriction", "bounciness", "frictioncombine", "bouncecombine"
+            "dynamicfriction",
+            "staticfriction",
+            "bounciness",
+            "frictioncombine",
+            "bouncecombine",
         };
 
         private static object Configure3D(string path, JObject properties)
@@ -337,8 +339,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     unknown.Add(prop.Name);
             }
             if (unknown.Count > 0)
-                return new ErrorResponse(
-                    $"Unknown 3D physics material property(ies): {string.Join(", ", unknown)}.");
+                return new ErrorResponse($"Unknown 3D physics material property(ies): {string.Join(", ", unknown)}.");
 
 #if UNITY_6000_0_OR_NEWER
             var mat = AssetDatabase.LoadAssetAtPath<PhysicsMaterial>(path);
@@ -405,7 +406,8 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             AssetPathUtility.GetFullAssetPath(path);
             Undo.RecordObject(mat, "Configure Physics Material");
-            foreach (var setter in setters) setter();
+            foreach (var setter in setters)
+                setter();
             EditorUtility.SetDirty(mat);
             AssetDatabase.SaveAssets();
 
@@ -413,14 +415,11 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Updated {changed.Count} property(ies) on 3D physics material at '{path}'.",
-                data = new { path, changed }
+                data = new { path, changed },
             };
         }
 
-        private static readonly HashSet<string> Valid2DMatKeys = new HashSet<string>
-        {
-            "friction", "bounciness"
-        };
+        private static readonly HashSet<string> Valid2DMatKeys = new HashSet<string> { "friction", "bounciness" };
 
         private static object Configure2D(string path, JObject properties)
         {
@@ -433,8 +432,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     unknown.Add(prop.Name);
             }
             if (unknown.Count > 0)
-                return new ErrorResponse(
-                    $"Unknown 2D physics material property(ies): {string.Join(", ", unknown)}.");
+                return new ErrorResponse($"Unknown 2D physics material property(ies): {string.Join(", ", unknown)}.");
 
             var mat = AssetDatabase.LoadAssetAtPath<PhysicsMaterial2D>(path);
             if (mat == null)
@@ -462,7 +460,8 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             AssetPathUtility.GetFullAssetPath(path);
             Undo.RecordObject(mat, "Configure Physics Material 2D");
-            foreach (var setter in setters) setter();
+            foreach (var setter in setters)
+                setter();
             EditorUtility.SetDirty(mat);
             AssetDatabase.SaveAssets();
 
@@ -470,7 +469,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Updated {changed.Count} property(ies) on 2D physics material at '{path}'.",
-                data = new { path, changed }
+                data = new { path, changed },
             };
         }
 

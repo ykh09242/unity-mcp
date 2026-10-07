@@ -4,12 +4,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.ProBuilder;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -42,8 +42,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.Ignore("An unowned prefab stage is open.");
 
             // Use real package types without invoking the unrelated default-material patch.
-            foreach (FieldInfo field in typeof(ManageProBuilder).GetFields(
-                BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+            foreach (FieldInfo field in typeof(ManageProBuilder).GetFields(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
                 if (field.FieldType == typeof(Type) || field.FieldType == typeof(bool))
                     savedResolutionFields.Add(field, field.GetValue(null));
             SetResolutionField("_typesResolved", true);
@@ -51,8 +50,7 @@ namespace MCPForUnityTests.Editor.Tools
             SetResolutionField("_proBuilderMeshType", meshType);
             SetResolutionField("_faceType", Type.GetType("UnityEngine.ProBuilder.Face, Unity.ProBuilder", true));
             SetResolutionField("_smoothingType", Type.GetType("UnityEngine.ProBuilder.Smoothing, Unity.ProBuilder", true));
-            SetResolutionField("_editorMeshUtilityType", Type.GetType(
-                "UnityEditor.ProBuilder.EditorMeshUtility, Unity.ProBuilder.Editor"));
+            SetResolutionField("_editorMeshUtilityType", Type.GetType("UnityEditor.ProBuilder.EditorMeshUtility, Unity.ProBuilder.Editor"));
 
             originalScene = SceneManager.GetActiveScene();
             capturedScene = true;
@@ -65,11 +63,20 @@ namespace MCPForUnityTests.Editor.Tools
             faces.SetValue(Activator.CreateInstance(faceType, new object[] { new[] { 3, 4, 5 } }), 1);
             var positions = new[]
             {
-                new Vector3(1, 2, 3), new Vector3(-2, 1, 0), new Vector3(0, -1, 2),
-                new Vector3(3, 0, 1), new Vector3(0, 4, -1), new Vector3(-1, 0, 3),
+                new Vector3(1, 2, 3),
+                new Vector3(-2, 1, 0),
+                new Vector3(0, -1, 2),
+                new Vector3(3, 0, 1),
+                new Vector3(0, 4, -1),
+                new Vector3(-1, 0, 3),
             };
-            MethodInfo create = meshType.GetMethod("Create", BindingFlags.Static | BindingFlags.Public,
-                null, new[] { typeof(IEnumerable<Vector3>), typeof(IEnumerable<>).MakeGenericType(faceType) }, null);
+            MethodInfo create = meshType.GetMethod(
+                "Create",
+                BindingFlags.Static | BindingFlags.Public,
+                null,
+                new[] { typeof(IEnumerable<Vector3>), typeof(IEnumerable<>).MakeGenericType(faceType) },
+                null
+            );
             Assert.IsNotNull(create, "Expected the documented ProBuilder Create overload.");
             mesh = (Component)create.Invoke(null, new object[] { positions, faces });
             Assert.IsNotNull(mesh);
@@ -78,8 +85,7 @@ namespace MCPForUnityTests.Editor.Tools
             CaptureMesh();
             JObject available = JObject.FromObject(ManageProBuilder.HandleCommand(new JObject { ["action"] = "ping" }));
             Assert.IsTrue(available.Value<bool>("success"), available.ToString());
-            Assert.AreEqual(meshType, typeof(ManageProBuilder).GetField("_proBuilderMeshType",
-                BindingFlags.Static | BindingFlags.NonPublic).GetValue(null));
+            Assert.AreEqual(meshType, typeof(ManageProBuilder).GetField("_proBuilderMeshType", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null));
         }
 
         [TearDown]
@@ -91,9 +97,11 @@ namespace MCPForUnityTests.Editor.Tools
                     CaptureMesh();
                 foreach (GameObject go in ownedObjects)
                 {
-                    if (go == null) continue;
+                    if (go == null)
+                        continue;
                     foreach (Component component in go.GetComponents<Component>())
-                        if (component != null) Undo.ClearUndo(component);
+                        if (component != null)
+                            Undo.ClearUndo(component);
                     Undo.ClearUndo(go);
                 }
                 for (int i = ownedObjects.Count - 1; i >= 0; i--)
@@ -139,8 +147,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         private Vector3[] WorldVertices()
         {
-            return ((IEnumerable<Vector3>)meshType.GetProperty("positions").GetValue(mesh))
-                .Select(mesh.transform.TransformPoint).ToArray();
+            return ((IEnumerable<Vector3>)meshType.GetProperty("positions").GetValue(mesh)).Select(mesh.transform.TransformPoint).ToArray();
         }
 
         private JObject Send(string action, JObject properties = null)
@@ -151,7 +158,8 @@ namespace MCPForUnityTests.Editor.Tools
                 ["target"] = mesh.gameObject.GetInstanceIDCompat().ToString(),
                 ["searchMethod"] = "by_id",
             };
-            if (properties != null) request["properties"] = properties;
+            if (properties != null)
+                request["properties"] = properties;
             JObject result = JObject.FromObject(ManageProBuilder.HandleCommand(request));
             CaptureMesh();
             return result;
@@ -176,8 +184,7 @@ namespace MCPForUnityTests.Editor.Tools
                     GameObject ancestor = Parent("Ancestor_");
                     ancestor.transform.position = new Vector3(-3, 5, 1);
                     ancestor.transform.rotation = Quaternion.Euler(-13, 29, 41);
-                    ancestor.transform.localScale = hierarchy == 4
-                        ? new Vector3(-1.5f, 2, .75f) : new Vector3(1.5f, 2, .75f);
+                    ancestor.transform.localScale = hierarchy == 4 ? new Vector3(-1.5f, 2, .75f) : new Vector3(1.5f, 2, .75f);
                     parent.transform.SetParent(ancestor.transform, false);
                 }
             }
@@ -204,7 +211,8 @@ namespace MCPForUnityTests.Editor.Tools
         public void AutoSmoothReportsFacesSuppliedToSmoothing(string indices, int expected)
         {
             var properties = new JObject { ["angleThreshold"] = 0 };
-            if (indices != null) properties["faceIndices"] = JToken.Parse(indices);
+            if (indices != null)
+                properties["faceIndices"] = JToken.Parse(indices);
             JObject result = Send("auto_smooth", properties);
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(expected, result["data"].Value<int>("faceCount"));

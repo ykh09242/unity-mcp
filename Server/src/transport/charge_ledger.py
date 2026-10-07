@@ -1,4 +1,5 @@
 """Owner-loop reservation mapping with immutable charges and indexed totals."""
+
 from collections.abc import Hashable, Iterator, Mapping, MutableMapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -6,7 +7,7 @@ from typing import Self, TypeAlias, TypeVar
 
 ChargeValue: TypeAlias = int | str | None
 ChargeRecord: TypeAlias = Mapping[str, ChargeValue]
-IndexKey = TypeVar('IndexKey', bound=Hashable)
+IndexKey = TypeVar("IndexKey", bound=Hashable)
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,15 +19,19 @@ class _Charge:
 
 
 def _freeze(record: ChargeRecord) -> _Charge:
-    size, user, session = record['bytes'], record['user_id'], record['session_id']
+    size, user, session = record["bytes"], record["user_id"], record["session_id"]
     if type(size) is not int or size < 0:
-        raise ValueError('Reservation bytes must be a nonnegative integer')
+        raise ValueError("Reservation bytes must be a nonnegative integer")
     if user is not None and type(user) is not str:
-        raise TypeError('Reservation principal must be a string or None')
+        raise TypeError("Reservation principal must be a string or None")
     if type(session) is not str:
-        raise TypeError('Reservation session must be a string')
-    return _Charge(size, user, session, MappingProxyType({
-        'bytes': size, 'user_id': user, 'session_id': session}))
+        raise TypeError("Reservation session must be a string")
+    return _Charge(
+        size,
+        user,
+        session,
+        MappingProxyType({"bytes": size, "user_id": user, "session_id": session}),
+    )
 
 
 class ChargeLedger(MutableMapping[Hashable, ChargeRecord]):

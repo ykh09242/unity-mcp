@@ -1,4 +1,5 @@
 """Actual installed FastMCP/MCP memory transport cancellation reaches polling."""
+
 import asyncio
 import importlib
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from core.config import config
 from models.models import ToolDefinitionModel
 import services.custom_tool_service as module
 from services.custom_tool_service import CustomToolService
+
 entrypoint = importlib.import_module("services.tools.execute_custom_tool")
 
 
@@ -19,14 +21,18 @@ entrypoint = importlib.import_module("services.tools.execute_custom_tool")
 @pytest.mark.parametrize("mode", ["legacy", "auto"])
 @pytest.mark.parametrize("operation", ["notification", "abandon", "session_close"])
 @pytest.mark.parametrize("phase", ["initial_dispatch", "sleep"])
-async def test_sdk_memory_lifecycle_releases_polling_after_cancellation(monkeypatch, operation, phase, mode):
+async def test_sdk_memory_lifecycle_releases_polling_after_cancellation(
+    monkeypatch, operation, phase, mode
+):
     # Given: real FastMCP protocol routing over actual paired SDK memory streams.
     monkeypatch.setattr(config, "http_remote_hosted", False)
     mcp = FastMCP("owned-polling-lifecycle-proof")
     service = CustomToolService(mcp)
     definition = ToolDefinitionModel(name="build", requires_polling=True, max_poll_seconds=600)
     monkeypatch.setattr(service, "get_tool_definition", AsyncMock(return_value=definition))
-    monkeypatch.setattr(entrypoint, "resolve_project_id_for_unity_instance", lambda target: "owned-project")
+    monkeypatch.setattr(
+        entrypoint, "resolve_project_id_for_unity_instance", lambda target: "owned-project"
+    )
     entered = asyncio.Event()
     handler_done = asyncio.Event()
     blocked = asyncio.Event()
@@ -56,7 +62,13 @@ async def test_sdk_memory_lifecycle_releases_polling_after_cancellation(monkeypa
     monkeypatch.setattr(module, "send_with_unity_instance", dispatch)
     if phase == "sleep":
         # Replace only the service's runtime reference, leaving the SDK untouched.
-        monkeypatch.setattr(module, "asyncio", SimpleNamespace(sleep=sleep, wait_for=asyncio.wait_for, TimeoutError=asyncio.TimeoutError))
+        monkeypatch.setattr(
+            module,
+            "asyncio",
+            SimpleNamespace(
+                sleep=sleep, wait_for=asyncio.wait_for, TimeoutError=asyncio.TimeoutError
+            ),
+        )
 
     @mcp.tool
     async def lifecycle_poll(ctx: Context):
@@ -79,7 +91,13 @@ async def test_sdk_memory_lifecycle_releases_polling_after_cancellation(monkeypa
             assert service._polls_by_user == {None: 1}
             # When: cancellation is delivered by the actual protocol/client/session.
             if operation == "notification":
-                await client.session.send_notification(types.CancelledNotification(params=types.CancelledNotificationParams(requestId=seen_ids[0], reason="owned verification")))
+                await client.session.send_notification(
+                    types.CancelledNotification(
+                        params=types.CancelledNotificationParams(
+                            requestId=seen_ids[0], reason="owned verification"
+                        )
+                    )
+                )
             elif operation == "abandon":
                 call.cancel()
             else:
@@ -90,7 +108,9 @@ async def test_sdk_memory_lifecycle_releases_polling_after_cancellation(monkeypa
             assert active_at_phase_exit == [1]
             assert service._active_polls == 0
             assert service._polls_by_session == service._polls_by_user == {}
-            print(f"SDK lifecycle: mode={mode}, protocol={protocol_version}, operation={operation}, phase={phase}; cancelled and released")
+            print(
+                f"SDK lifecycle: mode={mode}, protocol={protocol_version}, operation={operation}, phase={phase}; cancelled and released"
+            )
         finally:
             call.cancel()
             await asyncio.gather(call, return_exceptions=True)

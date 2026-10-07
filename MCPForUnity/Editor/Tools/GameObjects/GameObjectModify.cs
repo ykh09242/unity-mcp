@@ -21,7 +21,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             {
                 findParams = new JObject { ["searchInactive"] = true };
             }
-            
+
             GameObject targetGo = ManageGameObjectCommon.FindObjectInternal(targetToken, searchMethod, findParams);
             if (targetGo == null)
             {
@@ -34,9 +34,10 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             if (parentToken != null)
             {
                 newParentGo = ManageGameObjectCommon.FindObjectInternal(parentToken, "by_id_or_name_or_path");
-                if (newParentGo == null
-                    && !(parentToken.Type == JTokenType.Null
-                         || (parentToken.Type == JTokenType.String && string.IsNullOrEmpty(parentToken.ToString()))))
+                if (
+                    newParentGo == null
+                    && !(parentToken.Type == JTokenType.Null || (parentToken.Type == JTokenType.String && string.IsNullOrEmpty(parentToken.ToString())))
+                )
                 {
                     return new ErrorResponse($"New parent ('{parentToken}') not found.");
                 }
@@ -65,8 +66,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             {
                 // Check if we're renaming the root object of an open prefab stage
                 var prefabStageForRename = PrefabStageUtility.GetCurrentPrefabStage();
-                bool isRenamingPrefabRoot = prefabStageForRename != null &&
-                                            prefabStageForRename.prefabContentsRoot == targetGo;
+                bool isRenamingPrefabRoot = prefabStageForRename != null && prefabStageForRename.prefabContentsRoot == targetGo;
 
                 if (isRenamingPrefabRoot)
                 {
@@ -229,7 +229,10 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             var componentPropertiesError = GameObjectComponentHelpers.ApplyComponentProperties(
-                targetGo, @params["componentProperties"] as JObject, out bool componentPropertiesModified);
+                targetGo,
+                @params["componentProperties"] as JObject,
+                out bool componentPropertiesModified
+            );
             if (componentPropertiesError != null)
             {
                 return componentPropertiesError;
@@ -253,10 +256,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             if (!EditorApplication.isPlaying)
                 EditorSceneManager.MarkSceneDirty(targetGo.scene);
 
-            return new SuccessResponse(
-                $"GameObject '{targetGo.name}' modified successfully.",
-                Helpers.GameObjectSerializer.GetGameObjectData(targetGo)
-            );
+            return new SuccessResponse($"GameObject '{targetGo.name}' modified successfully.", Helpers.GameObjectSerializer.GetGameObjectData(targetGo));
         }
     }
 }

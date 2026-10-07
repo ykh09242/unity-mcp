@@ -29,13 +29,17 @@ async def tenant_servers(monkeypatch: pytest.MonkeyPatch):
         {"name": "disabled_probe", "unity_target": "manage_disabled"},
         {"name": "helper_probe", "unity_target": None},
     ]
-    monkeypatch.setattr("transport.unity_instance_middleware.get_registered_tools", lambda: metadata)
+    monkeypatch.setattr(
+        "transport.unity_instance_middleware.get_registered_tools", lambda: metadata
+    )
     servers = {}
     for user in ("alice", "bob", "empty"):
         if user != "empty":
             await registry.register(user, user.title(), user, "6000", user_id=user)
         if user == "alice":
-            await registry.register_tools_for_session(user, [ToolDefinitionModel(name="manage_vfx")])
+            await registry.register_tools_for_session(
+                user, [ToolDefinitionModel(name="manage_vfx")]
+            )
         server = FastMCP(user)
         middleware = UnityInstanceMiddleware()
         monkeypatch.setattr(middleware, "_resolve_user_id", AsyncMock(return_value=user))
@@ -73,7 +77,9 @@ async def test_remote_enabled_tools_and_helpers_remain_available(tenant_servers,
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "auto"])
 @pytest.mark.parametrize("user", ["bob", "empty"])
-async def test_remote_empty_catalog_does_not_inherit_another_users_tools(tenant_servers, mode: str, user: str) -> None:
+async def test_remote_empty_catalog_does_not_inherit_another_users_tools(
+    tenant_servers, mode: str, user: str
+) -> None:
     async with Client(tenant_servers[user], mode=mode) as client:
         assert {tool.name for tool in await client.list_tools()} == {"helper_probe"}
         with pytest.raises((ToolError, MCPError)):
@@ -84,7 +90,9 @@ async def test_remote_empty_catalog_does_not_inherit_another_users_tools(tenant_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "auto"])
 @pytest.mark.parametrize("target", ["Bob@bob", "AliceOff@alice-off"])
-async def test_remote_call_checks_selected_project_catalog(tenant_servers, mode: str, target: str) -> None:
+async def test_remote_call_checks_selected_project_catalog(
+    tenant_servers, mode: str, target: str
+) -> None:
     async with Client(tenant_servers["alice"], mode=mode) as client:
         # Alice's enabled project must not authorize a different selected project.
         with pytest.raises((ToolError, MCPError)):

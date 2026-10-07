@@ -18,6 +18,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
     {
         private const string QueueBase = "https://queue.fal.run/";
         private const string QueueHost = "queue.fal.run";
+
         // Bundled bootstrap default. The shared live catalog may remove it or offer newer models.
         // internal so the model catalog references it directly (single source of truth, drift-guarded).
         internal const string DefaultModel = "fal-ai/flux-2";
@@ -26,19 +27,25 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         public async Task<string> SubmitAsync(ImageGenRequest req, string apiKey, IHttpTransport http, CancellationToken ct)
         {
-            if (req == null) throw new ArgumentNullException(nameof(req));
-            if (http == null) throw new ArgumentNullException(nameof(http));
+            if (req == null)
+                throw new ArgumentNullException(nameof(req));
+            if (http == null)
+                throw new ArgumentNullException(nameof(http));
 
             string model = string.IsNullOrEmpty(req.Model) ? DefaultModel : req.Model;
-            bool image = string.Equals(req.Mode, "image", StringComparison.OrdinalIgnoreCase)
-                         && (!string.IsNullOrEmpty(req.ImageUrl) || !string.IsNullOrEmpty(req.ImagePath));
+            bool image =
+                string.Equals(req.Mode, "image", StringComparison.OrdinalIgnoreCase)
+                && (!string.IsNullOrEmpty(req.ImageUrl) || !string.IsNullOrEmpty(req.ImagePath));
 
             ModelEntry entry = req.CatalogEntry ?? AssetGenModelCatalog.Find(model);
             var body = new JObject();
-            if (entry == null || entry.PromptField != null) body[entry?.PromptField ?? "prompt"] = req.Prompt ?? string.Empty;
-            if (entry == null || (image ? entry.EditSupportsNumImages : entry.SupportsNumImages)) body["num_images"] = 1;
+            if (entry == null || entry.PromptField != null)
+                body[entry?.PromptField ?? "prompt"] = req.Prompt ?? string.Empty;
+            if (entry == null || (image ? entry.EditSupportsNumImages : entry.SupportsNumImages))
+                body["num_images"] = 1;
             string outputFormat = image ? entry?.EditOutputFormat : entry?.OutputFormat;
-            if (outputFormat != null) body["output_format"] = outputFormat;
+            if (outputFormat != null)
+                body["output_format"] = outputFormat;
             string url;
             if (image)
             {
@@ -67,7 +74,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         internal static async Task<string> SubmitQueueAsync(JObject body, string model, string apiKey, IHttpTransport http, CancellationToken ct)
         {
-            if (!FalModelSchema.SafeId(model)) throw new InvalidOperationException("Invalid fal model ID.");
+            if (!FalModelSchema.SafeId(model))
+                throw new InvalidOperationException("Invalid fal model ID.");
             string url = QueueBase + model;
 
             ProviderHttp.RequireHost(url, QueueHost, apiKey, "fal submit");
@@ -77,7 +85,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 Method = "POST",
                 Url = url,
                 ContentType = "application/json",
-                Body = ProviderHttp.SerializeRequest(body)
+                Body = ProviderHttp.SerializeRequest(body),
             };
             spec.Headers["Authorization"] = "Key " + apiKey;
 
@@ -101,20 +109,33 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             return responseUrl;
         }
 
-        public Task<ProviderPollResult> PollAsync(string providerJobId, string apiKey, IHttpTransport http, CancellationToken ct)
-            => PollQueueAsync(providerJobId, apiKey, http, ct, json =>
-            {
-                var file = json["images"]?[0] ?? json["image"];
-                return new ProviderPollResult
+        public Task<ProviderPollResult> PollAsync(string providerJobId, string apiKey, IHttpTransport http, CancellationToken ct) =>
+            PollQueueAsync(
+                providerJobId,
+                apiKey,
+                http,
+                ct,
+                json =>
                 {
-                    DownloadUrl = ExtractImageUrl(json),
-                    ResultExt = ImageResultFormat.FromMetadata((string)file?["content_type"], (string)file?["url"]),
-                };
-            });
+                    var file = json["images"]?[0] ?? json["image"];
+                    return new ProviderPollResult
+                    {
+                        DownloadUrl = ExtractImageUrl(json),
+                        ResultExt = ImageResultFormat.FromMetadata((string)file?["content_type"], (string)file?["url"]),
+                    };
+                }
+            );
 
-        internal static async Task<ProviderPollResult> PollQueueAsync(string providerJobId, string apiKey, IHttpTransport http, CancellationToken ct, Func<JObject, ProviderPollResult> extract)
+        internal static async Task<ProviderPollResult> PollQueueAsync(
+            string providerJobId,
+            string apiKey,
+            IHttpTransport http,
+            CancellationToken ct,
+            Func<JObject, ProviderPollResult> extract
+        )
         {
-            if (string.IsNullOrEmpty(providerJobId)) throw new ArgumentNullException(nameof(providerJobId));
+            if (string.IsNullOrEmpty(providerJobId))
+                throw new ArgumentNullException(nameof(providerJobId));
             string responseUrl = providerJobId;
             // providerJobId is provider-supplied (the submit-time response_url). Re-validate before
             // attaching the key so a poisoned URL can never exfiltrate it.
@@ -175,7 +196,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             if (images is JArray arr && arr.Count > 0)
             {
                 string u = arr[0]?["url"]?.ToString();
-                if (!string.IsNullOrEmpty(u)) return u;
+                if (!string.IsNullOrEmpty(u))
+                    return u;
             }
             string single = result["image"]?["url"]?.ToString();
             return string.IsNullOrEmpty(single) ? null : single;
@@ -188,7 +210,11 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             JObject json = null;
             if (!string.IsNullOrEmpty(text))
             {
-                try { json = JObject.Parse(text); } catch { /* non-JSON */ }
+                try
+                {
+                    json = JObject.Parse(text);
+                }
+                catch { /* non-JSON */ }
             }
 
             bool ok = res?.Ok == true;

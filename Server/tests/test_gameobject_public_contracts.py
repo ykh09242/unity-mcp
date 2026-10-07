@@ -27,7 +27,7 @@ def _run(code, tmp_path):
 
 def test_gameobject_cli_lifecycle_transforms_and_single_json(tmp_path):
     output = _run(
-        r'''
+        r"""
         import copy
         import json
         import httpx
@@ -186,7 +186,7 @@ def test_gameobject_cli_lifecycle_transforms_and_single_json(tmp_path):
             print('FULL_HELP', command, json.dumps(result.stdout))
         print(f'fresh gameobject CLI checks={checks} failures={len(failures)} requests={len(requests)}')
         assert not failures, failures
-        ''',
+        """,
         tmp_path,
     )
     assert "fresh gameobject CLI checks=" in output
@@ -194,7 +194,7 @@ def test_gameobject_cli_lifecycle_transforms_and_single_json(tmp_path):
 
 def test_gameobject_registered_sdk_vectors_flags_and_preflight(tmp_path):
     output = _run(
-        r'''
+        r"""
         import copy
         import json
         import anyio
@@ -417,7 +417,7 @@ def test_gameobject_registered_sdk_vectors_flags_and_preflight(tmp_path):
             assert not failures, failures
 
         anyio.run(main)
-        ''',
+        """,
         tmp_path,
     )
     assert "fresh gameobject SDK checks=" in output

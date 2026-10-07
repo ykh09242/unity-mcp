@@ -26,7 +26,7 @@ def _run(code, tmp_path):
 
 def test_material_cli_public_values_and_single_json(tmp_path):
     output = _run(
-        r'''
+        r"""
         import copy
         import json
         import httpx
@@ -300,7 +300,7 @@ def test_material_cli_public_values_and_single_json(tmp_path):
             print('FULL_HELP', command, json.dumps(result.stdout))
         print(f'fresh material CLI checks={checks} failures={len(failures)} requests={len(requests)}')
         assert not failures, failures
-        ''',
+        """,
         tmp_path,
     )
     assert "fresh material CLI checks=" in output
@@ -308,7 +308,7 @@ def test_material_cli_public_values_and_single_json(tmp_path):
 
 def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
     output = _run(
-        r'''
+        r"""
         import copy
         import json
         import anyio
@@ -757,7 +757,7 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
             print(f'fresh material SDK checks={checks} failures={len(failures)} requests={len(requests)}')
             assert not failures, failures
         anyio.run(main)
-        ''',
+        """,
         tmp_path,
     )
     assert "fresh material SDK checks=" in output

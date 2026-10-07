@@ -13,14 +13,21 @@ async def test_run_tests_async_forwards_params(monkeypatch):
 
     captured = {}
 
-    async def fake_send_with_unity_instance(send_fn, unity_instance, command_type, params, **kwargs):
+    async def fake_send_with_unity_instance(
+        send_fn, unity_instance, command_type, params, **kwargs
+    ):
         captured["command_type"] = command_type
         captured["params"] = params
-        return {"success": True, "data": {"job_id": "abc123", "status": "running", "mode": "EditMode"}}
+        return {
+            "success": True,
+            "data": {"job_id": "abc123", "status": "running", "mode": "EditMode"},
+        }
 
     import services.tools.run_tests as mod
+
     monkeypatch.setattr(
-        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance)
+        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance
+    )
 
     resp = await run_tests(
         DummyContext(),
@@ -43,13 +50,20 @@ async def test_run_tests_forwards_init_timeout(monkeypatch):
 
     captured = {}
 
-    async def fake_send_with_unity_instance(send_fn, unity_instance, command_type, params, **kwargs):
+    async def fake_send_with_unity_instance(
+        send_fn, unity_instance, command_type, params, **kwargs
+    ):
         captured["params"] = params
-        return {"success": True, "data": {"job_id": "abc123", "status": "running", "mode": "PlayMode"}}
+        return {
+            "success": True,
+            "data": {"job_id": "abc123", "status": "running", "mode": "PlayMode"},
+        }
 
     import services.tools.run_tests as mod
+
     monkeypatch.setattr(
-        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance)
+        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance
+    )
 
     resp = await run_tests(
         DummyContext(),
@@ -66,13 +80,20 @@ async def test_run_tests_omits_init_timeout_when_none(monkeypatch):
 
     captured = {}
 
-    async def fake_send_with_unity_instance(send_fn, unity_instance, command_type, params, **kwargs):
+    async def fake_send_with_unity_instance(
+        send_fn, unity_instance, command_type, params, **kwargs
+    ):
         captured["params"] = params
-        return {"success": True, "data": {"job_id": "abc123", "status": "running", "mode": "EditMode"}}
+        return {
+            "success": True,
+            "data": {"job_id": "abc123", "status": "running", "mode": "EditMode"},
+        }
 
     import services.tools.run_tests as mod
+
     monkeypatch.setattr(
-        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance)
+        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance
+    )
 
     resp = await run_tests(DummyContext(), mode="EditMode")
     assert "initTimeout" not in captured["params"]
@@ -103,14 +124,18 @@ async def test_run_tests_clear_stuck_forwards_only_the_flag(monkeypatch):
 
     captured = {}
 
-    async def fake_send_with_unity_instance(send_fn, unity_instance, command_type, params, **kwargs):
+    async def fake_send_with_unity_instance(
+        send_fn, unity_instance, command_type, params, **kwargs
+    ):
         captured["command_type"] = command_type
         captured["params"] = params
         return {"success": True, "message": "Stuck job cleared.", "data": {"cleared": True}}
 
     import services.tools.run_tests as mod
+
     monkeypatch.setattr(
-        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance)
+        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance
+    )
 
     resp = await run_tests(DummyContext(), clear_stuck=True)
 
@@ -126,15 +151,19 @@ async def test_run_tests_clear_stuck_bypasses_preflight(monkeypatch):
     """#1272: preflight(requires_no_tests=True) would reject the call that clears the job blocking it."""
     from services.tools.run_tests import run_tests
 
-    async def fake_send_with_unity_instance(send_fn, unity_instance, command_type, params, **kwargs):
+    async def fake_send_with_unity_instance(
+        send_fn, unity_instance, command_type, params, **kwargs
+    ):
         return {"success": True, "message": "Stuck job cleared.", "data": {"cleared": True}}
 
     async def exploding_preflight(*args, **kwargs):
         raise AssertionError("clear_stuck must short-circuit before preflight")
 
     import services.tools.run_tests as mod
+
     monkeypatch.setattr(
-        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance)
+        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance
+    )
     monkeypatch.setattr(mod, "preflight", exploding_preflight)
 
     resp = await run_tests(DummyContext(), clear_stuck=True)
@@ -146,12 +175,16 @@ async def test_run_tests_clear_stuck_ignores_invalid_init_timeout(monkeypatch):
     """Recovery must be unconditional: an unrelated bad arg must not block clearing."""
     from services.tools.run_tests import run_tests
 
-    async def fake_send_with_unity_instance(send_fn, unity_instance, command_type, params, **kwargs):
+    async def fake_send_with_unity_instance(
+        send_fn, unity_instance, command_type, params, **kwargs
+    ):
         return {"success": True, "message": "Stuck job cleared.", "data": {"cleared": True}}
 
     import services.tools.run_tests as mod
+
     monkeypatch.setattr(
-        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance)
+        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance
+    )
 
     resp = await run_tests(DummyContext(), clear_stuck=True, init_timeout=0)
     assert resp.success is True
@@ -163,16 +196,23 @@ async def test_run_tests_without_clear_stuck_still_preflights(monkeypatch):
 
     calls = []
 
-    async def fake_send_with_unity_instance(send_fn, unity_instance, command_type, params, **kwargs):
-        return {"success": True, "data": {"job_id": "abc123", "status": "running", "mode": "EditMode"}}
+    async def fake_send_with_unity_instance(
+        send_fn, unity_instance, command_type, params, **kwargs
+    ):
+        return {
+            "success": True,
+            "data": {"job_id": "abc123", "status": "running", "mode": "EditMode"},
+        }
 
     async def recording_preflight(*args, **kwargs):
         calls.append(kwargs)
         return None
 
     import services.tools.run_tests as mod
+
     monkeypatch.setattr(
-        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance)
+        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance
+    )
     monkeypatch.setattr(mod, "preflight", recording_preflight)
 
     resp = await run_tests(DummyContext(), mode="EditMode")
@@ -187,14 +227,21 @@ async def test_get_test_job_forwards_job_id(monkeypatch):
 
     captured = {}
 
-    async def fake_send_with_unity_instance(send_fn, unity_instance, command_type, params, **kwargs):
+    async def fake_send_with_unity_instance(
+        send_fn, unity_instance, command_type, params, **kwargs
+    ):
         captured["command_type"] = command_type
         captured["params"] = params
-        return {"success": True, "data": {"job_id": params["job_id"], "status": "running", "mode": "EditMode"}}
+        return {
+            "success": True,
+            "data": {"job_id": params["job_id"], "status": "running", "mode": "EditMode"},
+        }
 
     import services.tools.run_tests as mod
+
     monkeypatch.setattr(
-        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance)
+        mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance
+    )
 
     resp = await get_test_job(DummyContext(), job_id="job-1")
     assert captured["command_type"] == "get_test_job"
@@ -227,7 +274,9 @@ async def test_test_tools_preserve_structured_stdio_reload_errors(monkeypatch, o
         response = await mod.run_tests(DummyContext(), clear_stuck=operation == "clear")
     else:
         response = await mod.get_test_job(
-            DummyContext(), "job-1", wait_timeout=1 if operation == "wait" else None,
+            DummyContext(),
+            "job-1",
+            wait_timeout=1 if operation == "wait" else None,
         )
 
     # Then: callers retain the actionable error, hint, and retry delay.

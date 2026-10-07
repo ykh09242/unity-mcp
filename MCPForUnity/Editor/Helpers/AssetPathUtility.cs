@@ -22,8 +22,8 @@ namespace MCPForUnity.Editor.Helpers
             return UnityAssetPath.Resolve(path);
         }
 
-        public static string GetAssetReferencePath(string path, bool allowPackages = false, bool allowBuiltIn = false)
-            => UnityAssetPath.Resolve(path, allowPackages, allowBuiltIn);
+        public static string GetAssetReferencePath(string path, bool allowPackages = false, bool allowBuiltIn = false) =>
+            UnityAssetPath.Resolve(path, allowPackages, allowBuiltIn);
 
         public static string GetAssetPathFromGuid(string guid, bool allowPackages = false, bool allowBuiltIn = false)
         {
@@ -34,8 +34,7 @@ namespace MCPForUnity.Editor.Helpers
         public static string GetFullAssetPath(string path)
         {
             string canonical = GetContainedAssetPath(path);
-            return SafePathUtility.ResolveWithinRoot(Application.dataPath,
-                canonical.Length == 6 ? "." : canonical.Substring(7));
+            return SafePathUtility.ResolveWithinRoot(Application.dataPath, canonical.Length == 6 ? "." : canonical.Substring(7));
         }
 
         /// <summary>
@@ -247,7 +246,9 @@ namespace MCPForUnity.Editor.Helpers
             bool isArchive = source != null && source.StartsWith(archivePrefix, StringComparison.Ordinal);
             string prefix = isArchive ? archivePrefix : "git+https://github.com/ykh09242/unity-mcp.git@";
             string suffix = isArchive ? ".zip#subdirectory=Server" : "#subdirectory=Server";
-            bool valid = source != null && source.StartsWith(prefix, StringComparison.Ordinal)
+            bool valid =
+                source != null
+                && source.StartsWith(prefix, StringComparison.Ordinal)
                 && source.EndsWith(suffix, StringComparison.Ordinal)
                 && source.Length == prefix.Length + 40 + suffix.Length;
             if (valid)
@@ -256,11 +257,16 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     char c = source[i];
                     if (!(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') && !(c >= 'A' && c <= 'F'))
-                    { valid = false; break; }
+                    {
+                        valid = false;
+                        break;
+                    }
                 }
             }
             if (!valid)
-                throw new InvalidOperationException("package.json mcpServerSource must pin https://github.com/ykh09242/unity-mcp/archive/<40-hex-commit>.zip#subdirectory=Server or the equivalent full-commit Git source. Reinstall a valid fork package or set an explicit development server source override.");
+                throw new InvalidOperationException(
+                    "package.json mcpServerSource must pin https://github.com/ykh09242/unity-mcp/archive/<40-hex-commit>.zip#subdirectory=Server or the equivalent full-commit Git source. Reinstall a valid fork package or set an explicit development server source override."
+                );
             return source;
         }
 
@@ -277,10 +283,12 @@ namespace MCPForUnity.Editor.Helpers
                 return path;
 
             // Skip non-local paths (git URLs, PyPI package names, etc.)
-            if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("git+", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase))
+            if (
+                path.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("git+", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase)
+            )
             {
                 return path;
             }
@@ -388,15 +396,12 @@ namespace MCPForUnity.Editor.Helpers
         /// <param name="packageSource">Pre-captured value from GetMcpServerPackageSource()</param>
         public static System.Collections.Generic.IList<string> GetBetaServerFromArgsList(string gitUrlOverride, string packageSource)
         {
-            return new System.Collections.Generic.List<string>
-            { "--python", ">=3.11", "--from", GetEffectiveServerSource(gitUrlOverride, packageSource) };
+            return new System.Collections.Generic.List<string> { "--python", ">=3.11", "--from", GetEffectiveServerSource(gitUrlOverride, packageSource) };
         }
 
         private static string GetEffectiveServerSource(string sourceOverride, string packageSource)
         {
-            return !string.IsNullOrEmpty(sourceOverride)
-                ? ResolveLocalServerPath(sourceOverride)
-                : ValidatePinnedServerSource(packageSource);
+            return !string.IsNullOrEmpty(sourceOverride) ? ResolveLocalServerPath(sourceOverride) : ValidatePinnedServerSource(packageSource);
         }
 
         /// <summary>
@@ -408,7 +413,11 @@ namespace MCPForUnity.Editor.Helpers
         public static bool ShouldForceUvxRefresh()
         {
             bool devForceRefresh = false;
-            try { devForceRefresh = EditorPrefs.GetBool(EditorPrefKeys.DevModeForceServerRefresh, false); } catch { }
+            try
+            {
+                devForceRefresh = EditorPrefs.GetBool(EditorPrefKeys.DevModeForceServerRefresh, false);
+            }
+            catch { }
 
             if (devForceRefresh)
                 return true;
@@ -453,8 +462,7 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         internal static bool IsOfflineProbeCacheValid(string source, double now) =>
-            string.Equals(source, _offlineCacheSource, StringComparison.Ordinal)
-            && now - _offlineCacheTimestamp < OfflineCacheTtlSeconds;
+            string.Equals(source, _offlineCacheSource, StringComparison.Ordinal) && now - _offlineCacheTimestamp < OfflineCacheTtlSeconds;
 
         private static bool RunOfflineProbe()
         {
@@ -493,8 +501,10 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static string GetUvxDevFlags(bool forceRefresh, bool useOffline)
         {
-            if (forceRefresh) return "--no-cache --refresh ";
-            if (useOffline) return "--offline ";
+            if (forceRefresh)
+                return "--no-cache --refresh ";
+            if (useOffline)
+                return "--offline ";
             return string.Empty;
         }
 
@@ -506,8 +516,10 @@ namespace MCPForUnity.Editor.Helpers
         public static IReadOnlyList<string> GetUvxDevFlagsList()
         {
             bool forceRefresh = ShouldForceUvxRefresh();
-            if (forceRefresh) return new[] { "--no-cache", "--refresh" };
-            if (GetCachedOfflineProbeResult()) return new[] { "--offline" };
+            if (forceRefresh)
+                return new[] { "--no-cache", "--refresh" };
+            if (GetCachedOfflineProbeResult())
+                return new[] { "--offline" };
             return Array.Empty<string>();
         }
 
@@ -637,11 +649,11 @@ namespace MCPForUnity.Editor.Helpers
 
             // Common semver prerelease indicators:
             // e.g., "9.3.0-beta.1", "9.3.0-alpha", "9.3.0-rc.2", "9.3.0-preview"
-            return version.Contains("-beta", StringComparison.OrdinalIgnoreCase) ||
-                   version.Contains("-alpha", StringComparison.OrdinalIgnoreCase) ||
-                   version.Contains("-rc", StringComparison.OrdinalIgnoreCase) ||
-                   version.Contains("-preview", StringComparison.OrdinalIgnoreCase) ||
-                   version.Contains("-pre", StringComparison.OrdinalIgnoreCase);
+            return version.Contains("-beta", StringComparison.OrdinalIgnoreCase)
+                || version.Contains("-alpha", StringComparison.OrdinalIgnoreCase)
+                || version.Contains("-rc", StringComparison.OrdinalIgnoreCase)
+                || version.Contains("-preview", StringComparison.OrdinalIgnoreCase)
+                || version.Contains("-pre", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

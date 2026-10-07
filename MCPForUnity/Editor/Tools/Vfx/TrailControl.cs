@@ -1,7 +1,7 @@
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Vfx
 {
@@ -10,7 +10,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object Clear(JObject @params)
         {
             TrailRenderer tr = TrailRead.FindTrailRenderer(@params);
-            if (tr == null) return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
+            if (tr == null)
+                return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
 
             Undo.RecordObject(tr, "Clear Trail");
             tr.Clear();
@@ -20,7 +21,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object Emit(JObject @params)
         {
             TrailRenderer tr = TrailRead.FindTrailRenderer(@params);
-            if (tr == null) return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
+            if (tr == null)
+                return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
 
             RendererHelpers.EnsureMaterial(tr);
 

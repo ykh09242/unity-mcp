@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -41,9 +41,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             try
             {
                 string name = @params["name"]?.ToString();
-                clip.name = !string.IsNullOrEmpty(name)
-                    ? name
-                    : Path.GetFileNameWithoutExtension(clipPath);
+                clip.name = !string.IsNullOrEmpty(name) ? name : Path.GetFileNameWithoutExtension(clipPath);
 
                 clip.frameRate = frameRate;
                 var settings = AnimationUtility.GetAnimationClipSettings(clip);
@@ -83,8 +81,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                         name = clip.name,
                         length,
                         frameRate = clip.frameRate,
-                        isLooping = loop
-                    }
+                        isLooping = loop,
+                    },
                 };
             }
             finally
@@ -115,24 +113,28 @@ namespace MCPForUnity.Editor.Tools.Animation
             foreach (var binding in bindings)
             {
                 var curve = AnimationUtility.GetEditorCurve(clip, binding);
-                curves.Add(new
-                {
-                    path = binding.path,
-                    propertyName = binding.propertyName,
-                    type = binding.type.Name,
-                    keyCount = curve?.length ?? 0
-                });
+                curves.Add(
+                    new
+                    {
+                        path = binding.path,
+                        propertyName = binding.propertyName,
+                        type = binding.type.Name,
+                        keyCount = curve?.length ?? 0,
+                    }
+                );
             }
 
             var events = AnimationUtility.GetAnimationEvents(clip);
-            var eventList = events.Select(e => new
-            {
-                time = e.time,
-                functionName = e.functionName,
-                stringParameter = e.stringParameter,
-                floatParameter = e.floatParameter,
-                intParameter = e.intParameter
-            }).ToArray();
+            var eventList = events
+                .Select(e => new
+                {
+                    time = e.time,
+                    functionName = e.functionName,
+                    stringParameter = e.stringParameter,
+                    floatParameter = e.floatParameter,
+                    intParameter = e.intParameter,
+                })
+                .ToArray();
 
             return new
             {
@@ -148,8 +150,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     curveCount = bindings.Length,
                     curves,
                     eventCount = events.Length,
-                    events = eventList
-                }
+                    events = eventList,
+                },
             };
         }
 
@@ -230,8 +232,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     clipPath,
                     propertyPath,
                     type = typeName,
-                    keyframeCount = curve.length
-                }
+                    keyframeCount = curve.length,
+                },
             };
         }
 
@@ -335,8 +337,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     property,
                     type = typeName,
                     curves = new[] { property + suffixes[0], property + suffixes[1], property + suffixes[2] },
-                    keyframeCount = keysArray.Count
-                }
+                    keyframeCount = keysArray.Count,
+                },
             };
         }
 
@@ -380,12 +382,14 @@ namespace MCPForUnity.Editor.Tools.Animation
                     var eventNames = new System.Collections.Generic.List<string>();
                     foreach (var e in events)
                         eventNames.Add(e.functionName);
-                    warning = $" Warning: This clip has {events.Length} AnimationEvent(s) ({string.Join(", ", eventNames)}). " +
-                              $"'{go.name}' must have a MonoBehaviour with matching method(s) to receive them, " +
-                              "otherwise Unity will log 'AnimationEvent has no receiver' errors.";
+                    warning =
+                        $" Warning: This clip has {events.Length} AnimationEvent(s) ({string.Join(", ", eventNames)}). "
+                        + $"'{go.name}' must have a MonoBehaviour with matching method(s) to receive them, "
+                        + "otherwise Unity will log 'AnimationEvent has no receiver' errors.";
                 }
 
-                if (!wasLegacy) warning += " Warning: clip was converted to legacy and will not be usable in Mecanim/BlendTrees.";
+                if (!wasLegacy)
+                    warning += " Warning: clip was converted to legacy and will not be usable in Mecanim/BlendTrees.";
 
                 return new { success = true, message = $"Assigned clip '{clip.name}' to Animation component on '{go.name}'.{warning}" };
             }
@@ -413,8 +417,8 @@ namespace MCPForUnity.Editor.Tools.Animation
             return new
             {
                 success = true,
-                message = $"GameObject '{go.name}' has an Animator component. The clip '{clip.name}' is available at '{clipPath}'. " +
-                          "Assign it to an Animator Controller state via the Animator window or create an AnimatorOverrideController."
+                message = $"GameObject '{go.name}' has an Animator component. The clip '{clip.name}' is available at '{clipPath}'. "
+                    + "Assign it to an Animator Controller state via the Animator window or create an AnimatorOverrideController.",
             };
         }
 
@@ -527,26 +531,32 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             // Try common Unity types
             Type type = Type.GetType($"UnityEngine.{typeName}, UnityEngine.CoreModule");
-            if (type != null) return type;
+            if (type != null)
+                return type;
 
             type = Type.GetType($"UnityEngine.{typeName}, UnityEngine.AnimationModule");
-            if (type != null) return type;
+            if (type != null)
+                return type;
 
             type = Type.GetType($"UnityEngine.{typeName}, UnityEngine");
-            if (type != null) return type;
+            if (type != null)
+                return type;
 
             // Try fully qualified
             type = Type.GetType(typeName);
-            if (type != null) return type;
+            if (type != null)
+                return type;
 
             // Fallback: search all loaded assemblies
             foreach (var assembly in UnityAssembliesCompat.GetLoadedAssemblies())
             {
                 type = assembly.GetType(typeName);
-                if (type != null) return type;
+                if (type != null)
+                    return type;
 
                 type = assembly.GetType($"UnityEngine.{typeName}");
-                if (type != null) return type;
+                if (type != null)
+                    return type;
             }
 
             return null;
@@ -577,7 +587,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 functionName = functionName,
                 stringParameter = @params["stringParameter"]?.ToString() ?? "",
                 floatParameter = @params["floatParameter"]?.ReadScalar<float?>() ?? 0f,
-                intParameter = @params["intParameter"]?.ReadScalar<int?>() ?? 0
+                intParameter = @params["intParameter"]?.ReadScalar<int?>() ?? 0,
             };
 
             var events = AnimationUtility.GetAnimationEvents(clip).ToList();
@@ -599,8 +609,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     functionName,
                     stringParameter = animEvent.stringParameter,
                     floatParameter = animEvent.floatParameter,
-                    intParameter = animEvent.intParameter
-                }
+                    intParameter = animEvent.intParameter,
+                },
             };
         }
 
@@ -661,8 +671,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 {
                     clipPath,
                     removedCount,
-                    remainingCount = events.Count
-                }
+                    remainingCount = events.Count,
+                },
             };
         }
     }

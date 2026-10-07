@@ -1,8 +1,8 @@
 using System;
 using System.Reflection;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
-using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -51,10 +51,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void HandleCommand_WithInvalidMode_ReturnsError()
         {
-            var resultObj = MCPForUnity.Editor.Tools.RunTests.HandleCommand(new JObject
-            {
-                ["mode"] = "NotARealMode"
-            }).GetAwaiter().GetResult();
+            var resultObj = MCPForUnity.Editor.Tools.RunTests.HandleCommand(new JObject { ["mode"] = "NotARealMode" }).GetAwaiter().GetResult();
 
             Assert.IsInstanceOf<ErrorResponse>(resultObj);
             var err = (ErrorResponse)resultObj;

@@ -21,6 +21,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
     {
         private const string TextEndpoint = "https://api.meshy.ai/openapi/v2/text-to-3d";
         private const string ImageEndpoint = "https://api.meshy.ai/openapi/v1/image-to-3d";
+
         // Default model; the catalog mirrors this and the drift-guard test pins the two together.
         internal const string DefaultModel = "meshy-6";
 
@@ -36,14 +37,17 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         public async Task<string> SubmitAsync(ModelGenRequest req, string apiKey, IHttpTransport http, CancellationToken ct)
         {
-            if (req == null) throw new ArgumentNullException(nameof(req));
-            if (http == null) throw new ArgumentNullException(nameof(http));
+            if (req == null)
+                throw new ArgumentNullException(nameof(req));
+            if (http == null)
+                throw new ArgumentNullException(nameof(http));
 
             _format = string.IsNullOrEmpty(req.Format) ? "glb" : req.Format.TrimStart('.').ToLowerInvariant();
             _wantTexture = req.Texture;
             _aiModel = string.IsNullOrEmpty(req.Model) ? DefaultModel : req.Model;
-            _isImage = string.Equals(req.Mode, "image", StringComparison.OrdinalIgnoreCase)
-                       && (!string.IsNullOrEmpty(req.ImageUrl) || !string.IsNullOrEmpty(req.ImagePath));
+            _isImage =
+                string.Equals(req.Mode, "image", StringComparison.OrdinalIgnoreCase)
+                && (!string.IsNullOrEmpty(req.ImageUrl) || !string.IsNullOrEmpty(req.ImagePath));
 
             JObject body;
             string url;
@@ -57,7 +61,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 {
                     ["image_url"] = imageRef,
                     ["ai_model"] = _aiModel,
-                    ["should_texture"] = _wantTexture
+                    ["should_texture"] = _wantTexture,
                 };
             }
             else
@@ -68,7 +72,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 {
                     ["mode"] = "preview",
                     ["prompt"] = req.Prompt ?? string.Empty,
-                    ["ai_model"] = _aiModel
+                    ["ai_model"] = _aiModel,
                 };
             }
 
@@ -77,8 +81,10 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         public async Task<ProviderPollResult> PollAsync(string providerJobId, string apiKey, IHttpTransport http, CancellationToken ct)
         {
-            if (string.IsNullOrEmpty(providerJobId)) throw new ArgumentNullException(nameof(providerJobId));
-            if (http == null) throw new ArgumentNullException(nameof(http));
+            if (string.IsNullOrEmpty(providerJobId))
+                throw new ArgumentNullException(nameof(providerJobId));
+            if (http == null)
+                throw new ArgumentNullException(nameof(http));
 
             bool refinePhase = _refineSubmitted;
             string pollId = refinePhase ? _refineTaskId : providerJobId;
@@ -98,7 +104,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             bool twoPhase = !_isImage && _wantTexture;
             float raw = 0f;
             JToken prog = json["progress"];
-            if (prog != null && prog.Type != JTokenType.Null) raw = Mathf.Clamp01(prog.Value<float>() / 100f);
+            if (prog != null && prog.Type != JTokenType.Null)
+                raw = Mathf.Clamp01(prog.Value<float>() / 100f);
             result.Progress = !twoPhase ? raw : (refinePhase ? 0.5f + raw * 0.5f : raw * 0.5f);
 
             if (state == ProviderPollState.Succeeded)
@@ -111,7 +118,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                     {
                         ["mode"] = "refine",
                         ["preview_task_id"] = providerJobId,
-                        ["ai_model"] = _aiModel
+                        ["ai_model"] = _aiModel,
                     };
                     _refineTaskId = await PostTask(TextEndpoint, refineBody, apiKey, http, ct, "refine");
                     _refineSubmitted = true;
@@ -131,9 +138,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             }
             else if (state == ProviderPollState.Failed)
             {
-                string err = json["task_error"]?["message"]?.ToString()
-                             ?? json["message"]?.ToString()
-                             ?? "Meshy task failed.";
+                string err = json["task_error"]?["message"]?.ToString() ?? json["message"]?.ToString() ?? "Meshy task failed.";
                 result.Error = SecretRedactor.Scrub(err, apiKey);
             }
 
@@ -148,7 +153,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 Method = "POST",
                 Url = url,
                 ContentType = "application/json",
-                Body = ProviderHttp.SerializeRequest(body)
+                Body = ProviderHttp.SerializeRequest(body),
             };
             spec.Headers["Authorization"] = "Bearer " + apiKey;
 
@@ -156,19 +161,20 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             JObject json = ParseOk(res, apiKey, phase);
             string id = json["result"]?.ToString();
             if (string.IsNullOrEmpty(id))
-                throw new Exception(SecretRedactor.Scrub(
-                    $"Meshy {phase} returned no task id: " + ProviderHttp.Truncate(ProviderHttp.BodyText(res)), apiKey));
+                throw new Exception(SecretRedactor.Scrub($"Meshy {phase} returned no task id: " + ProviderHttp.Truncate(ProviderHttp.BodyText(res)), apiKey));
             return id;
         }
 
         private string ExtractModelUrl(JObject urls, out string resultExt)
         {
             resultExt = null;
-            if (urls == null) return null;
+            if (urls == null)
+                return null;
             foreach (string format in new[] { _format, "glb", "fbx" })
             {
                 string url = urls[format]?.ToString();
-                if (string.IsNullOrEmpty(url)) continue;
+                if (string.IsNullOrEmpty(url))
+                    continue;
                 resultExt = format;
                 return url;
             }
@@ -201,7 +207,11 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             JObject json = null;
             if (!string.IsNullOrEmpty(text))
             {
-                try { json = JObject.Parse(text); } catch { /* non-JSON */ }
+                try
+                {
+                    json = JObject.Parse(text);
+                }
+                catch { /* non-JSON */ }
             }
 
             bool ok = res?.Ok == true;

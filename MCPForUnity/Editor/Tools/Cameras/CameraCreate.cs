@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Cameras
 {
@@ -13,13 +13,13 @@ namespace MCPForUnity.Editor.Tools.Cameras
     {
         private static readonly Dictionary<string, (string body, string aim)> Presets = new(StringComparer.OrdinalIgnoreCase)
         {
-            ["follow"]        = ("CinemachineFollow",              "CinemachineRotationComposer"),
-            ["third_person"]  = ("CinemachineThirdPersonFollow",   "CinemachineRotationComposer"),
-            ["freelook"]      = ("CinemachineOrbitalFollow",       "CinemachineRotationComposer"),
-            ["dolly"]         = ("CinemachineSplineDolly",         "CinemachineRotationComposer"),
-            ["static"]        = (null,                              "CinemachineHardLookAt"),
-            ["top_down"]      = ("CinemachineFollow",              null),
-            ["side_scroller"] = ("CinemachinePositionComposer",    null),
+            ["follow"] = ("CinemachineFollow", "CinemachineRotationComposer"),
+            ["third_person"] = ("CinemachineThirdPersonFollow", "CinemachineRotationComposer"),
+            ["freelook"] = ("CinemachineOrbitalFollow", "CinemachineRotationComposer"),
+            ["dolly"] = ("CinemachineSplineDolly", "CinemachineRotationComposer"),
+            ["static"] = (null, "CinemachineHardLookAt"),
+            ["top_down"] = ("CinemachineFollow", null),
+            ["side_scroller"] = ("CinemachinePositionComposer", null),
         };
 
         internal static object CreateBasicCamera(JObject @params)
@@ -70,8 +70,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     {
                         instanceID = go.GetInstanceIDCompat(),
                         cinemachine = false,
-                        hint = "Install com.unity.cinemachine for presets, blending, and virtual camera features."
-                    }
+                        hint = "Install com.unity.cinemachine for presets, blending, and virtual camera features.",
+                    },
                 };
             }
             finally
@@ -90,15 +90,13 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             if (!Presets.TryGetValue(preset, out var presetDef))
             {
-                return new ErrorResponse(
-                    $"Unknown preset '{preset}'. Valid presets: {string.Join(", ", Presets.Keys)}.");
+                return new ErrorResponse($"Unknown preset '{preset}'. Valid presets: {string.Join(", ", Presets.Keys)}.");
             }
 
             var cmType = CameraHelpers.CinemachineCameraType;
             var bodyType = presetDef.body == null ? null : CameraHelpers.ResolveComponentType(presetDef.body);
             var aimType = presetDef.aim == null ? null : CameraHelpers.ResolveComponentType(presetDef.aim);
-            if (cmType == null || (presetDef.body != null && bodyType == null)
-                || (presetDef.aim != null && aimType == null))
+            if (cmType == null || (presetDef.body != null && bodyType == null) || (presetDef.aim != null && aimType == null))
                 return new ErrorResponse($"Required Cinemachine components for preset '{preset}' are unavailable.");
 
             var go = new GameObject(name);
@@ -135,14 +133,12 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         var lensProp = so.FindProperty("Lens") ?? so.FindProperty("m_Lens");
                         if (lensProp == null)
                             return new ErrorResponse("Could not find Lens property on CinemachineCamera.");
-                        foreach (var (input, field) in new[]
+                        foreach (
+                            var (input, field) in new[] { ("fieldOfView", "FieldOfView"), ("nearClipPlane", "NearClipPlane"), ("farClipPlane", "FarClipPlane") }
+                        )
                         {
-                            ("fieldOfView", "FieldOfView"),
-                            ("nearClipPlane", "NearClipPlane"),
-                            ("farClipPlane", "FarClipPlane")
-                        })
-                        {
-                            if (props[input] == null) continue;
+                            if (props[input] == null)
+                                continue;
                             var lensField = lensProp.FindPropertyRelative(field);
                             if (lensField == null)
                                 return new ErrorResponse($"Could not find Lens.{field} property on CinemachineCamera.");
@@ -177,8 +173,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         preset,
                         priority,
                         body = bodyType == null ? null : presetDef.body,
-                        aim = aimType == null ? null : presetDef.aim
-                    }
+                        aim = aimType == null ? null : presetDef.aim,
+                    },
                 };
             }
             finally
@@ -213,11 +209,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 {
                     success = true,
                     message = $"CinemachineBrain already exists on '{existingBrain.gameObject.name}'.",
-                    data = new
-                    {
-                        instanceID = existingBrain.gameObject.GetInstanceIDCompat(),
-                        alreadyExisted = true
-                    }
+                    data = new { instanceID = existingBrain.gameObject.GetInstanceIDCompat(), alreadyExisted = true },
                 };
             }
 
@@ -250,20 +242,17 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     {
                         if (blendStyle != null)
                         {
-                            var styleProp = defaultBlendProp.FindPropertyRelative("Style")
-                                         ?? defaultBlendProp.FindPropertyRelative("m_Style");
+                            var styleProp = defaultBlendProp.FindPropertyRelative("Style") ?? defaultBlendProp.FindPropertyRelative("m_Style");
                             if (styleProp != null)
                             {
-                                int idx = Array.FindIndex(styleProp.enumNames,
-                                    n => n.Equals(blendStyle, StringComparison.OrdinalIgnoreCase));
+                                int idx = Array.FindIndex(styleProp.enumNames, n => n.Equals(blendStyle, StringComparison.OrdinalIgnoreCase));
                                 if (idx >= 0)
                                     styleProp.enumValueIndex = idx;
                             }
                         }
                         if (blendDuration >= 0)
                         {
-                            var timeProp = defaultBlendProp.FindPropertyRelative("Time")
-                                        ?? defaultBlendProp.FindPropertyRelative("m_Time");
+                            var timeProp = defaultBlendProp.FindPropertyRelative("Time") ?? defaultBlendProp.FindPropertyRelative("m_Time");
                             if (timeProp != null)
                                 timeProp.floatValue = blendDuration;
                         }
@@ -277,11 +266,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 {
                     success = true,
                     message = $"CinemachineBrain added to '{cam.gameObject.name}'.",
-                    data = new
-                    {
-                        instanceID = cam.gameObject.GetInstanceIDCompat(),
-                        alreadyExisted = false
-                    }
+                    data = new { instanceID = cam.gameObject.GetInstanceIDCompat(), alreadyExisted = false },
                 };
             }
             finally

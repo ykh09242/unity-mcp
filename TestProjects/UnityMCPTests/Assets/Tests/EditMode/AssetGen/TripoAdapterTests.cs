@@ -13,27 +13,28 @@ namespace MCPForUnityTests.Editor.AssetGen
     /// </summary>
     public class TripoAdapterTests
     {
-        private static HttpResult Json(string json, int status = 200)
-            => new HttpResult
+        private static HttpResult Json(string json, int status = 200) =>
+            new HttpResult
             {
                 Status = status,
                 IsSuccess = status >= 200 && status < 300,
                 Text = json,
-                Body = Encoding.UTF8.GetBytes(json)
+                Body = Encoding.UTF8.GetBytes(json),
             };
 
         [Test]
         public void Submit_PostsTaskEndpoint_WithBearerHeader_AndReturnsTaskId()
         {
-            var http = new FakeHttpTransport
-            {
-                Handler = _ => Json("{\"code\":0,\"data\":{\"task_id\":\"abc123\"}}")
-            };
+            var http = new FakeHttpTransport { Handler = _ => Json("{\"code\":0,\"data\":{\"task_id\":\"abc123\"}}") };
             var adapter = new TripoAdapter();
-            var req = new ModelGenRequest { Provider = "tripo", Mode = "text", Prompt = "a red dragon" };
+            var req = new ModelGenRequest
+            {
+                Provider = "tripo",
+                Mode = "text",
+                Prompt = "a red dragon",
+            };
 
-            string taskId = adapter.SubmitAsync(req, "tsk_secret_value", http, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            string taskId = adapter.SubmitAsync(req, "tsk_secret_value", http, CancellationToken.None).GetAwaiter().GetResult();
 
             Assert.AreEqual("abc123", taskId);
             Assert.AreEqual(1, http.RecordedRequests.Count);
@@ -54,14 +55,14 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var http = new FakeHttpTransport
             {
-                Handler = _ => Json(
-                    "{\"code\":0,\"data\":{\"status\":\"success\",\"progress\":100," +
-                    "\"output\":{\"pbr_model\":\"https://cdn.tripo3d.ai/model.glb\"}}}")
+                Handler = _ =>
+                    Json(
+                        "{\"code\":0,\"data\":{\"status\":\"success\",\"progress\":100," + "\"output\":{\"pbr_model\":\"https://cdn.tripo3d.ai/model.glb\"}}}"
+                    ),
             };
             var adapter = new TripoAdapter();
 
-            ProviderPollResult res = adapter.PollAsync("abc123", "tsk_secret_value", http, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            ProviderPollResult res = adapter.PollAsync("abc123", "tsk_secret_value", http, CancellationToken.None).GetAwaiter().GetResult();
 
             Assert.AreEqual(ProviderPollState.Succeeded, res.State);
             Assert.AreEqual("https://cdn.tripo3d.ai/model.glb", res.DownloadUrl);
@@ -70,14 +71,10 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void Poll_MapsRunning_WithProgress()
         {
-            var http = new FakeHttpTransport
-            {
-                Handler = _ => Json("{\"code\":0,\"data\":{\"status\":\"running\",\"progress\":42}}")
-            };
+            var http = new FakeHttpTransport { Handler = _ => Json("{\"code\":0,\"data\":{\"status\":\"running\",\"progress\":42}}") };
             var adapter = new TripoAdapter();
 
-            ProviderPollResult res = adapter.PollAsync("abc123", "k", http, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            ProviderPollResult res = adapter.PollAsync("abc123", "k", http, CancellationToken.None).GetAwaiter().GetResult();
 
             Assert.AreEqual(ProviderPollState.Running, res.State);
             Assert.AreEqual(0.42f, res.Progress, 0.001f);
@@ -86,14 +83,10 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void Poll_MapsFailed_WithError()
         {
-            var http = new FakeHttpTransport
-            {
-                Handler = _ => Json("{\"code\":0,\"data\":{\"status\":\"failed\",\"progress\":0}}")
-            };
+            var http = new FakeHttpTransport { Handler = _ => Json("{\"code\":0,\"data\":{\"status\":\"failed\",\"progress\":0}}") };
             var adapter = new TripoAdapter();
 
-            ProviderPollResult res = adapter.PollAsync("abc123", "k", http, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            ProviderPollResult res = adapter.PollAsync("abc123", "k", http, CancellationToken.None).GetAwaiter().GetResult();
 
             Assert.AreEqual(ProviderPollState.Failed, res.State);
             Assert.IsNotEmpty(res.Error);
@@ -104,7 +97,13 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var http = new FakeHttpTransport { Handler = _ => Json("{\"code\":0,\"data\":{\"task_id\":\"t\"}}") };
             var adapter = new TripoAdapter();
-            var req = new ModelGenRequest { Provider = "tripo", Mode = "text", Prompt = "x", Model = "P1-20260311" };
+            var req = new ModelGenRequest
+            {
+                Provider = "tripo",
+                Mode = "text",
+                Prompt = "x",
+                Model = "P1-20260311",
+            };
 
             adapter.SubmitAsync(req, "k", http, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -117,7 +116,12 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var http = new FakeHttpTransport { Handler = _ => Json("{\"code\":0,\"data\":{\"task_id\":\"t\"}}") };
             var adapter = new TripoAdapter();
-            var req = new ModelGenRequest { Provider = "tripo", Mode = "text", Prompt = "x" }; // Model null
+            var req = new ModelGenRequest
+            {
+                Provider = "tripo",
+                Mode = "text",
+                Prompt = "x",
+            }; // Model null
 
             adapter.SubmitAsync(req, "k", http, CancellationToken.None).GetAwaiter().GetResult();
 
@@ -128,16 +132,13 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void Submit_ImageMode_UsesImageToModel()
         {
-            var http = new FakeHttpTransport
-            {
-                Handler = _ => Json("{\"code\":0,\"data\":{\"task_id\":\"img1\"}}")
-            };
+            var http = new FakeHttpTransport { Handler = _ => Json("{\"code\":0,\"data\":{\"task_id\":\"img1\"}}") };
             var adapter = new TripoAdapter();
             var req = new ModelGenRequest
             {
                 Provider = "tripo",
                 Mode = "image",
-                ImageUrl = "https://example.com/in.png"
+                ImageUrl = "https://example.com/in.png",
             };
 
             adapter.SubmitAsync(req, "k", http, CancellationToken.None).GetAwaiter().GetResult();
@@ -191,10 +192,14 @@ namespace MCPForUnityTests.Editor.AssetGen
             // Tripo can't take a local image inline (no data-URI support, upload not wired) — it must
             // fail clearly rather than silently falling back to text mode.
             var adapter = new TripoAdapter();
-            var req = new ModelGenRequest { Provider = "tripo", Mode = "image", ImagePath = "/tmp/whatever.png" };
+            var req = new ModelGenRequest
+            {
+                Provider = "tripo",
+                Mode = "image",
+                ImagePath = "/tmp/whatever.png",
+            };
 
-            Assert.Throws<System.Exception>(() =>
-                adapter.SubmitAsync(req, "k", new FakeHttpTransport(), CancellationToken.None).GetAwaiter().GetResult());
+            Assert.Throws<System.Exception>(() => adapter.SubmitAsync(req, "k", new FakeHttpTransport(), CancellationToken.None).GetAwaiter().GetResult());
         }
     }
 }

@@ -1,4 +1,5 @@
 """Real socket regressions for shared connection lifetime and replay safety."""
+
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
@@ -44,6 +45,7 @@ def _read_frame(peer):
                 raise EOFError("Client closed before complete command")
             result.extend(chunk)
         return bytes(result)
+
     size = struct.unpack(">Q", read_exact(8))[0]
     return read_exact(size)
 
@@ -96,7 +98,9 @@ def test_lifecycle_waits_for_completed_mutation_response(isolated_connection, mo
         lifecycle.result(timeout=2)
         bridge.result(timeout=2)
     assert result == {"success": True}
-    assert not closed_during_response, "Lifecycle changed the socket before response timeout restoration"
+    assert not closed_during_response, (
+        "Lifecycle changed the socket before response timeout restoration"
+    )
 
 
 def test_liveness_check_preserves_finite_socket_timeout(isolated_connection):
@@ -137,9 +141,11 @@ def test_unity_error_does_not_reconnect_and_replay_mutation(isolated_connection,
     reconnects = []
     monkeypatch.setattr(conn, "connect", lambda *args, **kwargs: reconnects.append(1) or False)
     with ThreadPoolExecutor(max_workers=1) as executor:
+
         def respond():
             _read_frame(peer)
             _write_response(peer, {"status": "error", "error": "Mutation rejected"})
+
         bridge = executor.submit(respond)
         with pytest.raises(Exception, match="Mutation rejected"):
             conn.send_command("manage_gameobject", {}, max_attempts=1)
@@ -150,8 +156,14 @@ def test_unity_error_does_not_reconnect_and_replay_mutation(isolated_connection,
 
 def test_parallel_instance_resolution_shares_one_discovery_scan(monkeypatch):
     pool = uc.UnityConnectionPool()
-    selected = UnityInstanceInfo(id="Owned@abcdef", name="Owned", path="/Owned/Assets",
-                                 hash="abcdef", port=6400, status="running")
+    selected = UnityInstanceInfo(
+        id="Owned@abcdef",
+        name="Owned",
+        path="/Owned/Assets",
+        hash="abcdef",
+        port=6400,
+        status="running",
+    )
     scans = []
     started = threading.Barrier(4)
     scanning = threading.Event()
@@ -201,7 +213,9 @@ def test_queued_command_expires_before_dispatch(isolated_connection):
         peer.recv(1)
 
 
-def test_rediscovered_port_update_expires_while_lifecycle_holds_lock(isolated_connection, monkeypatch):
+def test_rediscovered_port_update_expires_while_lifecycle_holds_lock(
+    isolated_connection, monkeypatch
+):
     conn, _ = isolated_connection
     conn.disconnect()
     start_holder = threading.Event()
@@ -240,9 +254,11 @@ def test_lost_mutation_reply_does_not_dispatch_again(isolated_connection, monkey
     reconnects = []
     monkeypatch.setattr(conn, "connect", lambda *args, **kwargs: reconnects.append(1) or False)
     with ThreadPoolExecutor(max_workers=1) as executor:
+
         def drop_after_mutation():
             _read_frame(peer)
             peer.close()
+
         bridge = executor.submit(drop_after_mutation)
         response = conn.send_command("manage_gameobject", {}, max_attempts=1)
         bridge.result(timeout=2)
@@ -253,8 +269,12 @@ def test_lost_mutation_reply_does_not_dispatch_again(isolated_connection, monkey
     assert reconnects == []
 
 
-@pytest.mark.parametrize("corruption", ["oversized_frame", "invalid_json", "invalid_utf8", "invalid_shape"])
-def test_malformed_reply_discards_socket_then_next_call_connects_fresh(isolated_connection, corruption):
+@pytest.mark.parametrize(
+    "corruption", ["oversized_frame", "invalid_json", "invalid_utf8", "invalid_shape"]
+)
+def test_malformed_reply_discards_socket_then_next_call_connects_fresh(
+    isolated_connection, corruption
+):
     conn, peer = isolated_connection
     commands = []
 
@@ -263,7 +283,11 @@ def test_malformed_reply_discards_socket_then_next_call_connects_fresh(isolated_
         if corruption == "oversized_frame":
             peer.sendall(struct.pack(">Q", uc.FRAMED_MAX + 1) + b'{"status')
         else:
-            payload = {"invalid_json": b'{"status', "invalid_utf8": b'\xff', "invalid_shape": b'[]'}[corruption]
+            payload = {
+                "invalid_json": b'{"status',
+                "invalid_utf8": b"\xff",
+                "invalid_shape": b"[]",
+            }[corruption]
             peer.sendall(struct.pack(">Q", len(payload)) + payload)
 
     with ThreadPoolExecutor(max_workers=1) as executor:

@@ -14,29 +14,55 @@ internal static class StdioRegressionHarness
 {
     private const BindingFlags PrivateStatic = BindingFlags.Static | BindingFlags.NonPublic;
     private static readonly Type Host = typeof(StdioBridgeHost);
-    private static readonly MethodInfo Write = Host.GetMethod("WriteFrameAsync", PrivateStatic, null,
-        new[] { typeof(NetworkStream), typeof(byte[]) }, null);
+    private static readonly MethodInfo Write = Host.GetMethod("WriteFrameAsync", PrivateStatic, null, new[] { typeof(NetworkStream), typeof(byte[]) }, null);
     private static readonly MethodInfo Pump = Host.GetMethod("ProcessCommands", PrivateStatic);
     private static readonly MethodInfo Read = Host.GetMethod("ReadFrameAsUtf8Async", PrivateStatic);
-    private static int passed, failed;
-    private static void Check(bool value, string message) { if (!value) throw new Exception(message); }
+    private static int passed,
+        failed;
+
+    private static void Check(bool value, string message)
+    {
+        if (!value)
+            throw new Exception(message);
+    }
+
     private static void Test(string name, Action test)
     {
-        try { test(); passed++; Console.WriteLine("PASS: " + name); }
-        catch (Exception ex) { failed++; Console.WriteLine("FAIL: " + name + " => " + ex.GetType().Name + ": " + ex.Message); }
+        try
+        {
+            test();
+            passed++;
+            Console.WriteLine("PASS: " + name);
+        }
+        catch (Exception ex)
+        {
+            failed++;
+            Console.WriteLine("FAIL: " + name + " => " + ex.GetType().Name + ": " + ex.Message);
+        }
     }
+
     private static Task WriteFrame(NetworkStream stream, byte[] payload) => (Task)Write.Invoke(null, new object[] { stream, payload });
-    private static Task<string> ReadFrame(NetworkStream stream, CancellationToken token = default)
-        => (Task<string>)Read.Invoke(null, new object[] { stream, 80, token });
+
+    private static Task<string> ReadFrame(NetworkStream stream, CancellationToken token = default) =>
+        (Task<string>)Read.Invoke(null, new object[] { stream, 80, token });
+
     private static async Task SettleWithin(Task task, string message)
     {
         Check(await Task.WhenAny(task, Task.Delay(2000)).ConfigureAwait(false) == task, message);
         await task.ConfigureAwait(false);
     }
+
     private static bool SourceDisposed(CancellationToken token)
     {
-        try { var handle = token.WaitHandle; return false; }
-        catch (ObjectDisposedException) { return true; }
+        try
+        {
+            var handle = token.WaitHandle;
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return true;
+        }
     }
 
     // A NetworkStream requires a connected socket. Own an ephemeral loopback pair;
@@ -51,6 +77,7 @@ internal static class StdioRegressionHarness
         public NetworkStream ActualStream => sender.GetStream();
         public NetworkStream PeerStream => receiver.GetStream();
         public int ReceivedBytes => receiver.Available;
+
         public int FillSendBuffer()
         {
             byte[] block = new byte[4096];
@@ -60,10 +87,20 @@ internal static class StdioRegressionHarness
             {
                 while (total < 16 * 1024 * 1024)
                 {
-                    try { total += sender.Client.Send(block); }
+                    try
+                    {
+                        total += sender.Client.Send(block);
+                    }
                     catch (SocketException error) when (error.SocketErrorCode == SocketError.WouldBlock)
                     {
-                        Console.WriteLine("RUNTIME: owned socket prefill bytes=" + total + " send_buffer=" + sender.SendBufferSize + " receive_buffer=" + receiver.ReceiveBufferSize);
+                        Console.WriteLine(
+                            "RUNTIME: owned socket prefill bytes="
+                                + total
+                                + " send_buffer="
+                                + sender.SendBufferSize
+                                + " receive_buffer="
+                                + receiver.ReceiveBufferSize
+                        );
                         return total;
                     }
                 }
@@ -71,11 +108,15 @@ internal static class StdioRegressionHarness
             }
             finally
             {
-                try { sender.Client.Blocking = true; }
+                try
+                {
+                    sender.Client.Blocking = true;
+                }
                 catch (ObjectDisposedException) { }
                 catch (SocketException) { }
             }
         }
+
         public int DrainAvailable(int expected)
         {
             byte[] block = new byte[65536];
@@ -84,11 +125,16 @@ internal static class StdioRegressionHarness
             while (total < expected && deadline.ElapsedMilliseconds < 2000)
             {
                 int available = receiver.Available;
-                if (available == 0) { receiver.Client.Poll(10000, SelectMode.SelectRead); continue; }
+                if (available == 0)
+                {
+                    receiver.Client.Poll(10000, SelectMode.SelectRead);
+                    continue;
+                }
                 total += receiver.Client.Receive(block, 0, Math.Min(block.Length, available), SocketFlags.None);
             }
             return total;
         }
+
         public OwnedPair(int holdWrite = 0, int failWrite = 0)
         {
             try
@@ -102,9 +148,17 @@ internal static class StdioRegressionHarness
                 receiver.ReceiveBufferSize = 4096;
                 Stream = new ObservingStream(sender.Client, holdWrite, failWrite);
             }
-            catch { Dispose(); throw; }
-            finally { listener.Stop(); }
+            catch
+            {
+                Dispose();
+                throw;
+            }
+            finally
+            {
+                listener.Stop();
+            }
         }
+
         public void Dispose()
         {
             Stream?.Dispose();
@@ -113,49 +167,81 @@ internal static class StdioRegressionHarness
             listener.Stop();
         }
     }
+
     private sealed class ObservingStream : NetworkStream
     {
-        private readonly int holdWrite, failWrite;
+        private readonly int holdWrite,
+            failWrite;
         private readonly TaskCompletionSource<bool> held = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly List<byte[]> Writes = new List<byte[]>();
         public readonly List<CancellationToken> Tokens = new List<CancellationToken>();
-        public int ActiveWaits, CancellationCallbacks;
-        public bool IgnoreCancellation, CompleteOnDispose, ThrowOnFirstDispose;
+        public int ActiveWaits,
+            CancellationCallbacks;
+        public bool IgnoreCancellation,
+            CompleteOnDispose,
+            ThrowOnFirstDispose;
         public int DisposeAttempts;
-        public ObservingStream(Socket socket, int holdWrite, int failWrite) : base(socket, false)
-        { this.holdWrite = holdWrite; this.failWrite = failWrite; }
+
+        public ObservingStream(Socket socket, int holdWrite, int failWrite)
+            : base(socket, false)
+        {
+            this.holdWrite = holdWrite;
+            this.failWrite = failWrite;
+        }
+
         public override Task WriteAsync(byte[] bytes, int offset, int count, CancellationToken token)
         {
             Writes.Add(bytes.Skip(offset).Take(count).ToArray());
             Tokens.Add(token);
-            if (Writes.Count == failWrite) return Task.FromException(new IOException("owned write failure"));
-            if (Writes.Count != holdWrite) return Task.CompletedTask;
+            if (Writes.Count == failWrite)
+                return Task.FromException(new IOException("owned write failure"));
+            if (Writes.Count != holdWrite)
+                return Task.CompletedTask;
             return HoldAsync(token);
         }
+
         private async Task HoldAsync(CancellationToken token)
         {
             Interlocked.Increment(ref ActiveWaits);
             try
             {
-                if (IgnoreCancellation) { await held.Task.ConfigureAwait(false); return; }
-                using (token.Register(() =>
+                if (IgnoreCancellation)
                 {
-                    Interlocked.Increment(ref CancellationCallbacks);
-                    held.TrySetCanceled(token);
-                }))
-                { await held.Task.ConfigureAwait(false); }
+                    await held.Task.ConfigureAwait(false);
+                    return;
+                }
+                using (
+                    token.Register(() =>
+                    {
+                        Interlocked.Increment(ref CancellationCallbacks);
+                        held.TrySetCanceled(token);
+                    })
+                )
+                {
+                    await held.Task.ConfigureAwait(false);
+                }
             }
-            finally { Interlocked.Decrement(ref ActiveWaits); }
+            finally
+            {
+                Interlocked.Decrement(ref ActiveWaits);
+            }
         }
+
         public void Release() => held.TrySetResult(true);
+
         public void Abort() => held.TrySetException(new IOException("owned fixture cleanup"));
+
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
                 DisposeAttempts++;
-                if (ThrowOnFirstDispose && DisposeAttempts == 1) throw new IOException("owned dispose failure");
-                if (CompleteOnDispose) Release(); else Abort();
+                if (ThrowOnFirstDispose && DisposeAttempts == 1)
+                    throw new IOException("owned dispose failure");
+                if (CompleteOnDispose)
+                    Release();
+                else
+                    Abort();
             }
             base.Dispose(disposing);
         }
@@ -171,9 +257,15 @@ internal static class StdioRegressionHarness
                 Check(pair.Stream.Tokens.Count == heldWrite, "expected write stage was not reached");
                 Check(pair.Stream.Tokens.All(t => t.CanBeCanceled), "timeout token missing");
                 Check(pair.Stream.Tokens.All(t => t == pair.Stream.Tokens[0]), "header/payload token changed");
-                Check(await Task.WhenAny(write, Task.Delay(2000)).ConfigureAwait(false) == write,
-                    "80 ms timeout did not cancel held write before 2000 ms watchdog");
-                try { await write.ConfigureAwait(false); throw new Exception("held write succeeded instead of canceling"); }
+                Check(
+                    await Task.WhenAny(write, Task.Delay(2000)).ConfigureAwait(false) == write,
+                    "80 ms timeout did not cancel held write before 2000 ms watchdog"
+                );
+                try
+                {
+                    await write.ConfigureAwait(false);
+                    throw new Exception("held write succeeded instead of canceling");
+                }
                 catch (OperationCanceledException) { }
                 Check(pair.Stream.CancellationCallbacks == 1, "cancellation callback missing/duplicated");
                 Check(pair.Stream.ActiveWaits == 0, "held write/registration did not settle");
@@ -182,13 +274,17 @@ internal static class StdioRegressionHarness
             finally
             {
                 pair.Stream.Abort();
-                try { await SettleWithin(write, "owned cleanup could not settle write").ConfigureAwait(false); }
+                try
+                {
+                    await SettleWithin(write, "owned cleanup could not settle write").ConfigureAwait(false);
+                }
                 catch (IOException) { }
                 catch (OperationCanceledException) { }
                 Check(pair.Stream.ActiveWaits == 0, "owned wait leaked on cleanup");
             }
         }
     }
+
     private static async Task LifetimeAsync()
     {
         using (var pair = new OwnedPair(2))
@@ -204,12 +300,16 @@ internal static class StdioRegressionHarness
             finally
             {
                 pair.Stream.Abort();
-                try { await SettleWithin(write, "owned cleanup could not settle write").ConfigureAwait(false); }
+                try
+                {
+                    await SettleWithin(write, "owned cleanup could not settle write").ConfigureAwait(false);
+                }
                 catch (IOException) { }
                 Check(pair.Stream.ActiveWaits == 0, "owned wait leaked on cleanup");
             }
         }
     }
+
     private static async Task NormalFrameAsync(byte[] payload)
     {
         using (var pair = new OwnedPair())
@@ -224,24 +324,38 @@ internal static class StdioRegressionHarness
             Check(pair.Stream.CanWrite, "successful frame closed its stream");
         }
     }
+
     private static async Task FailureAsync()
     {
         using (var pair = new OwnedPair(failWrite: 2))
         {
-            try { await WriteFrame(pair.Stream, new byte[] { 7 }).ConfigureAwait(false); throw new Exception("failure swallowed"); }
-            catch (IOException error) { Check(error.Message == "owned write failure", "failure changed"); }
+            try
+            {
+                await WriteFrame(pair.Stream, new byte[] { 7 }).ConfigureAwait(false);
+                throw new Exception("failure swallowed");
+            }
+            catch (IOException error)
+            {
+                Check(error.Message == "owned write failure", "failure changed");
+            }
             Check(SourceDisposed(pair.Stream.Tokens[0]), "CTS not disposed after write failure");
         }
     }
+
     private static async Task NullPayloadAsync()
     {
         using (var pair = new OwnedPair())
         {
-            try { await WriteFrame(pair.Stream, null).ConfigureAwait(false); throw new Exception("null payload accepted"); }
+            try
+            {
+                await WriteFrame(pair.Stream, null).ConfigureAwait(false);
+                throw new Exception("null payload accepted");
+            }
             catch (ArgumentNullException) { }
             Check(pair.Stream.Writes.Count == 0, "invalid payload wrote bytes");
         }
     }
+
     private static async Task ActualSocketTimeoutAsync(bool prefill)
     {
         MethodInfo arrayWrite = typeof(NetworkStream).GetMethod("WriteAsync", new[] { typeof(byte[]), typeof(int), typeof(int), typeof(CancellationToken) });
@@ -256,7 +370,8 @@ internal static class StdioRegressionHarness
                 // Keep even the fill call behind the watchdog/owned socket cleanup.
                 fill = Task.Run(() => pair.FillSendBuffer());
                 Task settled = await Task.WhenAny(fill, Task.Delay(50)).ConfigureAwait(false);
-                if (settled == fill) await fill.ConfigureAwait(false);
+                if (settled == fill)
+                    await fill.ConfigureAwait(false);
                 Console.WriteLine("RUNTIME: prefill pending=" + !fill.IsCompleted);
             }
             // The peer initially never reads. The prefilled case must fail on its
@@ -264,11 +379,15 @@ internal static class StdioRegressionHarness
             Task write = Task.Run(() => WriteFrame(stream, new byte[16 * 1024 * 1024]));
             try
             {
-                if (prefill) Check(!write.IsCompleted, "owned socket did not backpressure the production frame write");
-                for (int count = 0; count < 20 && pair.ReceivedBytes == 0; count++) await Task.Delay(1).ConfigureAwait(false);
+                if (prefill)
+                    Check(!write.IsCompleted, "owned socket did not backpressure the production frame write");
+                for (int count = 0; count < 20 && pair.ReceivedBytes == 0; count++)
+                    await Task.Delay(1).ConfigureAwait(false);
                 Check(pair.ReceivedBytes > 0, "owned peer did not receive frame bytes");
-                Check(await Task.WhenAny(write, Task.Delay(2000)).ConfigureAwait(false) == write,
-                    "real Mono socket write ignored 80 ms timeout before 2000 ms watchdog");
+                Check(
+                    await Task.WhenAny(write, Task.Delay(2000)).ConfigureAwait(false) == write,
+                    "real Mono socket write ignored 80 ms timeout before 2000 ms watchdog"
+                );
                 try
                 {
                     await write.ConfigureAwait(false);
@@ -285,13 +404,19 @@ internal static class StdioRegressionHarness
             finally
             {
                 stream.Dispose(); // Owns its socket, exactly like TcpClient.GetStream in production.
-                try { await SettleWithin(write, "owned real socket write failed to settle after socket disposal").ConfigureAwait(false); }
+                try
+                {
+                    await SettleWithin(write, "owned real socket write failed to settle after socket disposal").ConfigureAwait(false);
+                }
                 catch (OperationCanceledException) { }
                 catch (IOException) { }
                 catch (ObjectDisposedException) { }
                 if (fill != null)
                 {
-                    try { await SettleWithin(fill, "owned prefill did not settle after cleanup").ConfigureAwait(false); }
+                    try
+                    {
+                        await SettleWithin(fill, "owned prefill did not settle after cleanup").ConfigureAwait(false);
+                    }
                     catch (ObjectDisposedException) { }
                     catch (SocketException) { }
                     catch (IOException) { }
@@ -299,7 +424,9 @@ internal static class StdioRegressionHarness
             }
         }
     }
+
     private static void Set(string name, object value) => Host.GetField(name, PrivateStatic).SetValue(null, value);
+
     private static async Task ActualStreamReuseAsync()
     {
         using (var pair = new OwnedPair())
@@ -312,6 +439,7 @@ internal static class StdioRegressionHarness
             Check(pair.DrainAvailable(22) == 22, "two complete small frames were not received");
         }
     }
+
     private static async Task SilentReadTimeoutAsync()
     {
         using (var pair = new OwnedPair())
@@ -320,21 +448,34 @@ internal static class StdioRegressionHarness
             Task<string> read = Task.Run(() => ReadFrame(stream));
             try
             {
-                Check(await Task.WhenAny(read, Task.Delay(2000)).ConfigureAwait(false) == read,
-                    "silent real Mono read ignored 80 ms timeout before 2000 ms watchdog");
-                try { await read.ConfigureAwait(false); throw new Exception("silent peer produced a frame"); }
-                catch (IOException error) { Check(error.Message == "Read timed out", "timeout outcome changed: " + error.Message); }
+                Check(
+                    await Task.WhenAny(read, Task.Delay(2000)).ConfigureAwait(false) == read,
+                    "silent real Mono read ignored 80 ms timeout before 2000 ms watchdog"
+                );
+                try
+                {
+                    await read.ConfigureAwait(false);
+                    throw new Exception("silent peer produced a frame");
+                }
+                catch (IOException error)
+                {
+                    Check(error.Message == "Read timed out", "timeout outcome changed: " + error.Message);
+                }
             }
             finally
             {
                 stream.Dispose();
-                try { await SettleWithin(read, "owned silent read failed to settle after disposal").ConfigureAwait(false); }
+                try
+                {
+                    await SettleWithin(read, "owned silent read failed to settle after disposal").ConfigureAwait(false);
+                }
                 catch (IOException) { }
                 catch (ObjectDisposedException) { }
                 catch (OperationCanceledException) { }
             }
         }
     }
+
     private static byte[] Frame(byte[] payload)
     {
         byte[] frame = new byte[8 + payload.Length];
@@ -342,6 +483,7 @@ internal static class StdioRegressionHarness
         Buffer.BlockCopy(payload, 0, frame, 8, payload.Length);
         return frame;
     }
+
     private static async Task PartialPayloadReadAsync()
     {
         using (var pair = new OwnedPair())
@@ -353,19 +495,30 @@ internal static class StdioRegressionHarness
             try
             {
                 Check(await Task.WhenAny(read, Task.Delay(2000)).ConfigureAwait(false) == read, "partial payload read ignored timeout");
-                try { await read.ConfigureAwait(false); throw new Exception("partial payload accepted"); }
-                catch (IOException error) { Check(error.Message == "Read timed out", "partial payload timeout outcome changed"); }
+                try
+                {
+                    await read.ConfigureAwait(false);
+                    throw new Exception("partial payload accepted");
+                }
+                catch (IOException error)
+                {
+                    Check(error.Message == "Read timed out", "partial payload timeout outcome changed");
+                }
             }
             finally
             {
                 stream.Dispose();
-                try { await SettleWithin(read, "partial read cleanup pending").ConfigureAwait(false); }
+                try
+                {
+                    await SettleWithin(read, "partial read cleanup pending").ConfigureAwait(false);
+                }
                 catch (IOException) { }
                 catch (ObjectDisposedException) { }
                 catch (OperationCanceledException) { }
             }
         }
     }
+
     private static async Task FragmentedReadReuseAsync()
     {
         using (var pair = new OwnedPair())
@@ -388,6 +541,7 @@ internal static class StdioRegressionHarness
             Check(again.Result == "ping", "reused read changed payload");
         }
     }
+
     private static async Task ExternalReadCancellationAsync(bool raceClose)
     {
         using (var pair = new OwnedPair())
@@ -397,23 +551,35 @@ internal static class StdioRegressionHarness
             Task<string> read = Task.Run(() => ReadFrame(stream, cancel.Token));
             await Task.Delay(10).ConfigureAwait(false);
             cancel.Cancel();
-            if (raceClose) stream.Dispose();
+            if (raceClose)
+                stream.Dispose();
             try
             {
                 Check(await Task.WhenAny(read, Task.Delay(2000)).ConfigureAwait(false) == read, "external cancellation did not release read");
-                try { await read.ConfigureAwait(false); throw new Exception("external read cancellation succeeded"); }
-                catch (OperationCanceledException error) { Check(error.CancellationToken == cancel.Token, "external cancellation lost caller token"); }
+                try
+                {
+                    await read.ConfigureAwait(false);
+                    throw new Exception("external read cancellation succeeded");
+                }
+                catch (OperationCanceledException error)
+                {
+                    Check(error.CancellationToken == cancel.Token, "external cancellation lost caller token");
+                }
             }
             finally
             {
                 stream.Dispose();
-                try { await SettleWithin(read, "externally canceled read cleanup pending").ConfigureAwait(false); }
+                try
+                {
+                    await SettleWithin(read, "externally canceled read cleanup pending").ConfigureAwait(false);
+                }
                 catch (IOException) { }
                 catch (ObjectDisposedException) { }
                 catch (OperationCanceledException) { }
             }
         }
     }
+
     private static async Task ClosedStreamAsync(bool reading)
     {
         using (var pair = new OwnedPair())
@@ -422,12 +588,17 @@ internal static class StdioRegressionHarness
             stream.Dispose();
             Task operation = Task.Run(() => reading ? (Task)ReadFrame(stream) : WriteFrame(stream, new byte[] { 1 }));
             Check(await Task.WhenAny(operation, Task.Delay(2000)).ConfigureAwait(false) == operation, "closed stream operation pending");
-            try { await operation.ConfigureAwait(false); throw new Exception("closed stream operation succeeded"); }
+            try
+            {
+                await operation.ConfigureAwait(false);
+                throw new Exception("closed stream operation succeeded");
+            }
             catch (IOException) { }
             catch (ObjectDisposedException) { }
             await Task.Delay(120).ConfigureAwait(false); // A stale callback must not crash the timer thread.
         }
     }
+
     private static async Task TimeoutDisposalEdgeAsync(bool falseSuccess)
     {
         using (var pair = new OwnedPair(2))
@@ -439,7 +610,11 @@ internal static class StdioRegressionHarness
             try
             {
                 Check(await Task.WhenAny(write, Task.Delay(2000)).ConfigureAwait(false) == write, "timeout disposal edge did not settle");
-                try { await write.ConfigureAwait(false); throw new Exception("deadline cleanup was reported as success"); }
+                try
+                {
+                    await write.ConfigureAwait(false);
+                    throw new Exception("deadline cleanup was reported as success");
+                }
                 catch (OperationCanceledException) { }
                 Check(pair.Stream.DisposeAttempts >= 1, "deadline callback did not attempt owned stream disposal");
                 Check(SourceDisposed(pair.Stream.Tokens[0]) && pair.Stream.ActiveWaits == 0, "deadline edge leaked CTS/wait");
@@ -447,13 +622,18 @@ internal static class StdioRegressionHarness
             finally
             {
                 pair.Stream.Abort();
-                try { await SettleWithin(write, "disposal edge cleanup pending").ConfigureAwait(false); }
+                try
+                {
+                    await SettleWithin(write, "disposal edge cleanup pending").ConfigureAwait(false);
+                }
                 catch (OperationCanceledException) { }
                 catch (IOException) { }
             }
         }
     }
+
     private static object Get(string name) => Host.GetField(name, PrivateStatic).GetValue(null);
+
     private static Dictionary<string, QueuedCommand> ResetQueue()
     {
         var queue = (Dictionary<string, QueuedCommand>)Get("commandQueue");
@@ -466,8 +646,15 @@ internal static class StdioRegressionHarness
         TransportCommandDispatcher.Settlement = Task.CompletedTask;
         return queue;
     }
-    private static QueuedCommand Command(string json = "ping", CancellationToken cancel = default)
-        => new QueuedCommand { CommandJson = json, Tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously), OwnerCancellation = cancel };
+
+    private static QueuedCommand Command(string json = "ping", CancellationToken cancel = default) =>
+        new QueuedCommand
+        {
+            CommandJson = json,
+            Tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously),
+            OwnerCancellation = cancel,
+        };
+
     private static void GuardOrdering(string source)
     {
         string body = File.ReadAllText(source);
@@ -479,6 +666,7 @@ internal static class StdioRegressionHarness
         int secondGuard = body.IndexOf("if (commandQueue.Count == 0)", firstGuard + 1, StringComparison.Ordinal);
         Check(secondGuard > scan, "post-prune empty guard removed");
     }
+
     private static void EmptyTick()
     {
         var queue = ResetQueue();
@@ -487,6 +675,7 @@ internal static class StdioRegressionHarness
         Check((int)Get("processingCommands") == 0, "empty return failed to reset processing guard");
         Check((double)Get("nextHeartbeatAt") > UnityEditor.EditorApplication.timeSinceStartup, "empty tick skipped heartbeat scheduling");
     }
+
     private static void CanceledOnly()
     {
         var queue = ResetQueue();
@@ -500,6 +689,7 @@ internal static class StdioRegressionHarness
             Check((int)Get("processingCommands") == 0 && TransportCommandDispatcher.Calls == 0, "canceled-only path failed to exit/reset");
         }
     }
+
     private static void CanceledThenLive()
     {
         var queue = ResetQueue();
@@ -515,6 +705,7 @@ internal static class StdioRegressionHarness
             Check(queue.Count == 0, "completed work retained");
         }
     }
+
     private static void ExecutingBarrier()
     {
         var queue = ResetQueue();
@@ -531,6 +722,7 @@ internal static class StdioRegressionHarness
             Check((int)Get("processingCommands") == 0, "barrier return failed to reset processing guard");
         }
     }
+
     private static async Task SettlementBarrierAsync()
     {
         var queue = ResetQueue();
@@ -547,16 +739,29 @@ internal static class StdioRegressionHarness
             Pump.Invoke(null, null);
             Check(!second.Tcs.Task.IsCompleted && TransportCommandDispatcher.Calls == 1, "unsettled execution allowed later work");
         }
-        finally { settlement.TrySetResult(true); }
-        Func<bool> containsFirst = () => { lock (Get("lockObj")) return queue.ContainsKey("first"); };
-        for (int count = 0; count < 200 && containsFirst(); count++) await Task.Delay(5).ConfigureAwait(false);
+        finally
+        {
+            settlement.TrySetResult(true);
+        }
+        Func<bool> containsFirst = () =>
+        {
+            lock (Get("lockObj"))
+                return queue.ContainsKey("first");
+        };
+        for (int count = 0; count < 200 && containsFirst(); count++)
+            await Task.Delay(5).ConfigureAwait(false);
         Check(!containsFirst(), "settled command not removed");
         Pump.Invoke(null, null);
         Check(second.Tcs.Task.IsCompleted && queue.Count == 0, "settlement did not release next command");
     }
+
     public static int Main(string[] args)
     {
-        if (args.Length != 1) { Console.WriteLine("FAIL: original host source path required"); return 1; }
+        if (args.Length != 1)
+        {
+            Console.WriteLine("FAIL: original host source path required");
+            return 1;
+        }
         Test("header write timeout cancels and cleans up", () => TimeoutAsync(1).GetAwaiter().GetResult());
         Test("payload write timeout cancels and cleans up", () => TimeoutAsync(2).GetAwaiter().GetResult());
         Test("timeout CTS lives through pending write and disposes after success", () => LifetimeAsync().GetAwaiter().GetResult());

@@ -3,18 +3,18 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools
 {
     /// <summary>
     /// Tool for managing components on GameObjects.
     /// Actions: add, remove, set_property
-    /// 
+    ///
     /// This is a focused tool for component lifecycle operations.
     /// For reading component data, use the unity://scene/gameobject/{id}/components resource.
     /// </summary>
@@ -55,7 +55,7 @@ namespace MCPForUnity.Editor.Tools
                     "add" => AddComponent(@params, targetToken, searchMethod),
                     "remove" => RemoveComponent(@params, targetToken, searchMethod),
                     "set_property" => SetProperty(@params, targetToken, searchMethod),
-                    _ => new ErrorResponse($"Unknown action: '{action}'. Supported actions: add, remove, set_property")
+                    _ => new ErrorResponse($"Unknown action: '{action}'. Supported actions: add, remove, set_property"),
                 };
             }
             catch (Exception e)
@@ -133,8 +133,9 @@ namespace MCPForUnity.Editor.Tools
                         componentType = type.FullName,
                         componentInstanceID = newComponent.GetInstanceIDCompat(),
                         componentAdded = true,
-                        errors = propertyErrors
-                    });
+                        errors = propertyErrors,
+                    }
+                );
             }
 
             return new
@@ -145,8 +146,8 @@ namespace MCPForUnity.Editor.Tools
                 {
                     instanceID = targetGo.GetInstanceIDCompat(),
                     componentType = type.FullName,
-                    componentInstanceID = newComponent.GetInstanceIDCompat()
-                }
+                    componentInstanceID = newComponent.GetInstanceIDCompat(),
+                },
             };
         }
 
@@ -173,15 +174,20 @@ namespace MCPForUnity.Editor.Tools
 
             JToken componentIndexToken = @params["componentIndex"] ?? @params["component_index"];
             int? componentIndex = ParamCoercion.CoerceIntNullable(componentIndexToken);
-            if (!componentIndex.HasValue && componentIndexToken != null
+            if (
+                !componentIndex.HasValue
+                && componentIndexToken != null
                 && componentIndexToken.Type != JTokenType.Null
-                && !string.IsNullOrWhiteSpace(componentIndexToken.ToString()))
+                && !string.IsNullOrWhiteSpace(componentIndexToken.ToString())
+            )
                 return new ErrorResponse("'component_index' must be a valid integer when supplied.");
             if (componentIndex.HasValue)
             {
                 var components = targetGo.GetComponents(type);
                 if (componentIndex.Value < 0 || componentIndex.Value >= components.Length)
-                    return new ErrorResponse($"component_index {componentIndex.Value} out of range. Found {components.Length} '{componentTypeName}' component(s).");
+                    return new ErrorResponse(
+                        $"component_index {componentIndex.Value} out of range. Found {components.Length} '{componentTypeName}' component(s)."
+                    );
                 if (type == typeof(Transform) || type == typeof(RectTransform))
                     return new ErrorResponse("Cannot remove Transform or RectTransform components.");
                 Undo.DestroyObjectImmediate(components[componentIndex.Value]);
@@ -191,7 +197,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     success = true,
                     message = $"Component '{componentTypeName}' (index {componentIndex.Value}) removed from '{targetGo.name}'.",
-                    data = new { instanceID = targetGo.GetInstanceIDCompat(), componentIndex = componentIndex.Value }
+                    data = new { instanceID = targetGo.GetInstanceIDCompat(), componentIndex = componentIndex.Value },
                 };
             }
 
@@ -209,10 +215,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 success = true,
                 message = $"Component '{componentTypeName}' removed from '{targetGo.name}'.",
-                data = new
-                {
-                    instanceID = targetGo.GetInstanceIDCompat()
-                }
+                data = new { instanceID = targetGo.GetInstanceIDCompat() },
             };
         }
 
@@ -239,9 +242,12 @@ namespace MCPForUnity.Editor.Tools
 
             JToken componentIndexToken = @params["componentIndex"] ?? @params["component_index"];
             int? componentIndex = ParamCoercion.CoerceIntNullable(componentIndexToken);
-            if (!componentIndex.HasValue && componentIndexToken != null
+            if (
+                !componentIndex.HasValue
+                && componentIndexToken != null
                 && componentIndexToken.Type != JTokenType.Null
-                && !string.IsNullOrWhiteSpace(componentIndexToken.ToString()))
+                && !string.IsNullOrWhiteSpace(componentIndexToken.ToString())
+            )
                 return new ErrorResponse("'component_index' must be a valid integer when supplied.");
             Component component;
             if (componentIndex.HasValue)
@@ -311,21 +317,17 @@ namespace MCPForUnity.Editor.Tools
 
                 if (errors.Count > 0)
                 {
-                    return new ErrorResponse($"Some properties failed to set on '{componentType}'.", new
-                    {
-                        instanceID = targetGo.GetInstanceIDCompat(),
-                        errors = errors
-                    });
+                    return new ErrorResponse(
+                        $"Some properties failed to set on '{componentType}'.",
+                        new { instanceID = targetGo.GetInstanceIDCompat(), errors = errors }
+                    );
                 }
 
                 return new
                 {
                     success = true,
                     message = $"Properties set on component '{componentType}' on '{targetGo.name}'.",
-                    data = new
-                    {
-                        instanceID = targetGo.GetInstanceIDCompat()
-                    }
+                    data = new { instanceID = targetGo.GetInstanceIDCompat() },
                 };
             }
             catch (Exception e)
@@ -367,7 +369,9 @@ namespace MCPForUnity.Editor.Tools
                 var result = RendererHelpers.EnsureMaterial(renderer);
                 if (result.MaterialReplaced)
                 {
-                    McpLog.Info($"[ManageComponents] Auto-assigned pipeline-compatible material to {renderer.GetType().Name} on '{go.name}' (reason: {result.ReplacementReason}).");
+                    McpLog.Info(
+                        $"[ManageComponents] Auto-assigned pipeline-compatible material to {renderer.GetType().Name} on '{go.name}' (reason: {result.ReplacementReason})."
+                    );
                 }
             }
         }
@@ -433,7 +437,7 @@ namespace MCPForUnity.Editor.Tools
                 if (error != null)
                     errors.Add(error);
             }
-            
+
             if (errors.Count > 0)
             {
                 McpLog.Warn($"[ManageComponents] Some properties failed to set on {component.GetType().Name}: {string.Join(", ", errors)}");

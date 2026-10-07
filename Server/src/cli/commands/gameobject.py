@@ -21,28 +21,11 @@ def gameobject():
 @gameobject.command("find")
 @click.argument("search_term")
 @click.option(
-    "--method", "-m",
-    type=SEARCH_METHOD_CHOICE_FULL,
-    default="by_name",
-    help="Search method."
+    "--method", "-m", type=SEARCH_METHOD_CHOICE_FULL, default="by_name", help="Search method."
 )
-@click.option(
-    "--include-inactive", "-i",
-    is_flag=True,
-    help="Include inactive GameObjects."
-)
-@click.option(
-    "--limit", "-l",
-    default=50,
-    type=int,
-    help="Maximum results to return."
-)
-@click.option(
-    "--cursor", "-c",
-    default=0,
-    type=int,
-    help="Pagination cursor (offset)."
-)
+@click.option("--include-inactive", "-i", is_flag=True, help="Include inactive GameObjects.")
+@click.option("--limit", "-l", default=50, type=int, help="Maximum results to return.")
+@click.option("--cursor", "-c", default=0, type=int, help="Pagination cursor (offset).")
 @handle_unity_errors
 def find(search_term: str, method: str, include_inactive: bool, limit: int, cursor: int):
     """Find GameObjects by search criteria.
@@ -56,74 +39,45 @@ def find(search_term: str, method: str, include_inactive: bool, limit: int, curs
         unity-mcp gameobject find "/Canvas/Panel" --method by_path
     """
     config = get_config()
-    result = run_command("find_gameobjects", {
-        "searchMethod": method,
-        "searchTerm": search_term,
-        "includeInactive": include_inactive,
-        "pageSize": limit,
-        "cursor": cursor,
-    }, config)
+    result = run_command(
+        "find_gameobjects",
+        {
+            "searchMethod": method,
+            "searchTerm": search_term,
+            "includeInactive": include_inactive,
+            "pageSize": limit,
+            "cursor": cursor,
+        },
+        config,
+    )
     click.echo(format_output(result, config.format))
 
 
 @gameobject.command("create")
 @click.argument("name")
 @click.option(
-    "--primitive", "-p",
-    type=click.Choice(["Cube", "Sphere", "Cylinder",
-                      "Plane", "Capsule", "Quad"]),
-    help="Create a primitive type."
+    "--primitive",
+    "-p",
+    type=click.Choice(["Cube", "Sphere", "Cylinder", "Plane", "Capsule", "Quad"]),
+    help="Create a primitive type.",
 )
+@click.option("--position", "-pos", nargs=3, type=float, default=None, help="Position as X Y Z.")
 @click.option(
-    "--position", "-pos",
+    "--rotation",
+    "-rot",
     nargs=3,
     type=float,
     default=None,
-    help="Position as X Y Z."
+    help="Rotation as X Y Z (euler angles).",
 )
+@click.option("--scale", "-s", nargs=3, type=float, default=None, help="Scale as X Y Z.")
+@click.option("--parent", default=None, help="Parent GameObject name or path.")
+@click.option("--tag", "-t", default=None, help="Tag to assign.")
+@click.option("--layer", default=None, help="Layer to assign.")
+@click.option("--components", default=None, help="Comma-separated list of components to add.")
+@click.option("--save-prefab", is_flag=True, help="Save as prefab after creation.")
 @click.option(
-    "--rotation", "-rot",
-    nargs=3,
-    type=float,
-    default=None,
-    help="Rotation as X Y Z (euler angles)."
-)
-@click.option(
-    "--scale", "-s",
-    nargs=3,
-    type=float,
-    default=None,
-    help="Scale as X Y Z."
-)
-@click.option(
-    "--parent",
-    default=None,
-    help="Parent GameObject name or path."
-)
-@click.option(
-    "--tag", "-t",
-    default=None,
-    help="Tag to assign."
-)
-@click.option(
-    "--layer",
-    default=None,
-    help="Layer to assign."
-)
-@click.option(
-    "--components",
-    default=None,
-    help="Comma-separated list of components to add."
-)
-@click.option(
-    "--save-prefab",
-    is_flag=True,
-    help="Save as prefab after creation."
-)
-@click.option(
-    "--prefab-path",
-    default=None,
-    help="Path for prefab (e.g., Assets/Prefabs/MyPrefab.prefab)."
+    "--prefab-path", default=None, help="Path for prefab (e.g., Assets/Prefabs/MyPrefab.prefab)."
 )
 @handle_unity_errors
 def create(
@@ -185,72 +139,35 @@ def create(
 
 @gameobject.command("modify")
 @click.argument("target")
+@click.option("--name", "-n", default=None, help="New name for the GameObject.")
 @click.option(
-    "--name", "-n",
-    default=None,
-    help="New name for the GameObject."
+    "--position", "-pos", nargs=3, type=float, default=None, help="New position as X Y Z."
 )
 @click.option(
-    "--position", "-pos",
+    "--rotation",
+    "-rot",
     nargs=3,
     type=float,
     default=None,
-    help="New position as X Y Z."
+    help="New rotation as X Y Z (euler angles).",
 )
+@click.option("--scale", "-s", nargs=3, type=float, default=None, help="New scale as X Y Z.")
+@click.option("--parent", default=None, help="New parent GameObject.")
+@click.option("--tag", "-t", default=None, help="New tag.")
+@click.option("--layer", default=None, help="New layer.")
+@click.option("--active/--inactive", default=None, help="Set active state.")
 @click.option(
-    "--rotation", "-rot",
-    nargs=3,
-    type=float,
-    default=None,
-    help="New rotation as X Y Z (euler angles)."
+    "--static/--no-static", default=None, help="Set static flag (all StaticEditorFlags on/off)."
 )
+@click.option("--add-components", default=None, help="Comma-separated list of components to add.")
 @click.option(
-    "--scale", "-s",
-    nargs=3,
-    type=float,
-    default=None,
-    help="New scale as X Y Z."
-)
-@click.option(
-    "--parent",
-    default=None,
-    help="New parent GameObject."
-)
-@click.option(
-    "--tag", "-t",
-    default=None,
-    help="New tag."
-)
-@click.option(
-    "--layer",
-    default=None,
-    help="New layer."
-)
-@click.option(
-    "--active/--inactive",
-    default=None,
-    help="Set active state."
-)
-@click.option(
-    "--static/--no-static",
-    default=None,
-    help="Set static flag (all StaticEditorFlags on/off)."
-)
-@click.option(
-    "--add-components",
-    default=None,
-    help="Comma-separated list of components to add."
-)
-@click.option(
-    "--remove-components",
-    default=None,
-    help="Comma-separated list of components to remove."
+    "--remove-components", default=None, help="Comma-separated list of components to remove."
 )
 @click.option(
     "--search-method",
     type=SEARCH_METHOD_CHOICE_TAGGED,
     default=None,
-    help="How to find the target GameObject."
+    help="How to find the target GameObject.",
 )
 @handle_unity_errors
 def modify(
@@ -323,13 +240,9 @@ def modify(
     "--search-method",
     type=SEARCH_METHOD_CHOICE_TAGGED,
     default=None,
-    help="How to find the target GameObject."
+    help="How to find the target GameObject.",
 )
-@click.option(
-    "--force", "-f",
-    is_flag=True,
-    help="Skip confirmation prompt."
-)
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt.")
 @handle_unity_errors
 def delete(target: str, search_method: Optional[str], force: bool):
     """Delete a GameObject.
@@ -361,22 +274,16 @@ def delete(target: str, search_method: Optional[str], force: bool):
 @gameobject.command("duplicate")
 @click.argument("target")
 @click.option(
-    "--name", "-n",
-    default=None,
-    help="Name for the duplicate (default: OriginalName_Copy)."
+    "--name", "-n", default=None, help="Name for the duplicate (default: OriginalName_Copy)."
 )
 @click.option(
-    "--offset",
-    nargs=3,
-    type=float,
-    default=None,
-    help="Position offset from original as X Y Z."
+    "--offset", nargs=3, type=float, default=None, help="Position offset from original as X Y Z."
 )
 @click.option(
     "--search-method",
     type=SEARCH_METHOD_CHOICE_TAGGED,
     default=None,
-    help="How to find the target GameObject."
+    help="How to find the target GameObject.",
 )
 @handle_unity_errors
 def duplicate(
@@ -415,34 +322,25 @@ def duplicate(
 
 @gameobject.command("move")
 @click.argument("target")
+@click.option("--reference", "-r", required=True, help="Reference object for relative movement.")
 @click.option(
-    "--reference", "-r",
+    "--direction",
+    "-d",
+    type=click.Choice(
+        ["left", "right", "up", "down", "forward", "back", "front", "backward", "behind"]
+    ),
     required=True,
-    help="Reference object for relative movement."
+    help="Direction to move.",
 )
+@click.option("--distance", type=float, default=1.0, help="Distance to move (default: 1.0).")
 @click.option(
-    "--direction", "-d",
-    type=click.Choice(["left", "right", "up", "down", "forward",
-                      "back", "front", "backward", "behind"]),
-    required=True,
-    help="Direction to move."
-)
-@click.option(
-    "--distance",
-    type=float,
-    default=1.0,
-    help="Distance to move (default: 1.0)."
-)
-@click.option(
-    "--local",
-    is_flag=True,
-    help="Use reference object's local space instead of world space."
+    "--local", is_flag=True, help="Use reference object's local space instead of world space."
 )
 @click.option(
     "--search-method",
     type=SEARCH_METHOD_CHOICE_TAGGED,
     default=None,
-    help="How to find the target GameObject."
+    help="How to find the target GameObject.",
 )
 @handle_unity_errors
 def move(

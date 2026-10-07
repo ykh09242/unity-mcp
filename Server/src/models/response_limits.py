@@ -1,4 +1,5 @@
 """Shared pre-serialization bounds for plugin and consumer JSON responses."""
+
 from __future__ import annotations
 
 import json
@@ -25,6 +26,7 @@ _ASCII_JSON_CHUNK_CHARS = 4096
 @dataclass(slots=True)
 class ResponseOwner:
     """Own result reservations through a request task's actual response cleanup."""
+
     entries: list[tuple[MutableMapping, str]] = field(default_factory=list)
     on_release: list[Callable[[], None]] = field(default_factory=list)
     copy_reservations: list[Callable[[ResponseOwner], bool]] = field(default_factory=list)
@@ -71,20 +73,26 @@ response_owner: ContextVar[ResponseOwner | None] = ContextVar("unity_response_ow
 
 def response_limit_error(reason: str = "response_payload_limit") -> dict[str, Any]:
     """Return a constant-sized error without retaining or echoing rejected data."""
-    return {"success": False, "error": "Unity response exceeds supported limits",
-            "data": {"reason": reason}}
+    return {
+        "success": False,
+        "error": "Unity response exceeds supported limits",
+        "data": {"reason": reason},
+    }
 
 
 def _model_wire_is_safe(model: BaseModel) -> bool:
     """Refuse extension hooks before a serializer can allocate an unbounded value."""
     model_type = type(model)
     decorators = model_type.__pydantic_decorators__
-    if (model_type.model_dump is not BaseModel.model_dump
-            or getattr(model_type.__get_pydantic_core_schema__, "__func__", None)
-            is not BaseModel.__get_pydantic_core_schema__.__func__
-            or type(model.__pydantic_serializer__) is not SchemaSerializer
-            or decorators.field_serializers or decorators.model_serializers
-            or decorators.computed_fields):
+    if (
+        model_type.model_dump is not BaseModel.model_dump
+        or getattr(model_type.__get_pydantic_core_schema__, "__func__", None)
+        is not BaseModel.__get_pydantic_core_schema__.__func__
+        or type(model.__pydantic_serializer__) is not SchemaSerializer
+        or decorators.field_serializers
+        or decorators.model_serializers
+        or decorators.computed_fields
+    ):
         return False
     pending = [model_type.__pydantic_core_schema__]
     nodes = 0
@@ -102,14 +110,19 @@ def _model_wire_is_safe(model: BaseModel) -> bool:
                 # models. Their serializer cannot expand an already bounded URL.
                 function = serializer.get("function") if type(serializer) is dict else None
                 owner = getattr(function, "__self__", None)
-                if (getattr(function, "__func__", None) is not AnyUrl.serialize_url.__func__
-                        or getattr(owner, "__module__", None) != "pydantic.networks"):
+                if (
+                    getattr(function, "__func__", None) is not AnyUrl.serialize_url.__func__
+                    or getattr(owner, "__module__", None) != "pydantic.networks"
+                ):
                     return False
             if node.get("computed_fields") or node.get("serialization_exclude_if"):
                 return False
-            pending.extend(child for key, child in node.items()
-                           if key not in {"metadata", "function", "serialization", "config"}
-                           and type(child) in (dict, list))
+            pending.extend(
+                child
+                for key, child in node.items()
+                if key not in {"metadata", "function", "serialization", "config"}
+                and type(child) in (dict, list)
+            )
         elif type(node) is list:
             if len(node) + len(pending) + nodes > MAX_RESPONSE_NODES:
                 return False
@@ -131,12 +144,12 @@ def _model_wire_items(model: BaseModel) -> Iterator[tuple[str, Any]]:
 
 def _native_url_is_safe(value: AnyUrl) -> bool:
     """Accept native URL serialization without invoking a subclass string hook."""
-    return (type(value).__module__ == "pydantic.networks"
-            and type(value).__str__ is AnyUrl.__str__)
+    return type(value).__module__ == "pydantic.networks" and type(value).__str__ is AnyUrl.__str__
 
 
-def _large_ascii_json_size(value: object, *, max_bytes: int,
-                           max_depth: int, max_nodes: int) -> int | None:
+def _large_ascii_json_size(
+    value: object, *, max_bytes: int, max_depth: int, max_nodes: int
+) -> int | None:
     """Size exact builtin graphs using bounded native ASCII string chunks.
 
     The original visitor proves retained bounds and whole-graph eligibility
@@ -158,8 +171,12 @@ def _large_ascii_json_size(value: object, *, max_bytes: int,
                 return False
             total += 2
             for offset in range(0, len(item), _ASCII_JSON_CHUNK_CHARS):
-                total += len(to_json(item[offset:offset + _ASCII_JSON_CHUNK_CHARS],
-                                     ensure_ascii=False)) - 2
+                total += (
+                    len(
+                        to_json(item[offset : offset + _ASCII_JSON_CHUNK_CHARS], ensure_ascii=False)
+                    )
+                    - 2
+                )
                 if total > max_bytes:
                     overflow = True
                     return False
@@ -200,10 +217,14 @@ def _large_ascii_json_size(value: object, *, max_bytes: int,
         return None
 
 
-def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
-                  max_depth: int = MAX_RESPONSE_DEPTH,
-                  max_nodes: int = MAX_RESPONSE_NODES,
-                  max_retained: int = MAX_RESPONSE_RETAINED_BYTES) -> int | None:
+def response_size(
+    value: Any,
+    *,
+    max_bytes: int = MAX_RESPONSE_BYTES,
+    max_depth: int = MAX_RESPONSE_DEPTH,
+    max_nodes: int = MAX_RESPONSE_NODES,
+    max_retained: int = MAX_RESPONSE_RETAINED_BYTES,
+) -> int | None:
     """Bound traversal and JSON serialization; return a conservative memory charge.
 
     The estimate includes Python objects, response copies and JSON working space.
@@ -233,16 +254,26 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
             retained += 4 * len(item)
             return retained <= max_retained
         if isinstance(item, dict):
-            return all(isinstance(key, str) and retain_storage(key, depth + 1)
-                       and retain_storage(child, depth + 1) for key, child in item.items())
+            return all(
+                isinstance(key, str)
+                and retain_storage(key, depth + 1)
+                and retain_storage(child, depth + 1)
+                for key, child in item.items()
+            )
         if isinstance(item, (list, tuple)):
             return all(retain_storage(child, depth + 1) for child in item)
         if isinstance(item, BaseModel):
-            return (retain_storage(item.__dict__, depth)
-                    and (item.__pydantic_extra__ is None
-                         or retain_storage(item.__pydantic_extra__, depth))
-                    and (item.__pydantic_private__ is None
-                         or retain_storage(item.__pydantic_private__, depth)))
+            return (
+                retain_storage(item.__dict__, depth)
+                and (
+                    item.__pydantic_extra__ is None
+                    or retain_storage(item.__pydantic_extra__, depth)
+                )
+                and (
+                    item.__pydantic_private__ is None
+                    or retain_storage(item.__pydantic_private__, depth)
+                )
+            )
         if isinstance(item, AnyUrl):
             return _native_url_is_safe(item) and retain_storage(str(item), depth)
         if isinstance(item, float):
@@ -296,8 +327,10 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
                 has_large_ascii = True
             return True
         if item_type is dict:
-            return all(isinstance(key, str) and visit(key, depth + 1)
-                       and visit(child, depth + 1) for key, child in item.items())
+            return all(
+                isinstance(key, str) and visit(key, depth + 1) and visit(child, depth + 1)
+                for key, child in item.items()
+            )
         if item_type is list or item_type is tuple:
             return all(visit(child, depth + 1) for child in item)
         if item_type is float:
@@ -315,17 +348,21 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
             if not storage_covered:
                 if not retain_storage(item.__dict__, depth):
                     return False
-                if (item.__pydantic_extra__ is not None
-                        and not retain_storage(item.__pydantic_extra__, depth)):
+                if item.__pydantic_extra__ is not None and not retain_storage(
+                    item.__pydantic_extra__, depth
+                ):
                     return False
-                if (item.__pydantic_private__ is not None
-                        and not retain_storage(item.__pydantic_private__, depth)):
+                if item.__pydantic_private__ is not None and not retain_storage(
+                    item.__pydantic_private__, depth
+                ):
                     return False
             previous_coverage = storage_covered
             storage_covered = True
             try:
-                return all(visit(key, depth + 1) and visit(child, depth + 1)
-                           for key, child in _model_wire_items(item))
+                return all(
+                    visit(key, depth + 1) and visit(child, depth + 1)
+                    for key, child in _model_wire_items(item)
+                )
             finally:
                 storage_covered = previous_coverage
         if isinstance(item, AnyUrl):
@@ -336,8 +373,10 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
             retained += 4 * len(item)
             return retained <= max_retained
         if isinstance(item, dict):
-            return all(isinstance(key, str) and visit(key, depth + 1)
-                       and visit(child, depth + 1) for key, child in item.items())
+            return all(
+                isinstance(key, str) and visit(key, depth + 1) and visit(child, depth + 1)
+                for key, child in item.items()
+            )
         if isinstance(item, (list, tuple)):
             return all(visit(child, depth + 1) for child in item)
         if isinstance(item, float):
@@ -352,24 +391,35 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
     encoded_bytes = 0
     try:
         if has_large_ascii and exact_ascii_graph:
-            exact_bytes = _large_ascii_json_size(value, max_bytes=max_bytes,
-                                                max_depth=max_depth, max_nodes=max_nodes)
+            exact_bytes = _large_ascii_json_size(
+                value, max_bytes=max_bytes, max_depth=max_depth, max_nodes=max_nodes
+            )
             if exact_bytes is not None:
                 if exact_bytes > max_bytes:
                     return None
                 retained += exact_bytes
                 return retained if retained <= max_retained else None
-        encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False,
-                                   default=lambda model: BaseModel.model_dump(
-                                       model, by_alias=True, mode="json", exclude_none=True)
-                                   if isinstance(model, BaseModel) else str(model))
+        encoder = json.JSONEncoder(
+            ensure_ascii=False,
+            allow_nan=False,
+            default=lambda model: (
+                BaseModel.model_dump(model, by_alias=True, mode="json", exclude_none=True)
+                if isinstance(model, BaseModel)
+                else str(model)
+            ),
+        )
         # Leave room for strings/buffers and older C encoders' temporary chunks
         # and item tuples. A conservative bound selects a path, never a rejection.
-        if (encoded_bound is not None
-                and 8 * encoded_bound + 128 * nodes + 4096 <= max_retained - retained):
+        if (
+            encoded_bound is not None
+            and 8 * encoded_bound + 128 * nodes + 4096 <= max_retained - retained
+        ):
             encoded = encoder.encode(value)
-            encoded_bytes = (len(encoded) if type(encoded) is str and encoded.isascii()
-                             else len(encoded.encode("utf-8")))
+            encoded_bytes = (
+                len(encoded)
+                if type(encoded) is str and encoded.isascii()
+                else len(encoded.encode("utf-8"))
+            )
         else:
             for chunk in encoder.iterencode(value):
                 # JSON encoder chunks are strings; ASCII bytes equal their length.
@@ -389,8 +439,9 @@ def bound_response(value: Any) -> Any:
     return response_limit_error() if response_size(value) is None else value
 
 
-def bounded_json_text(raw: str | bytes | bytearray, *, max_bytes: int, max_depth: int,
-                      max_nodes: int) -> str | None:
+def bounded_json_text(
+    raw: str | bytes | bytearray, *, max_bytes: int, max_depth: int, max_nodes: int
+) -> str | None:
     """Reject large, deep or wide raw frames before allocating a decoded graph.
 
     Count containers and scalar starts outside strings. Skip long quoted values
@@ -406,8 +457,14 @@ def bounded_json_text(raw: str | bytes | bytearray, *, max_bytes: int, max_depth
         # Strict built-in decoding or exact ASCII proves the checked byte length.
         # Subclasses retain recounting because their hooks may change the content.
         known_byte_length = exact_bytes or (raw_type is str and text.isascii())
-        if not known_byte_length and sum(len(text[offset:offset + 65_536].encode("utf-8"))
-                                         for offset in range(0, len(text), 65_536)) > max_bytes:
+        if (
+            not known_byte_length
+            and sum(
+                len(text[offset : offset + 65_536].encode("utf-8"))
+                for offset in range(0, len(text), 65_536)
+            )
+            > max_bytes
+        ):
             return None
     except UnicodeError:
         return None

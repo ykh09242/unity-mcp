@@ -1,12 +1,12 @@
 using System;
 using System.Collections;
+using MCPForUnity.Editor.Tools;
+using MCPForUnityTests.Editor.Tools.Fixtures;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.TestTools;
-using MCPForUnity.Editor.Tools;
-using MCPForUnityTests.Editor.Tools.Fixtures;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -101,7 +101,10 @@ namespace MCPForUnityTests.Editor.Tools
             _createdAssetPath = data["path"]?.ToString();
 
             Assert.IsTrue(AssetDatabase.IsValidFolder(_nestedFolder), "Nested folder should be created.");
-            Assert.IsTrue(_createdAssetPath!.StartsWith(_nestedFolder, StringComparison.Ordinal), $"Asset should be created under {_nestedFolder}: {_createdAssetPath}");
+            Assert.IsTrue(
+                _createdAssetPath!.StartsWith(_nestedFolder, StringComparison.Ordinal),
+                $"Asset should be created under {_nestedFolder}: {_createdAssetPath}"
+            );
             Assert.IsTrue(_createdAssetPath.EndsWith(".asset", StringComparison.OrdinalIgnoreCase), "Asset should have .asset extension.");
             Assert.IsFalse(string.IsNullOrWhiteSpace(_createdGuid), "Expected guid in response.");
 
@@ -122,10 +125,25 @@ namespace MCPForUnityTests.Editor.Tools
                 ["overwrite"] = true,
                 ["patches"] = new JArray
                 {
-                    new JObject { ["propertyPath"] = "displayName", ["op"] = "set", ["value"] = "Hello" },
-                    new JObject { ["propertyPath"] = "baseNumber", ["op"] = "set", ["value"] = 42 },
-                    new JObject { ["propertyPath"] = "nested.note", ["op"] = "set", ["value"] = "note!" }
-                }
+                    new JObject
+                    {
+                        ["propertyPath"] = "displayName",
+                        ["op"] = "set",
+                        ["value"] = "Hello",
+                    },
+                    new JObject
+                    {
+                        ["propertyPath"] = "baseNumber",
+                        ["op"] = "set",
+                        ["value"] = 42,
+                    },
+                    new JObject
+                    {
+                        ["propertyPath"] = "nested.note",
+                        ["op"] = "set",
+                        ["value"] = "note!",
+                    },
+                },
             };
 
             var raw = ManageScriptableObject.HandleCommand(create);
@@ -158,7 +176,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["typeName"] = typeof(ManageScriptableObjectTestDefinition).FullName,
                 ["folderPath"] = _runRoot,
                 ["assetName"] = "Modify_Target",
-                ["overwrite"] = true
+                ["overwrite"] = true,
             };
             var createRes = ToJObject(ManageScriptableObject.HandleCommand(create));
             Assert.IsTrue(createRes.Value<bool>("success"), createRes.ToString());
@@ -174,22 +192,27 @@ namespace MCPForUnityTests.Editor.Tools
                 ["patches"] = new JArray
                 {
                     // Resize list to 2
-                    new JObject { ["propertyPath"] = "materials.Array.size", ["op"] = "array_resize", ["value"] = 2 },
+                    new JObject
+                    {
+                        ["propertyPath"] = "materials.Array.size",
+                        ["op"] = "array_resize",
+                        ["value"] = 2,
+                    },
                     // Assign element 0 by guid
                     new JObject
                     {
                         ["propertyPath"] = "materials.Array.data[0]",
                         ["op"] = "set",
-                        ["ref"] = new JObject { ["guid"] = matAGuid }
+                        ["ref"] = new JObject { ["guid"] = matAGuid },
                     },
                     // Assign element 1 by path
                     new JObject
                     {
                         ["propertyPath"] = "materials.Array.data[1]",
                         ["op"] = "set",
-                        ["ref"] = new JObject { ["path"] = _matBPath }
-                    }
-                }
+                        ["ref"] = new JObject { ["path"] = _matBPath },
+                    },
+                },
             };
 
             var modRes = ToJObject(ManageScriptableObject.HandleCommand(modify));
@@ -222,23 +245,31 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual("invalid_params", badAction.Value<string>("error"));
 
             // type not found
-            var badType = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = "Nope.MissingType",
-                ["folderPath"] = TempRoot,
-                ["assetName"] = "X",
-            }));
+            var badType = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = "Nope.MissingType",
+                        ["folderPath"] = TempRoot,
+                        ["assetName"] = "X",
+                    }
+                )
+            );
             Assert.IsFalse(badType.Value<bool>("success"));
             Assert.AreEqual("type_not_found", badType.Value<string>("error"));
 
             // target not found
-            var badTarget = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "modify",
-                ["target"] = new JObject { ["guid"] = "00000000000000000000000000000000" },
-                ["patches"] = new JArray(),
-            }));
+            var badTarget = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = new JObject { ["guid"] = "00000000000000000000000000000000" },
+                        ["patches"] = new JArray(),
+                    }
+                )
+            );
             Assert.IsFalse(badTarget.Value<bool>("success"));
             Assert.AreEqual("target_not_found", badTarget.Value<string>("error"));
         }
@@ -246,36 +277,48 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Create_RejectsNonAssetsRootFolders()
         {
-            var badPackages = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = typeof(ManageScriptableObjectTestDefinition).FullName,
-                ["folderPath"] = "Packages/NotAllowed",
-                ["assetName"] = "BadFolder",
-                ["overwrite"] = true,
-            }));
+            var badPackages = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = typeof(ManageScriptableObjectTestDefinition).FullName,
+                        ["folderPath"] = "Packages/NotAllowed",
+                        ["assetName"] = "BadFolder",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsFalse(badPackages.Value<bool>("success"));
             Assert.AreEqual("invalid_folder_path", badPackages.Value<string>("error"));
 
-            var badAbsolute = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = typeof(ManageScriptableObjectTestDefinition).FullName,
-                ["folderPath"] = "/tmp/not_allowed",
-                ["assetName"] = "BadFolder2",
-                ["overwrite"] = true,
-            }));
+            var badAbsolute = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = typeof(ManageScriptableObjectTestDefinition).FullName,
+                        ["folderPath"] = "/tmp/not_allowed",
+                        ["assetName"] = "BadFolder2",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsFalse(badAbsolute.Value<bool>("success"));
             Assert.AreEqual("invalid_folder_path", badAbsolute.Value<string>("error"));
 
-            var badFileUri = ToJObject(ManageScriptableObject.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["typeName"] = typeof(ManageScriptableObjectTestDefinition).FullName,
-                ["folderPath"] = "file:///tmp/not_allowed",
-                ["assetName"] = "BadFolder3",
-                ["overwrite"] = true,
-            }));
+            var badFileUri = ToJObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = typeof(ManageScriptableObjectTestDefinition).FullName,
+                        ["folderPath"] = "file:///tmp/not_allowed",
+                        ["assetName"] = "BadFolder3",
+                        ["overwrite"] = true,
+                    }
+                )
+            );
             Assert.IsFalse(badFileUri.Value<bool>("success"));
             Assert.AreEqual("invalid_folder_path", badFileUri.Value<string>("error"));
         }
@@ -297,11 +340,11 @@ namespace MCPForUnityTests.Editor.Tools
 
             var path = res["data"]?["path"]?.ToString();
             Assert.IsNotNull(path, "Expected path in response.");
-            Assert.IsTrue(path!.StartsWith("Assets/Temp/ManageScriptableObjectTests/SlashProbe/Deep", StringComparison.Ordinal),
-                $"Expected sanitized Assets-rooted path, got: {path}");
+            Assert.IsTrue(
+                path!.StartsWith("Assets/Temp/ManageScriptableObjectTests/SlashProbe/Deep", StringComparison.Ordinal),
+                $"Expected sanitized Assets-rooted path, got: {path}"
+            );
             Assert.IsFalse(path.Contains("//", StringComparison.Ordinal), $"Path should not contain double slashes: {path}");
         }
     }
 }
-
-

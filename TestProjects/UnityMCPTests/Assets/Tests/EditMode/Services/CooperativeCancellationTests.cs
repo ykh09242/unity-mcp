@@ -24,7 +24,14 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsNotNull(cancel, "Cancel must resolve IDs within the owning connection.");
             Action cancellation = () =>
             {
-                Assert.IsTrue(Task.Run(() => { _ = owner.DrainAsync(); }).Wait(TimeSpan.FromSeconds(1)), "Cancellation callbacks must execute outside the queue lock.");
+                Assert.IsTrue(
+                    Task.Run(() =>
+                        {
+                            _ = owner.DrainAsync();
+                        })
+                        .Wait(TimeSpan.FromSeconds(1)),
+                    "Cancellation callbacks must execute outside the queue lock."
+                );
                 canceled = true;
                 active.TrySetResult(true);
             };
@@ -44,7 +51,17 @@ namespace MCPForUnityTests.Editor.Services
             var owner = new ConnectionCommandWork(lifetime.Token);
             lifetime.Cancel();
             bool executed = false;
-            Assert.AreEqual("Connection closed", owner.TryStart("queued", _ => { executed = true; return Task.CompletedTask; }));
+            Assert.AreEqual(
+                "Connection closed",
+                owner.TryStart(
+                    "queued",
+                    _ =>
+                    {
+                        executed = true;
+                        return Task.CompletedTask;
+                    }
+                )
+            );
             Assert.IsFalse(executed);
         }
     }

@@ -44,13 +44,16 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void CandidatePaths_IncludeTheDefaultSteamLibrary()
         {
             var paths = BlenderDetection.CandidatePaths().Select(p => p.Replace('\\', '/')).ToList();
-            string exe = Application.platform == RuntimePlatform.WindowsEditor ? "blender.exe"
+            string exe =
+                Application.platform == RuntimePlatform.WindowsEditor ? "blender.exe"
                 : Application.platform == RuntimePlatform.OSXEditor ? "Blender.app/Contents/MacOS/Blender"
                 : "blender";
             Assert.IsTrue(paths.Any(p => p.EndsWith("steamapps/common/Blender/" + exe)), string.Join("\n", paths));
             if (Application.platform == RuntimePlatform.LinuxEditor)
-                Assert.IsTrue(paths.Any(p => p.EndsWith(".local/share/flatpak/exports/bin/org.blender.Blender")),
-                    "per-user flatpak export should be a candidate on Linux");
+                Assert.IsTrue(
+                    paths.Any(p => p.EndsWith(".local/share/flatpak/exports/bin/org.blender.Blender")),
+                    "per-user flatpak export should be a candidate on Linux"
+                );
         }
 
         [Test]

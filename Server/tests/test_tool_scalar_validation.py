@@ -1,4 +1,5 @@
 """Scalar contracts at the shared registry and real in-memory SDK boundary."""
+
 import asyncio
 import importlib
 import inspect
@@ -16,7 +17,9 @@ import services.registry.tool_registry as registry
 def restore_registry():
     original_fixtures = [t for t in registry._tool_registry if t["name"] == "scalar_fixture"]
     yield
-    registry._tool_registry[:] = [t for t in registry._tool_registry if t["name"] != "scalar_fixture"]
+    registry._tool_registry[:] = [
+        t for t in registry._tool_registry if t["name"] != "scalar_fixture"
+    ]
     registry._tool_registry.extend(original_fixtures)
 
 
@@ -35,10 +38,14 @@ def register_fixture(server):
     async def scalar_fixture(  # pylint: disable=dangerous-default-value
         ctx: Context,
         flag: Annotated[bool, "Boolean flag description"] = True,
-        count: Optional[Annotated[
-            int, BeforeValidator(before), AfterValidator(after),
-            Field(strict=False, ge=0, le=10, description="Bounded count description"),
-        ]] = 3,
+        count: Optional[
+            Annotated[
+                int,
+                BeforeValidator(before),
+                AfterValidator(after),
+                Field(strict=False, ge=0, le=10, description="Bounded count description"),
+            ]
+        ] = 3,
         ratio: Annotated[float, "Numeric ratio description"] = 1.0,
         rows: Annotated[list[dict[str, list[int | float]]], "Nested rows description"] = [],
         flags: dict[str, bool] | None = None,
@@ -46,8 +53,13 @@ def register_fixture(server):
         boolean_or_count: bool | int | None = None,
     ) -> dict:
         payload = {
-            "flag": flag, "count": count, "ratio": ratio, "rows": rows,
-            "flags": flags, "selector": selector, "boolean_or_count": boolean_or_count,
+            "flag": flag,
+            "count": count,
+            "ratio": ratio,
+            "rows": rows,
+            "flags": flags,
+            "selector": selector,
+            "boolean_or_count": boolean_or_count,
         }
         calls.append(payload)
         return payload
@@ -77,21 +89,26 @@ def test_registry_preserves_scalar_types_and_metadata_at_sdk_boundary(mode):
             tool = next(t for t in await client.list_tools() if t.name == "scalar_fixture")
             properties = tool.input_schema["properties"]
             for name, description in {
-                "flag": "Boolean flag description", "count": "Bounded count description",
-                "ratio": "Numeric ratio description", "rows": "Nested rows description",
+                "flag": "Boolean flag description",
+                "count": "Bounded count description",
+                "ratio": "Numeric ratio description",
+                "rows": "Nested rows description",
             }.items():
                 assert properties[name].get("description") == description
             errors = []
-            invalid = [
-                {"flag": value} for value in (0, 1, "false", "true")
-            ] + [
-                {"count": value} for value in (True, False, 0.5, 1.0, "1", -1, 11)
-            ] + [
-                {"ratio": value} for value in (True, False, "2.5", float("nan"), float("inf"), float("-inf"))
-            ] + [
-                {"rows": [{"vector": [1, True]}]}, {"flags": {"enabled": 0}},
-                {"selector": True},
-            ]
+            invalid = (
+                [{"flag": value} for value in (0, 1, "false", "true")]
+                + [{"count": value} for value in (True, False, 0.5, 1.0, "1", -1, 11)]
+                + [
+                    {"ratio": value}
+                    for value in (True, False, "2.5", float("nan"), float("inf"), float("-inf"))
+                ]
+                + [
+                    {"rows": [{"vector": [1, True]}]},
+                    {"flags": {"enabled": 0}},
+                    {"selector": True},
+                ]
+            )
             for payload in invalid:
                 before = len(calls)
                 result = await client.call_tool("scalar_fixture", payload, raise_on_error=False)
@@ -100,10 +117,12 @@ def test_registry_preserves_scalar_types_and_metadata_at_sdk_boundary(mode):
             assert not errors, "\n".join(errors)
 
             for payload in (
-                {}, {"flag": False, "count": 0, "ratio": 2},
+                {},
+                {"flag": False, "count": 0, "ratio": 2},
                 {"count": None, "selector": "42", "flags": {"enabled": False}},
                 {"selector": 42, "rows": [{"vector": [1, 2.5]}]},
-                {"boolean_or_count": True}, {"boolean_or_count": 1},
+                {"boolean_or_count": True},
+                {"boolean_or_count": 1},
             ):
                 result = await client.call_tool("scalar_fixture", payload)
                 assert not result.is_error
@@ -122,7 +141,9 @@ def test_synchronous_tools_keep_container_shapes_and_scalar_types(mode):
 
     @mcp_for_unity_tool()
     def scalar_fixture(
-        coordinates: tuple[int, float], choices: set[int], frozen: frozenset[int],
+        coordinates: tuple[int, float],
+        choices: set[int],
+        frozen: frozenset[int],
     ) -> dict:
         calls.append((coordinates, choices, frozen))
         return {"success": True}
@@ -138,10 +159,14 @@ def test_synchronous_tools_keep_container_shapes_and_scalar_types(mode):
             assert not result.is_error
             assert calls == [((1, 2.0), {0, 1}, frozenset({2}))]
             for override in (
-                {"coordinates": [True, 2]}, {"coordinates": [1, True]},
-                {"choices": [False]}, {"frozen": [True]},
+                {"coordinates": [True, 2]},
+                {"coordinates": [1, True]},
+                {"choices": [False]},
+                {"frozen": [True]},
             ):
-                result = await client.call_tool("scalar_fixture", {**valid, **override}, raise_on_error=False)
+                result = await client.call_tool(
+                    "scalar_fixture", {**valid, **override}, raise_on_error=False
+                )
                 assert result.is_error
                 assert len(calls) == 1
 
@@ -169,8 +194,10 @@ def test_actual_tools_reject_wrong_scalar_types_before_transport(monkeypatch, mo
     monkeypatch.setattr(find, "preflight", preflight)
     server = FastMCP("actual-scalar-contract")
     for module, name in (
-        (import_model, "import_model_file"), (ui, "manage_ui"),
-        (find, "find_gameobjects"), (sprite, "manage_sprite"),
+        (import_model, "import_model_file"),
+        (ui, "manage_ui"),
+        (find, "find_gameobjects"),
+        (sprite, "manage_sprite"),
     ):
         metadata = next(t for t in get_registered_tools() if t["name"] == name)
         server.tool(name=name, **metadata["kwargs"])(getattr(module, name))
@@ -184,24 +211,57 @@ def test_actual_tools_reject_wrong_scalar_types_before_transport(monkeypatch, mo
                 ("manage_ui", {"action": "get_visual_tree", "max_depth": True}),
                 ("find_gameobjects", {"search_term": "Cube", "page_size": True}),
                 ("find_gameobjects", {"search_term": "Cube", "include_inactive": 0}),
-                ("manage_sprite", {"action": "slice_sheet", "path": "Assets/hero.png", "cols": True}),
-                ("manage_sprite", {"action": "slice_sheet", "path": "Assets/hero.png", "cols": 1.5}),
-                ("manage_sprite", {"action": "get_info", "path": "Assets/hero.png", "page_size": True}),
-                ("manage_sprite", {"action": "full_setup", "path": "Assets/hero.png", "cols": 4, "overwrite": 1}),
-                ("manage_sprite", {"action": "full_setup", "path": "Assets/hero.png", "cols": 4, "add_to_scene": "false"}),
+                (
+                    "manage_sprite",
+                    {"action": "slice_sheet", "path": "Assets/hero.png", "cols": True},
+                ),
+                (
+                    "manage_sprite",
+                    {"action": "slice_sheet", "path": "Assets/hero.png", "cols": 1.5},
+                ),
+                (
+                    "manage_sprite",
+                    {"action": "get_info", "path": "Assets/hero.png", "page_size": True},
+                ),
+                (
+                    "manage_sprite",
+                    {"action": "full_setup", "path": "Assets/hero.png", "cols": 4, "overwrite": 1},
+                ),
+                (
+                    "manage_sprite",
+                    {
+                        "action": "full_setup",
+                        "path": "Assets/hero.png",
+                        "cols": 4,
+                        "add_to_scene": "false",
+                    },
+                ),
             ):
                 before = len(sent)
                 result = await client.call_tool(name, payload, raise_on_error=False)
                 if not result.is_error or len(sent) != before:
-                    errors.append(f"{name} {payload!r} -> {sent[-1] if len(sent) > before else None!r}")
+                    errors.append(
+                        f"{name} {payload!r} -> {sent[-1] if len(sent) > before else None!r}"
+                    )
             assert not errors, "\n".join(errors)
-            await client.call_tool("import_model_file", {"source_path": "Assets/Model.fbx", "target_size": 2})
+            await client.call_tool(
+                "import_model_file", {"source_path": "Assets/Model.fbx", "target_size": 2}
+            )
             assert sent[-1]["targetSize"] == 2.0
-            await client.call_tool("find_gameobjects", {"search_term": "Cube", "page_size": "5", "include_inactive": "false"})
+            await client.call_tool(
+                "find_gameobjects",
+                {"search_term": "Cube", "page_size": "5", "include_inactive": "false"},
+            )
             assert sent[-1]["pageSize"] == 5 and sent[-1]["includeInactive"] is False
-            await client.call_tool("manage_sprite", {
-                "action": "get_info", "path": "Assets/hero.png", "page_size": 5, "cursor": 0,
-            })
+            await client.call_tool(
+                "manage_sprite",
+                {
+                    "action": "get_info",
+                    "path": "Assets/hero.png",
+                    "page_size": 5,
+                    "cursor": 0,
+                },
+            )
             assert sent[-1]["page_size"] == 5 and sent[-1]["cursor"] == 0
 
     asyncio.run(exercise())
@@ -232,7 +292,9 @@ def test_entire_registered_catalog_has_strict_scalar_leaf_schemas():
             for value in schema:
                 visit(value, label)
 
-    tools = [t for t in get_registered_tools() if t["func"].__module__.startswith("services.tools.")]
+    tools = [
+        t for t in get_registered_tools() if t["func"].__module__.startswith("services.tools.")
+    ]
     assert len(tools) >= 51
     for tool in tools:
         hints = get_type_hints(tool["func"], include_extras=True)

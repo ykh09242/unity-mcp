@@ -1,4 +1,5 @@
 """Registering another server must not add wrappers to the shared resource registry."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -16,7 +17,7 @@ def test_repeated_registration_preserves_handlers_and_single_usage_events(mode, 
         directory.mkdir()
         env[key] = str(directory)
     env.pop("UNITY_MCP_DEFAULT_INSTANCE", None)
-    source = r'''
+    source = r"""
 import asyncio
 import json
 import logging
@@ -123,10 +124,13 @@ async def scenario():
     assert all(entry["func"] is originals[entry["name"]] for entry in get_registered_resources())
 
 asyncio.run(scenario())
-'''
+"""
     result = subprocess.run(
         [sys.executable, "-c", f"MODE = {mode!r}\n" + textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1], env=env,
-        capture_output=True, text=True, timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr

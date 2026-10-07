@@ -1,11 +1,10 @@
 using System;
 using System.Collections.Generic;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using MCPForUnity.Editor.Helpers;
-using UnityEngine;
 using UnityEditor;
-
+using UnityEngine;
 #if UNITY_VFX_GRAPH //Please enable the symbol in the project settings for VisualEffectGraph to work
 using UnityEngine.VFX;
 #endif
@@ -187,9 +186,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 }
                 catch (JsonException ex)
                 {
-                    throw new JsonException(  
-                        "'properties' must be a JSON object or a JSON string containing an object.",
-                        ex); 
+                    throw new JsonException("'properties' must be a JSON object or a JSON string containing an object.", ex);
                 }
             }
 
@@ -262,7 +259,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 // Route to appropriate handler based on action prefix
                 if (actionLower == "ping")
                 {
-                    return new { success = true, tool = "manage_vfx", components = new[] { "ParticleSystem", "VisualEffect", "LineRenderer", "TrailRenderer" } };
+                    return new
+                    {
+                        success = true,
+                        tool = "manage_vfx",
+                        components = new[] { "ParticleSystem", "VisualEffect", "LineRenderer", "TrailRenderer" },
+                    };
                 }
 
                 // ParticleSystem actions (particle_*)
@@ -297,7 +299,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
             catch (Exception ex)
             {
-                return new { success = false, message = ex.Message, stackTrace = ex.StackTrace };
+                return new
+                {
+                    success = false,
+                    message = ex.Message,
+                    stackTrace = ex.StackTrace,
+                };
             }
         }
 
@@ -305,26 +312,48 @@ namespace MCPForUnity.Editor.Tools.Vfx
         {
             switch (action)
             {
-                case "create": return ParticleControl.Create(@params);
-                case "get_info": return ParticleRead.GetInfo(@params);
-                case "set_main": return ParticleWrite.SetMain(@params);
-                case "set_emission": return ParticleWrite.SetEmission(@params);
-                case "set_shape": return ParticleWrite.SetShape(@params);
-                case "set_color_over_lifetime": return ParticleWrite.SetColorOverLifetime(@params);
-                case "set_size_over_lifetime": return ParticleWrite.SetSizeOverLifetime(@params);
-                case "set_velocity_over_lifetime": return ParticleWrite.SetVelocityOverLifetime(@params);
-                case "set_noise": return ParticleWrite.SetNoise(@params);
-                case "set_renderer": return ParticleWrite.SetRenderer(@params);
-                case "enable_module": return ParticleControl.EnableModule(@params);
-                case "play": return ParticleControl.Control(@params, "play");
-                case "stop": return ParticleControl.Control(@params, "stop");
-                case "pause": return ParticleControl.Control(@params, "pause");
-                case "restart": return ParticleControl.Control(@params, "restart");
-                case "clear": return ParticleControl.Control(@params, "clear");
-                case "add_burst": return ParticleControl.AddBurst(@params);
-                case "clear_bursts": return ParticleControl.ClearBursts(@params);
+                case "create":
+                    return ParticleControl.Create(@params);
+                case "get_info":
+                    return ParticleRead.GetInfo(@params);
+                case "set_main":
+                    return ParticleWrite.SetMain(@params);
+                case "set_emission":
+                    return ParticleWrite.SetEmission(@params);
+                case "set_shape":
+                    return ParticleWrite.SetShape(@params);
+                case "set_color_over_lifetime":
+                    return ParticleWrite.SetColorOverLifetime(@params);
+                case "set_size_over_lifetime":
+                    return ParticleWrite.SetSizeOverLifetime(@params);
+                case "set_velocity_over_lifetime":
+                    return ParticleWrite.SetVelocityOverLifetime(@params);
+                case "set_noise":
+                    return ParticleWrite.SetNoise(@params);
+                case "set_renderer":
+                    return ParticleWrite.SetRenderer(@params);
+                case "enable_module":
+                    return ParticleControl.EnableModule(@params);
+                case "play":
+                    return ParticleControl.Control(@params, "play");
+                case "stop":
+                    return ParticleControl.Control(@params, "stop");
+                case "pause":
+                    return ParticleControl.Control(@params, "pause");
+                case "restart":
+                    return ParticleControl.Control(@params, "restart");
+                case "clear":
+                    return ParticleControl.Control(@params, "clear");
+                case "add_burst":
+                    return ParticleControl.AddBurst(@params);
+                case "clear_bursts":
+                    return ParticleControl.ClearBursts(@params);
                 default:
-                    return new { success = false, message = $"Unknown particle action: {action}. Valid: create, get_info, set_main, set_emission, set_shape, set_color_over_lifetime, set_size_over_lifetime, set_velocity_over_lifetime, set_noise, set_renderer, enable_module, play, stop, pause, restart, clear, add_burst, clear_bursts" };
+                    return new
+                    {
+                        success = false,
+                        message = $"Unknown particle action: {action}. Valid: create, get_info, set_main, set_emission, set_shape, set_color_over_lifetime, set_size_over_lifetime, set_velocity_over_lifetime, set_noise, set_renderer, enable_module, play, stop, pause, restart, clear, add_burst, clear_bursts",
+                    };
             }
         }
 
@@ -339,37 +368,63 @@ namespace MCPForUnity.Editor.Tools.Vfx
             switch (action)
             {
                 // Asset management
-                case "create_asset": return VfxGraphAssets.CreateAsset(@params);
-                case "assign_asset": return VfxGraphAssets.AssignAsset(@params);
-                case "list_templates": return VfxGraphAssets.ListTemplates(@params);
-                case "list_assets": return VfxGraphAssets.ListAssets(@params);
+                case "create_asset":
+                    return VfxGraphAssets.CreateAsset(@params);
+                case "assign_asset":
+                    return VfxGraphAssets.AssignAsset(@params);
+                case "list_templates":
+                    return VfxGraphAssets.ListTemplates(@params);
+                case "list_assets":
+                    return VfxGraphAssets.ListAssets(@params);
 
                 // Runtime parameter control
-                case "get_info": return VfxGraphRead.GetInfo(@params);
-                case "set_float": return VfxGraphWrite.SetParameter<float>(@params, (vfx, n, v) => vfx.SetFloat(n, v));
-                case "set_int": return VfxGraphWrite.SetParameter<int>(@params, (vfx, n, v) => vfx.SetInt(n, v));
-                case "set_bool": return VfxGraphWrite.SetParameter<bool>(@params, (vfx, n, v) => vfx.SetBool(n, v));
-                case "set_vector2": return VfxGraphWrite.SetVector(@params, 2);
-                case "set_vector3": return VfxGraphWrite.SetVector(@params, 3);
-                case "set_vector4": return VfxGraphWrite.SetVector(@params, 4);
-                case "set_color": return VfxGraphWrite.SetColor(@params);
-                case "set_gradient": return VfxGraphWrite.SetGradient(@params);
-                case "set_texture": return VfxGraphWrite.SetTexture(@params);
-                case "set_mesh": return VfxGraphWrite.SetMesh(@params);
-                case "set_curve": return VfxGraphWrite.SetCurve(@params);
-                case "send_event": return VfxGraphWrite.SendEvent(@params);
-                case "play": return VfxGraphControl.Control(@params, "play");
-                case "stop": return VfxGraphControl.Control(@params, "stop");
-                case "pause": return VfxGraphControl.Control(@params, "pause");
-                case "reinit": return VfxGraphControl.Control(@params, "reinit");
-                case "set_playback_speed": return VfxGraphControl.SetPlaybackSpeed(@params);
-                case "set_seed": return VfxGraphControl.SetSeed(@params);
+                case "get_info":
+                    return VfxGraphRead.GetInfo(@params);
+                case "set_float":
+                    return VfxGraphWrite.SetParameter<float>(@params, (vfx, n, v) => vfx.SetFloat(n, v));
+                case "set_int":
+                    return VfxGraphWrite.SetParameter<int>(@params, (vfx, n, v) => vfx.SetInt(n, v));
+                case "set_bool":
+                    return VfxGraphWrite.SetParameter<bool>(@params, (vfx, n, v) => vfx.SetBool(n, v));
+                case "set_vector2":
+                    return VfxGraphWrite.SetVector(@params, 2);
+                case "set_vector3":
+                    return VfxGraphWrite.SetVector(@params, 3);
+                case "set_vector4":
+                    return VfxGraphWrite.SetVector(@params, 4);
+                case "set_color":
+                    return VfxGraphWrite.SetColor(@params);
+                case "set_gradient":
+                    return VfxGraphWrite.SetGradient(@params);
+                case "set_texture":
+                    return VfxGraphWrite.SetTexture(@params);
+                case "set_mesh":
+                    return VfxGraphWrite.SetMesh(@params);
+                case "set_curve":
+                    return VfxGraphWrite.SetCurve(@params);
+                case "send_event":
+                    return VfxGraphWrite.SendEvent(@params);
+                case "play":
+                    return VfxGraphControl.Control(@params, "play");
+                case "stop":
+                    return VfxGraphControl.Control(@params, "stop");
+                case "pause":
+                    return VfxGraphControl.Control(@params, "pause");
+                case "reinit":
+                    return VfxGraphControl.Control(@params, "reinit");
+                case "set_playback_speed":
+                    return VfxGraphControl.SetPlaybackSpeed(@params);
+                case "set_seed":
+                    return VfxGraphControl.SetSeed(@params);
                 default:
-                    return new { success = false, message = $"Unknown vfx action: {action}. Valid: create_asset, assign_asset, list_templates, list_assets, get_info, set_float, set_int, set_bool, set_vector2/3/4, set_color, set_gradient, set_texture, set_mesh, set_curve, send_event, play, stop, pause, reinit, set_playback_speed, set_seed" };
+                    return new
+                    {
+                        success = false,
+                        message = $"Unknown vfx action: {action}. Valid: create_asset, assign_asset, list_templates, list_assets, get_info, set_float, set_int, set_bool, set_vector2/3/4, set_color, set_gradient, set_texture, set_mesh, set_curve, send_event, play, stop, pause, reinit, set_playback_speed, set_seed",
+                    };
             }
 #endif
         }
-
 
         #endregion
 
@@ -377,21 +432,38 @@ namespace MCPForUnity.Editor.Tools.Vfx
         {
             switch (action)
             {
-                case "get_info": return LineRead.GetInfo(@params);
-                case "set_positions": return LineWrite.SetPositions(@params);
-                case "add_position": return LineWrite.AddPosition(@params);
-                case "set_position": return LineWrite.SetPosition(@params);
-                case "set_width": return LineWrite.SetWidth(@params);
-                case "set_color": return LineWrite.SetColor(@params);
-                case "set_material": return LineWrite.SetMaterial(@params);
-                case "set_properties": return LineWrite.SetProperties(@params);
-                case "clear": return LineWrite.Clear(@params);
-                case "create_line": return LineCreate.CreateLine(@params);
-                case "create_circle": return LineCreate.CreateCircle(@params);
-                case "create_arc": return LineCreate.CreateArc(@params);
-                case "create_bezier": return LineCreate.CreateBezier(@params);
+                case "get_info":
+                    return LineRead.GetInfo(@params);
+                case "set_positions":
+                    return LineWrite.SetPositions(@params);
+                case "add_position":
+                    return LineWrite.AddPosition(@params);
+                case "set_position":
+                    return LineWrite.SetPosition(@params);
+                case "set_width":
+                    return LineWrite.SetWidth(@params);
+                case "set_color":
+                    return LineWrite.SetColor(@params);
+                case "set_material":
+                    return LineWrite.SetMaterial(@params);
+                case "set_properties":
+                    return LineWrite.SetProperties(@params);
+                case "clear":
+                    return LineWrite.Clear(@params);
+                case "create_line":
+                    return LineCreate.CreateLine(@params);
+                case "create_circle":
+                    return LineCreate.CreateCircle(@params);
+                case "create_arc":
+                    return LineCreate.CreateArc(@params);
+                case "create_bezier":
+                    return LineCreate.CreateBezier(@params);
                 default:
-                    return new { success = false, message = $"Unknown line action: {action}. Valid: get_info, set_positions, add_position, set_position, set_width, set_color, set_material, set_properties, clear, create_line, create_circle, create_arc, create_bezier" };
+                    return new
+                    {
+                        success = false,
+                        message = $"Unknown line action: {action}. Valid: get_info, set_positions, add_position, set_position, set_width, set_color, set_material, set_properties, clear, create_line, create_circle, create_arc, create_bezier",
+                    };
             }
         }
 
@@ -399,16 +471,28 @@ namespace MCPForUnity.Editor.Tools.Vfx
         {
             switch (action)
             {
-                case "get_info": return TrailRead.GetInfo(@params);
-                case "set_time": return TrailWrite.SetTime(@params);
-                case "set_width": return TrailWrite.SetWidth(@params);
-                case "set_color": return TrailWrite.SetColor(@params);
-                case "set_material": return TrailWrite.SetMaterial(@params);
-                case "set_properties": return TrailWrite.SetProperties(@params);
-                case "clear": return TrailControl.Clear(@params);
-                case "emit": return TrailControl.Emit(@params);
+                case "get_info":
+                    return TrailRead.GetInfo(@params);
+                case "set_time":
+                    return TrailWrite.SetTime(@params);
+                case "set_width":
+                    return TrailWrite.SetWidth(@params);
+                case "set_color":
+                    return TrailWrite.SetColor(@params);
+                case "set_material":
+                    return TrailWrite.SetMaterial(@params);
+                case "set_properties":
+                    return TrailWrite.SetProperties(@params);
+                case "clear":
+                    return TrailControl.Clear(@params);
+                case "emit":
+                    return TrailControl.Emit(@params);
                 default:
-                    return new { success = false, message = $"Unknown trail action: {action}. Valid: get_info, set_time, set_width, set_color, set_material, set_properties, clear, emit" };
+                    return new
+                    {
+                        success = false,
+                        message = $"Unknown trail action: {action}. Valid: get_info, set_time, set_width, set_color, set_material, set_properties, clear, emit",
+                    };
             }
         }
     }

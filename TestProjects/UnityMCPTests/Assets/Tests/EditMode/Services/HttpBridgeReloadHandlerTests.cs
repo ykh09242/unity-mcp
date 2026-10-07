@@ -1,9 +1,9 @@
 using System;
 using System.Threading.Tasks;
-using NUnit.Framework;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
+using NUnit.Framework;
 using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Services
@@ -16,10 +16,7 @@ namespace MCPForUnityTests.Editor.Services
     /// </summary>
     public class HttpBridgeReloadHandlerTests : TransportPreferenceTestBase
     {
-        private static readonly TimeSpan[] ZeroSchedule =
-        {
-            TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero
-        };
+        private static readonly TimeSpan[] ZeroSchedule = { TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero };
 
         private FakeTransportClient _fakeClient;
         private TransportManager _manager;
@@ -55,8 +52,7 @@ namespace MCPForUnityTests.Editor.Services
             MCPServiceLocator.Register(_savedManager);
         }
 
-        private static bool ResumeFlagSet =>
-            SessionState.GetBool(HttpBridgeReloadHandler.ResumeSessionKey, false);
+        private static bool ResumeFlagSet => SessionState.GetBool(HttpBridgeReloadHandler.ResumeSessionKey, false);
 
         private void StartBridge()
         {
@@ -82,8 +78,7 @@ namespace MCPForUnityTests.Editor.Services
 
             HttpBridgeReloadHandler.OnBeforeAssemblyReloadCore(_manager);
 
-            Assert.IsTrue(ResumeFlagSet,
-                "a pending resume must survive a reload boundary where the bridge is down (#1229 multi-pass compile)");
+            Assert.IsTrue(ResumeFlagSet, "a pending resume must survive a reload boundary where the bridge is down (#1229 multi-pass compile)");
         }
 
         [Test]
@@ -135,8 +130,7 @@ namespace MCPForUnityTests.Editor.Services
 
             Assert.IsTrue(resume.IsCompleted, "resume should complete synchronously with fakes");
             Assert.AreEqual(ZeroSchedule.Length, _fakeClient.StartCalls);
-            Assert.IsFalse(ResumeFlagSet,
-                "exhaustion erases the flag so later reload boundaries don't replay the failure loop");
+            Assert.IsFalse(ResumeFlagSet, "exhaustion erases the flag so later reload boundaries don't replay the failure loop");
         }
 
         [Test]
@@ -162,8 +156,7 @@ namespace MCPForUnityTests.Editor.Services
             Task resume = HttpBridgeReloadHandler.ResumeHttpWithRetriesAsync(ZeroSchedule);
 
             Assert.IsTrue(resume.IsCompleted, "resume should complete synchronously with fakes");
-            Assert.AreEqual(1, _fakeClient.StartCalls,
-                "a session established while the resume waited must not be bounced");
+            Assert.AreEqual(1, _fakeClient.StartCalls, "a session established while the resume waited must not be bounced");
             Assert.IsFalse(ResumeFlagSet);
         }
 

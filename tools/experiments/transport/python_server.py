@@ -6,6 +6,7 @@
 # How to run: uv run python_server.py mcp FIXTURE_DIR
 # Existing repository interpreter: Server/.venv/Scripts/python.exe python_server.py ...
 """Two public tool shapes backed exclusively by owned deterministic fixtures."""
+
 from __future__ import annotations
 
 import json
@@ -23,8 +24,10 @@ JSON: Final = TypeAdapter(dict[str, JsonValue])
 
 def build_server(fixtures: Path) -> FastMCP:
     """Construct the representative subset without importing product startup."""
-    outputs = {name: JSON.validate_json((fixtures / f"{name}.json").read_bytes())
-               for name in ("small", "state", "large", "job")}
+    outputs = {
+        name: JSON.validate_json((fixtures / f"{name}.json").read_bytes())
+        for name in ("small", "state", "large", "job")
+    }
     server = FastMCP("owned-python-probe")
 
     # The wide signatures intentionally preserve the public tool parameter shape.
@@ -60,8 +63,10 @@ def build_server(fixtures: Path) -> FastMCP:
 
 async def export_tools(server: FastMCP, fixtures: Path) -> None:
     """Share the exact advertised descriptors with the official C# SDK server."""
-    tools = [tool.to_mcp_tool().model_dump(mode="json", by_alias=True, exclude_none=True)
-             for tool in await server.list_tools()]
+    tools = [
+        tool.to_mcp_tool().model_dump(mode="json", by_alias=True, exclude_none=True)
+        for tool in await server.list_tools()
+    ]
     _ = (fixtures / "tools.json").write_text(json.dumps(tools), encoding="utf-8")
 
 

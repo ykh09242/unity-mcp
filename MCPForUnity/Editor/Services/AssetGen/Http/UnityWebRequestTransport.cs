@@ -16,18 +16,15 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
     {
         public Task<HttpResult> SendAsync(HttpRequestSpec spec, CancellationToken ct)
         {
-            if (spec == null) throw new ArgumentNullException(nameof(spec));
+            if (spec == null)
+                throw new ArgumentNullException(nameof(spec));
             if (spec.DownloadProvider != null)
                 return new AssetDownloadTransport().DownloadAsync(spec.DownloadProvider, spec.Url, ct);
 
             var tcs = new TaskCompletionSource<HttpResult>();
 
             var download = new BoundedDownloadHandler();
-            var request = new UnityWebRequest(spec.Url, spec.Method ?? UnityWebRequest.kHttpVerbGET)
-            {
-                downloadHandler = download,
-                timeout = 120
-            };
+            var request = new UnityWebRequest(spec.Url, spec.Method ?? UnityWebRequest.kHttpVerbGET) { downloadHandler = download, timeout = 120 };
             if (spec.Body != null)
             {
                 request.uploadHandler = new UploadHandlerRaw(spec.Body);
@@ -52,7 +49,11 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
             {
                 ctReg = ct.Register(() =>
                 {
-                    try { request.Abort(); } catch { /* ignore */ }
+                    try
+                    {
+                        request.Abort();
+                    }
+                    catch { /* ignore */ }
                     tcs.TrySetCanceled();
                 });
             }
@@ -69,7 +70,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                         Body = body,
                         Text = Encoding.UTF8.GetString(body),
                         IsSuccess = request.result == UnityWebRequest.Result.Success,
-                        RetryAfterSeconds = int.TryParse(request.GetResponseHeader("Retry-After"), out int retryAfter) ? (int?)retryAfter : null
+                        RetryAfterSeconds = int.TryParse(request.GetResponseHeader("Retry-After"), out int retryAfter) ? (int?)retryAfter : null,
                     };
                     tcs.TrySetResult(result);
                 }

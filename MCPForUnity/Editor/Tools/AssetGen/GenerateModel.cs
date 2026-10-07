@@ -19,22 +19,32 @@ namespace MCPForUnity.Editor.Tools.AssetGen
     {
         public static object HandleCommand(JObject @params)
         {
-            if (@params == null) return new ErrorResponse("Parameters cannot be null.");
+            if (@params == null)
+                return new ErrorResponse("Parameters cannot be null.");
             var p = new ToolParams(@params);
             string action = (p.Get("action") ?? string.Empty).ToLowerInvariant();
             try
             {
                 switch (action)
                 {
-                    case "generate": return Generate(p);
-                    case "status": return AssetGenToolHelpers.Status(p, "3D model", 3.0);
-                    case "cancel": return AssetGenToolHelpers.Cancel(p);
-                    case "list_providers": return AssetGenToolHelpers.ListProviders("model");
-                    case "list_models": return AssetGenToolHelpers.ListModels(p, "model");
-                    case "refresh_models": return AssetGenToolHelpers.ListModels(p, "model", true);
-                    case "": return new ErrorResponse("'action' parameter is required.");
+                    case "generate":
+                        return Generate(p);
+                    case "status":
+                        return AssetGenToolHelpers.Status(p, "3D model", 3.0);
+                    case "cancel":
+                        return AssetGenToolHelpers.Cancel(p);
+                    case "list_providers":
+                        return AssetGenToolHelpers.ListProviders("model");
+                    case "list_models":
+                        return AssetGenToolHelpers.ListModels(p, "model");
+                    case "refresh_models":
+                        return AssetGenToolHelpers.ListModels(p, "model", true);
+                    case "":
+                        return new ErrorResponse("'action' parameter is required.");
                     default:
-                        return new ErrorResponse($"Unknown action: '{action}'. Supported: generate, status, cancel, list_providers, list_models, refresh_models.");
+                        return new ErrorResponse(
+                            $"Unknown action: '{action}'. Supported: generate, status, cancel, list_providers, list_models, refresh_models."
+                        );
                 }
             }
             catch (NotSupportedException nse)
@@ -74,7 +84,8 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 Name = p.Get("name"),
                 OutputFolder = p.Get("outputFolder"),
             };
-            if (string.IsNullOrWhiteSpace(req.Mode)) req.Mode = "text";
+            if (string.IsNullOrWhiteSpace(req.Mode))
+                req.Mode = "text";
             if (req.Mode != "text" && req.Mode != "image")
                 return new ErrorResponse("'mode' must be 'text' or 'image'.");
             if (!AssetGenPaths.NormalizeOutputFolder(req.OutputFolder, out req.OutputFolder, out string outputErr))
@@ -87,7 +98,9 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 if (string.IsNullOrWhiteSpace(req.ImagePath))
                     return new ErrorResponse("image mode requires 'image_url' or 'image_path'.");
                 if (provider == "tripo")
-                    return new ErrorResponse("Tripo image input requires a hosted 'image_url'; local 'image_path' is not supported for Tripo (use Meshy for local-image→3D).");
+                    return new ErrorResponse(
+                        "Tripo image input requires a hosted 'image_url'; local 'image_path' is not supported for Tripo (use Meshy for local-image→3D)."
+                    );
                 if (!LocalImage.ResolveExisting(req.ImagePath, out string absImg, out string imgErr))
                     return new ErrorResponse(imgErr);
                 req.ImagePath = absImg;
@@ -100,7 +113,13 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             return new PendingResponse(
                 $"3D generation started with '{provider}'. Poll the status action with this job_id.",
                 pollIntervalSeconds: 3.0,
-                data: new { job_id = job.JobId, provider, status = "pending" });
+                data: new
+                {
+                    job_id = job.JobId,
+                    provider,
+                    status = "pending",
+                }
+            );
         }
     }
 }

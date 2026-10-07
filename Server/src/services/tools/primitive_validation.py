@@ -1,4 +1,5 @@
 """Validate the native PrimitiveType Enum.Parse syntax without rewriting tokens."""
+
 import re
 from typing import Any
 

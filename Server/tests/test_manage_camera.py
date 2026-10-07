@@ -22,6 +22,7 @@ from services.tools.manage_camera import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_unity(monkeypatch):
     """Patch Unity transport layer and return captured call dict."""
@@ -48,10 +49,15 @@ def mock_unity(monkeypatch):
 # Action list completeness
 # ---------------------------------------------------------------------------
 
+
 def test_all_actions_is_union_of_sub_lists():
     expected = set(
-        SETUP_ACTIONS + CREATION_ACTIONS + CONFIGURATION_ACTIONS
-        + EXTENSION_ACTIONS + CONTROL_ACTIONS + CAPTURE_ACTIONS
+        SETUP_ACTIONS
+        + CREATION_ACTIONS
+        + CONFIGURATION_ACTIONS
+        + EXTENSION_ACTIONS
+        + CONTROL_ACTIONS
+        + CAPTURE_ACTIONS
     )
     assert set(ALL_ACTIONS) == expected
 
@@ -68,19 +74,16 @@ def test_all_actions_count():
 # Invalid / missing action
 # ---------------------------------------------------------------------------
 
+
 def test_unknown_action_returns_error(mock_unity):
-    result = asyncio.run(
-        manage_camera(SimpleNamespace(), action="nonexistent_action")
-    )
+    result = asyncio.run(manage_camera(SimpleNamespace(), action="nonexistent_action"))
     assert result["success"] is False
     assert "Unknown action" in result["message"]
     assert "tool_name" not in mock_unity
 
 
 def test_empty_action_returns_error(mock_unity):
-    result = asyncio.run(
-        manage_camera(SimpleNamespace(), action="")
-    )
+    result = asyncio.run(manage_camera(SimpleNamespace(), action=""))
     assert result["success"] is False
 
 
@@ -88,10 +91,9 @@ def test_empty_action_returns_error(mock_unity):
 # Setup actions
 # ---------------------------------------------------------------------------
 
+
 def test_ping_sends_correct_params(mock_unity):
-    result = asyncio.run(
-        manage_camera(SimpleNamespace(), action="ping")
-    )
+    result = asyncio.run(manage_camera(SimpleNamespace(), action="ping"))
     assert result["success"] is True
     assert mock_unity["tool_name"] == "manage_camera"
     assert mock_unity["params"]["action"] == "ping"
@@ -111,9 +113,7 @@ def test_ensure_brain_sends_correct_params(mock_unity):
 
 
 def test_get_brain_status_sends_correct_params(mock_unity):
-    result = asyncio.run(
-        manage_camera(SimpleNamespace(), action="get_brain_status")
-    )
+    result = asyncio.run(manage_camera(SimpleNamespace(), action="get_brain_status"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "get_brain_status"
 
@@ -121,6 +121,7 @@ def test_get_brain_status_sends_correct_params(mock_unity):
 # ---------------------------------------------------------------------------
 # Camera creation
 # ---------------------------------------------------------------------------
+
 
 def test_create_camera_with_preset(mock_unity):
     result = asyncio.run(
@@ -145,9 +146,7 @@ def test_create_camera_with_preset(mock_unity):
 
 
 def test_create_camera_minimal(mock_unity):
-    result = asyncio.run(
-        manage_camera(SimpleNamespace(), action="create_camera")
-    )
+    result = asyncio.run(manage_camera(SimpleNamespace(), action="create_camera"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "create_camera"
 
@@ -155,6 +154,7 @@ def test_create_camera_minimal(mock_unity):
 # ---------------------------------------------------------------------------
 # Configuration actions
 # ---------------------------------------------------------------------------
+
 
 def test_set_target_sends_follow_and_lookat(mock_unity):
     result = asyncio.run(
@@ -240,6 +240,7 @@ def test_set_noise_sends_amplitude_frequency(mock_unity):
 # Extension actions
 # ---------------------------------------------------------------------------
 
+
 def test_add_extension_sends_type(mock_unity):
     result = asyncio.run(
         manage_camera(
@@ -270,6 +271,7 @@ def test_remove_extension_sends_type(mock_unity):
 # Control actions
 # ---------------------------------------------------------------------------
 
+
 def test_set_blend_sends_style_and_duration(mock_unity):
     result = asyncio.run(
         manage_camera(
@@ -296,9 +298,7 @@ def test_force_camera_sends_target(mock_unity):
 
 
 def test_release_override_sends_no_extra_params(mock_unity):
-    result = asyncio.run(
-        manage_camera(SimpleNamespace(), action="release_override")
-    )
+    result = asyncio.run(manage_camera(SimpleNamespace(), action="release_override"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "release_override"
     assert "target" not in mock_unity["params"]
@@ -306,9 +306,7 @@ def test_release_override_sends_no_extra_params(mock_unity):
 
 
 def test_list_cameras_sends_no_extra_params(mock_unity):
-    result = asyncio.run(
-        manage_camera(SimpleNamespace(), action="list_cameras")
-    )
+    result = asyncio.run(manage_camera(SimpleNamespace(), action="list_cameras"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "list_cameras"
 
@@ -316,6 +314,7 @@ def test_list_cameras_sends_no_extra_params(mock_unity):
 # ---------------------------------------------------------------------------
 # Capture actions
 # ---------------------------------------------------------------------------
+
 
 def test_screenshot_sends_basic_params(mock_unity):
     result = asyncio.run(
@@ -455,9 +454,7 @@ def test_screenshot_view_target_works_without_capture_source(mock_unity):
 
 
 def test_screenshot_multiview_sends_action(mock_unity):
-    result = asyncio.run(
-        manage_camera(SimpleNamespace(), action="screenshot_multiview")
-    )
+    result = asyncio.run(manage_camera(SimpleNamespace(), action="screenshot_multiview"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "screenshot_multiview"
 
@@ -506,6 +503,7 @@ def test_screenshot_invalid_orbit_elevations(mock_unity):
 # ---------------------------------------------------------------------------
 # Parameter handling
 # ---------------------------------------------------------------------------
+
 
 def test_search_method_passed_through(mock_unity):
     result = asyncio.run(
@@ -564,9 +562,7 @@ def test_non_dict_response_wrapped(monkeypatch):
         fake_send,
     )
 
-    result = asyncio.run(
-        manage_camera(SimpleNamespace(), action="ping")
-    )
+    result = asyncio.run(manage_camera(SimpleNamespace(), action="ping"))
     assert result["success"] is False
     assert "unexpected string response" in result["message"]
 
@@ -575,17 +571,14 @@ def test_non_dict_response_wrapped(monkeypatch):
 # Case insensitivity
 # ---------------------------------------------------------------------------
 
+
 def test_action_case_insensitive(mock_unity):
-    result = asyncio.run(
-        manage_camera(SimpleNamespace(), action="Create_Camera")
-    )
+    result = asyncio.run(manage_camera(SimpleNamespace(), action="Create_Camera"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "create_camera"
 
 
 def test_action_uppercase(mock_unity):
-    result = asyncio.run(
-        manage_camera(SimpleNamespace(), action="PING")
-    )
+    result = asyncio.run(manage_camera(SimpleNamespace(), action="PING"))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == "ping"

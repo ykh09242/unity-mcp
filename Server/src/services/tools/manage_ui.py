@@ -4,6 +4,7 @@ Defines the manage_ui tool for creating and managing Unity UI Toolkit elements.
 Supports creating UXML documents and USS stylesheets, attaching UIDocument
 components to GameObjects, and inspecting visual trees.
 """
+
 import base64
 import os
 from typing import Annotated, Any, Literal
@@ -28,7 +29,9 @@ def _canonical_ui_path(path: str) -> str:
     parts = normalized.split("/")
     if not parts or parts[0].lower() != "assets":
         raise ValueError("path must be under 'Assets/'.")
-    if any(part in ("", ".", "..") for part in parts) or any(c in normalized for c in ':*?"<>|\x00\r\n'):
+    if any(part in ("", ".", "..") for part in parts) or any(
+        c in normalized for c in ':*?"<>|\x00\r\n'
+    ):
         raise ValueError("path must not contain rooted or traversal sequences.")
     if os.path.splitext(normalized)[1].lower() not in _VALID_EXTENSIONS:
         raise ValueError("Invalid file extension. Must be .uxml or .uss.")
@@ -67,117 +70,151 @@ def _canonical_ui_path(path: str) -> str:
 )
 async def manage_ui(
     ctx: Context,
-    action: Annotated[Literal[
-        "ping",
-        "create",
-        "read",
-        "update",
-        "delete",
-        "attach_ui_document",
-        "detach_ui_document",
-        "create_panel_settings",
-        "update_panel_settings",
-        "get_visual_tree",
-        "render_ui",
-        "link_stylesheet",
-        "list",
-        "modify_visual_element",
-    ], "Action to perform."],
-
+    action: Annotated[
+        Literal[
+            "ping",
+            "create",
+            "read",
+            "update",
+            "delete",
+            "attach_ui_document",
+            "detach_ui_document",
+            "create_panel_settings",
+            "update_panel_settings",
+            "get_visual_tree",
+            "render_ui",
+            "link_stylesheet",
+            "list",
+            "modify_visual_element",
+        ],
+        "Action to perform.",
+    ],
     # File operations (create/read/update/link_stylesheet)
-    path: Annotated[str,
-                     "Assets-relative path (e.g., 'Assets/UI/MainMenu.uxml' or 'Assets/UI/Styles.uss'). "
-                     "For render_ui: optional UXML path to render directly without a scene GameObject."] | None = None,
-    contents: Annotated[str,
-                         "File content (UXML or USS markup). Plain text - encoding handled automatically."] | None = None,
-
+    path: Annotated[
+        str,
+        "Assets-relative path (e.g., 'Assets/UI/MainMenu.uxml' or 'Assets/UI/Styles.uss'). "
+        "For render_ui: optional UXML path to render directly without a scene GameObject.",
+    ]
+    | None = None,
+    contents: Annotated[
+        str, "File content (UXML or USS markup). Plain text - encoding handled automatically."
+    ]
+    | None = None,
     # attach_ui_document / get_visual_tree / render_ui
-    target: Annotated[str,
-                       "Target GameObject name or path for attach_ui_document / get_visual_tree / render_ui."] | None = None,
-    source_asset: Annotated[str,
-                             "Path to UXML VisualTreeAsset (e.g., 'Assets/UI/MainMenu.uxml')."] | None = None,
-    panel_settings: Annotated[str,
-                               "Path to PanelSettings asset. Auto-creates default if omitted."] | None = None,
-    sort_order: Annotated[int,
-                           "UIDocument sort order (default 0)."] | None = None,
-
+    target: Annotated[
+        str, "Target GameObject name or path for attach_ui_document / get_visual_tree / render_ui."
+    ]
+    | None = None,
+    source_asset: Annotated[str, "Path to UXML VisualTreeAsset (e.g., 'Assets/UI/MainMenu.uxml')."]
+    | None = None,
+    panel_settings: Annotated[str, "Path to PanelSettings asset. Auto-creates default if omitted."]
+    | None = None,
+    sort_order: Annotated[int, "UIDocument sort order (default 0)."] | None = None,
     # create_panel_settings
-    scale_mode: Annotated[Literal[
-        "ConstantPixelSize",
-        "ConstantPhysicalSize",
-        "ScaleWithScreenSize",
-    ], "Panel scale mode. Legacy shorthand; prefer using 'settings' dict."] | None = None,
-    reference_resolution: Annotated[dict[str, int],
-                                     "Reference resolution as {width, height}. Legacy shorthand; prefer using 'settings' dict."] | None = None,
-    settings: Annotated[dict[str, Any],
-                         "Generic PanelSettings properties dict for create_panel_settings. "
-                         "Keys: scaleMode (ConstantPixelSize|ConstantPhysicalSize|ScaleWithScreenSize), "
-                         "referenceResolution ({width,height}), screenMatchMode (MatchWidthOrHeight|ShrinkToFit|ExpandToFill), "
-                         "match (0-1 float), referenceDpi, fallbackDpi, sortingOrder, targetDisplay, "
-                         "clearColor (bool), colorClearValue (#RRGGBB or {r,g,b,a}), clearDepthStencil, "
-                         "themeStyleSheet (asset path), dynamicAtlasSettings ({minAtlasSize,maxAtlasSize,maxSubTextureSize,activeFilters})."
-                         ] | None = None,
-
+    scale_mode: Annotated[
+        Literal[
+            "ConstantPixelSize",
+            "ConstantPhysicalSize",
+            "ScaleWithScreenSize",
+        ],
+        "Panel scale mode. Legacy shorthand; prefer using 'settings' dict.",
+    ]
+    | None = None,
+    reference_resolution: Annotated[
+        dict[str, int],
+        "Reference resolution as {width, height}. Legacy shorthand; prefer using 'settings' dict.",
+    ]
+    | None = None,
+    settings: Annotated[
+        dict[str, Any],
+        "Generic PanelSettings properties dict for create_panel_settings. "
+        "Keys: scaleMode (ConstantPixelSize|ConstantPhysicalSize|ScaleWithScreenSize), "
+        "referenceResolution ({width,height}), screenMatchMode (MatchWidthOrHeight|ShrinkToFit|ExpandToFill), "
+        "match (0-1 float), referenceDpi, fallbackDpi, sortingOrder, targetDisplay, "
+        "clearColor (bool), colorClearValue (#RRGGBB or {r,g,b,a}), clearDepthStencil, "
+        "themeStyleSheet (asset path), dynamicAtlasSettings ({minAtlasSize,maxAtlasSize,maxSubTextureSize,activeFilters}).",
+    ]
+    | None = None,
     # get_visual_tree
-    max_depth: Annotated[int,
-                          "Max depth to traverse visual tree (default 10)."] | None = None,
-
+    max_depth: Annotated[int, "Max depth to traverse visual tree (default 10)."] | None = None,
     # render_ui
-    width: Annotated[int,
-                      "Render width in pixels, 1 to 8192 (default 1920). "
-                      "The frame may contain at most 33,554,432 pixels. For render_ui."] | None = None,
-    height: Annotated[int,
-                       "Render height in pixels, 1 to 8192 (default 1080). For render_ui."] | None = None,
-    include_image: Annotated[bool,
-                              "Return inline base64 PNG in the response (default false). For render_ui."] | None = None,
-    max_resolution: Annotated[int,
-                               "Max resolution for inline base64 image, 1 to 8192 "
-                               "(default 640; 0 selects the default). For render_ui."] | None = None,
-    screenshot_file_name: Annotated[str,
-                                     "Custom file name for the render output (default: auto-generated). "
-                                     "For render_ui."] | None = None,
-    output_folder: Annotated[str,
-                              "Optional folder for the render output. Project-relative (e.g. 'Assets/Screenshots' or "
-                              "'Captures') or absolute path inside the project. Overrides the user's Editor preference. "
-                              "If omitted, falls back to the Editor preference, then to the built-in default "
-                              "(Assets/Screenshots). For render_ui."] | None = None,
-
+    width: Annotated[
+        int,
+        "Render width in pixels, 1 to 8192 (default 1920). "
+        "The frame may contain at most 33,554,432 pixels. For render_ui.",
+    ]
+    | None = None,
+    height: Annotated[int, "Render height in pixels, 1 to 8192 (default 1080). For render_ui."]
+    | None = None,
+    include_image: Annotated[
+        bool, "Return inline base64 PNG in the response (default false). For render_ui."
+    ]
+    | None = None,
+    max_resolution: Annotated[
+        int,
+        "Max resolution for inline base64 image, 1 to 8192 "
+        "(default 640; 0 selects the default). For render_ui.",
+    ]
+    | None = None,
+    screenshot_file_name: Annotated[
+        str, "Custom file name for the render output (default: auto-generated). For render_ui."
+    ]
+    | None = None,
+    output_folder: Annotated[
+        str,
+        "Optional folder for the render output. Project-relative (e.g. 'Assets/Screenshots' or "
+        "'Captures') or absolute path inside the project. Overrides the user's Editor preference. "
+        "If omitted, falls back to the Editor preference, then to the built-in default "
+        "(Assets/Screenshots). For render_ui.",
+    ]
+    | None = None,
     # link_stylesheet
-    stylesheet: Annotated[str,
-                           "Path to USS stylesheet to link (e.g., 'Assets/UI/Styles.uss'). "
-                           "For link_stylesheet."] | None = None,
-
+    stylesheet: Annotated[
+        str, "Path to USS stylesheet to link (e.g., 'Assets/UI/Styles.uss'). For link_stylesheet."
+    ]
+    | None = None,
     # list
-    filter_type: Annotated[str,
-                            "Filter UI assets by type: 'uxml', 'uss', 'PanelSettings', or omit for all. "
-                            "For list."] | None = None,
-    page_size: Annotated[int,
-                          "Number of results per page: 1-1000 (default 50). For list."] | None = None,
-    page_number: Annotated[int,
-                            "Page number, 1-based (default 1). For list."] | None = None,
-
+    filter_type: Annotated[
+        str, "Filter UI assets by type: 'uxml', 'uss', 'PanelSettings', or omit for all. For list."
+    ]
+    | None = None,
+    page_size: Annotated[int, "Number of results per page: 1-1000 (default 50). For list."]
+    | None = None,
+    page_number: Annotated[int, "Page number, 1-based (default 1). For list."] | None = None,
     # modify_visual_element
-    element_name: Annotated[str,
-                             "Name of the visual element to modify (the 'name' attribute in UXML). "
-                             "For modify_visual_element."] | None = None,
-    text: Annotated[str,
-                     "New text content for Label/Button elements. For modify_visual_element."] | None = None,
-    add_classes: Annotated[list[str],
-                            "USS class names to add to the element. For modify_visual_element."] | None = None,
-    remove_classes: Annotated[list[str],
-                               "USS class names to remove from the element. For modify_visual_element."] | None = None,
-    toggle_classes: Annotated[list[str],
-                               "USS class names to toggle on the element. For modify_visual_element."] | None = None,
-    style: Annotated[dict[str, Any],
-                      "Inline styles to set (e.g., {'backgroundColor': '#FF0000', 'fontSize': 24}). "
-                      "For modify_visual_element."] | None = None,
-    enabled: Annotated[bool,
-                        "Set element enabled/disabled state. For modify_visual_element."] | None = None,
-    visible: Annotated[bool,
-                        "Set element visibility (display: flex/none). For modify_visual_element."] | None = None,
-    tooltip: Annotated[str,
-                        "Set element tooltip text. For modify_visual_element."] | None = None,
-
+    element_name: Annotated[
+        str,
+        "Name of the visual element to modify (the 'name' attribute in UXML). "
+        "For modify_visual_element.",
+    ]
+    | None = None,
+    text: Annotated[str, "New text content for Label/Button elements. For modify_visual_element."]
+    | None = None,
+    add_classes: Annotated[
+        list[str], "USS class names to add to the element. For modify_visual_element."
+    ]
+    | None = None,
+    remove_classes: Annotated[
+        list[str], "USS class names to remove from the element. For modify_visual_element."
+    ]
+    | None = None,
+    toggle_classes: Annotated[
+        list[str], "USS class names to toggle on the element. For modify_visual_element."
+    ]
+    | None = None,
+    style: Annotated[
+        dict[str, Any],
+        "Inline styles to set (e.g., {'backgroundColor': '#FF0000', 'fontSize': 24}). "
+        "For modify_visual_element.",
+    ]
+    | None = None,
+    enabled: Annotated[bool, "Set element enabled/disabled state. For modify_visual_element."]
+    | None = None,
+    visible: Annotated[
+        bool, "Set element visibility (display: flex/none). For modify_visual_element."
+    ]
+    | None = None,
+    tooltip: Annotated[str, "Set element tooltip text. For modify_visual_element."] | None = None,
 ) -> dict[str, Any]:
     action_lower = action.lower()
 
@@ -197,7 +234,10 @@ async def manage_ui(
 
     # --- Path validation for file operations ---
     try:
-        if action_lower in ("create", "read", "update", "delete", "link_stylesheet", "render_ui") and path:
+        if (
+            action_lower in ("create", "read", "update", "delete", "link_stylesheet", "render_ui")
+            and path
+        ):
             path = _canonical_ui_path(path)
         if action_lower == "link_stylesheet" and stylesheet:
             stylesheet = _canonical_ui_path(stylesheet)
@@ -211,8 +251,7 @@ async def manage_ui(
 
     # File operations: base64-encode contents for transport
     if action_lower in ("create", "update") and contents is not None:
-        params_dict["encodedContents"] = base64.b64encode(
-            contents.encode("utf-8")).decode("utf-8")
+        params_dict["encodedContents"] = base64.b64encode(contents.encode("utf-8")).decode("utf-8")
         params_dict["contentsEncoded"] = True
     elif action_lower in ("create", "update") and contents is None:
         # Let Unity-side validate and return the error
@@ -286,13 +325,24 @@ async def manage_ui(
     # --- Route to Unity ---
     unity_instance = await get_unity_instance_from_context(ctx)
     is_mutation = action_lower in (
-        "create", "update", "delete", "attach_ui_document", "detach_ui_document",
-        "create_panel_settings", "update_panel_settings", "render_ui", "link_stylesheet", "modify_visual_element",
+        "create",
+        "update",
+        "delete",
+        "attach_ui_document",
+        "detach_ui_document",
+        "create_panel_settings",
+        "update_panel_settings",
+        "render_ui",
+        "link_stylesheet",
+        "modify_visual_element",
     )
 
     if is_mutation:
         result = await send_mutation(
-            ctx, unity_instance, "manage_ui", params_dict,
+            ctx,
+            unity_instance,
+            "manage_ui",
+            params_dict,
         )
     else:
         result = await send_with_unity_instance(
@@ -308,8 +358,7 @@ async def manage_ui(
             data = result.get("data", {})
             if data.get("contentsEncoded") and data.get("encodedContents") is not None:
                 try:
-                    decoded = base64.b64decode(
-                        data["encodedContents"]).decode("utf-8")
+                    decoded = base64.b64decode(data["encodedContents"]).decode("utf-8")
                     data["contents"] = decoded
                     del data["encodedContents"]
                     del data["contentsEncoded"]

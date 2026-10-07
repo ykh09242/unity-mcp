@@ -18,14 +18,12 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static bool IsBuiltInMcpType(Type type, string assemblyName, string builtInNamespacePrefix)
         {
-            if (type != null && !string.IsNullOrEmpty(type.Namespace)
-                && type.Namespace.StartsWith(builtInNamespacePrefix, StringComparison.Ordinal))
+            if (type != null && !string.IsNullOrEmpty(type.Namespace) && type.Namespace.StartsWith(builtInNamespacePrefix, StringComparison.Ordinal))
             {
                 return true;
             }
 
-            if (!string.IsNullOrEmpty(assemblyName)
-                && assemblyName.Equals("MCPForUnity.Editor", StringComparison.Ordinal))
+            if (!string.IsNullOrEmpty(assemblyName) && assemblyName.Equals("MCPForUnity.Editor", StringComparison.Ordinal))
             {
                 return true;
             }
@@ -64,8 +62,7 @@ namespace MCPForUnity.Editor.Helpers
 
             // First part stays lowercase, rest get capitalized
             var first = parts[0];
-            var rest = string.Concat(parts.Skip(1).Select(part =>
-                string.IsNullOrEmpty(part) ? "" : char.ToUpperInvariant(part[0]) + part.Substring(1)));
+            var rest = string.Concat(parts.Skip(1).Select(part => string.IsNullOrEmpty(part) ? "" : char.ToUpperInvariant(part[0]) + part.Substring(1)));
 
             return first + rest;
         }

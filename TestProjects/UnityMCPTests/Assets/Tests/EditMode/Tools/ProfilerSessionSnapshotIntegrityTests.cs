@@ -33,12 +33,18 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (!ownsRoot) return;
+            if (!ownsRoot)
+                return;
             foreach (string file in ownedFiles)
-                if (File.Exists(file)) File.Delete(file);
-            if (!Directory.Exists(ownedRoot)) return;
-            Assert.AreEqual(0, Directory.GetFileSystemEntries(ownedRoot).Length,
-                "Unexpected artifacts retained in the exact owned temporary root: " + ownedRoot);
+                if (File.Exists(file))
+                    File.Delete(file);
+            if (!Directory.Exists(ownedRoot))
+                return;
+            Assert.AreEqual(
+                0,
+                Directory.GetFileSystemEntries(ownedRoot).Length,
+                "Unexpected artifacts retained in the exact owned temporary root: " + ownedRoot
+            );
             Directory.Delete(ownedRoot, false);
         }
 
@@ -64,7 +70,8 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 UProfiler.enableAllocationCallstacks = true;
                 var request = new JObject { ["action"] = "profiler_start" };
-                if (value != "omitted") request["enable_callstacks"] = JToken.Parse(value);
+                if (value != "omitted")
+                    request["enable_callstacks"] = JToken.Parse(value);
                 var response = JObject.FromObject(ManageProfiler.HandleCommand(request).GetAwaiter().GetResult());
                 Assert.IsTrue(response.Value<bool>("success"), response.ToString());
                 Assert.AreEqual(expected, UProfiler.enableAllocationCallstacks);
@@ -149,8 +156,9 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("RequiredUInt", 0u)]
         public void SelectedSignatureUsesDeclaredDefaultOrExistingRequiredFallback(string methodName, uint expected)
         {
-            var parameter = typeof(ProfilerSessionSnapshotIntegrityTests).GetMethod(methodName,
-                BindingFlags.NonPublic | BindingFlags.Static).GetParameters()[0];
+            var parameter = typeof(ProfilerSessionSnapshotIntegrityTests).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static).GetParameters()[
+                0
+            ];
             object value = CaptureFlagsDefault(parameter);
             Assert.AreEqual(expected, Convert.ToUInt32(value));
             Assert.AreEqual(parameter.ParameterType, value.GetType());
@@ -159,31 +167,45 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void InstalledSnapshotOverloadsRetainTheirDeclaredDefaultsWithoutInvocation()
         {
-            Type memoryType = Type.GetType("Unity.Profiling.Memory.MemoryProfiler, UnityEngine.CoreModule")
+            Type memoryType =
+                Type.GetType("Unity.Profiling.Memory.MemoryProfiler, UnityEngine.CoreModule")
                 ?? Type.GetType("UnityEngine.Profiling.Memory.Experimental.MemoryProfiler, UnityEngine.CoreModule");
-            if (memoryType == null) Assert.Ignore("No supported built-in snapshot API is available.");
+            if (memoryType == null)
+                Assert.Ignore("No supported built-in snapshot API is available.");
             int checkedMethods = 0;
             foreach (var method in memoryType.GetMethods(BindingFlags.Public | BindingFlags.Static))
             {
-                if (method.Name != "TakeSnapshot") continue;
+                if (method.Name != "TakeSnapshot")
+                    continue;
                 var parameters = method.GetParameters();
-                if (parameters.Length != 3 && parameters.Length != 4) continue;
+                if (parameters.Length != 3 && parameters.Length != 4)
+                    continue;
                 var flags = parameters[parameters.Length - 1];
-                if (!flags.ParameterType.IsEnum && flags.ParameterType != typeof(uint)) continue;
-                if (!flags.HasDefaultValue) continue;
+                if (!flags.ParameterType.IsEnum && flags.ParameterType != typeof(uint))
+                    continue;
+                if (!flags.HasDefaultValue)
+                    continue;
                 Assert.AreEqual(flags.DefaultValue, CaptureFlagsDefault(flags));
                 checkedMethods++;
             }
             Assert.Greater(checkedMethods, 0, "No declared-default snapshot overload was found.");
         }
 
-        private enum TestFlags : uint { Managed = 1, Native = 2 }
+        private enum TestFlags : uint
+        {
+            Managed = 1,
+            Native = 2,
+        }
+
         private static void OptionalEnum(TestFlags flags = TestFlags.Managed | TestFlags.Native) { }
+
         private static void OptionalUInt(uint flags = 7u) { }
+
         private static void RequiredEnum(TestFlags flags) { }
+
         private static void RequiredUInt(uint flags) { }
-        private static TaskCompletionSource<object> NewCompletion() =>
-            new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private static TaskCompletionSource<object> NewCompletion() => new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         private static void Complete(TaskCompletionSource<object> completion, string path, bool result)
         {

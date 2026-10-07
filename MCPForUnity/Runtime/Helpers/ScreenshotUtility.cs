@@ -13,24 +13,33 @@ namespace MCPForUnity.Runtime.Helpers
     public readonly struct ScreenshotCaptureResult
     {
         public ScreenshotCaptureResult(string fullPath, string projectRelativePath, int superSize)
-            : this(fullPath, projectRelativePath, superSize, isAsync: false, imageBase64: null, imageWidth: 0, imageHeight: 0)
-        {
-        }
+            : this(fullPath, projectRelativePath, superSize, isAsync: false, imageBase64: null, imageWidth: 0, imageHeight: 0) { }
 
         public ScreenshotCaptureResult(string fullPath, string projectRelativePath, int superSize, bool isAsync)
-            : this(fullPath, projectRelativePath, superSize, isAsync, imageBase64: null, imageWidth: 0, imageHeight: 0)
-        {
-        }
+            : this(fullPath, projectRelativePath, superSize, isAsync, imageBase64: null, imageWidth: 0, imageHeight: 0) { }
 
-        public ScreenshotCaptureResult(string fullPath, string projectRelativePath, int superSize, bool isAsync,
-            string imageBase64, int imageWidth, int imageHeight)
-            : this(fullPath, projectRelativePath, superSize, isAsync, imageBase64, imageWidth, imageHeight,
-                fallbackReason: null, fallbackCameraName: null)
-        {
-        }
+        public ScreenshotCaptureResult(
+            string fullPath,
+            string projectRelativePath,
+            int superSize,
+            bool isAsync,
+            string imageBase64,
+            int imageWidth,
+            int imageHeight
+        )
+            : this(fullPath, projectRelativePath, superSize, isAsync, imageBase64, imageWidth, imageHeight, fallbackReason: null, fallbackCameraName: null) { }
 
-        public ScreenshotCaptureResult(string fullPath, string projectRelativePath, int superSize, bool isAsync,
-            string imageBase64, int imageWidth, int imageHeight, string fallbackReason, string fallbackCameraName)
+        public ScreenshotCaptureResult(
+            string fullPath,
+            string projectRelativePath,
+            int superSize,
+            bool isAsync,
+            string imageBase64,
+            int imageWidth,
+            int imageHeight,
+            string fallbackReason,
+            string fallbackCameraName
+        )
         {
             FullPath = fullPath;
             ProjectRelativePath = projectRelativePath;
@@ -44,19 +53,23 @@ namespace MCPForUnity.Runtime.Helpers
         }
 
         public string FullPath { get; }
+
         /// <summary>Path relative to the Unity project root (e.g. "Captures/foo.png"). Suitable for ScreenCapture.CaptureScreenshot.</summary>
         public string ProjectRelativePath { get; }
         public int SuperSize { get; }
         public bool IsAsync { get; }
+
         /// <summary>Base64-encoded PNG image data. Only populated when include_image is true.</summary>
         public string ImageBase64 { get; }
         public int ImageWidth { get; }
         public int ImageHeight { get; }
+
         /// <summary>
         /// Set when a composited capture was replaced by a camera render, and says why. A camera
         /// render has no Screen Space - Overlay canvases or UI Toolkit panels. Null otherwise.
         /// </summary>
         public string FallbackReason { get; }
+
         /// <summary>The camera that rendered the image when <see cref="FallbackReason"/> is set; null otherwise.</summary>
         public string FallbackCameraName { get; }
     }
@@ -83,8 +96,7 @@ namespace MCPForUnity.Runtime.Helpers
 
         public static void ValidateFrameDimensions(int width, int height)
         {
-            if (width <= 0 || height <= 0 || width > MaxCaptureDimension || height > MaxCaptureDimension
-                || (long)width * height > MaxCapturePixels)
+            if (width <= 0 || height <= 0 || width > MaxCaptureDimension || height > MaxCaptureDimension || (long)width * height > MaxCapturePixels)
                 throw new ArgumentException($"Capture dimensions must be positive, at most {MaxCaptureDimension} per side and {MaxCapturePixels} pixels.");
         }
 
@@ -151,7 +163,8 @@ namespace MCPForUnity.Runtime.Helpers
 
         public sealed class CaptureBatchBudget
         {
-            private long renderedPixels, retainedPixels;
+            private long renderedPixels,
+                retainedPixels;
             private int shots;
 
             // Account actual per-frame dimensions in case a render callback changes the viewport.
@@ -159,9 +172,9 @@ namespace MCPForUnity.Runtime.Helpers
             {
                 ValidateFrameDimensions(width, height);
                 ValidateFrameDimensions(tileWidth, tileHeight);
-                long framePixels = (long)width * height, tilePixels = (long)tileWidth * tileHeight;
-                if (shots >= MaxBatchShots || framePixels > MaxBatchRenderedPixels - renderedPixels
-                    || tilePixels > MaxRetainedTilePixels - retainedPixels)
+                long framePixels = (long)width * height,
+                    tilePixels = (long)tileWidth * tileHeight;
+                if (shots >= MaxBatchShots || framePixels > MaxBatchRenderedPixels - renderedPixels || tilePixels > MaxRetainedTilePixels - retainedPixels)
                     throw new ArgumentException("Batch capture exceeds its frame or aggregate pixel budget.");
                 renderedPixels += framePixels;
                 retainedPixels += tilePixels;
@@ -172,7 +185,8 @@ namespace MCPForUnity.Runtime.Helpers
         public static void ReleaseCaptureTiles(IEnumerable<Texture2D> tiles)
         {
             if (tiles != null)
-                foreach (var tile in tiles) DestroyTexture(tile);
+                foreach (var tile in tiles)
+                    DestroyTexture(tile);
         }
 
         private static Camera FindAvailableCamera()
@@ -198,7 +212,8 @@ namespace MCPForUnity.Runtime.Helpers
             string fileName = null,
             int superSize = 1,
             bool ensureUniqueFileName = true,
-            string folderOverride = null)
+            string folderOverride = null
+        )
         {
             ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), superSize, out _, out _);
             ScreenshotCaptureResult result = PrepareCaptureResult(fileName, superSize, ensureUniqueFileName, folderOverride, isAsync: true);
@@ -225,7 +240,8 @@ namespace MCPForUnity.Runtime.Helpers
             bool ensureUniqueFileName = true,
             bool includeImage = false,
             int maxResolution = 0,
-            string folderOverride = null)
+            string folderOverride = null
+        )
         {
             if (camera == null)
             {
@@ -244,7 +260,8 @@ namespace MCPForUnity.Runtime.Helpers
             Texture2D tex = null;
             Texture2D downscaled = null;
             string imageBase64 = null;
-            int imgW = 0, imgH = 0;
+            int imgW = 0,
+                imgH = 0;
             try
             {
                 camera.targetTexture = rt;
@@ -288,9 +305,7 @@ namespace MCPForUnity.Runtime.Helpers
 
             if (includeImage && imageBase64 != null)
             {
-                return new ScreenshotCaptureResult(
-                    result.FullPath, result.ProjectRelativePath, result.SuperSize, false,
-                    imageBase64, imgW, imgH);
+                return new ScreenshotCaptureResult(result.FullPath, result.ProjectRelativePath, result.SuperSize, false, imageBase64, imgW, imgH);
             }
             return result;
         }
@@ -309,7 +324,8 @@ namespace MCPForUnity.Runtime.Helpers
             bool ensureUniqueFileName = true,
             bool includeImage = false,
             int maxResolution = 0,
-            string folderOverride = null)
+            string folderOverride = null
+        )
         {
             ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), superSize, out _, out _);
             ValidateMaxResolution(maxResolution);
@@ -318,21 +334,24 @@ namespace MCPForUnity.Runtime.Helpers
             // capture would sit out the timeout before falling back.
             if (Application.isBatchMode)
             {
-                return CaptureWithCameraInstead(fileName, superSize, ensureUniqueFileName, includeImage,
-                    maxResolution, folderOverride, "Batch mode renders no frames");
+                return CaptureWithCameraInstead(
+                    fileName,
+                    superSize,
+                    ensureUniqueFileName,
+                    includeImage,
+                    maxResolution,
+                    folderOverride,
+                    "Batch mode renders no frames"
+                );
             }
 
-            if (!await CompositedCaptureGate
-                    .WaitAsync(TimeSpan.FromSeconds(ScreenshotCapturer.DefaultTimeoutSeconds * 4))
-                    .ConfigureAwait(true))
+            if (!await CompositedCaptureGate.WaitAsync(TimeSpan.FromSeconds(ScreenshotCapturer.DefaultTimeoutSeconds * 4)).ConfigureAwait(true))
             {
-                throw new TimeoutException(
-                    "Another composited screenshot capture is still in progress. Retry shortly.");
+                throw new TimeoutException("Another composited screenshot capture is still in progress. Retry shortly.");
             }
             try
             {
-                return await CaptureCompositedAsyncUngated(
-                    fileName, superSize, ensureUniqueFileName, includeImage, maxResolution, folderOverride)
+                return await CaptureCompositedAsyncUngated(fileName, superSize, ensureUniqueFileName, includeImage, maxResolution, folderOverride)
                     .ConfigureAwait(true);
             }
             finally
@@ -347,52 +366,71 @@ namespace MCPForUnity.Runtime.Helpers
             bool ensureUniqueFileName,
             bool includeImage,
             int maxResolution,
-            string folderOverride)
+            string folderOverride
+        )
         {
             // Fail fast on a bad folder, but pick the file name only when the image is written:
             // a camera capture that runs during the wait could otherwise take the same unique
             // name, and this write would then replace that file.
             ResolveFolderAbsolute(folderOverride);
-            var tcs = new TaskCompletionSource<ScreenshotCaptureResult>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
+            var tcs = new TaskCompletionSource<ScreenshotCaptureResult>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            ScreenshotCapturer.Begin(Mathf.Max(1, superSize), (tex, timedOut) =>
-            {
-                Texture2D downscaled = null;
-                try
+            ScreenshotCapturer.Begin(
+                Mathf.Max(1, superSize),
+                (tex, timedOut) =>
                 {
-                    // Not an error: the caller still gets an image, and the result says it is a
-                    // camera render rather than the composited Game view.
-                    if (timedOut)
+                    Texture2D downscaled = null;
+                    try
                     {
-                        tcs.TrySetResult(CaptureWithCameraInstead(
-                            fileName, superSize, ensureUniqueFileName, includeImage, maxResolution, folderOverride,
-                            $"No frame was rendered within {ScreenshotCapturer.DefaultTimeoutSeconds:0.#} s " +
-                            "(for example, the game is paused or the Editor is not rendering while unfocused)"));
-                        return;
-                    }
+                        // Not an error: the caller still gets an image, and the result says it is a
+                        // camera render rather than the composited Game view.
+                        if (timedOut)
+                        {
+                            tcs.TrySetResult(
+                                CaptureWithCameraInstead(
+                                    fileName,
+                                    superSize,
+                                    ensureUniqueFileName,
+                                    includeImage,
+                                    maxResolution,
+                                    folderOverride,
+                                    $"No frame was rendered within {ScreenshotCapturer.DefaultTimeoutSeconds:0.#} s "
+                                        + "(for example, the game is paused or the Editor is not rendering while unfocused)"
+                                )
+                            );
+                            return;
+                        }
 
-                    if (tex == null)
+                        if (tex == null)
+                        {
+                            tcs.TrySetResult(
+                                CaptureWithCameraInstead(
+                                    fileName,
+                                    superSize,
+                                    ensureUniqueFileName,
+                                    includeImage,
+                                    maxResolution,
+                                    folderOverride,
+                                    "ScreenCapture returned no image"
+                                )
+                            );
+                            return;
+                        }
+
+                        var prepared = PrepareCaptureResult(fileName, superSize, ensureUniqueFileName, folderOverride: folderOverride, isAsync: false);
+                        tcs.TrySetResult(EncodeAndSaveComposited(tex, prepared, includeImage, maxResolution, ensureUniqueFileName, ref downscaled));
+                    }
+                    catch (Exception ex)
                     {
-                        tcs.TrySetResult(CaptureWithCameraInstead(
-                            fileName, superSize, ensureUniqueFileName, includeImage, maxResolution, folderOverride,
-                            "ScreenCapture returned no image"));
-                        return;
+                        tcs.TrySetException(ex);
                     }
-
-                    var prepared = PrepareCaptureResult(fileName, superSize, ensureUniqueFileName, folderOverride: folderOverride, isAsync: false);
-                    tcs.TrySetResult(EncodeAndSaveComposited(tex, prepared, includeImage, maxResolution, ensureUniqueFileName, ref downscaled));
+                    finally
+                    {
+                        DestroyTexture(tex);
+                        DestroyTexture(downscaled);
+                    }
                 }
-                catch (Exception ex)
-                {
-                    tcs.TrySetException(ex);
-                }
-                finally
-                {
-                    DestroyTexture(tex);
-                    DestroyTexture(downscaled);
-                }
-            });
+            );
 
             return tcs.Task;
         }
@@ -405,19 +443,34 @@ namespace MCPForUnity.Runtime.Helpers
             bool includeImage,
             int maxResolution,
             string folderOverride,
-            string cause)
+            string cause
+        )
         {
             var cam = FindAvailableCamera();
             if (cam == null)
                 throw new InvalidOperationException(cause + ", and there is no camera to render instead.");
 
-            var r = CaptureFromCameraToProjectFolder(cam, fileName, superSize, ensureUniqueFileName,
-                includeImage, maxResolution, folderOverride: folderOverride);
-            return new ScreenshotCaptureResult(r.FullPath, r.ProjectRelativePath, r.SuperSize, r.IsAsync,
-                r.ImageBase64, r.ImageWidth, r.ImageHeight,
-                $"{cause}, so this is a render of camera '{cam.name}'. A camera render does not show " +
-                "Screen Space - Overlay canvases or UI Toolkit panels.",
-                cam.name);
+            var r = CaptureFromCameraToProjectFolder(
+                cam,
+                fileName,
+                superSize,
+                ensureUniqueFileName,
+                includeImage,
+                maxResolution,
+                folderOverride: folderOverride
+            );
+            return new ScreenshotCaptureResult(
+                r.FullPath,
+                r.ProjectRelativePath,
+                r.SuperSize,
+                r.IsAsync,
+                r.ImageBase64,
+                r.ImageWidth,
+                r.ImageHeight,
+                $"{cause}, so this is a render of camera '{cam.name}'. A camera render does not show "
+                    + "Screen Space - Overlay canvases or UI Toolkit panels.",
+                cam.name
+            );
         }
 
         private static ScreenshotCaptureResult EncodeAndSaveComposited(
@@ -426,7 +479,8 @@ namespace MCPForUnity.Runtime.Helpers
             bool includeImage,
             int maxResolution,
             bool ensureUniqueFileName,
-            ref Texture2D downscaled)
+            ref Texture2D downscaled
+        )
         {
             int width = tex.width;
             int height = tex.height;
@@ -455,9 +509,7 @@ namespace MCPForUnity.Runtime.Helpers
                 imgH = height;
             }
 
-            return new ScreenshotCaptureResult(
-                prepared.FullPath, prepared.ProjectRelativePath, prepared.SuperSize, false,
-                imageBase64, imgW, imgH);
+            return new ScreenshotCaptureResult(prepared.FullPath, prepared.ProjectRelativePath, prepared.SuperSize, false, imageBase64, imgW, imgH);
         }
 
         /// <summary>
@@ -466,7 +518,8 @@ namespace MCPForUnity.Runtime.Helpers
         /// </summary>
         public static (string base64, int width, int height) RenderCameraToBase64(Camera camera, int maxResolution = 640)
         {
-            if (camera == null) throw new ArgumentNullException(nameof(camera));
+            if (camera == null)
+                throw new ArgumentNullException(nameof(camera));
 
             int width = Mathf.Max(1, camera.pixelWidth > 0 ? camera.pixelWidth : Screen.width);
             int height = Mathf.Max(1, camera.pixelHeight > 0 ? camera.pixelHeight : Screen.height);
@@ -517,7 +570,8 @@ namespace MCPForUnity.Runtime.Helpers
         /// </summary>
         public static Texture2D RenderCameraToTexture(Camera camera, int maxResolution = 640, CaptureBatchBudget budget = null)
         {
-            if (camera == null) throw new ArgumentNullException(nameof(camera));
+            if (camera == null)
+                throw new ArgumentNullException(nameof(camera));
 
             int width = Mathf.Max(1, camera.pixelWidth > 0 ? camera.pixelWidth : Screen.width);
             int height = Mathf.Max(1, camera.pixelHeight > 0 ? camera.pixelHeight : Screen.height);
@@ -565,8 +619,7 @@ namespace MCPForUnity.Runtime.Helpers
         /// Labels are drawn as white text on a dark banner at the bottom of each tile.
         /// Returns base64 PNG plus dimensions. Destroys all input tile textures.
         /// </summary>
-        public static (string base64, int width, int height) ComposeContactSheet(
-            List<Texture2D> tiles, List<string> labels, int padding = 4)
+        public static (string base64, int width, int height) ComposeContactSheet(List<Texture2D> tiles, List<string> labels, int padding = 4)
         {
             Texture2D sheet = null;
             try
@@ -591,7 +644,8 @@ namespace MCPForUnity.Runtime.Helpers
                 // Build the full sheet in a Color32[] buffer, then upload once
                 var bgColor = new Color32(30, 30, 30, 255);
                 Color32[] sheetPixels = new Color32[sheetW * sheetH];
-                for (int i = 0; i < sheetPixels.Length; i++) sheetPixels[i] = bgColor;
+                for (int i = 0; i < sheetPixels.Length; i++)
+                    sheetPixels[i] = bgColor;
 
                 // Track label draw requests so we can apply them after the bulk upload
                 var labelDraws = new List<(string text, int x, int y, int h)>();
@@ -664,7 +718,8 @@ namespace MCPForUnity.Runtime.Helpers
 
             foreach (char c in text)
             {
-                if (x + charWidth > tex.width) break;
+                if (x + charWidth > tex.width)
+                    break;
                 ulong glyph = GetGlyph(c);
                 if (glyph != 0)
                 {
@@ -673,15 +728,16 @@ namespace MCPForUnity.Runtime.Helpers
                         for (int col = 0; col < 5; col++)
                         {
                             bool on = ((glyph >> ((6 - row) * 5 + (4 - col))) & 1) == 1;
-                            if (!on) continue;
+                            if (!on)
+                                continue;
                             // Scale the 5x7 glyph to charWidth x charHeight
                             int px0 = x + col * charWidth / 5;
                             int px1 = x + (col + 1) * charWidth / 5;
                             int py0 = startY + (6 - row) * charHeight / 7;
                             int py1 = startY + (7 - row) * charHeight / 7;
                             for (int py = py0; py < py1 && py < tex.height; py++)
-                                for (int px = px0; px < px1 && px < tex.width; px++)
-                                    tex.SetPixel(px, py, color);
+                            for (int px = px0; px < px1 && px < tex.width; px++)
+                                tex.SetPixel(px, py, color);
                         }
                     }
                 }
@@ -695,47 +751,88 @@ namespace MCPForUnity.Runtime.Helpers
             // Each row is 5 wide, MSB=left. Row 0 is top.
             switch (char.ToUpperInvariant(c))
             {
-                case 'A': return 0b01110_10001_10001_11111_10001_10001_10001UL;
-                case 'B': return 0b11110_10001_10001_11110_10001_10001_11110UL;
-                case 'C': return 0b01110_10001_10000_10000_10000_10001_01110UL;
-                case 'D': return 0b11100_10010_10001_10001_10001_10010_11100UL;
-                case 'E': return 0b11111_10000_10000_11110_10000_10000_11111UL;
-                case 'F': return 0b11111_10000_10000_11110_10000_10000_10000UL;
-                case 'G': return 0b01110_10001_10000_10111_10001_10001_01110UL;
-                case 'H': return 0b10001_10001_10001_11111_10001_10001_10001UL;
-                case 'I': return 0b01110_00100_00100_00100_00100_00100_01110UL;
-                case 'K': return 0b10001_10010_10100_11000_10100_10010_10001UL;
-                case 'L': return 0b10000_10000_10000_10000_10000_10000_11111UL;
-                case 'M': return 0b10001_11011_10101_10101_10001_10001_10001UL;
-                case 'N': return 0b10001_11001_10101_10011_10001_10001_10001UL;
-                case 'O': return 0b01110_10001_10001_10001_10001_10001_01110UL;
-                case 'R': return 0b11110_10001_10001_11110_10100_10010_10001UL;
-                case 'S': return 0b01110_10001_10000_01110_00001_10001_01110UL;
-                case 'T': return 0b11111_00100_00100_00100_00100_00100_00100UL;
-                case 'U': return 0b10001_10001_10001_10001_10001_10001_01110UL;
-                case 'V': return 0b10001_10001_10001_10001_01010_01010_00100UL;
-                case 'W': return 0b10001_10001_10001_10101_10101_11011_10001UL;
-                case 'Y': return 0b10001_10001_01010_00100_00100_00100_00100UL;
-                case '0': return 0b01110_10011_10101_10101_10101_11001_01110UL;
-                case '1': return 0b00100_01100_00100_00100_00100_00100_01110UL;
-                case '2': return 0b01110_10001_00001_00010_00100_01000_11111UL;
-                case '3': return 0b01110_10001_00001_00110_00001_10001_01110UL;
-                case '4': return 0b00010_00110_01010_10010_11111_00010_00010UL;
-                case '5': return 0b11111_10000_11110_00001_00001_10001_01110UL;
-                case '6': return 0b01110_10001_10000_11110_10001_10001_01110UL;
-                case '7': return 0b11111_00001_00010_00100_01000_01000_01000UL;
-                case '8': return 0b01110_10001_10001_01110_10001_10001_01110UL;
-                case '9': return 0b01110_10001_10001_01111_00001_10001_01110UL;
-                case 'J': return 0b00111_00010_00010_00010_00010_10010_01100UL;
-                case 'P': return 0b11110_10001_10001_11110_10000_10000_10000UL;
-                case 'Q': return 0b01110_10001_10001_10001_10101_10010_01101UL;
-                case 'X': return 0b10001_01010_00100_00100_00100_01010_10001UL;
-                case 'Z': return 0b11111_00001_00010_00100_01000_10000_11111UL;
-                case '-': return 0b00000_00000_00000_11111_00000_00000_00000UL;
-                case '_': return 0b00000_00000_00000_00000_00000_00000_11111UL;
-                case ' ': return 0UL;
-                case '+': return 0b00000_00100_00100_11111_00100_00100_00000UL;
-                default:  return 0UL;
+                case 'A':
+                    return 0b01110_10001_10001_11111_10001_10001_10001UL;
+                case 'B':
+                    return 0b11110_10001_10001_11110_10001_10001_11110UL;
+                case 'C':
+                    return 0b01110_10001_10000_10000_10000_10001_01110UL;
+                case 'D':
+                    return 0b11100_10010_10001_10001_10001_10010_11100UL;
+                case 'E':
+                    return 0b11111_10000_10000_11110_10000_10000_11111UL;
+                case 'F':
+                    return 0b11111_10000_10000_11110_10000_10000_10000UL;
+                case 'G':
+                    return 0b01110_10001_10000_10111_10001_10001_01110UL;
+                case 'H':
+                    return 0b10001_10001_10001_11111_10001_10001_10001UL;
+                case 'I':
+                    return 0b01110_00100_00100_00100_00100_00100_01110UL;
+                case 'K':
+                    return 0b10001_10010_10100_11000_10100_10010_10001UL;
+                case 'L':
+                    return 0b10000_10000_10000_10000_10000_10000_11111UL;
+                case 'M':
+                    return 0b10001_11011_10101_10101_10001_10001_10001UL;
+                case 'N':
+                    return 0b10001_11001_10101_10011_10001_10001_10001UL;
+                case 'O':
+                    return 0b01110_10001_10001_10001_10001_10001_01110UL;
+                case 'R':
+                    return 0b11110_10001_10001_11110_10100_10010_10001UL;
+                case 'S':
+                    return 0b01110_10001_10000_01110_00001_10001_01110UL;
+                case 'T':
+                    return 0b11111_00100_00100_00100_00100_00100_00100UL;
+                case 'U':
+                    return 0b10001_10001_10001_10001_10001_10001_01110UL;
+                case 'V':
+                    return 0b10001_10001_10001_10001_01010_01010_00100UL;
+                case 'W':
+                    return 0b10001_10001_10001_10101_10101_11011_10001UL;
+                case 'Y':
+                    return 0b10001_10001_01010_00100_00100_00100_00100UL;
+                case '0':
+                    return 0b01110_10011_10101_10101_10101_11001_01110UL;
+                case '1':
+                    return 0b00100_01100_00100_00100_00100_00100_01110UL;
+                case '2':
+                    return 0b01110_10001_00001_00010_00100_01000_11111UL;
+                case '3':
+                    return 0b01110_10001_00001_00110_00001_10001_01110UL;
+                case '4':
+                    return 0b00010_00110_01010_10010_11111_00010_00010UL;
+                case '5':
+                    return 0b11111_10000_11110_00001_00001_10001_01110UL;
+                case '6':
+                    return 0b01110_10001_10000_11110_10001_10001_01110UL;
+                case '7':
+                    return 0b11111_00001_00010_00100_01000_01000_01000UL;
+                case '8':
+                    return 0b01110_10001_10001_01110_10001_10001_01110UL;
+                case '9':
+                    return 0b01110_10001_10001_01111_00001_10001_01110UL;
+                case 'J':
+                    return 0b00111_00010_00010_00010_00010_10010_01100UL;
+                case 'P':
+                    return 0b11110_10001_10001_11110_10000_10000_10000UL;
+                case 'Q':
+                    return 0b01110_10001_10001_10001_10101_10010_01101UL;
+                case 'X':
+                    return 0b10001_01010_00100_00100_00100_01010_10001UL;
+                case 'Z':
+                    return 0b11111_00001_00010_00100_01000_10000_11111UL;
+                case '-':
+                    return 0b00000_00000_00000_11111_00000_00000_00000UL;
+                case '_':
+                    return 0b00000_00000_00000_00000_00000_00000_11111UL;
+                case ' ':
+                    return 0UL;
+                case '+':
+                    return 0b00000_00100_00100_11111_00100_00100_00000UL;
+                default:
+                    return 0UL;
             }
         }
 
@@ -765,9 +862,7 @@ namespace MCPForUnity.Runtime.Helpers
             // sRGB encode on store while the blit samples a linear-flagged capture without a
             // matching decode, which washes the image out (see issue #1328).
             bool srcIsSrgb = GraphicsFormatUtility.IsSRGBFormat(source.graphicsFormat);
-            RenderTextureReadWrite readWrite = srcIsSrgb
-                ? RenderTextureReadWrite.sRGB
-                : RenderTextureReadWrite.Linear;
+            RenderTextureReadWrite readWrite = srcIsSrgb ? RenderTextureReadWrite.sRGB : RenderTextureReadWrite.Linear;
 
             RenderTexture prevActive = RenderTexture.active;
             var rt = RenderTexture.GetTemporary(dstW, dstH, 0, RenderTextureFormat.ARGB32, readWrite);
@@ -794,7 +889,8 @@ namespace MCPForUnity.Runtime.Helpers
 
         private static void DestroyTexture(Texture2D tex)
         {
-            if (tex == null) return;
+            if (tex == null)
+                return;
             if (Application.isPlaying)
                 UnityEngine.Object.Destroy(tex);
             else
@@ -804,14 +900,16 @@ namespace MCPForUnity.Runtime.Helpers
         /// <summary>Validates the complete output immediately before opening it for a capture write.</summary>
         public static void WriteCaptureBytes(string fullPath, byte[] bytes, bool ensureUniqueFileName = true)
         {
-            if (bytes == null) throw new ArgumentNullException(nameof(bytes));
+            if (bytes == null)
+                throw new ArgumentNullException(nameof(bytes));
             string containedPath = SafePathUtility.ResolveWithinRoot(GetProjectRootPath(), fullPath);
             using (var folders = new OutputFolderScope(GetProjectRootPath()))
             {
                 folders.EnsureParentDirectory(containedPath);
                 containedPath = SafePathUtility.ResolveWithinRoot(GetProjectRootPath(), containedPath);
-                using (var output = new FileStream(containedPath,
-                    ensureUniqueFileName ? FileMode.CreateNew : FileMode.Create, FileAccess.Write, FileShare.None))
+                using (
+                    var output = new FileStream(containedPath, ensureUniqueFileName ? FileMode.CreateNew : FileMode.Create, FileAccess.Write, FileShare.None)
+                )
                 {
                     output.Write(bytes, 0, bytes.Length);
                 }
@@ -819,7 +917,13 @@ namespace MCPForUnity.Runtime.Helpers
             }
         }
 
-        public static ScreenshotCaptureResult PrepareCaptureResult(string fileName, int superSize, bool ensureUniqueFileName, string folderOverride, bool isAsync)
+        public static ScreenshotCaptureResult PrepareCaptureResult(
+            string fileName,
+            int superSize,
+            bool ensureUniqueFileName,
+            string folderOverride,
+            bool isAsync
+        )
         {
             ValidateSuperSize(superSize);
             int size = Mathf.Max(1, superSize);
@@ -849,23 +953,19 @@ namespace MCPForUnity.Runtime.Helpers
             string requested = string.IsNullOrWhiteSpace(folderOverride) ? DefaultFolder : folderOverride.Trim();
             requested = requested.Replace('\\', '/').TrimEnd('/');
 
-            string combined = Path.IsPathRooted(requested)
-                ? requested
-                : Path.Combine(projectRoot, requested);
+            string combined = Path.IsPathRooted(requested) ? requested : Path.Combine(projectRoot, requested);
 
             string fullFolder = Path.GetFullPath(combined).Replace('\\', '/').TrimEnd('/');
             string normalizedRoot = projectRoot;
 
             // Reject paths that escape the project root (case-insensitive on Windows, exact elsewhere).
-            var rootComparison = Application.platform == RuntimePlatform.WindowsEditor
-                ? StringComparison.OrdinalIgnoreCase
-                : StringComparison.Ordinal;
-            if (!fullFolder.Equals(normalizedRoot, rootComparison) &&
-                !fullFolder.StartsWith(normalizedRoot + "/", rootComparison))
+            var rootComparison = Application.platform == RuntimePlatform.WindowsEditor ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            if (!fullFolder.Equals(normalizedRoot, rootComparison) && !fullFolder.StartsWith(normalizedRoot + "/", rootComparison))
             {
                 throw new InvalidOperationException(
-                    $"Screenshot folder '{folderOverride}' resolves outside the Unity project root ('{fullFolder}'). " +
-                    $"Use a project-relative path (e.g. 'Assets/Screenshots' or 'Captures').");
+                    $"Screenshot folder '{folderOverride}' resolves outside the Unity project root ('{fullFolder}'). "
+                        + $"Use a project-relative path (e.g. 'Assets/Screenshots' or 'Captures')."
+                );
             }
 
             return SafePathUtility.ResolveWithinRoot(projectRoot, fullFolder);
@@ -878,7 +978,8 @@ namespace MCPForUnity.Runtime.Helpers
         /// </summary>
         public static string ToProjectRelativePath(string normalizedFullPath)
         {
-            if (string.IsNullOrEmpty(normalizedFullPath)) return normalizedFullPath;
+            if (string.IsNullOrEmpty(normalizedFullPath))
+                return normalizedFullPath;
             string projectRoot = GetProjectRootPath();
             string normalized = normalizedFullPath.Replace('\\', '/');
             if (normalized.StartsWith(projectRoot, StringComparison.OrdinalIgnoreCase))
@@ -894,27 +995,33 @@ namespace MCPForUnity.Runtime.Helpers
         /// </summary>
         public static bool IsUnderAssets(string projectRelativePath)
         {
-            if (string.IsNullOrEmpty(projectRelativePath)) return false;
+            if (string.IsNullOrEmpty(projectRelativePath))
+                return false;
             string norm = projectRelativePath.Replace('\\', '/').TrimStart('/');
-            return norm.Equals("Assets", StringComparison.OrdinalIgnoreCase)
-                || norm.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase);
+            return norm.Equals("Assets", StringComparison.OrdinalIgnoreCase) || norm.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string BuildFileName(string fileName)
         {
-            string name = string.IsNullOrWhiteSpace(fileName)
-                ? $"screenshot-{DateTime.Now:yyyyMMdd-HHmmss}"
-                : fileName.Trim();
+            string name = string.IsNullOrWhiteSpace(fileName) ? $"screenshot-{DateTime.Now:yyyyMMdd-HHmmss}" : fileName.Trim();
 
-            if (name == "." || name == ".." || name.IndexOfAny(new[] { '/', '\\', ':', '*', '?', '"', '<', '>', '|' }) >= 0 ||
-                name.Any(char.IsControl) || name.EndsWith(".") || name.Length > 200)
+            if (
+                name == "."
+                || name == ".."
+                || name.IndexOfAny(new[] { '/', '\\', ':', '*', '?', '"', '<', '>', '|' }) >= 0
+                || name.Any(char.IsControl)
+                || name.EndsWith(".")
+                || name.Length > 200
+            )
                 throw new InvalidOperationException("Screenshot filename must be a simple filename without directory components.");
 
             name = SanitizeFileName(name);
 
-            if (!name.EndsWith(".png", StringComparison.OrdinalIgnoreCase) &&
-                !name.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) &&
-                !name.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+            if (
+                !name.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                && !name.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+                && !name.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
+            )
             {
                 name += ".png";
             }
@@ -927,8 +1034,7 @@ namespace MCPForUnity.Runtime.Helpers
             // GetInvalidFileNameChars() doesn't include '\' or '/' on Unix, so a caller-supplied
             // name like "foo\bar" would survive and later get spliced into the directory portion.
             var invalidChars = Path.GetInvalidFileNameChars();
-            string cleaned = new string(
-                fileName.Select(ch => invalidChars.Contains(ch) || ch == '/' || ch == '\\' ? '_' : ch).ToArray());
+            string cleaned = new string(fileName.Select(ch => invalidChars.Contains(ch) || ch == '/' || ch == '\\' ? '_' : ch).ToArray());
 
             return string.IsNullOrWhiteSpace(cleaned) ? "screenshot" : cleaned;
         }
@@ -1033,8 +1139,10 @@ namespace MCPForUnity.Runtime.Helpers
 #if UNITY_EDITOR
         private void TickTimeout()
         {
-            if (_finished) return;
-            if (Time.realtimeSinceStartup - _startedAt < _timeoutSeconds) return;
+            if (_finished)
+                return;
+            if (Time.realtimeSinceStartup - _startedAt < _timeoutSeconds)
+                return;
             Complete(null, timedOut: true);
         }
 #else
@@ -1049,18 +1157,21 @@ namespace MCPForUnity.Runtime.Helpers
         private System.Collections.IEnumerator Start()
         {
             yield return new WaitForEndOfFrame();
-            if (_finished) yield break;
+            if (_finished)
+                yield break;
 
             Texture2D tex = null;
             try
             {
                 ScreenshotUtility.ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), _superSize, out _, out _);
                 tex = ScreenCapture.CaptureScreenshotAsTexture(_superSize);
-                if (tex != null) ScreenshotUtility.ValidateFrameDimensions(tex.width, tex.height);
+                if (tex != null)
+                    ScreenshotUtility.ValidateFrameDimensions(tex.width, tex.height);
             }
             catch (Exception ex)
             {
-                if (tex != null) Destroy(tex);
+                if (tex != null)
+                    Destroy(tex);
                 tex = null;
                 Debug.LogError($"[MCP for Unity] CaptureScreenshotAsTexture failed: {ex.Message}");
             }

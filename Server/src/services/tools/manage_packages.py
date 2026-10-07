@@ -9,9 +9,18 @@ from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
 ALL_ACTIONS = [
-    "list_packages", "search_packages", "get_package_info", "ping", "status",
-    "add_package", "remove_package", "embed_package", "resolve_packages",
-    "add_registry", "remove_registry", "list_registries",
+    "list_packages",
+    "search_packages",
+    "get_package_info",
+    "ping",
+    "status",
+    "add_package",
+    "remove_package",
+    "embed_package",
+    "resolve_packages",
+    "add_registry",
+    "remove_registry",
+    "list_registries",
 ]
 
 
@@ -56,7 +65,9 @@ async def _send_packages_command(
 async def manage_packages(
     ctx: Context,
     action: Annotated[str, "The package action to perform."],
-    package: Annotated[Optional[str], "Package identifier (name, name@version, git URL, or file: path)."] = None,
+    package: Annotated[
+        Optional[str], "Package identifier (name, name@version, git URL, or file: path)."
+    ] = None,
     force: Annotated[Optional[bool], "Force removal even if other packages depend on it."] = None,
     query: Annotated[Optional[str], "Search query for search_packages."] = None,
     job_id: Annotated[Optional[str], "Job ID for polling status."] = None,

@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Graphics
 {
@@ -19,7 +19,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
 #else
                 RenderSettings.customReflection;
 #endif
-            set {
+            set
+            {
 #if UNITY_2022_1_OR_NEWER
                 RenderSettings.customReflectionTexture = value;
 #else
@@ -27,6 +28,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 #endif
             }
         }
+
         // ---------------------------------------------------------------
         // skybox_get — read all environment settings
         // ---------------------------------------------------------------
@@ -45,14 +47,21 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     string propName = skyMat.shader.GetPropertyName(i);
                     var propType = skyMat.shader.GetPropertyType(i);
                     object val = ReadMaterialProperty(skyMat, propName, propType);
-                    props.Add(new { name = propName, type = propType.ToString(), value = val });
+                    props.Add(
+                        new
+                        {
+                            name = propName,
+                            type = propType.ToString(),
+                            value = val,
+                        }
+                    );
                 }
                 matInfo = new
                 {
                     name = skyMat.name,
                     shader = skyMat.shader.name,
                     path = AssetDatabase.GetAssetPath(skyMat),
-                    properties = props
+                    properties = props,
                 };
             }
 
@@ -70,7 +79,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         equatorColor = ColorToArray(RenderSettings.ambientEquatorColor),
                         groundColor = ColorToArray(RenderSettings.ambientGroundColor),
                         ambientLight = ColorToArray(RenderSettings.ambientLight),
-                        intensity = RenderSettings.ambientIntensity
+                        intensity = RenderSettings.ambientIntensity,
                     },
                     fog = new
                     {
@@ -79,7 +88,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         color = ColorToArray(RenderSettings.fogColor),
                         density = RenderSettings.fogDensity,
                         startDistance = RenderSettings.fogStartDistance,
-                        endDistance = RenderSettings.fogEndDistance
+                        endDistance = RenderSettings.fogEndDistance,
                     },
                     reflection = new
                     {
@@ -87,15 +96,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         bounces = RenderSettings.reflectionBounces,
                         mode = RenderSettings.defaultReflectionMode.ToString(),
                         resolution = RenderSettings.defaultReflectionResolution,
-                        customCubemap = CustomReflectionTexture != null
-                            ? AssetDatabase.GetAssetPath(CustomReflectionTexture)
-                            : null
+                        customCubemap = CustomReflectionTexture != null ? AssetDatabase.GetAssetPath(CustomReflectionTexture) : null,
                     },
-                    sun = sun != null
-                        ? (object)new { name = sun.gameObject.name, instanceID = sun.gameObject.GetInstanceIDCompat() }
-                        : null,
-                    subtractiveShadowColor = ColorToArray(RenderSettings.subtractiveShadowColor)
-                }
+                    sun = sun != null ? (object)new { name = sun.gameObject.name, instanceID = sun.gameObject.GetInstanceIDCompat() } : null,
+                    subtractiveShadowColor = ColorToArray(RenderSettings.subtractiveShadowColor),
+                },
             };
         }
 
@@ -124,8 +129,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     material = mat.name,
                     shader = mat.shader.name,
-                    path = materialPath
-                }
+                    path = materialPath,
+                },
             };
         }
 
@@ -175,7 +180,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Set {set.Count} property(ies) on skybox material '{skyMat.name}'.",
-                data = new { material = skyMat.name, set, failed }
+                data = new
+                {
+                    material = skyMat.name,
+                    set,
+                    failed,
+                },
             };
         }
 
@@ -191,8 +201,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (!string.IsNullOrEmpty(modeStr))
             {
                 if (!Enum.TryParse(modeStr, true, out mode) || !Enum.IsDefined(typeof(AmbientMode), mode))
-                    return new ErrorResponse(
-                        $"Invalid ambient mode '{modeStr}'. Valid: Skybox, Trilight, Flat, Custom.");
+                    return new ErrorResponse($"Invalid ambient mode '{modeStr}'. Valid: Skybox, Trilight, Flat, Custom.");
             }
 
             var skyColor = ParseColorToken(p.GetRaw("color") ?? p.GetRaw("sky_color"));
@@ -226,8 +235,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     skyColor = ColorToArray(RenderSettings.ambientSkyColor),
                     equatorColor = ColorToArray(RenderSettings.ambientEquatorColor),
                     groundColor = ColorToArray(RenderSettings.ambientGroundColor),
-                    intensity = RenderSettings.ambientIntensity
-                }
+                    intensity = RenderSettings.ambientIntensity,
+                },
             };
         }
 
@@ -243,8 +252,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (!string.IsNullOrEmpty(modeStr))
             {
                 if (!Enum.TryParse(modeStr, true, out fogMode) || !Enum.IsDefined(typeof(FogMode), fogMode))
-                    return new ErrorResponse(
-                        $"Invalid fog mode '{modeStr}'. Valid: Linear, Exponential, ExponentialSquared.");
+                    return new ErrorResponse($"Invalid fog mode '{modeStr}'. Valid: Linear, Exponential, ExponentialSquared.");
             }
 
             var enabledToken = p.GetRaw("fog_enabled") ?? p.GetRaw("enabled");
@@ -284,8 +292,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     color = ColorToArray(RenderSettings.fogColor),
                     density = RenderSettings.fogDensity,
                     startDistance = RenderSettings.fogStartDistance,
-                    endDistance = RenderSettings.fogEndDistance
-                }
+                    endDistance = RenderSettings.fogEndDistance,
+                },
             };
         }
 
@@ -298,10 +306,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             string modeStr = p.Get("reflection_mode") ?? p.Get("mode");
             var mode = RenderSettings.defaultReflectionMode;
-            if (!string.IsNullOrEmpty(modeStr) &&
-                (!Enum.TryParse(modeStr, true, out mode) || !Enum.IsDefined(typeof(DefaultReflectionMode), mode)))
-                return new ErrorResponse(
-                    $"Invalid reflection mode '{modeStr}'. Valid: Skybox, Custom.");
+            if (!string.IsNullOrEmpty(modeStr) && (!Enum.TryParse(modeStr, true, out mode) || !Enum.IsDefined(typeof(DefaultReflectionMode), mode)))
+                return new ErrorResponse($"Invalid reflection mode '{modeStr}'. Valid: Skybox, Custom.");
 
             var intensity = p.GetFloat("intensity");
             var bounces = p.GetInt("bounces");
@@ -346,10 +352,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     bounces = RenderSettings.reflectionBounces,
                     mode = RenderSettings.defaultReflectionMode.ToString(),
                     resolution = RenderSettings.defaultReflectionResolution,
-                    customCubemap = CustomReflectionTexture != null
-                        ? AssetDatabase.GetAssetPath(CustomReflectionTexture)
-                        : null
-                }
+                    customCubemap = CustomReflectionTexture != null ? AssetDatabase.GetAssetPath(CustomReflectionTexture) : null,
+                },
             };
         }
 
@@ -386,8 +390,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     name = go.name,
                     instanceID = go.GetInstanceIDCompat(),
-                    lightType = light.type.ToString()
-                }
+                    lightType = light.type.ToString(),
+                },
             };
         }
 
@@ -402,19 +406,21 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
         private static Color ArrayToColor(float[] arr)
         {
-            return new Color(
-                arr[0], arr[1], arr[2],
-                arr.Length >= 4 ? arr[3] : 1f);
+            return new Color(arr[0], arr[1], arr[2], arr.Length >= 4 ? arr[3] : 1f);
         }
 
         private static Color? ParseColorToken(JToken token)
         {
-            if (token == null || token.Type == JTokenType.Null) return null;
+            if (token == null || token.Type == JTokenType.Null)
+                return null;
             if (token is JArray arr && arr.Count >= 3)
             {
                 return new Color(
-                    arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(), arr[2].ReadScalar<float>(),
-                    arr.Count >= 4 ? arr[3].ReadScalar<float>() : 1f);
+                    arr[0].ReadScalar<float>(),
+                    arr[1].ReadScalar<float>(),
+                    arr[2].ReadScalar<float>(),
+                    arr.Count >= 4 ? arr[3].ReadScalar<float>() : 1f
+                );
             }
             return null;
         }
@@ -444,7 +450,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
         private static bool SetMaterialProperty(Material mat, string propName, JToken value)
         {
             int propIdx = mat.shader.FindPropertyIndex(propName);
-            if (propIdx < 0) return false;
+            if (propIdx < 0)
+                return false;
 
             var propType = mat.shader.GetPropertyType(propIdx);
             try
@@ -454,9 +461,15 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     case ShaderPropertyType.Color:
                         if (value is JArray colorArr && colorArr.Count >= 3)
                         {
-                            mat.SetColor(propName, new Color(
-                                colorArr[0].ReadScalar<float>(), colorArr[1].ReadScalar<float>(), colorArr[2].ReadScalar<float>(),
-                                colorArr.Count >= 4 ? colorArr[3].ReadScalar<float>() : 1f));
+                            mat.SetColor(
+                                propName,
+                                new Color(
+                                    colorArr[0].ReadScalar<float>(),
+                                    colorArr[1].ReadScalar<float>(),
+                                    colorArr[2].ReadScalar<float>(),
+                                    colorArr.Count >= 4 ? colorArr[3].ReadScalar<float>() : 1f
+                                )
+                            );
                             return true;
                         }
                         return false;
@@ -470,18 +483,29 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     case ShaderPropertyType.Vector:
                         if (value is JArray vecArr && vecArr.Count >= 2)
                         {
-                            mat.SetVector(propName, new Vector4(
-                                vecArr[0].ReadScalar<float>(), vecArr[1].ReadScalar<float>(),
-                                vecArr.Count >= 3 ? vecArr[2].ReadScalar<float>() : 0f,
-                                vecArr.Count >= 4 ? vecArr[3].ReadScalar<float>() : 0f));
+                            mat.SetVector(
+                                propName,
+                                new Vector4(
+                                    vecArr[0].ReadScalar<float>(),
+                                    vecArr[1].ReadScalar<float>(),
+                                    vecArr.Count >= 3 ? vecArr[2].ReadScalar<float>() : 0f,
+                                    vecArr.Count >= 4 ? vecArr[3].ReadScalar<float>() : 0f
+                                )
+                            );
                             return true;
                         }
                         return false;
                     case ShaderPropertyType.Texture:
                         if (value.Type == JTokenType.String)
                         {
-                            var tex = AssetDatabase.LoadAssetAtPath<Texture>(AssetPathUtility.GetAssetReferencePath(value.ToString(), allowPackages: true, allowBuiltIn: true));
-                            if (tex != null) { mat.SetTexture(propName, tex); return true; }
+                            var tex = AssetDatabase.LoadAssetAtPath<Texture>(
+                                AssetPathUtility.GetAssetReferencePath(value.ToString(), allowPackages: true, allowBuiltIn: true)
+                            );
+                            if (tex != null)
+                            {
+                                mat.SetTexture(propName, tex);
+                                return true;
+                            }
                         }
                         else if (value.Type == JTokenType.Null)
                         {
@@ -501,8 +525,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
         private static void MarkSceneDirty()
         {
-            UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(
-                UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
+            UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
         }
     }
 }

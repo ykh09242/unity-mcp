@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MCPForUnity.Editor.Helpers;
 using UnityEditor;
-using UnityEditor.Build.Reporting;
 using UnityEditor.Build;
+using UnityEditor.Build.Reporting;
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
-using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Build
 {
@@ -17,8 +17,7 @@ namespace MCPForUnity.Editor.Tools.Build
             job.State = BuildJobState.Pending;
             BuildJobStore.AddBuildJob(job);
 
-            ScheduleOnNextUpdate(() =>
-                RunBuildCore(job, () => BuildPipeline.BuildPlayer(options)));
+            ScheduleOnNextUpdate(() => RunBuildCore(job, () => BuildPipeline.BuildPlayer(options)));
 
             return new PendingResponse(
                 $"Build scheduled for {job.Target}. Polling for completion...",
@@ -33,8 +32,7 @@ namespace MCPForUnity.Editor.Tools.Build
             job.State = BuildJobState.Pending;
             BuildJobStore.AddBuildJob(job);
 
-            ScheduleOnNextUpdate(() =>
-                RunBuildCore(job, () => BuildPipeline.BuildPlayer(options)));
+            ScheduleOnNextUpdate(() => RunBuildCore(job, () => BuildPipeline.BuildPlayer(options)));
 
             return new PendingResponse(
                 $"Profile build scheduled for {job.Target}. Polling for completion...",
@@ -44,12 +42,7 @@ namespace MCPForUnity.Editor.Tools.Build
         }
 #endif
 
-        public static BuildPlayerOptions CreateBuildOptions(
-            BuildTarget target,
-            string outputPath,
-            string[] scenes,
-            BuildOptions buildOptions,
-            int subtarget)
+        public static BuildPlayerOptions CreateBuildOptions(BuildTarget target, string outputPath, string[] scenes, BuildOptions buildOptions, int subtarget)
         {
             var options = new BuildPlayerOptions
             {
@@ -66,10 +59,12 @@ namespace MCPForUnity.Editor.Tools.Build
             // a specific texture format — confirmed Unity bug IN-102413 where value 0
             // on Unity 6000+ triggers PVRTC, ignoring Player Settings.
             // Leave at platform default (0) so Unity respects Player Settings.
-            if (target == BuildTarget.StandaloneWindows
+            if (
+                target == BuildTarget.StandaloneWindows
                 || target == BuildTarget.StandaloneWindows64
                 || target == BuildTarget.StandaloneOSX
-                || target == BuildTarget.StandaloneLinux64)
+                || target == BuildTarget.StandaloneLinux64
+            )
             {
                 options.subtarget = subtarget;
             }
@@ -83,23 +78,46 @@ namespace MCPForUnity.Editor.Tools.Build
             if (development)
                 opts |= BuildOptions.Development;
 
-            if (optionNames == null) return opts;
+            if (optionNames == null)
+                return opts;
 
             foreach (var name in optionNames)
             {
                 switch (name.ToLowerInvariant())
                 {
-                    case "clean_build": opts |= BuildOptions.CleanBuildCache; break;
-                    case "auto_run": opts |= BuildOptions.AutoRunPlayer; break;
-                    case "deep_profiling": opts |= BuildOptions.EnableDeepProfilingSupport; break;
-                    case "compress_lz4": opts |= BuildOptions.CompressWithLz4; break;
-                    case "strict_mode": opts |= BuildOptions.StrictMode; break;
-                    case "detailed_report": opts |= BuildOptions.DetailedBuildReport; break;
-                    case "allow_debugging": opts |= BuildOptions.AllowDebugging; break;
-                    case "connect_profiler": opts |= BuildOptions.ConnectWithProfiler; break;
-                    case "scripts_only": opts |= BuildOptions.BuildScriptsOnly; break;
-                    case "show_player": opts |= BuildOptions.ShowBuiltPlayer; break;
-                    case "include_tests": opts |= BuildOptions.IncludeTestAssemblies; break;
+                    case "clean_build":
+                        opts |= BuildOptions.CleanBuildCache;
+                        break;
+                    case "auto_run":
+                        opts |= BuildOptions.AutoRunPlayer;
+                        break;
+                    case "deep_profiling":
+                        opts |= BuildOptions.EnableDeepProfilingSupport;
+                        break;
+                    case "compress_lz4":
+                        opts |= BuildOptions.CompressWithLz4;
+                        break;
+                    case "strict_mode":
+                        opts |= BuildOptions.StrictMode;
+                        break;
+                    case "detailed_report":
+                        opts |= BuildOptions.DetailedBuildReport;
+                        break;
+                    case "allow_debugging":
+                        opts |= BuildOptions.AllowDebugging;
+                        break;
+                    case "connect_profiler":
+                        opts |= BuildOptions.ConnectWithProfiler;
+                        break;
+                    case "scripts_only":
+                        opts |= BuildOptions.BuildScriptsOnly;
+                        break;
+                    case "show_player":
+                        opts |= BuildOptions.ShowBuiltPlayer;
+                        break;
+                    case "include_tests":
+                        opts |= BuildOptions.IncludeTestAssemblies;
+                        break;
                 }
             }
             return opts;
@@ -152,13 +170,13 @@ namespace MCPForUnity.Editor.Tools.Build
             if (job.State == BuildJobState.Succeeded)
             {
                 UnityEngine.Debug.Log(
-                    $"[MCP Build] Build succeeded: {job.Target} → {job.OutputPath} " +
-                    $"({job.TotalSizeMb} MB, {(job.CompletedAt.Value - job.StartedAt).TotalSeconds:F1}s)");
+                    $"[MCP Build] Build succeeded: {job.Target} → {job.OutputPath} "
+                        + $"({job.TotalSizeMb} MB, {(job.CompletedAt.Value - job.StartedAt).TotalSeconds:F1}s)"
+                );
             }
             else
             {
-                UnityEngine.Debug.LogError(
-                    $"[MCP Build] ✗ Build failed: {job.Target} — {job.ErrorMessage}");
+                UnityEngine.Debug.LogError($"[MCP Build] ✗ Build failed: {job.Target} — {job.ErrorMessage}");
             }
         }
 
@@ -234,7 +252,8 @@ namespace MCPForUnity.Editor.Tools.Build
             bool executed = false;
             void RunOnce()
             {
-                if (executed) return;
+                if (executed)
+                    return;
                 executed = true;
                 EditorApplication.update -= RunOnce;
                 action();
@@ -244,10 +263,7 @@ namespace MCPForUnity.Editor.Tools.Build
 
         private static string[] GetDefaultScenes()
         {
-            return EditorBuildSettings.scenes
-                .Where(s => s.enabled)
-                .Select(s => s.path)
-                .ToArray();
+            return EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray();
         }
 
         /// <summary>
@@ -265,14 +281,16 @@ namespace MCPForUnity.Editor.Tools.Build
             for (int i = 0; i < sceneCount; i++)
             {
                 Scene scene = SceneManager.GetSceneAt(i);
-                if (!scene.isDirty) continue;
+                if (!scene.isDirty)
+                    continue;
 
                 if (string.IsNullOrEmpty(scene.path))
                 {
                     McpLog.Warn(
-                        $"[MCP Build] Skipping unsaved scene '{scene.name}': it has never been saved, " +
-                        "so saving it would open a modal file dialog. Save it manually, or the build " +
-                        "will use the last saved state of the build-settings scenes.");
+                        $"[MCP Build] Skipping unsaved scene '{scene.name}': it has never been saved, "
+                            + "so saving it would open a modal file dialog. Save it manually, or the build "
+                            + "will use the last saved state of the build-settings scenes."
+                    );
                     continue;
                 }
 

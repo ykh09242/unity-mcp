@@ -65,9 +65,7 @@ class TestManageGameObjectComponentProperties:
         assert "component_properties" in sig.parameters
 
     def test_tool_description_mentions_component_properties(self):
-        tool = next(
-            (t for t in get_registered_tools() if t["name"] == "manage_gameobject"), None
-        )
+        tool = next((t for t in get_registered_tools() if t["name"] == "manage_gameobject"), None)
         assert tool is not None
         desc = tool.get("description") or tool.get("kwargs", {}).get("description", "")
         # The top-level tool description doesn't need to mention it, but the
@@ -92,9 +90,7 @@ class TestManageGameObjectComponentProperties:
             )
         )
         assert result["success"] is True
-        assert mock_unity["params"]["componentProperties"] == {
-            "BoxCollider": {"size": [2, 2, 2]}
-        }
+        assert mock_unity["params"]["componentProperties"] == {"BoxCollider": {"size": [2, 2, 2]}}
 
     def test_component_properties_json_string_forwarded_on_create(self, mock_unity):
         result = asyncio.run(
@@ -106,9 +102,7 @@ class TestManageGameObjectComponentProperties:
             )
         )
         assert result["success"] is True
-        assert mock_unity["params"]["componentProperties"] == {
-            "BoxCollider": {"size": [2, 2, 2]}
-        }
+        assert mock_unity["params"]["componentProperties"] == {"BoxCollider": {"size": [2, 2, 2]}}
 
     def test_invalid_component_properties_rejected_before_send(self, mock_unity):
         result = asyncio.run(
@@ -167,9 +161,7 @@ class TestManageGameObjectComponentsToAdd:
                 SimpleNamespace(),
                 action="create",
                 name="Probe",
-                components_to_add=[
-                    {"typeName": "BoxCollider", "properties": {"size": [2, 2, 2]}}
-                ],
+                components_to_add=[{"typeName": "BoxCollider", "properties": {"size": [2, 2, 2]}}],
             )
         )
         assert result["success"] is True
@@ -302,9 +294,7 @@ class TestManageGameObjectComponentsToAdd:
                 SimpleNamespace(),
                 action="modify",
                 target="Probe",
-                components_to_add=[
-                    {"typeName": "BoxCollider", "properties": {"size": [2, 2, 2]}}
-                ],
+                components_to_add=[{"typeName": "BoxCollider", "properties": {"size": [2, 2, 2]}}],
             )
         )
         assert result["success"] is True

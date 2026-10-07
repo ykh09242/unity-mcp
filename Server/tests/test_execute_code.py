@@ -1,4 +1,5 @@
 """Tests for execute_code tool."""
+
 import asyncio
 import os
 import subprocess
@@ -49,6 +50,7 @@ def mock_unity_error(monkeypatch):
 
 # --- execute action ---
 
+
 def test_execute_forwards_code_to_unity(mock_unity):
     result = asyncio.run(execute_code(SimpleNamespace(), action="execute", code="return 42;"))
     assert result["success"] is True
@@ -80,6 +82,7 @@ def test_execute_requires_code():
 
 # --- get_history action ---
 
+
 def test_get_history_forwards_to_unity(mock_unity):
     asyncio.run(execute_code(SimpleNamespace(), action="get_history", limit=5))
     assert mock_unity["params"]["action"] == "get_history"
@@ -103,6 +106,7 @@ def test_get_history_clamps_negative_limit(mock_unity):
 
 # --- replay action ---
 
+
 def test_replay_forwards_index(mock_unity):
     asyncio.run(execute_code(SimpleNamespace(), action="replay", index=3))
     assert mock_unity["params"]["action"] == "replay"
@@ -117,12 +121,14 @@ def test_replay_requires_index():
 
 # --- clear_history action ---
 
+
 def test_clear_history_forwards(mock_unity):
     asyncio.run(execute_code(SimpleNamespace(), action="clear_history"))
     assert mock_unity["params"]["action"] == "clear_history"
 
 
 # --- error handling ---
+
 
 def test_error_response_normalized(mock_unity_error):
     result = asyncio.run(execute_code(SimpleNamespace(), action="execute", code="bad"))
@@ -214,7 +220,7 @@ def test_missing_required_input_skips_context_lookup_and_dispatch(monkeypatch, a
 
 
 def test_sdk_rejects_scalar_coercion_before_unity_dispatch():
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import asyncio, importlib
         from fastmcp import FastMCP, Client
         from services.tools import register_all_tools
@@ -263,9 +269,12 @@ def test_sdk_rejects_scalar_coercion_before_unity_dispatch():
             assert not errors, errors
             print("real SDK execute_code scalar contracts passed in both protocol modes")
         asyncio.run(main())
-    ''')
+    """)
     result = subprocess.run(
-        [sys.executable, "-B", "-c", code], capture_output=True, text=True, timeout=60,
+        [sys.executable, "-B", "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=60,
         env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true", "UNITY_MCP_TRANSPORT": "stdio"},
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -273,6 +282,7 @@ def test_sdk_rejects_scalar_coercion_before_unity_dispatch():
 
 
 # --- param isolation ---
+
 
 def test_execute_omits_irrelevant_params(mock_unity):
     asyncio.run(execute_code(SimpleNamespace(), action="execute", code="return 1;"))

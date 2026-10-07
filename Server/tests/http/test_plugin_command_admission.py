@@ -58,8 +58,10 @@ async def register_socket(registry: PluginRegistry, session: str, user: str) -> 
 async def start_command(session: str, params: dict | None = None) -> asyncio.Task:
     task = asyncio.create_task(PluginHub.send_command(session, "run_tests", params or {}))
     for _ in range(20):
-        if (any(entry["session_id"] == session for entry in PluginHub._pending.values())
-                and PluginHub._connections[session].send_json.await_count):
+        if (
+            any(entry["session_id"] == session for entry in PluginHub._pending.values())
+            and PluginHub._connections[session].send_json.await_count
+        ):
             return task
         await asyncio.sleep(0)
     assert False, "Command never entered pending transport state"
@@ -103,11 +105,13 @@ async def test_session_admission_rejects_before_building_payload(admission_hub, 
     original_message = hub_module.ExecuteCommandMessage
     try:
         await asyncio.sleep(0)
+
         def unexpected_work(*args, **kwargs):
             raise AssertionError("Rejected command allocated an ID or execute model")
 
         monkeypatch.setattr(hub_module.uuid, "uuid4", unexpected_work)
         monkeypatch.setattr(hub_module, "ExecuteCommandMessage", unexpected_work)
+
         # A saturated request must not even traverse its parameters.
         class Untouchable(dict):
             def items(self):
@@ -131,9 +135,15 @@ async def test_session_admission_rejects_before_building_payload(admission_hub, 
 
 @pytest.mark.asyncio
 async def test_user_capacity_spans_sessions_and_preserves_other_tenant(admission_hub):
-    sockets = {sid: await register_socket(admission_hub, sid, user) for sid, user in (
-        ("a1", "alice"), ("a2", "alice"), ("a3", "alice"), ("b1", "bob"),
-    )}
+    sockets = {
+        sid: await register_socket(admission_hub, sid, user)
+        for sid, user in (
+            ("a1", "alice"),
+            ("a2", "alice"),
+            ("a3", "alice"),
+            ("b1", "bob"),
+        )
+    }
     tasks = [await start_command("a1"), await start_command("a2")]
     try:
         result = await reject_without_send("a3", sockets["a3"], {"user_id": "bob"})
@@ -149,7 +159,9 @@ async def test_user_capacity_spans_sessions_and_preserves_other_tenant(admission
 
 @pytest.mark.asyncio
 async def test_global_capacity_bounds_distinct_tenants(admission_hub):
-    sockets = {sid: await register_socket(admission_hub, sid, sid) for sid in ("a", "b", "c", "d", "e")}
+    sockets = {
+        sid: await register_socket(admission_hub, sid, sid) for sid in ("a", "b", "c", "d", "e")
+    }
     tasks = [await start_command(sid) for sid in ("a", "b", "c", "d")]
     try:
         await reject_without_send("e", sockets["e"], {})
@@ -170,8 +182,17 @@ async def test_oversized_payload_never_enters_pending(admission_hub, payload):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("ceiling", ["MAX_PENDING_PAYLOAD_BYTES_PER_SESSION", "MAX_PENDING_PAYLOAD_BYTES_PER_USER", "MAX_PENDING_PAYLOAD_BYTES"])
-async def test_each_retained_payload_budget_rejects_before_send(admission_hub, monkeypatch, ceiling):
+@pytest.mark.parametrize(
+    "ceiling",
+    [
+        "MAX_PENDING_PAYLOAD_BYTES_PER_SESSION",
+        "MAX_PENDING_PAYLOAD_BYTES_PER_USER",
+        "MAX_PENDING_PAYLOAD_BYTES",
+    ],
+)
+async def test_each_retained_payload_budget_rejects_before_send(
+    admission_hub, monkeypatch, ceiling
+):
     monkeypatch.setattr(PluginHub, "MAX_PENDING_PER_SESSION", 5)
     monkeypatch.setattr(PluginHub, "MAX_PENDING_PER_USER", 5)
     monkeypatch.setattr(PluginHub, "MAX_PENDING_COMMANDS", 10)
@@ -206,7 +227,14 @@ async def test_all_completion_paths_release_admission(admission_hub, monkeypatch
     task = await start_command("a")
     try:
         if cleanup == "result":
-            await hub.on_receive(socket, {"type": "command_result", "id": next(iter(PluginHub._pending)), "result": {"success": True}})
+            await hub.on_receive(
+                socket,
+                {
+                    "type": "command_result",
+                    "id": next(iter(PluginHub._pending)),
+                    "result": {"success": True},
+                },
+            )
         elif cleanup == "disconnect":
             await hub.on_disconnect(socket, 1001)
         elif cleanup == "evict":
@@ -223,7 +251,6 @@ async def test_all_completion_paths_release_admission(admission_hub, monkeypatch
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     assert PluginHub._pending == {}
-
 
     if cleanup == "shutdown":
         PluginHub.configure(admission_hub)
@@ -273,7 +300,9 @@ async def test_readiness_probe_propagates_capacity_without_retry_wait(admission_
     first = await start_command("a")
     try:
         before = socket.send_json.await_count
-        result = await asyncio.wait_for(PluginHub.send_command_for_instance("a", "get_editor_state", {}, user_id="alice"), 0.3)
+        result = await asyncio.wait_for(
+            PluginHub.send_command_for_instance("a", "get_editor_state", {}, user_id="alice"), 0.3
+        )
         assert result["data"]["reason"] == "command_capacity"
         assert socket.send_json.await_count == before
         assert len(PluginHub._pending) == 1
@@ -297,7 +326,7 @@ async def test_replacement_session_releases_old_user_payload_quota(admission_hub
         await hub.on_receive(replacement, {"type": "register", "project_hash": "a"})
         assert (await asyncio.wait_for(old, 0.3))["hint"] == "retry"
         assert PluginHub._pending == {}
-        new_session = (await admission_hub.get_session_id_by_hash("a", user_id="alice"))
+        new_session = await admission_hub.get_session_id_by_hash("a", user_id="alice")
         assert new_session != "a"
         recovered = await start_command(new_session)
         recovered.cancel()
@@ -329,7 +358,7 @@ async def test_invalid_or_complex_payload_is_bounded(admission_hub, monkeypatch,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("text", ["ascii", "\x00\\\"", "\U0001f600\uac00"])
+@pytest.mark.parametrize("text", ["ascii", '\x00\\"', "\U0001f600\uac00"])
 async def test_payload_boundary_charges_unicode_and_json_escapes(admission_hub, monkeypatch, text):
     socket = await register_socket(admission_hub, "a", "alice")
     params = {"script": text * 10}
@@ -357,7 +386,14 @@ async def test_normal_long_command_keeps_requested_deadline(admission_hub):
             await asyncio.sleep(0)
         assert socket.send_json.call_args.args[0]["timeout"] == 900
         assert not task.done()
-        await hub.on_receive(socket, {"type": "command_result", "id": next(iter(PluginHub._pending)), "result": {"success": True}})
+        await hub.on_receive(
+            socket,
+            {
+                "type": "command_result",
+                "id": next(iter(PluginHub._pending)),
+                "result": {"success": True},
+            },
+        )
         assert (await task)["success"] is True
     finally:
         task.cancel()
@@ -377,11 +413,19 @@ async def test_registered_tool_reports_capacity_through_public_sdk(admission_hub
         PluginHub.configure(admission_hub, mcp=mcp)
         socket = await register_socket(admission_hub, "a", None)
         hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
-        await hub.on_receive(socket, {"type": "register_tools", "tools": [{"name": "run_tests", "description": "owned tool control"}]})
+        await hub.on_receive(
+            socket,
+            {
+                "type": "register_tools",
+                "tools": [{"name": "run_tests", "description": "owned tool control"}],
+            },
+        )
         first = await start_command("a")
         try:
             before = socket.send_json.await_count
-            response = await asyncio.wait_for(client.call_tool("run_tests", {"clear_stuck": True, "unity_instance": "a"}), 0.5)
+            response = await asyncio.wait_for(
+                client.call_tool("run_tests", {"clear_stuck": True, "unity_instance": "a"}), 0.5
+            )
             result = json.loads(response.content[0].text)
             assert result["success"] is False
             assert result["data"]["reason"] == "command_capacity"
@@ -391,12 +435,18 @@ async def test_registered_tool_reports_capacity_through_public_sdk(admission_hub
             first.cancel()
             await asyncio.gather(first, return_exceptions=True)
         assert PluginHub._pending == {}
+
         async def complete(payload):
             if payload.get("type") == "execute":
-                await hub.on_receive(socket, {"type": "command_result", "id": payload["id"], "result": {"success": True}})
+                await hub.on_receive(
+                    socket,
+                    {"type": "command_result", "id": payload["id"], "result": {"success": True}},
+                )
 
         socket.send_json.side_effect = complete
-        response = await asyncio.wait_for(client.call_tool("run_tests", {"clear_stuck": True, "unity_instance": "a"}), 0.5)
+        response = await asyncio.wait_for(
+            client.call_tool("run_tests", {"clear_stuck": True, "unity_instance": "a"}), 0.5
+        )
         assert json.loads(response.content[0].text)["success"] is True
         assert PluginHub._pending == {}
 
@@ -417,7 +467,12 @@ async def test_real_asgi_plugin_endpoint_enforces_capacity(admission_hub, monkey
     try:
         assert (await asyncio.wait_for(outgoing.get(), 0.3))["type"] == "websocket.accept"
         assert json.loads((await outgoing.get())["text"])["type"] == "welcome"
-        await incoming.put({"type": "websocket.receive", "text": json.dumps({"type": "register", "project_hash": "owned"})})
+        await incoming.put(
+            {
+                "type": "websocket.receive",
+                "text": json.dumps({"type": "register", "project_hash": "owned"}),
+            }
+        )
         session_id = json.loads((await asyncio.wait_for(outgoing.get(), 0.3))["text"])["session_id"]
         command = asyncio.create_task(PluginHub.send_command(session_id, "run_tests", {}))
         execution = json.loads((await asyncio.wait_for(outgoing.get(), 0.3))["text"])
@@ -425,7 +480,14 @@ async def test_real_asgi_plugin_endpoint_enforces_capacity(admission_hub, monkey
         result = await asyncio.wait_for(PluginHub.send_command(session_id, "run_tests", {}), 0.3)
         assert result["data"]["reason"] == "command_capacity"
         assert outgoing.empty(), "Rejected command must not reach the ASGI WebSocket send"
-        await incoming.put({"type": "websocket.receive", "text": json.dumps({"type": "command_result", "id": execution["id"], "result": {"success": True}})})
+        await incoming.put(
+            {
+                "type": "websocket.receive",
+                "text": json.dumps(
+                    {"type": "command_result", "id": execution["id"], "result": {"success": True}}
+                ),
+            }
+        )
         assert (await asyncio.wait_for(command, 0.3))["success"] is True
         assert PluginHub._pending == {}
     finally:
@@ -439,7 +501,9 @@ async def test_real_asgi_plugin_endpoint_enforces_capacity(admission_hub, monkey
 
 
 @pytest.mark.asyncio
-async def test_real_http_command_route_returns_capacity_without_unity_send(admission_hub, monkeypatch):
+async def test_real_http_command_route_returns_capacity_without_unity_send(
+    admission_hub, monkeypatch
+):
     from main import create_mcp_server
 
     monkeypatch.setattr(config, "http_remote_hosted", False)
@@ -450,8 +514,17 @@ async def test_real_http_command_route_returns_capacity_without_unity_send(admis
     first = await start_command("a")
     try:
         before = socket.send_json.await_count
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://owned.invalid") as client:
-            response = await asyncio.wait_for(client.post("/api/command", headers={"X-Unity-MCP-Token": "owned-admission-control"}, json={"type": "run_tests", "unity_instance": "a", "params": {}}), 0.5)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://owned.invalid"
+        ) as client:
+            response = await asyncio.wait_for(
+                client.post(
+                    "/api/command",
+                    headers={"X-Unity-MCP-Token": "owned-admission-control"},
+                    json={"type": "run_tests", "unity_instance": "a", "params": {}},
+                ),
+                0.5,
+            )
         assert response.status_code == 200
         assert response.json()["data"]["reason"] == "command_capacity"
         assert socket.send_json.await_count == before

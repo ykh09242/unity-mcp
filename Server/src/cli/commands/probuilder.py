@@ -63,6 +63,7 @@ def probuilder():
 # Shape Creation
 # =============================================================================
 
+
 @probuilder.command("create-shape")
 @click.argument("shape_type")
 @click.option("--name", "-n", default=None, help="Name for the created GameObject.")
@@ -121,7 +122,7 @@ def create_shape(shape_type: str, name: Optional[str], position, rotation, param
 
 
 @probuilder.command("create-poly")
-@click.option("--points", "-p", required=True, help='Points as JSON: [[x,y,z], ...]')
+@click.option("--points", "-p", required=True, help="Points as JSON: [[x,y,z], ...]")
 @click.option("--height", "-h", type=float, default=1.0, help="Extrude height.")
 @click.option("--name", "-n", default=None, help="Name for the created GameObject.")
 @click.option("--flip-normals", is_flag=True, help="Flip face normals.")
@@ -156,16 +157,22 @@ def create_poly(points: str, height: float, name: Optional[str], flip_normals: b
 # Mesh Editing
 # =============================================================================
 
+
 @probuilder.command("extrude-faces")
 @click.argument("target")
 @click.option("--faces", required=True, help="Face indices as JSON array, e.g. '[0,1,2]'.")
 @click.option("--distance", "-d", type=float, default=0.5, help="Extrusion distance.")
-@click.option("--method", type=click.Choice(["FaceNormal", "VertexNormal", "IndividualFaces"]),
-              default="FaceNormal", help="Extrusion method.")
+@click.option(
+    "--method",
+    type=click.Choice(["FaceNormal", "VertexNormal", "IndividualFaces"]),
+    default="FaceNormal",
+    help="Extrusion method.",
+)
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
-def extrude_faces(target: str, faces: str, distance: float, method: str,
-                  search_method: Optional[str]):
+def extrude_faces(
+    target: str, faces: str, distance: float, method: str, search_method: Optional[str]
+):
     """Extrude faces of a ProBuilder mesh.
 
     \b
@@ -194,14 +201,18 @@ def extrude_faces(target: str, faces: str, distance: float, method: str,
 
 @probuilder.command("extrude-edges")
 @click.argument("target")
-@click.option("--edges", required=True,
-              help='Edge indices as JSON array [0,1] or vertex pairs [{"a":0,"b":1}].')
+@click.option(
+    "--edges",
+    required=True,
+    help='Edge indices as JSON array [0,1] or vertex pairs [{"a":0,"b":1}].',
+)
 @click.option("--distance", "-d", type=float, default=0.5, help="Extrusion distance.")
 @click.option("--as-group/--no-group", default=True, help="Extrude as group.")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
-def extrude_edges(target: str, edges: str, distance: float, as_group: bool,
-                  search_method: Optional[str]):
+def extrude_edges(
+    target: str, edges: str, distance: float, as_group: bool, search_method: Optional[str]
+):
     """Extrude edges of a ProBuilder mesh.
 
     \b
@@ -234,8 +245,11 @@ def extrude_edges(target: str, edges: str, distance: float, as_group: bool,
 
 @probuilder.command("bevel-edges")
 @click.argument("target")
-@click.option("--edges", required=True,
-              help='Edge indices as JSON array [0,1] or vertex pairs [{"a":0,"b":1}].')
+@click.option(
+    "--edges",
+    required=True,
+    help='Edge indices as JSON array [0,1] or vertex pairs [{"a":0,"b":1}].',
+)
 @click.option("--amount", "-a", type=float, default=0.1, help="Bevel amount (0-1).")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
@@ -296,7 +310,11 @@ def delete_faces(target: str, faces: str, search_method: Optional[str]):
 
 @probuilder.command("subdivide")
 @click.argument("target")
-@click.option("--faces", default=None, help="Face indices as JSON array (optional, subdivides all if omitted).")
+@click.option(
+    "--faces",
+    default=None,
+    help="Face indices as JSON array (optional, subdivides all if omitted).",
+)
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
 def subdivide(target: str, faces: Optional[str], search_method: Optional[str]):
@@ -326,16 +344,27 @@ def subdivide(target: str, faces: Optional[str], search_method: Optional[str]):
 
 @probuilder.command("select-faces")
 @click.argument("target")
-@click.option("--direction", type=click.Choice(["up", "down", "forward", "back", "left", "right"]),
-              default=None, help="Select faces by normal direction.")
-@click.option("--tolerance", type=float, default=0.7, help="Dot product tolerance for direction (0-1).")
+@click.option(
+    "--direction",
+    type=click.Choice(["up", "down", "forward", "back", "left", "right"]),
+    default=None,
+    help="Select faces by normal direction.",
+)
+@click.option(
+    "--tolerance", type=float, default=0.7, help="Dot product tolerance for direction (0-1)."
+)
 @click.option("--grow-from", default=None, help="Face indices to grow selection from (JSON array).")
 @click.option("--grow-angle", type=float, default=-1, help="Max angle for grow selection (-1=any).")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
-def select_faces(target: str, direction: Optional[str], tolerance: float,
-                 grow_from: Optional[str], grow_angle: float,
-                 search_method: Optional[str]):
+def select_faces(
+    target: str,
+    direction: Optional[str],
+    tolerance: float,
+    grow_from: Optional[str],
+    grow_angle: float,
+    search_method: Optional[str],
+):
     """Select faces by criteria (direction, grow, flood, loop).
 
     \b
@@ -402,8 +431,7 @@ def move_vertices(target: str, vertices: str, offset, search_method: Optional[st
 @click.option("--radius", "-r", type=float, default=0.01, help="Neighbor radius for welding.")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
-def weld_vertices(target: str, vertices: str, radius: float,
-                  search_method: Optional[str]):
+def weld_vertices(target: str, vertices: str, radius: float, search_method: Optional[str]):
     """Weld vertices within a proximity radius.
 
     \b
@@ -434,8 +462,7 @@ def weld_vertices(target: str, vertices: str, radius: float,
 @click.option("--material", "-m", required=True, help="Material asset path.")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
-def set_material(target: str, faces: str, material: str,
-                 search_method: Optional[str]):
+def set_material(target: str, faces: str, material: str, search_method: Optional[str]):
     """Assign a material to specific faces.
 
     \b
@@ -464,10 +491,15 @@ def set_material(target: str, faces: str, material: str,
 # Mesh Info
 # =============================================================================
 
+
 @probuilder.command("info")
 @click.argument("target")
-@click.option("--include", type=click.Choice(["summary", "faces", "edges", "all"]),
-              default="summary", help="Detail level: summary, faces, edges, or all.")
+@click.option(
+    "--include",
+    type=click.Choice(["summary", "faces", "edges", "all"]),
+    default="summary",
+    help="Detail level: summary, faces, edges, or all.",
+)
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
 def mesh_info(target: str, include: str, search_method: Optional[str]):
@@ -494,6 +526,7 @@ def mesh_info(target: str, include: str, search_method: Optional[str]):
 # =============================================================================
 # Smoothing
 # =============================================================================
+
 
 @probuilder.command("auto-smooth")
 @click.argument("target")
@@ -558,6 +591,7 @@ def set_smoothing(target: str, faces: str, group: int, search_method: Optional[s
 # =============================================================================
 # Mesh Utilities
 # =============================================================================
+
 
 @probuilder.command("center-pivot")
 @click.argument("target")
@@ -676,6 +710,7 @@ def repair_mesh(target: str, search_method: Optional[str]):
 # =============================================================================
 # Raw Command (escape hatch)
 # =============================================================================
+
 
 @probuilder.command("raw")
 @click.argument("action")

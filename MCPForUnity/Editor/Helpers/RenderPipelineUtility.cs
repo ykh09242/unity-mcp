@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
-using UnityEditor;
 
 namespace MCPForUnity.Editor.Helpers
 {
@@ -13,14 +13,14 @@ namespace MCPForUnity.Editor.Helpers
             BuiltIn,
             Universal,
             HighDefinition,
-            Custom
+            Custom,
         }
 
         internal enum VFXComponentType
         {
             ParticleSystem,
             LineRenderer,
-            TrailRenderer
+            TrailRenderer,
         }
 
         private static Dictionary<string, Material> s_DefaultVFXMaterials = new Dictionary<string, Material>();
@@ -31,7 +31,8 @@ namespace MCPForUnity.Editor.Helpers
         private static readonly string[] BuiltInParticleShaders = { "Particles/Standard Unlit", "Particles/Alpha Blended", "Particles/Additive" };
         private static readonly string[] UrpLitShaders = { "Universal Render Pipeline/Lit", "Universal Render Pipeline/Simple Lit" };
         private static readonly string[] UrpUnlitShaders = { "Universal Render Pipeline/Unlit" };
-        private static readonly string[] UrpParticleShaders = {
+        private static readonly string[] UrpParticleShaders =
+        {
             "Universal Render Pipeline/Particles/Unlit",
             "Universal Render Pipeline/Particles/Simple Lit",
             "Universal Render Pipeline/Particles/Lit",
@@ -48,14 +49,15 @@ namespace MCPForUnity.Editor.Helpers
             }
 
             var typeName = asset.GetType().FullName ?? string.Empty;
-            if (typeName.IndexOf("HighDefinition", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                typeName.IndexOf("HDRP", StringComparison.OrdinalIgnoreCase) >= 0)
+            if (
+                typeName.IndexOf("HighDefinition", StringComparison.OrdinalIgnoreCase) >= 0
+                || typeName.IndexOf("HDRP", StringComparison.OrdinalIgnoreCase) >= 0
+            )
             {
                 return PipelineKind.HighDefinition;
             }
 
-            if (typeName.IndexOf("Universal", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                typeName.IndexOf("URP", StringComparison.OrdinalIgnoreCase) >= 0)
+            if (typeName.IndexOf("Universal", StringComparison.OrdinalIgnoreCase) >= 0 || typeName.IndexOf("URP", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 return PipelineKind.Universal;
             }
@@ -87,9 +89,7 @@ namespace MCPForUnity.Editor.Helpers
                 McpLog.Warn($"Shader '{alias}' not found. Falling back to {pipeline} defaults.");
             }
 
-            var fallback = ResolveDefaultLitShader(pipeline)
-                           ?? ResolveDefaultLitShader(PipelineKind.BuiltIn)
-                           ?? Shader.Find("Unlit/Color");
+            var fallback = ResolveDefaultLitShader(pipeline) ?? ResolveDefaultLitShader(PipelineKind.BuiltIn) ?? Shader.Find("Unlit/Color");
 
             if (fallback != null)
             {
@@ -106,7 +106,7 @@ namespace MCPForUnity.Editor.Helpers
                 PipelineKind.HighDefinition => TryFindShader(HdrpLitShaders) ?? TryFindShader(UrpLitShaders),
                 PipelineKind.Universal => TryFindShader(UrpLitShaders) ?? TryFindShader(HdrpLitShaders),
                 PipelineKind.Custom => TryFindShader(BuiltInLitShaders) ?? TryFindShader(UrpLitShaders) ?? TryFindShader(HdrpLitShaders),
-                _ => TryFindShader(BuiltInLitShaders) ?? Shader.Find("Unlit/Color")
+                _ => TryFindShader(BuiltInLitShaders) ?? Shader.Find("Unlit/Color"),
             };
         }
 
@@ -117,16 +117,18 @@ namespace MCPForUnity.Editor.Helpers
                 PipelineKind.HighDefinition => TryFindShader(HdrpUnlitShaders) ?? TryFindShader(UrpUnlitShaders) ?? TryFindShader(BuiltInUnlitShaders),
                 PipelineKind.Universal => TryFindShader(UrpUnlitShaders) ?? TryFindShader(HdrpUnlitShaders) ?? TryFindShader(BuiltInUnlitShaders),
                 PipelineKind.Custom => TryFindShader(BuiltInUnlitShaders) ?? TryFindShader(UrpUnlitShaders) ?? TryFindShader(HdrpUnlitShaders),
-                _ => TryFindShader(BuiltInUnlitShaders)
+                _ => TryFindShader(BuiltInUnlitShaders),
             };
         }
 
         private static Shader ResolveAlias(string alias, PipelineKind pipeline)
         {
-            if (string.Equals(alias, "lit", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(alias, "default", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(alias, "default_lit", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(alias, "standard", StringComparison.OrdinalIgnoreCase))
+            if (
+                string.Equals(alias, "lit", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(alias, "default", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(alias, "default_lit", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(alias, "standard", StringComparison.OrdinalIgnoreCase)
+            )
             {
                 return ResolveDefaultLitShader(pipeline);
             }
@@ -189,7 +191,9 @@ namespace MCPForUnity.Editor.Helpers
                     }
                     else if (shaderLooksBuiltin && !shaderLooksHdrp)
                     {
-                        McpLog.Warn($"[RenderPipelineUtility] Active pipeline is HDRP but shader '{shaderName}' looks Built-in. Consider using an HDRP shader for correct results.");
+                        McpLog.Warn(
+                            $"[RenderPipelineUtility] Active pipeline is HDRP but shader '{shaderName}' looks Built-in. Consider using an HDRP shader for correct results."
+                        );
                     }
                     break;
                 case PipelineKind.Universal:
@@ -199,13 +203,17 @@ namespace MCPForUnity.Editor.Helpers
                     }
                     else if (shaderLooksBuiltin && !shaderLooksUrp)
                     {
-                        McpLog.Warn($"[RenderPipelineUtility] Active pipeline is URP but shader '{shaderName}' looks Built-in. Consider using a URP shader for correct results.");
+                        McpLog.Warn(
+                            $"[RenderPipelineUtility] Active pipeline is URP but shader '{shaderName}' looks Built-in. Consider using a URP shader for correct results."
+                        );
                     }
                     break;
                 case PipelineKind.BuiltIn:
                     if (shaderLooksSrp)
                     {
-                        McpLog.Warn($"[RenderPipelineUtility] Active pipeline is Built-in but shader '{shaderName}' targets URP/HDRP. Asset may not render as expected.");
+                        McpLog.Warn(
+                            $"[RenderPipelineUtility] Active pipeline is Built-in but shader '{shaderName}' targets URP/HDRP. Asset may not render as expected."
+                        );
                     }
                     break;
             }
@@ -295,9 +303,7 @@ namespace MCPForUnity.Editor.Helpers
 
             if (pipeline == PipelineKind.BuiltIn)
             {
-                string builtinPath = componentType == VFXComponentType.ParticleSystem
-                    ? "Default-Particle.mat"
-                    : "Default-Line.mat";
+                string builtinPath = componentType == VFXComponentType.ParticleSystem ? "Default-Particle.mat" : "Default-Line.mat";
 
                 material = AssetDatabase.GetBuiltinExtraResource<Material>(builtinPath);
             }
@@ -368,9 +374,9 @@ namespace MCPForUnity.Editor.Helpers
                     PipelineKind.HighDefinition => TryFindShader(HdrpUnlitShaders) ?? ResolveDefaultUnlitShader(pipeline),
                     PipelineKind.BuiltIn => TryFindShader(BuiltInParticleShaders) ?? ResolveDefaultUnlitShader(pipeline),
                     PipelineKind.Custom => TryFindShader(UrpParticleShaders)
-                                           ?? TryFindShader(BuiltInParticleShaders)
-                                           ?? TryFindShader(HdrpUnlitShaders)
-                                           ?? ResolveDefaultUnlitShader(pipeline),
+                        ?? TryFindShader(BuiltInParticleShaders)
+                        ?? TryFindShader(HdrpUnlitShaders)
+                        ?? ResolveDefaultUnlitShader(pipeline),
                     _ => ResolveDefaultUnlitShader(pipeline),
                 };
             }
@@ -385,17 +391,17 @@ namespace MCPForUnity.Editor.Helpers
                 return false;
             }
 
-            if (lowerName == "standard" ||
-                lowerName.StartsWith("legacy shaders/", StringComparison.Ordinal) ||
-                lowerName.StartsWith("mobile/", StringComparison.Ordinal))
+            if (
+                lowerName == "standard"
+                || lowerName.StartsWith("legacy shaders/", StringComparison.Ordinal)
+                || lowerName.StartsWith("mobile/", StringComparison.Ordinal)
+            )
             {
                 return true;
             }
 
             // Built-in non-SRP shader families commonly seen on particles/old content.
-            if (!shaderLooksSrp &&
-                (lowerName.StartsWith("particles/", StringComparison.Ordinal) ||
-                 lowerName.StartsWith("unlit/", StringComparison.Ordinal)))
+            if (!shaderLooksSrp && (lowerName.StartsWith("particles/", StringComparison.Ordinal) || lowerName.StartsWith("unlit/", StringComparison.Ordinal)))
             {
                 return true;
             }

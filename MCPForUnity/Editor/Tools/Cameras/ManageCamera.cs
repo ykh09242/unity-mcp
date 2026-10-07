@@ -1,6 +1,6 @@
 using System;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Tools.Cameras
 {
@@ -30,32 +30,20 @@ namespace MCPForUnity.Editor.Tools.Cameras
                             message = CameraHelpers.HasCinemachine
                                 ? "Cinemachine is available."
                                 : "Cinemachine not installed. Basic Camera operations available.",
-                            data = new
-                            {
-                                cinemachine = CameraHelpers.HasCinemachine,
-                                version = CameraHelpers.GetCinemachineVersion()
-                            }
+                            data = new { cinemachine = CameraHelpers.HasCinemachine, version = CameraHelpers.GetCinemachineVersion() },
                         };
 
                     case "create_camera":
-                        return CameraHelpers.HasCinemachine
-                            ? CameraCreate.CreateCinemachineCamera(@params)
-                            : CameraCreate.CreateBasicCamera(@params);
+                        return CameraHelpers.HasCinemachine ? CameraCreate.CreateCinemachineCamera(@params) : CameraCreate.CreateBasicCamera(@params);
 
                     case "set_target":
-                        return CameraHelpers.HasCinemachine
-                            ? CameraConfigure.SetCinemachineTarget(@params)
-                            : CameraConfigure.SetBasicCameraTarget(@params);
+                        return CameraHelpers.HasCinemachine ? CameraConfigure.SetCinemachineTarget(@params) : CameraConfigure.SetBasicCameraTarget(@params);
 
                     case "set_lens":
-                        return CameraHelpers.HasCinemachine
-                            ? CameraConfigure.SetCinemachineLens(@params)
-                            : CameraConfigure.SetBasicCameraLens(@params);
+                        return CameraHelpers.HasCinemachine ? CameraConfigure.SetCinemachineLens(@params) : CameraConfigure.SetBasicCameraLens(@params);
 
                     case "set_priority":
-                        return CameraHelpers.HasCinemachine
-                            ? CameraConfigure.SetCinemachinePriority(@params)
-                            : CameraConfigure.SetBasicCameraPriority(@params);
+                        return CameraHelpers.HasCinemachine ? CameraConfigure.SetCinemachinePriority(@params) : CameraConfigure.SetBasicCameraPriority(@params);
 
                     case "list_cameras":
                         return CameraControl.ListCameras(@params);
@@ -79,8 +67,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 if (!CameraHelpers.HasCinemachine)
                 {
                     return new ErrorResponse(
-                        $"Action '{action}' requires the Cinemachine package (com.unity.cinemachine). "
-                        + CameraHelpers.GetFallbackSuggestion(action));
+                        $"Action '{action}' requires the Cinemachine package (com.unity.cinemachine). " + CameraHelpers.GetFallbackSuggestion(action)
+                    );
                 }
 
                 switch (action)
@@ -118,10 +106,11 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     default:
                         return new ErrorResponse(
                             $"Unknown action: '{action}'. Valid actions: ping, create_camera, set_target, "
-                            + "set_lens, set_priority, list_cameras, screenshot, screenshot_multiview, "
-                            + "ensure_brain, get_brain_status, "
-                            + "set_body, set_aim, set_noise, add_extension, remove_extension, "
-                            + "set_blend, force_camera, release_override.");
+                                + "set_lens, set_priority, list_cameras, screenshot, screenshot_multiview, "
+                                + "ensure_brain, get_brain_status, "
+                                + "set_body, set_aim, set_noise, add_extension, remove_extension, "
+                                + "set_blend, force_camera, release_override."
+                        );
                 }
             }
             catch (Exception ex)

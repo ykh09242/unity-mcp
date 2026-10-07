@@ -1,12 +1,12 @@
 using System;
 using System.IO;
-using NUnit.Framework;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
+using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using MCPForUnity.Editor.Tools;
 
 namespace MCPForUnity.Tests.EditMode.Tools
 {
@@ -34,14 +34,9 @@ namespace MCPForUnity.Tests.EditMode.Tools
         [Test]
         public void Load_MissingPackageScene_ReportsThePackagePath_NotAnAssetsRewrite()
         {
-            var p = new JObject
-            {
-                ["action"] = "load",
-                ["path"] = "Packages/com.example.doesnotexist/Samples/Demo.unity"
-            };
+            var p = new JObject { ["action"] = "load", ["path"] = "Packages/com.example.doesnotexist/Samples/Demo.unity" };
 
-            var r = ManageScene.HandleCommand(p) as JObject
-                    ?? JObject.FromObject(ManageScene.HandleCommand(p));
+            var r = ManageScene.HandleCommand(p) as JObject ?? JObject.FromObject(ManageScene.HandleCommand(p));
 
             Assert.IsFalse(r.Value<bool>("success"), r.ToString());
 
@@ -62,12 +57,16 @@ namespace MCPForUnity.Tests.EditMode.Tools
         [TestCase("save")]
         public void PackageSceneWrites_AreRejectedAtThePublicEntry(string action)
         {
-            var response = JObject.FromObject(ManageScene.HandleCommand(new JObject
-            {
-                ["action"] = action,
-                ["path"] = "Packages/com.example.doesnotexist",
-                ["name"] = "Rejected"
-            }));
+            var response = JObject.FromObject(
+                ManageScene.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["path"] = "Packages/com.example.doesnotexist",
+                        ["name"] = "Rejected",
+                    }
+                )
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             StringAssert.Contains("read-only", response.Value<string>("error"));
         }
@@ -99,16 +98,16 @@ namespace MCPForUnity.Tests.EditMode.Tools
                 // Written directly, deliberately without AssetDatabase.Refresh().
                 File.WriteAllText(full, "%YAML 1.1\n");
 
-                Assert.IsNull(AssetDatabase.LoadAssetAtPath<SceneAsset>(relative),
-                    "sanity: the AssetDatabase must not know about this file yet");
-                Assert.IsTrue(ManageScene.SceneAssetExists(relative),
-                    "a scene present on disk must still be found");
+                Assert.IsNull(AssetDatabase.LoadAssetAtPath<SceneAsset>(relative), "sanity: the AssetDatabase must not know about this file yet");
+                Assert.IsTrue(ManageScene.SceneAssetExists(relative), "a scene present on disk must still be found");
             }
             finally
             {
-                if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+                if (Directory.Exists(dir))
+                    Directory.Delete(dir, recursive: true);
                 string meta = dir + ".meta";
-                if (File.Exists(meta)) File.Delete(meta);
+                if (File.Exists(meta))
+                    File.Delete(meta);
                 AssetDatabase.Refresh();
             }
         }
@@ -127,17 +126,17 @@ namespace MCPForUnity.Tests.EditMode.Tools
                 {
                     ["action"] = "create",
                     ["name"] = "Replacement",
-                    ["path"] = fixture.Folder + "/Rejected"
+                    ["path"] = fixture.Folder + "/Rejected",
                 };
-                if (template != null) command["template"] = template;
+                if (template != null)
+                    command["template"] = template;
 
                 var response = JObject.FromObject(ManageScene.HandleCommand(command));
 
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 StringAssert.Contains("unsaved changes", response.Value<string>("error"));
                 fixture.AssertUnsavedScenePreserved();
-                Assert.IsFalse(Directory.Exists(Path.Combine(Application.dataPath,
-                    fixture.Folder.Substring("Assets/".Length), "Rejected")));
+                Assert.IsFalse(Directory.Exists(Path.Combine(Application.dataPath, fixture.Folder.Substring("Assets/".Length), "Rejected")));
             }
         }
 
@@ -153,7 +152,8 @@ namespace MCPForUnity.Tests.EditMode.Tools
                     EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(fixture.TargetPath, true) };
                     command["buildIndex"] = 0;
                 }
-                else command["path"] = fixture.TargetPath;
+                else
+                    command["path"] = fixture.TargetPath;
 
                 var response = JObject.FromObject(ManageScene.HandleCommand(command));
 
@@ -176,7 +176,8 @@ namespace MCPForUnity.Tests.EditMode.Tools
                     EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(fixture.TargetPath, true) };
                     command["buildIndex"] = 0;
                 }
-                else command["path"] = fixture.TargetPath;
+                else
+                    command["path"] = fixture.TargetPath;
 
                 var response = JObject.FromObject(ManageScene.HandleCommand(command));
 
@@ -238,7 +239,8 @@ namespace MCPForUnity.Tests.EditMode.Tools
                 try
                 {
                     EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-                    if (_originalSetup.Length > 0) EditorSceneManager.RestoreSceneManagerSetup(_originalSetup);
+                    if (_originalSetup.Length > 0)
+                        EditorSceneManager.RestoreSceneManagerSetup(_originalSetup);
                 }
                 finally
                 {

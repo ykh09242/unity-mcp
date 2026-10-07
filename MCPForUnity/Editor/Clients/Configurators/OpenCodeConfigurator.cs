@@ -19,14 +19,16 @@ namespace MCPForUnity.Editor.Clients.Configurators
         private const string RemoteType = "remote";
         private const string LocalType = "local";
 
-        public OpenCodeConfigurator() : base(new McpClient
-        {
-            name = "OpenCode",
-            windowsConfigPath = BuildConfigPath(),
-            macConfigPath = BuildConfigPath(),
-            linuxConfigPath = BuildConfigPath()
-        })
-        { }
+        public OpenCodeConfigurator()
+            : base(
+                new McpClient
+                {
+                    name = "OpenCode",
+                    windowsConfigPath = BuildConfigPath(),
+                    macConfigPath = BuildConfigPath(),
+                    linuxConfigPath = BuildConfigPath(),
+                }
+            ) { }
 
         private static string BuildConfigPath()
         {
@@ -62,8 +64,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
 
             try
             {
-                return JsonConvert.DeserializeObject<JObject>(content)
-                    ?? throw new JsonException("The configuration must be an object.");
+                return JsonConvert.DeserializeObject<JObject>(content) ?? throw new JsonException("The configuration must be an object.");
             }
             catch (JsonException ex)
             {
@@ -156,20 +157,18 @@ namespace MCPForUnity.Editor.Clients.Configurators
 
         public override string GetManualSnippet()
         {
-            var snippet = new JObject
-            {
-                ["mcp"] = new JObject { [ServerName] = BuildServerEntry() }
-            };
+            var snippet = new JObject { ["mcp"] = new JObject { [ServerName] = BuildServerEntry() } };
             return JsonConvert.SerializeObject(snippet, Formatting.Indented);
         }
 
-        public override IList<string> GetInstallationSteps() => new List<string>
-        {
-            "Install OpenCode (https://opencode.ai)",
-            "Click Configure to add Unity MCP to ~/.config/opencode/opencode.json",
-            "Restart OpenCode",
-            "The Unity MCP server should be detected automatically"
-        };
+        public override IList<string> GetInstallationSteps() =>
+            new List<string>
+            {
+                "Install OpenCode (https://opencode.ai)",
+                "Click Configure to add Unity MCP to ~/.config/opencode/opencode.json",
+                "Restart OpenCode",
+                "The Unity MCP server should be detected automatically",
+            };
 
         private static JObject BuildServerEntry()
         {
@@ -198,7 +197,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 {
                     ["type"] = LocalType,
                     ["command"] = command,
-                    ["enabled"] = true
+                    ["enabled"] = true,
                 };
             }
 
@@ -207,7 +206,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 ["type"] = RemoteType,
                 ["url"] = HttpEndpointUtility.GetMcpRpcUrl(),
                 ["headers"] = JObject.FromObject(HttpEndpointUtility.GetAuthHeaders()),
-                ["enabled"] = true
+                ["enabled"] = true,
             };
         }
 
@@ -222,8 +221,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
 
             if (expected == ConfiguredTransport.Stdio)
             {
-                if (!string.Equals(entryType, LocalType, StringComparison.OrdinalIgnoreCase)
-                    || !(entry["command"] is JArray command) || command.Count == 0)
+                if (!string.Equals(entryType, LocalType, StringComparison.OrdinalIgnoreCase) || !(entry["command"] is JArray command) || command.Count == 0)
                 {
                     return false;
                 }

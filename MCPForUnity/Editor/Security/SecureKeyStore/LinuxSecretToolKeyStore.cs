@@ -24,7 +24,10 @@ namespace MCPForUnity.Editor.Security
                     return p.ExitCode == 0;
                 }
             }
-            catch { return false; }
+            catch
+            {
+                return false;
+            }
         }
 
         public bool Has(string providerId) => TryGet(providerId, out _);
@@ -32,36 +35,50 @@ namespace MCPForUnity.Editor.Security
         public bool TryGet(string providerId, out string apiKey)
         {
             apiKey = null;
-            if (string.IsNullOrEmpty(providerId)) return false;
+            if (string.IsNullOrEmpty(providerId))
+                return false;
             try
             {
                 var psi = NewPsi();
                 psi.ArgumentList.Add("lookup");
-                psi.ArgumentList.Add("service"); psi.ArgumentList.Add(Service);
-                psi.ArgumentList.Add("account"); psi.ArgumentList.Add(providerId);
+                psi.ArgumentList.Add("service");
+                psi.ArgumentList.Add(Service);
+                psi.ArgumentList.Add("account");
+                psi.ArgumentList.Add(providerId);
                 using (var p = Process.Start(psi))
                 {
                     string outp = p.StandardOutput.ReadToEnd();
                     p.WaitForExit(5000);
-                    if (p.ExitCode != 0) return false;
+                    if (p.ExitCode != 0)
+                        return false;
                     apiKey = (outp ?? string.Empty).TrimEnd('\n', '\r');
                     return !string.IsNullOrEmpty(apiKey);
                 }
             }
-            catch { return false; }
+            catch
+            {
+                return false;
+            }
         }
 
         public void Set(string providerId, string apiKey)
         {
-            if (string.IsNullOrEmpty(providerId)) return;
-            if (string.IsNullOrEmpty(apiKey)) { Delete(providerId); return; }
+            if (string.IsNullOrEmpty(providerId))
+                return;
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                Delete(providerId);
+                return;
+            }
             try
             {
                 var psi = NewPsi(redirectIn: true);
                 psi.ArgumentList.Add("store");
                 psi.ArgumentList.Add("--label=MCPForUnity AssetGen");
-                psi.ArgumentList.Add("service"); psi.ArgumentList.Add(Service);
-                psi.ArgumentList.Add("account"); psi.ArgumentList.Add(providerId);
+                psi.ArgumentList.Add("service");
+                psi.ArgumentList.Add(Service);
+                psi.ArgumentList.Add("account");
+                psi.ArgumentList.Add(providerId);
                 using (var p = Process.Start(psi))
                 {
                     p.StandardInput.Write(apiKey);
@@ -74,14 +91,18 @@ namespace MCPForUnity.Editor.Security
 
         public void Delete(string providerId)
         {
-            if (string.IsNullOrEmpty(providerId)) return;
+            if (string.IsNullOrEmpty(providerId))
+                return;
             try
             {
                 var psi = NewPsi();
                 psi.ArgumentList.Add("clear");
-                psi.ArgumentList.Add("service"); psi.ArgumentList.Add(Service);
-                psi.ArgumentList.Add("account"); psi.ArgumentList.Add(providerId);
-                using (var p = Process.Start(psi)) p.WaitForExit(5000);
+                psi.ArgumentList.Add("service");
+                psi.ArgumentList.Add(Service);
+                psi.ArgumentList.Add("account");
+                psi.ArgumentList.Add(providerId);
+                using (var p = Process.Start(psi))
+                    p.WaitForExit(5000);
             }
             catch { /* best effort */ }
         }

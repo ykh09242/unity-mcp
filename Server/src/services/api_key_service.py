@@ -18,6 +18,7 @@ logger = logging.getLogger("mcp-for-unity-server")
 @dataclass
 class ValidationResult:
     """Result of an API key validation."""
+
     valid: bool
     user_id: str | None = None
     metadata: dict[str, Any] | None = None
@@ -84,9 +85,12 @@ class ApiKeyService:
         try:
             endpoint = urlsplit(validation_url)
             allowed = (
-                endpoint.scheme == "https" and bool(endpoint.hostname)
-                and endpoint.username is None and endpoint.password is None
-                and not endpoint.fragment and endpoint.port != 0
+                endpoint.scheme == "https"
+                and bool(endpoint.hostname)
+                and endpoint.username is None
+                and endpoint.password is None
+                and not endpoint.fragment
+                and endpoint.port != 0
                 and not any(char.isspace() or ord(char) < 32 for char in validation_url)
                 and "\\" not in validation_url
             )
@@ -99,8 +103,7 @@ class ApiKeyService:
         self._service_token_header = service_token_header
         self._service_token = service_token
         # Cache: api_key -> (valid, user_id, metadata, expires_at)
-        self._cache: dict[str, tuple[bool, str |
-                                     None, dict[str, Any] | None, float]] = {}
+        self._cache: dict[str, tuple[bool, str | None, dict[str, Any] | None, float]] = {}
         self._cache_lock = asyncio.Lock()
         self._inflight: dict[str, _ValidationFlight] = {}
         self._validation_waiters = 0
@@ -141,7 +144,9 @@ class ApiKeyService:
         # Check cache first
         async with self._cache_lock:
             if self._closed:
-                return ValidationResult(valid=False, error="Auth service unavailable", cacheable=False)
+                return ValidationResult(
+                    valid=False, error="Auth service unavailable", cacheable=False
+                )
             cached = self._cache.get(api_key)
             if cached is not None:
                 valid, user_id, metadata, expires_at = cached
@@ -167,7 +172,9 @@ class ApiKeyService:
             if source_id is not None and not self._admit_source(source_id):
                 return self._overload()
             if flight is None:
-                flight = _ValidationFlight(asyncio.create_task(self._validate_and_cache(api_key, digest)))
+                flight = _ValidationFlight(
+                    asyncio.create_task(self._validate_and_cache(api_key, digest))
+                )
                 self._inflight[digest] = flight
                 flight.task.add_done_callback(lambda task: self._finish_flight(digest, flight))
             flight.waiters += 1
@@ -200,7 +207,9 @@ class ApiKeyService:
 
     @staticmethod
     def _overload() -> ValidationResult:
-        return ValidationResult(valid=False, error="Authentication temporarily busy", cacheable=False, overloaded=True)
+        return ValidationResult(
+            valid=False, error="Authentication temporarily busy", cacheable=False, overloaded=True
+        )
 
     def _admit_source(self, source_id: str) -> bool:
         """Called under the cache lock, using actual peer identity rather than forwarded headers.
@@ -211,14 +220,20 @@ class ApiKeyService:
         budget = self._sources.get(source_id)
         if budget is None:
             if len(self._sources) >= self.MAX_SOURCE_BUCKETS:
-                for key in [key for key, value in self._sources.items()
-                            if value.waiters == 0 and now - value.updated_at >= self.SOURCE_IDLE_TTL]:
+                for key in [
+                    key
+                    for key, value in self._sources.items()
+                    if value.waiters == 0 and now - value.updated_at >= self.SOURCE_IDLE_TTL
+                ]:
                     del self._sources[key]
             if len(self._sources) >= self.MAX_SOURCE_BUCKETS:
                 return False
             budget = _SourceBudget(self.SOURCE_BURST, now)
             self._sources[source_id] = budget
-        budget.tokens = min(self.SOURCE_BURST, budget.tokens + max(0.0, now - budget.updated_at) * self.SOURCE_REFILL_PER_SECOND)
+        budget.tokens = min(
+            self.SOURCE_BURST,
+            budget.tokens + max(0.0, now - budget.updated_at) * self.SOURCE_REFILL_PER_SECOND,
+        )
         budget.updated_at = now
         if budget.waiters >= self.MAX_SOURCE_WAITERS or budget.tokens < 1.0:
             return False
@@ -277,7 +292,9 @@ class ApiKeyService:
             close_task = self._close_task
         await asyncio.shield(close_task)
 
-    async def _close_resources(self, tasks: list[asyncio.Task[ValidationResult]], client: httpx.AsyncClient | None) -> None:
+    async def _close_resources(
+        self, tasks: list[asyncio.Task[ValidationResult]], client: httpx.AsyncClient | None
+    ) -> None:
         try:
             await asyncio.gather(*tasks, return_exceptions=True)
         finally:
@@ -304,12 +321,17 @@ class ApiKeyService:
         for attempt in range(self.MAX_RETRIES + 1):
             try:
                 if self._closed:
-                    return ValidationResult(valid=False, error="Auth service unavailable", cacheable=False)
+                    return ValidationResult(
+                        valid=False, error="Auth service unavailable", cacheable=False
+                    )
                 if self._client is None:
                     self._client = httpx.AsyncClient(
-                        timeout=self.REQUEST_TIMEOUT, follow_redirects=False,
-                        limits=httpx.Limits(max_connections=self.MAX_INFLIGHT_VALIDATIONS,
-                                           max_keepalive_connections=self.MAX_INFLIGHT_VALIDATIONS),
+                        timeout=self.REQUEST_TIMEOUT,
+                        follow_redirects=False,
+                        limits=httpx.Limits(
+                            max_connections=self.MAX_INFLIGHT_VALIDATIONS,
+                            max_keepalive_connections=self.MAX_INFLIGHT_VALIDATIONS,
+                        ),
                     )
                 client = self._client
                 # Build request headers

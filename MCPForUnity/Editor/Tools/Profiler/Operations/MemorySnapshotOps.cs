@@ -36,42 +36,42 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
             try
             {
-                var debugScreenCaptureType = Type.GetType(
-                    "Unity.Profiling.DebugScreenCapture, UnityEngine.CoreModule")
+                var debugScreenCaptureType =
+                    Type.GetType("Unity.Profiling.DebugScreenCapture, UnityEngine.CoreModule")
                     ?? Type.GetType("UnityEngine.Profiling.Experimental.DebugScreenCapture, UnityEngine.CoreModule")
                     ?? Type.GetType("Unity.Profiling.Memory.Experimental.DebugScreenCapture, Unity.MemoryProfiler.Editor");
-                var captureFlagsType = Type.GetType(
-                    "Unity.Profiling.Memory.CaptureFlags, UnityEngine.CoreModule")
+                var captureFlagsType =
+                    Type.GetType("Unity.Profiling.Memory.CaptureFlags, UnityEngine.CoreModule")
                     ?? Type.GetType("UnityEngine.Profiling.Memory.Experimental.CaptureFlags, UnityEngine.CoreModule");
 
                 System.Reflection.MethodInfo takeMethod = null;
 
                 if (debugScreenCaptureType != null && captureFlagsType != null)
                 {
-                    var screenshotCallbackType = typeof(Action<,,>).MakeGenericType(
-                        typeof(string), typeof(bool), debugScreenCaptureType);
-                    takeMethod = MemoryProfilerType.GetMethod("TakeSnapshot",
-                        new[] { typeof(string), typeof(Action<string, bool>), screenshotCallbackType, captureFlagsType });
+                    var screenshotCallbackType = typeof(Action<,,>).MakeGenericType(typeof(string), typeof(bool), debugScreenCaptureType);
+                    takeMethod = MemoryProfilerType.GetMethod(
+                        "TakeSnapshot",
+                        new[] { typeof(string), typeof(Action<string, bool>), screenshotCallbackType, captureFlagsType }
+                    );
                 }
 
                 if (takeMethod == null && captureFlagsType != null)
                 {
-                    takeMethod = MemoryProfilerType.GetMethod("TakeSnapshot",
-                        new[] { typeof(string), typeof(Action<string, bool>), captureFlagsType });
+                    takeMethod = MemoryProfilerType.GetMethod("TakeSnapshot", new[] { typeof(string), typeof(Action<string, bool>), captureFlagsType });
                 }
 
                 if (takeMethod == null && debugScreenCaptureType != null)
                 {
-                    var screenshotCallbackType = typeof(Action<,,>).MakeGenericType(
-                        typeof(string), typeof(bool), debugScreenCaptureType);
-                    takeMethod = MemoryProfilerType.GetMethod("TakeSnapshot",
-                        new[] { typeof(string), typeof(Action<string, bool>), screenshotCallbackType, typeof(uint) });
+                    var screenshotCallbackType = typeof(Action<,,>).MakeGenericType(typeof(string), typeof(bool), debugScreenCaptureType);
+                    takeMethod = MemoryProfilerType.GetMethod(
+                        "TakeSnapshot",
+                        new[] { typeof(string), typeof(Action<string, bool>), screenshotCallbackType, typeof(uint) }
+                    );
                 }
 
                 if (takeMethod == null)
                 {
-                    takeMethod = MemoryProfilerType.GetMethod("TakeSnapshot",
-                        new[] { typeof(string), typeof(Action<string, bool>) });
+                    takeMethod = MemoryProfilerType.GetMethod("TakeSnapshot", new[] { typeof(string), typeof(Action<string, bool>) });
                 }
 
                 if (takeMethod == null)
@@ -111,9 +111,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 return parameter.DefaultValue;
 
             // Preserve the existing fallback for signatures without an optional default.
-            return parameter.ParameterType == typeof(uint)
-                ? (object)0u
-                : Enum.ToObject(parameter.ParameterType, 0);
+            return parameter.ParameterType == typeof(uint) ? (object)0u : Enum.ToObject(parameter.ParameterType, 0);
         }
 
         private static void CompleteSnapshot(TaskCompletionSource<object> completion, string path, bool result)
@@ -124,12 +122,17 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 {
                     var fi = new FileInfo(path);
                     long size = fi.Exists ? fi.Length : 0;
-                    completion.TrySetResult(new SuccessResponse("Memory snapshot captured.", new
-                    {
-                        path,
-                        size_bytes = size,
-                        size_mb = Math.Round(size / (1024.0 * 1024.0), 2),
-                    }));
+                    completion.TrySetResult(
+                        new SuccessResponse(
+                            "Memory snapshot captured.",
+                            new
+                            {
+                                path,
+                                size_bytes = size,
+                                size_mb = Math.Round(size / (1024.0 * 1024.0), 2),
+                            }
+                        )
+                    );
                 }
                 else
                 {
@@ -161,25 +164,24 @@ namespace MCPForUnity.Editor.Tools.Profiler
             var snapshots = new List<object>();
             foreach (string dir in dirs)
             {
-                if (!Directory.Exists(dir)) continue;
+                if (!Directory.Exists(dir))
+                    continue;
                 foreach (string file in Directory.GetFiles(dir, "*.snap"))
                 {
                     var fi = new FileInfo(file);
-                    snapshots.Add(new
-                    {
-                        path = fi.FullName,
-                        size_bytes = fi.Length,
-                        size_mb = Math.Round(fi.Length / (1024.0 * 1024.0), 2),
-                        created = fi.CreationTimeUtc.ToString("o"),
-                    });
+                    snapshots.Add(
+                        new
+                        {
+                            path = fi.FullName,
+                            size_bytes = fi.Length,
+                            size_mb = Math.Round(fi.Length / (1024.0 * 1024.0), 2),
+                            created = fi.CreationTimeUtc.ToString("o"),
+                        }
+                    );
                 }
             }
 
-            return new SuccessResponse($"Found {snapshots.Count} snapshot(s).", new
-            {
-                snapshots,
-                searched_dirs = dirs,
-            });
+            return new SuccessResponse($"Found {snapshots.Count} snapshot(s).", new { snapshots, searched_dirs = dirs });
         }
 
         internal static object CompareSnapshots(JObject @params)
@@ -204,37 +206,41 @@ namespace MCPForUnity.Editor.Tools.Profiler
             var fiA = new FileInfo(pathA);
             var fiB = new FileInfo(pathB);
 
-            return new SuccessResponse("Snapshot comparison (file-level metadata).", new
-            {
-                snapshot_a = new
+            return new SuccessResponse(
+                "Snapshot comparison (file-level metadata).",
+                new
                 {
-                    path = fiA.FullName,
-                    size_bytes = fiA.Length,
-                    size_mb = Math.Round(fiA.Length / (1024.0 * 1024.0), 2),
-                    created = fiA.CreationTimeUtc.ToString("o"),
-                },
-                snapshot_b = new
-                {
-                    path = fiB.FullName,
-                    size_bytes = fiB.Length,
-                    size_mb = Math.Round(fiB.Length / (1024.0 * 1024.0), 2),
-                    created = fiB.CreationTimeUtc.ToString("o"),
-                },
-                delta = new
-                {
-                    size_delta_bytes = fiB.Length - fiA.Length,
-                    size_delta_mb = Math.Round((fiB.Length - fiA.Length) / (1024.0 * 1024.0), 2),
-                    time_delta_seconds = (fiB.CreationTimeUtc - fiA.CreationTimeUtc).TotalSeconds,
-                },
-                note = "For detailed object-level comparison, open both snapshots in the Memory Profiler window.",
-            });
+                    snapshot_a = new
+                    {
+                        path = fiA.FullName,
+                        size_bytes = fiA.Length,
+                        size_mb = Math.Round(fiA.Length / (1024.0 * 1024.0), 2),
+                        created = fiA.CreationTimeUtc.ToString("o"),
+                    },
+                    snapshot_b = new
+                    {
+                        path = fiB.FullName,
+                        size_bytes = fiB.Length,
+                        size_mb = Math.Round(fiB.Length / (1024.0 * 1024.0), 2),
+                        created = fiB.CreationTimeUtc.ToString("o"),
+                    },
+                    delta = new
+                    {
+                        size_delta_bytes = fiB.Length - fiA.Length,
+                        size_delta_mb = Math.Round((fiB.Length - fiA.Length) / (1024.0 * 1024.0), 2),
+                        time_delta_seconds = (fiB.CreationTimeUtc - fiA.CreationTimeUtc).TotalSeconds,
+                    },
+                    note = "For detailed object-level comparison, open both snapshots in the Memory Profiler window.",
+                }
+            );
         }
 
         private static ErrorResponse PackageMissingError()
         {
             return new ErrorResponse(
                 "Package com.unity.memoryprofiler is required. "
-                + "Install via Package Manager or: manage_packages action=add_package package_id=com.unity.memoryprofiler");
+                    + "Install via Package Manager or: manage_packages action=add_package package_id=com.unity.memoryprofiler"
+            );
         }
     }
 }

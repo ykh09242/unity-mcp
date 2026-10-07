@@ -1,11 +1,11 @@
 using System.Text.RegularExpressions;
-using NUnit.Framework;
-using UnityEngine;
-using UnityEngine.TestTools;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Tools.GameObjects;
+using Newtonsoft.Json.Linq;
+using NUnit.Framework;
+using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -48,8 +48,7 @@ namespace MCPForUnityTests.Editor.Tools
             // spatialBlend is a float property — passing an array triggers conversion failure
             var props = new JObject { ["spatialBlend"] = JArray.Parse("[1, 2, 3]") };
 
-            var result = GameObjectComponentHelpers.SetComponentPropertiesInternal(
-                testGo, "AudioSource", props, audioSource);
+            var result = GameObjectComponentHelpers.SetComponentPropertiesInternal(testGo, "AudioSource", props, audioSource);
 
             Assert.IsNotNull(result, "Should return an error response");
             Assert.IsInstanceOf<ErrorResponse>(result);
@@ -57,9 +56,7 @@ namespace MCPForUnityTests.Editor.Tools
             var errorResponse = (ErrorResponse)result;
 
             // The error message must NOT say "not found" for a property that exists
-            Assert.IsFalse(
-                errorResponse.Error.Contains("not found"),
-                $"Error should report conversion failure, not 'not found'. Got: {errorResponse.Error}");
+            Assert.IsFalse(errorResponse.Error.Contains("not found"), $"Error should report conversion failure, not 'not found'. Got: {errorResponse.Error}");
         }
 
         /// <summary>
@@ -75,8 +72,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             var props = new JObject { ["totallyFakeProperty"] = 42 };
 
-            var result = GameObjectComponentHelpers.SetComponentPropertiesInternal(
-                testGo, "AudioSource", props, audioSource);
+            var result = GameObjectComponentHelpers.SetComponentPropertiesInternal(testGo, "AudioSource", props, audioSource);
 
             Assert.IsNotNull(result);
             Assert.IsInstanceOf<ErrorResponse>(result);
@@ -85,7 +81,8 @@ namespace MCPForUnityTests.Editor.Tools
 
             Assert.IsTrue(
                 errorResponse.Error.Contains("not found") || errorResponse.Error.Contains("failed"),
-                $"Error for nonexistent property should say 'not found'. Got: {errorResponse.Error}");
+                $"Error for nonexistent property should say 'not found'. Got: {errorResponse.Error}"
+            );
         }
 
         /// <summary>
@@ -98,8 +95,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             var props = new JObject { ["volume"] = 0.42f };
 
-            var result = GameObjectComponentHelpers.SetComponentPropertiesInternal(
-                testGo, "AudioSource", props, audioSource);
+            var result = GameObjectComponentHelpers.SetComponentPropertiesInternal(testGo, "AudioSource", props, audioSource);
 
             Assert.IsNull(result, "Should return null on success (no errors)");
             Assert.AreEqual(0.42f, audioSource.volume, 0.001f);

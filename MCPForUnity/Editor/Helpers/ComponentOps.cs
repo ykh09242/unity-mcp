@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Events;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Helpers
 {
@@ -178,7 +178,8 @@ namespace MCPForUnity.Editor.Helpers
             // Try reflection first (property, field, then non-public serialized field)
             if (TrySetViaReflection(component, type, propertyName, normalizedName, flags, value, out error, out bool rejectedValue))
                 return true;
-            if (rejectedValue) return false;
+            if (rejectedValue)
+                return false;
 
             // Reflection failed — fall back to SerializedProperty which handles arrays,
             // custom serialization (e.g. UdonSharp), and types reflection can't convert.
@@ -195,19 +196,26 @@ namespace MCPForUnity.Editor.Helpers
             return false;
         }
 
-        private static bool TrySetViaReflection(object component, Type type, string propertyName, string normalizedName, BindingFlags flags, JToken value, out string error, out bool rejectedValue)
+        private static bool TrySetViaReflection(
+            object component,
+            Type type,
+            string propertyName,
+            string normalizedName,
+            BindingFlags flags,
+            JToken value,
+            out string error,
+            out bool rejectedValue
+        )
         {
             error = null;
             rejectedValue = false;
 
             // Resolve integer IDs through the same typed SerializedProperty path as object forms.
             // The shared JSON converter accepts object-form IDs but cannot read bare integers.
-            bool isObjectReferenceValue = value != null &&
-                (value.Type == JTokenType.Object || value.Type == JTokenType.Integer);
+            bool isObjectReferenceValue = value != null && (value.Type == JTokenType.Object || value.Type == JTokenType.Integer);
 
             // Try property first
-            PropertyInfo propInfo = type.GetProperty(propertyName, flags)
-                                 ?? type.GetProperty(normalizedName, flags);
+            PropertyInfo propInfo = type.GetProperty(propertyName, flags) ?? type.GetProperty(normalizedName, flags);
             if (propInfo != null && propInfo.CanWrite)
             {
                 if (isObjectReferenceValue && typeof(UnityEngine.Object).IsAssignableFrom(propInfo.PropertyType))
@@ -237,8 +245,7 @@ namespace MCPForUnity.Editor.Helpers
             }
 
             // Try field
-            FieldInfo fieldInfo = type.GetField(propertyName, flags)
-                               ?? type.GetField(normalizedName, flags);
+            FieldInfo fieldInfo = type.GetField(propertyName, flags) ?? type.GetField(normalizedName, flags);
             if (fieldInfo != null && !fieldInfo.IsInitOnly)
             {
                 if (isObjectReferenceValue && typeof(UnityEngine.Object).IsAssignableFrom(fieldInfo.FieldType))
@@ -268,8 +275,7 @@ namespace MCPForUnity.Editor.Helpers
             }
 
             // Try non-public serialized fields — traverse inheritance hierarchy
-            fieldInfo = FindSerializedFieldInHierarchy(type, propertyName)
-                     ?? FindSerializedFieldInHierarchy(type, normalizedName);
+            fieldInfo = FindSerializedFieldInHierarchy(type, propertyName) ?? FindSerializedFieldInHierarchy(type, normalizedName);
             if (fieldInfo != null)
             {
                 if (isObjectReferenceValue && typeof(UnityEngine.Object).IsAssignableFrom(fieldInfo.FieldType))
@@ -308,7 +314,8 @@ namespace MCPForUnity.Editor.Helpers
         public static List<string> GetAccessibleMembers(Type componentType)
         {
             var members = new List<string>();
-            if (componentType == null) return members;
+            if (componentType == null)
+                return members;
 
             BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
 
@@ -371,8 +378,7 @@ namespace MCPForUnity.Editor.Helpers
                 // Search for the field on this specific type (case-insensitive)
                 foreach (var field in currentType.GetFields(privateFlags))
                 {
-                    if (string.Equals(field.Name, fieldName, StringComparison.OrdinalIgnoreCase) &&
-                        field.GetCustomAttribute<SerializeField>() != null)
+                    if (string.Equals(field.Name, fieldName, StringComparison.OrdinalIgnoreCase) && field.GetCustomAttribute<SerializeField>() != null)
                     {
                         return field;
                     }
@@ -385,13 +391,9 @@ namespace MCPForUnity.Editor.Helpers
 
         private static string CheckPhysicsConflict(GameObject target, Type componentType)
         {
-            bool isAdding2DPhysics =
-                typeof(Rigidbody2D).IsAssignableFrom(componentType) ||
-                typeof(Collider2D).IsAssignableFrom(componentType);
+            bool isAdding2DPhysics = typeof(Rigidbody2D).IsAssignableFrom(componentType) || typeof(Collider2D).IsAssignableFrom(componentType);
 
-            bool isAdding3DPhysics =
-                typeof(Rigidbody).IsAssignableFrom(componentType) ||
-                typeof(Collider).IsAssignableFrom(componentType);
+            bool isAdding3DPhysics = typeof(Rigidbody).IsAssignableFrom(componentType) || typeof(Collider).IsAssignableFrom(componentType);
 
             if (isAdding2DPhysics)
             {
@@ -441,18 +443,15 @@ namespace MCPForUnity.Editor.Helpers
         {
             BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase;
 
-            PropertyInfo propInfo = componentType.GetProperty(propertyName, flags)
-                                 ?? componentType.GetProperty(normalizedName, flags);
+            PropertyInfo propInfo = componentType.GetProperty(propertyName, flags) ?? componentType.GetProperty(normalizedName, flags);
             if (propInfo != null)
                 return propInfo.PropertyType;
 
-            FieldInfo fieldInfo = componentType.GetField(propertyName, flags)
-                               ?? componentType.GetField(normalizedName, flags);
+            FieldInfo fieldInfo = componentType.GetField(propertyName, flags) ?? componentType.GetField(normalizedName, flags);
             if (fieldInfo != null)
                 return fieldInfo.FieldType;
 
-            fieldInfo = FindSerializedFieldInHierarchy(componentType, propertyName)
-                     ?? FindSerializedFieldInHierarchy(componentType, normalizedName);
+            fieldInfo = FindSerializedFieldInHierarchy(componentType, propertyName) ?? FindSerializedFieldInHierarchy(componentType, normalizedName);
             if (fieldInfo != null)
                 return fieldInfo.FieldType;
 
@@ -477,19 +476,16 @@ namespace MCPForUnity.Editor.Helpers
             so.ApplyModifiedProperties();
 
             // Readback verification for ObjectReference — these can silently fail
-            if (prop.propertyType == SerializedPropertyType.ObjectReference
-                && value != null
-                && !(value is JValue jv && jv.Type == JTokenType.Null))
+            if (prop.propertyType == SerializedPropertyType.ObjectReference && value != null && !(value is JValue jv && jv.Type == JTokenType.Null))
             {
                 string propertyPath = prop.propertyPath;
                 so.Update();
                 var verifyProp = so.FindProperty(propertyPath);
-                if (verifyProp != null
-                    && verifyProp.propertyType == SerializedPropertyType.ObjectReference
-                    && verifyProp.objectReferenceValue == null)
+                if (verifyProp != null && verifyProp.propertyType == SerializedPropertyType.ObjectReference && verifyProp.objectReferenceValue == null)
                 {
-                    error = $"Property '{propertyName}' was set but the object reference did not persist. " +
-                            "Check that the referenced object exists and is the correct type.";
+                    error =
+                        $"Property '{propertyName}' was set but the object reference did not persist. "
+                        + "Check that the referenced object exists and is the correct type.";
                     return false;
                 }
             }
@@ -548,8 +544,7 @@ namespace MCPForUnity.Editor.Helpers
                 switch (prop.propertyType)
                 {
                     case SerializedPropertyType.Integer:
-                        if (value == null || value.Type == JTokenType.Null
-                            || (value.Type != JTokenType.Integer && value.Type != JTokenType.String))
+                        if (value == null || value.Type == JTokenType.Null || (value.Type != JTokenType.Integer && value.Type != JTokenType.String))
                         {
                             error = "Expected integer value.";
                             return false;
@@ -574,7 +569,11 @@ namespace MCPForUnity.Editor.Helpers
                         if (prop.type == "double")
                         {
                             double? doubleVal = value.ReadScalar<double?>();
-                            if (!doubleVal.HasValue) { error = "Expected double value."; return false; }
+                            if (!doubleVal.HasValue)
+                            {
+                                error = "Expected double value.";
+                                return false;
+                            }
                             prop.doubleValue = doubleVal.Value;
                             return true;
                         }
@@ -808,9 +807,12 @@ namespace MCPForUnity.Editor.Helpers
                 var components = filterGo.GetComponents<Component>();
                 foreach (var comp in components)
                 {
-                    if (comp == null) continue;
-                    if (string.Equals(comp.GetType().Name, componentFilter, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(comp.GetType().FullName, componentFilter, StringComparison.OrdinalIgnoreCase))
+                    if (comp == null)
+                        continue;
+                    if (
+                        string.Equals(comp.GetType().Name, componentFilter, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(comp.GetType().FullName, componentFilter, StringComparison.OrdinalIgnoreCase)
+                    )
                     {
                         prop.objectReferenceValue = comp;
                         if (prop.objectReferenceValue != null)
@@ -836,13 +838,15 @@ namespace MCPForUnity.Editor.Helpers
                 int matchCount = 0;
                 foreach (var sub in subAssets)
                 {
-                    if (sub == null || sub == resolved) continue;
+                    if (sub == null || sub == resolved)
+                        continue;
                     prop.objectReferenceValue = sub;
                     if (prop.objectReferenceValue != null)
                     {
                         match = sub;
                         matchCount++;
-                        if (matchCount > 1) break;
+                        if (matchCount > 1)
+                            break;
                     }
                 }
 
@@ -857,9 +861,10 @@ namespace MCPForUnity.Editor.Helpers
 
                 if (matchCount > 1)
                 {
-                    error = $"Multiple compatible sub-assets found in '{subAssetPath}'. " +
-                            "Use {\"guid\": \"...\", \"spriteName\": \"<name>\"} or " +
-                            "{\"guid\": \"...\", \"fileID\": <id>} for precise selection.";
+                    error =
+                        $"Multiple compatible sub-assets found in '{subAssetPath}'. "
+                        + "Use {\"guid\": \"...\", \"spriteName\": \"<name>\"} or "
+                        + "{\"guid\": \"...\", \"fileID\": <id>} for precise selection.";
                     return false;
                 }
             }
@@ -871,7 +876,8 @@ namespace MCPForUnity.Editor.Helpers
                 var components = go.GetComponents<Component>();
                 foreach (var comp in components)
                 {
-                    if (comp == null) continue;
+                    if (comp == null)
+                        continue;
                     prop.objectReferenceValue = comp;
                     if (prop.objectReferenceValue != null)
                         return true;
@@ -898,8 +904,7 @@ namespace MCPForUnity.Editor.Helpers
                 return false;
             }
 
-            var ids = GameObjectLookup.SearchGameObjects(
-                GameObjectLookup.SearchMethod.ByName, name, includeInactive: true, maxResults: 1);
+            var ids = GameObjectLookup.SearchGameObjects(GameObjectLookup.SearchMethod.ByName, name, includeInactive: true, maxResults: 1);
 
             if (ids.Count == 0)
             {
@@ -926,7 +931,8 @@ namespace MCPForUnity.Editor.Helpers
         {
             error = null;
             var prop = so.FindProperty(propertyName) ?? so.FindProperty(normalizedName);
-            if (prop != null) return prop;
+            if (prop != null)
+                return prop;
 
             // Compare against the raw name as well: NormalizePropertyName turns "m_sprite" into
             // "mSprite", which strips to "msprite" rather than "sprite".
@@ -946,8 +952,7 @@ namespace MCPForUnity.Editor.Helpers
                 // this pick whichever comes first; refuse rather than write the wrong one.
                 if (match != null)
                 {
-                    error = $"Property '{propertyName}' matches more than one serialized field " +
-                            $"('{match}', '{iter.name}'); use the exact field name.";
+                    error = $"Property '{propertyName}' matches more than one serialized field " + $"('{match}', '{iter.name}'); use the exact field name.";
                     return null;
                 }
                 match = iter.name;
@@ -972,13 +977,15 @@ namespace MCPForUnity.Editor.Helpers
         private static SerializedProperty FindPropertyRelativeFuzzy(SerializedProperty parent, string key)
         {
             var child = parent.FindPropertyRelative(key);
-            if (child != null) return child;
+            if (child != null)
+                return child;
 
             string normalizedKey = key.Replace("_", "").ToLowerInvariant();
 
             var end = parent.GetEndProperty();
             var iter = parent.Copy();
-            if (!iter.Next(true)) return null;
+            if (!iter.Next(true))
+                return null;
 
             while (!SerializedProperty.EqualContents(iter, end))
             {
@@ -1058,4 +1065,3 @@ namespace MCPForUnity.Editor.Helpers
         }
     }
 }
-

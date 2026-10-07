@@ -21,8 +21,7 @@ def resolve_log_dir(
     platform: str | None = None,
     env: Mapping[str, str] | None = None,
 ) -> str:
-    """Return the absolute log directory path for the current OS.
-    """
+    """Return the absolute log directory path for the current OS."""
     if platform is None:
         platform = sys.platform
     if env is None:

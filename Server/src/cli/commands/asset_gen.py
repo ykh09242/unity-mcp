@@ -29,16 +29,33 @@ def _emit(result, config, verb):
 
 
 @asset_gen.command("list-models")
-@click.option("--kind", type=click.Choice(["audio", "image", "model"]), required=True,
-              help="Asset kind to discover.")
+@click.option(
+    "--kind",
+    type=click.Choice(["audio", "image", "model"]),
+    required=True,
+    help="Asset kind to discover.",
+)
 @click.option("--provider", default=None, help="Restrict results to one provider.")
 @click.option("--refresh", is_flag=True, help="Force live catalog discovery.")
 @click.option("--search", default=None, help="Filter models by name, id or use case.")
-@click.option("--mode", type=click.Choice(["text", "image"]), default=None, help="Filter models by input mode.")
+@click.option(
+    "--mode",
+    type=click.Choice(["text", "image"]),
+    default=None,
+    help="Filter models by input mode.",
+)
 @click.option("--limit", type=click.IntRange(1, 200), default=None, help="Page size (default 50).")
 @click.option("--offset", type=click.IntRange(min=0), default=None, help="Page offset (default 0).")
 @handle_unity_errors
-def list_models(kind: str, provider: Optional[str], refresh: bool, search: Optional[str], mode: Optional[str], limit: Optional[int], offset: Optional[int]):
+def list_models(
+    kind: str,
+    provider: Optional[str],
+    refresh: bool,
+    search: Optional[str],
+    mode: Optional[str],
+    limit: Optional[int],
+    offset: Optional[int],
+):
     """List compatible models, capabilities, and catalog freshness.
 
     If catalogs[].refreshing is true, repeat this command without --refresh later.
@@ -46,12 +63,22 @@ def list_models(kind: str, provider: Optional[str], refresh: bool, search: Optio
     """
     if provider is not None:
         provider = provider.lower()
-    if refresh and provider is not None and not (provider == "fal" or provider == "openrouter" and kind == "image"):
+    if (
+        refresh
+        and provider is not None
+        and not (provider == "fal" or provider == "openrouter" and kind == "image")
+    ):
         raise click.UsageError("--refresh supports fal and OpenRouter images.")
     params = {"action": "refresh_models" if refresh else "list_models"}
     if provider is not None:
         params["provider"] = provider
-    params.update({k: v for k, v in {"search": search, "mode": mode, "limit": limit, "offset": offset}.items() if v is not None})
+    params.update(
+        {
+            k: v
+            for k, v in {"search": search, "mode": mode, "limit": limit, "offset": offset}.items()
+            if v is not None
+        }
+    )
     config = get_config()
     click.echo(format_output(run_command(f"generate_{kind}", params, config), config.format))
 
@@ -63,10 +90,14 @@ def list_models(kind: str, provider: Optional[str], refresh: bool, search: Optio
 @click.option("--image-path", default=None, help="Source image path for image->3D.")
 @click.option("--image-url", default=None, help="Source image URL for image->3D.")
 @click.option("--format", "fmt", default=None, help="Output format: glb, fbx, obj, usdz.")
-@click.option("--target-size", default=None, type=float, help="Normalize largest dimension (meters).")
+@click.option(
+    "--target-size", default=None, type=float, help="Normalize largest dimension (meters)."
+)
 @click.option("--texture/--no-texture", "texture", default=None, help="Generate textures.")
 @click.option("--tier", default=None, help="Provider quality/cost tier.")
-@click.option("--model", default=None, help="Provider model id/version (omit for the GUI-selected default).")
+@click.option(
+    "--model", default=None, help="Provider model id/version (omit for the GUI-selected default)."
+)
 @click.option("--name", default=None, help="Base name for the imported asset.")
 @click.option("--output-folder", default=None, help="Destination folder under Assets/.")
 @handle_unity_errors
@@ -116,7 +147,9 @@ def generate_model(
 
 @asset_gen.command("import-model")
 @click.option("--uid", required=True, help="Sketchfab model uid to import.")
-@click.option("--target-size", default=None, type=float, help="Normalize largest dimension (meters).")
+@click.option(
+    "--target-size", default=None, type=float, help="Normalize largest dimension (meters)."
+)
 @click.option("--name", default=None, help="Base name for the imported asset.")
 @click.option("--output-folder", default=None, help="Destination folder under Assets/.")
 @handle_unity_errors
@@ -148,15 +181,25 @@ def import_model(
 
 
 @asset_gen.command("import-model-file")
-@click.option("--source-path", "source_path", required=True,
-              help="Assets-relative or absolute-within-Assets model file path (.fbx/.obj/.glb/.gltf/.zip); traversal and links are rejected.")
+@click.option(
+    "--source-path",
+    "source_path",
+    required=True,
+    help="Assets-relative or absolute-within-Assets model file path (.fbx/.obj/.glb/.gltf/.zip); traversal and links are rejected.",
+)
 @click.option("--name", default=None, help="Base name for the imported asset.")
 @click.option("--output-folder", default=None, help="Destination folder under Assets/.")
-@click.option("--target-size", default=None, type=float, help="Normalize largest dimension (meters).")
-@click.option("--animation-type", "animation_type", default=None,
-              type=click.Choice(["none", "generic", "humanoid", "legacy"]),
-              help="FBX/OBJ rig mode: generic/humanoid surface animation clips; "
-                   "legacy selects Unity's legacy Animation system (glTF ignores this).")
+@click.option(
+    "--target-size", default=None, type=float, help="Normalize largest dimension (meters)."
+)
+@click.option(
+    "--animation-type",
+    "animation_type",
+    default=None,
+    type=click.Choice(["none", "generic", "humanoid", "legacy"]),
+    help="FBX/OBJ rig mode: generic/humanoid surface animation clips; "
+    "legacy selects Unity's legacy Animation system (glTF ignores this).",
+)
 @handle_unity_errors
 def import_model_file(source_path, name, output_folder, target_size, animation_type):
     """Import a 3D model file already within this Unity project's Assets folder."""
@@ -180,7 +223,9 @@ def import_model_file(source_path, name, output_folder, target_size, animation_t
 @click.option("--image-path", default=None, help="Source image path for image->image.")
 @click.option("--image-url", default=None, help="Source image URL for image->image.")
 @click.option("--model", default=None, help="Provider model id/slug.")
-@click.option("--transparent/--no-transparent", "transparent", default=None, help="Request transparency.")
+@click.option(
+    "--transparent/--no-transparent", "transparent", default=None, help="Request transparency."
+)
 @click.option("--width", default=None, type=int, help="Output width in pixels.")
 @click.option("--height", default=None, type=int, help="Output height in pixels.")
 @click.option("--name", default=None, help="Base name for the imported asset.")
@@ -232,7 +277,12 @@ def generate_image(
 @click.option("--provider", default=None, help="Provider id (fal).")
 @click.option("--prompt", default=None, help="Text prompt describing the sound or music.")
 @click.option("--model", default=None, help="fal model id (omit for the GUI-selected default).")
-@click.option("--duration", default=None, type=float, help="Requested length in seconds (soft-clamped per model).")
+@click.option(
+    "--duration",
+    default=None,
+    type=float,
+    help="Requested length in seconds (soft-clamped per model).",
+)
 @click.option("--name", default=None, help="Base name for the imported asset.")
 @click.option("--output-folder", default=None, help="Destination folder under Assets/.")
 @handle_unity_errors
@@ -269,7 +319,9 @@ def generate_audio(
 
 
 @asset_gen.command("status")
-@click.option("--job-id", "job_id", required=True, help="Job id returned by a generate/import command.")
+@click.option(
+    "--job-id", "job_id", required=True, help="Job id returned by a generate/import command."
+)
 @handle_unity_errors
 def status(job_id: str):
     """Check the status of an asset generation/import job.

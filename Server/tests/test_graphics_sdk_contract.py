@@ -8,7 +8,7 @@ import textwrap
 
 
 def test_graphics_sdk_preserves_rejected_bakes_and_optional_values():
-    source = '''
+    source = """
         import sys
         from unittest.mock import AsyncMock
         import anyio
@@ -53,7 +53,7 @@ def test_graphics_sdk_preserves_rejected_bakes_and_optional_values():
                     result = await client.call_tool("manage_graphics", {"action": "invalid"})
                     assert result.data["success"] is False and len(captured) == before
         anyio.run(scenario)
-    '''
+    """
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],
         cwd=Path(__file__).resolve().parents[1],

@@ -11,8 +11,16 @@ namespace MCPForUnityTests.Editor.AssetGen
     public class ArchiveLimitSecurityTests
     {
         private string root;
-        [SetUp] public void SetUp() => root = Path.Combine(Path.GetTempPath(), "mcp-zip-security-" + Guid.NewGuid().ToString("N"));
-        [TearDown] public void TearDown() { if (Directory.Exists(root)) Directory.Delete(root, true); }
+
+        [SetUp]
+        public void SetUp() => root = Path.Combine(Path.GetTempPath(), "mcp-zip-security-" + Guid.NewGuid().ToString("N"));
+
+        [TearDown]
+        public void TearDown()
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, true);
+        }
 
         private string MakeZip(int count, int bytes)
         {
@@ -30,7 +38,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             Directory.CreateDirectory(root);
             using var stream = new MemoryStream();
             using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, true))
-                for (int i = 0; i < declaredSizes.Length; i++) archive.CreateEntry(i + ".cs");
+                for (int i = 0; i < declaredSizes.Length; i++)
+                    archive.CreateEntry(i + ".cs");
             byte[] bytes = stream.ToArray();
             int end = bytes.Length - 22;
             int central = (int)BitConverter.ToUInt32(bytes, end + 16);
@@ -41,8 +50,8 @@ namespace MCPForUnityTests.Editor.AssetGen
                 // These disallowed entries are skipped before opening their empty bodies.
                 Buffer.BlockCopy(BitConverter.GetBytes(size), 0, bytes, central + 20, 4);
                 Buffer.BlockCopy(BitConverter.GetBytes(size), 0, bytes, central + 24, 4);
-                central += 46 + BitConverter.ToUInt16(bytes, central + 28)
-                    + BitConverter.ToUInt16(bytes, central + 30) + BitConverter.ToUInt16(bytes, central + 32);
+                central +=
+                    46 + BitConverter.ToUInt16(bytes, central + 28) + BitConverter.ToUInt16(bytes, central + 30) + BitConverter.ToUInt16(bytes, central + 32);
             }
             string zip = Path.Combine(root, "declared.zip");
             File.WriteAllBytes(zip, bytes);
@@ -56,8 +65,10 @@ namespace MCPForUnityTests.Editor.AssetGen
             string zip = MakeDeclaredSizeZip(512u * 1024 * 1024 + (exceeds ? 1u : 0u));
             string output = Path.Combine(root, "out");
             var allowed = new HashSet<string> { ".obj" };
-            if (exceeds) Assert.Throws<IOException>(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
-            else Assert.DoesNotThrow(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
+            if (exceeds)
+                Assert.Throws<IOException>(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
+            else
+                Assert.DoesNotThrow(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
             Assert.IsFalse(Directory.Exists(output), "metadata tests must not open payloads or create output");
         }
 
@@ -67,13 +78,17 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             // Entries stay within the former per-entry budget, so the aggregate gate is isolated.
             var sizes = new List<uint>();
-            for (int i = 0; i < 8; i++) sizes.Add(256u * 1024 * 1024);
-            if (exceeds) sizes.Add(1);
+            for (int i = 0; i < 8; i++)
+                sizes.Add(256u * 1024 * 1024);
+            if (exceeds)
+                sizes.Add(1);
             string zip = MakeDeclaredSizeZip(sizes.ToArray());
             string output = Path.Combine(root, "out");
             var allowed = new HashSet<string> { ".obj" };
-            if (exceeds) Assert.Throws<IOException>(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
-            else Assert.DoesNotThrow(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
+            if (exceeds)
+                Assert.Throws<IOException>(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
+            else
+                Assert.DoesNotThrow(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
             Assert.IsFalse(Directory.Exists(output), "aggregate arithmetic must not allocate the declared payloads");
         }
 
@@ -95,8 +110,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             string zip = MakeZip(count, size);
             string output = Path.Combine(root, "out");
-            Assert.Throws<IOException>(() => SafeZipExtractor.ExtractTo(zip, output, null,
-                CancellationToken.None, maxEntries, maxEntry, maxTotal, ratio));
+            Assert.Throws<IOException>(() => SafeZipExtractor.ExtractTo(zip, output, null, CancellationToken.None, maxEntries, maxEntry, maxTotal, ratio));
             Assert.IsFalse(Directory.Exists(output));
         }
 

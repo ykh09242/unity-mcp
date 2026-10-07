@@ -23,18 +23,19 @@ namespace MCPForUnityTests.EditMode.Helpers
                 for (int index = 0; index < pixels.Length; index++)
                     pixels[index] = new Color32((byte)(index + 1), 0, 0, 255);
                 texture.SetPixels32(pixels); // intentionally no Apply before the CPU flip
-                var flip = typeof(EditorWindowScreenshotUtility).GetMethod(
-                    "FlipTextureVertically", BindingFlags.Static | BindingFlags.NonPublic);
+                var flip = typeof(EditorWindowScreenshotUtility).GetMethod("FlipTextureVertically", BindingFlags.Static | BindingFlags.NonPublic);
                 Assert.IsNotNull(flip);
                 flip.Invoke(null, new object[] { texture });
                 var flipped = texture.GetPixels32();
                 for (int row = 0; row < height; row++)
-                    for (int column = 0; column < width; column++)
-                        Assert.AreEqual(pixels[(height - 1 - row) * width + column],
-                            flipped[row * width + column]);
+                for (int column = 0; column < width; column++)
+                    Assert.AreEqual(pixels[(height - 1 - row) * width + column], flipped[row * width + column]);
                 Assert.IsTrue(texture.isReadable);
             }
-            finally { Object.DestroyImmediate(texture); }
+            finally
+            {
+                Object.DestroyImmediate(texture);
+            }
         }
 
         [Test]
@@ -68,11 +69,13 @@ namespace MCPForUnityTests.EditMode.Helpers
             try
             {
                 var camera = go.AddComponent<Camera>();
-                var error = Assert.Throws<System.ArgumentException>(() =>
-                    ScreenshotUtility.CaptureFromCameraToProjectFolder(camera, superSize: int.MaxValue));
+                var error = Assert.Throws<System.ArgumentException>(() => ScreenshotUtility.CaptureFromCameraToProjectFolder(camera, superSize: int.MaxValue));
                 StringAssert.Contains("superSize must", error.Message);
             }
-            finally { Object.DestroyImmediate(go); }
+            finally
+            {
+                Object.DestroyImmediate(go);
+            }
         }
 
         [Test]
@@ -85,12 +88,17 @@ namespace MCPForUnityTests.EditMode.Helpers
             var prior = RenderTexture.active;
             try
             {
-                Assert.Throws<System.ArgumentException>(() => ScreenshotUtility.ComposeContactSheet(
-                    tiles, new System.Collections.Generic.List<string> { "fixture" }, int.MaxValue));
+                Assert.Throws<System.ArgumentException>(() =>
+                    ScreenshotUtility.ComposeContactSheet(tiles, new System.Collections.Generic.List<string> { "fixture" }, int.MaxValue)
+                );
                 Assert.IsTrue(tile == null, "Rejected composition must release its owned input texture.");
                 Assert.AreSame(prior, RenderTexture.active);
             }
-            finally { if (tile != null) Object.DestroyImmediate(tile); }
+            finally
+            {
+                if (tile != null)
+                    Object.DestroyImmediate(tile);
+            }
         }
 
         [TestCase(8193, 1)]
@@ -100,12 +108,14 @@ namespace MCPForUnityTests.EditMode.Helpers
         public void SceneViewViewportBudgetRejectsBeforeResolvingEngineHost(int width, int height)
         {
             var capture = typeof(MCPForUnity.Editor.Helpers.EditorWindowScreenshotUtility).GetMethod(
-                "CaptureViewRect", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+                "CaptureViewRect",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic
+            );
             Assert.IsNotNull(capture);
             var error = Assert.Throws<System.Reflection.TargetInvocationException>(() =>
-                capture.Invoke(null, new object[] { null, new Rect(0, 0, width, height) }));
+                capture.Invoke(null, new object[] { null, new Rect(0, 0, width, height) })
+            );
             Assert.IsInstanceOf<System.ArgumentException>(error.InnerException);
         }
-
     }
 }

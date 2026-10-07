@@ -58,9 +58,7 @@ def running_server(tmp_path):
                 with httpx.Client(timeout=0.5, trust_env=False) as client:
                     deadline = time.monotonic() + 20
                     while time.monotonic() < deadline:
-                        assert process.poll() is None, (
-                            "Local server exited before readiness"
-                        )
+                        assert process.poll() is None, "Local server exited before readiness"
                         try:
                             if client.get(f"{url}/health").status_code == 200:
                                 break
@@ -86,9 +84,7 @@ async def test_native_clients_work_and_browser_requests_fail_on_real_server(
     # Native MCP protocol initialization and session requests retain authentication.
     async with Client(StreamableHttpTransport(f"{url}/mcp", headers=headers), mode="legacy") as mcp:
         assert await mcp.ping()
-        assert any(
-            tool.name == "set_active_instance" for tool in await mcp.list_tools()
-        )
+        assert any(tool.name == "set_active_instance" for tool in await mcp.list_tools())
 
     # Modern clients discover and call the same authenticated tool surface.
     async with Client(StreamableHttpTransport(f"{url}/mcp", headers=headers)) as mcp:

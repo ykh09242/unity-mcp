@@ -2,8 +2,8 @@ using System;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Runtime.Helpers;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -15,8 +15,8 @@ namespace MCPForUnityTests.Editor.Tools
     public class UguiDiagnosticsTests
     {
         private GameObject root;
-        private static readonly MethodInfo DiagnoseMethod = typeof(ManageUI).Assembly
-            .GetType("MCPForUnity.Editor.Tools.UguiDiagnostics")
+        private static readonly MethodInfo DiagnoseMethod = typeof(ManageUI)
+            .Assembly.GetType("MCPForUnity.Editor.Tools.UguiDiagnostics")
             .GetMethod("Diagnose", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
 
         [SetUp]
@@ -59,20 +59,11 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Diagnose(GameObject target = null, JArray sizes = null, bool includeInactive = false, int maxNodes = 200)
         {
-            return JObject.FromObject(DiagnoseMethod.Invoke(null, new object[]
-            {
-                target ?? root,
-                sizes ?? Sizes(800, 600),
-                includeInactive,
-                maxNodes
-            }));
+            return JObject.FromObject(DiagnoseMethod.Invoke(null, new object[] { target ?? root, sizes ?? Sizes(800, 600), includeInactive, maxNodes }));
         }
 
-        private static JArray Sizes(int width, int height) => new JArray(new JObject
-        {
-            ["width"] = width,
-            ["height"] = height
-        });
+        private static JArray Sizes(int width, int height) => new JArray(new JObject { ["width"] = width, ["height"] = height });
+
         private static JArray Findings(JObject response)
         {
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
@@ -126,11 +117,7 @@ namespace MCPForUnityTests.Editor.Tools
             int callbacks = UguiDiagnosticsCallbackProbe.Callbacks;
             int scenes = UnityEngine.SceneManagement.SceneManager.sceneCount;
             var sizes = Sizes(800, 600);
-            sizes.Add(new JObject
-            {
-                ["width"] = 1920,
-                ["height"] = 1080
-            });
+            sizes.Add(new JObject { ["width"] = 1920, ["height"] = 1080 });
             Findings(Diagnose(sizes: sizes));
             Assert.AreEqual(before, EditorJsonUtility.ToJson(rect));
             Assert.AreEqual(layoutBefore, EditorJsonUtility.ToJson(layout));
@@ -152,7 +139,10 @@ namespace MCPForUnityTests.Editor.Tools
             var fitter = Add(child, "UnityEngine.UI.ContentSizeFitter");
             Set(fitter, "horizontalFit", 2);
             var result = Diagnose();
-            Assert.IsFalse(Has(result, "layout_driver_conflict", container), "The parent's own ContentSizeFitter drives the parent, while its group drives children.");
+            Assert.IsFalse(
+                Has(result, "layout_driver_conflict", container),
+                "The parent's own ContentSizeFitter drives the parent, while its group drives children."
+            );
             Assert.IsTrue(Has(result, "layout_driver_conflict", child));
             var element = Add(child, "UnityEngine.UI.LayoutElement");
             Set(element, "ignoreLayout", true);
@@ -199,7 +189,10 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(2, child.GetComponents(first.GetType()).Length);
             Assert.IsTrue(((Behaviour)second).isActiveAndEnabled);
             string before = EditorJsonUtility.ToJson(child.GetComponent<RectTransform>());
-            Assert.IsTrue(Has(Diagnose(), "layout_driver_conflict", child), "A disabled or unconstrained first fitter must not hide a later active size controller.");
+            Assert.IsTrue(
+                Has(Diagnose(), "layout_driver_conflict", child),
+                "A disabled or unconstrained first fitter must not hide a later active size controller."
+            );
             Assert.AreEqual(before, EditorJsonUtility.ToJson(child.GetComponent<RectTransform>()));
             ((Behaviour)second).enabled = false;
             Assert.IsFalse(Has(Diagnose(), "layout_driver_conflict", child), "Unconstrained/disabled fitters do not drive a size axis.");
@@ -211,11 +204,7 @@ namespace MCPForUnityTests.Editor.Tools
             var child = Child("Responsive");
             child.GetComponent<RectTransform>().anchoredPosition = new Vector2(300, 0);
             var sizes = Sizes(800, 600);
-            sizes.Add(new JObject
-            {
-                ["width"] = 400,
-                ["height"] = 800
-            });
+            sizes.Add(new JObject { ["width"] = 400, ["height"] = 800 });
             var result = Diagnose(sizes: sizes);
             Assert.IsTrue(Has(result, "off_canvas", child));
             var findings = Findings(result).Where(f => (string)f["code"] == "off_canvas" && (int)f["instanceID"] == child.GetInstanceIDCompat()).ToArray();
@@ -244,11 +233,7 @@ namespace MCPForUnityTests.Editor.Tools
             Child("Second", layoutHost);
             string before = EditorJsonUtility.ToJson(first.GetComponent<RectTransform>());
             var sizes = Sizes(1920, 1080);
-            sizes.Add(new JObject
-            {
-                ["width"] = 960,
-                ["height"] = 1080
-            });
+            sizes.Add(new JObject { ["width"] = 960, ["height"] = 1080 });
             var result = Diagnose(sizes: sizes);
             Findings(result);
             var rects = result["data"]["rects"].Where(r => (int)r["instanceID"] == first.GetInstanceIDCompat()).ToArray();
@@ -271,11 +256,7 @@ namespace MCPForUnityTests.Editor.Tools
             Set(text, "fontSize", 20);
             Set(text, "text", "Responsive text needs enough horizontal room to wrap properly");
             var sizes = Sizes(1600, 600);
-            sizes.Add(new JObject
-            {
-                ["width"] = 180,
-                ["height"] = 600
-            });
+            sizes.Add(new JObject { ["width"] = 180, ["height"] = 600 });
             var findings = Findings(Diagnose(sizes: sizes)).Where(f => (string)f["code"] == "text_overflow").ToArray();
             Assert.AreEqual(1, findings.Length);
             Assert.AreEqual(180, findings[0]["resolution"].Value<int>("width"));
@@ -290,7 +271,8 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var child = Child("SharedDynamicFontText");
             var text = Add(child, "UnityEngine.UI.Text");
-            Font font = fontKind == 0 ? UnityEngine.Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")
+            Font font =
+                fontKind == 0 ? UnityEngine.Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")
                 : fontKind == 1 ? Font.CreateDynamicFontFromOSFont("Arial", 13)
                 : AssetDatabase.LoadAssetAtPath<Font>("Assets/TextMesh Pro/Fonts/LiberationSans.ttf");
             if (fontKind == 2 && font == null)
@@ -342,8 +324,11 @@ namespace MCPForUnityTests.Editor.Tools
                 string materialBefore = EditorJsonUtility.ToJson(material);
                 string fontMaterialBefore = EditorJsonUtility.ToJson(font.material);
                 CharacterInfo[] glyphsBefore = font.characterInfo;
-                int[] fontsBefore = UnityEngine.Resources.FindObjectsOfTypeAll<Font>()
-                    .Select(existing => existing.GetInstanceIDCompat()).OrderBy(id => id).ToArray();
+                int[] fontsBefore = UnityEngine
+                    .Resources.FindObjectsOfTypeAll<Font>()
+                    .Select(existing => existing.GetInstanceIDCompat())
+                    .OrderBy(id => id)
+                    .ToArray();
                 bool textDirty = EditorUtility.IsDirty(text);
                 bool fontDirty = EditorUtility.IsDirty(font);
                 var sizes = Sizes(1600, 1200);
@@ -351,25 +336,36 @@ namespace MCPForUnityTests.Editor.Tools
                 sizes.Add(Sizes(8192, 8192)[0]);
                 for (int call = 0; call < 2; call++)
                 {
-                    var result = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
-                    {
-                        ["action"] = "diagnose",
-                        ["target"] = root.GetInstanceIDCompat(),
-                        ["resolutions"] = sizes,
-                        ["include_inactive"] = true
-                    }));
+                    var result = JObject.FromObject(
+                        ManageUGUI.HandleCommand(
+                            new JObject
+                            {
+                                ["action"] = "diagnose",
+                                ["target"] = root.GetInstanceIDCompat(),
+                                ["resolutions"] = sizes,
+                                ["include_inactive"] = true,
+                            }
+                        )
+                    );
                     Findings(result);
                     string callbackCounts = " Font rebuilds: " + fontCallbacks + "; original Text dirty callbacks: " + dirtyCallbacks + ".";
                     Assert.AreEqual(0, fontCallbacks, "Read-only diagnose must not rebuild the original Text's shared dynamic font atlas." + callbackCounts);
-                    Assert.AreEqual(0, dirtyCallbacks, "Read-only diagnose must not notify dirty callbacks on the original Text through its shared Font." + callbackCounts);
+                    Assert.AreEqual(
+                        0,
+                        dirtyCallbacks,
+                        "Read-only diagnose must not notify dirty callbacks on the original Text through its shared Font." + callbackCounts
+                    );
                     Assert.AreEqual(textBefore, EditorJsonUtility.ToJson(text));
                     Assert.AreEqual(rectBefore, EditorJsonUtility.ToJson(child.GetComponent<RectTransform>()));
                     Assert.AreEqual(fontBefore, EditorJsonUtility.ToJson(font));
                     Assert.AreEqual(materialBefore, EditorJsonUtility.ToJson(material));
                     Assert.AreEqual(fontMaterialBefore, EditorJsonUtility.ToJson(font.material));
                     CollectionAssert.AreEqual(glyphsBefore, font.characterInfo);
-                    CollectionAssert.AreEqual(fontsBefore, UnityEngine.Resources.FindObjectsOfTypeAll<Font>()
-                        .Select(existing => existing.GetInstanceIDCompat()).OrderBy(id => id).ToArray(), "Temporary preview Fonts must be destroyed before public diagnose returns.");
+                    CollectionAssert.AreEqual(
+                        fontsBefore,
+                        UnityEngine.Resources.FindObjectsOfTypeAll<Font>().Select(existing => existing.GetInstanceIDCompat()).OrderBy(id => id).ToArray(),
+                        "Temporary preview Fonts must be destroyed before public diagnose returns."
+                    );
                     Assert.AreEqual(textDirty, EditorUtility.IsDirty(text));
                     Assert.AreEqual(fontDirty, EditorUtility.IsDirty(font));
                 }
@@ -399,8 +395,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsNotNull(source);
                 Assert.IsTrue(source.dynamic);
                 string content = (string)text.GetType().GetProperty("text").GetValue(text);
-                var settings = (TextGenerationSettings)text.GetType().GetMethod("GetGenerationSettings")
-                    .Invoke(text, new object[] { new Vector2(800, 600) });
+                var settings = (TextGenerationSettings)text.GetType().GetMethod("GetGenerationSettings").Invoke(text, new object[] { new Vector2(800, 600) });
                 var scales = new[] { 1f, 2f, 5f };
                 var widths = new float[scales.Length];
                 var heights = new float[scales.Length];
@@ -420,8 +415,7 @@ namespace MCPForUnityTests.Editor.Tools
                 string fontBefore = EditorJsonUtility.ToJson(source);
                 string materialBefore = EditorJsonUtility.ToJson(source.material);
                 CharacterInfo[] glyphsBefore = source.characterInfo;
-                int[] fontsBefore = UnityEngine.Resources.FindObjectsOfTypeAll<Font>()
-                    .Select(font => font.GetInstanceIDCompat()).OrderBy(id => id).ToArray();
+                int[] fontsBefore = UnityEngine.Resources.FindObjectsOfTypeAll<Font>().Select(font => font.GetInstanceIDCompat()).OrderBy(id => id).ToArray();
                 Font.textureRebuilt += rebuilt;
                 string faceEvidence = "Source names: " + string.Join(", ", source.fontNames) + "; source size: " + source.fontSize + ".";
                 candidate = new Font();
@@ -438,8 +432,18 @@ namespace MCPForUnityTests.Editor.Tools
                     for (int index = 0; index < scales.Length; index++)
                     {
                         settings.scaleFactor = scales[index];
-                        Assert.AreEqual(widths[index], generator.GetPreferredWidth(content, settings), 0.01f, "Preferred width at density " + scales[index] + ". " + faceEvidence);
-                        Assert.AreEqual(heights[index], generator.GetPreferredHeight(content, settings), 0.01f, "Preferred height at density " + scales[index] + ". " + faceEvidence);
+                        Assert.AreEqual(
+                            widths[index],
+                            generator.GetPreferredWidth(content, settings),
+                            0.01f,
+                            "Preferred width at density " + scales[index] + ". " + faceEvidence
+                        );
+                        Assert.AreEqual(
+                            heights[index],
+                            generator.GetPreferredHeight(content, settings),
+                            0.01f,
+                            "Preferred height at density " + scales[index] + ". " + faceEvidence
+                        );
                     }
                 }
                 Assert.AreEqual(0, originalRebuilds, "An independent native Font must not rebuild the original font atlas.");
@@ -452,8 +456,10 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.AreEqual(fontBefore, EditorJsonUtility.ToJson(source));
                 Assert.AreEqual(materialBefore, EditorJsonUtility.ToJson(source.material));
                 CollectionAssert.AreEqual(glyphsBefore, source.characterInfo);
-                CollectionAssert.AreEqual(fontsBefore, UnityEngine.Resources.FindObjectsOfTypeAll<Font>()
-                    .Select(font => font.GetInstanceIDCompat()).OrderBy(id => id).ToArray());
+                CollectionAssert.AreEqual(
+                    fontsBefore,
+                    UnityEngine.Resources.FindObjectsOfTypeAll<Font>().Select(font => font.GetInstanceIDCompat()).OrderBy(id => id).ToArray()
+                );
             }
             finally
             {
@@ -482,7 +488,11 @@ namespace MCPForUnityTests.Editor.Tools
             var result = Diagnose();
             Assert.IsTrue(Has(result, "interactive_overlap"));
             Assert.IsTrue(Has(result, "raycast_blocker"));
-            Assert.IsTrue(Findings(result).Where(f => (string)f["code"] == "interactive_overlap" || (string)f["code"] == "raycast_blocker").All(f => (string)f["status"] == "candidate"));
+            Assert.IsTrue(
+                Findings(result)
+                    .Where(f => (string)f["code"] == "interactive_overlap" || (string)f["code"] == "raycast_blocker")
+                    .All(f => (string)f["status"] == "candidate")
+            );
             Set(graphic, "raycastTarget", false);
             second.SetActive(false);
             Assert.IsFalse(Has(Diagnose(includeInactive: true), "interactive_overlap"));
@@ -541,7 +551,10 @@ namespace MCPForUnityTests.Editor.Tools
             childGroup.interactable = false;
             childGroup.blocksRaycasts = true;
             Button("OtherButton");
-            Assert.IsTrue(Has(Diagnose(), "interactive_overlap"), "Child CanvasGroup.interactable does not disable the ancestor Button receiving its pointer event.");
+            Assert.IsTrue(
+                Has(Diagnose(), "interactive_overlap"),
+                "Child CanvasGroup.interactable does not disable the ancestor Button receiving its pointer event."
+            );
             button.AddComponent<CanvasGroup>().interactable = false;
             Assert.IsFalse(Has(Diagnose(), "interactive_overlap"), "The receiver Button's own CanvasGroup.interactable disables that receiver.");
         }
@@ -577,8 +590,15 @@ namespace MCPForUnityTests.Editor.Tools
             var image = Add(child, "UnityEngine.UI.Image");
             var utilities = UnityTypeResolver.ResolveAny("UnityEngine.UI.MaskUtilities");
             var depthMethod = utilities.GetMethod("GetStencilDepth", BindingFlags.Static | BindingFlags.Public);
-            Assert.AreEqual(0, depthMethod.Invoke(null, new object[] { child.transform, root.transform }), "Native stencil depth excludes Masks without an active Graphic.");
-            Assert.IsFalse(NativeGraphicRaycast(image, ScreenPoint(child.GetComponent<RectTransform>(), Vector3.zero)), "The enabled Mask remains a pointer filter regardless of Graphic activation.");
+            Assert.AreEqual(
+                0,
+                depthMethod.Invoke(null, new object[] { child.transform, root.transform }),
+                "Native stencil depth excludes Masks without an active Graphic."
+            );
+            Assert.IsFalse(
+                NativeGraphicRaycast(image, ScreenPoint(child.GetComponent<RectTransform>(), Vector3.zero)),
+                "The enabled Mask remains a pointer filter regardless of Graphic activation."
+            );
             string before = EditorJsonUtility.ToJson(child.GetComponent<RectTransform>());
             var result = Diagnose();
             Assert.IsFalse(Has(result, "clipped_by_mask", child));
@@ -624,7 +644,10 @@ namespace MCPForUnityTests.Editor.Tools
             var material = (Material)mask.GetType().GetMethod("GetModifiedMaterial").Invoke(mask, new object[] { baseMaterial });
             bool nativeVisible = material.GetInt("_ColorMask") != 0;
             Assert.AreEqual(showGraphic || !maskEnabled, nativeVisible, "Native Mask removes its own color writes while retaining stencil writes.");
-            Assert.IsTrue(NativeGraphicRaycast(image, ScreenPoint(go.GetComponent<RectTransform>(), Vector3.zero)), "showMaskGraphic does not disable pointer filtering or receiving.");
+            Assert.IsTrue(
+                NativeGraphicRaycast(image, ScreenPoint(go.GetComponent<RectTransform>(), Vector3.zero)),
+                "showMaskGraphic does not disable pointer filtering or receiving."
+            );
             string maskBefore = EditorJsonUtility.ToJson(mask);
             string imageBefore = EditorJsonUtility.ToJson(image);
             string materialBefore = EditorJsonUtility.ToJson(material);
@@ -659,9 +682,17 @@ namespace MCPForUnityTests.Editor.Tools
             other.transform.SetParent(boundary.transform, false);
             Canvas.ForceUpdateCanvases();
             float nativeAlpha = child.GetComponent<CanvasRenderer>().GetInheritedAlpha();
-            Assert.AreEqual(ignoreParents && boundaryEnabled ? 1 : 0, nativeAlpha, 0.001f, "Native inherited alpha must establish that this batch surface evaluates the group boundary.");
+            Assert.AreEqual(
+                ignoreParents && boundaryEnabled ? 1 : 0,
+                nativeAlpha,
+                0.001f,
+                "Native inherited alpha must establish that this batch surface evaluates the group boundary."
+            );
             var image = child.GetComponent(UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image"));
-            Assert.IsTrue(NativeGraphicRaycast(image, ScreenPoint(child.GetComponent<RectTransform>(), Vector3.zero)), "Inherited transparency does not disable pointer filtering.");
+            Assert.IsTrue(
+                NativeGraphicRaycast(image, ScreenPoint(child.GetComponent<RectTransform>(), Vector3.zero)),
+                "Inherited transparency does not disable pointer filtering."
+            );
             string groupBefore = EditorJsonUtility.ToJson(group);
             string rectBefore = EditorJsonUtility.ToJson(child.GetComponent<RectTransform>());
             var result = Diagnose();
@@ -690,8 +721,16 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(1, ((Color)image.GetType().GetProperty("color").GetValue(image)).a);
             Assert.AreEqual(rendererAlpha, renderer.GetAlpha(), 0.001f, "The native current renderer state must differ from the Graphic's vertex alpha.");
             float nativeAlpha = renderer.GetInheritedAlpha();
-            Assert.AreEqual(group.alpha, nativeAlpha, 0.001f, "Native inherited alpha reports the CanvasGroup multiplier independently of this renderer's own alpha.");
-            Assert.IsTrue(NativeGraphicRaycast(image, ScreenPoint(overlay.GetComponent<RectTransform>(), Vector3.zero)), "Renderer transparency does not disable pointer filters.");
+            Assert.AreEqual(
+                group.alpha,
+                nativeAlpha,
+                0.001f,
+                "Native inherited alpha reports the CanvasGroup multiplier independently of this renderer's own alpha."
+            );
+            Assert.IsTrue(
+                NativeGraphicRaycast(image, ScreenPoint(overlay.GetComponent<RectTransform>(), Vector3.zero)),
+                "Renderer transparency does not disable pointer filters."
+            );
             string imageBefore = EditorJsonUtility.ToJson(image);
             string groupBefore = EditorJsonUtility.ToJson(group);
             string rendererBefore = EditorJsonUtility.ToJson(renderer);
@@ -700,7 +739,9 @@ namespace MCPForUnityTests.Editor.Tools
             Findings(result);
             var output = result["data"]["rects"].Single(r => (int)r["instanceID"] == overlay.GetInstanceIDCompat());
             Assert.AreEqual(nativeAlpha * renderer.GetAlpha() > 0.001f, output.Value<bool>("visible"));
-            Assert.IsTrue(Findings(result).Any(f => (string)f["code"] == "raycast_blocker" && (int?)f["relatedTarget"]?["instanceID"] == overlay.GetInstanceIDCompat()));
+            Assert.IsTrue(
+                Findings(result).Any(f => (string)f["code"] == "raycast_blocker" && (int?)f["relatedTarget"]?["instanceID"] == overlay.GetInstanceIDCompat())
+            );
             Assert.AreEqual(imageBefore, EditorJsonUtility.ToJson(image));
             Assert.AreEqual(groupBefore, EditorJsonUtility.ToJson(group));
             Assert.AreEqual(rendererBefore, EditorJsonUtility.ToJson(renderer));
@@ -735,13 +776,22 @@ namespace MCPForUnityTests.Editor.Tools
             var performClipping = rectangular.GetType().GetMethod("PerformClipping");
             performClipping.Invoke(rectangular, null);
             performClipping.Invoke(rectangular, null);
-            Assert.IsFalse(child.GetComponent<CanvasRenderer>().cull, "Native rectangular culling uses the expanded clip independently of the stencil rectangle.");
+            Assert.IsFalse(
+                child.GetComponent<CanvasRenderer>().cull,
+                "Native rectangular culling uses the expanded clip independently of the stencil rectangle."
+            );
             var material = (Material)image.GetType().GetProperty("materialForRendering").GetValue(image);
             Assert.AreEqual(stencilEnabled ? 1 : 0, material.GetInt("_Stencil"));
-            Assert.AreEqual((int)(stencilEnabled ? UnityEngine.Rendering.CompareFunction.Equal : UnityEngine.Rendering.CompareFunction.Always), material.GetInt("_StencilComp"));
+            Assert.AreEqual(
+                (int)(stencilEnabled ? UnityEngine.Rendering.CompareFunction.Equal : UnityEngine.Rendering.CompareFunction.Always),
+                material.GetInt("_StencilComp")
+            );
             Vector2 point = ScreenPoint(control.GetComponent<RectTransform>(), Vector3.zero);
             Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(rect, point, null, padding));
-            Assert.IsTrue(NativeGraphicRaycast(image, point), "Expanded Graphic padding can accept points within the stencil even when the renderer lies outside it.");
+            Assert.IsTrue(
+                NativeGraphicRaycast(image, point),
+                "Expanded Graphic padding can accept points within the stencil even when the renderer lies outside it."
+            );
             string rectBefore = EditorJsonUtility.ToJson(rect);
             string stencilBefore = EditorJsonUtility.ToJson(stencil);
             string materialBefore = EditorJsonUtility.ToJson(material);
@@ -821,7 +871,12 @@ namespace MCPForUnityTests.Editor.Tools
             Findings(result);
             var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == root.GetInstanceIDCompat());
             Assert.AreEqual(800, rect["rect"].Value<float>("width"), 0.1f);
-            Assert.AreEqual(600, rect["rect"].Value<float>("height"), 0.1f, "AspectRatioFitter is invalid on a root screen-space Canvas and must remain inert in the preview.");
+            Assert.AreEqual(
+                600,
+                rect["rect"].Value<float>("height"),
+                0.1f,
+                "AspectRatioFitter is invalid on a root screen-space Canvas and must remain inert in the preview."
+            );
         }
 
         [Test]
@@ -841,7 +896,12 @@ namespace MCPForUnityTests.Editor.Tools
                 var result = Diagnose();
                 Findings(result);
                 var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceIDCompat());
-                Assert.AreEqual(40, rect["rect"].Value<float>("width"), 0.1f, "Image preferred width depends on sprite pixelsPerUnit / Canvas.referencePixelsPerUnit.");
+                Assert.AreEqual(
+                    40,
+                    rect["rect"].Value<float>("width"),
+                    0.1f,
+                    "Image preferred width depends on sprite pixelsPerUnit / Canvas.referencePixelsPerUnit."
+                );
             }
             finally
             {
@@ -869,16 +929,17 @@ namespace MCPForUnityTests.Editor.Tools
             var branch = Child("FirstBranch");
             var descendants = Enumerable.Range(0, 500).Select(i => Child("Descendant" + i, branch)).ToArray();
             var siblings = Enumerable.Range(0, 500).Select(i => Child("Sibling" + i)).ToArray();
-            var expected = new[] { root, branch }.Concat(descendants).Concat(siblings.Take(498))
-                .Select(go => go.GetInstanceIDCompat()).ToArray();
+            var expected = new[] { root, branch }.Concat(descendants).Concat(siblings.Take(498)).Select(go => go.GetInstanceIDCompat()).ToArray();
             var result = Diagnose(maxNodes: 1000);
             Findings(result);
             CollectionAssert.AreEqual(expected, result["data"]["rects"].Select(r => (int)r["instanceID"]).ToArray());
             Assert.IsTrue(result["data"].Value<bool>("truncated"));
             var scoped = Diagnose(branch, maxNodes: 1000);
             Findings(scoped);
-            CollectionAssert.AreEqual(new[] { branch }.Concat(descendants).Select(go => go.GetInstanceIDCompat()).ToArray(),
-                scoped["data"]["rects"].Select(r => (int)r["instanceID"]).ToArray());
+            CollectionAssert.AreEqual(
+                new[] { branch }.Concat(descendants).Select(go => go.GetInstanceIDCompat()).ToArray(),
+                scoped["data"]["rects"].Select(r => (int)r["instanceID"]).ToArray()
+            );
             Assert.IsTrue(scoped["data"].Value<bool>("truncated"), "Omitted Canvas context still makes the selected descendant preview incomplete.");
         }
 
@@ -929,11 +990,7 @@ namespace MCPForUnityTests.Editor.Tools
             var leaf = Child("Leaf", nested);
             string before = EditorJsonUtility.ToJson(leaf.GetComponent<RectTransform>());
             var sizes = Sizes(1920, 1080);
-            sizes.Add(new JObject
-            {
-                ["width"] = 960,
-                ["height"] = 1080
-            });
+            sizes.Add(new JObject { ["width"] = 960, ["height"] = 1080 });
             var result = Diagnose(sizes: sizes);
             Findings(result);
             var rects = result["data"]["rects"].Where(r => (int)r["instanceID"] == leaf.GetInstanceIDCompat()).ToArray();
@@ -975,7 +1032,11 @@ namespace MCPForUnityTests.Editor.Tools
             Set(scaler, "referenceResolution", reference);
             Set(scaler, "screenMatchMode", matchMode);
             Set(scaler, "matchWidthOrHeight", 0.5f);
-            Assert.AreEqual(reference, scaler.GetType().GetProperty("referenceResolution").GetValue(scaler), "Native CanvasScaler accepts positive fractional reference dimensions.");
+            Assert.AreEqual(
+                reference,
+                scaler.GetType().GetProperty("referenceResolution").GetValue(scaler),
+                "Native CanvasScaler accepts positive fractional reference dimensions."
+            );
             var first = Button("NativeScaledButton");
             var second = Button("OtherNativeScaledButton");
             first.GetComponent<RectTransform>().sizeDelta = new Vector2(0.1f, 0.1f);
@@ -998,9 +1059,13 @@ namespace MCPForUnityTests.Editor.Tools
             var rect = first.GetComponent<RectTransform>();
             var corners = new Vector3[4];
             rect.GetWorldCorners(corners);
-            float nativeWidth = RectTransformUtility.WorldToScreenPoint(null, corners[2]).x
-                - RectTransformUtility.WorldToScreenPoint(null, corners[0]).x;
-            Assert.AreEqual(rect.rect.width * nativeScale, nativeWidth, 0.1f, "The native overlay transform must apply the scaler before comparing diagnostic geometry.");
+            float nativeWidth = RectTransformUtility.WorldToScreenPoint(null, corners[2]).x - RectTransformUtility.WorldToScreenPoint(null, corners[0]).x;
+            Assert.AreEqual(
+                rect.rect.width * nativeScale,
+                nativeWidth,
+                0.1f,
+                "The native overlay transform must apply the scaler before comparing diagnostic geometry."
+            );
             var image = first.GetComponent(UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image"));
             Assert.IsTrue(NativeGraphicRaycast(image, ScreenPoint(rect, Vector3.zero)));
             string canvasBefore = EditorJsonUtility.ToJson(canvas);
@@ -1032,7 +1097,11 @@ namespace MCPForUnityTests.Editor.Tools
             var reference = new Vector2(negativeWidth ? -800 : 800, 600);
             Set(scaler, "referenceResolution", reference);
             Set(scaler, "screenMatchMode", matchMode);
-            Assert.AreEqual(reference, scaler.GetType().GetProperty("referenceResolution").GetValue(scaler), "Native CanvasScaler preserves the sign of nonzero reference dimensions.");
+            Assert.AreEqual(
+                reference,
+                scaler.GetType().GetProperty("referenceResolution").GetValue(scaler),
+                "Native CanvasScaler preserves the sign of nonzero reference dimensions."
+            );
             var child = Child("SignedReferenceChild");
             var rect = child.GetComponent<RectTransform>();
             var handle = scaler.GetType().GetMethod("HandleScaleWithScreenSize", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -1052,9 +1121,15 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreNotEqual(0, nativeScale);
             var corners = new Vector3[4];
             rect.GetWorldCorners(corners);
-            float nativeWidth = Mathf.Abs(RectTransformUtility.WorldToScreenPoint(null, corners[2]).x
-                - RectTransformUtility.WorldToScreenPoint(null, corners[0]).x);
-            Assert.AreEqual(rect.rect.width * Mathf.Abs(nativeScale), nativeWidth, 0.1f, "Native overlay geometry must apply the stored Canvas scale before comparing the preview.");
+            float nativeWidth = Mathf.Abs(
+                RectTransformUtility.WorldToScreenPoint(null, corners[2]).x - RectTransformUtility.WorldToScreenPoint(null, corners[0]).x
+            );
+            Assert.AreEqual(
+                rect.rect.width * Mathf.Abs(nativeScale),
+                nativeWidth,
+                0.1f,
+                "Native overlay geometry must apply the stored Canvas scale before comparing the preview."
+            );
             string canvasBefore = EditorJsonUtility.ToJson(canvas);
             string scalerBefore = EditorJsonUtility.ToJson(scaler);
             string rectBefore = EditorJsonUtility.ToJson(rect);
@@ -1078,8 +1153,15 @@ namespace MCPForUnityTests.Editor.Tools
             var second = Button("Second");
             second.transform.SetParent(container.transform, false);
             var graphic = first.GetComponent(UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image"));
-            Assert.AreSame(root.GetComponent<Canvas>(), graphic.GetType().GetProperty("canvas").GetValue(graphic), "Graphic.CacheCanvas selects the nearest enabled Canvas.");
-            Assert.IsTrue(Has(Diagnose(), "interactive_overlap"), "Disabling a nested Canvas does not disable child Graphics that fall back to the active root.");
+            Assert.AreSame(
+                root.GetComponent<Canvas>(),
+                graphic.GetType().GetProperty("canvas").GetValue(graphic),
+                "Graphic.CacheCanvas selects the nearest enabled Canvas."
+            );
+            Assert.IsTrue(
+                Has(Diagnose(), "interactive_overlap"),
+                "Disabling a nested Canvas does not disable child Graphics that fall back to the active root."
+            );
         }
 
         [Test]
@@ -1109,7 +1191,10 @@ namespace MCPForUnityTests.Editor.Tools
             first.transform.SetParent(container.transform, false);
             var second = Button("Second");
             second.transform.SetParent(container.transform, false);
-            Assert.IsTrue(Has(Diagnose(), "interactive_overlap"), "Selectable.ParentGroupAllowsInteraction honors ignoreParentGroups even when that group is disabled.");
+            Assert.IsTrue(
+                Has(Diagnose(), "interactive_overlap"),
+                "Selectable.ParentGroupAllowsInteraction honors ignoreParentGroups even when that group is disabled."
+            );
             root.GetComponent<CanvasGroup>().blocksRaycasts = false;
             Assert.IsFalse(Has(Diagnose(), "interactive_overlap"), "Graphic.Raycast skips disabled groups and still evaluates the ancestor's blocksRaycasts.");
         }
@@ -1147,7 +1232,10 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(secondRect, point, null));
             Assert.IsFalse(RectTransformUtility.RectangleContainsScreenPoint(firstRect, point, null, firstPadding));
             Assert.IsFalse(RectTransformUtility.RectangleContainsScreenPoint(secondRect, point, null, secondPadding));
-            Assert.IsFalse(Has(Diagnose(), "interactive_overlap"), "Raycast padding shrinks pointer regions without shrinking the overlapping rendered rectangles.");
+            Assert.IsFalse(
+                Has(Diagnose(), "interactive_overlap"),
+                "Raycast padding shrinks pointer regions without shrinking the overlapping rendered rectangles."
+            );
         }
 
         [Test]
@@ -1175,8 +1263,8 @@ namespace MCPForUnityTests.Editor.Tools
             Set(Add(first, "UnityEngine.UI.RectMask2D"), "padding", new Vector4(0, 0, 80, 0));
             Set(Add(second, "UnityEngine.UI.RectMask2D"), "padding", new Vector4(80, 0, 0, 0));
             var imageType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image");
-            Vector2 point = (ScreenPoint(first.GetComponent<RectTransform>(), Vector3.zero)
-                + ScreenPoint(second.GetComponent<RectTransform>(), Vector3.zero)) * 0.5f;
+            Vector2 point =
+                (ScreenPoint(first.GetComponent<RectTransform>(), Vector3.zero) + ScreenPoint(second.GetComponent<RectTransform>(), Vector3.zero)) * 0.5f;
             Assert.IsFalse(NativeGraphicRaycast(first.GetComponent(imageType), point));
             Assert.IsFalse(NativeGraphicRaycast(second.GetComponent(imageType), point));
             var result = Diagnose();
@@ -1204,7 +1292,10 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(NativeGraphicRaycast(first.GetComponent(imageType), point));
             Assert.IsTrue(NativeGraphicRaycast(second.GetComponent(imageType), point));
             var result = Diagnose();
-            Assert.IsFalse(Has(result, "interactive_overlap"), "RectMask2D pointer padding is evaluated in its local transformed rectangle, unlike canvas-space render clipping padding.");
+            Assert.IsFalse(
+                Has(result, "interactive_overlap"),
+                "RectMask2D pointer padding is evaluated in its local transformed rectangle, unlike canvas-space render clipping padding."
+            );
             var firstOutput = result["data"]["rects"].Single(r => (int)r["instanceID"] == first.GetInstanceIDCompat());
             Assert.AreEqual(120, firstOutput["visibleRect"].Value<float>("width"), 0.1f);
         }
@@ -1229,7 +1320,10 @@ namespace MCPForUnityTests.Editor.Tools
             ((Behaviour)childButton).enabled = true;
             Set(childButton, "interactable", false);
             Assert.AreSame(child, method.MakeGenericMethod(clickHandler).Invoke(null, new object[] { child }));
-            Assert.IsFalse(Has(Diagnose(), "interactive_overlap"), "An enabled non-interactable child receives and consumes its own pointer event instead of forwarding to the parent.");
+            Assert.IsFalse(
+                Has(Diagnose(), "interactive_overlap"),
+                "An enabled non-interactable child receives and consumes its own pointer event instead of forwarding to the parent."
+            );
         }
 
         [Test]
@@ -1285,12 +1379,16 @@ namespace MCPForUnityTests.Editor.Tools
                 Vector2 point = ScreenPoint(firstRect, new Vector3(localX, 0, 0));
                 Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(secondRect, point, null));
                 Assert.IsTrue(NativeGraphicRaycast(secondImage, point));
-                nativeOverlap &= RectTransformUtility.RectangleContainsScreenPoint(firstRect, point, null, graphicPadding)
-                    && NativeGraphicRaycast(firstImage, point);
+                nativeOverlap &=
+                    RectTransformUtility.RectangleContainsScreenPoint(firstRect, point, null, graphicPadding) && NativeGraphicRaycast(firstImage, point);
             }
 
             var result = Diagnose();
-            Assert.AreEqual(nativeOverlap, Has(result, "interactive_overlap", first), "Candidate bounds must agree with native hit testing in the reversed-endpoint strip, including mirrored transforms.");
+            Assert.AreEqual(
+                nativeOverlap,
+                Has(result, "interactive_overlap", first),
+                "Candidate bounds must agree with native hit testing in the reversed-endpoint strip, including mirrored transforms."
+            );
         }
 
         [TestCase(-100f, 0f)]
@@ -1315,8 +1413,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Vector2 point = ScreenPoint(firstRect, new Vector3(localX, 0, 0));
                 Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(secondRect, point, null));
                 Assert.IsTrue(NativeGraphicRaycast(secondImage, point));
-                nativeOverlap &= RectTransformUtility.RectangleContainsScreenPoint(firstRect, point, null, padding)
-                    && NativeGraphicRaycast(firstImage, point);
+                nativeOverlap &= RectTransformUtility.RectangleContainsScreenPoint(firstRect, point, null, padding) && NativeGraphicRaycast(firstImage, point);
             }
 
             Assert.AreEqual(nativeOverlap, Has(Diagnose(), "interactive_overlap", first));
@@ -1376,11 +1473,16 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(NativeGraphicRaycast(secondImage, point));
             if (horizontalScale > 0)
                 Assert.IsFalse(nativeCulled, "The ordinary mask control must have registered and retained its child's renderer.");
-            bool nativeOverlap = !nativeCulled
+            bool nativeOverlap =
+                !nativeCulled
                 && RectTransformUtility.RectangleContainsScreenPoint(first.GetComponent<RectTransform>(), point, null)
                 && NativeGraphicRaycast(firstImage, point);
             var result = Diagnose();
-            Assert.AreEqual(nativeOverlap, Has(result, "interactive_overlap", first), "GraphicRaycaster excludes native mask-culled renderers even when their rectangular pointer filters accept the point.");
+            Assert.AreEqual(
+                nativeOverlap,
+                Has(result, "interactive_overlap", first),
+                "GraphicRaycaster excludes native mask-culled renderers even when their rectangular pointer filters accept the point."
+            );
             var output = result["data"]["rects"].Single(r => (int)r["instanceID"] == first.GetInstanceIDCompat());
             Assert.AreEqual(nativeCulled ? 0 : 100, output["visibleRect"].Value<float>("width"), 0.1f);
         }
@@ -1487,13 +1589,7 @@ namespace MCPForUnityTests.Editor.Tools
             var result = Diagnose(maxNodes: 1);
             Findings(result);
             Assert.IsTrue(result["data"].Value<bool>("truncated"));
-            var current = JObject.FromObject(DiagnoseMethod.Invoke(null, new object[]
-            {
-                root,
-                null,
-                false,
-                200
-            }));
+            var current = JObject.FromObject(DiagnoseMethod.Invoke(null, new object[] { root, null, false, 200 }));
             Findings(current);
             Assert.AreEqual("current", (string)current["data"]["resolutions"][0]["resolution"]["mode"]);
             Assert.IsTrue(current["data"]["limitations"].Values<string>().Any(x => x.Contains("No explicit resolutions")));
@@ -1504,6 +1600,7 @@ namespace MCPForUnityTests.Editor.Tools
     public class UguiDiagnosticsCallbackProbe : MonoBehaviour
     {
         public static int Callbacks;
+
         private void OnEnable()
         {
             Callbacks++;

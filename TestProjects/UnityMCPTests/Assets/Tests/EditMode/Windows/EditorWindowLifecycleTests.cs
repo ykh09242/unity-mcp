@@ -64,7 +64,8 @@ namespace MCPForUnityTests.Editor.Windows
             }
             finally
             {
-                if (window != null) UnityEngine.Object.DestroyImmediate(window);
+                if (window != null)
+                    UnityEngine.Object.DestroyImmediate(window);
                 bridgeField.SetValue(null, previousBridge);
                 serverField.SetValue(null, previousServer);
             }
@@ -105,8 +106,7 @@ namespace MCPForUnityTests.Editor.Windows
                 Assert.IsTrue(selected.value, "Clicking the active tab must not clear its selection.");
                 foreach (string name in names)
                 {
-                    Assert.AreEqual(name != expectedName,
-                        window.rootVisualElement.Q<VisualElement>(name + "-panel").ClassListContains("hidden"));
+                    Assert.AreEqual(name != expectedName, window.rootVisualElement.Q<VisualElement>(name + "-panel").ClassListContains("hidden"));
                 }
 
                 var next = window.rootVisualElement.Q<ToolbarToggle>("advanced-tab");
@@ -118,8 +118,10 @@ namespace MCPForUnityTests.Editor.Windows
             finally
             {
                 UnityEngine.Object.DestroyImmediate(window);
-                if (hadPreference) EditorPrefs.SetString(EditorPrefKeys.EditorWindowActivePanel, previous);
-                else EditorPrefs.DeleteKey(EditorPrefKeys.EditorWindowActivePanel);
+                if (hadPreference)
+                    EditorPrefs.SetString(EditorPrefKeys.EditorWindowActivePanel, previous);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.EditorWindowActivePanel);
             }
         }
 
@@ -130,18 +132,34 @@ namespace MCPForUnityTests.Editor.Windows
 
         private sealed class RunningBridge : IBridgeControlService, IDisposable
         {
-            public RunningBridge(TransportMode mode) { ActiveMode = mode; }
+            public RunningBridge(TransportMode mode)
+            {
+                ActiveMode = mode;
+            }
+
             public int StopCalls { get; private set; }
             public int DisposeCalls { get; private set; }
             public bool IsRunning => StopCalls == 0 && DisposeCalls == 0;
             public int CurrentPort => 6400;
             public bool IsAutoConnectMode => false;
             public TransportMode? ActiveMode { get; }
+
             public Task<bool> StartAsync() => Task.FromResult(true);
-            public Task StopAsync() { StopCalls++; return Task.CompletedTask; }
+
+            public Task StopAsync()
+            {
+                StopCalls++;
+                return Task.CompletedTask;
+            }
+
             public BridgeVerificationResult Verify(int port) => new BridgeVerificationResult { Success = true };
+
             public Task<BridgeVerificationResult> VerifyAsync() => Task.FromResult(Verify(CurrentPort));
-            public void Dispose() { DisposeCalls++; }
+
+            public void Dispose()
+            {
+                DisposeCalls++;
+            }
         }
 
         private sealed class RunningServer : IServerManagementService, IDisposable
@@ -149,24 +167,48 @@ namespace MCPForUnityTests.Editor.Windows
             public int StopCalls { get; private set; }
             public int DisposeCalls { get; private set; }
             public bool HasManagedServerLaunchHandle => true;
+
             public bool ClearUvxCache() => true;
+
             public bool StartLocalHttpServer(bool quiet = false) => true;
+
             public string GetLocalHttpServerLaunchLogPath() => null;
+
             public bool IsManagedServerLaunchProcessAlive() => StopCalls == 0 && DisposeCalls == 0;
+
             public void LogLocalHttpServerLaunchFailure() { }
-            public bool StopLocalHttpServer() { StopCalls++; return true; }
-            public bool StopManagedLocalHttpServer() { StopCalls++; return true; }
+
+            public bool StopLocalHttpServer()
+            {
+                StopCalls++;
+                return true;
+            }
+
+            public bool StopManagedLocalHttpServer()
+            {
+                StopCalls++;
+                return true;
+            }
+
             public bool IsLocalHttpServerRunning() => IsManagedServerLaunchProcessAlive();
+
             public bool IsLocalHttpServerReachable() => IsManagedServerLaunchProcessAlive();
+
             public bool TryGetLocalHttpServerCommand(out string command, out string error)
             {
                 command = "test-server";
                 error = null;
                 return true;
             }
+
             public bool IsLocalUrl() => true;
+
             public bool CanStartLocalServer() => true;
-            public void Dispose() { DisposeCalls++; }
+
+            public void Dispose()
+            {
+                DisposeCalls++;
+            }
         }
     }
 }

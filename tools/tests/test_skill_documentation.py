@@ -28,7 +28,9 @@ def registered_contracts():
                 if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
                 for decorator in node.decorator_list:
-                    if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Name):
+                    if not isinstance(decorator, ast.Call) or not isinstance(
+                        decorator.func, ast.Name
+                    ):
                         continue
                     metadata = {kw.arg: kw.value for kw in decorator.keywords}
                     if decorator.func.id == "mcp_for_unity_resource":
@@ -45,8 +47,16 @@ def registered_contracts():
                         if arg.annotation is None:
                             continue
                         for annotation in ast.walk(arg.annotation):
-                            if isinstance(annotation, ast.Subscript) and isinstance(annotation.value, ast.Name) and annotation.value.id == "Literal":
-                                values = annotation.slice.elts if isinstance(annotation.slice, ast.Tuple) else [annotation.slice]
+                            if (
+                                isinstance(annotation, ast.Subscript)
+                                and isinstance(annotation.value, ast.Name)
+                                and annotation.value.id == "Literal"
+                            ):
+                                values = (
+                                    annotation.slice.elts
+                                    if isinstance(annotation.slice, ast.Tuple)
+                                    else [annotation.slice]
+                                )
                                 literals[arg.arg] = {ast.literal_eval(value) for value in values}
                     tools[name] = (allowed, required, literals)
     return tools, resources
@@ -65,7 +75,9 @@ def validate_request(request, tools):
         raise ValueError(f"{name}: unexpected={unexpected}, missing={required - params.keys()}")
     for parameter, values in literals.items():
         if parameter in params and params[parameter] is not None:
-            selected = params[parameter] if isinstance(params[parameter], list) else [params[parameter]]
+            selected = (
+                params[parameter] if isinstance(params[parameter], list) else [params[parameter]]
+            )
             if any(value not in tuple(values) for value in selected):
                 raise ValueError(f"{name}.{parameter}: invalid value {params[parameter]!r}")
     if name == "import_model_file":
@@ -94,11 +106,21 @@ class SkillDocumentationTests(unittest.TestCase):
                     relative, _, anchor = unquote(link).partition("#")
                     target = (path.parent / relative).resolve() if relative else path.resolve()
                     with self.subTest(path=path.relative_to(ROOT), link=link):
-                        self.assertTrue(target.is_relative_to(skill.resolve()), "Reference escapes distributed skill")
-                        self.assertTrue(target.is_file(), "Reference missing from distributed skill")
+                        self.assertTrue(
+                            target.is_relative_to(skill.resolve()),
+                            "Reference escapes distributed skill",
+                        )
+                        self.assertTrue(
+                            target.is_file(), "Reference missing from distributed skill"
+                        )
                         if anchor:
-                            headings = re.findall(r"^#+\s+(.+)$", target.read_text(encoding="utf-8"), re.MULTILINE)
-                            anchors = {re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-") for heading in headings}
+                            headings = re.findall(
+                                r"^#+\s+(.+)$", target.read_text(encoding="utf-8"), re.MULTILINE
+                            )
+                            anchors = {
+                                re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
+                                for heading in headings
+                            }
                             self.assertIn(anchor, anchors)
 
     def test_json_tool_examples_match_registered_schemas(self):
@@ -129,7 +151,10 @@ class SkillDocumentationTests(unittest.TestCase):
     def test_resource_uris_match_registered_resources_or_script_locators(self):
         # Component templates advertise an optional RFC6570 query expansion.
         paths = [re.sub(r"\{\?[^}]+\}", "", uri) for uri in self.resources]
-        patterns = [re.compile("^" + re.sub(r"\\\{.*?\\\}", "[^/?` ]+", re.escape(uri)) + "$") for uri in paths]
+        patterns = [
+            re.compile("^" + re.sub(r"\\\{.*?\\\}", "[^/?` ]+", re.escape(uri)) + "$")
+            for uri in paths
+        ]
         for skill in SKILLS:
             for path in skill.rglob("*.md"):
                 uris = re.findall(r"mcpforunity://[^`\s\"<>]+", path.read_text(encoding="utf-8"))
@@ -137,7 +162,10 @@ class SkillDocumentationTests(unittest.TestCase):
                     with self.subTest(path=path.relative_to(ROOT), uri=uri):
                         if uri.startswith("mcpforunity://path/Assets/"):
                             continue
-                        self.assertTrue(any(pattern.fullmatch(uri.split("?", 1)[0]) for pattern in patterns), "Unregistered resource URI")
+                        self.assertTrue(
+                            any(pattern.fullmatch(uri.split("?", 1)[0]) for pattern in patterns),
+                            "Unregistered resource URI",
+                        )
 
     def test_source_skill_manifest_examples_use_current_package_identity(self):
         metadata = json.loads((ROOT / "MCPForUnity/package.json").read_text(encoding="utf-8"))
@@ -158,9 +186,13 @@ class SkillDocumentationTests(unittest.TestCase):
             self.assertTrue(url.fragment)
 
     def test_source_migration_fixture_preserves_unrelated_manifest_entries(self):
-        examples = [json.loads(body) for language, body in FENCES.findall(
-            (SKILLS[3] / "SKILL.md").read_text(encoding="utf-8")
-        ) if language == "json"]
+        examples = [
+            json.loads(body)
+            for language, body in FENCES.findall(
+                (SKILLS[3] / "SKILL.md").read_text(encoding="utf-8")
+            )
+            if language == "json"
+        ]
         migrations = [example for example in examples if {"before", "after"} <= example.keys()]
         self.assertTrue(migrations, "No manifest migration case was checked")
         old, new = "com.coplaydev.unity-mcp", "com.ykh09242.unity-mcp"
@@ -168,11 +200,24 @@ class SkillDocumentationTests(unittest.TestCase):
             before, after = example["before"], example["after"]
             self.assertIn(old, before["dependencies"])
             self.assertNotIn(old, after["dependencies"])
-            unrelated = {name: value for name, value in before["dependencies"].items() if name not in (old, new)}
+            unrelated = {
+                name: value
+                for name, value in before["dependencies"].items()
+                if name not in (old, new)
+            }
             self.assertTrue(unrelated, "Migration fixture needs an unrelated dependency")
-            self.assertEqual(unrelated, {name: value for name, value in after["dependencies"].items() if name not in (old, new)})
-            self.assertEqual([name for name in before["testables"] if name not in (old, new)],
-                             [name for name in after["testables"] if name not in (old, new)])
+            self.assertEqual(
+                unrelated,
+                {
+                    name: value
+                    for name, value in after["dependencies"].items()
+                    if name not in (old, new)
+                },
+            )
+            self.assertEqual(
+                [name for name in before["testables"] if name not in (old, new)],
+                [name for name in after["testables"] if name not in (old, new)],
+            )
             self.assertTrue(any(name not in (old, new) for name in before["testables"]))
             self.assertIn(old, before["testables"])
             self.assertNotIn(old, after["testables"])
@@ -184,14 +229,25 @@ class SkillDocumentationTests(unittest.TestCase):
         self.assertEqual(expected, {path.relative_to(mirror) for path in mirror.rglob("*.md")})
         for relative in expected:
             with self.subTest(reference=relative):
-                self.assertEqual((canonical / relative).read_text(encoding="utf-8"), (mirror / relative).read_text(encoding="utf-8"))
+                self.assertEqual(
+                    (canonical / relative).read_text(encoding="utf-8"),
+                    (mirror / relative).read_text(encoding="utf-8"),
+                )
 
     def test_missing_tool_recovery_covers_group_and_editor_catalog_actions(self):
         for skill in SKILLS[:2]:
-            examples = [json.loads(body) for language, body in FENCES.findall(
-                (skill / "references/connection.md").read_text(encoding="utf-8")
-            ) if language == "json"]
-            actions = {example["params"]["action"] for example in examples if example["tool"] == "manage_tools"}
+            examples = [
+                json.loads(body)
+                for language, body in FENCES.findall(
+                    (skill / "references/connection.md").read_text(encoding="utf-8")
+                )
+                if language == "json"
+            ]
+            actions = {
+                example["params"]["action"]
+                for example in examples
+                if example["tool"] == "manage_tools"
+            }
             self.assertTrue({"list_groups", "activate", "sync"} <= actions)
             for example in examples:
                 validate_request(example, self.tools)
@@ -204,9 +260,10 @@ class SkillDocumentationTests(unittest.TestCase):
                     example = json.loads(body)
                     if example.get("tool") == "blender_bridge":
                         examples.append(example)
-        self.assertTrue({"status", "scene_info", "object_info", "import_model"} <= {
-            example["params"]["action"] for example in examples
-        })
+        self.assertTrue(
+            {"status", "scene_info", "object_info", "import_model"}
+            <= {example["params"]["action"] for example in examples}
+        )
         imports = []
         for example in examples:
             validate_request(example, self.tools)
@@ -219,16 +276,32 @@ class SkillDocumentationTests(unittest.TestCase):
                 self.assertIs(params.get("ensure_bloom"), False)
                 if params["save_prefab"]:
                     self.assertIs(params.get("place_in_scene"), True)
-        self.assertTrue(any(params["save_prefab"] is False for params in imports), "Plain import scope is missing")
-        self.assertTrue(any(params["save_prefab"] is True for params in imports), "Requested prefab creation is missing")
+        self.assertTrue(
+            any(params["save_prefab"] is False for params in imports),
+            "Plain import scope is missing",
+        )
+        self.assertTrue(
+            any(params["save_prefab"] is True for params in imports),
+            "Requested prefab creation is missing",
+        )
 
     def test_separate_blender_prefab_example_creates_without_overwrite_and_reads_asset(self):
-        examples = [json.loads(body) for language, body in FENCES.findall(
-            (SKILLS[2] / "SKILL.md").read_text(encoding="utf-8")
-        ) if language == "json"]
+        examples = [
+            json.loads(body)
+            for language, body in FENCES.findall(
+                (SKILLS[2] / "SKILL.md").read_text(encoding="utf-8")
+            )
+            if language == "json"
+        ]
         prefabs = [example for example in examples if example.get("tool") == "manage_prefabs"]
-        creates = [example["params"] for example in prefabs if example["params"]["action"] == "create_from_gameobject"]
-        reads = [example["params"] for example in prefabs if example["params"]["action"] == "get_info"]
+        creates = [
+            example["params"]
+            for example in prefabs
+            if example["params"]["action"] == "create_from_gameobject"
+        ]
+        reads = [
+            example["params"] for example in prefabs if example["params"]["action"] == "get_info"
+        ]
         self.assertTrue(creates, "Model import alone cannot fulfill a new prefab request")
         for example in prefabs:
             validate_request(example, self.tools)
@@ -247,7 +320,17 @@ class SkillDocumentationTests(unittest.TestCase):
             {"tool": "blender_bridge", "params": {"action": "save_prefab"}},
             {"tool": "script_apply_edits", "params": {"uri": "Assets/A.cs", "edits": []}},
             {"tool": "import_model_file", "params": {"source_path": "/tmp/model.fbx"}},
-            {"tool": "batch_execute", "params": {"commands": [{"tool": "manage_scene", "params": {"action": "get_active", "unity_instance": "Other@123"}}]}},
+            {
+                "tool": "batch_execute",
+                "params": {
+                    "commands": [
+                        {
+                            "tool": "manage_scene",
+                            "params": {"action": "get_active", "unity_instance": "Other@123"},
+                        }
+                    ]
+                },
+            },
         )
         for request in invalid:
             with self.subTest(request=request), self.assertRaises(ValueError):

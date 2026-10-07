@@ -27,10 +27,18 @@ class TestStartupConfigValidation:
     def test_remote_http_requires_explicit_tls_proxy(self, monkeypatch, proxy_env):
         import main as entry
 
-        monkeypatch.setattr(sys, "argv", [
-            "main", "--transport", "http", "--http-remote-hosted",
-            "--api-key-validation-url", "https://auth.example/validate",
-        ])
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "main",
+                "--transport",
+                "http",
+                "--http-remote-hosted",
+                "--api-key-validation-url",
+                "https://auth.example/validate",
+            ],
+        )
         monkeypatch.delenv("UNITY_MCP_HTTP_BEHIND_TLS_PROXY", raising=False)
         if proxy_env is not None:
             monkeypatch.setenv("UNITY_MCP_HTTP_BEHIND_TLS_PROXY", proxy_env)
@@ -47,9 +55,16 @@ class TestStartupConfigValidation:
         import main as entry
 
         arguments = [
-            "main", "--transport", "http", "--http-remote-hosted",
-            "--api-key-validation-url", "https://auth.example/validate",
-            "--http-host", "127.0.0.1", "--http-port", "8099",
+            "main",
+            "--transport",
+            "http",
+            "--http-remote-hosted",
+            "--api-key-validation-url",
+            "https://auth.example/validate",
+            "--http-host",
+            "127.0.0.1",
+            "--http-port",
+            "8099",
         ]
         monkeypatch.delenv("UNITY_MCP_HTTP_BEHIND_TLS_PROXY", raising=False)
         if use_env:
@@ -74,7 +89,8 @@ class TestStartupConfigValidation:
             "argv",
             [
                 "main",
-                "--transport", "http",
+                "--transport",
+                "http",
                 "--http-remote-hosted",
                 # Deliberately omit --api-key-validation-url
             ],
@@ -96,7 +112,8 @@ class TestStartupConfigValidation:
             "argv",
             [
                 "main",
-                "--transport", "http",
+                "--transport",
+                "http",
                 # No --http-remote-hosted flag
             ],
         )
@@ -129,15 +146,16 @@ class TestLoginUrlEndpoint:
                 },
                 status_code=404,
             )
-        return JSONResponse({
-            "success": True,
-            "login_url": config.api_key_login_url,
-        })
+        return JSONResponse(
+            {
+                "success": True,
+                "login_url": config.api_key_login_url,
+            }
+        )
 
     @pytest.mark.asyncio
     async def test_login_url_returns_url_when_configured(self, monkeypatch):
-        monkeypatch.setattr(config, "api_key_login_url",
-                            "https://app.example.com/keys")
+        monkeypatch.setattr(config, "api_key_login_url", "https://app.example.com/keys")
 
         response = await self._auth_login_url(MagicMock(spec=Request))
 

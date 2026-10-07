@@ -9,10 +9,11 @@ def setup_asset_tools():
     mcp = DummyMCP()
     import services.tools.manage_asset
     from services.registry import get_registered_tools
+
     for tool_info in get_registered_tools():
-        tool_name = tool_info['name']
-        if any(keyword in tool_name for keyword in ['asset', 'manage_asset']):
-            mcp.tools[tool_name] = tool_info['func']
+        tool_name = tool_info["name"]
+        if any(keyword in tool_name for keyword in ["asset", "manage_asset"]):
+            mcp.tools[tool_name] = tool_info["func"]
     return mcp.tools
 
 
@@ -29,6 +30,7 @@ async def test_apply_text_edits_long_file(monkeypatch):
 
     # Patch the send_command_with_retry function at the module level where it's imported
     import transport.legacy.unity_connection
+
     monkeypatch.setattr(
         transport.legacy.unity_connection,
         "async_send_command_with_retry",
@@ -36,8 +38,7 @@ async def test_apply_text_edits_long_file(monkeypatch):
     )
     # No need to patch tools.manage_script; it now calls unity_connection.send_command_with_retry
 
-    edit = {"startLine": 1005, "startCol": 0,
-            "endLine": 1005, "endCol": 5, "newText": "Hello"}
+    edit = {"startLine": 1005, "startCol": 0, "endLine": 1005, "endCol": 5, "newText": "Hello"}
     ctx = DummyContext()
     resp = await apply_edits(ctx, "mcpforunity://path/Assets/Scripts/LongFile.cs", [edit])
     assert captured["cmd"] == "manage_script"
@@ -58,6 +59,7 @@ async def test_sequential_edits_use_precondition(monkeypatch):
 
     # Patch the send_command_with_retry function at the module level where it's imported
     import transport.legacy.unity_connection
+
     monkeypatch.setattr(
         transport.legacy.unity_connection,
         "async_send_command_with_retry",
@@ -65,11 +67,9 @@ async def test_sequential_edits_use_precondition(monkeypatch):
     )
     # No need to patch tools.manage_script; it now calls unity_connection.send_command_with_retry
 
-    edit1 = {"startLine": 1, "startCol": 0, "endLine": 1,
-             "endCol": 0, "newText": "//header\n"}
+    edit1 = {"startLine": 1, "startCol": 0, "endLine": 1, "endCol": 0, "newText": "//header\n"}
     resp1 = await apply_edits(DummyContext(), "mcpforunity://path/Assets/Scripts/File.cs", [edit1])
-    edit2 = {"startLine": 2, "startCol": 0, "endLine": 2,
-             "endCol": 0, "newText": "//second\n"}
+    edit2 = {"startLine": 2, "startCol": 0, "endLine": 2, "endCol": 0, "newText": "//second\n"}
     resp2 = await apply_edits(
         DummyContext(),
         "mcpforunity://path/Assets/Scripts/File.cs",
@@ -93,6 +93,7 @@ async def test_apply_text_edits_forwards_options(monkeypatch):
 
     # Patch the send_command_with_retry function at the module level where it's imported
     import transport.legacy.unity_connection
+
     monkeypatch.setattr(
         transport.legacy.unity_connection,
         "async_send_command_with_retry",
@@ -122,6 +123,7 @@ async def test_apply_text_edits_defaults_atomic_for_multi_span(monkeypatch):
 
     # Patch the send_command_with_retry function at the module level where it's imported
     import transport.legacy.unity_connection
+
     monkeypatch.setattr(
         transport.legacy.unity_connection,
         "async_send_command_with_retry",
@@ -131,8 +133,7 @@ async def test_apply_text_edits_defaults_atomic_for_multi_span(monkeypatch):
 
     edits = [
         {"startLine": 2, "startCol": 2, "endLine": 2, "endCol": 3, "newText": "A"},
-        {"startLine": 3, "startCol": 2, "endLine": 3,
-            "endCol": 2, "newText": "// tail\n"},
+        {"startLine": 3, "startCol": 2, "endLine": 3, "endCol": 2, "newText": "// tail\n"},
     ]
     await apply_edits(
         DummyContext(),
@@ -157,9 +158,9 @@ async def test_manage_asset_prefab_modify_request(monkeypatch):
 
     # Patch the async function in the tools module
     import services.tools.manage_asset as tools_manage_asset
+
     # Patch both at the module and at the function closure location
-    monkeypatch.setattr(tools_manage_asset,
-                        "async_send_command_with_retry", fake_async)
+    monkeypatch.setattr(tools_manage_asset, "async_send_command_with_retry", fake_async)
     # Also patch the globals of the function object (handles dynamically loaded module alias)
     manage_asset.__globals__["async_send_command_with_retry"] = fake_async
 

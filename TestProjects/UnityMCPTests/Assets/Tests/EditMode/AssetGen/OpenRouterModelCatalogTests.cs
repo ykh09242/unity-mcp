@@ -22,24 +22,34 @@ namespace MCPForUnityTests.Editor.AssetGen
         private FakeHttpTransport http;
         private string directory;
         private DateTime now;
+
         private static HttpResult Json(JObject body) => new HttpResult { Status = 200, Text = body.ToString() };
-        private static JObject Parameters(int minimum = 0, int maximum = 1) => new JObject
-        {
-            ["input_references"] = new JObject { ["type"] = "range", ["min"] = minimum, ["max"] = maximum },
-            ["output_format"] = new JObject { ["type"] = "enum", ["values"] = new JArray("jpeg", "png") },
-        };
-        private static JObject Model(string id = Id, JObject parameters = null) => new JObject
-        {
-            ["id"] = id, ["name"] = "New image model",
-            ["architecture"] = new JObject { ["input_modalities"] = new JArray("text", "image"), ["output_modalities"] = new JArray("image") },
-            ["supported_parameters"] = parameters ?? Parameters(),
-            // Untrusted endpoint URL must never be followed.
-            ["endpoints"] = "https://untrusted.invalid/endpoints",
-        };
-        private static JObject Endpoint(JObject parameters, string tag = "vendor") => new JObject
-        {
-            ["provider_tag"] = tag, ["supported_parameters"] = parameters,
-        };
+
+        private static JObject Parameters(int minimum = 0, int maximum = 1) =>
+            new JObject
+            {
+                ["input_references"] = new JObject
+                {
+                    ["type"] = "range",
+                    ["min"] = minimum,
+                    ["max"] = maximum,
+                },
+                ["output_format"] = new JObject { ["type"] = "enum", ["values"] = new JArray("jpeg", "png") },
+            };
+
+        private static JObject Model(string id = Id, JObject parameters = null) =>
+            new JObject
+            {
+                ["id"] = id,
+                ["name"] = "New image model",
+                ["architecture"] = new JObject { ["input_modalities"] = new JArray("text", "image"), ["output_modalities"] = new JArray("image") },
+                ["supported_parameters"] = parameters ?? Parameters(),
+                // Untrusted endpoint URL must never be followed.
+                ["endpoints"] = "https://untrusted.invalid/endpoints",
+            };
+
+        private static JObject Endpoint(JObject parameters, string tag = "vendor") =>
+            new JObject { ["provider_tag"] = tag, ["supported_parameters"] = parameters };
 
         [SetUp]
         public void SetUp()
@@ -50,9 +60,15 @@ namespace MCPForUnityTests.Editor.AssetGen
             OpenRouterModelCatalog.CachePathOverrideForTests = Path.Combine(directory, "catalog.json");
             now = new DateTime(2026, 10, 3, 12, 0, 0, DateTimeKind.Utc);
             OpenRouterModelCatalog.UtcNow = () => now;
-            http = new FakeHttpTransport { Handler = r => Json(r.Url.EndsWith("/endpoints")
-                ? new JObject { ["id"] = Id, ["endpoints"] = new JArray(Endpoint(Parameters())) }
-                : new JObject { ["data"] = new JArray(Model()) }) };
+            http = new FakeHttpTransport
+            {
+                Handler = r =>
+                    Json(
+                        r.Url.EndsWith("/endpoints")
+                            ? new JObject { ["id"] = Id, ["endpoints"] = new JArray(Endpoint(Parameters())) }
+                            : new JObject { ["data"] = new JArray(Model()) }
+                    ),
+            };
             OpenRouterModelCatalog.TransportOverrideForTests = http;
         }
 
@@ -61,7 +77,8 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             AssetGenJobManager.ResetForTests();
             AssetGenModelCatalog.ResetForTests(true);
-            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, true);
         }
 
         [Test]
@@ -114,23 +131,58 @@ namespace MCPForUnityTests.Editor.AssetGen
                 Assert.Throws<InvalidOperationException>(() => AssetGenModelCatalog.ResolveModel("image", "openrouter", null));
                 Assert.AreEqual(Id, AssetGenPrefs.GetSelectedModel("image", "openrouter"));
             }
-            finally { AssetGenPrefs.SetSelectedModel("image", "openrouter", old); }
+            finally
+            {
+                AssetGenPrefs.SetSelectedModel("image", "openrouter", old);
+            }
         }
 
         [Test]
         public void EndpointVerification_UsesDefinitiveCapabilities_AndPinsCompatibleProvider()
         {
-            http.Handler = r => Json(r.Url.EndsWith("/endpoints")
-                ? new JObject { ["id"] = Id, ["endpoints"] = new JArray(Endpoint(Parameters(0, 0), "text-only"), Endpoint(Parameters(), "image-vendor")) }
-                : new JObject { ["data"] = new JArray(Model()) });
+            http.Handler = r =>
+                Json(
+                    r.Url.EndsWith("/endpoints")
+                        ? new JObject
+                        {
+                            ["id"] = Id,
+                            ["endpoints"] = new JArray(Endpoint(Parameters(0, 0), "text-only"), Endpoint(Parameters(), "image-vendor")),
+                        }
+                        : new JObject { ["data"] = new JArray(Model()) }
+                );
             var entry = OpenRouterModelCatalog.VerifyForGeneration(Id, "image", CancellationToken.None).Result;
             Assert.AreEqual("image-vendor", entry.RouterProviderTag);
             Assert.AreEqual("png", entry.OutputFormat);
             Assert.IsTrue(http.RecordedRequests.All(r => new Uri(r.Url).Host == "openrouter.ai"));
             var adapter = new OpenRouterAdapter();
-            var paid = new FakeHttpTransport { Handler = _ => Json(new JObject { ["data"] = new JArray(new JObject
-                { ["b64_json"] = Convert.ToBase64String(new byte[] { 255, 216, 255, 1 }), ["media_type"] = "image/jpeg" }) }) };
-            adapter.SubmitAsync(new ImageGenRequest { CatalogEntry = entry, Model = Id, Mode = "image", ImageUrl = "https://example.com/ref.png", Prompt = "paint" }, "test-key", paid, CancellationToken.None).GetAwaiter().GetResult();
+            var paid = new FakeHttpTransport
+            {
+                Handler = _ =>
+                    Json(
+                        new JObject
+                        {
+                            ["data"] = new JArray(
+                                new JObject { ["b64_json"] = Convert.ToBase64String(new byte[] { 255, 216, 255, 1 }), ["media_type"] = "image/jpeg" }
+                            ),
+                        }
+                    ),
+            };
+            adapter
+                .SubmitAsync(
+                    new ImageGenRequest
+                    {
+                        CatalogEntry = entry,
+                        Model = Id,
+                        Mode = "image",
+                        ImageUrl = "https://example.com/ref.png",
+                        Prompt = "paint",
+                    },
+                    "test-key",
+                    paid,
+                    CancellationToken.None
+                )
+                .GetAwaiter()
+                .GetResult();
             var request = paid.RecordedRequests.Single();
             Assert.AreEqual("https://openrouter.ai/api/v1/images", request.Url);
             var body = JObject.Parse(Encoding.UTF8.GetString(request.Body));
@@ -139,13 +191,30 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual("https://example.com/ref.png", (string)body["input_references"][0]["image_url"]["url"]);
             Assert.IsNull(body["messages"]);
             Assert.AreEqual("jpg", adapter.PollAsync("ready", "test-key", paid, CancellationToken.None).Result.ResultExt);
-            Assert.Throws<InvalidOperationException>(() => adapter.SubmitAsync(new ImageGenRequest { CatalogEntry = entry, Model = Id, Width = 512, Height = 512 }, "test-key", paid, CancellationToken.None).GetAwaiter().GetResult());
+            Assert.Throws<InvalidOperationException>(() =>
+                adapter
+                    .SubmitAsync(
+                        new ImageGenRequest
+                        {
+                            CatalogEntry = entry,
+                            Model = Id,
+                            Width = 512,
+                            Height = 512,
+                        },
+                        "test-key",
+                        paid,
+                        CancellationToken.None
+                    )
+                    .GetAwaiter()
+                    .GetResult()
+            );
         }
 
         [Test]
         public void Discovery_ExcludesVectorOnly_AndDistinguishesImageRequiredModels()
         {
-            var vector = Parameters(); vector["output_format"]["values"] = new JArray("svg");
+            var vector = Parameters();
+            vector["output_format"]["values"] = new JArray("svg");
             http.Handler = _ => Json(new JObject { ["data"] = new JArray(Model("test/vector", vector), Model(Id, Parameters(1, 1))) });
             Assert.IsTrue(OpenRouterModelCatalog.RefreshAsync(true).Result);
             var entry = AssetGenModelCatalog.ForProvider("openrouter", "image").Single();
@@ -163,29 +232,43 @@ namespace MCPForUnityTests.Editor.AssetGen
                 http.Handler = _ => Json(new JObject { ["data"] = new JArray() });
                 var paid = new FakeHttpTransport();
                 AssetGenJobManager.TransportOverrideForTests = paid;
-                var job = AssetGenJobManager.StartImageGeneration(new ImageGenRequest { Provider = "openrouter", Model = Id, Prompt = "cat" });
+                var job = AssetGenJobManager.StartImageGeneration(
+                    new ImageGenRequest
+                    {
+                        Provider = "openrouter",
+                        Model = Id,
+                        Prompt = "cat",
+                    }
+                );
                 var tick = typeof(AssetGenJobManager).GetMethod("Tick", BindingFlags.NonPublic | BindingFlags.Static);
-                for (int i = 0; i < 6; i++) tick.Invoke(null, null);
+                for (int i = 0; i < 6; i++)
+                    tick.Invoke(null, null);
                 Assert.AreEqual(AssetGenJobState.Failed, job.State);
                 Assert.IsEmpty(paid.RecordedRequests);
             }
-            finally { Environment.SetEnvironmentVariable("MCPFORUNITY_OPENROUTER_API_KEY", key); }
+            finally
+            {
+                Environment.SetEnvironmentVariable("MCPFORUNITY_OPENROUTER_API_KEY", key);
+            }
         }
 
         [UnityTest, Explicit("Reads public OpenRouter image discovery; no paid generation.")]
         public IEnumerator LivePublicCatalog_AndExactEndpoint()
         {
-            if (Environment.GetEnvironmentVariable("MCPFORUNITY_RUN_LIVE_CATALOG") != "1") Assert.Ignore("Opt-in live discovery test.");
+            if (Environment.GetEnvironmentVariable("MCPFORUNITY_RUN_LIVE_CATALOG") != "1")
+                Assert.Ignore("Opt-in live discovery test.");
             OpenRouterModelCatalog.TransportOverrideForTests = new UnityWebRequestTransport();
             OpenRouterModelCatalog.UtcNow = () => DateTime.UtcNow;
             var refresh = OpenRouterModelCatalog.RefreshAsync(true);
-            while (!refresh.IsCompleted) yield return null;
+            while (!refresh.IsCompleted)
+                yield return null;
             Assert.IsTrue(refresh.Result, OpenRouterModelCatalog.LastError);
             var entries = AssetGenModelCatalog.ForProvider("openrouter", "image");
             Assert.IsNotEmpty(entries);
             TestContext.WriteLine("OpenRouter: " + entries.Count + " discovered image models");
             var verify = OpenRouterModelCatalog.VerifyForGeneration(entries.First(e => e.Modes.Contains("text")).Id, "text", CancellationToken.None);
-            while (!verify.IsCompleted) yield return null;
+            while (!verify.IsCompleted)
+                yield return null;
             Assert.IsFalse(verify.IsFaulted, verify.Exception?.ToString());
             TestContext.WriteLine("Verified " + verify.Result.Id + " via " + verify.Result.RouterProviderTag);
         }

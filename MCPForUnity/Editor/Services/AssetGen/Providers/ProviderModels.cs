@@ -6,7 +6,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         Queued,
         Running,
         Succeeded,
-        Failed
+        Failed,
     }
 
     /// <summary>
@@ -20,9 +20,11 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         public ProviderPollState State;
         public float Progress;
         public string DownloadUrl;
+
         /// <summary>Inline result bytes for synchronous providers that return base64 (e.g. OpenRouter),
         /// so the job manager skips the download step. Takes precedence over <see cref="DownloadUrl"/>.</summary>
         public byte[] InlineData;
+
         /// <summary>Overrides the downloaded file extension, e.g. "zip" for archive results.</summary>
         public string ResultExt;
         public string Error;

@@ -20,23 +20,29 @@ namespace MCPForUnity.Runtime.Helpers
 
         public void EnsureParentDirectory(string fullPath)
         {
-            if (disposed) throw new ObjectDisposedException(nameof(OutputFolderScope));
+            if (disposed)
+                throw new ObjectDisposedException(nameof(OutputFolderScope));
             string containedPath = SafePathUtility.ResolveWithinRoot(root, fullPath);
             string parent = Path.GetDirectoryName(containedPath);
-            if (!string.IsNullOrEmpty(parent)) EnsureDirectory(parent);
+            if (!string.IsNullOrEmpty(parent))
+                EnsureDirectory(parent);
         }
 
         private void EnsureDirectory(string path)
         {
             path = SafePathUtility.ResolveWithinRoot(root, path);
-            if (Directory.Exists(path)) return;
-            if (File.Exists(path)) throw new IOException($"The output folder '{path}' is occupied by a file.");
+            if (Directory.Exists(path))
+                return;
+            if (File.Exists(path))
+                throw new IOException($"The output folder '{path}' is occupied by a file.");
 
             string parent = Path.GetDirectoryName(path);
-            if (string.IsNullOrEmpty(parent)) throw new IOException("The output directory has no existing parent.");
+            if (string.IsNullOrEmpty(parent))
+                throw new IOException("The output directory has no existing parent.");
             EnsureDirectory(parent);
             path = SafePathUtility.ResolveWithinRoot(root, path);
-            if (Directory.Exists(path)) return;
+            if (Directory.Exists(path))
+                return;
             Directory.CreateDirectory(path);
             createdFolders.Add(path);
             SafePathUtility.ResolveWithinRoot(root, path);
@@ -46,9 +52,11 @@ namespace MCPForUnity.Runtime.Helpers
 
         public void Dispose()
         {
-            if (disposed) return;
+            if (disposed)
+                return;
             disposed = true;
-            if (completed) return;
+            if (completed)
+                return;
 
             for (int i = createdFolders.Count - 1; i >= 0; i--)
             {
@@ -56,9 +64,11 @@ namespace MCPForUnity.Runtime.Helpers
                 try
                 {
                     string path = SafePathUtility.ResolveWithinRoot(root, folder);
-                    if (!Directory.Exists(path)) continue;
+                    if (!Directory.Exists(path))
+                        continue;
                     using (var entries = Directory.EnumerateFileSystemEntries(path).GetEnumerator())
-                        if (entries.MoveNext()) continue;
+                        if (entries.MoveNext())
+                            continue;
                     Directory.Delete(path, false);
                 }
                 catch (IOException) { }

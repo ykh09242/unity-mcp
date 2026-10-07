@@ -1,4 +1,5 @@
 """Real ASGI plugin transport negotiation, ownership and retention regressions."""
+
 import asyncio
 from concurrent.futures import CancelledError
 from contextlib import asynccontextmanager, nullcontext
@@ -32,9 +33,21 @@ def client(monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", True)
     monkeypatch.setattr(config, "http_behind_tls_proxy", True)
     monkeypatch.setattr(config, "transport_mode", "http")
-    for name in ("_connections", "_pending", "_ping_tasks", "_last_pong", "_admitted",
-                 "_retained_results", "_raw_results"):
-        monkeypatch.setattr(PluginHub, name, ChargeLedger() if name in ('_retained_results', '_raw_results') else {}, raising=False)
+    for name in (
+        "_connections",
+        "_pending",
+        "_ping_tasks",
+        "_last_pong",
+        "_admitted",
+        "_retained_results",
+        "_raw_results",
+    ):
+        monkeypatch.setattr(
+            PluginHub,
+            name,
+            ChargeLedger() if name in ("_retained_results", "_raw_results") else {},
+            raising=False,
+        )
     for name in ("_registry", "_lock", "_loop", "_mcp", "_large_results"):
         monkeypatch.setattr(PluginHub, name, None, raising=False)
     monkeypatch.setattr(PluginHub, "_editor_states", EditorStateStore(), raising=False)
@@ -43,8 +56,9 @@ def client(monkeypatch):
     async def validate(key, **kwargs):
         return ValidationResult(valid=True, user_id=key)
 
-    monkeypatch.setattr(ApiKeyService, "_instance", SimpleNamespace(
-        validate=validate, aclose=AsyncMock()))
+    monkeypatch.setattr(
+        ApiKeyService, "_instance", SimpleNamespace(validate=validate, aclose=AsyncMock())
+    )
     registry = PluginRegistry()
     clock = {"wall": 100.0, "mono": 10.0}
 
@@ -52,7 +66,8 @@ def client(monkeypatch):
     async def lifespan(app):
         PluginHub.configure(registry)
         PluginHub._editor_states = EditorStateStore(
-            wall_time=lambda: clock["wall"], monotonic=lambda: clock["mono"])
+            wall_time=lambda: clock["wall"], monotonic=lambda: clock["mono"]
+        )
         try:
             yield
         finally:
@@ -99,26 +114,45 @@ def barrier(client, wire, session_id):
 
 def payload_and_frames(command_id, *, envelope_id=None):
     result = {"success": True, "data": {"synthetic": "성공" * 50000}}
-    payload = json.dumps({"type": "command_result", "id": envelope_id or command_id,
-                          "result": result}, ensure_ascii=False).encode()
+    payload = json.dumps(
+        {"type": "command_result", "id": envelope_id or command_id, "result": result},
+        ensure_ascii=False,
+    ).encode()
     assert len(payload) >= THRESHOLD_BYTES
-    chunks = [MAGIC + command_id.encode("ascii") + offset.to_bytes(4, "big")
-              + payload[offset:offset + CHUNK_PAYLOAD_BYTES]
-              for offset in range(0, len(payload), CHUNK_PAYLOAD_BYTES)]
+    chunks = [
+        MAGIC
+        + command_id.encode("ascii")
+        + offset.to_bytes(4, "big")
+        + payload[offset : offset + CHUNK_PAYLOAD_BYTES]
+        for offset in range(0, len(payload), CHUNK_PAYLOAD_BYTES)
+    ]
     return result, payload, chunks
 
 
 def begin(wire, command_id, payload, chunks):
-    wire.send_json({"type": "result_start", "id": command_id,
-                    "total_bytes": len(payload), "chunk_count": len(chunks)})
+    wire.send_json(
+        {
+            "type": "result_start",
+            "id": command_id,
+            "total_bytes": len(payload),
+            "chunk_count": len(chunks),
+        }
+    )
 
 
 def state_message(sequence=7, observed=100000, *, reload_pending=False):
-    return {"type": "editor_state", "epoch": "owned-domain", "sequence": sequence,
+    return {
+        "type": "editor_state",
+        "epoch": "owned-domain",
+        "sequence": sequence,
+        "observed_at_unix_ms": observed,
+        "state": {
+            "schema_version": "unity-mcp/editor_state@2",
+            "sequence": sequence,
             "observed_at_unix_ms": observed,
-            "state": {"schema_version": "unity-mcp/editor_state@2", "sequence": sequence,
-                      "observed_at_unix_ms": observed,
-                      "compilation": {"is_compiling": False, "is_domain_reload_pending": reload_pending}}}
+            "compilation": {"is_compiling": False, "is_domain_reload_pending": reload_pending},
+        },
+    }
 
 
 def cached(client, project="owner", user="alice"):
@@ -139,7 +173,11 @@ def test_old_peer_gets_empty_features_and_unchanged_text_result(client):
 def test_capabilities_are_negotiated_as_supported_intersection(client):
     with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as wire:
         sid, welcome, registered = register(wire, capabilities=[*FEATURES, "unsupported"])
-        assert set(welcome["capabilities"]) == {*FEATURES, "command_cancel_v1", "large_result_gzip_v1"}
+        assert set(welcome["capabilities"]) == {
+            *FEATURES,
+            "command_cancel_v1",
+            "large_result_gzip_v1",
+        }
         assert set(registered["capabilities"]) == set(FEATURES)
         state = PluginHub._connections[sid].state
         assert state.plugin_session_id == sid
@@ -210,7 +248,9 @@ def test_malformed_active_large_transfer_closes_only_its_socket(client, kind):
             healthy_sid, _, _ = register(healthy, "healthy", FEATURES)
             unrelated, unrelated_id = start_command(client, healthy, healthy_sid)
             task, cid = start_command(client, wire, sid)
-            _, payload, chunks = payload_and_frames(cid, envelope_id="another-command" if kind == "envelope_id" else None)
+            _, payload, chunks = payload_and_frames(
+                cid, envelope_id="another-command" if kind == "envelope_id" else None
+            )
             begin(wire, cid, payload, chunks)
             if kind == "offset":
                 wire.send_bytes(chunks[1])
@@ -223,13 +263,17 @@ def test_malformed_active_large_transfer_closes_only_its_socket(client, kind):
                 wire.receive_json()
             assert task.result(timeout=2)["success"] is False
             assert not unrelated.done()
-            healthy.send_json({"type": "command_result", "id": unrelated_id, "result": {"success": True}})
+            healthy.send_json(
+                {"type": "command_result", "id": unrelated_id, "result": {"success": True}}
+            )
             assert unrelated.result(timeout=2) == {"success": True}
     assert PluginHub._raw_results == {}
     assert PluginHub._large_results.retained_bytes == 0
 
 
-def test_original_command_deadline_releases_partial_bytes_and_late_data_is_ignored(client, monkeypatch):
+def test_original_command_deadline_releases_partial_bytes_and_late_data_is_ignored(
+    client, monkeypatch
+):
     monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 0.2)
     with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as wire:
         sid, _, _ = register(wire, capabilities=FEATURES)
@@ -259,11 +303,17 @@ def test_raw_allocation_counts_existing_retained_responses(client, monkeypatch, 
         wire.send_json({"type": "command_result", "id": cid, "result": retained_result})
         assert first.result(timeout=2) == retained_result
         retained_charge = PluginHub._retained_results[cid]["bytes"]
-        ceiling = {"session": "MAX_RETAINED_RESULT_BYTES_PER_SESSION",
-                   "user": "MAX_RETAINED_RESULT_BYTES_PER_USER", "global": "MAX_RETAINED_RESULT_BYTES"}[scope]
+        ceiling = {
+            "session": "MAX_RETAINED_RESULT_BYTES_PER_SESSION",
+            "user": "MAX_RETAINED_RESULT_BYTES_PER_USER",
+            "global": "MAX_RETAINED_RESULT_BYTES",
+        }[scope]
         second_user = "bob" if scope == "global" else "alice"
-        second_context = (nullcontext(wire) if scope == "session" else
-                          client.websocket_connect("/plugin", headers={"x-api-key": second_user}))
+        second_context = (
+            nullcontext(wire)
+            if scope == "session"
+            else client.websocket_connect("/plugin", headers={"x-api-key": second_user})
+        )
         with second_context as second_wire:
             second_sid = sid
             if scope != "session":
@@ -364,9 +414,13 @@ def test_replacement_registration_invalidates_old_generation_raw_and_state(clien
 def test_cached_resource_reads_reuse_push_but_strict_and_stale_reads_use_rpc(client, monkeypatch):
     import services.resources.editor_state as resource
 
-    monkeypatch.setattr(resource, "get_unity_instance_from_context", AsyncMock(return_value="owner"))
+    monkeypatch.setattr(
+        resource, "get_unity_instance_from_context", AsyncMock(return_value="owner")
+    )
     authoritative = state_message(sequence=99)["state"]
-    rpc = AsyncMock(side_effect=lambda *args, **kwargs: {"success": True, "data": deepcopy(authoritative)})
+    rpc = AsyncMock(
+        side_effect=lambda *args, **kwargs: {"success": True, "data": deepcopy(authoritative)}
+    )
     monkeypatch.setattr(resource.unity_transport, "send_with_unity_instance", rpc)
     ctx = SimpleNamespace(get_state=AsyncMock(return_value="alice"))
     with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as wire:

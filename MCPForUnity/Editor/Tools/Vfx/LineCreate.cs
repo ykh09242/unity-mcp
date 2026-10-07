@@ -1,8 +1,8 @@
 using System;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Vfx
 {
@@ -11,7 +11,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object CreateLine(JObject @params)
         {
             LineRenderer lr = LineRead.FindLineRenderer(@params);
-            if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
+            if (lr == null)
+                return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
             Vector3 start = ManageVfxCommon.ParseVector3(@params["start"]);
             Vector3 end = ManageVfxCommon.ParseVector3(@params["end"]);
@@ -34,16 +35,19 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object CreateCircle(JObject @params)
         {
             LineRenderer lr = LineRead.FindLineRenderer(@params);
-            if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
+            if (lr == null)
+                return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
             Vector3 center = ManageVfxCommon.ParseVector3(@params["center"]);
             float radius = @params["radius"]?.ReadScalar<float?>() ?? 1f;
             int segments = @params["segments"]?.ReadScalar<int?>() ?? 32;
-            if (segments < 1) return new { success = false, message = "segments must be positive" };
+            if (segments < 1)
+                return new { success = false, message = "segments must be positive" };
             Vector3 normal = @params["normal"] != null ? ManageVfxCommon.ParseVector3(@params["normal"]).normalized : Vector3.up;
 
             Vector3 right = Vector3.Cross(normal, Vector3.forward);
-            if (right.sqrMagnitude < 0.001f) right = Vector3.Cross(normal, Vector3.up);
+            if (right.sqrMagnitude < 0.001f)
+                right = Vector3.Cross(normal, Vector3.up);
             right = right.normalized;
             Vector3 forward = Vector3.Cross(right, normal).normalized;
             var applyAppearance = PrepareAppearance(@params, lr);
@@ -70,7 +74,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object CreateArc(JObject @params)
         {
             LineRenderer lr = LineRead.FindLineRenderer(@params);
-            if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
+            if (lr == null)
+                return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
             Vector3 center = ManageVfxCommon.ParseVector3(@params["center"]);
             float radius = @params["radius"]?.ReadScalar<float?>() ?? 1f;
@@ -82,7 +87,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Vector3 normal = @params["normal"] != null ? ManageVfxCommon.ParseVector3(@params["normal"]).normalized : Vector3.up;
 
             Vector3 right = Vector3.Cross(normal, Vector3.forward);
-            if (right.sqrMagnitude < 0.001f) right = Vector3.Cross(normal, Vector3.up);
+            if (right.sqrMagnitude < 0.001f)
+                right = Vector3.Cross(normal, Vector3.up);
             right = right.normalized;
             Vector3 forward = Vector3.Cross(right, normal).normalized;
             var applyAppearance = PrepareAppearance(@params, lr);
@@ -110,14 +116,16 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object CreateBezier(JObject @params)
         {
             LineRenderer lr = LineRead.FindLineRenderer(@params);
-            if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
+            if (lr == null)
+                return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
             Vector3 start = ManageVfxCommon.ParseVector3(@params["start"]);
             Vector3 end = ManageVfxCommon.ParseVector3(@params["end"]);
             Vector3 cp1 = ManageVfxCommon.ParseVector3(@params["controlPoint1"] ?? @params["control1"]);
-            Vector3 cp2 = @params["controlPoint2"] != null || @params["control2"] != null
-                ? ManageVfxCommon.ParseVector3(@params["controlPoint2"] ?? @params["control2"])
-                : cp1;
+            Vector3 cp2 =
+                @params["controlPoint2"] != null || @params["control2"] != null
+                    ? ManageVfxCommon.ParseVector3(@params["controlPoint2"] ?? @params["control2"])
+                    : cp1;
             int segments = @params["segments"]?.ReadScalar<int?>() ?? 32;
             if (segments < 1 || segments == int.MaxValue)
                 return new { success = false, message = "segments must be positive and leave room for the final position" };
@@ -166,12 +174,24 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             return () =>
             {
-                if (width.HasValue) { lr.startWidth = width.Value; lr.endWidth = width.Value; }
-                if (startWidth.HasValue) lr.startWidth = startWidth.Value;
-                if (endWidth.HasValue) lr.endWidth = endWidth.Value;
-                if (color.HasValue) { lr.startColor = color.Value; lr.endColor = color.Value; }
-                if (startColor.HasValue) lr.startColor = startColor.Value;
-                if (endColor.HasValue) lr.endColor = endColor.Value;
+                if (width.HasValue)
+                {
+                    lr.startWidth = width.Value;
+                    lr.endWidth = width.Value;
+                }
+                if (startWidth.HasValue)
+                    lr.startWidth = startWidth.Value;
+                if (endWidth.HasValue)
+                    lr.endWidth = endWidth.Value;
+                if (color.HasValue)
+                {
+                    lr.startColor = color.Value;
+                    lr.endColor = color.Value;
+                }
+                if (startColor.HasValue)
+                    lr.startColor = startColor.Value;
+                if (endColor.HasValue)
+                    lr.endColor = endColor.Value;
             };
         }
     }

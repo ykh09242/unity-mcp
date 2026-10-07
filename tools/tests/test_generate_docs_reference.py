@@ -49,7 +49,9 @@ def test_unannotated_unions_have_no_description():
 
 
 def test_field_description_survives_validator_metadata_and_optional_union():
-    described = Annotated[int | None, Field(description="Component index"), BeforeValidator(lambda value: value)]
+    described = Annotated[
+        int | None, Field(description="Component index"), BeforeValidator(lambda value: value)
+    ]
     assert _annotation_description(described) == "Component index"
     assert _annotation_description(Annotated[described | str, 7]) == "Component index"
     assert _render_type(described) == "int | None"
@@ -61,12 +63,18 @@ def test_existing_string_description_precedes_field_metadata():
     assert _annotation_description(Annotated[int, Field(), 7]) is None
 
 
-@pytest.mark.parametrize("committed,generated,expected", [
-    (b"same\n", b"same\r\n", []),
-    (b"old\n", b"new\n", ["differs: index.md"]),
-])
+@pytest.mark.parametrize(
+    "committed,generated,expected",
+    [
+        (b"same\n", b"same\r\n", []),
+        (b"old\n", b"new\n", ["differs: index.md"]),
+    ],
+)
 def test_reference_drift_compares_text_not_newlines_or_file_metadata(
-    tmp_path: Path, committed: bytes, generated: bytes, expected: list[str],
+    tmp_path: Path,
+    committed: bytes,
+    generated: bytes,
+    expected: list[str],
 ) -> None:
     left, right = tmp_path / "committed", tmp_path / "generated"
     for directory, content in ((left, committed), (right, generated)):
@@ -91,8 +99,11 @@ assert [[item['name'] for item in group] for group in second] == [
 """
     # When: registry loading is repeated without restarting Python.
     result = subprocess.run(
-        [sys.executable, "-c", script], cwd=docs.REPO_ROOT,
-        capture_output=True, text=True, check=False,
+        [sys.executable, "-c", script],
+        cwd=docs.REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     # Then: both calls contain the same registered tools and resources.
     assert result.returncode == 0, result.stderr
@@ -100,7 +111,9 @@ assert [[item['name'] for item in group] for group in second] == [
 
 @pytest.mark.parametrize("new_group", [None, "new_group"])
 def test_regeneration_removes_obsolete_generated_pages_and_passes_drift_check(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, new_group: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    new_group: str | None,
 ) -> None:
     # Given: generated documentation for a tool that is later removed or regrouped.
     def example_tool() -> None:
@@ -117,7 +130,8 @@ def test_regeneration_removes_obsolete_generated_pages_and_passes_drift_check(
         old_page.read_text(encoding="utf-8").replace(
             docs.EXAMPLES_PLACEHOLDER,
             f"{docs.EXAMPLES_OPEN}\nPreserved usage example.\n{docs.EXAMPLES_CLOSE}\n",
-        ), encoding="utf-8",
+        ),
+        encoding="utf-8",
     )
     if new_group is None:
         tools.clear()
@@ -132,14 +146,15 @@ def test_regeneration_removes_obsolete_generated_pages_and_passes_drift_check(
     assert not (tools_root / "old_group" / "index.md").exists()
     assert not (tools_root / "old_group" / "_category_.json").exists()
     if new_group is not None:
-        assert "Preserved usage example." in (
-            tools_root / new_group / "example_tool.md"
-        ).read_text(encoding="utf-8")
+        assert "Preserved usage example." in (tools_root / new_group / "example_tool.md").read_text(
+            encoding="utf-8"
+        )
     assert docs.main(["--check"]) == 0
 
 
 def test_regeneration_and_drift_check_preserve_authored_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given: authored documentation alongside an obsolete generated tool page.
     def example_tool() -> None:
@@ -174,7 +189,9 @@ def test_regeneration_and_drift_check_preserve_authored_files(
 
 @pytest.mark.parametrize("new_group", [None, "new_group"])
 def test_drift_check_detects_obsolete_pages_without_modifying_committed_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, new_group: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    new_group: str | None,
 ) -> None:
     # Given: a committed generated tree whose tool registry changed.
     def example_tool() -> None:
@@ -201,16 +218,22 @@ def test_drift_check_detects_obsolete_pages_without_modifying_committed_files(
 
 
 def test_generation_stops_before_writes_when_a_public_module_cannot_import(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given: discoverable tool source with an import failure and existing owned output.
     tools_package = tmp_path / "tool_source"
     tools_package.mkdir()
-    (tools_package / "broken_tool.py").write_text("raise ImportError('broken tool')\n", encoding="utf-8")
+    (tools_package / "broken_tool.py").write_text(
+        "raise ImportError('broken tool')\n", encoding="utf-8"
+    )
     resources_package = tmp_path / "resource_source"
     resources_package.mkdir()
     packages = {}
-    for name, directory in (("services.tools", tools_package), ("services.resources", resources_package)):
+    for name, directory in (
+        ("services.tools", tools_package),
+        ("services.resources", resources_package),
+    ):
         module = ModuleType(name)
         module.__file__ = str(directory / "__init__.py")
         packages[name] = module
@@ -219,7 +242,9 @@ def test_generation_stops_before_writes_when_a_public_module_cannot_import(
     def import_module(name: str, package: str | None = None) -> ModuleType:
         if name in packages:
             return packages[name]
-        if name == "services.tools.broken_tool" or (package == "services.tools" and name == ".broken_tool"):
+        if name == "services.tools.broken_tool" or (
+            package == "services.tools" and name == ".broken_tool"
+        ):
             raise ImportError("broken tool")
         return real_import(name, package)
 

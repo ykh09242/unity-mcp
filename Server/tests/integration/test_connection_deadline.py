@@ -1,4 +1,5 @@
 """Connection resilience when a domain reload leaves the Unity socket half-open."""
+
 from __future__ import annotations
 
 import json
@@ -151,9 +152,7 @@ def test_connection_failure_refreshes_cached_port_before_backoff(monkeypatch) ->
         return False
 
     monkeypatch.setattr(conn, "connect", fail_connect)
-    monkeypatch.setattr(
-        uc.time, "sleep", lambda _seconds: ports_before_backoff.append(conn.port)
-    )
+    monkeypatch.setattr(uc.time, "sleep", lambda _seconds: ports_before_backoff.append(conn.port))
 
     with pytest.raises(ConnectionError, match="Could not connect to Unity"):
         conn.send_command("get_editor_state", {}, max_attempts=1)

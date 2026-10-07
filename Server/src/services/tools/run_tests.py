@@ -1,4 +1,5 @@
 """Async Unity Test Runner jobs: start + poll."""
+
 from __future__ import annotations
 
 import asyncio
@@ -63,7 +64,9 @@ _nudge_states: OrderedDict[tuple[str, str, str, str], _JobNudgeState] = OrderedD
 _terminal_nudge_jobs: OrderedDict[tuple[str, str, str, str], float] = OrderedDict()
 
 
-async def _get_unity_project_path(unity_instance: str | None, user_id: str | None = None) -> str | None:
+async def _get_unity_project_path(
+    unity_instance: str | None, user_id: str | None = None
+) -> str | None:
     """Get the project root path for a Unity instance (for focus nudging).
 
     Args:
@@ -92,10 +95,13 @@ async def _get_unity_project_path(unity_instance: str | None, user_id: str | Non
             path = session.project_path if session else None
         else:
             from transport.legacy.stdio_port_registry import stdio_port_registry
+
             instances = stdio_port_registry.get_instances()
-            matches = [instance for instance in instances if (
-                instance.id == unity_instance or instance.hash == target_hash
-            )]
+            matches = [
+                instance
+                for instance in instances
+                if (instance.id == unity_instance or instance.hash == target_hash)
+            ]
             path = matches[0].path if len(matches) == 1 else None
             # Stdio status files contain Application.dataPath, ending in Assets.
             if path:
@@ -119,8 +125,13 @@ async def _get_unity_project_path(unity_instance: str | None, user_id: str | Non
 
 
 async def _update_job_nudge(
-    unity_instance: str | None, user_id: str | None, job_id: str,
-    data: dict[str, Any], *, wait: bool, observation_order: int | None = None,
+    unity_instance: str | None,
+    user_id: str | None,
+    job_id: str,
+    data: dict[str, Any],
+    *,
+    wait: bool,
+    observation_order: int | None = None,
 ) -> None:
     """Share a bounded, monotonic no-progress budget across every poll of a job."""
     global _active_nudge_task
@@ -194,17 +205,25 @@ async def _update_job_nudge(
         progress["focus_nudge_status"] = "background_execution_enabled"
         return
     if not should_nudge(
-        status="running", editor_is_focused=state.editor_is_focused,
+        status="running",
+        editor_is_focused=state.editor_is_focused,
         last_update_unix_ms=state.last_update or None,
         current_time_ms=int(time.time() * 1000),
     ):
         return
     if _active_nudge_task is not None and not _active_nudge_task.done():
         return
-    interval = min(focus_nudge._BASE_NUDGE_INTERVAL_S * (2 ** state.attempts), focus_nudge._MAX_NUDGE_INTERVAL_S)
+    interval = min(
+        focus_nudge._BASE_NUDGE_INTERVAL_S * (2**state.attempts), focus_nudge._MAX_NUDGE_INTERVAL_S
+    )
     if state.last_attempt is not None and now - state.last_attempt < interval:
         return
-    observed_progress = (state.last_update, state.completed, state.test_started, state.test_finished)
+    observed_progress = (
+        state.last_update,
+        state.completed,
+        state.test_started,
+        state.test_finished,
+    )
     observed_reservation = (state.attempts, state.last_attempt)
     project_path = await _get_unity_project_path(unity_instance, user_id)
     if not project_path:
@@ -212,12 +231,13 @@ async def _update_job_nudge(
         return
     # Resolution can await HTTP registry locks; recheck after another poll may
     # have completed the job, reported progress, or reserved the desktop.
-    if _nudge_states.get(key) is not state or observed_progress != (
-        state.last_update, state.completed, state.test_started, state.test_finished
-    ) or observed_reservation != (state.attempts, state.last_attempt) or (
-        state.run_in_background or state.editor_is_focused
-    ) or (
-        _active_nudge_task is not None and not _active_nudge_task.done()
+    if (
+        _nudge_states.get(key) is not state
+        or observed_progress
+        != (state.last_update, state.completed, state.test_started, state.test_finished)
+        or observed_reservation != (state.attempts, state.last_attempt)
+        or (state.run_in_background or state.editor_is_focused)
+        or (_active_nudge_task is not None and not _active_nudge_task.done())
     ):
         return
     state.attempts += 1
@@ -227,7 +247,8 @@ async def _update_job_nudge(
 
     async def perform_nudge() -> None:
         await nudge_unity_focus(
-            unity_project_path=project_path, force=True,
+            unity_project_path=project_path,
+            force=True,
             focus_duration_s=focus_nudge._DEFAULT_FOCUS_DURATION_S,
         )
 
@@ -340,26 +361,26 @@ class GetTestJobResponse(MCPResponse):
 )
 async def run_tests(
     ctx: Context,
-    mode: Annotated[Literal["EditMode", "PlayMode"],
-                    "Unity test mode to run"] = "EditMode",
-    test_names: Annotated[list[str] | str,
-                          "Full names of specific tests to run"] | None = None,
-    group_names: Annotated[list[str] | str,
-                           "Same as test_names, except it allows for Regex"] | None = None,
-    category_names: Annotated[list[str] | str,
-                              "NUnit category names to filter by"] | None = None,
-    assembly_names: Annotated[list[str] | str,
-                              "Assembly names to filter tests by"] | None = None,
-    include_failed_tests: Annotated[bool,
-                                    "Include details for failed/skipped tests only (default: false)"] = False,
-    include_details: Annotated[bool,
-                               "Include details for all tests (default: false)"] = False,
-    init_timeout: Annotated[int | None,
-                            "Initialization timeout in milliseconds (1..2147483647). PlayMode tests may need longer "
-                            "due to domain reload (default: 15000). Recommended: 120000 for PlayMode."] = None,
-    clear_stuck: Annotated[bool,
-                           "Clear an orphaned running job instead of starting a run. Use when a job "
-                           "was lost to a domain reload and is blocking every subsequent run."] = False,
+    mode: Annotated[Literal["EditMode", "PlayMode"], "Unity test mode to run"] = "EditMode",
+    test_names: Annotated[list[str] | str, "Full names of specific tests to run"] | None = None,
+    group_names: Annotated[list[str] | str, "Same as test_names, except it allows for Regex"]
+    | None = None,
+    category_names: Annotated[list[str] | str, "NUnit category names to filter by"] | None = None,
+    assembly_names: Annotated[list[str] | str, "Assembly names to filter tests by"] | None = None,
+    include_failed_tests: Annotated[
+        bool, "Include details for failed/skipped tests only (default: false)"
+    ] = False,
+    include_details: Annotated[bool, "Include details for all tests (default: false)"] = False,
+    init_timeout: Annotated[
+        int | None,
+        "Initialization timeout in milliseconds (1..2147483647). PlayMode tests may need longer "
+        "due to domain reload (default: 15000). Recommended: 120000 for PlayMode.",
+    ] = None,
+    clear_stuck: Annotated[
+        bool,
+        "Clear an orphaned running job instead of starting a run. Use when a job "
+        "was lost to a domain reload and is blocking every subsequent run.",
+    ] = False,
 ) -> RunTestsStartResponse | MCPResponse:
     unity_instance = await get_unity_instance_from_context(ctx)
 
@@ -380,9 +401,14 @@ async def run_tests(
         return MCPResponse(success=False, error=str(response))
 
     if init_timeout is not None and not 0 < init_timeout <= 2**31 - 1:
-        return MCPResponse(success=False, error="init_timeout must be a positive 32-bit integer (milliseconds) or None")
+        return MCPResponse(
+            success=False,
+            error="init_timeout must be a positive 32-bit integer (milliseconds) or None",
+        )
 
-    gate = await preflight(ctx, requires_no_tests=True, wait_for_no_compile=True, refresh_if_dirty=True)
+    gate = await preflight(
+        ctx, requires_no_tests=True, wait_for_no_compile=True, refresh_if_dirty=True
+    )
     if isinstance(gate, MCPResponse):
         return gate
 
@@ -397,13 +423,13 @@ async def run_tests(
         return None
 
     params: dict[str, Any] = {"mode": mode}
-    if (t := _coerce_string_list(test_names)):
+    if t := _coerce_string_list(test_names):
         params["testNames"] = t
-    if (g := _coerce_string_list(group_names)):
+    if g := _coerce_string_list(group_names):
         params["groupNames"] = g
-    if (c := _coerce_string_list(category_names)):
+    if c := _coerce_string_list(category_names):
         params["categoryNames"] = c
-    if (a := _coerce_string_list(assembly_names)):
+    if a := _coerce_string_list(assembly_names):
         params["assemblyNames"] = a
     if include_failed_tests:
         params["includeFailedTests"] = True
@@ -442,14 +468,16 @@ async def run_tests(
 async def get_test_job(
     ctx: Context,
     job_id: Annotated[str, "Job id returned by run_tests"],
-    include_failed_tests: Annotated[bool,
-                                    "Include details for failed/skipped tests only (default: false)"] = False,
-    include_details: Annotated[bool,
-                               "Include details for all tests (default: false)"] = False,
-    wait_timeout: Annotated[int | None,
-                            "If set, wait up to this many seconds for tests to complete before returning. "
-                            "Reduces polling frequency and avoids client-side loop detection. "
-                            "Recommended: 30-60 seconds. Returns immediately if tests complete sooner."] = None,
+    include_failed_tests: Annotated[
+        bool, "Include details for failed/skipped tests only (default: false)"
+    ] = False,
+    include_details: Annotated[bool, "Include details for all tests (default: false)"] = False,
+    wait_timeout: Annotated[
+        int | None,
+        "If set, wait up to this many seconds for tests to complete before returning. "
+        "Reduces polling frequency and avoids client-side loop detection. "
+        "Recommended: 30-60 seconds. Returns immediately if tests complete sooner.",
+    ] = None,
 ) -> GetTestJobResponse | MCPResponse:
     unity_instance = await get_unity_instance_from_context(ctx)
     user_id = await ctx.get_state("user_id") if config.http_remote_hosted else None
@@ -474,44 +502,77 @@ async def get_test_job(
 
     # If wait_timeout is specified, poll server-side until complete or timeout
     if wait_timeout and wait_timeout > 0:
-        http_session = (await ctx.get_state("unity_session_id") if config.transport_mode.lower() == "http"
-                        else await get_authenticated_stdio_generation(unity_instance))
+        http_session = (
+            await ctx.get_state("unity_session_id")
+            if config.transport_mode.lower() == "http"
+            else await get_authenticated_stdio_generation(unity_instance)
+        )
         deadline = asyncio.get_event_loop().time() + wait_timeout
         poll_interval = 2.0  # Poll Unity every 2 seconds
         response = None
         # The selected instance and authenticated owner must match. An absent
         # selection may route through caller context, so those reads stay private.
         poll_key = (
-            config.transport_mode, user_id, unity_instance, http_session, job_id,
-            bool(include_failed_tests), bool(include_details),
-        ) if unity_instance and (
-            not config.http_remote_hosted or isinstance(user_id, str) and bool(user_id)
-        ) and (
-            isinstance(http_session, str) and bool(http_session)
-        ) else None
+            (
+                config.transport_mode,
+                user_id,
+                unity_instance,
+                http_session,
+                job_id,
+                bool(include_failed_tests),
+                bool(include_details),
+            )
+            if unity_instance
+            and (not config.http_remote_hosted or isinstance(user_id, str) and bool(user_id))
+            and (isinstance(http_session, str) and bool(http_session))
+            else None
+        )
         async with AsyncExitStack() as leases:
             shared_read = await leases.enter_async_context(_job_status_reads.session(poll_key))
             while True:
                 remaining = deadline - asyncio.get_event_loop().time()
                 if remaining <= 0:
                     if response is None:
-                        return MCPResponse(success=False, error="wait_timeout expired before a test job status was received")
+                        return MCPResponse(
+                            success=False,
+                            error="wait_timeout expired before a test job status was received",
+                        )
                     return GetTestJobResponse.model_validate(response)
                 try:
                     if config.transport_mode.lower() != "http":
-                        current_generation = await get_authenticated_stdio_generation(unity_instance)
+                        current_generation = await get_authenticated_stdio_generation(
+                            unity_instance
+                        )
                         if current_generation != http_session:
                             await leases.aclose()
                             http_session = current_generation
-                            poll_key = (config.transport_mode, user_id, unity_instance, http_session, job_id,
-                                        bool(include_failed_tests), bool(include_details)) if unity_instance and http_session else None
-                            shared_read = await leases.enter_async_context(_job_status_reads.session(poll_key))
-                    response, observation_order = await asyncio.wait_for(shared_read.fetch(_fetch_status), timeout=remaining)
+                            poll_key = (
+                                (
+                                    config.transport_mode,
+                                    user_id,
+                                    unity_instance,
+                                    http_session,
+                                    job_id,
+                                    bool(include_failed_tests),
+                                    bool(include_details),
+                                )
+                                if unity_instance and http_session
+                                else None
+                            )
+                            shared_read = await leases.enter_async_context(
+                                _job_status_reads.session(poll_key)
+                            )
+                    response, observation_order = await asyncio.wait_for(
+                        shared_read.fetch(_fetch_status), timeout=remaining
+                    )
                 except SharedReadCapacityError:
                     return MCPResponse(**response_limit_error("result_capacity"))
                 except asyncio.TimeoutError:
                     if response is None:
-                        return MCPResponse(success=False, error="wait_timeout expired before a test job status was received")
+                        return MCPResponse(
+                            success=False,
+                            error="wait_timeout expired before a test job status was received",
+                        )
                     return GetTestJobResponse.model_validate(response)
 
                 if isinstance(response, MCPResponse):
@@ -528,7 +589,12 @@ async def get_test_job(
                 try:
                     await asyncio.wait_for(
                         _update_job_nudge(
-                            unity_instance, user_id, job_id, data, wait=True, observation_order=observation_order,
+                            unity_instance,
+                            user_id,
+                            job_id,
+                            data,
+                            wait=True,
+                            observation_order=observation_order,
                         ),
                         timeout=max(0.0, deadline - asyncio.get_event_loop().time()),
                     )
@@ -545,7 +611,7 @@ async def get_test_job(
 
                 # Wait before next poll (but don't exceed remaining time)
                 await asyncio.sleep(min(poll_interval, remaining))
-    
+
     # No wait_timeout - return immediately (original behavior)
     response, observation_order = await _fetch_status()
     if isinstance(response, MCPResponse):
@@ -557,6 +623,11 @@ async def get_test_job(
 
     data = response.get("data", {})
     await _update_job_nudge(
-        unity_instance, user_id, job_id, data, wait=False, observation_order=observation_order,
+        unity_instance,
+        user_id,
+        job_id,
+        data,
+        wait=False,
+        observation_order=observation_order,
     )
     return GetTestJobResponse(**response)

@@ -8,10 +8,11 @@ def setup_console_tools():
     mcp = DummyMCP()
     import services.tools.read_console
     from services.registry import get_registered_tools
+
     for tool_info in get_registered_tools():
-        tool_name = tool_info['name']
-        if any(keyword in tool_name for keyword in ['read_console', 'console']):
-            mcp.tools[tool_name] = tool_info['func']
+        tool_name = tool_info["name"]
+        if any(keyword in tool_name for keyword in ["read_console", "console"]):
+            mcp.tools[tool_name] = tool_info["func"]
     return mcp.tools
 
 
@@ -26,11 +27,14 @@ async def test_read_console_full_default(monkeypatch):
         captured["params"] = params
         return {
             "success": True,
-            "data": {"lines": [{"level": "error", "message": "oops", "stacktrace": "trace", "time": "t"}]},
+            "data": {
+                "lines": [{"level": "error", "message": "oops", "stacktrace": "trace", "time": "t"}]
+            },
         }
 
     # Patch the send_command_with_retry function in the tools module
     import services.tools.read_console
+
     monkeypatch.setattr(
         services.tools.read_console,
         "async_send_command_with_retry",
@@ -62,6 +66,7 @@ async def test_read_console_truncated(monkeypatch):
 
     # Patch the send_command_with_retry function in the tools module
     import services.tools.read_console
+
     monkeypatch.setattr(
         services.tools.read_console,
         "async_send_command_with_retry",
@@ -69,8 +74,7 @@ async def test_read_console_truncated(monkeypatch):
     )
 
     resp = await read_console(ctx=DummyContext(), action="get", count=10, include_stacktrace=False)
-    assert resp == {"success": True, "data": {
-        "lines": [{"level": "error", "message": "oops"}]}}
+    assert resp == {"success": True, "data": {"lines": [{"level": "error", "message": "oops"}]}}
     assert captured["params"]["includeStacktrace"] is False
 
 
@@ -91,6 +95,7 @@ async def test_read_console_default_count(monkeypatch):
 
     # Patch the send_command_with_retry function in the tools module
     import services.tools.read_console
+
     monkeypatch.setattr(
         services.tools.read_console,
         "async_send_command_with_retry",
@@ -119,12 +124,12 @@ async def test_read_console_paging(monkeypatch):
         cursor = params.get("cursor", 0)
         # Simulate 25 total messages
         all_messages = [{"level": "error", "message": f"error {i}"} for i in range(25)]
-        
+
         # Return a page of results
         start = cursor
         end = min(start + page_size, len(all_messages))
         messages = all_messages[start:end]
-        
+
         return {
             "success": True,
             "data": {
@@ -139,6 +144,7 @@ async def test_read_console_paging(monkeypatch):
 
     # Patch the send_command_with_retry function in the tools module
     import services.tools.read_console
+
     monkeypatch.setattr(
         services.tools.read_console,
         "async_send_command_with_retry",
@@ -154,7 +160,7 @@ async def test_read_console_paging(monkeypatch):
     assert resp["data"]["truncated"] is True
     assert resp["data"]["nextCursor"] == "5"
     assert resp["data"]["total"] == 25
-    
+
     # Second page - get next 5 entries
     resp = await read_console(ctx=DummyContext(), action="get", page_size=5, cursor=5)
     assert resp["success"] is True
@@ -162,7 +168,7 @@ async def test_read_console_paging(monkeypatch):
     assert len(resp["data"]["items"]) == 5
     assert resp["data"]["truncated"] is True
     assert resp["data"]["nextCursor"] == "10"
-    
+
     # Last page - get remaining entries
     resp = await read_console(ctx=DummyContext(), action="get", page_size=5, cursor=20)
     assert resp["success"] is True
@@ -179,7 +185,9 @@ async def test_read_console_types_json_string(monkeypatch):
 
     captured = {}
 
-    async def fake_send_with_unity_instance(_send_fn, _unity_instance, _command_type, params, **_kwargs):
+    async def fake_send_with_unity_instance(
+        _send_fn, _unity_instance, _command_type, params, **_kwargs
+    ):
         captured["params"] = params
         return {
             "success": True,
@@ -187,6 +195,7 @@ async def test_read_console_types_json_string(monkeypatch):
         }
 
     import services.tools.read_console as read_console_mod
+
     monkeypatch.setattr(
         read_console_mod,
         "send_with_unity_instance",
@@ -199,7 +208,7 @@ async def test_read_console_types_json_string(monkeypatch):
     # Verify types was parsed correctly and sent as a list
     assert isinstance(captured["params"]["types"], list)
     assert captured["params"]["types"] == ["error", "warning", "all"]
-    
+
     # Test case normalization to lowercase
     captured.clear()
     resp = await read_console(ctx=DummyContext(), action="get", types='["ERROR", "Warning", "LOG"]')
@@ -222,11 +231,14 @@ async def test_read_console_types_validation(monkeypatch):
 
     captured = {}
 
-    async def fake_send_with_unity_instance(_send_fn, _unity_instance, _command_type, params, **_kwargs):
+    async def fake_send_with_unity_instance(
+        _send_fn, _unity_instance, _command_type, params, **_kwargs
+    ):
         captured["params"] = params
         return {"success": True, "data": {"lines": []}}
 
     import services.tools.read_console as read_console_mod
+
     monkeypatch.setattr(
         read_console_mod,
         "send_with_unity_instance",

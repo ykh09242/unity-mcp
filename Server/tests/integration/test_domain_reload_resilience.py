@@ -4,6 +4,7 @@ Integration test for domain reload resilience.
 Tests that the MCP server can handle rapid-fire requests during Unity domain reloads
 by waiting for the plugin to reconnect instead of failing immediately.
 """
+
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, patch
@@ -41,7 +42,7 @@ async def test_plugin_hub_waits_for_reconnection_during_reload():
                 project_hash="abc123",
                 unity_version="2022.3.0f1",
                 registered_at=now,
-                connected_at=now
+                connected_at=now,
             )
             return {"test-session-123": session}
 
@@ -89,9 +90,9 @@ async def test_plugin_hub_fails_after_timeout():
     PluginHub._lock = asyncio.Lock()
 
     # Temporarily override config for a short timeout
-    with patch('transport.plugin_hub.config') as mock_config:
+    with patch("transport.plugin_hub.config") as mock_config:
         mock_config.reload_max_retries = 3  # Only 3 retries
-        mock_config.reload_retry_ms = 10    # 10ms between retries
+        mock_config.reload_retry_ms = 10  # 10ms between retries
 
         try:
             # Should raise RuntimeError after timeout
@@ -184,15 +185,14 @@ async def test_read_console_during_simulated_reload(monkeypatch):
         return {
             "success": True,
             "message": f"Retrieved {call_count[0]} log entries.",
-            "data": ["<b><color=#2EA3FF>MCP-FOR-UNITY</color></b>: Auto-discovered 10 tools"]
+            "data": ["<b><color=#2EA3FF>MCP-FOR-UNITY</color></b>: Auto-discovered 10 tools"],
         }
 
     # Patch the async_send_command_with_retry directly
     import services.tools.read_console
+
     monkeypatch.setattr(
-        services.tools.read_console,
-        "async_send_command_with_retry",
-        fake_send_command
+        services.tools.read_console, "async_send_command_with_retry", fake_send_command
     )
 
     # Run multiple read_console calls rapidly (simulating the stress test)
@@ -204,14 +204,14 @@ async def test_read_console_during_simulated_reload(monkeypatch):
             types=["all"],
             count=50,
             format="plain",
-            include_stacktrace=False
+            include_stacktrace=False,
         )
         results.append(result)
 
     # All calls should succeed
     assert len(results) == 5
     for i, result in enumerate(results):
-        assert result["success"] is True, f"Call {i+1} failed with result: {result}"
+        assert result["success"] is True, f"Call {i + 1} failed with result: {result}"
         assert "data" in result
 
     # At least 5 calls should have been made
@@ -234,7 +234,7 @@ async def test_plugin_hub_respects_unity_instance_preference():
         project_hash="hash1",
         unity_version="2022.3.0f1",
         registered_at=now,
-        connected_at=now
+        connected_at=now,
     )
     session2 = PluginSession(
         session_id="session-2",
@@ -242,14 +242,11 @@ async def test_plugin_hub_respects_unity_instance_preference():
         project_hash="hash2",
         unity_version="2022.3.0f1",
         registered_at=now,
-        connected_at=now
+        connected_at=now,
     )
 
     async def mock_list_sessions(**kwargs):
-        return {
-            "session-1": session1,
-            "session-2": session2
-        }
+        return {"session-1": session1, "session-2": session2}
 
     async def mock_get_session_id_by_hash(project_hash, user_id=None):
         if project_hash == "hash2":

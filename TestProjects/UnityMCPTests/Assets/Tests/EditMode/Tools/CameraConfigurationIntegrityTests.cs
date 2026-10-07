@@ -38,9 +38,12 @@ namespace MCPForUnityTests.Editor.Tools
             capturedState = false;
             objects.Clear();
             ownedScene = default;
-            if (!CameraHelpers.HasCinemachine) Assert.Ignore("Cinemachine is not installed.");
-            if (PrefabStageUtility.GetCurrentPrefabStage() != null) Assert.Ignore("An unowned prefab stage is open.");
-            if (CameraHelpers.FindBrain() != null) Assert.Ignore("An unowned CinemachineBrain is present.");
+            if (!CameraHelpers.HasCinemachine)
+                Assert.Ignore("Cinemachine is not installed.");
+            if (PrefabStageUtility.GetCurrentPrefabStage() != null)
+                Assert.Ignore("An unowned prefab stage is open.");
+            if (CameraHelpers.FindBrain() != null)
+                Assert.Ignore("An unowned CinemachineBrain is present.");
             Assert.IsNotNull(OverrideId);
             Assert.IsNotNull(OverrideBrain);
             originalOverrideId = (int)OverrideId.GetValue(null);
@@ -55,7 +58,8 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
             target = Owned("Camera");
             camera = target.AddComponent(CameraHelpers.CinemachineCameraType);
-            if (camera is Behaviour behaviour) behaviour.enabled = false;
+            if (camera is Behaviour behaviour)
+                behaviour.enabled = false;
             oldReference = Owned("Old");
             newReference = Owned("Reference");
             RequireTargetProperty("Follow").SetValue(camera, oldReference.transform);
@@ -82,11 +86,14 @@ namespace MCPForUnityTests.Editor.Tools
 
         private Transform TargetValue(string name) => (Transform)RequireTargetProperty(name).GetValue(camera);
 
-        private JObject Request(string action, JObject properties) => new JObject
-        {
-            ["action"] = action, ["target"] = target.GetInstanceIDCompat().ToString(),
-            ["searchMethod"] = "by_id", ["properties"] = properties
-        };
+        private JObject Request(string action, JObject properties) =>
+            new JObject
+            {
+                ["action"] = action,
+                ["target"] = target.GetInstanceIDCompat().ToString(),
+                ["searchMethod"] = "by_id",
+                ["properties"] = properties,
+            };
 
         private JObject Send(string action, JObject properties) => JObject.FromObject(ManageCamera.HandleCommand(Request(action, properties)));
 
@@ -95,7 +102,8 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Owned("Brain");
             go.AddComponent<Camera>().enabled = false;
             var brain = go.AddComponent(CameraHelpers.CinemachineBrainType);
-            if (brain is Behaviour behaviour) behaviour.enabled = false;
+            if (brain is Behaviour behaviour)
+                behaviour.enabled = false;
             Assert.AreSame(brain, CameraHelpers.FindBrain(), "The public control path must resolve only the owned Brain.");
             var method = brain.GetType().GetMethod("SetCameraOverride", BindingFlags.Public | BindingFlags.Instance);
             if (method == null || method.GetParameters().Length != 6)
@@ -117,7 +125,8 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (!capturedState) return;
+            if (!capturedState)
+                return;
             try
             {
                 var owner = (Component)OverrideBrain.GetValue(null);
@@ -125,7 +134,8 @@ namespace MCPForUnityTests.Editor.Tools
                 if (owner != null && id >= 0 && objects.Contains(owner.gameObject))
                 {
                     var release = owner.GetType().GetMethod("ReleaseCameraOverride", BindingFlags.Public | BindingFlags.Instance);
-                    if (release != null) release.Invoke(owner, new object[] { id });
+                    if (release != null)
+                        release.Invoke(owner, new object[] { id });
                 }
             }
             finally
@@ -134,17 +144,21 @@ namespace MCPForUnityTests.Editor.Tools
                 OverrideBrain.SetValue(null, originalOverrideBrain);
                 foreach (var go in objects)
                 {
-                    if (go == null) continue;
+                    if (go == null)
+                        continue;
                     foreach (var component in go.GetComponents<Component>())
-                        if (component != null) Undo.ClearUndo(component);
+                        if (component != null)
+                            Undo.ClearUndo(component);
                     Undo.ClearUndo(go);
                     Object.DestroyImmediate(go);
                 }
                 objects.Clear();
                 Selection.objects = originalSelections;
                 Selection.activeObject = originalSelection;
-                if (originalScene.IsValid() && originalScene.isLoaded) SceneManager.SetActiveScene(originalScene);
-                if (ownedScene.IsValid() && ownedScene.isLoaded) EditorSceneManager.CloseScene(ownedScene, true);
+                if (originalScene.IsValid() && originalScene.isLoaded)
+                    SceneManager.SetActiveScene(originalScene);
+                if (ownedScene.IsValid() && ownedScene.isLoaded)
+                    EditorSceneManager.CloseScene(ownedScene, true);
                 capturedState = false;
             }
         }
@@ -155,11 +169,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             int objectDirty = EditorUtility.GetDirtyCount(target);
             int componentDirty = EditorUtility.GetDirtyCount(camera);
-            var properties = new JObject
-            {
-                ["follow"] = newReference.name,
-                ["lookAt"] = newReference.GetInstanceIDCompat().ToString()
-            };
+            var properties = new JObject { ["follow"] = newReference.name, ["lookAt"] = newReference.GetInstanceIDCompat().ToString() };
             properties[missingField] = "MissingCameraReference_" + Guid.NewGuid().ToString("N");
             var response = Send("set_target", properties);
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
@@ -190,10 +200,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void NameAndIdReferencesAreApplied()
         {
-            var response = Send("set_target", new JObject
-            {
-                ["follow"] = newReference.name, ["lookAt"] = newReference.GetInstanceIDCompat().ToString()
-            });
+            var response = Send("set_target", new JObject { ["follow"] = newReference.name, ["lookAt"] = newReference.GetInstanceIDCompat().ToString() });
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreSame(newReference.transform, TargetValue("Follow"));
             Assert.AreSame(newReference.transform, TargetValue("LookAt"));
@@ -232,7 +239,8 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("remove_extension", "CinemachineExtension")]
         public void ExtensionOperationsRejectNonExtensionAndAbstractTypesWithoutMutation(string action, string typeName)
         {
-            if (typeName == "Camera") target.AddComponent<Camera>().enabled = false;
+            if (typeName == "Camera")
+                target.AddComponent<Camera>().enabled = false;
             if (action == "remove_extension" && typeName == "CinemachineExtension")
             {
                 var extensionType = CameraHelpers.ResolveComponentType("CinemachineRecomposer");

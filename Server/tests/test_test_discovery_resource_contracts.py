@@ -1,4 +1,5 @@
 """Test discovery responses survive registered production resource serialization."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -14,14 +15,18 @@ def _run_sdk_scenario(source: str, evidence_dir: Path) -> None:
         env[name] = str(evidence_dir / name.lower())
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1], env=env,
-        capture_output=True, text=True, timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_test_discovery_resource_preserves_native_path_and_pagination(tmp_path):
-    _run_sdk_scenario('''
+    _run_sdk_scenario(
+        """
         import asyncio, json, socket, sys
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
@@ -66,11 +71,14 @@ def test_test_discovery_resource_preserves_native_path_and_pagination(tmp_path):
                         assert boundary.call_args.args == ("Selected@hash", command, params)
                         assert boundary.call_args.kwargs == {"user_id": None, "retry_on_reload": True}
         asyncio.run(scenario())
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
 
 
 def test_test_discovery_resource_keeps_older_rows_empty_pages_and_error_fallback(tmp_path):
-    _run_sdk_scenario('''
+    _run_sdk_scenario(
+        """
         import asyncio, json, socket, sys
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
@@ -117,11 +125,14 @@ def test_test_discovery_resource_keeps_older_rows_empty_pages_and_error_fallback
                         assert response["message"] == "Failed to retrieve tests"
                         assert response["data"] is None
         asyncio.run(scenario())
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
 
 
 def test_test_discovery_resource_rejects_invalid_mode_before_outbound(tmp_path):
-    _run_sdk_scenario('''
+    _run_sdk_scenario(
+        """
         import asyncio, socket, sys
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
@@ -160,11 +171,14 @@ def test_test_discovery_resource_rejects_invalid_mode_before_outbound(tmp_path):
                             raise AssertionError("Mode must respect the existing Literal contract")
             boundary.assert_not_awaited()
         asyncio.run(scenario())
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
 
 
 def test_resource_error_metadata_survives_strict_data_models(tmp_path):
-    _run_sdk_scenario('''
+    _run_sdk_scenario(
+        """
         import asyncio, json, socket, sys
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
@@ -219,4 +233,6 @@ def test_resource_error_metadata_survives_strict_data_models(tmp_path):
                         else:
                             raise AssertionError("Successful payloads must still use strict resource data validation")
         asyncio.run(scenario())
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )

@@ -3,6 +3,7 @@
 Automates: sprite sheet slicing, AnimationClip creation from sliced frames,
 and AnimatorController generation.
 """
+
 import json
 from typing import Annotated, Any, Literal, get_args
 
@@ -29,10 +30,12 @@ def _sprite_image_result(result: dict[str, Any], image_base64: str) -> ToolResul
 
     meta = result.copy()
     meta.pop("image_base64")
-    return ToolResult(content=[
-        TextContent(type="text", text=json.dumps(meta)),
-        ImageContent(type="image", data=payload, mimeType=mime),
-    ])
+    return ToolResult(
+        content=[
+            TextContent(type="text", text=json.dumps(meta)),
+            ImageContent(type="image", data=payload, mimeType=mime),
+        ]
+    )
 
 
 @mcp_for_unity_tool(
@@ -157,11 +160,17 @@ async def manage_sprite(
         return {"success": False, "message": f"'path' is required for action '{action}'."}
 
     if action_lower in ("slice_sheet", "full_setup") and cols is None and frame_width is None:
-        return {"success": False, "message": f"'cols' or 'frame_width' is required for '{action}'. "
-                "Use get_info first to view the sheet image, count the grid visually, then call full_setup with cols/rows."}
+        return {
+            "success": False,
+            "message": f"'cols' or 'frame_width' is required for '{action}'. "
+            "Use get_info first to view the sheet image, count the grid visually, then call full_setup with cols/rows.",
+        }
 
     if action_lower == "setup_controller" and not controller_path:
-        return {"success": False, "message": "'controller_path' is required for setup_controller (e.g. 'Assets/Animators/Hero.controller')."}
+        return {
+            "success": False,
+            "message": "'controller_path' is required for setup_controller (e.g. 'Assets/Animators/Hero.controller').",
+        }
 
     unity_instance = await get_unity_instance_from_context(ctx)
 
@@ -169,13 +178,22 @@ async def manage_sprite(
     # reads a missing key as the default, and forwarding every argument buries the real
     # ones in nulls on the wire.
     optional = {
-        "path": path, "cols": cols, "rows": rows,
-        "frame_width": frame_width, "frame_height": frame_height,
-        "base_name": base_name, "filter_mode": filter_mode, "clips": clips,
-        "animation_name": animation_name, "output_dir": output_dir,
-        "controller_path": controller_path, "page_size": page_size,
-        "cursor": cursor, "scene_target": scene_target,
-        "overwrite": overwrite or None, "add_to_scene": add_to_scene or None,
+        "path": path,
+        "cols": cols,
+        "rows": rows,
+        "frame_width": frame_width,
+        "frame_height": frame_height,
+        "base_name": base_name,
+        "filter_mode": filter_mode,
+        "clips": clips,
+        "animation_name": animation_name,
+        "output_dir": output_dir,
+        "controller_path": controller_path,
+        "page_size": page_size,
+        "cursor": cursor,
+        "scene_target": scene_target,
+        "overwrite": overwrite or None,
+        "add_to_scene": add_to_scene or None,
     }
 
     params: dict[str, Any] = {"action": action_lower}

@@ -86,3 +86,6 @@ docs/superpowers/
 
 # Public Unity compiler inputs cached independently of source and package profiles
 .unity-ci-sdk/
+
+# Local formatting mirrors, tool installs and task scratch files
+/.tmp/

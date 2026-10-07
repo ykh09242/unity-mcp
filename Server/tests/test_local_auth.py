@@ -45,9 +45,7 @@ def test_shutdown_does_not_remove_newer_launch_file(token_path):
     assert token_path.read_text() == "newer-test-launch"
 
 
-def test_cli_does_not_automatically_disclose_local_token_to_remote_host(
-    tmp_path, monkeypatch
-):
+def test_cli_does_not_automatically_disclose_local_token_to_remote_host(tmp_path, monkeypatch):
     monkeypatch.delenv(LOCAL_AUTH_FILE_ENV, raising=False)
     monkeypatch.delenv(LOCAL_AUTH_TOKEN_ENV, raising=False)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)

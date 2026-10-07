@@ -1,4 +1,5 @@
 """Bounds follow the installed MCP serializer without executing extension hooks."""
+
 import json
 from types import SimpleNamespace
 from typing import Annotated
@@ -8,16 +9,26 @@ from fastmcp.tools.base import ToolResult
 from fastmcp.resources.base import ResourceResult
 from mcp.server.runner import _dump_result
 from mcp_types import CallToolResult, TextContent
-from pydantic import (AnyUrl, BaseModel, ConfigDict, Field, PlainSerializer, PrivateAttr, computed_field,
-                      field_serializer, model_serializer)
+from pydantic import (
+    AnyUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    PrivateAttr,
+    computed_field,
+    field_serializer,
+    model_serializer,
+)
 
 from models import response_limits as limits
 from transport import response_limit_middleware as middleware
 
 
 def wire_bytes(result):
-    return json.dumps(_dump_result(result.to_mcp_result()), ensure_ascii=False,
-                      separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        _dump_result(result.to_mcp_result()), ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
 
 
 async def admit(raw, monkeypatch, budget=500):
@@ -49,8 +60,12 @@ async def test_raw_extra_is_rejected_when_installed_sdk_wire_exceeds_budget(monk
 @pytest.mark.asyncio
 async def test_raw_extra_and_aliases_survive_when_wire_fits_budget(monkeypatch):
     # Given: ordinary MCP metadata and small extension fields.
-    raw = ExtraResult(content=[TextContent(text="ok", _meta={"kind": "plain"})],
-                      _meta={"request": 7}, structured_content={"ok": True}, extension="small")
+    raw = ExtraResult(
+        content=[TextContent(text="ok", _meta={"kind": "plain"})],
+        _meta={"request": 7},
+        structured_content={"ok": True},
+        extension="small",
+    )
     expected = _dump_result(raw)
     # When: the bounded result traverses middleware and the real SDK dump.
     result = await admit(raw, monkeypatch)
@@ -210,8 +225,12 @@ def test_schema_serialization_hooks_are_rejected_before_invocation(hook):
         model_config = ConfigDict(json_encoders={str: expand})
         value: str
 
-    model_type = {"annotated": AnnotatedModel, "computed": ComputedModel,
-                  "exclude_if": ExcludeModel, "json_encoder": EncoderModel}[hook]
+    model_type = {
+        "annotated": AnnotatedModel,
+        "computed": ComputedModel,
+        "exclude_if": ExcludeModel,
+        "json_encoder": EncoderModel,
+    }[hook]
     # When / Then: the shared limiter refuses the hook before allocating its output.
     assert limits.response_size(model_type(value="small"), max_bytes=500) is None
     assert calls == []
@@ -345,4 +364,6 @@ async def test_native_resource_url_and_aliases_keep_installed_sdk_representation
     result = await middleware.ResponseLimitMiddleware().on_read_resource(context, call_next)
     # Then: the standard resource model remains admissible and unchanged on wire.
     assert _dump_result(result.to_mcp_result(context.message.uri)) == expected
-    assert limits.response_size(original.to_mcp_result(context.message.uri), max_bytes=500) is not None
+    assert (
+        limits.response_size(original.to_mcp_result(context.message.uri), max_bytes=500) is not None
+    )

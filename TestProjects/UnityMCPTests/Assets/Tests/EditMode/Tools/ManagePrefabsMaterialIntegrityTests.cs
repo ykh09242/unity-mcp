@@ -39,9 +39,11 @@ namespace MCPForUnityTests.Editor.Tools
         public void TearDown()
         {
             foreach (Object item in runtimeObjects)
-                if (item != null && !EditorUtility.IsPersistent(item)) Object.DestroyImmediate(item);
+                if (item != null && !EditorUtility.IsPersistent(item))
+                    Object.DestroyImmediate(item);
             runtimeObjects.Clear();
-            if (originalScene.IsValid() && originalScene.isLoaded) SceneManager.SetActiveScene(originalScene);
+            if (originalScene.IsValid() && originalScene.isLoaded)
+                SceneManager.SetActiveScene(originalScene);
             if (ownedScene.IsValid() && ownedScene.isLoaded)
             {
                 Assert.IsTrue(ownedScene.name.StartsWith("McpPrefabMaterialIntegrity_", StringComparison.Ordinal));
@@ -331,7 +333,8 @@ namespace MCPForUnityTests.Editor.Tools
         private Material Material(Color color)
         {
             Shader shader = Shader.Find("Standard") ?? Shader.Find("Unlit/Color");
-            if (shader == null) Assert.Ignore("Requires an installed shader with _Color for the serialization fixture.");
+            if (shader == null)
+                Assert.Ignore("Requires an installed shader with _Color for the serialization fixture.");
             var material = new Material(shader);
             Assert.IsTrue(material.HasProperty("_Color"));
             material.SetColor("_Color", color);
@@ -341,7 +344,8 @@ namespace MCPForUnityTests.Editor.Tools
 
         private void EnsureMaterialsFolder()
         {
-            if (!AssetDatabase.IsValidFolder(assetRoot + "/Materials")) AssetDatabase.CreateFolder(assetRoot, "Materials");
+            if (!AssetDatabase.IsValidFolder(assetRoot + "/Materials"))
+                AssetDatabase.CreateFolder(assetRoot, "Materials");
         }
 
         private Material Persist(Material material, string fileName)
@@ -353,12 +357,16 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Create(GameObject root, string fileName)
         {
-            var response = JObject.FromObject(ManagePrefabs.HandleCommand(new JObject
-            {
-                ["action"] = "create_from_gameobject",
-                ["target"] = root.name,
-                ["prefabPath"] = assetRoot + "/" + fileName + ".prefab"
-            }));
+            var response = JObject.FromObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create_from_gameobject",
+                        ["target"] = root.name,
+                        ["prefabPath"] = assetRoot + "/" + fileName + ".prefab",
+                    }
+                )
+            );
             Assert.IsTrue((bool)response["success"], response.ToString());
             return response;
         }
@@ -382,12 +390,15 @@ namespace MCPForUnityTests.Editor.Tools
             if (material == null)
             {
                 Shader shader = RenderPipelineUtility.ResolveShader("Standard");
-                if (shader == null) Assert.Ignore("Requires a resolved pipeline shader for missing-material color persistence.");
+                if (shader == null)
+                    Assert.Ignore("Requires a resolved pipeline shader for missing-material color persistence.");
                 material = new Material(shader);
                 runtimeObjects.Add(material);
             }
-            if (material.HasProperty("_BaseColor")) return "_BaseColor";
-            if (material.HasProperty("_Color")) return "_Color";
+            if (material.HasProperty("_BaseColor"))
+                return "_BaseColor";
+            if (material.HasProperty("_Color"))
+                return "_Color";
             Assert.Ignore("Resolved shader must expose _BaseColor or _Color for this color-persistence fixture.");
             return null;
         }

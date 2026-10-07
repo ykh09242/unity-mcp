@@ -12,10 +12,15 @@ docs = importlib.import_module("services.tools.unity_docs")
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("inputs", [
-    {"queries": ",".join(f"Type{i}" for i in range(9))},
-    {"query": "x" * 257}, {"queries": "x" * 2049},
-], ids=["query-count", "query-length", "total-input"])
+@pytest.mark.parametrize(
+    "inputs",
+    [
+        {"queries": ",".join(f"Type{i}" for i in range(9))},
+        {"query": "x" * 257},
+        {"queries": "x" * 2049},
+    ],
+    ids=["query-count", "query-length", "total-input"],
+)
 async def test_excess_input_is_rejected_before_fetch(monkeypatch, inputs):
     fetch = AsyncMock()
     monkeypatch.setattr(docs, "_fetch_url", fetch)

@@ -8,7 +8,7 @@ import textwrap
 
 
 def test_registered_console_schema_accepts_projection_and_preserves_defaults():
-    source = '''
+    source = """
         import copy, importlib
         import anyio
         from fastmcp import FastMCP, Client
@@ -47,9 +47,13 @@ def test_registered_console_schema_accepts_projection_and_preserves_defaults():
                         assert result.structured_content["success"] is False
                     assert len(sent) == before
         anyio.run(scenario)
-    '''
-    result = subprocess.run([sys.executable, "-B", "-c", textwrap.dedent(source)],
-                            cwd=Path(__file__).resolve().parents[1],
-                            env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
-                            capture_output=True, text=True, timeout=30)
+    """
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", textwrap.dedent(source)],
+        cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     assert result.returncode == 0, result.stdout + result.stderr

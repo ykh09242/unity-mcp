@@ -19,8 +19,7 @@ namespace MCPForUnityTests.Editor.Services
             var svc = new ClientConfigurationService();
             var summary = svc.ConfigureAllDetectedClients();
             int installedCount = svc.GetAllClients().Count(c => c.IsInstalled);
-            Assert.AreEqual(installedCount, summary.SuccessCount + summary.FailureCount,
-                "Only installed clients should appear in success/failure totals");
+            Assert.AreEqual(installedCount, summary.SuccessCount + summary.FailureCount, "Only installed clients should appear in success/failure totals");
         }
 
         [Test]

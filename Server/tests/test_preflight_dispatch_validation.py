@@ -1,4 +1,5 @@
 """Real SDK dispatch checks without the suite's preflight monkeypatches."""
+
 import os
 from pathlib import Path
 import subprocess
@@ -14,15 +15,19 @@ def run_dispatch_scenario(source: str, tmp_path: Path) -> None:
     environment["UNITY_MCP_LOG_DIR"] = str(tmp_path)
     result = subprocess.run(
         [sys.executable, "-B", "-c", textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1], env=environment,
-        capture_output=True, text=True, timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
 def test_sdk_rejects_invalid_shapes_before_routing_state_or_editor_io(tmp_path, mode):
-    run_dispatch_scenario('''
+    run_dispatch_scenario(
+        """
         import asyncio, socket, sys
         from types import SimpleNamespace
         from typing import Annotated
@@ -120,11 +125,14 @@ def test_sdk_rejects_invalid_shapes_before_routing_state_or_editor_io(tmp_path, 
                 assert payloads[-1][0] == "batch_execute"
                 assert payloads[-1][1]["commands"][0]["params"] == {"action": "modify", "setActive": False}
         asyncio.run(scenario())
-    '''.replace("MODE", repr(mode)), tmp_path)
+    """.replace("MODE", repr(mode)),
+        tmp_path,
+    )
 
 
 def test_meta_local_errors_do_not_probe_editor_state(tmp_path):
-    run_dispatch_scenario('''
+    run_dispatch_scenario(
+        """
         import asyncio, importlib, sys
         from unittest.mock import AsyncMock, Mock
         sys.path.insert(0, "src")
@@ -158,11 +166,14 @@ def test_meta_local_errors_do_not_probe_editor_state(tmp_path):
             assert result["success"] is False
             select.get_unity_connection_pool.assert_not_called()
         asyncio.run(scenario())
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
 
 
 def test_argument_guard_preserves_aliases_and_runs_callbacks_only_in_sdk(tmp_path):
-    run_dispatch_scenario('''
+    run_dispatch_scenario(
+        """
         import asyncio, sys
         from enum import Enum
         from typing import Annotated
@@ -296,11 +307,14 @@ def test_argument_guard_preserves_aliases_and_runs_callbacks_only_in_sdk(tmp_pat
             validator.validate_python({})
             assert callbacks == []
         asyncio.run(scenario())
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )
 
 
 def test_all_registered_tools_have_safe_bounded_argument_guards(tmp_path):
-    run_dispatch_scenario('''
+    run_dispatch_scenario(
+        """
         import asyncio, sys
         sys.path.insert(0, "src")
         from fastmcp import FastMCP
@@ -331,4 +345,6 @@ def test_all_registered_tools_have_safe_bounded_argument_guards(tmp_path):
                 _argument_validator(distinct)
             assert _argument_validator.cache_info().currsize == 128
         asyncio.run(scenario())
-    ''', tmp_path)
+    """,
+        tmp_path,
+    )

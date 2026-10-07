@@ -14,11 +14,9 @@ namespace MCPForUnity.Editor.Security
         private const int CRED_PERSIST_LOCAL_MACHINE = 2;
         private readonly string targetNamespace;
 
-        internal WindowsCredentialKeyStore(string targetNamespace = SecureKeyStoreConstants.ServiceName)
-            => this.targetNamespace = targetNamespace;
+        internal WindowsCredentialKeyStore(string targetNamespace = SecureKeyStoreConstants.ServiceName) => this.targetNamespace = targetNamespace;
 
-        private string Target(string providerId)
-            => targetNamespace + ":" + providerId;
+        private string Target(string providerId) => targetNamespace + ":" + providerId;
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct CREDENTIAL
@@ -54,12 +52,15 @@ namespace MCPForUnity.Editor.Security
         public bool TryGet(string providerId, out string apiKey)
         {
             apiKey = null;
-            if (string.IsNullOrEmpty(providerId)) return false;
-            if (!CredRead(Target(providerId), CRED_TYPE_GENERIC, 0, out IntPtr ptr)) return false;
+            if (string.IsNullOrEmpty(providerId))
+                return false;
+            if (!CredRead(Target(providerId), CRED_TYPE_GENERIC, 0, out IntPtr ptr))
+                return false;
             try
             {
                 var cred = Marshal.PtrToStructure<CREDENTIAL>(ptr);
-                if (cred.CredentialBlobSize <= 0 || cred.CredentialBlob == IntPtr.Zero) return false;
+                if (cred.CredentialBlobSize <= 0 || cred.CredentialBlob == IntPtr.Zero)
+                    return false;
                 byte[] bytes = new byte[cred.CredentialBlobSize];
                 Marshal.Copy(cred.CredentialBlob, bytes, 0, cred.CredentialBlobSize);
                 apiKey = Encoding.UTF8.GetString(bytes);
@@ -73,8 +74,13 @@ namespace MCPForUnity.Editor.Security
 
         public void Set(string providerId, string apiKey)
         {
-            if (string.IsNullOrEmpty(providerId)) return;
-            if (string.IsNullOrEmpty(apiKey)) { Delete(providerId); return; }
+            if (string.IsNullOrEmpty(providerId))
+                return;
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                Delete(providerId);
+                return;
+            }
             byte[] blob = Encoding.UTF8.GetBytes(apiKey);
             IntPtr blobPtr = Marshal.AllocHGlobal(blob.Length);
             try
@@ -91,8 +97,7 @@ namespace MCPForUnity.Editor.Security
                 };
                 if (!CredWrite(ref cred, 0))
                 {
-                    throw new InvalidOperationException(
-                        "CredWrite failed (Win32 " + Marshal.GetLastWin32Error() + ")");
+                    throw new InvalidOperationException("CredWrite failed (Win32 " + Marshal.GetLastWin32Error() + ")");
                 }
             }
             finally
@@ -103,7 +108,8 @@ namespace MCPForUnity.Editor.Security
 
         public void Delete(string providerId)
         {
-            if (string.IsNullOrEmpty(providerId)) return;
+            if (string.IsNullOrEmpty(providerId))
+                return;
             CredDelete(Target(providerId), CRED_TYPE_GENERIC, 0);
         }
     }

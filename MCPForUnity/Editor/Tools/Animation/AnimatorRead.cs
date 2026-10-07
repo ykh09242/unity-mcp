@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
-using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEditor.Animations;
 using UnityEngine;
 
@@ -28,14 +28,16 @@ namespace MCPForUnity.Editor.Tools.Animation
             var parameters = new List<object>();
             foreach (var p in definitions)
             {
-                parameters.Add(new
-                {
-                    name = p.name,
-                    type = p.type.ToString(),
-                    defaultFloat = p.defaultFloat,
-                    defaultInt = p.defaultInt,
-                    defaultBool = p.defaultBool
-                });
+                parameters.Add(
+                    new
+                    {
+                        name = p.name,
+                        type = p.type.ToString(),
+                        defaultFloat = p.defaultFloat,
+                        defaultInt = p.defaultInt,
+                        defaultBool = p.defaultBool,
+                    }
+                );
             }
 
             var layers = new List<object>();
@@ -45,16 +47,18 @@ namespace MCPForUnity.Editor.Tools.Animation
                 bool isInTransition = animator.IsInTransition(i);
                 var stateInfo = animator.GetCurrentAnimatorStateInfo(i);
 
-                layers.Add(new
-                {
-                    index = i,
-                    name = animator.GetLayerName(i),
-                    weight = animator.GetLayerWeight(i),
-                    currentStateHash = stateInfo.fullPathHash,
-                    currentStateNormalizedTime = stateInfo.normalizedTime,
-                    currentStateLength = stateInfo.length,
-                    isInTransition
-                });
+                layers.Add(
+                    new
+                    {
+                        index = i,
+                        name = animator.GetLayerName(i),
+                        weight = animator.GetLayerWeight(i),
+                        currentStateHash = stateInfo.fullPathHash,
+                        currentStateNormalizedTime = stateInfo.normalizedTime,
+                        currentStateLength = stateInfo.length,
+                        isInTransition,
+                    }
+                );
             }
 
             var clips = new List<object>();
@@ -62,14 +66,16 @@ namespace MCPForUnity.Editor.Tools.Animation
             {
                 foreach (var clip in runtimeController.animationClips)
                 {
-                    clips.Add(new
-                    {
-                        name = clip.name,
-                        length = clip.length,
-                        frameRate = clip.frameRate,
-                        isLooping = clip.isLooping,
-                        wrapMode = clip.wrapMode.ToString()
-                    });
+                    clips.Add(
+                        new
+                        {
+                            name = clip.name,
+                            length = clip.length,
+                            frameRate = clip.frameRate,
+                            isLooping = clip.isLooping,
+                            wrapMode = clip.wrapMode.ToString(),
+                        }
+                    );
                 }
             }
 
@@ -91,8 +97,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     layerCount,
                     parameters,
                     layers,
-                    clips
-                }
+                    clips,
+                },
             };
         }
 
@@ -156,8 +162,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 {
                     name = found.name,
                     type = found.type.ToString(),
-                    value
-                }
+                    value,
+                },
             };
         }
     }

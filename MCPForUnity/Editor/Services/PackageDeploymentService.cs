@@ -291,17 +291,13 @@ namespace MCPForUnity.Editor.Services
                 Message = message,
                 SourcePath = source,
                 TargetPath = target,
-                BackupPath = backup
+                BackupPath = backup,
             };
         }
 
         private static PackageDeploymentResult Fail(string message)
         {
-            return new PackageDeploymentResult
-            {
-                Success = false,
-                Message = message
-            };
+            return new PackageDeploymentResult { Success = false, Message = message };
         }
     }
 }

@@ -21,9 +21,28 @@ namespace MCPForUnity.Editor.Helpers
         private const int RepaintSettlingDelayMs = 75;
         private static readonly HashSet<string> WindowsReservedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "CON", "PRN", "AUX", "NUL",
-            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            "COM1",
+            "COM2",
+            "COM3",
+            "COM4",
+            "COM5",
+            "COM6",
+            "COM7",
+            "COM8",
+            "COM9",
+            "LPT1",
+            "LPT2",
+            "LPT3",
+            "LPT4",
+            "LPT5",
+            "LPT6",
+            "LPT7",
+            "LPT8",
+            "LPT9",
         };
 
         /// <summary>
@@ -48,7 +67,8 @@ namespace MCPForUnity.Editor.Helpers
             int maxResolution,
             out int viewportWidth,
             out int viewportHeight,
-            string folderOverride = null)
+            string folderOverride = null
+        )
         {
             if (sceneView == null)
                 throw new ArgumentNullException(nameof(sceneView));
@@ -104,7 +124,8 @@ namespace MCPForUnity.Editor.Helpers
                         false,
                         imageBase64,
                         imageWidth,
-                        imageHeight);
+                        imageHeight
+                    );
                 }
 
                 return result;
@@ -153,7 +174,8 @@ namespace MCPForUnity.Editor.Helpers
                 Mathf.Round(viewportLocalPoints.x * pixelsPerPoint),
                 Mathf.Round(viewportLocalPoints.y * pixelsPerPoint),
                 Mathf.Round(viewportLocalPoints.width * pixelsPerPoint),
-                Mathf.Round(viewportLocalPoints.height * pixelsPerPoint));
+                Mathf.Round(viewportLocalPoints.height * pixelsPerPoint)
+            );
         }
 
         private static Rect GetViewportLocalRectPoints(SceneView sceneView, float pixelsPerPoint)
@@ -176,7 +198,8 @@ namespace MCPForUnity.Editor.Helpers
                 0f,
                 Mathf.Max(0f, windowRect.height - viewportHeight),
                 Mathf.Min(windowRect.width, viewportWidth),
-                Mathf.Min(windowRect.height, viewportHeight));
+                Mathf.Min(windowRect.height, viewportHeight)
+            );
         }
 
         private static Texture2D CaptureViewRect(SceneView sceneView, Rect viewportRectPixels)
@@ -192,12 +215,15 @@ namespace MCPForUnity.Editor.Helpers
             // GrabPixels is an internal extern on GUIView (parent of HostView), present since at least Unity 2021.1.
             // See: UnityCsReference/Editor/Mono/GUIView.bindings.cs — `internal extern void GrabPixels(RenderTexture, Rect)`
             // If Unity removes this, the MissingMethodException below keeps the failure explicit.
-            MethodInfo grabPixels = hostView.GetType().GetMethod(
-                "GrabPixels",
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-                null,
-                new[] { typeof(RenderTexture), typeof(Rect) },
-                null);
+            MethodInfo grabPixels = hostView
+                .GetType()
+                .GetMethod(
+                    "GrabPixels",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    null,
+                    new[] { typeof(RenderTexture), typeof(Rect) },
+                    null
+                );
 
             if (grabPixels == null)
                 throw new MissingMethodException($"{hostView.GetType().FullName}.GrabPixels(RenderTexture, Rect)");
@@ -344,9 +370,7 @@ namespace MCPForUnity.Editor.Helpers
 
         private static string BuildFileName(string fileName)
         {
-            string baseName = string.IsNullOrWhiteSpace(fileName)
-                ? $"screenshot-{DateTime.Now:yyyyMMdd-HHmmss}.png"
-                : SanitizeFileName(fileName);
+            string baseName = string.IsNullOrWhiteSpace(fileName) ? $"screenshot-{DateTime.Now:yyyyMMdd-HHmmss}.png" : SanitizeFileName(fileName);
 
             if (!baseName.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
                 baseName += ".png";

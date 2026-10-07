@@ -1,12 +1,12 @@
 using System;
 using System.IO;
+using MCPForUnity.Editor.Clients.Configurators;
+using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Models;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
-using MCPForUnity.Editor.Clients.Configurators;
-using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Editor.Models;
-using MCPForUnity.Editor.Constants;
 using EditorConfigCache = MCPForUnity.Editor.Services.EditorConfigurationCache;
 
 namespace MCPForUnityTests.Editor.Helpers
@@ -61,8 +61,10 @@ namespace MCPForUnityTests.Editor.Helpers
             Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", _originalTokenFile);
             Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN", _originalToken);
             File.Delete(_tokenPath);
-            if (_hadScope) EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, _originalScope);
-            else EditorPrefs.DeleteKey(EditorPrefKeys.HttpTransportScope);
+            if (_hadScope)
+                EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, _originalScope);
+            else
+                EditorPrefs.DeleteKey(EditorPrefKeys.HttpTransportScope);
             if (_hadHttpTransport)
                 EditorPrefs.SetBool(UseHttpTransportPrefKey, _originalHttpTransport);
             else
@@ -75,25 +77,17 @@ namespace MCPForUnityTests.Editor.Helpers
         {
             var client = new KiloCodeConfigurator().Client;
 
-            Assert.AreEqual("mcp", client.ServerContainerKey,
-                "Kilo Code's new schema nests servers under an \"mcp\" container, not \"mcpServers\"");
-            Assert.AreEqual("remote", client.HttpTypeValue,
-                "Kilo Code's new schema uses type:\"remote\" for HTTP servers");
-            Assert.AreEqual("local", client.StdioTypeValue,
-                "Kilo Code's new schema uses type:\"local\" for stdio servers");
-            Assert.AreEqual("https://app.kilo.ai/config.json", client.SchemaUrl,
-                "Kilo Code config should declare the kilo.jsonc $schema");
-            Assert.IsTrue(client.DefaultUnityFields.ContainsKey("enabled"),
-                "Kilo Code uses an \"enabled\" flag instead of \"disabled\"");
-            Assert.AreEqual(true, client.DefaultUnityFields["enabled"],
-                "Kilo Code must default enabled:true so the server is active");
-            Assert.IsFalse(client.DefaultUnityFields.ContainsKey("disabled"),
-                "Kilo Code's new schema must not write the legacy \"disabled\" field");
+            Assert.AreEqual("mcp", client.ServerContainerKey, "Kilo Code's new schema nests servers under an \"mcp\" container, not \"mcpServers\"");
+            Assert.AreEqual("remote", client.HttpTypeValue, "Kilo Code's new schema uses type:\"remote\" for HTTP servers");
+            Assert.AreEqual("local", client.StdioTypeValue, "Kilo Code's new schema uses type:\"local\" for stdio servers");
+            Assert.AreEqual("https://app.kilo.ai/config.json", client.SchemaUrl, "Kilo Code config should declare the kilo.jsonc $schema");
+            Assert.IsTrue(client.DefaultUnityFields.ContainsKey("enabled"), "Kilo Code uses an \"enabled\" flag instead of \"disabled\"");
+            Assert.AreEqual(true, client.DefaultUnityFields["enabled"], "Kilo Code must default enabled:true so the server is active");
+            Assert.IsFalse(client.DefaultUnityFields.ContainsKey("disabled"), "Kilo Code's new schema must not write the legacy \"disabled\" field");
 
             foreach (var path in new[] { client.windowsConfigPath, client.macConfigPath, client.linuxConfigPath })
             {
-                Assert.AreEqual("kilo.jsonc", System.IO.Path.GetFileName(path),
-                    "Kilo Code config must target kilo.jsonc, not mcp_settings.json");
+                Assert.AreEqual("kilo.jsonc", System.IO.Path.GetFileName(path), "Kilo Code config must target kilo.jsonc, not mcp_settings.json");
             }
         }
 
@@ -104,16 +98,13 @@ namespace MCPForUnityTests.Editor.Helpers
 
             var root = JObject.Parse(ConfigJsonBuilder.BuildManualConfigJson(uvPath: null, client));
 
-            Assert.AreEqual("https://app.kilo.ai/config.json", (string)root["$schema"],
-                "Kilo Code config should include the kilo.jsonc $schema at the root");
+            Assert.AreEqual("https://app.kilo.ai/config.json", (string)root["$schema"], "Kilo Code config should include the kilo.jsonc $schema at the root");
             Assert.IsNull(root["mcpServers"], "Kilo Code must not use the legacy \"mcpServers\" container");
 
             var unity = (JObject)root.SelectToken("mcp.unityMCP");
             Assert.NotNull(unity, "Expected mcp.unityMCP node");
-            Assert.AreEqual("remote", (string)unity["type"],
-                "Kilo Code HTTP config must use type:remote, not type:http/streamableHttp");
-            Assert.AreEqual(true, (bool)unity["enabled"],
-                "Kilo Code config must set enabled:true");
+            Assert.AreEqual("remote", (string)unity["type"], "Kilo Code HTTP config must use type:remote, not type:http/streamableHttp");
+            Assert.AreEqual(true, (bool)unity["enabled"], "Kilo Code config must set enabled:true");
             Assert.IsNull(unity["disabled"], "Kilo Code must not write the legacy disabled field");
             Assert.IsNotNull(unity["url"], "HTTP transport should set a url");
             Assert.IsNull(unity["command"], "HTTP transport should not include a command");
@@ -133,19 +124,17 @@ namespace MCPForUnityTests.Editor.Helpers
                     {
                         ["command"] = "uvx",
                         ["args"] = new JArray("unity-mcp-server"),
-                        ["type"] = "local"
-                    }
-                }
+                        ["type"] = "local",
+                    },
+                },
             };
 
             var result = ConfigJsonBuilder.ApplyUnityServerToExistingConfig(root, uvPath: null, client);
 
-            Assert.AreEqual("https://app.kilo.ai/config.json", (string)result["$schema"],
-                "Rewrite should add the kilo.jsonc $schema when missing");
+            Assert.AreEqual("https://app.kilo.ai/config.json", (string)result["$schema"], "Rewrite should add the kilo.jsonc $schema when missing");
             var unity = (JObject)result.SelectToken("mcp.unityMCP");
             Assert.NotNull(unity, "Expected mcp.unityMCP node");
-            Assert.AreEqual("remote", (string)unity["type"],
-                "Existing config should be rewritten to type:remote for Kilo Code");
+            Assert.AreEqual("remote", (string)unity["type"], "Existing config should be rewritten to type:remote for Kilo Code");
             Assert.AreEqual(true, (bool)unity["enabled"], "Existing config should gain enabled:true");
             Assert.IsNull(unity["command"], "HTTP transport should remove the stale stdio command");
         }
@@ -160,8 +149,7 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.IsNull(root["$schema"], "Cline must not write a $schema");
             var unity = (JObject)root.SelectToken("mcpServers.unityMCP");
             Assert.NotNull(unity, "Expected mcpServers.unityMCP node");
-            Assert.AreEqual("streamableHttp", (string)unity["type"],
-                "Cline must keep type:streamableHttp after the name-check was replaced with a flag");
+            Assert.AreEqual("streamableHttp", (string)unity["type"], "Cline must keep type:streamableHttp after the name-check was replaced with a flag");
         }
 
         [Test]
@@ -174,8 +162,7 @@ namespace MCPForUnityTests.Editor.Helpers
             var unity = (JObject)root.SelectToken("mcpServers.unityMCP");
 
             Assert.NotNull(unity, "Expected mcpServers.unityMCP node");
-            Assert.AreEqual("http", (string)unity["type"],
-                "Clients without HttpTypeValue should keep the generic type:http");
+            Assert.AreEqual("http", (string)unity["type"], "Clients without HttpTypeValue should keep the generic type:http");
         }
 
         [Test]
@@ -190,8 +177,7 @@ namespace MCPForUnityTests.Editor.Helpers
             root = ConfigJsonBuilder.ApplyUnityServerToExistingConfig(root, null, client);
 
             // Then the native HTTP header contains the current credential.
-            Assert.AreEqual("second-test-launch",
-                (string)root.SelectToken("mcpServers.unityMCP.headers.X-Unity-MCP-Token"));
+            Assert.AreEqual("second-test-launch", (string)root.SelectToken("mcpServers.unityMCP.headers.X-Unity-MCP-Token"));
         }
 
         [Test]
@@ -207,9 +193,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase(true)]
         public void CodexConfiguration_LooksUpLocalAuthWithoutEmbeddingToken(bool updateExisting)
         {
-            string text = updateExisting
-                ? CodexConfigHelper.UpsertCodexServerBlock("", null)
-                : CodexConfigHelper.BuildCodexServerBlock(null);
+            string text = updateExisting ? CodexConfigHelper.UpsertCodexServerBlock("", null) : CodexConfigHelper.BuildCodexServerBlock(null);
             using var reader = new StringReader(text);
             var root = MCPForUnity.External.Tommy.TOML.Parse(reader);
             Assert.IsNotEmpty(root["mcp_servers"]["unityMCP"]["http_headers_helper"].AsString.Value);
@@ -245,16 +229,13 @@ namespace MCPForUnityTests.Editor.Helpers
             try
             {
                 EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, false);
-                MCPForUnity.Editor.Clients.IMcpClientConfigurator configurator = openClaw
-                    ? new OwnedOpenClaw(path) : new OwnedOpenCode(path);
+                MCPForUnity.Editor.Clients.IMcpClientConfigurator configurator = openClaw ? new OwnedOpenClaw(path) : new OwnedOpenCode(path);
                 configurator.Configure();
                 Assert.AreEqual(McpStatus.Configured, configurator.Status);
                 File.WriteAllText(_tokenPath, "second-test-launch");
                 configurator.Configure();
 
-                string entryPath = openClaw
-                    ? "plugins.entries.openclaw-mcp-bridge.config.servers.unityMCP"
-                    : "mcp.unityMCP";
+                string entryPath = openClaw ? "plugins.entries.openclaw-mcp-bridge.config.servers.unityMCP" : "mcp.unityMCP";
                 var entry = JObject.Parse(File.ReadAllText(path)).SelectToken(entryPath);
                 Assert.AreEqual("second-test-launch", (string)entry["headers"]["X-Unity-MCP-Token"]);
                 Assert.AreEqual(McpStatus.Configured, configurator.Status);

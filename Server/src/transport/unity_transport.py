@@ -1,4 +1,5 @@
 """Transport helpers for routing commands to Unity."""
+
 from __future__ import annotations
 
 import logging
@@ -24,6 +25,7 @@ async def _resolve_user_id_from_request() -> str | None:
         return None
     try:
         from fastmcp.server.dependencies import get_http_request
+
         user_id = getattr(get_http_request().state, AUTHENTICATED_USER_STATE, None)
         return user_id if isinstance(user_id, str) and user_id else None
     except (ImportError, LookupError, RuntimeError):
@@ -45,8 +47,7 @@ async def send_with_unity_instance(
         if params is None:
             params = {}
         if not isinstance(params, dict):
-            raise TypeError(
-                "Command parameters must be a dict for HTTP transport")
+            raise TypeError("Command parameters must be a dict for HTTP transport")
 
         # Auto-resolve user_id from HTTP request API key (remote-hosted mode)
         if user_id is None:
@@ -100,8 +101,7 @@ async def send_with_unity_instance(
             # Fail fast with a retry hint instead of hanging for COMMAND_TIMEOUT.
             # The client can decide whether retrying is appropriate for the command.
             return normalize_unity_response(
-                MCPResponse(success=False, error=err,
-                            hint="retry").model_dump()
+                MCPResponse(success=False, error=err, hint="retry").model_dump()
             )
 
     if unity_instance:

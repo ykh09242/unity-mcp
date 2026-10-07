@@ -40,6 +40,7 @@ from cli.utils.config import CLIConfig
 # Fixtures - Shared Test Setup
 # =============================================================================
 
+
 @pytest.fixture
 def runner():
     """CLI test runner for all command tests."""
@@ -61,26 +62,19 @@ def mock_config():
 @pytest.fixture
 def mock_success_response():
     """Standard successful command response."""
-    return {
-        "success": True,
-        "message": "Operation successful",
-        "data": {"result": "ok"}
-    }
+    return {"success": True, "message": "Operation successful", "data": {"result": "ok"}}
 
 
 @pytest.fixture
 def mock_failure_response():
     """Standard failure command response."""
-    return {
-        "success": False,
-        "error": "Operation failed",
-        "message": "Something went wrong"
-    }
+    return {"success": False, "error": "Operation failed", "message": "Something went wrong"}
 
 
 # =============================================================================
 # Pattern: Command Structure and Parameter Building
 # =============================================================================
+
 
 class TestCommandParameterBuilding:
     """Verify how commands build parameter dictionaries.
@@ -118,7 +112,9 @@ class TestCommandParameterBuilding:
         mock_response = {"success": True, "data": {}}
 
         with patch("cli.commands.component.get_config", return_value=mock_config):
-            with patch("cli.commands.component.run_command", return_value=mock_response) as mock_run:
+            with patch(
+                "cli.commands.component.run_command", return_value=mock_response
+            ) as mock_run:
                 # Without optional params
                 runner.invoke(component, ["add", "Player", "Rigidbody"])
 
@@ -140,7 +136,9 @@ class TestCommandParameterBuilding:
 
         with patch("cli.commands.material.get_config", return_value=mock_config):
             with patch("cli.commands.material.run_command", return_value=mock_response) as mock_run:
-                runner.invoke(material, ["set-color", "Assets/Mat.mat", "1.0", "0.5", "0.25", "1.0"])
+                runner.invoke(
+                    material, ["set-color", "Assets/Mat.mat", "1.0", "0.5", "0.25", "1.0"]
+                )
 
                 args = mock_run.call_args
                 params = args[0][1]
@@ -150,6 +148,7 @@ class TestCommandParameterBuilding:
 # =============================================================================
 # Pattern: JSON Parsing and Type Coercion
 # =============================================================================
+
 
 class TestJSONParsingPattern:
     """Verify how commands parse JSON parameters.
@@ -239,6 +238,7 @@ class TestJSONParsingPattern:
 # Pattern: Error Handling and Exit Codes
 # =============================================================================
 
+
 class TestErrorHandlingPattern:
     """Verify consistent error handling across command modules.
 
@@ -253,7 +253,10 @@ class TestErrorHandlingPattern:
         calls print_error(str(e)), then sys.exit(1).
         """
         with patch("cli.commands.prefab.get_config", return_value=mock_config):
-            with patch("cli.commands.prefab.run_command", side_effect=UnityConnectionError("Connection failed")):
+            with patch(
+                "cli.commands.prefab.run_command",
+                side_effect=UnityConnectionError("Connection failed"),
+            ):
                 result = runner.invoke(prefab, ["open", "Assets/Prefabs/Test.prefab"])
 
                 assert result.exit_code == 1
@@ -265,7 +268,10 @@ class TestErrorHandlingPattern:
         Captures: Same error handling pattern repeated in component.py.
         """
         with patch("cli.commands.component.get_config", return_value=mock_config):
-            with patch("cli.commands.component.run_command", side_effect=UnityConnectionError("Connection lost")):
+            with patch(
+                "cli.commands.component.run_command",
+                side_effect=UnityConnectionError("Connection lost"),
+            ):
                 result = runner.invoke(component, ["add", "Player", "Rigidbody"])
 
                 assert result.exit_code == 1
@@ -276,7 +282,10 @@ class TestErrorHandlingPattern:
         Captures: Pattern repeats across all material commands.
         """
         with patch("cli.commands.material.get_config", return_value=mock_config):
-            with patch("cli.commands.material.run_command", side_effect=UnityConnectionError("Disconnected")):
+            with patch(
+                "cli.commands.material.run_command",
+                side_effect=UnityConnectionError("Disconnected"),
+            ):
                 result = runner.invoke(material, ["info", "Assets/Mat.mat"])
 
                 assert result.exit_code == 1
@@ -287,7 +296,9 @@ class TestErrorHandlingPattern:
         Captures: Pattern found in asset.py as well.
         """
         with patch("cli.commands.asset.get_config", return_value=mock_config):
-            with patch("cli.commands.asset.run_command", side_effect=UnityConnectionError("Timeout")):
+            with patch(
+                "cli.commands.asset.run_command", side_effect=UnityConnectionError("Timeout")
+            ):
                 result = runner.invoke(asset, ["search", "*.prefab"])
 
                 assert result.exit_code == 1
@@ -296,6 +307,7 @@ class TestErrorHandlingPattern:
 # =============================================================================
 # Pattern: Success Response Handling
 # =============================================================================
+
 
 class TestSuccessResponseHandling:
     """Verify how commands handle successful responses.
@@ -365,6 +377,7 @@ class TestSuccessResponseHandling:
 # Pattern: Output Formatting
 # =============================================================================
 
+
 class TestOutputFormattingPattern:
     """Verify how commands format and display responses.
 
@@ -382,7 +395,9 @@ class TestOutputFormattingPattern:
 
         with patch("cli.commands.prefab.get_config", return_value=mock_config):
             with patch("cli.commands.prefab.run_command", return_value=response):
-                with patch("cli.commands.prefab.format_output", return_value="formatted") as mock_format:
+                with patch(
+                    "cli.commands.prefab.format_output", return_value="formatted"
+                ) as mock_format:
                     runner.invoke(prefab, ["open", "Assets/Prefabs/Test.prefab"])
 
                     mock_format.assert_called()
@@ -401,8 +416,8 @@ class TestOutputFormattingPattern:
                 "data": {
                     "assetPath": "Assets/Prefabs/Test.prefab",
                     "prefabType": "Regular",
-                    "guid": "abc123"
-                }
+                    "guid": "abc123",
+                },
             }
         }
 
@@ -418,6 +433,7 @@ class TestOutputFormattingPattern:
 # =============================================================================
 # Pattern: Search Method Parameter
 # =============================================================================
+
 
 class TestSearchMethodParameter:
     """Verify repeated search method parameter implementation.
@@ -448,7 +464,9 @@ class TestSearchMethodParameter:
         Captures: Click automatically validates against Choice() options.
         """
         with patch("cli.commands.component.get_config", return_value=mock_config):
-            result = runner.invoke(component, ["add", "Player", "Rigidbody", "--search-method", "invalid"])
+            result = runner.invoke(
+                component, ["add", "Player", "Rigidbody", "--search-method", "invalid"]
+            )
 
             # Click exits with code 2 for usage errors
             assert result.exit_code == 2
@@ -464,7 +482,9 @@ class TestSearchMethodParameter:
 
         with patch("cli.commands.material.get_config", return_value=mock_config):
             with patch("cli.commands.material.run_command", return_value=response) as mock_run:
-                runner.invoke(material, ["assign", "Assets/Mat.mat", "Cube", "--search-method", "by_tag"])
+                runner.invoke(
+                    material, ["assign", "Assets/Mat.mat", "Cube", "--search-method", "by_tag"]
+                )
 
                 args = mock_run.call_args
                 params = args[0][1]
@@ -474,6 +494,7 @@ class TestSearchMethodParameter:
 # =============================================================================
 # Pattern: Confirmation Dialogs
 # =============================================================================
+
 
 class TestConfirmationDialogPattern:
     """Verify confirmation dialog usage across commands.
@@ -513,6 +534,7 @@ class TestConfirmationDialogPattern:
 # =============================================================================
 # Pattern: Optional Parameter Handling
 # =============================================================================
+
 
 class TestOptionalParameterHandling:
     """Verify how commands handle optional parameters.
@@ -570,6 +592,7 @@ class TestOptionalParameterHandling:
 # =============================================================================
 # Pattern: Command Tool Name Resolution
 # =============================================================================
+
 
 class TestCommandToolNameResolution:
     """Verify how commands resolve target tool names.
@@ -639,6 +662,7 @@ class TestCommandToolNameResolution:
 # Pattern: Config Access
 # =============================================================================
 
+
 class TestConfigAccessPattern:
     """Verify how commands access CLI configuration.
 
@@ -680,6 +704,7 @@ class TestConfigAccessPattern:
 # Pattern: Wrapped Response Structure
 # =============================================================================
 
+
 class TestWrappedResponseHandling:
     """Verify handling of wrapped response data.
 
@@ -697,10 +722,7 @@ class TestWrappedResponseHandling:
         wrapped_response = {
             "result": {
                 "success": True,
-                "data": {
-                    "assetPath": "Test.prefab",
-                    "prefabType": "Regular"
-                }
+                "data": {"assetPath": "Test.prefab", "prefabType": "Regular"},
             }
         }
 
@@ -722,16 +744,18 @@ class TestWrappedResponseHandling:
                 "data": {
                     "items": [
                         {"name": "Root", "path": ""},
-                        {"name": "Child", "path": "Root/Child"}
+                        {"name": "Child", "path": "Root/Child"},
                     ],
-                    "total": 2
-                }
+                    "total": 2,
+                },
             }
         }
 
         with patch("cli.commands.prefab.get_config", return_value=mock_config):
             with patch("cli.commands.prefab.run_command", return_value=wrapped_response):
-                result = runner.invoke(prefab, ["hierarchy", "Assets/Prefabs/Test.prefab", "--compact"])
+                result = runner.invoke(
+                    prefab, ["hierarchy", "Assets/Prefabs/Test.prefab", "--compact"]
+                )
 
                 assert "Total: 2 objects" in result.output
 
@@ -739,6 +763,7 @@ class TestWrappedResponseHandling:
 # =============================================================================
 # Pattern: Prefab Creation with Optional Flags
 # =============================================================================
+
 
 class TestPrefabCreateFlags:
     """Verify prefab create command's optional flags.
@@ -756,8 +781,17 @@ class TestPrefabCreateFlags:
 
         with patch("cli.commands.prefab.get_config", return_value=mock_config):
             with patch("cli.commands.prefab.run_command", return_value=response) as mock_run:
-                runner.invoke(prefab, ["create", "Player", "Assets/Prefabs/Player.prefab",
-                                      "--overwrite", "--include-inactive", "--unlink-if-instance"])
+                runner.invoke(
+                    prefab,
+                    [
+                        "create",
+                        "Player",
+                        "Assets/Prefabs/Player.prefab",
+                        "--overwrite",
+                        "--include-inactive",
+                        "--unlink-if-instance",
+                    ],
+                )
 
                 args = mock_run.call_args
                 params = args[0][1]
@@ -786,6 +820,7 @@ class TestPrefabCreateFlags:
 # =============================================================================
 # Integration Tests - Multi-Step Command Flows
 # =============================================================================
+
 
 class TestMultiStepCommandFlows:
     """Verify realistic workflows using multiple commands.
@@ -828,8 +863,10 @@ class TestMultiStepCommandFlows:
                 assert result.exit_code == 0
 
                 # Modify
-                result = runner.invoke(component, ["modify", "Player", "Rigidbody",
-                                                  "-p", '{"mass": 5.0, "useGravity": false}'])
+                result = runner.invoke(
+                    component,
+                    ["modify", "Player", "Rigidbody", "-p", '{"mass": 5.0, "useGravity": false}'],
+                )
                 assert result.exit_code == 0
 
                 # Remove
@@ -850,7 +887,9 @@ class TestMultiStepCommandFlows:
                 assert result.exit_code == 0
 
                 # Set color
-                result = runner.invoke(material, ["set-color", "Assets/Materials/New.mat", "1", "0", "0"])
+                result = runner.invoke(
+                    material, ["set-color", "Assets/Materials/New.mat", "1", "0", "0"]
+                )
                 assert result.exit_code == 0
 
                 # Assign
@@ -861,6 +900,7 @@ class TestMultiStepCommandFlows:
 # =============================================================================
 # Edge Cases and Boundary Conditions
 # =============================================================================
+
 
 class TestEdgeCases:
     """Verify handling of edge cases and unusual inputs.
@@ -895,7 +935,9 @@ class TestEdgeCases:
         with patch("cli.commands.material.get_config", return_value=mock_config):
             with patch("cli.commands.material.run_command", return_value=response) as mock_run:
                 # Out of typical 0-1 range but valid float values
-                result = runner.invoke(material, ["set-color", "Mat.mat", "2.5", "0.5", "0.25", "1.0"])
+                result = runner.invoke(
+                    material, ["set-color", "Mat.mat", "2.5", "0.5", "0.25", "1.0"]
+                )
 
                 # Verify command executed successfully
                 if mock_run.called:
@@ -956,6 +998,7 @@ class TestEdgeCases:
 # =============================================================================
 # Identified Boilerplate Patterns for Refactoring
 # =============================================================================
+
 
 class TestBoilerplatePatterns:
     """Document boilerplate patterns identified for refactoring.

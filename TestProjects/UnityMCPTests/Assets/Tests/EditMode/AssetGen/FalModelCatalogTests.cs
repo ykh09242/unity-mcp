@@ -49,16 +49,33 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             AssetGenJobManager.ResetForTests();
             AssetGenPrefs.SetSelectedModel("audio", "fal", oldSelection);
-            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, true);
         }
 
         internal static JObject Endpoint(string id, string kind = "audio", string prompt = "prompt", bool edit = false)
         {
-            var input = new JObject { ["type"] = "object", ["properties"] = new JObject { [prompt] = new JObject { ["type"] = "string" } }, ["required"] = new JArray(prompt) };
-            var output = new JObject { ["type"] = "object", ["properties"] = kind == "audio"
-                ? new JObject { ["audio"] = new JObject { ["$ref"] = "#/components/schemas/File" } }
-                : kind == "model" ? new JObject { ["model_glb"] = new JObject { ["$ref"] = "#/components/schemas/File" } }
-                : new JObject { ["images"] = new JObject { ["type"] = "array", ["items"] = new JObject { ["$ref"] = "#/components/schemas/File" } } } };
+            var input = new JObject
+            {
+                ["type"] = "object",
+                ["properties"] = new JObject { [prompt] = new JObject { ["type"] = "string" } },
+                ["required"] = new JArray(prompt),
+            };
+            var output = new JObject
+            {
+                ["type"] = "object",
+                ["properties"] =
+                    kind == "audio" ? new JObject { ["audio"] = new JObject { ["$ref"] = "#/components/schemas/File" } }
+                    : kind == "model" ? new JObject { ["model_glb"] = new JObject { ["$ref"] = "#/components/schemas/File" } }
+                    : new JObject
+                    {
+                        ["images"] = new JObject
+                        {
+                            ["type"] = "array",
+                            ["items"] = new JObject { ["$ref"] = "#/components/schemas/File" },
+                        },
+                    },
+            };
             if (edit)
             {
                 input["properties"]["image_url"] = new JObject { ["type"] = "string" };
@@ -67,34 +84,100 @@ namespace MCPForUnityTests.Editor.AssetGen
             return new JObject
             {
                 ["endpoint_id"] = id,
-                ["metadata"] = new JObject { ["status"] = "active", ["category"] = kind == "model" ? edit ? "image-to-3d" : "text-to-3d" : edit ? "image-to-image" : kind == "audio" ? "text-to-audio" : "text-to-image", ["display_name"] = "Test model", ["tags"] = new JArray(kind == "audio" ? "music" : "image"), ["updated_at"] = "2026-10-01T12:00:00Z" },
+                ["metadata"] = new JObject
+                {
+                    ["status"] = "active",
+                    ["category"] =
+                        kind == "model"
+                            ? edit
+                                ? "image-to-3d"
+                                : "text-to-3d"
+                            : edit
+                                ? "image-to-image"
+                                : kind == "audio"
+                                    ? "text-to-audio"
+                                    : "text-to-image",
+                    ["display_name"] = "Test model",
+                    ["tags"] = new JArray(kind == "audio" ? "music" : "image"),
+                    ["updated_at"] = "2026-10-01T12:00:00Z",
+                },
                 ["openapi"] = new JObject
                 {
                     ["paths"] = new JObject
                     {
-                        ["/" + id] = new JObject { ["post"] = new JObject { ["requestBody"] = new JObject { ["content"] = new JObject { ["application/json"] = new JObject { ["schema"] = new JObject { ["$ref"] = "#/components/schemas/Input" } } } } } },
-                        ["/" + id + "/requests/{request_id}"] = new JObject { ["get"] = new JObject { ["responses"] = new JObject { ["200"] = new JObject { ["content"] = new JObject { ["application/json"] = new JObject { ["schema"] = new JObject { ["$ref"] = "#/components/schemas/Output" } } } } } } },
+                        ["/" + id] = new JObject
+                        {
+                            ["post"] = new JObject
+                            {
+                                ["requestBody"] = new JObject
+                                {
+                                    ["content"] = new JObject
+                                    {
+                                        ["application/json"] = new JObject { ["schema"] = new JObject { ["$ref"] = "#/components/schemas/Input" } },
+                                    },
+                                },
+                            },
+                        },
+                        ["/" + id + "/requests/{request_id}"] = new JObject
+                        {
+                            ["get"] = new JObject
+                            {
+                                ["responses"] = new JObject
+                                {
+                                    ["200"] = new JObject
+                                    {
+                                        ["content"] = new JObject
+                                        {
+                                            ["application/json"] = new JObject { ["schema"] = new JObject { ["$ref"] = "#/components/schemas/Output" } },
+                                        },
+                                    },
+                                },
+                            },
+                        },
                     },
-                    ["components"] = new JObject { ["schemas"] = new JObject { ["Input"] = input, ["Output"] = output, ["File"] = new JObject { ["type"] = "object", ["properties"] = new JObject { ["url"] = new JObject { ["type"] = "string" } } } } },
+                    ["components"] = new JObject
+                    {
+                        ["schemas"] = new JObject
+                        {
+                            ["Input"] = input,
+                            ["Output"] = output,
+                            ["File"] = new JObject
+                            {
+                                ["type"] = "object",
+                                ["properties"] = new JObject { ["url"] = new JObject { ["type"] = "string" } },
+                            },
+                        },
+                    },
                 },
             };
         }
 
         private static JObject Input(JObject model) => (JObject)model["openapi"]["components"]["schemas"]["Input"];
+
         private static HttpResult Json(JObject json) => new HttpResult { Status = 200, Text = json.ToString() };
+
         private static HttpResult Models(params JObject[] models) => Json(new JObject { ["models"] = new JArray(models), ["has_more"] = false });
+
         private void Serve(params JObject[] models)
         {
             http.Handler = request =>
             {
                 bool details = request.Url.Contains("endpoint_id=");
-                string category = new[] { "text-to-image", "image-to-image", "text-to-3d", "image-to-3d", "text-to-audio" }
-                    .FirstOrDefault(value => request.Url.Contains("category=" + value));
-                return Models(models.Where(model => details
-                    ? request.Url.Contains("endpoint_id=" + Uri.EscapeDataString((string)model["endpoint_id"]) + "&")
-                    : (string)model["metadata"]["category"] == category).ToArray());
+                string category = new[] { "text-to-image", "image-to-image", "text-to-3d", "image-to-3d", "text-to-audio" }.FirstOrDefault(value =>
+                    request.Url.Contains("category=" + value)
+                );
+                return Models(
+                    models
+                        .Where(model =>
+                            details
+                                ? request.Url.Contains("endpoint_id=" + Uri.EscapeDataString((string)model["endpoint_id"]) + "&")
+                                : (string)model["metadata"]["category"] == category
+                        )
+                        .ToArray()
+                );
             };
         }
+
         private bool Refresh(string kind = "audio", bool force = true) => FalModelCatalog.RefreshAsync(kind, force).GetAwaiter().GetResult();
 
         [TestCase("audio"), TestCase("image"), TestCase("model")]
@@ -119,7 +202,17 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.Less(entries.Count(e => e.VerifiedAt != null), entries.Count);
             var discovered = entries.First(e => e.VerifiedAt == null);
             Assert.IsTrue(discovered.FromRefresh);
-            var page = JObject.FromObject(GenerateAudio.HandleCommand(new JObject { ["action"] = "list_models", ["search"] = "music-", ["offset"] = 30, ["limit"] = 5 }));
+            var page = JObject.FromObject(
+                GenerateAudio.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "list_models",
+                        ["search"] = "music-",
+                        ["offset"] = 30,
+                        ["limit"] = 5,
+                    }
+                )
+            );
             Assert.AreEqual(40, (int)page["data"]["total"]);
             Assert.AreEqual(5, page["data"]["models"].Count());
             Assert.IsTrue((bool)page["data"]["has_more"]);
@@ -137,7 +230,9 @@ namespace MCPForUnityTests.Editor.AssetGen
             var entry = FalModelCatalog.VerifyForGeneration("test/restyle", "image", "image", CancellationToken.None).GetAwaiter().GetResult();
             Assert.AreEqual("test/restyle", entry.EditModelId);
             CollectionAssert.AreEqual(new[] { "image" }, entry.Modes);
-            Assert.Throws<InvalidOperationException>(() => FalModelCatalog.VerifyForGeneration(entry.Id, "image", "text", CancellationToken.None).GetAwaiter().GetResult());
+            Assert.Throws<InvalidOperationException>(() =>
+                FalModelCatalog.VerifyForGeneration(entry.Id, "image", "text", CancellationToken.None).GetAwaiter().GetResult()
+            );
         }
 
         [TestCase("audio"), TestCase("image"), TestCase("model")]
@@ -152,11 +247,30 @@ namespace MCPForUnityTests.Editor.AssetGen
                 string id = "test/replacement-" + kind;
                 Serve(Endpoint(id, kind));
                 Assert.IsTrue(Refresh(kind));
-                var paid = new FakeHttpTransport { Handler = _ => Json(new JObject { ["request_id"] = "r1", ["response_url"] = "https://queue.fal.run/test/app/requests/r1" }) };
+                var paid = new FakeHttpTransport
+                {
+                    Handler = _ => Json(new JObject { ["request_id"] = "r1", ["response_url"] = "https://queue.fal.run/test/app/requests/r1" }),
+                };
                 AssetGenJobManager.TransportOverrideForTests = paid;
-                AssetGenJob job = kind == "audio" ? AssetGenJobManager.StartAudioGeneration(new AudioGenRequest { Provider = "fal", Prompt = "rain" })
-                    : kind == "image" ? AssetGenJobManager.StartImageGeneration(new ImageGenRequest { Provider = "fal", Mode = "text", Prompt = "rain" })
-                    : AssetGenJobManager.StartModelGeneration(new ModelGenRequest { Provider = "fal", Mode = "text", Prompt = "chair" });
+                AssetGenJob job =
+                    kind == "audio" ? AssetGenJobManager.StartAudioGeneration(new AudioGenRequest { Provider = "fal", Prompt = "rain" })
+                    : kind == "image"
+                        ? AssetGenJobManager.StartImageGeneration(
+                            new ImageGenRequest
+                            {
+                                Provider = "fal",
+                                Mode = "text",
+                                Prompt = "rain",
+                            }
+                        )
+                    : AssetGenJobManager.StartModelGeneration(
+                        new ModelGenRequest
+                        {
+                            Provider = "fal",
+                            Mode = "text",
+                            Prompt = "chair",
+                        }
+                    );
                 AssetGenJobManager.TryAdvanceForTests(job.JobId);
                 AssetGenJobManager.TryAdvanceForTests(job.JobId);
                 Assert.AreNotEqual(AssetGenJobState.Failed, job.State, job.Error);
@@ -173,7 +287,8 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void Batch404_DoesNotHideActiveModels_WhenAnotherModelIsRemoved()
         {
             const string removed = "test/music-missing";
-            http.Handler = r => !r.Url.Contains("endpoint_id=") ? Models(Endpoint(Music), Endpoint(removed))
+            http.Handler = r =>
+                !r.Url.Contains("endpoint_id=") ? Models(Endpoint(Music), Endpoint(removed))
                 : r.Url.Contains(Uri.EscapeDataString(removed)) ? new HttpResult { Status = 404, Text = "{\"error\":{\"type\":\"not_found\"}}" }
                 : Models(Endpoint(Music));
             Assert.IsTrue(Refresh());
@@ -189,10 +304,27 @@ namespace MCPForUnityTests.Editor.AssetGen
             var entry = FalModelCatalog.VerifyForGeneration("test/mesh-image", "model", "image", CancellationToken.None).GetAwaiter().GetResult();
             Assert.AreEqual("model_glb", entry.ModelOutputField);
             var adapter = new FalModelAdapter();
-            var submit = new FakeHttpTransport { Handler = r => r.Method == "POST" ? Json(new JObject { ["request_id"] = "r1" })
-                : r.Url.EndsWith("/status") ? Json(new JObject { ["status"] = "COMPLETED" })
-                : Json(new JObject { ["model_glb"] = new JObject { ["url"] = "https://example.com/model.glb" } }) };
-            string pid = adapter.SubmitAsync(new ModelGenRequest { Mode = "image", CatalogEntry = entry, ImageUrl = "https://example.com/ref.jpg" }, "test-key", submit, CancellationToken.None).GetAwaiter().GetResult();
+            var submit = new FakeHttpTransport
+            {
+                Handler = r =>
+                    r.Method == "POST" ? Json(new JObject { ["request_id"] = "r1" })
+                    : r.Url.EndsWith("/status") ? Json(new JObject { ["status"] = "COMPLETED" })
+                    : Json(new JObject { ["model_glb"] = new JObject { ["url"] = "https://example.com/model.glb" } }),
+            };
+            string pid = adapter
+                .SubmitAsync(
+                    new ModelGenRequest
+                    {
+                        Mode = "image",
+                        CatalogEntry = entry,
+                        ImageUrl = "https://example.com/ref.jpg",
+                    },
+                    "test-key",
+                    submit,
+                    CancellationToken.None
+                )
+                .GetAwaiter()
+                .GetResult();
             Assert.AreEqual("https://queue.fal.run/test/mesh-image/requests/r1", pid);
             var body = JObject.Parse(Encoding.UTF8.GetString(submit.RecordedRequests[0].Body));
             Assert.AreEqual("https://example.com/ref.jpg", (string)body["image_url"]);
@@ -200,7 +332,9 @@ namespace MCPForUnityTests.Editor.AssetGen
             var result = adapter.PollAsync(pid, "test-key", submit, CancellationToken.None).GetAwaiter().GetResult();
             Assert.AreEqual("glb", result.ResultExt);
             Assert.AreEqual("https://example.com/model.glb", result.DownloadUrl);
-            Assert.Throws<InvalidOperationException>(() => adapter.SubmitAsync(new ModelGenRequest { CatalogEntry = entry, Format = "fbx" }, "test-key", submit, CancellationToken.None));
+            Assert.Throws<InvalidOperationException>(() =>
+                adapter.SubmitAsync(new ModelGenRequest { CatalogEntry = entry, Format = "fbx" }, "test-key", submit, CancellationToken.None)
+            );
         }
 
         [Test]
@@ -236,9 +370,17 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             Assert.IsTrue(Refresh());
             string checkedAt = FalModelCatalog.VerifiedAt("audio");
-            http.Handler = request => request.Url.Contains("cursor=")
-                ? new HttpResult { Status = 429 }
-                : Json(new JObject { ["models"] = new JArray(), ["has_more"] = true, ["next_cursor"] = "page2" });
+            http.Handler = request =>
+                request.Url.Contains("cursor=")
+                    ? new HttpResult { Status = 429 }
+                    : Json(
+                        new JObject
+                        {
+                            ["models"] = new JArray(),
+                            ["has_more"] = true,
+                            ["next_cursor"] = "page2",
+                        }
+                    );
             now = now.AddDays(2);
             Assert.IsFalse(Refresh());
             Assert.AreEqual(Music, AssetGenModelCatalog.DefaultModelId("fal", "audio"));
@@ -251,9 +393,17 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void Refresh_TraversesAllMetadataPages_BeforeReplacingCatalog()
         {
             var next = Endpoint("test/music-v3");
-            http.Handler = request => request.Url.Contains("endpoint_id=") ? Models(Endpoint(Music), next)
+            http.Handler = request =>
+                request.Url.Contains("endpoint_id=") ? Models(Endpoint(Music), next)
                 : request.Url.Contains("cursor=") ? Models(next)
-                : Json(new JObject { ["models"] = new JArray(Endpoint(Music)), ["has_more"] = true, ["next_cursor"] = "next page+" });
+                : Json(
+                    new JObject
+                    {
+                        ["models"] = new JArray(Endpoint(Music)),
+                        ["has_more"] = true,
+                        ["next_cursor"] = "next page+",
+                    }
+                );
             Assert.IsTrue(Refresh());
             CollectionAssert.AreEquivalent(new[] { Music, "test/music-v3" }, AssetGenModelCatalog.ForProvider("fal", "audio").Select(entry => entry.Id));
             Assert.IsTrue(http.RecordedRequests.Any(request => request.Url.Contains("cursor=next%20page%2B")));
@@ -326,9 +476,12 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             int count = 0;
             var waits = new System.Collections.Generic.List<TimeSpan>();
-            FalModelCatalog.DelayOverrideForTests = (wait, _) => { waits.Add(wait); return Task.CompletedTask; };
-            http.Handler = _ => count++ == 0 ? new HttpResult { Status = 429, RetryAfterSeconds = 999 }
-                : Models(Endpoint(Music));
+            FalModelCatalog.DelayOverrideForTests = (wait, _) =>
+            {
+                waits.Add(wait);
+                return Task.CompletedTask;
+            };
+            http.Handler = _ => count++ == 0 ? new HttpResult { Status = 429, RetryAfterSeconds = 999 } : Models(Endpoint(Music));
             Assert.IsTrue(Refresh());
             Assert.AreEqual(Music, AssetGenModelCatalog.DefaultModelId("fal", "audio"));
             Assert.Contains(TimeSpan.FromSeconds(10), waits);
@@ -357,8 +510,12 @@ namespace MCPForUnityTests.Editor.AssetGen
             var section = new McpAssetGenSection(root);
             Assert.AreEqual("test/music-retired", AssetGenPrefs.GetSelectedModel("audio", "fal"));
             Assert.IsTrue(root.Query<DropdownField>().ToList().Any(dropdown => dropdown.value?.Contains("Saved model unavailable") == true));
-            Assert.IsFalse(root.Query<Label>(className: "validation-description").ToList()
-                .Any(caveat => string.IsNullOrEmpty(caveat.text) && caveat.style.display.value != DisplayStyle.None), "An empty license caveat box must be hidden.");
+            Assert.IsFalse(
+                root.Query<Label>(className: "validation-description")
+                    .ToList()
+                    .Any(caveat => string.IsNullOrEmpty(caveat.text) && caveat.style.display.value != DisplayStyle.None),
+                "An empty license caveat box must be hidden."
+            );
         }
 
         [Test]
@@ -378,10 +535,12 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsTrue(menu.choices.All(c => !McpAssetGenSection.MenuItemText(c).Contains("/")), "GenericMenu turns every '/' into a submenu.");
             Assert.IsTrue(root.Query<Label>().ToList().Any(l => l.text.StartsWith($"The menu shows {McpAssetGenSection.MenuLimit} of 40 models")));
 
-            var searches = (System.Collections.Generic.Dictionary<string, string>)typeof(McpAssetGenSection)
-                .GetField("searches", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(section);
+            var searches = (System.Collections.Generic.Dictionary<string, string>)
+                typeof(McpAssetGenSection).GetField("searches", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(section);
             searches["audio/fal"] = "music-30";
-            typeof(McpAssetGenSection).GetMethod("RebuildModelControls", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(section, new object[] { null, null });
+            typeof(McpAssetGenSection)
+                .GetMethod("RebuildModelControls", BindingFlags.NonPublic | BindingFlags.Instance)
+                .Invoke(section, new object[] { null, null });
             menu = AudioMenu();
             Assert.AreEqual(2, menu.choices.Count);
             Assert.IsTrue(menu.choices.Any(c => c.Contains("test/music-30")), "Search must reach models beyond the menu cap.");
@@ -413,7 +572,9 @@ namespace MCPForUnityTests.Editor.AssetGen
             Serve();
             var verify = typeof(McpAssetGenSection).GetMethod("VerifySelection", BindingFlags.NonPublic | BindingFlags.Instance);
             ((Task)verify.Invoke(section, new object[] { AssetGenModelCatalog.Find(Music), new Label() })).GetAwaiter().GetResult();
-            typeof(McpAssetGenSection).GetMethod("RebuildModelControls", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(section, new object[] { null, null });
+            typeof(McpAssetGenSection)
+                .GetMethod("RebuildModelControls", BindingFlags.NonPublic | BindingFlags.Instance)
+                .Invoke(section, new object[] { null, null });
             var warning = root.Query<Label>().ToList().Single(label => label.text.StartsWith("Compatibility check failed"));
             StringAssert.Contains("unavailable", warning.text);
             Assert.IsTrue(warning.ClassListContains("warning-banner-text"));
@@ -424,12 +585,39 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             var model = Endpoint("test/sfx-v2", prompt: "text");
             model["metadata"]["tags"] = new JArray("sfx");
-            Input(model)["properties"]["duration_seconds"] = new JObject { ["anyOf"] = new JArray(
-                new JObject { ["type"] = "number", ["minimum"] = 0.5, ["maximum"] = 22 }, new JObject { ["type"] = "null" }) };
+            Input(model)["properties"]["duration_seconds"] = new JObject
+            {
+                ["anyOf"] = new JArray(
+                    new JObject
+                    {
+                        ["type"] = "number",
+                        ["minimum"] = 0.5,
+                        ["maximum"] = 22,
+                    },
+                    new JObject { ["type"] = "null" }
+                ),
+            };
             var entry = FalModelSchema.Parse(model, "audio", now.ToString("O"));
             Assert.IsNotNull(entry);
-            var submit = new FakeHttpTransport { Handler = _ => new HttpResult { Status = 200, Text = "{\"response_url\":\"https://queue.fal.run/test/sfx-v2/requests/r1\"}" } };
-            new FalAudioAdapter().SubmitAsync(new AudioGenRequest { Model = entry.Id, CatalogEntry = entry, Prompt = "rain", Duration = 0.75f }, "test-key", submit, CancellationToken.None).GetAwaiter().GetResult();
+            var submit = new FakeHttpTransport
+            {
+                Handler = _ => new HttpResult { Status = 200, Text = "{\"response_url\":\"https://queue.fal.run/test/sfx-v2/requests/r1\"}" },
+            };
+            new FalAudioAdapter()
+                .SubmitAsync(
+                    new AudioGenRequest
+                    {
+                        Model = entry.Id,
+                        CatalogEntry = entry,
+                        Prompt = "rain",
+                        Duration = 0.75f,
+                    },
+                    "test-key",
+                    submit,
+                    CancellationToken.None
+                )
+                .GetAwaiter()
+                .GetResult();
             var body = JObject.Parse(Encoding.UTF8.GetString(submit.RecordedRequests[0].Body));
             Assert.AreEqual("rain", (string)body["text"]);
             Assert.IsNull(body["prompt"]);
@@ -440,10 +628,33 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void MillisecondDuration_ConvertsFromSeconds_AndClampsToSchemaMinimum()
         {
             var model = Endpoint(Music);
-            Input(model)["properties"]["music_length_ms"] = new JObject { ["type"] = "integer", ["minimum"] = 3000, ["maximum"] = 600000, ["default"] = 10000 };
+            Input(model)["properties"]["music_length_ms"] = new JObject
+            {
+                ["type"] = "integer",
+                ["minimum"] = 3000,
+                ["maximum"] = 600000,
+                ["default"] = 10000,
+            };
             var entry = FalModelSchema.Parse(model, "audio", now.ToString("O"));
-            var submit = new FakeHttpTransport { Handler = _ => new HttpResult { Status = 200, Text = "{\"response_url\":\"https://queue.fal.run/test/music-v2/requests/r1\"}" } };
-            new FalAudioAdapter().SubmitAsync(new AudioGenRequest { Model = entry.Id, CatalogEntry = entry, Prompt = "rain", Duration = 1f }, "test-key", submit, CancellationToken.None).GetAwaiter().GetResult();
+            var submit = new FakeHttpTransport
+            {
+                Handler = _ => new HttpResult { Status = 200, Text = "{\"response_url\":\"https://queue.fal.run/test/music-v2/requests/r1\"}" },
+            };
+            new FalAudioAdapter()
+                .SubmitAsync(
+                    new AudioGenRequest
+                    {
+                        Model = entry.Id,
+                        CatalogEntry = entry,
+                        Prompt = "rain",
+                        Duration = 1f,
+                    },
+                    "test-key",
+                    submit,
+                    CancellationToken.None
+                )
+                .GetAwaiter()
+                .GetResult();
             var body = JObject.Parse(Encoding.UTF8.GetString(submit.RecordedRequests[0].Body));
             Assert.AreEqual(3000, (int)body["music_length_ms"]);
             Assert.AreEqual(JTokenType.Integer, body["music_length_ms"].Type);
@@ -453,22 +664,48 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void NullableDuration_DefaultOnWrapper_IsUsedInSubmittedRequest(bool reference)
         {
             var model = Endpoint("test/music-default");
-            var duration = new JObject { ["anyOf"] = new JArray(
-                new JObject { ["type"] = "number", ["minimum"] = 0.5, ["maximum"] = 22 },
-                new JObject { ["type"] = "null" }), ["default"] = 5 };
+            var duration = new JObject
+            {
+                ["anyOf"] = new JArray(
+                    new JObject
+                    {
+                        ["type"] = "number",
+                        ["minimum"] = 0.5,
+                        ["maximum"] = 22,
+                    },
+                    new JObject { ["type"] = "null" }
+                ),
+                ["default"] = 5,
+            };
             if (reference)
             {
                 model["openapi"]["components"]["schemas"]["Duration"] = duration;
                 Input(model)["properties"]["duration"] = new JObject { ["$ref"] = "#/components/schemas/Duration" };
             }
-            else Input(model)["properties"]["duration"] = duration;
+            else
+                Input(model)["properties"]["duration"] = duration;
             var original = model.DeepClone();
             var entry = FalModelSchema.Parse(model, "audio", now.ToString("O"));
             Assert.IsNotNull(entry);
-            var submit = new FakeHttpTransport { Handler = _ => new HttpResult { Status = 200,
-                Text = "{\"response_url\":\"https://queue.fal.run/test/music-default/requests/r1\"}" } };
-            new FalAudioAdapter().SubmitAsync(new AudioGenRequest { Model = entry.Id, CatalogEntry = entry,
-                Prompt = "rain", Duration = 0 }, "test-key", submit, CancellationToken.None).GetAwaiter().GetResult();
+            var submit = new FakeHttpTransport
+            {
+                Handler = _ => new HttpResult { Status = 200, Text = "{\"response_url\":\"https://queue.fal.run/test/music-default/requests/r1\"}" },
+            };
+            new FalAudioAdapter()
+                .SubmitAsync(
+                    new AudioGenRequest
+                    {
+                        Model = entry.Id,
+                        CatalogEntry = entry,
+                        Prompt = "rain",
+                        Duration = 0,
+                    },
+                    "test-key",
+                    submit,
+                    CancellationToken.None
+                )
+                .GetAwaiter()
+                .GetResult();
             var body = JObject.Parse(Encoding.UTF8.GetString(submit.RecordedRequests.Single().Body));
             Assert.AreEqual(5f, (float)body["duration"], "The submitted default must come from the nullable field wrapper.");
             Assert.IsTrue(JToken.DeepEquals(original, model), "Resolving a nullable default must not mutate provider metadata.");
@@ -478,15 +715,36 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void NumImagesSchema_WithMultipleOf_OmitsUnsupportedFixedCount(bool edit)
         {
             var model = Endpoint("test/image-multiple", "image", edit: edit);
-            Input(model)["properties"]["num_images"] = new JObject { ["type"] = "integer",
-                ["minimum"] = 1, ["maximum"] = 4, ["multipleOf"] = 2, ["default"] = 2 };
+            Input(model)["properties"]["num_images"] = new JObject
+            {
+                ["type"] = "integer",
+                ["minimum"] = 1,
+                ["maximum"] = 4,
+                ["multipleOf"] = 2,
+                ["default"] = 2,
+            };
             var entry = FalModelSchema.Parse(model, "image", now.ToString("O"));
             Assert.IsNotNull(entry);
-            var submit = new FakeHttpTransport { Handler = _ => new HttpResult { Status = 200,
-                Text = "{\"response_url\":\"https://queue.fal.run/test/image-multiple/requests/r1\"}" } };
-            new FalAdapter().SubmitAsync(new ImageGenRequest { Model = entry.Id, CatalogEntry = entry,
-                Mode = edit ? "image" : "text", ImageUrl = edit ? "https://example.com/source.png" : null,
-                Prompt = "rain" }, "test-key", submit, CancellationToken.None).GetAwaiter().GetResult();
+            var submit = new FakeHttpTransport
+            {
+                Handler = _ => new HttpResult { Status = 200, Text = "{\"response_url\":\"https://queue.fal.run/test/image-multiple/requests/r1\"}" },
+            };
+            new FalAdapter()
+                .SubmitAsync(
+                    new ImageGenRequest
+                    {
+                        Model = entry.Id,
+                        CatalogEntry = entry,
+                        Mode = edit ? "image" : "text",
+                        ImageUrl = edit ? "https://example.com/source.png" : null,
+                        Prompt = "rain",
+                    },
+                    "test-key",
+                    submit,
+                    CancellationToken.None
+                )
+                .GetAwaiter()
+                .GetResult();
             var body = JObject.Parse(Encoding.UTF8.GetString(submit.RecordedRequests.Single().Body));
             Assert.IsNull(body["num_images"], "The adapter's fixed count of one violates multipleOf=2: " + body);
             Assert.IsFalse(entry.SupportsNumImages);
@@ -514,14 +772,21 @@ namespace MCPForUnityTests.Editor.AssetGen
             Input(model)["properties"]["duration"] = JObject.Parse(schema);
             Assert.IsNull(FalModelSchema.Parse(model, "audio", now.ToString("O")));
             Serve(model);
-            Assert.Throws<InvalidOperationException>(() => FalModelCatalog.VerifyForGeneration(Music, "audio", "text", CancellationToken.None).GetAwaiter().GetResult());
+            Assert.Throws<InvalidOperationException>(() =>
+                FalModelCatalog.VerifyForGeneration(Music, "audio", "text", CancellationToken.None).GetAwaiter().GetResult()
+            );
         }
 
         [Test]
         public void NumImagesSchema_ExcludingOne_IsNotAdvertisedAsSupported()
         {
             var model = Endpoint("test/image-v2", "image");
-            Input(model)["properties"]["num_images"] = new JObject { ["type"] = "integer", ["exclusiveMinimum"] = 1, ["maximum"] = 4 };
+            Input(model)["properties"]["num_images"] = new JObject
+            {
+                ["type"] = "integer",
+                ["exclusiveMinimum"] = 1,
+                ["maximum"] = 4,
+            };
             var entry = FalModelSchema.Parse(model, "image", now.ToString("O"));
             Assert.IsNotNull(entry);
             Assert.IsFalse(entry.SupportsNumImages);
@@ -538,7 +803,10 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsNull(FalModelSchema.Parse(model, "audio", now.ToString("O")));
             model = Endpoint(Music);
             schemas = model["openapi"]["components"]["schemas"];
-            schemas["Loop"] = new JObject { ["anyOf"] = new JArray(new JObject { ["$ref"] = "#/components/schemas/Loop" }, new JObject { ["type"] = "string" }) };
+            schemas["Loop"] = new JObject
+            {
+                ["anyOf"] = new JArray(new JObject { ["$ref"] = "#/components/schemas/Loop" }, new JObject { ["type"] = "string" }),
+            };
             Input(model)["properties"]["duration"] = new JObject { ["$ref"] = "#/components/schemas/Loop" };
             Assert.IsNull(FalModelSchema.Parse(model, "audio", now.ToString("O")));
         }
@@ -547,7 +815,12 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void ImageSchema_ChoosesImportableOutputFormat_AndRejectsVectorOnlyModels()
         {
             var model = Endpoint("test/image", "image");
-            Input(model)["properties"]["output_format"] = new JObject { ["type"] = "string", ["enum"] = new JArray("webp", "png"), ["default"] = "webp" };
+            Input(model)["properties"]["output_format"] = new JObject
+            {
+                ["type"] = "string",
+                ["enum"] = new JArray("webp", "png"),
+                ["default"] = "webp",
+            };
             Assert.AreEqual("png", FalModelSchema.Parse(model, "image", now.ToString("O")).OutputFormat);
             Input(model)["properties"]["output_format"]["enum"] = new JArray("svg");
             Assert.IsNull(FalModelSchema.Parse(model, "image", now.ToString("O")));
@@ -572,8 +845,26 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsTrue(Refresh("image"));
             var entry = AssetGenModelCatalog.Find(imageId);
             Assert.AreEqual(imageId + "/edit", entry.EditModelId);
-            var submit = new FakeHttpTransport { Handler = _ => new HttpResult { Status = 200, Text = "{\"response_url\":\"https://queue.fal.run/test/image-v2/requests/r1\"}" } };
-            new FalAdapter().SubmitAsync(new ImageGenRequest { Model = imageId, CatalogEntry = entry, Mode = "image", Prompt = "rain", ImageUrl = "https://example.com/image.png" }, "test-key", submit, CancellationToken.None).GetAwaiter().GetResult();
+            var submit = new FakeHttpTransport
+            {
+                Handler = _ => new HttpResult { Status = 200, Text = "{\"response_url\":\"https://queue.fal.run/test/image-v2/requests/r1\"}" },
+            };
+            new FalAdapter()
+                .SubmitAsync(
+                    new ImageGenRequest
+                    {
+                        Model = imageId,
+                        CatalogEntry = entry,
+                        Mode = "image",
+                        Prompt = "rain",
+                        ImageUrl = "https://example.com/image.png",
+                    },
+                    "test-key",
+                    submit,
+                    CancellationToken.None
+                )
+                .GetAwaiter()
+                .GetResult();
             var body = JObject.Parse(Encoding.UTF8.GetString(submit.RecordedRequests[0].Body));
             Assert.AreEqual("https://example.com/image.png", (string)body["image_url"]);
             Assert.IsNull(body["image_urls"]);
@@ -587,16 +878,32 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsTrue(Refresh("image"));
             var entry = AssetGenModelCatalog.Find("test/image-v2");
             Assert.IsNull(entry.EditModelId);
-            Assert.Throws<Exception>(() => new FalAdapter().SubmitAsync(new ImageGenRequest
-                { Model = entry.Id, CatalogEntry = entry, Mode = "image", ImageUrl = "https://example.com/in.png" }, "test-key", new FakeHttpTransport(), CancellationToken.None).GetAwaiter().GetResult());
+            Assert.Throws<Exception>(() =>
+                new FalAdapter()
+                    .SubmitAsync(
+                        new ImageGenRequest
+                        {
+                            Model = entry.Id,
+                            CatalogEntry = entry,
+                            Mode = "image",
+                            ImageUrl = "https://example.com/in.png",
+                        },
+                        "test-key",
+                        new FakeHttpTransport(),
+                        CancellationToken.None
+                    )
+                    .GetAwaiter()
+                    .GetResult()
+            );
         }
 
         [Test]
         public void MissingFindEndpoints_404_IsANegativeResult_ButList404PreservesCache()
         {
-            http.Handler = request => request.Url.Contains("endpoint_id=")
-                ? new HttpResult { Status = 404, Text = "{\"error\":{\"type\":\"not_found\",\"message\":\"Endpoint(s) not found\"}}" }
-                : Models(Endpoint(Music));
+            http.Handler = request =>
+                request.Url.Contains("endpoint_id=")
+                    ? new HttpResult { Status = 404, Text = "{\"error\":{\"type\":\"not_found\",\"message\":\"Endpoint(s) not found\"}}" }
+                    : Models(Endpoint(Music));
             Assert.IsTrue(Refresh());
             Assert.IsEmpty(AssetGenModelCatalog.ForProvider("fal", "audio"));
             http.Handler = _ => new HttpResult { Status = 404, Text = "{\"error\":{\"type\":\"not_found\"}}" };
@@ -622,23 +929,37 @@ namespace MCPForUnityTests.Editor.AssetGen
                 Serve();
                 var submit = new FakeHttpTransport();
                 AssetGenJobManager.TransportOverrideForTests = submit;
-                var job = AssetGenJobManager.StartAudioGeneration(new AudioGenRequest { Provider = "fal", Model = Music, Prompt = "rain" });
+                var job = AssetGenJobManager.StartAudioGeneration(
+                    new AudioGenRequest
+                    {
+                        Provider = "fal",
+                        Model = Music,
+                        Prompt = "rain",
+                    }
+                );
                 var tick = typeof(AssetGenJobManager).GetMethod("Tick", BindingFlags.NonPublic | BindingFlags.Static);
-                for (int i = 0; i < 5; i++) tick.Invoke(null, null);
+                for (int i = 0; i < 5; i++)
+                    tick.Invoke(null, null);
                 Assert.AreEqual(AssetGenJobState.Failed, job.State);
                 StringAssert.Contains("unavailable", job.Error);
                 Assert.IsEmpty(submit.RecordedRequests, "A failed availability check must not submit a paid generation.");
-                Assert.IsTrue(http.RecordedRequests.All(request => request.Headers["Authorization"] == "Key test-key" && new Uri(request.Url).Host == "api.fal.ai"));
+                Assert.IsTrue(
+                    http.RecordedRequests.All(request => request.Headers["Authorization"] == "Key test-key" && new Uri(request.Url).Host == "api.fal.ai")
+                );
             }
-            finally { Environment.SetEnvironmentVariable("MCPFORUNITY_FAL_API_KEY", previousKey); }
+            finally
+            {
+                Environment.SetEnvironmentVariable("MCPFORUNITY_FAL_API_KEY", previousKey);
+            }
         }
 
         private sealed class DelayedTransport : IHttpTransport
         {
             public readonly TaskCompletionSource<HttpResult> First = new();
             private int count;
-            public Task<HttpResult> SendAsync(HttpRequestSpec spec, CancellationToken ct)
-                => count++ == 0 ? First.Task : Task.FromResult(Models(Endpoint(Music)));
+
+            public Task<HttpResult> SendAsync(HttpRequestSpec spec, CancellationToken ct) =>
+                count++ == 0 ? First.Task : Task.FromResult(Models(Endpoint(Music)));
         }
 
         private sealed class LiveTransport : IHttpTransport
@@ -661,7 +982,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreSame(first, second);
             Assert.IsTrue(FalModelCatalog.IsRefreshing("audio"));
             delayed.First.SetResult(Models(Endpoint(Music)));
-            while (!first.IsCompleted) yield return null;
+            while (!first.IsCompleted)
+                yield return null;
             Assert.IsTrue(first.Result);
             Assert.IsFalse(FalModelCatalog.IsRefreshing("audio"));
         }
@@ -678,7 +1000,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsNotNull(verify.Result.VerifiedAt);
             Assert.IsTrue(FalModelCatalog.IsRefreshing("audio"));
             delayed.First.SetResult(Models(Endpoint(Music)));
-            while (!refresh.IsCompleted) yield return null;
+            while (!refresh.IsCompleted)
+                yield return null;
             Assert.IsTrue(refresh.Result, FalModelCatalog.LastError("audio"));
         }
 
@@ -704,7 +1027,13 @@ namespace MCPForUnityTests.Editor.AssetGen
             var field = root.Query<TextField>().ToList().First(candidate => candidate.isPasswordField);
             field.value = "unsaved-test-input";
             delayed.First.SetResult(Models());
-            while (FalModelCatalog.IsRefreshing("image") || FalModelCatalog.IsRefreshing("audio") || FalModelCatalog.IsRefreshing("model") || OpenRouterModelCatalog.IsRefreshing) yield return null;
+            while (
+                FalModelCatalog.IsRefreshing("image")
+                || FalModelCatalog.IsRefreshing("audio")
+                || FalModelCatalog.IsRefreshing("model")
+                || OpenRouterModelCatalog.IsRefreshing
+            )
+                yield return null;
             yield return null;
             Assert.AreEqual("unsaved-test-input", field.value);
             Assert.IsTrue(root.Contains(field), "The automatic refresh must not replace key-entry controls.");
@@ -721,7 +1050,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             var audio = FalModelCatalog.RefreshAsync("audio", true);
             var image = FalModelCatalog.RefreshAsync("image", true);
             var model = FalModelCatalog.RefreshAsync("model", true);
-            while (!audio.IsCompleted || !image.IsCompleted || !model.IsCompleted) yield return null;
+            while (!audio.IsCompleted || !image.IsCompleted || !model.IsCompleted)
+                yield return null;
             Assert.IsTrue(audio.Result, FalModelCatalog.LastError("audio"));
             Assert.IsTrue(image.Result, FalModelCatalog.LastError("image"));
             Assert.IsTrue(model.Result, FalModelCatalog.LastError("model"));
@@ -733,7 +1063,8 @@ namespace MCPForUnityTests.Editor.AssetGen
                 Assert.IsTrue(entries.Any(entry => !string.IsNullOrEmpty(entry.VerifiedAt)));
                 TestContext.WriteLine(kind + ": " + entries.Count + " discovered; " + entries.Count(e => e.VerifiedAt != null) + " verified");
                 var verify = FalModelCatalog.VerifyForGeneration(entries[0].Id, kind, "text", CancellationToken.None);
-                while (!verify.IsCompleted) yield return null;
+                while (!verify.IsCompleted)
+                    yield return null;
                 Assert.IsFalse(verify.IsFaulted, verify.Exception?.ToString());
                 Assert.IsNotNull(verify.Result);
             }

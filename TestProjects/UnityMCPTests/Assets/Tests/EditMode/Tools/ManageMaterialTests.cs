@@ -1,11 +1,11 @@
 using System;
 using System.IO;
+using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Tools;
-using MCPForUnity.Runtime.Helpers;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -29,7 +29,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             string guid = Guid.NewGuid().ToString("N");
             _matPath = $"{TempRoot}/TestMat_{guid}.mat";
-            
+
             // Create a basic material
             var material = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
             AssetDatabase.CreateAsset(material, _matPath);
@@ -43,7 +43,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 AssetDatabase.DeleteAsset(TempRoot);
             }
-            
+
             // Clean up empty parent folders to avoid debris
             CleanupEmptyParentFolders(TempRoot);
         }
@@ -58,9 +58,9 @@ namespace MCPForUnityTests.Editor.Tools
                 ["action"] = "set_material_shader_property",
                 ["materialPath"] = _matPath,
                 ["property"] = "_BaseColor", // URP
-                ["value"] = new JArray(color.r, color.g, color.b, color.a)
+                ["value"] = new JArray(color.r, color.g, color.b, color.a),
             };
-            
+
             // Check if using Standard shader (fallback)
             var mat = AssetDatabase.LoadAssetAtPath<Material>(_matPath);
             if (mat.shader.name == "Standard")
@@ -73,10 +73,10 @@ namespace MCPForUnityTests.Editor.Tools
 
             // Assert
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-            
+
             mat = AssetDatabase.LoadAssetAtPath<Material>(_matPath); // Reload
             var prop = mat.shader.name == "Standard" ? "_Color" : "_BaseColor";
-            
+
             Assert.IsTrue(mat.HasProperty(prop), $"Material should have property {prop}");
             Assert.AreEqual(color, mat.GetColor(prop));
         }
@@ -90,7 +90,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ["action"] = "set_material_color",
                 ["materialPath"] = _matPath,
-                ["color"] = new JArray(color.r, color.g, color.b, color.a)
+                ["color"] = new JArray(color.r, color.g, color.b, color.a),
             };
 
             // Act
@@ -98,10 +98,10 @@ namespace MCPForUnityTests.Editor.Tools
 
             // Assert
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-            
+
             var mat = AssetDatabase.LoadAssetAtPath<Material>(_matPath);
             var prop = mat.HasProperty("_BaseColor") ? "_BaseColor" : "_Color";
-            
+
             Assert.IsTrue(mat.HasProperty(prop), $"Material should have property {prop}");
             Assert.AreEqual(color, mat.GetColor(prop));
         }
@@ -112,7 +112,7 @@ namespace MCPForUnityTests.Editor.Tools
             // Arrange
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = "AssignTestCube";
-            
+
             try
             {
                 var paramsObj = new JObject
@@ -121,7 +121,7 @@ namespace MCPForUnityTests.Editor.Tools
                     ["target"] = "AssignTestCube",
                     ["searchMethod"] = "by_name",
                     ["materialPath"] = _matPath,
-                    ["slot"] = 0
+                    ["slot"] = 0,
                 };
 
                 // Act
@@ -129,7 +129,7 @@ namespace MCPForUnityTests.Editor.Tools
 
                 // Assert
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-                
+
                 var renderer = go.GetComponent<Renderer>();
                 Assert.IsNotNull(renderer.sharedMaterial);
                 // Compare names because objects might be different instances (loaded vs scene)
@@ -141,7 +141,7 @@ namespace MCPForUnityTests.Editor.Tools
                 UnityEngine.Object.DestroyImmediate(go);
             }
         }
-        
+
         [TestCase(null)]
         [TestCase("shared")]
         [TestCase("instance")]
@@ -166,9 +166,10 @@ namespace MCPForUnityTests.Editor.Tools
                     ["target"] = go.GetInstanceIDCompat().ToString(),
                     ["searchMethod"] = "by_id",
                     ["materialPath"] = _matPath,
-                    ["slot"] = 1
+                    ["slot"] = 1,
                 };
-                if (mode != null) request["mode"] = mode;
+                if (mode != null)
+                    request["mode"] = mode;
                 var result = ToJObject(ManageMaterial.HandleCommand(request));
 
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
@@ -181,7 +182,8 @@ namespace MCPForUnityTests.Editor.Tools
                 }
                 else
                 {
-                    if (selected != material) instance = selected;
+                    if (selected != material)
+                        instance = selected;
                     Assert.AreNotSame(material, selected, "Instance assignment must clone the selected source material.");
                     Assert.IsFalse(AssetDatabase.Contains(selected));
                     Assert.AreSame(material.shader, selected.shader);
@@ -195,7 +197,8 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 UnityEngine.Object.DestroyImmediate(go);
                 UnityEngine.Object.DestroyImmediate(peer);
-                if (instance != null) UnityEngine.Object.DestroyImmediate(instance);
+                if (instance != null)
+                    UnityEngine.Object.DestroyImmediate(instance);
             }
         }
 
@@ -211,17 +214,22 @@ namespace MCPForUnityTests.Editor.Tools
             int undoGroup = Undo.GetCurrentGroup();
             try
             {
-                var result = ToJObject(ManageMaterial.HandleCommand(new JObject
-                {
-                    ["action"] = "assign_material_to_renderer",
-                    ["target"] = go.GetInstanceIDCompat().ToString(),
-                    ["searchMethod"] = "by_id",
-                    ["materialPath"] = _matPath,
-                    ["slot"] = 1,
-                    ["mode"] = "instance"
-                }));
+                var result = ToJObject(
+                    ManageMaterial.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "assign_material_to_renderer",
+                            ["target"] = go.GetInstanceIDCompat().ToString(),
+                            ["searchMethod"] = "by_id",
+                            ["materialPath"] = _matPath,
+                            ["slot"] = 1,
+                            ["mode"] = "instance",
+                        }
+                    )
+                );
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-                if (renderer.sharedMaterials[1] != material) instance = renderer.sharedMaterials[1];
+                if (renderer.sharedMaterials[1] != material)
+                    instance = renderer.sharedMaterials[1];
                 Assert.IsNotNull(instance, "Instance assignment must create a clone.");
 
                 Undo.FlushUndoRecordObjects();
@@ -257,14 +265,18 @@ namespace MCPForUnityTests.Editor.Tools
                 var renderer = go.GetComponent<Renderer>();
                 var original = renderer.sharedMaterial;
                 var materialCount = UnityEngine.Resources.FindObjectsOfTypeAll<Material>().Length;
-                var result = ToJObject(ManageMaterial.HandleCommand(new JObject
-                {
-                    ["action"] = "assign_material_to_renderer",
-                    ["target"] = go.GetInstanceIDCompat().ToString(),
-                    ["searchMethod"] = "by_id",
-                    ["materialPath"] = _matPath,
-                    ["mode"] = mode
-                }));
+                var result = ToJObject(
+                    ManageMaterial.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "assign_material_to_renderer",
+                            ["target"] = go.GetInstanceIDCompat().ToString(),
+                            ["searchMethod"] = "by_id",
+                            ["materialPath"] = _matPath,
+                            ["mode"] = mode,
+                        }
+                    )
+                );
 
                 Assert.IsFalse(result.Value<bool>("success"), result.ToString());
                 StringAssert.Contains("mode", result.Value<string>("error"));
@@ -284,12 +296,16 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var path = $"{TempRoot}/Rejected.mat";
             var materialCount = UnityEngine.Resources.FindObjectsOfTypeAll<Material>().Length;
-            var result = ToJObject(ManageMaterial.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["materialPath"] = path,
-                ["properties"] = JToken.Parse(properties)
-            }));
+            var result = ToJObject(
+                ManageMaterial.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["materialPath"] = path,
+                        ["properties"] = JToken.Parse(properties),
+                    }
+                )
+            );
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("properties", result.Value<string>("error"));
@@ -303,12 +319,16 @@ namespace MCPForUnityTests.Editor.Tools
         public void CreateMaterial_ObjectPropertiesStillCreatesAsset(bool jsonString)
         {
             var path = $"{TempRoot}/Valid.mat";
-            var result = ToJObject(ManageMaterial.HandleCommand(new JObject
-            {
-                ["action"] = "create",
-                ["materialPath"] = path,
-                ["properties"] = jsonString ? (JToken)new JValue("{}") : new JObject()
-            }));
+            var result = ToJObject(
+                ManageMaterial.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["materialPath"] = path,
+                        ["properties"] = jsonString ? (JToken)new JValue("{}") : new JObject(),
+                    }
+                )
+            );
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<Material>(path));
@@ -317,10 +337,10 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SetRendererColor_PropertyBlock_Works()
         {
-             // Arrange
+            // Arrange
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = "BlockTestCube";
-            
+
             // Assign the material first so we have something valid
             var mat = AssetDatabase.LoadAssetAtPath<Material>(_matPath);
             go.GetComponent<Renderer>().sharedMaterial = mat;
@@ -334,7 +354,7 @@ namespace MCPForUnityTests.Editor.Tools
                     ["target"] = "BlockTestCube",
                     ["searchMethod"] = "by_name",
                     ["color"] = new JArray(color.r, color.g, color.b, color.a),
-                    ["mode"] = "property_block"
+                    ["mode"] = "property_block",
                 };
 
                 // Act
@@ -342,14 +362,14 @@ namespace MCPForUnityTests.Editor.Tools
 
                 // Assert
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-                
+
                 var renderer = go.GetComponent<Renderer>();
                 var block = new MaterialPropertyBlock();
                 renderer.GetPropertyBlock(block, 0);
-                
+
                 var prop = mat.HasProperty("_BaseColor") ? "_BaseColor" : "_Color";
                 Assert.AreEqual(color, block.GetColor(prop));
-                
+
                 // Verify material asset didn't change (it was originally white/gray from setup?)
                 // We didn't check original color, but property block shouldn't affect shared material
                 // We can check that sharedMaterial color is NOT red if we set it to something else first
@@ -364,12 +384,8 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void GetMaterialInfo_ReturnsProperties()
         {
-             // Arrange
-            var paramsObj = new JObject
-            {
-                ["action"] = "get_material_info",
-                ["materialPath"] = _matPath
-            };
+            // Arrange
+            var paramsObj = new JObject { ["action"] = "get_material_info", ["materialPath"] = _matPath };
 
             // Act
             var result = ToJObject(ManageMaterial.HandleCommand(paramsObj));
@@ -382,13 +398,14 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsInstanceOf<JArray>(data["properties"]);
             var props = data["properties"] as JArray;
             Assert.IsTrue(props.Count > 0);
-            
+
             // Check for standard properties
             bool foundColor = false;
-            foreach(var p in props)
+            foreach (var p in props)
             {
                 var name = p["name"]?.ToString();
-                if (name == "_Color" || name == "_BaseColor") foundColor = true;
+                if (name == "_Color" || name == "_BaseColor")
+                    foundColor = true;
             }
             Assert.IsTrue(foundColor, "Should find color property");
         }

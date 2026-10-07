@@ -12,7 +12,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object SetPositions(JObject @params)
         {
             LineRenderer lr = LineRead.FindLineRenderer(@params);
-            if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
+            if (lr == null)
+                return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
             if (!TryParsePositions(@params["positions"], out var positions, out var error))
                 return new { success = false, message = error };
@@ -30,7 +31,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object AddPosition(JObject @params)
         {
             LineRenderer lr = LineRead.FindLineRenderer(@params);
-            if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
+            if (lr == null)
+                return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
             if (!TryParsePosition(@params["position"], allowDefault: true, out var pos))
                 return new { success = false, message = "Invalid position: expected [x, y, z] or {x, y, z}" };
@@ -43,16 +45,23 @@ namespace MCPForUnity.Editor.Tools.Vfx
             lr.SetPosition(idx, pos);
             EditorUtility.SetDirty(lr);
 
-            return new { success = true, message = $"Added position at index {idx}", index = idx };
+            return new
+            {
+                success = true,
+                message = $"Added position at index {idx}",
+                index = idx,
+            };
         }
 
         public static object SetPosition(JObject @params)
         {
             LineRenderer lr = LineRead.FindLineRenderer(@params);
-            if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
+            if (lr == null)
+                return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
             int index = @params["index"]?.ReadScalar<int?>() ?? -1;
-            if (index < 0 || index >= lr.positionCount) return new { success = false, message = $"Invalid index {index}" };
+            if (index < 0 || index >= lr.positionCount)
+                return new { success = false, message = $"Invalid index {index}" };
 
             if (!TryParsePosition(@params["position"], allowDefault: true, out var pos))
                 return new { success = false, message = "Invalid position: expected [x, y, z] or {x, y, z}" };
@@ -75,21 +84,38 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object SetWidth(JObject @params)
         {
             LineRenderer lr = LineRead.FindLineRenderer(@params);
-            if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
+            if (lr == null)
+                return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
             var changes = new List<string>();
             var updates = new List<Action>();
 
-            RendererHelpers.ApplyWidthProperties(@params, changes,
-                v => { RequireFinite(v, "startWidth"); updates.Add(() => lr.startWidth = v); },
-                v => { RequireFinite(v, "endWidth"); updates.Add(() => lr.endWidth = v); },
+            RendererHelpers.ApplyWidthProperties(
+                @params,
+                changes,
+                v =>
+                {
+                    RequireFinite(v, "startWidth");
+                    updates.Add(() => lr.startWidth = v);
+                },
+                v =>
+                {
+                    RequireFinite(v, "endWidth");
+                    updates.Add(() => lr.endWidth = v);
+                },
                 v => updates.Add(() => lr.widthCurve = v),
-                v => { RequireFinite(v, "widthMultiplier"); updates.Add(() => lr.widthMultiplier = v); },
-                ManageVfxCommon.ParseAnimationCurve);
+                v =>
+                {
+                    RequireFinite(v, "widthMultiplier");
+                    updates.Add(() => lr.widthMultiplier = v);
+                },
+                ManageVfxCommon.ParseAnimationCurve
+            );
 
             RendererHelpers.EnsureMaterial(lr);
             Undo.RecordObject(lr, "Set Line Width");
-            foreach (var update in updates) update();
+            foreach (var update in updates)
+                update();
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
         }
@@ -97,17 +123,24 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object SetColor(JObject @params)
         {
             LineRenderer lr = LineRead.FindLineRenderer(@params);
-            if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
+            if (lr == null)
+                return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
             RendererHelpers.EnsureMaterial(lr);
 
             Undo.RecordObject(lr, "Set Line Color");
             var changes = new List<string>();
 
-            RendererHelpers.ApplyColorProperties(@params, changes,
-                v => lr.startColor = v, v => lr.endColor = v,
+            RendererHelpers.ApplyColorProperties(
+                @params,
+                changes,
+                v => lr.startColor = v,
+                v => lr.endColor = v,
                 v => lr.colorGradient = v,
-                ManageVfxCommon.ParseColor, ManageVfxCommon.ParseGradient, fadeEndAlpha: false);
+                ManageVfxCommon.ParseColor,
+                ManageVfxCommon.ParseGradient,
+                fadeEndAlpha: false
+            );
 
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
@@ -122,15 +155,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object SetProperties(JObject @params)
         {
             LineRenderer lr = LineRead.FindLineRenderer(@params);
-            if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
+            if (lr == null)
+                return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
             Vector3[] positions = null;
             int? positionCount = null;
             if (@params["positions"] != null)
             {
                 // Explicit null retains the existing positions and suppresses positionCount.
-                if (@params["positions"].Type != JTokenType.Null &&
-                    !TryParsePositions(@params["positions"], out positions, out var error))
+                if (@params["positions"].Type != JTokenType.Null && !TryParsePositions(@params["positions"], out positions, out var error))
                     return new { success = false, message = error };
             }
             else if (@params["positionCount"] != null)
@@ -142,20 +175,28 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             var rendererChanges = new List<string>();
             var updates = new List<Action>();
-            RendererHelpers.ApplyLineTrailProperties(@params, rendererChanges,
-                v => updates.Add(() => lr.loop = v), v => updates.Add(() => lr.useWorldSpace = v),
-                v => updates.Add(() => lr.numCornerVertices = v), v => updates.Add(() => lr.numCapVertices = v),
-                v => updates.Add(() => lr.alignment = v), v => updates.Add(() => lr.textureMode = v),
-                v => updates.Add(() => lr.generateLightingData = v));
+            RendererHelpers.ApplyLineTrailProperties(
+                @params,
+                rendererChanges,
+                v => updates.Add(() => lr.loop = v),
+                v => updates.Add(() => lr.useWorldSpace = v),
+                v => updates.Add(() => lr.numCornerVertices = v),
+                v => updates.Add(() => lr.numCapVertices = v),
+                v => updates.Add(() => lr.alignment = v),
+                v => updates.Add(() => lr.textureMode = v),
+                v => updates.Add(() => lr.generateLightingData = v)
+            );
             var applyCommon = RendererHelpers.PrepareCommonRendererProperties(lr, @params, rendererChanges);
 
             Material material = null;
             if (@params["materialPath"] != null)
             {
                 material = ManageVfxCommon.FindMaterialByPath(@params["materialPath"].ToString());
-                if (material == null) McpLog.Warn($"Material not found: {@params["materialPath"]}");
+                if (material == null)
+                    McpLog.Warn($"Material not found: {@params["materialPath"]}");
             }
-            if (material == null) RendererHelpers.EnsureMaterial(lr);
+            if (material == null)
+                RendererHelpers.EnsureMaterial(lr);
 
             Undo.RecordObject(lr, "Set Line Properties");
             var changes = new List<string>();
@@ -180,7 +221,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 changes.Add("positionCount");
             }
 
-            foreach (var update in updates) update();
+            foreach (var update in updates)
+                update();
             applyCommon();
             changes.AddRange(rendererChanges);
 
@@ -192,7 +234,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         {
             positions = null;
             error = "Positions array required";
-            if (!(token is JArray array)) return false;
+            if (!(token is JArray array))
+                return false;
 
             positions = new Vector3[array.Count];
             for (int i = 0; i < array.Count; i++)
@@ -210,9 +253,11 @@ namespace MCPForUnity.Editor.Tools.Vfx
         private static bool TryParsePosition(JToken token, bool allowDefault, out Vector3 position)
         {
             position = Vector3.zero;
-            if (token == null || token.Type == JTokenType.Null) return allowDefault;
+            if (token == null || token.Type == JTokenType.Null)
+                return allowDefault;
             var parsed = VectorParsing.ParseVector3(token);
-            if (!parsed.HasValue) return false;
+            if (!parsed.HasValue)
+                return false;
             position = parsed.Value;
             return true;
         }
@@ -220,7 +265,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object Clear(JObject @params)
         {
             LineRenderer lr = LineRead.FindLineRenderer(@params);
-            if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
+            if (lr == null)
+                return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
             int count = lr.positionCount;
             Undo.RecordObject(lr, "Clear Line");

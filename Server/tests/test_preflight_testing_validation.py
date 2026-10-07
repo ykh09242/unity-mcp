@@ -12,12 +12,18 @@ from services.tools import preflight, refresh_unity, run_tests
 
 @pytest.fixture
 def editor_boundary(monkeypatch):
-    state = AsyncMock(return_value={
-        "success": True, "data": {"advice": {"ready_for_tools": True}},
-    })
-    send = AsyncMock(return_value={
-        "success": True, "data": {"job_id": "fixture-job", "status": "queued"},
-    })
+    state = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {"advice": {"ready_for_tools": True}},
+        }
+    )
+    send = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {"job_id": "fixture-job", "status": "queued"},
+        }
+    )
     monkeypatch.setattr(preflight, "_in_pytest", lambda: False)
     monkeypatch.setattr(refresh_unity, "_in_pytest", lambda: False)
     monkeypatch.setattr(editor_state, "get_editor_state_authoritative", state)
@@ -45,9 +51,14 @@ async def test_valid_initialization_timeout_still_checks_readiness(editor_bounda
     assert response.success is True
     state.assert_awaited_once_with(ctx)
     params = send.await_args.args[3]
-    assert params == ({"mode": "EditMode"} if timeout is None else {
-        "mode": "EditMode", "initTimeout": timeout,
-    })
+    assert params == (
+        {"mode": "EditMode"}
+        if timeout is None
+        else {
+            "mode": "EditMode",
+            "initTimeout": timeout,
+        }
+    )
 
 
 @pytest.mark.asyncio
@@ -88,7 +99,8 @@ async def test_reload_rejection_then_invalid_mutation_skips_second_wait(editor_b
     state.return_value = {"success": True, "data": {"advice": {"ready_for_tools": True}}}
     rejected = {"success": False, "error": "Invalid script edit parameters"}
     send.side_effect = [
-        {"success": False, "hint": "retry", "data": {"reason": "reloading"}}, rejected,
+        {"success": False, "hint": "retry", "data": {"reason": "reloading"}},
+        rejected,
     ]
     response = await refresh_unity.send_mutation(ctx, "Selected@fixture", "manage_script", {})
     assert response is rejected
@@ -104,7 +116,11 @@ async def test_disconnect_still_recovers_and_verifies_mutation(editor_boundary):
     verified = {"success": True, "message": "Mutation verified"}
     verify = AsyncMock(return_value=verified)
     response = await refresh_unity.send_mutation(
-        ctx, "Selected@fixture", "manage_script", {}, verify_after_disconnect=verify,
+        ctx,
+        "Selected@fixture",
+        "manage_script",
+        {},
+        verify_after_disconnect=verify,
     )
     assert response is verified
     verify.assert_awaited_once_with()

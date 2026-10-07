@@ -1,4 +1,5 @@
 """Shader/animation contracts through actual Click and central HTTP handling."""
+
 import builtins
 import importlib
 import json
@@ -33,15 +34,50 @@ COMMANDS = [
     ["animation", "controller", "add-layer", CONTROLLER, "Upper"],
     ["animation", "controller", "remove-layer", CONTROLLER, "--layer-index", "0"],
     ["animation", "controller", "set-layer-weight", CONTROLLER, "0", "--layer-index", "0"],
-    ["animation", "controller", "create-blend-tree-1d", CONTROLLER, "Walk", "--blend-param", "Speed"],
-    ["animation", "controller", "create-blend-tree-2d", CONTROLLER, "Walk", "--blend-param-x", "X", "--blend-param-y", "Y"],
-    ["animation", "controller", "add-blend-tree-child", CONTROLLER, "Walk", "--clip-path", CLIP, "--threshold", "0", "--position", "0", "0"],
+    [
+        "animation",
+        "controller",
+        "create-blend-tree-1d",
+        CONTROLLER,
+        "Walk",
+        "--blend-param",
+        "Speed",
+    ],
+    [
+        "animation",
+        "controller",
+        "create-blend-tree-2d",
+        CONTROLLER,
+        "Walk",
+        "--blend-param-x",
+        "X",
+        "--blend-param-y",
+        "Y",
+    ],
+    [
+        "animation",
+        "controller",
+        "add-blend-tree-child",
+        CONTROLLER,
+        "Walk",
+        "--clip-path",
+        CLIP,
+        "--threshold",
+        "0",
+        "--position",
+        "0",
+        "0",
+    ],
 ]
 
 
 @pytest.fixture
 def controlled_http(monkeypatch):
-    expected = {"success": True, "message": "Operation completed", "data": {"contents": "Shader text", "count": 0, "enabled": False, "reference": None}}
+    expected = {
+        "success": True,
+        "message": "Operation completed",
+        "data": {"contents": "Shader text", "count": 0, "enabled": False, "reference": None},
+    }
     raw = dict(expected)
     requests = []
     client_type = httpx.AsyncClient
@@ -50,7 +86,9 @@ def controlled_http(monkeypatch):
         requests.append(json.loads(request.content))
         return httpx.Response(200, json=raw)
 
-    monkeypatch.setattr(connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond)))
+    monkeypatch.setattr(
+        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+    )
     monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
     return expected, raw, requests
 
@@ -62,7 +100,9 @@ def test_successful_json_is_one_response_document(controlled_http, command, wrap
     if wrapped:
         raw.clear()
         raw.update({"status": "success", "result": expected})
-    result = CliRunner().invoke(cli, ["--format", "json", "--instance", "Project@fixture", *command])
+    result = CliRunner().invoke(
+        cli, ["--format", "json", "--instance", "Project@fixture", *command]
+    )
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == expected
     assert len(requests) == 1 and requests[0]["unity_instance"] == "Project@fixture"
@@ -72,7 +112,11 @@ def test_successful_json_is_one_response_document(controlled_http, command, wrap
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_native_failure_retains_document_and_nonzero_exit(controlled_http, command, wrapped):
     _, raw, requests = controlled_http
-    expected = {"success": False, "error": "Native operation rejected", "data": {"count": 0, "enabled": False, "reference": None}}
+    expected = {
+        "success": False,
+        "error": "Native operation rejected",
+        "data": {"count": 0, "enabled": False, "reference": None},
+    }
     raw.clear()
     raw.update({"status": "success", "result": expected} if wrapped else expected)
     result = CliRunner().invoke(cli, ["--format", "json", *command])
@@ -86,7 +130,13 @@ def test_native_failure_retains_document_and_nonzero_exit(controlled_http, comma
 def test_explicit_non_shader_suffix_never_targets_shader_sibling(controlled_http, suffix, action):
     _, _, requests = controlled_http
     command = ["shader", action, "Assets/Shaders/Fixture" + suffix]
-    command += ["--contents", "Changed"] if action == "update" else ["--force"] if action == "delete" else []
+    command += (
+        ["--contents", "Changed"]
+        if action == "update"
+        else ["--force"]
+        if action == "delete"
+        else []
+    )
     result = CliRunner().invoke(cli, command)
     assert result.exit_code != 0, (result.output, requests)
     assert requests == [], "unsupported explicit path was rewritten to a .shader request"
@@ -104,7 +154,9 @@ def test_explicit_empty_shader_contents_do_not_read_stdin(controlled_http, actio
 @pytest.mark.parametrize("action", ["create", "update"])
 @pytest.mark.parametrize("default_encoding", ["utf-8", "cp1252", "cp949"])
 @pytest.mark.parametrize("bom", [b"", b"\xef\xbb\xbf"])
-def test_shader_file_unicode_is_independent_of_locale(controlled_http, monkeypatch, tmp_path, action, default_encoding, bom):
+def test_shader_file_unicode_is_independent_of_locale(
+    controlled_http, monkeypatch, tmp_path, action, default_encoding, bom
+):
     _, _, requests = controlled_http
     shader_commands = importlib.import_module("cli.commands.shader")
     contents = 'Shader "Custom/Fixture" { /* caf\u00e9 \ud55c\uae00 \U0001f600 */ }\n'
@@ -133,7 +185,9 @@ def test_shader_file_invalid_utf8_never_sends_contents(controlled_http, tmp_path
     assert requests == []
 
 
-@pytest.mark.parametrize("path", ["Assets/Shaders/Fixture", SHADER, "Assets/Shaders/Fixture.SHADER"])
+@pytest.mark.parametrize(
+    "path", ["Assets/Shaders/Fixture", SHADER, "Assets/Shaders/Fixture.SHADER"]
+)
 def test_shader_supported_path_forms_keep_name_and_directory(controlled_http, path):
     _, _, requests = controlled_http
     result = CliRunner().invoke(cli, ["shader", "read", path])
@@ -141,24 +195,71 @@ def test_shader_supported_path_forms_keep_name_and_directory(controlled_http, pa
     assert requests[0]["params"] == {"action": "read", "name": "Fixture", "path": "Assets/Shaders"}
 
 
-@pytest.mark.parametrize("command,notice", [
-    (["shader", "read", SHADER], "Shader text"),
-    (["shader", "create", "Fixture", "--contents", "Shader text"], "Created shader:"),
-    (["animation", "controller", "create-blend-tree-1d", CONTROLLER, "Walk", "--blend-param", "Speed"], "Created 1D blend tree"),
-])
+@pytest.mark.parametrize(
+    "command,notice",
+    [
+        (["shader", "read", SHADER], "Shader text"),
+        (["shader", "create", "Fixture", "--contents", "Shader text"], "Created shader:"),
+        (
+            [
+                "animation",
+                "controller",
+                "create-blend-tree-1d",
+                CONTROLLER,
+                "Walk",
+                "--blend-param",
+                "Speed",
+            ],
+            "Created 1D blend tree",
+        ),
+    ],
+)
 def test_text_output_keeps_readable_contents_and_notices(controlled_http, command, notice):
     result = CliRunner().invoke(cli, command)
     assert result.exit_code == 0, result.output
     assert notice in result.stdout
 
 
-@pytest.mark.parametrize("command,properties", [
-    (["animator", "set-enabled", "0", "false"], {"enabled": False}),
-    (["animator", "set-speed", "0", "0"], {"speed": 0.0}),
-    (["controller", "add-state", CONTROLLER, "Walk", "--no-default", "--speed", "0"], {"stateName": "Walk", "isDefault": False, "speed": 0.0, "layerIndex": 0}),
-    (["controller", "add-blend-tree-child", CONTROLLER, "Walk", "--clip-path", CLIP, "--threshold", "0", "--position", "0", "0"], {"stateName": "Walk", "layerIndex": 0, "threshold": 0.0, "position": [0.0, 0.0]}),
-    (["controller", "add-parameter", CONTROLLER, "Enabled", "--type", "bool", "--default-value", "false"], {"parameterName": "Enabled", "parameterType": "bool", "defaultValue": False}),
-])
+@pytest.mark.parametrize(
+    "command,properties",
+    [
+        (["animator", "set-enabled", "0", "false"], {"enabled": False}),
+        (["animator", "set-speed", "0", "0"], {"speed": 0.0}),
+        (
+            ["controller", "add-state", CONTROLLER, "Walk", "--no-default", "--speed", "0"],
+            {"stateName": "Walk", "isDefault": False, "speed": 0.0, "layerIndex": 0},
+        ),
+        (
+            [
+                "controller",
+                "add-blend-tree-child",
+                CONTROLLER,
+                "Walk",
+                "--clip-path",
+                CLIP,
+                "--threshold",
+                "0",
+                "--position",
+                "0",
+                "0",
+            ],
+            {"stateName": "Walk", "layerIndex": 0, "threshold": 0.0, "position": [0.0, 0.0]},
+        ),
+        (
+            [
+                "controller",
+                "add-parameter",
+                CONTROLLER,
+                "Enabled",
+                "--type",
+                "bool",
+                "--default-value",
+                "false",
+            ],
+            {"parameterName": "Enabled", "parameterType": "bool", "defaultValue": False},
+        ),
+    ],
+)
 def test_animation_wire_keeps_false_zero_and_clip_routing(controlled_http, command, properties):
     _, _, requests = controlled_http
     result = CliRunner().invoke(cli, ["animation", *command])
@@ -169,7 +270,7 @@ def test_animation_wire_keeps_false_zero_and_clip_routing(controlled_http, comma
 
 
 def test_json_and_rejected_shader_paths_in_fresh_process(tmp_path):
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import json
         import httpx
         from click.testing import CliRunner
@@ -207,8 +308,15 @@ def test_json_and_rejected_shader_paths_in_fresh_process(tmp_path):
             assert result.exit_code != 0, result.output
         assert len(requests) == 12
         print("fresh CLI/HTTP: 12 JSON scenarios and 3 unsupported-path rejections passed")
-    ''')
-    env = {**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true", "APPDATA": str(tmp_path), "XDG_DATA_HOME": str(tmp_path)}
-    result = subprocess.run([sys.executable, "-B", "-c", code], env=env, capture_output=True, text=True, timeout=30)
+    """)
+    env = {
+        **os.environ,
+        "UNITY_MCP_DISABLE_TELEMETRY": "true",
+        "APPDATA": str(tmp_path),
+        "XDG_DATA_HOME": str(tmp_path),
+    }
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", code], env=env, capture_output=True, text=True, timeout=30
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "12 JSON scenarios and 3 unsupported-path rejections passed" in result.stdout

@@ -1,7 +1,7 @@
 using System;
+using MCPForUnity.Editor.Tools;
 using NUnit.Framework;
 using UnityEngine;
-using MCPForUnity.Editor.Tools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -111,12 +111,10 @@ namespace MCPForUnityTests.Editor.Tools
 
             // Verify it's not from an Editor assembly by checking the assembly name
             string assemblyName = type.Assembly.GetName().Name;
-            Assert.That(assemblyName, Does.Not.Contain("Editor"),
-                "User script should come from Player assembly, not Editor assembly");
+            Assert.That(assemblyName, Does.Not.Contain("Editor"), "User script should come from Player assembly, not Editor assembly");
 
             // Verify it's from the TestAsmdef assembly (which is a Player assembly)
-            Assert.AreEqual("TestAsmdef", assemblyName,
-                "CustomComponent should be resolved from TestAsmdef assembly");
+            Assert.AreEqual("TestAsmdef", assemblyName, "CustomComponent should be resolved from TestAsmdef assembly");
         }
 
         [Test]
@@ -138,8 +136,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             Assert.IsTrue(result, "Should resolve Rigidbody");
             Assert.IsTrue(typeof(Component).IsAssignableFrom(type), "Resolved type should be assignable from Component");
-            Assert.IsTrue(typeof(MonoBehaviour).IsAssignableFrom(type) ||
-                         typeof(Component).IsAssignableFrom(type), "Should be a valid Unity component");
+            Assert.IsTrue(typeof(MonoBehaviour).IsAssignableFrom(type) || typeof(Component).IsAssignableFrom(type), "Should be a valid Unity component");
         }
     }
 }

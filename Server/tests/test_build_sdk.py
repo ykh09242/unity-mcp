@@ -1,4 +1,5 @@
 """Actual SDK settings-value and pending/terminal build response contracts."""
+
 import os
 import subprocess
 import sys
@@ -6,7 +7,7 @@ import textwrap
 
 
 def test_build_settings_and_status_at_actual_sdk_boundary():
-    code = textwrap.dedent('''
+    code = textwrap.dedent("""
         import asyncio, importlib
         from fastmcp import FastMCP, Client
         from core.logging_decorator import log_execution
@@ -66,8 +67,13 @@ def test_build_settings_and_status_at_actual_sdk_boundary():
                     assert sent[before:]==[{"action":"batch","targets":["windows64","linux64"]},{"action":"status","targets":["windows64","linux64"],"job_id":"batch-new"}]
             print("real SDK build settings/status contracts passed")
         asyncio.run(main())
-    ''')
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30,
-                            env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"})
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "real SDK build settings/status contracts passed" in result.stdout

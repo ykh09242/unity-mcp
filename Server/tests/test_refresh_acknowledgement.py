@@ -14,8 +14,23 @@ from services.tools import refresh_unity as refresh_module
 @pytest.mark.asyncio
 @pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
 @pytest.mark.parametrize("compile_mode", ["none", "request"])
-@pytest.mark.parametrize("case", ["rejected", "rejected_disconnect", "retry_rejected", "no_wait", "unchanged", "new_sampled", "new_unsampled", "lost_response", "lost_response_no_wait"])
-async def test_public_refresh_acknowledges_only_confirmed_snapshot(monkeypatch, tmp_path, protocol, compile_mode, case):
+@pytest.mark.parametrize(
+    "case",
+    [
+        "rejected",
+        "rejected_disconnect",
+        "retry_rejected",
+        "no_wait",
+        "unchanged",
+        "new_sampled",
+        "new_unsampled",
+        "lost_response",
+        "lost_response_no_wait",
+    ],
+)
+async def test_public_refresh_acknowledges_only_confirmed_snapshot(
+    monkeypatch, tmp_path, protocol, compile_mode, case
+):
     # Given: an actual dirty scanner baseline and a selected public MCP tool.
     monkeypatch.setattr(scanner_module, "_in_pytest", lambda: False)
     monkeypatch.setattr(refresh_module, "_in_pytest", lambda: False)
@@ -40,8 +55,14 @@ async def test_public_refresh_acknowledges_only_confirmed_snapshot(monkeypatch, 
         assert selected == instance and command == "refresh_unity"
         assert kwargs == {"retry_on_reload": False}
         if case in ("rejected", "rejected_disconnect", "retry_rejected"):
-            return {"success": False, "error": "disconnected before dispatch" if case == "rejected_disconnect" else "Unity rejected before execution", "hint": "retry",
-                    "data": {"reason": "tests_running" if case == "retry_rejected" else "reloading"}}
+            return {
+                "success": False,
+                "error": "disconnected before dispatch"
+                if case == "rejected_disconnect"
+                else "Unity rejected before execution",
+                "hint": "retry",
+                "data": {"reason": "tests_running" if case == "retry_rejected" else "reloading"},
+            }
         if case in ("lost_response", "lost_response_no_wait"):
             return {"success": False, "error": "disconnected", "hint": "retry"}
         return {"success": True, "data": {"refresh_triggered": True}}
@@ -68,7 +89,13 @@ async def test_public_refresh_acknowledges_only_confirmed_snapshot(monkeypatch, 
     app.tool(name="refresh_unity")(refresh_module.refresh_unity)
     # When: the real public tool processes a refresh outcome.
     async with Client(app, mode=protocol) as client:
-        result = await client.call_tool("refresh_unity", {"compile": compile_mode, "wait_for_ready": case not in ("no_wait", "lost_response_no_wait")})
+        result = await client.call_tool(
+            "refresh_unity",
+            {
+                "compile": compile_mode,
+                "wait_for_ready": case not in ("no_wait", "lost_response_no_wait"),
+            },
+        )
     response = json.loads(result.content[0].text)
     # Then: rejected/no-wait/newer changes are never acknowledged as imported.
     assert requests == ["refresh_unity"]
@@ -106,10 +133,14 @@ def test_refresh_snapshot_cannot_clear_reassigned_project(monkeypatch, tmp_path)
 @pytest.mark.parametrize("scope", ["scripts", "assets", "all"])
 @pytest.mark.parametrize("compile_mode", ["none", "request"])
 @pytest.mark.parametrize("refresh_triggered", [True, False, None])
-async def test_refresh_acknowledgement_requires_asset_import(monkeypatch, protocol, scope, compile_mode, refresh_triggered):
+async def test_refresh_acknowledgement_requires_asset_import(
+    monkeypatch, protocol, scope, compile_mode, refresh_triggered
+):
     scanner = scanner_module.ExternalChangesScanner()
     instance = "RefreshScope@fixture"
-    scanner._states[instance] = scanner_module.ExternalChangesState(dirty=True, last_seen_mtime_ns=1)
+    scanner._states[instance] = scanner_module.ExternalChangesState(
+        dirty=True, last_seen_mtime_ns=1
+    )
     monkeypatch.setattr(refresh_module, "external_changes_scanner", scanner)
     requests = []
 
@@ -124,6 +155,7 @@ async def test_refresh_acknowledgement_requires_asset_import(monkeypatch, protoc
         return {"success": True, "data": data}
 
     monkeypatch.setattr(refresh_module.unity_transport, "send_with_unity_instance", transport)
+
     class Selected(Middleware):
         async def on_call_tool(self, context, call_next):
             await context.fastmcp_context.set_state("unity_instance", instance)
@@ -133,7 +165,9 @@ async def test_refresh_acknowledgement_requires_asset_import(monkeypatch, protoc
     app.add_middleware(Selected())
     app.tool(name="refresh_unity")(refresh_module.refresh_unity)
     async with Client(app, mode=protocol) as client:
-        result = await client.call_tool("refresh_unity", {"scope": scope, "compile": compile_mode, "wait_for_ready": True})
+        result = await client.call_tool(
+            "refresh_unity", {"scope": scope, "compile": compile_mode, "wait_for_ready": True}
+        )
     response = json.loads(result.content[0].text)
     assert response["success"] is True and len(requests) == 1
     acknowledged = scope != "scripts" and refresh_triggered is not False

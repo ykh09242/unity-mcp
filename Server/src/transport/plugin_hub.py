@@ -22,18 +22,27 @@ from core.config import config
 from core.constants import API_KEY_HEADER
 from models.models import MCPResponse
 from models.response_limits import (
-    MAX_RESPONSE_BYTES, MAX_RESPONSE_DEPTH, MAX_RESPONSE_NODES,
-    MAX_RESPONSE_RETAINED_BYTES, bounded_json_text, response_limit_error, response_size,
-    ResponseOwner, response_owner,
+    MAX_RESPONSE_BYTES,
+    MAX_RESPONSE_DEPTH,
+    MAX_RESPONSE_NODES,
+    MAX_RESPONSE_RETAINED_BYTES,
+    bounded_json_text,
+    response_limit_error,
+    response_size,
+    ResponseOwner,
+    response_owner,
 )
 from transport.plugin_registry import PluginRegistry
 from transport.charge_ledger import ChargeLedger
 from transport.json_decoder import decode_json
 from transport.editor_state_store import EditorStateStore
 from transport.large_result_assembler import (
-    CAPABILITY as LARGE_RESULT_CAPABILITY, MAGIC, MAX_FRAME_BYTES,
+    CAPABILITY as LARGE_RESULT_CAPABILITY,
+    MAGIC,
+    MAX_FRAME_BYTES,
     COMPRESSION_CAPABILITY,
-    LargeResultAssembler, LargeResultProtocolError,
+    LargeResultAssembler,
+    LargeResultProtocolError,
 )
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
 from services.api_key_service import ApiKeyService
@@ -121,8 +130,7 @@ class InstanceSelectionRequiredError(RuntimeError):
         "Call set_active_instance with Name@hash from mcpforunity://instances."
     )
 
-    def __init__(self, message: str | None = None,
-                 available_instances: list[str] | None = None):
+    def __init__(self, message: str | None = None, available_instances: list[str] | None = None):
         # Carried structurally so the transport layer can surface the ids without
         # parsing the message; also appended to the text for parity with the stdio
         # guard, which lists the ids inline.
@@ -154,8 +162,7 @@ class PluginHub(WebSocketEndpoint):
     # Fast-path commands should never block the client for long; return a retry hint instead.
     # This helps avoid the Cursor-side ~30s tool-call timeout when Unity is compiling/reloading
     # or is throttled while unfocused.
-    _FAST_FAIL_COMMANDS: set[str] = {
-        "read_console", "get_editor_state", "ping"}
+    _FAST_FAIL_COMMANDS: set[str] = {"read_console", "get_editor_state", "ping"}
 
     _registry: PluginRegistry | None = None
     _mcp: FastMCP | None = None
@@ -198,8 +205,14 @@ class PluginHub(WebSocketEndpoint):
     # still owned by the command coroutine during cancellation-sensitive cleanup.
     _retained_results: ClassVar[ChargeLedger] = ChargeLedger()
     CANCELLATION_CAPABILITY = "command_cancel_v1"
-    CAPABILITIES = frozenset({"editor_state_v1", LARGE_RESULT_CAPABILITY,
-                              COMPRESSION_CAPABILITY, CANCELLATION_CAPABILITY})
+    CAPABILITIES = frozenset(
+        {
+            "editor_state_v1",
+            LARGE_RESULT_CAPABILITY,
+            COMPRESSION_CAPABILITY,
+            CANCELLATION_CAPABILITY,
+        }
+    )
     _editor_states: ClassVar[EditorStateStore] = EditorStateStore()
     # No completed-result TTL: only callers overlapping an actual RPC share it.
     _readiness_reads: ClassVar[SharedToolReads[dict[str, Any]]] = SharedToolReads()
@@ -219,26 +232,41 @@ class PluginHub(WebSocketEndpoint):
         if entry is None or entry["future"].done():
             return False
         websocket = cls._connections.get(entry["session_id"])
-        return (websocket is not None
-                and getattr(websocket.state, "plugin_generation", None) == generation)
+        return (
+            websocket is not None
+            and getattr(websocket.state, "plugin_generation", None) == generation
+        )
 
     @classmethod
     def _has_result_capacity(cls, entry: Mapping[str, Any], charge: int) -> bool:
-        user_id, session_id = entry.get('user_id'), entry['session_id']
+        user_id, session_id = entry.get("user_id"), entry["session_id"]
         total = cls._retained_results.total_bytes + cls._raw_results.total_bytes
-        user_total = cls._retained_results.user_bytes(user_id) + cls._raw_results.user_bytes(user_id)
-        session_total = cls._retained_results.session_bytes(session_id) + cls._raw_results.session_bytes(session_id)
-        return (total + charge <= cls.MAX_RETAINED_RESULT_BYTES
-                and user_total + charge <= cls.MAX_RETAINED_RESULT_BYTES_PER_USER
-                and session_total + charge <= cls.MAX_RETAINED_RESULT_BYTES_PER_SESSION)
+        user_total = cls._retained_results.user_bytes(user_id) + cls._raw_results.user_bytes(
+            user_id
+        )
+        session_total = cls._retained_results.session_bytes(
+            session_id
+        ) + cls._raw_results.session_bytes(session_id)
+        return (
+            total + charge <= cls.MAX_RETAINED_RESULT_BYTES
+            and user_total + charge <= cls.MAX_RETAINED_RESULT_BYTES_PER_USER
+            and session_total + charge <= cls.MAX_RETAINED_RESULT_BYTES_PER_SESSION
+        )
 
     @classmethod
     def _reserve_transfer(cls, generation: str, command_id: str, size: int) -> bool:
         return cls._reserve_compressed_transfer(generation, command_id, size, 0)
 
     @classmethod
-    def _reserve_compressed_transfer(cls, generation: str, command_id: str,
-                                     size: int, working_bytes: int, *, ledger: ChargeLedger | None = None) -> bool:
+    def _reserve_compressed_transfer(
+        cls,
+        generation: str,
+        command_id: str,
+        size: int,
+        working_bytes: int,
+        *,
+        ledger: ChargeLedger | None = None,
+    ) -> bool:
         ledger = cls._raw_results if ledger is None else ledger
         if ledger is not cls._raw_results:
             return False
@@ -249,7 +277,10 @@ class PluginHub(WebSocketEndpoint):
         if entry is None or not cls._has_result_capacity(entry, charge):
             return False
         ledger[generation, command_id] = {
-            "bytes": charge, "user_id": entry.get("user_id"), "session_id": entry["session_id"]}
+            "bytes": charge,
+            "user_id": entry.get("user_id"),
+            "session_id": entry["session_id"],
+        }
         return True
 
     @classmethod
@@ -272,7 +303,8 @@ class PluginHub(WebSocketEndpoint):
         for generation, command_id in cls._large_results.expire():
             if cls._transfer_pending(generation, command_id):
                 cls._pending[command_id]["future"].set_result(
-                    response_limit_error("result_transfer_timeout"))
+                    response_limit_error("result_transfer_timeout")
+                )
 
     async def dispatch(self) -> None:
         """Own admission through connect failures, registration and disconnect."""
@@ -309,8 +341,10 @@ class PluginHub(WebSocketEndpoint):
         except asyncio.TimeoutError:
             close_code = 4408
             try:
-                await asyncio.wait_for(websocket.close(code=close_code, reason="Plugin registration timeout"),
-                                       self.CLOSE_TIMEOUT)
+                await asyncio.wait_for(
+                    websocket.close(code=close_code, reason="Plugin registration timeout"),
+                    self.CLOSE_TIMEOUT,
+                )
             except (asyncio.TimeoutError, RuntimeError):
                 pass
         finally:
@@ -332,18 +366,27 @@ class PluginHub(WebSocketEndpoint):
                 await websocket.close(code=4400, reason="Large results were not negotiated")
                 return None
             if len(raw) > MAX_FRAME_BYTES:
-                await websocket.close(code=1009, reason="Large result frame exceeds supported limits")
+                await websocket.close(
+                    code=1009, reason="Large result frame exceeds supported limits"
+                )
                 return None
             return raw
-        text = bounded_json_text(raw, max_bytes=self.MAX_RAW_MESSAGE_BYTES,
-                                 max_depth=self.MAX_RESULT_DEPTH,
-                                 max_nodes=self.MAX_RESULT_NODES)
+        text = bounded_json_text(
+            raw,
+            max_bytes=self.MAX_RAW_MESSAGE_BYTES,
+            max_depth=self.MAX_RESULT_DEPTH,
+            max_nodes=self.MAX_RESULT_NODES,
+        )
         if text is None:
             await websocket.close(code=1009, reason="Plugin message exceeds supported limits")
             return None
         try:
             # Subclass decode hooks are part of the existing bounded-text path.
-            return decode_json(raw, fallback_text=text) if type(raw) in (str, bytes) else json.loads(text)
+            return (
+                decode_json(raw, fallback_text=text)
+                if type(raw) in (str, bytes)
+                else json.loads(text)
+            )
         except (ValueError, RecursionError):
             await websocket.close(code=1003, reason="Malformed plugin message")
             return None
@@ -371,7 +414,9 @@ class PluginHub(WebSocketEndpoint):
             if size > cls.MAX_COMMAND_PAYLOAD_BYTES:
                 return False
             if isinstance(value, dict):
-                return all(visit(key, depth + 1) and visit(item, depth + 1) for key, item in value.items())
+                return all(
+                    visit(key, depth + 1) and visit(item, depth + 1) for key, item in value.items()
+                )
             if isinstance(value, (list, tuple)):
                 return all(visit(item, depth + 1) for item in value)
             return value is None or isinstance(value, (str, bool, int, float))
@@ -381,7 +426,9 @@ class PluginHub(WebSocketEndpoint):
     @staticmethod
     def _command_capacity_response() -> dict[str, Any]:
         return MCPResponse(
-            success=False, error="Unity command capacity reached; please retry", hint="retry",
+            success=False,
+            error="Unity command capacity reached; please retry",
+            hint="retry",
             data={"reason": "command_capacity", "retry_after_ms": 250},
         ).model_dump()
 
@@ -405,15 +452,25 @@ class PluginHub(WebSocketEndpoint):
         cls._ordinary_state_reads = SharedToolReads()
         cls._raw_results = ChargeLedger()
         raw_ledger = cls._raw_results
+
         def reserve(generation: str, command_id: str, size: int) -> bool:
-            return cls._reserve_compressed_transfer(generation, command_id, size, 0, ledger=raw_ledger)
-        def reserve_compressed(generation: str, command_id: str, size: int, working_bytes: int) -> bool:
-            return cls._reserve_compressed_transfer(generation, command_id, size, working_bytes, ledger=raw_ledger)
+            return cls._reserve_compressed_transfer(
+                generation, command_id, size, 0, ledger=raw_ledger
+            )
+
+        def reserve_compressed(
+            generation: str, command_id: str, size: int, working_bytes: int
+        ) -> bool:
+            return cls._reserve_compressed_transfer(
+                generation, command_id, size, working_bytes, ledger=raw_ledger
+            )
+
         def release(generation: str, command_id: str) -> None:
             raw_ledger.pop((generation, command_id), None)
+
         cls._large_results = LargeResultAssembler(
-            cls._transfer_pending, reserve, release,
-            reserve_compressed=reserve_compressed)
+            cls._transfer_pending, reserve, release, reserve_compressed=reserve_compressed
+        )
         # Start tracking MCP client sessions for tool-change notifications
         if mcp is not None:
             _install_session_tracking(mcp)
@@ -504,8 +561,7 @@ class PluginHub(WebSocketEndpoint):
         # Validate API key in remote-hosted mode (fail closed)
         if config.http_remote_hosted:
             if not ApiKeyService.is_initialized():
-                logger.debug(
-                    "WebSocket connection rejected: auth service not initialized")
+                logger.debug("WebSocket connection rejected: auth service not initialized")
                 await websocket.close(code=1013, reason="Try again later")
                 return
 
@@ -530,8 +586,7 @@ class PluginHub(WebSocketEndpoint):
                     indicator in result.error.lower()
                     for indicator in ("unavailable", "timeout", "service error")
                 ):
-                    logger.debug(
-                        "WebSocket connection rejected: auth service unavailable")
+                    logger.debug("WebSocket connection rejected: auth service unavailable")
                     await websocket.close(code=1013, reason="Try again later")
                     return
 
@@ -541,8 +596,7 @@ class PluginHub(WebSocketEndpoint):
 
             # Both valid and user_id must be present to accept
             if not result.user_id:
-                logger.debug(
-                    "WebSocket connection rejected: validated key missing user_id")
+                logger.debug("WebSocket connection rejected: validated key missing user_id")
                 await websocket.close(code=4403, reason="Invalid API key")
                 return
 
@@ -560,8 +614,9 @@ class PluginHub(WebSocketEndpoint):
         async with lock:
             # Authentication never changes; only its validated principal owns
             # per-user capacity. Local sockets share the local principal.
-            user_count = sum(owner == user_id for ws, owner in cls._admitted.values()
-                             if ws is not websocket)
+            user_count = sum(
+                owner == user_id for ws, owner in cls._admitted.values() if ws is not websocket
+            )
             accepted = user_count < registry.MAX_SESSIONS_PER_USER
             if accepted:
                 cls._admitted[id(websocket)] = (websocket, user_id)
@@ -617,9 +672,7 @@ class PluginHub(WebSocketEndpoint):
             return
         async with lock:
             cls._discard_socket_state(websocket)
-            session_ids = [
-                sid for sid, ws in cls._connections.items() if ws is websocket
-            ]
+            session_ids = [sid for sid, ws in cls._connections.items() if ws is websocket]
             for session_id in session_ids:
                 cls._connections.pop(session_id, None)
                 # Stop the ping loop for this session
@@ -635,11 +688,12 @@ class PluginHub(WebSocketEndpoint):
                     if entry.get("session_id") == session_id
                 ]
                 if pending_ids:
-                    logger.debug(f"Cancelling {len(pending_ids)} pending commands for disconnected session")
+                    logger.debug(
+                        f"Cancelling {len(pending_ids)} pending commands for disconnected session"
+                    )
                 for command_id in pending_ids:
                     entry = cls._pending.pop(command_id, None)
-                    future = entry.get("future") if isinstance(
-                        entry, dict) else None
+                    future = entry.get("future") if isinstance(entry, dict) else None
                     if future and not future.done():
                         future.set_exception(
                             PluginDisconnectedError(
@@ -648,8 +702,7 @@ class PluginHub(WebSocketEndpoint):
                         )
                 if cls._registry:
                     await cls._registry.unregister(session_id)
-                logger.info(
-                    f"Plugin session {session_id} disconnected ({close_code})")
+                logger.info(f"Plugin session {session_id} disconnected ({close_code})")
 
         if session_ids and not config.http_remote_hosted:
             await cls._refresh_server_tool_visibility()
@@ -660,7 +713,9 @@ class PluginHub(WebSocketEndpoint):
     # ------------------------------------------------------------------
     @classmethod
     async def get_cached_editor_state(
-        cls, unity_instance: str | None, user_id: str | None = None,
+        cls,
+        unity_instance: str | None,
+        user_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Read only a fresh snapshot owned by the currently routed connection."""
         if cls._registry is None or cls._lock is None:
@@ -669,7 +724,8 @@ class PluginHub(WebSocketEndpoint):
             return None
         try:
             session_id = await cls._resolve_session_id(
-                unity_instance, user_id=user_id, retry_on_reload=False)
+                unity_instance, user_id=user_id, retry_on_reload=False
+            )
         except (NoUnitySessionError, InstanceSelectionRequiredError):
             return None
         lock = cls._lock
@@ -679,13 +735,17 @@ class PluginHub(WebSocketEndpoint):
             websocket = cls._connections.get(session_id)
             if websocket is None or not cls._supports(websocket, "editor_state_v1"):
                 return None
-            if (websocket.application_state != WebSocketState.CONNECTED
-                    or websocket.client_state != WebSocketState.CONNECTED):
+            if (
+                websocket.application_state != WebSocketState.CONNECTED
+                or websocket.client_state != WebSocketState.CONNECTED
+            ):
                 return None
             return cls._editor_states.get(session_id, user_id)
 
     @classmethod
-    async def _read_identity(cls, session_id: str, *, authoritative: bool = False) -> _ConnectionReadIdentity | None:
+    async def _read_identity(
+        cls, session_id: str, *, authoritative: bool = False
+    ) -> _ConnectionReadIdentity | None:
         """Capture only live registered identity; epochs stay bounded by sockets."""
         lock, registry = cls._lock, cls._registry
         if lock is None or registry is None:
@@ -701,19 +761,24 @@ class PluginHub(WebSocketEndpoint):
             generation = getattr(state, "plugin_generation", None)
             command_epoch = getattr(state, "plugin_command_epoch", 0)
             state_epoch = getattr(state, "plugin_state_read_epoch", 0)
-            if (not isinstance(generation, str) or not generation
-                    or not getattr(state, "plugin_registered", False)
-                    or getattr(state, "plugin_session_id", None) != session_id
-                    or getattr(state, "user_id", None) != session.user_id
-                    or type(command_epoch) is not int or type(state_epoch) is not int
-                    or websocket.client_state != WebSocketState.CONNECTED
-                    or websocket.application_state != WebSocketState.CONNECTED):
+            if (
+                not isinstance(generation, str)
+                or not generation
+                or not getattr(state, "plugin_registered", False)
+                or getattr(state, "plugin_session_id", None) != session_id
+                or getattr(state, "user_id", None) != session.user_id
+                or type(command_epoch) is not int
+                or type(state_epoch) is not int
+                or websocket.client_state != WebSocketState.CONNECTED
+                or websocket.application_state != WebSocketState.CONNECTED
+            ):
                 return None
             if authoritative:
                 state_epoch += 1
                 state.plugin_state_read_epoch = state_epoch
-            return _ConnectionReadIdentity(session_id, session.user_id, id(websocket), generation,
-                                           command_epoch, state_epoch)
+            return _ConnectionReadIdentity(
+                session_id, session.user_id, id(websocket), generation, command_epoch, state_epoch
+            )
 
     @staticmethod
     def _is_non_mutating(command_type: str, params: dict[str, Any]) -> bool:
@@ -724,23 +789,28 @@ class PluginHub(WebSocketEndpoint):
         return command_type in PluginHub._NON_MUTATING_COMMANDS
 
     @staticmethod
-    def _matches_read_identity(websocket: WebSocket, user_id: str | None, identity: _ConnectionReadIdentity) -> bool:
+    def _matches_read_identity(
+        websocket: WebSocket, user_id: str | None, identity: _ConnectionReadIdentity
+    ) -> bool:
         """Check the captured generation atomically at actual command admission."""
         state = websocket.state
-        return (id(websocket) == identity.socket_id and user_id == identity.user_id
-                and getattr(state, "user_id", None) == identity.user_id
-                and getattr(state, "plugin_session_id", None) == identity.session_id
-                and getattr(state, "plugin_generation", None) == identity.generation
-                and getattr(state, "plugin_command_epoch", 0) == identity.command_epoch
-                # State epochs separate joining, not admission: two independent
-                # fresh reads can both finish after invalidating older flights.
-                and websocket.client_state == WebSocketState.CONNECTED
-                and websocket.application_state == WebSocketState.CONNECTED)
+        return (
+            id(websocket) == identity.socket_id
+            and user_id == identity.user_id
+            and getattr(state, "user_id", None) == identity.user_id
+            and getattr(state, "plugin_session_id", None) == identity.session_id
+            and getattr(state, "plugin_generation", None) == identity.generation
+            and getattr(state, "plugin_command_epoch", 0) == identity.command_epoch
+            # State epochs separate joining, not admission: two independent
+            # fresh reads can both finish after invalidating older flights.
+            and websocket.client_state == WebSocketState.CONNECTED
+            and websocket.application_state == WebSocketState.CONNECTED
+        )
 
     @classmethod
-    async def _readiness_probe(cls, session_id: str, identity: _ConnectionReadIdentity | None) -> Literal[
-        "ready", "retry", "command_capacity", "result_capacity", "read_invalidated"
-    ]:
+    async def _readiness_probe(
+        cls, session_id: str, identity: _ConnectionReadIdentity | None
+    ) -> Literal["ready", "retry", "command_capacity", "result_capacity", "read_invalidated"]:
         """Share a pending ping, reducing its charged copy before returning."""
         owner = ResponseOwner()
         token = response_owner.set(owner)
@@ -749,14 +819,24 @@ class PluginHub(WebSocketEndpoint):
                 probe = await cls.send_command(session_id, "ping", {})
             else:
                 async with cls._readiness_reads.session(identity) as read:
-                    probe = await read.fetch(lambda: cls.send_command(session_id, "ping", {}, _expected_read=identity))
+                    probe = await read.fetch(
+                        lambda: cls.send_command(session_id, "ping", {}, _expected_read=identity)
+                    )
             data = probe.get("data")
             if isinstance(data, dict):
                 reason = data.get("reason")
-                if isinstance(reason, str) and reason in {"command_capacity", "result_capacity", "read_invalidated"}:
+                if isinstance(reason, str) and reason in {
+                    "command_capacity",
+                    "result_capacity",
+                    "read_invalidated",
+                }:
                     return reason
             result = probe.get("result")
-            if probe.get("status") == "success" and isinstance(result, dict) and result.get("message") == "pong":
+            if (
+                probe.get("status") == "success"
+                and isinstance(result, dict)
+                and result.get("message") == "pong"
+            ):
                 return "ready"
             return "retry"
         except SharedReadCapacityError:
@@ -766,8 +846,14 @@ class PluginHub(WebSocketEndpoint):
             owner.release()
 
     @classmethod
-    async def send_command(cls, session_id: str, command_type: str, params: dict[str, Any], *,
-                           _expected_read: _ConnectionReadIdentity | None = None) -> dict[str, Any]:
+    async def send_command(
+        cls,
+        session_id: str,
+        command_type: str,
+        params: dict[str, Any],
+        *,
+        _expected_read: _ConnectionReadIdentity | None = None,
+    ) -> dict[str, Any]:
         try:
             websocket = await cls._get_connection(session_id)
         except RuntimeError:
@@ -824,7 +910,9 @@ class PluginHub(WebSocketEndpoint):
                 if _expected_read is not None:
                     return cls._unavailable_retry_response("read_invalidated")
                 raise RuntimeError(f"Plugin session {session_id} not connected")
-            if _expected_read is not None and not cls._matches_read_identity(websocket, user_id, _expected_read):
+            if _expected_read is not None and not cls._matches_read_identity(
+                websocket, user_id, _expected_read
+            ):
                 return cls._unavailable_retry_response("read_invalidated")
             # _pending is the single source of accounting: every existing pop on
             # result/cancel/timeout/disconnect/eviction/shutdown returns capacity.
@@ -838,19 +926,24 @@ class PluginHub(WebSocketEndpoint):
                 if entry["session_id"] == session_id:
                     session_count += 1
                     session_bytes += entry_bytes
-            if (len(cls._pending) >= cls.MAX_PENDING_COMMANDS
-                    or user_count >= cls.MAX_PENDING_PER_USER
-                    or session_count >= cls.MAX_PENDING_PER_SESSION):
+            if (
+                len(cls._pending) >= cls.MAX_PENDING_COMMANDS
+                or user_count >= cls.MAX_PENDING_PER_USER
+                or session_count >= cls.MAX_PENDING_PER_SESSION
+            ):
                 return cls._command_capacity_response()
             payload_bytes = cls._command_payload_size(command_type, params)
             if payload_bytes is None:
                 return MCPResponse(
-                    success=False, error="Unity command payload exceeds supported size or structure",
+                    success=False,
+                    error="Unity command payload exceeds supported size or structure",
                     data={"reason": "command_payload_limit"},
                 ).model_dump()
-            if (total_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES
-                    or user_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_USER
-                    or session_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_SESSION):
+            if (
+                total_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES
+                or user_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_USER
+                or session_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_SESSION
+            ):
                 return cls._command_capacity_response()
             # Unknown/custom/batch commands may mutate. Advance before socket
             # I/O so later readers cannot join an earlier observation.
@@ -862,14 +955,17 @@ class PluginHub(WebSocketEndpoint):
                 websocket.state.plugin_state_read_epoch = epoch + 1 if type(epoch) is int else 1
             command_id = str(uuid.uuid4())
             if command_id in cls._pending:
-                raise RuntimeError(
-                    f"Duplicate command id generated: {command_id}")
+                raise RuntimeError(f"Duplicate command id generated: {command_id}")
             future: asyncio.Future = asyncio.get_running_loop().create_future()
             result_ledger = cls._retained_results
             cls._pending[command_id] = {
-                "future": future, "session_id": session_id,
-                "user_id": user_id, "payload_bytes": payload_bytes,
-                "response_owner": response_owner.get(), "result_ledger": result_ledger}
+                "future": future,
+                "session_id": session_id,
+                "user_id": user_id,
+                "payload_bytes": payload_bytes,
+                "response_owner": response_owner.get(),
+                "result_ledger": result_ledger,
+            }
             generation = getattr(websocket.state, "plugin_generation", None)
 
         send_task: asyncio.Task | None = None
@@ -885,7 +981,8 @@ class PluginHub(WebSocketEndpoint):
             try:
                 send_task = asyncio.create_task(websocket.send_json(msg.model_dump()))
                 done, _ = await asyncio.wait(
-                    {send_task, future}, timeout=server_wait_s,
+                    {send_task, future},
+                    timeout=server_wait_s,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 # A disconnect must also interrupt a blocked socket write.
@@ -930,7 +1027,9 @@ class PluginHub(WebSocketEndpoint):
                             send_task.cancel()
                         await asyncio.gather(send_task, return_exceptions=True)
                         if canceled:
-                            await cls._cancel_command_on_owner(websocket, session_id, generation, command_id)
+                            await cls._cancel_command_on_owner(
+                                websocket, session_id, generation, command_id
+                            )
             finally:
                 # A disconnected or completed future still retains its result
                 # during send-task cleanup. Only its owner returns this capacity.
@@ -938,14 +1037,17 @@ class PluginHub(WebSocketEndpoint):
                     result_ledger.pop(command_id, None)
 
     @classmethod
-    async def _cancel_command_on_owner(cls, websocket: WebSocket, session_id: str,
-                                       generation: str | None, command_id: str) -> None:
+    async def _cancel_command_on_owner(
+        cls, websocket: WebSocket, session_id: str, generation: str | None, command_id: str
+    ) -> None:
         # Always address the captured socket: a reconnect must never receive an
         # old command's cancellation, even if it reused the routing session ID.
-        if (not isinstance(generation, str)
-                or cls._connections.get(session_id) is not websocket
-                or getattr(websocket.state, "plugin_generation", None) != generation
-                or not cls._supports(websocket, cls.CANCELLATION_CAPABILITY)):
+        if (
+            not isinstance(generation, str)
+            or cls._connections.get(session_id) is not websocket
+            or getattr(websocket.state, "plugin_generation", None) != generation
+            or not cls._supports(websocket, cls.CANCELLATION_CAPABILITY)
+        ):
             return
         try:
             await websocket.send_json(CancelCommandMessage(id=command_id).model_dump())
@@ -998,7 +1100,10 @@ class PluginHub(WebSocketEndpoint):
 
     @classmethod
     async def has_tool_for_identity(
-        cls, identity: _ConnectionReadIdentity, project_hash: str, user_id: str,
+        cls,
+        identity: _ConnectionReadIdentity,
+        project_hash: str,
+        user_id: str,
         names: tuple[str, ...],
     ) -> bool:
         """Authorize selected membership against the captured live connection generation."""
@@ -1012,38 +1117,52 @@ class PluginHub(WebSocketEndpoint):
             if websocket is None:
                 return False
             state = websocket.state
-            if (id(websocket) != identity.socket_id
-                    or getattr(state, 'plugin_generation', None) != identity.generation
-                    or getattr(state, 'plugin_session_id', None) != identity.session_id
-                    or not getattr(state, 'plugin_registered', False)
-                    or getattr(state, 'user_id', None) != user_id
-                    or websocket.client_state != WebSocketState.CONNECTED
-                    or websocket.application_state != WebSocketState.CONNECTED):
+            if (
+                id(websocket) != identity.socket_id
+                or getattr(state, "plugin_generation", None) != identity.generation
+                or getattr(state, "plugin_session_id", None) != identity.session_id
+                or not getattr(state, "plugin_registered", False)
+                or getattr(state, "user_id", None) != user_id
+                or websocket.client_state != WebSocketState.CONNECTED
+                or websocket.application_state != WebSocketState.CONNECTED
+            ):
                 return False
             # Command/read epochs concern observation sharing, not tool permission.
-            allowed = await registry.has_tool_for_session(identity.session_id, project_hash, user_id, names)
+            allowed = await registry.has_tool_for_session(
+                identity.session_id, project_hash, user_id, names
+            )
             # configure is synchronous and may replace owners while the registry
             # lock acquisition awaited, even though this old Hub lock is held.
-            return (allowed and cls._registry is registry and cls._lock is lock
-                    and cls._connections.get(identity.session_id) is websocket
-                    and getattr(state, 'plugin_generation', None) == identity.generation
-                    and getattr(state, 'user_id', None) == user_id
-                    and getattr(state, 'plugin_registered', False)
-                    and getattr(state, 'plugin_session_id', None) == identity.session_id
-                    and websocket.client_state == WebSocketState.CONNECTED
-                    and websocket.application_state == WebSocketState.CONNECTED)
+            return (
+                allowed
+                and cls._registry is registry
+                and cls._lock is lock
+                and cls._connections.get(identity.session_id) is websocket
+                and getattr(state, "plugin_generation", None) == identity.generation
+                and getattr(state, "user_id", None) == user_id
+                and getattr(state, "plugin_registered", False)
+                and getattr(state, "plugin_session_id", None) == identity.session_id
+                and websocket.client_state == WebSocketState.CONNECTED
+                and websocket.application_state == WebSocketState.CONNECTED
+            )
 
     @classmethod
-    async def capture_tool_identity(cls, session_id: str) -> _ConnectionReadIdentity | Literal[False] | None:
+    async def capture_tool_identity(
+        cls, session_id: str
+    ) -> _ConnectionReadIdentity | Literal[False] | None:
         """None permits never-live shims; a lost required live capture denies access."""
         websocket = cls._connections.get(session_id)
         if websocket is None:
             return None
         registry, lock = cls._registry, cls._lock
         identity = await cls._read_identity(session_id)
-        if (identity is None or identity.socket_id != id(websocket)
-                or cls._registry is not registry or cls._lock is not lock
-                or cls._connections.get(session_id) is not websocket):
+        if (
+            identity is None
+            or identity.socket_id != id(websocket)
+            or cls._registry is not registry
+            or cls._lock is not lock
+            or cls._connections.get(session_id) is not websocket
+        ):
             return False
         return identity
 
@@ -1080,8 +1199,9 @@ class PluginHub(WebSocketEndpoint):
             raise RuntimeError("PluginHub not configured")
 
         async with lock:
-            registered = (getattr(websocket.state, "plugin_registered", False)
-                          or getattr(websocket.state, "plugin_registering", False))
+            registered = getattr(websocket.state, "plugin_registered", False) or getattr(
+                websocket.state, "plugin_registering", False
+            )
             websocket.state.plugin_registering = True
         if registered:
             await websocket.close(code=4409, reason="Plugin already registered")
@@ -1094,8 +1214,7 @@ class PluginHub(WebSocketEndpoint):
 
         if not project_hash:
             await websocket.close(code=4400)
-            raise ValueError(
-                "Plugin registration missing project_hash")
+            raise ValueError("Plugin registration missing project_hash")
 
         # Get user_id from websocket state (set during API key validation)
         user_id = getattr(websocket.state, "user_id", None)
@@ -1111,7 +1230,13 @@ class PluginHub(WebSocketEndpoint):
                 return
             try:
                 session, evicted_session_id = await registry.register(
-                    session_id, project_name, project_hash, unity_version, project_path, user_id=user_id)
+                    session_id,
+                    project_name,
+                    project_hash,
+                    unity_version,
+                    project_path,
+                    user_id=user_id,
+                )
             except ValueError:
                 await websocket.close(code=4429, reason="Plugin session limit reached")
                 return
@@ -1181,11 +1306,15 @@ class PluginHub(WebSocketEndpoint):
             await cls._notify_mcp_tool_list_changed()
 
         if user_id:
-            logger.info("Plugin registered: %r (%r) for user %r", project_name, project_hash, user_id)
+            logger.info(
+                "Plugin registered: %r (%r) for user %r", project_name, project_hash, user_id
+            )
         else:
             logger.info("Plugin registered: %r (%r)", project_name, project_hash)
 
-    async def _handle_register_tools(self, websocket: WebSocket, payload: RegisterToolsMessage) -> None:
+    async def _handle_register_tools(
+        self, websocket: WebSocket, payload: RegisterToolsMessage
+    ) -> None:
         cls = type(self)
         registry = cls._registry
         lock = cls._lock
@@ -1199,15 +1328,15 @@ class PluginHub(WebSocketEndpoint):
         # Find session_id for this websocket
         async with lock:
             session_id = next(
-                (sid for sid, ws in cls._connections.items() if ws is websocket), None)
+                (sid for sid, ws in cls._connections.items() if ws is websocket), None
+            )
 
         if not session_id:
             logger.warning("Received register_tools from unknown connection")
             return
 
         await registry.register_tools_for_session(session_id, payload.tools)
-        logger.info(
-            f"Registered {len(payload.tools)} tools for session {session_id}")
+        logger.info(f"Registered {len(payload.tools)} tools for session {session_id}")
 
         # Hosted catalogs are read from the authenticated plugin session through
         # custom_tools / execute_custom_tool, never installed process-wide.
@@ -1248,12 +1377,12 @@ class PluginHub(WebSocketEndpoint):
         if not sessions:
             mcp = cls._mcp
             if mcp is not None and cls._unity_transform_start is not None:
-                mcp._transforms = mcp._transforms[:cls._unity_transform_start]
+                mcp._transforms = mcp._transforms[: cls._unity_transform_start]
                 cls._unity_transform_start = None
             return
-        cls._sync_server_tool_visibility([
-            tool for session in sessions.values() for tool in session.tools.values()
-        ])
+        cls._sync_server_tool_visibility(
+            [tool for session in sessions.values() for tool in session.tools.values()]
+        )
 
     @classmethod
     def _sync_server_tool_visibility(cls, registered_tools: list) -> None:
@@ -1282,7 +1411,9 @@ class PluginHub(WebSocketEndpoint):
 
             registered_names: set[str] = set()
             for tool in registered_tools:
-                name = getattr(tool, "name", None) if not isinstance(tool, dict) else tool.get("name")
+                name = (
+                    getattr(tool, "name", None) if not isinstance(tool, dict) else tool.get("name")
+                )
                 if isinstance(name, str) and name:
                     registered_names.add(name)
 
@@ -1291,7 +1422,7 @@ class PluginHub(WebSocketEndpoint):
             # Reset Unity overrides: trim transforms back to where Unity started,
             # then re-apply based on current registered tools.
             if cls._unity_transform_start is not None:
-                mcp._transforms = mcp._transforms[:cls._unity_transform_start]
+                mcp._transforms = mcp._transforms[: cls._unity_transform_start]
             else:
                 # First time: record where startup transforms end.
                 cls._unity_transform_start = len(mcp._transforms)
@@ -1366,7 +1497,9 @@ class PluginHub(WebSocketEndpoint):
             if cls._connections.get(session_id) is websocket:
                 cls._editor_states.accept(session_id, data)
 
-    async def _handle_large_result(self, websocket: WebSocket, data: bytes | dict[str, Any]) -> None:
+    async def _handle_large_result(
+        self, websocket: WebSocket, data: bytes | dict[str, Any]
+    ) -> None:
         cls = type(self)
         if not cls._supports(websocket, LARGE_RESULT_CAPABILITY):
             await websocket.close(code=4400, reason="Large results were not negotiated")
@@ -1382,10 +1515,18 @@ class PluginHub(WebSocketEndpoint):
                 cls._expire_large_results()
                 if isinstance(data, dict):
                     start = ResultStartMessage(**data)
-                    if start.encoding == "gzip" and not cls._supports(websocket, COMPRESSION_CAPABILITY):
+                    if start.encoding == "gzip" and not cls._supports(
+                        websocket, COMPRESSION_CAPABILITY
+                    ):
                         raise LargeResultProtocolError("compression_not_negotiated", start.id)
-                    assembler.begin(generation, start.id, start.total_bytes, start.chunk_count,
-                                    encoding=start.encoding, decoded_bytes=start.decoded_bytes)
+                    assembler.begin(
+                        generation,
+                        start.id,
+                        start.total_bytes,
+                        start.chunk_count,
+                        encoding=start.encoding,
+                        decoded_bytes=start.decoded_bytes,
+                    )
                     return
                 completed = assembler.feed(generation, data)
                 if completed is None:
@@ -1393,23 +1534,32 @@ class PluginHub(WebSocketEndpoint):
                 command_id = completed.command_id
                 # Decode directly from bytearray: avoid a second full bytes copy.
                 text = bounded_json_text(
-                    completed.payload, max_bytes=cls.MAX_RAW_MESSAGE_BYTES,
-                    max_depth=cls.MAX_RESULT_DEPTH, max_nodes=cls.MAX_RESULT_NODES)
+                    completed.payload,
+                    max_bytes=cls.MAX_RAW_MESSAGE_BYTES,
+                    max_depth=cls.MAX_RESULT_DEPTH,
+                    max_nodes=cls.MAX_RESULT_NODES,
+                )
                 if text is None:
                     raise LargeResultProtocolError("result_payload_limit", command_id)
                 message = decode_json(completed.payload, fallback_text=text)
-                if (not isinstance(message, dict) or message.get("type") != "command_result"
-                        or message.get("id") != command_id):
+                if (
+                    not isinstance(message, dict)
+                    or message.get("type") != "command_result"
+                    or message.get("id") != command_id
+                ):
                     raise LargeResultProtocolError("invalid_result_envelope", command_id)
                 payload = CommandResultMessage(**message)
                 completed = text = message = None
             await self._handle_command_result(websocket, payload)
         except LargeResultProtocolError as exc:
             if exc.reason in {
-                "result_capacity", "result_transfer_timeout",
+                "result_capacity",
+                "result_transfer_timeout",
             }:
                 if cls._transfer_pending(generation, exc.command_id):
-                    cls._pending[exc.command_id]["future"].set_result(response_limit_error(exc.reason))
+                    cls._pending[exc.command_id]["future"].set_result(
+                        response_limit_error(exc.reason)
+                    )
                 return
             await websocket.close(code=4400, reason="Invalid large result transfer")
         except (ValueError, RecursionError):
@@ -1418,7 +1568,9 @@ class PluginHub(WebSocketEndpoint):
             if command_id is not None:
                 assembler.discard(generation, command_id)
 
-    async def _handle_command_result(self, websocket: WebSocket, payload: CommandResultMessage) -> None:
+    async def _handle_command_result(
+        self, websocket: WebSocket, payload: CommandResultMessage
+    ) -> None:
         cls = type(self)
         lock = cls._lock
         if lock is None:
@@ -1438,8 +1590,12 @@ class PluginHub(WebSocketEndpoint):
             future = entry.get("future")
             if future and not future.done():
                 charge = response_size(
-                    result, max_bytes=cls.MAX_RESULT_BYTES, max_depth=cls.MAX_RESULT_DEPTH,
-                    max_nodes=cls.MAX_RESULT_NODES, max_retained=cls.MAX_RESULT_RETAINED_BYTES)
+                    result,
+                    max_bytes=cls.MAX_RESULT_BYTES,
+                    max_depth=cls.MAX_RESULT_DEPTH,
+                    max_nodes=cls.MAX_RESULT_NODES,
+                    max_retained=cls.MAX_RESULT_RETAINED_BYTES,
+                )
                 if charge is None:
                     future.set_result(response_limit_error("result_payload_limit"))
                     count = getattr(websocket.state, "result_limit_violations", 0)
@@ -1451,12 +1607,15 @@ class PluginHub(WebSocketEndpoint):
                     if not cls._has_result_capacity(entry, charge):
                         future.set_result(response_limit_error("result_capacity"))
                         return
-                    result_ledger = entry.get('result_ledger', cls._retained_results)
+                    result_ledger = entry.get("result_ledger", cls._retained_results)
                     if result_ledger is not cls._retained_results:
                         future.set_result(response_limit_error("result_capacity"))
                         return
                     result_ledger[command_id] = {
-                        "bytes": charge, "user_id": user_id, "session_id": entry["session_id"]}
+                        "bytes": charge,
+                        "user_id": user_id,
+                        "session_id": entry["session_id"],
+                    }
                     owner = entry.get("response_owner")
                     if owner is not None:
                         if owner.released:
@@ -1465,12 +1624,19 @@ class PluginHub(WebSocketEndpoint):
                             return
                         owner.entries.append((result_ledger, command_id))
 
-                        def reserve_copy(copy_owner, source_id=command_id,
-                                         reservation=result_ledger[command_id], ledger=result_ledger):
+                        def reserve_copy(
+                            copy_owner,
+                            source_id=command_id,
+                            reservation=result_ledger[command_id],
+                            ledger=result_ledger,
+                        ):
                             # Synchronous on the same owner loop: admission and
                             # insertion cannot interleave with another producer.
-                            if (ledger is not cls._retained_results or ledger.get(source_id) is not reservation
-                                    or not cls._has_result_capacity(reservation, reservation["bytes"])):
+                            if (
+                                ledger is not cls._retained_results
+                                or ledger.get(source_id) is not reservation
+                                or not cls._has_result_capacity(reservation, reservation["bytes"])
+                            ):
                                 return False
                             copy_id = "copy:" + str(uuid.uuid4())
                             ledger[copy_id] = reservation
@@ -1481,8 +1647,10 @@ class PluginHub(WebSocketEndpoint):
                         owner.copy_reservations.append(reserve_copy)
                     future.set_result(result)
         if close_offender:
-            await asyncio.wait_for(websocket.close(code=1009, reason="Repeated plugin result limit violation"),
-                                   cls.CLOSE_TIMEOUT)
+            await asyncio.wait_for(
+                websocket.close(code=1009, reason="Repeated plugin result limit violation"),
+                cls.CLOSE_TIMEOUT,
+            )
 
     async def _handle_pong(self, websocket: WebSocket, payload: PongMessage) -> None:
         cls = type(self)
@@ -1518,7 +1686,9 @@ class PluginHub(WebSocketEndpoint):
                 async with lock:
                     cls._expire_large_results()
                     if session_id not in cls._connections:
-                        logger.debug(f"[Ping] Session {session_id} no longer in connections, stopping ping loop")
+                        logger.debug(
+                            f"[Ping] Session {session_id} no longer in connections, stopping ping loop"
+                        )
                         break
                     # Read last pong time under lock for consistency
                     last_pong = cls._last_pong.get(session_id, 0)
@@ -1595,7 +1765,11 @@ class PluginHub(WebSocketEndpoint):
             for key in keys_to_remove:
                 cls._pending.pop(key, None)
 
-        if ping_task is not None and ping_task is not asyncio.current_task() and not ping_task.done():
+        if (
+            ping_task is not None
+            and ping_task is not asyncio.current_task()
+            and not ping_task.done()
+        ):
             ping_task.cancel()
 
         for future in pending_futures:
@@ -1701,7 +1875,8 @@ class PluginHub(WebSocketEndpoint):
         # The ceiling used to equal the default, which silently neutered the override for
         # projects whose reloads/test boundaries legitimately exceed 20s (#1207).
         max_wait_s = _read_bounded_wait_env(
-            "UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", default_s=20.0, max_s=120.0)
+            "UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", default_s=20.0, max_s=120.0
+        )
         if not retry_on_reload:
             max_wait_s = 0.0
 
@@ -1757,8 +1932,7 @@ class PluginHub(WebSocketEndpoint):
             # Error path only; one extra registry read keeps the refusal actionable.
             try:
                 sessions = await registry.list_sessions(user_id=user_id)
-                return sorted(
-                    f"{s.project_name}@{s.project_hash}" for s in sessions.values())
+                return sorted(f"{s.project_name}@{s.project_hash}" for s in sessions.values())
             except Exception:
                 return []
 
@@ -1767,7 +1941,8 @@ class PluginHub(WebSocketEndpoint):
         session_id, session_count, explicit_required = await _try_once()
         if session_id is None and explicit_required and not target_hash and session_count > 0:
             raise InstanceSelectionRequiredError(
-                available_instances=await _available_instance_ids())
+                available_instances=await _available_instance_ids()
+            )
         wait_started = None
 
         # If there is no active plugin yet (e.g., Unity starting up or reloading),
@@ -1776,10 +1951,12 @@ class PluginHub(WebSocketEndpoint):
             if not target_hash and session_count > 1:
                 raise InstanceSelectionRequiredError(
                     InstanceSelectionRequiredError._MULTIPLE_INSTANCES,
-                    available_instances=await _available_instance_ids())
+                    available_instances=await _available_instance_ids(),
+                )
             if session_id is None and explicit_required and not target_hash and session_count > 0:
                 raise InstanceSelectionRequiredError(
-                    available_instances=await _available_instance_ids())
+                    available_instances=await _available_instance_ids()
+                )
             if wait_started is None:
                 wait_started = time.monotonic()
                 logger.debug(
@@ -1801,8 +1978,7 @@ class PluginHub(WebSocketEndpoint):
                 unity_instance or "default",
             )
         if session_id is None and not target_hash and session_count > 1:
-            raise InstanceSelectionRequiredError(
-                InstanceSelectionRequiredError._MULTIPLE_INSTANCES)
+            raise InstanceSelectionRequiredError(InstanceSelectionRequiredError._MULTIPLE_INSTANCES)
 
         if session_id is None and explicit_required and not target_hash and session_count > 0:
             raise InstanceSelectionRequiredError()
@@ -1815,8 +1991,7 @@ class PluginHub(WebSocketEndpoint):
             )
             # At this point we've given the plugin ample time to reconnect; surface
             # a clear error so the client can prompt the user to open Unity.
-            raise NoUnitySessionError(
-                "No Unity plugins are currently connected")
+            raise NoUnitySessionError("No Unity plugins are currently connected")
 
         return session_id
 
@@ -1868,8 +2043,14 @@ class PluginHub(WebSocketEndpoint):
             if not await cls._ensure_live_connection(session_id):
                 return cls._unavailable_retry_response("stale_connection")
 
-        share_state = command_type == "get_editor_state" and not params and editor_state_read_mode == "ordinary"
-        identity = await cls._read_identity(session_id, authoritative=command_type == "get_editor_state" and not share_state)
+        share_state = (
+            command_type == "get_editor_state"
+            and not params
+            and editor_state_read_mode == "ordinary"
+        )
+        identity = await cls._read_identity(
+            session_id, authoritative=command_type == "get_editor_state" and not share_state
+        )
 
         # During domain reload / immediate reconnect windows, the plugin may be connected but not yet
         # ready to process execute commands on the Unity main thread (which can be further delayed when
@@ -1878,7 +2059,8 @@ class PluginHub(WebSocketEndpoint):
         # register_tools (which can be delayed by EditorApplication.delayCall).
         if retry_on_reload and command_type in cls._FAST_FAIL_COMMANDS and command_type != "ping":
             max_wait_s = _read_bounded_wait_env(
-                "UNITY_MCP_SESSION_READY_WAIT_SECONDS", default_s=6.0, max_s=120.0)
+                "UNITY_MCP_SESSION_READY_WAIT_SECONDS", default_s=6.0, max_s=120.0
+            )
             if max_wait_s > 0:
                 deadline = time.monotonic() + max_wait_s
                 while time.monotonic() < deadline:
@@ -1909,7 +2091,11 @@ class PluginHub(WebSocketEndpoint):
         if share_state and identity is not None:
             try:
                 async with cls._ordinary_state_reads.session(identity) as read:
-                    return await read.fetch(lambda: cls.send_command(session_id, command_type, params, _expected_read=identity))
+                    return await read.fetch(
+                        lambda: cls.send_command(
+                            session_id, command_type, params, _expected_read=identity
+                        )
+                    )
             except SharedReadCapacityError:
                 return response_limit_error("result_capacity")
         if identity is not None and command_type in cls._FAST_FAIL_COMMANDS:

@@ -22,11 +22,7 @@ class LocalControlAuthMiddleware:
             return
 
         # Health is a public liveness probe, with no session or credential data.
-        if (
-            scope["type"] == "http"
-            and scope["method"] == "GET"
-            and scope["path"] == "/health"
-        ):
+        if scope["type"] == "http" and scope["method"] == "GET" and scope["path"] == "/health":
             await self.app(scope, receive, send)
             return
 
@@ -54,8 +50,7 @@ class LocalControlAuthMiddleware:
                 content_types = headers.getlist("content-type")
                 if (
                     len(content_types) != 1
-                    or content_types[0].split(";", 1)[0].strip().lower()
-                    != "application/json"
+                    or content_types[0].split(";", 1)[0].strip().lower() != "application/json"
                 ):
                     status, error = 415, "Content-Type must be application/json"
 
@@ -64,9 +59,7 @@ class LocalControlAuthMiddleware:
                 # Closing before accept rejects the HTTP upgrade (403 on ASGI servers).
                 await send({"type": "websocket.close", "code": 1008, "reason": error})
             else:
-                response = JSONResponse(
-                    {"success": False, "error": error}, status_code=status
-                )
+                response = JSONResponse({"success": False, "error": error}, status_code=status)
                 await response(scope, receive, send)
             return
 

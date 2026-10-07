@@ -23,16 +23,27 @@ PLATFORM = "linux/amd64"
 RECEIPT = "receipt.json"
 IMAGE_DATA = "/opt/unity/Editor/Data"
 DIRECTORIES = (
-    "Managed", "NetStandard", "UnityReferenceAssemblies", "DotNetSdkRoslyn",
-    "NetCoreRuntime", "Tools/Compilation/ApiUpdater", "Tools/ScriptUpdater",
+    "Managed",
+    "NetStandard",
+    "UnityReferenceAssemblies",
+    "DotNetSdkRoslyn",
+    "NetCoreRuntime",
+    "Tools/Compilation/ApiUpdater",
+    "Tools/ScriptUpdater",
 )
 PACKAGES = ("com.unity.test-framework", "com.unity.ext.nunit", "com.unity.ugui")
 BUILTINS = "Resources/PackageManager/BuiltInPackages"
 LIBCACHE = "Resources/PackageManager/ProjectTemplates/libcache"
 UI_REFERENCES = ("UnityEngine.UI.dll", "UnityEditor.UI.dll")
-ROSLYN_REFERENCES = tuple("MonoBleedingEdge/lib/mono/4.5/" + name for name in (
-    "Microsoft.CodeAnalysis.dll", "Microsoft.CodeAnalysis.CSharp.dll",
-    "System.Collections.Immutable.dll", "System.Reflection.Metadata.dll"))
+ROSLYN_REFERENCES = tuple(
+    "MonoBleedingEdge/lib/mono/4.5/" + name
+    for name in (
+        "Microsoft.CodeAnalysis.dll",
+        "Microsoft.CodeAnalysis.CSharp.dll",
+        "System.Collections.Immutable.dll",
+        "System.Reflection.Metadata.dll",
+    )
+)
 # Only inspect the public Editor data tree; no host mounts, network or Editor entrypoint.
 INVENTORY = """set -eu
 d=/opt/unity/Editor/Data
@@ -59,11 +70,21 @@ def identity(manifest: unity_ci.Manifest, version: str) -> dict:
     if row is None:
         raise ValueError("Requested Unity version is not in the manifest")
     source = {"image": row.image} if row.image else {"editorDownload": asdict(row.download)}
-    provenance = {"schema": SCHEMA, "platform": PLATFORM, "version": version, "source": source,
-                  "extractor_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
-    digest = hashlib.sha256(json.dumps(provenance, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return {"cache_key": f"unity-ci-sdk-v{SCHEMA}-linux-amd64-{version}-{digest}",
-            "cache_path": f".unity-ci-sdk/{version}", "provenance": provenance}
+    provenance = {
+        "schema": SCHEMA,
+        "platform": PLATFORM,
+        "version": version,
+        "source": source,
+        "extractor_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+    }
+    digest = hashlib.sha256(
+        json.dumps(provenance, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return {
+        "cache_key": f"unity-ci-sdk-v{SCHEMA}-linux-amd64-{version}-{digest}",
+        "cache_path": f".unity-ci-sdk/{version}",
+        "provenance": provenance,
+    }
 
 
 def _linked(path: Path) -> bool:
@@ -87,9 +108,13 @@ def _destination(output: Path, version: str) -> Path:
 def _ui_reference(value: str) -> bool:
     path = PurePosixPath(value)
     prefix = PurePosixPath(LIBCACHE).parts
-    tail = path.parts[len(prefix):]
-    return (path.parts[:len(prefix)] == prefix and 1 <= len(tail) <= 10
-            and "ScriptAssemblies" in tail[:-1] and path.name in UI_REFERENCES)
+    tail = path.parts[len(prefix) :]
+    return (
+        path.parts[: len(prefix)] == prefix
+        and 1 <= len(tail) <= 10
+        and "ScriptAssemblies" in tail[:-1]
+        and path.name in UI_REFERENCES
+    )
 
 
 def _allowed_input(value: str) -> bool:
@@ -102,7 +127,11 @@ def _allowed_input(value: str) -> bool:
         return True
     if value in ROSLYN_REFERENCES:
         return True
-    if path.name == "DotNetSdk" and len(path.parts) <= 10 and path.parts[0] not in {"Resources", "PlaybackEngines"}:
+    if (
+        path.name == "DotNetSdk"
+        and len(path.parts) <= 10
+        and path.parts[0] not in {"Resources", "PlaybackEngines"}
+    ):
         return True
     if path.parent.as_posix() == BUILTINS:
         return path.name in PACKAGES or path.name.startswith("com.unity.modules.")
@@ -110,9 +139,25 @@ def _allowed_input(value: str) -> bool:
 
 
 def _inventory(image: str) -> list[str]:
-    result = subprocess.run(["docker", "run", "--rm", "--platform", PLATFORM, "--network", "none",
-                             "--entrypoint", "/bin/sh", image, "-c", INVENTORY],
-                            check=True, capture_output=True, text=True)
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--platform",
+            PLATFORM,
+            "--network",
+            "none",
+            "--entrypoint",
+            "/bin/sh",
+            image,
+            "-c",
+            INVENTORY,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     lines = result.stdout.splitlines()
     if len(lines) > 512 or len(result.stdout) > 65536:
         raise ValueError("Compiler input inventory exceeded its bound")
@@ -120,13 +165,16 @@ def _inventory(image: str) -> list[str]:
     for line in lines:
         if not line.startswith(IMAGE_DATA + "/"):
             raise ValueError("Unexpected compiler input inventory path")
-        relative = line[len(IMAGE_DATA) + 1:]
+        relative = line[len(IMAGE_DATA) + 1 :]
         if not _allowed_input(relative):
             raise ValueError(f"Unexpected compiler input directory: {relative}")
         directories.add(relative)
     # A complete SDK can contain another named SDK; copy only the outer directory.
-    return [value for value in sorted(directories)
-            if not any(value.startswith(parent + "/") for parent in directories)]
+    return [
+        value
+        for value in sorted(directories)
+        if not any(value.startswith(parent + "/") for parent in directories)
+    ]
 
 
 def _records(directory: Path) -> dict:
@@ -144,38 +192,63 @@ def _records(directory: Path) -> dict:
                 digest.update(chunk)
         details = path.stat()
         records[path.relative_to(directory).as_posix()] = {
-            "size": details.st_size, "sha256": digest.hexdigest(), "mode": stat.S_IMODE(details.st_mode)}
+            "size": details.st_size,
+            "sha256": digest.hexdigest(),
+            "mode": stat.S_IMODE(details.st_mode),
+        }
     return records
 
 
 def _check_inputs(data: Path, directories: list[str]) -> None:
-    if not isinstance(directories, list) or not directories or any(not _allowed_input(value) for value in directories) or len(set(directories)) != len(directories):
+    if (
+        not isinstance(directories, list)
+        or not directories
+        or any(not _allowed_input(value) for value in directories)
+        or len(set(directories)) != len(directories)
+    ):
         raise ValueError("Invalid compiler input directories")
     for required in ("Managed", "NetStandard", "UnityReferenceAssemblies"):
         if required not in directories or not any((data / required).rglob("*.dll")):
             raise ValueError(f"Required compiler references missing: {required}")
-    old = (data / "DotNetSdkRoslyn" / "csc.dll").is_file() and (data / "NetCoreRuntime" / "dotnet").is_file()
-    modern = any((data / value / "dotnet").is_file() and
-                 any((data / value / "sdk").glob("*/Roslyn/bincore/csc.dll"))
-                 for value in directories if PurePosixPath(value).name == "DotNetSdk")
+    old = (data / "DotNetSdkRoslyn" / "csc.dll").is_file() and (
+        data / "NetCoreRuntime" / "dotnet"
+    ).is_file()
+    modern = any(
+        (data / value / "dotnet").is_file()
+        and any((data / value / "sdk").glob("*/Roslyn/bincore/csc.dll"))
+        for value in directories
+        if PurePosixPath(value).name == "DotNetSdk"
+    )
     if not old and not modern:
         raise ValueError("Complete bundled compiler and .NET runtime missing")
     if not any(value.startswith(BUILTINS + "/com.unity.modules.") for value in directories):
         raise ValueError("Bundled Unity module metadata missing")
     for name in UI_REFERENCES:
-        if not any(_ui_reference(value) and PurePosixPath(value).name == name for value in directories):
+        if not any(
+            _ui_reference(value) and PurePosixPath(value).name == name for value in directories
+        ):
             raise ValueError(f"Required template UI reference missing: {name}")
     for value in ROSLYN_REFERENCES:
         if value not in directories or not (data / value).is_file():
-            raise ValueError(f"Required optional Roslyn reference missing or has wrong type: {value}")
+            raise ValueError(
+                f"Required optional Roslyn reference missing or has wrong type: {value}"
+            )
     for value in directories:
-        present = (data / value).is_file() if _ui_reference(value) or value in ROSLYN_REFERENCES else (data / value).is_dir()
+        present = (
+            (data / value).is_file()
+            if _ui_reference(value) or value in ROSLYN_REFERENCES
+            else (data / value).is_dir()
+        )
         if not present:
             raise ValueError(f"Compiler input missing or has wrong type: {value}")
     for path in data.rglob("*"):
         relative = path.relative_to(data).as_posix()
-        if not any(relative == value or relative.startswith(value + "/") or value.startswith(relative + "/")
-                   for value in directories):
+        if not any(
+            relative == value
+            or relative.startswith(value + "/")
+            or value.startswith(relative + "/")
+            for value in directories
+        ):
             raise ValueError(f"Unexpected cached compiler input: {relative}")
 
 
@@ -186,18 +259,26 @@ def _validate(directory: Path, details: dict) -> None:
         if _linked(directory / "Data") or _linked(directory / RECEIPT):
             raise ValueError("Linked cache contents")
         receipt = json.loads((directory / RECEIPT).read_text(encoding="utf-8"))
-        if receipt["cache_key"] != details["cache_key"] or receipt["provenance"] != details["provenance"]:
+        if (
+            receipt["cache_key"] != details["cache_key"]
+            or receipt["provenance"] != details["provenance"]
+        ):
             raise ValueError("Compiler input source identity changed")
         _check_inputs(directory / "Data", receipt["directories"])
         if not receipt["files"] or _records(directory / "Data") != receipt["files"]:
             raise ValueError("Compiler input size, mode or SHA256 mismatch")
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise ValueError(f"Invalid compiler cache at {directory}; remove only this exact version directory and rerun: {exc}") from exc
+        raise ValueError(
+            f"Invalid compiler cache at {directory}; remove only this exact version directory and rerun: {exc}"
+        ) from exc
 
 
 def _remove_staging(staging: Path, destination: Path) -> None:
-    if (_linked(staging) or staging.resolve().parent != destination.parent.resolve()
-            or not staging.name.startswith(f".{destination.name}-")):
+    if (
+        _linked(staging)
+        or staging.resolve().parent != destination.parent.resolve()
+        or not staging.name.startswith(f".{destination.name}-")
+    ):
         raise ValueError("Refusing cleanup outside the controlled compiler-cache staging directory")
     shutil.rmtree(staging)
 
@@ -214,8 +295,12 @@ def prepare(manifest: unity_ci.Manifest, version: str, output: Path) -> dict:
         try:
             image = unity_ci.prepare(manifest, version, purpose="compile")
             directories = _inventory(image)
-            container = subprocess.run(["docker", "create", "--platform", PLATFORM, "--entrypoint", "/bin/true", image],
-                                       check=True, capture_output=True, text=True).stdout.strip()
+            container = subprocess.run(
+                ["docker", "create", "--platform", PLATFORM, "--entrypoint", "/bin/true", image],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
             if not container or any(char not in "0123456789abcdef" for char in container):
                 raise ValueError("Docker did not return a valid container id")
             try:
@@ -224,13 +309,27 @@ def prepare(manifest: unity_ci.Manifest, version: str, output: Path) -> dict:
                 for relative in directories:
                     target = data / relative
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    subprocess.run(["docker", "cp", f"{container}:{IMAGE_DATA}/{relative}", str(target)], check=True,
-                                   stdout=sys.stderr)
+                    subprocess.run(
+                        ["docker", "cp", f"{container}:{IMAGE_DATA}/{relative}", str(target)],
+                        check=True,
+                        stdout=sys.stderr,
+                    )
                 _check_inputs(data, directories)
                 files = _records(data)
-                (staging / RECEIPT).write_text(json.dumps({"cache_key": details["cache_key"],
-                    "provenance": details["provenance"], "directories": directories, "files": files},
-                    sort_keys=True, indent=2) + "\n", encoding="utf-8")
+                (staging / RECEIPT).write_text(
+                    json.dumps(
+                        {
+                            "cache_key": details["cache_key"],
+                            "provenance": details["provenance"],
+                            "directories": directories,
+                            "files": files,
+                        },
+                        sort_keys=True,
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
             finally:
                 subprocess.run(["docker", "rm", "-f", container], check=True, stdout=sys.stderr)
             _validate(staging, details)
@@ -239,8 +338,11 @@ def prepare(manifest: unity_ci.Manifest, version: str, output: Path) -> dict:
         finally:
             if staging.exists():
                 _remove_staging(staging, destination)
-    return {"unity_data": details["cache_path"] + "/Data", "runtime_image": manifest.preview_base_image,
-            "populated": populated}
+    return {
+        "unity_data": details["cache_path"] + "/Data",
+        "runtime_image": manifest.preview_base_image,
+        "populated": populated,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -249,7 +351,9 @@ def main(argv: list[str] | None = None) -> int:
     for command in ("identity", "prepare"):
         subparser = commands.add_parser(command)
         subparser.add_argument("version")
-        subparser.add_argument("--manifest", type=Path, default=Path(__file__).with_name("unity-versions.json"))
+        subparser.add_argument(
+            "--manifest", type=Path, default=Path(__file__).with_name("unity-versions.json")
+        )
         if command == "prepare":
             subparser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -264,7 +368,9 @@ def main(argv: list[str] | None = None) -> int:
         if output:
             with Path(output).open("a", encoding="utf-8", newline="\n") as stream:
                 for key, value in result.items():
-                    stream.write(f"{key}={str(value).lower() if isinstance(value, bool) else value}\n")
+                    stream.write(
+                        f"{key}={str(value).lower() if isinstance(value, bool) else value}\n"
+                    )
         print(json.dumps(result, sort_keys=True))
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         print(f"Unity compiler cache failed: {exc}", file=sys.stderr)

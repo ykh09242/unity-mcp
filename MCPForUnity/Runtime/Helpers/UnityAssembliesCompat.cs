@@ -71,11 +71,18 @@ namespace MCPForUnity.Runtime.Helpers
             foreach (var aqn in CurrentAssembliesAqns)
             {
                 Type type;
-                try { type = Type.GetType(aqn, throwOnError: false); }
-                catch { type = null; }
+                try
+                {
+                    type = Type.GetType(aqn, throwOnError: false);
+                }
+                catch
+                {
+                    type = null;
+                }
 
                 var del = TryBindGetLoadedAssemblies(type);
-                if (del != null) return del;
+                if (del != null)
+                    return del;
             }
 
             // 2. Fallback: scan every loaded assembly. This still uses the legacy
@@ -84,11 +91,18 @@ namespace MCPForUnity.Runtime.Helpers
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
                 Type type;
-                try { type = asm.GetType("UnityEngine.Assemblies.CurrentAssemblies", throwOnError: false); }
-                catch { continue; }
+                try
+                {
+                    type = asm.GetType("UnityEngine.Assemblies.CurrentAssemblies", throwOnError: false);
+                }
+                catch
+                {
+                    continue;
+                }
 
                 var del = TryBindGetLoadedAssemblies(type);
-                if (del != null) return del;
+                if (del != null)
+                    return del;
             }
 
             return null;
@@ -96,14 +110,10 @@ namespace MCPForUnity.Runtime.Helpers
 
         private static Func<Assembly[]> TryBindGetLoadedAssemblies(Type type)
         {
-            if (type == null) return null;
+            if (type == null)
+                return null;
 
-            var method = type.GetMethod(
-                "GetLoadedAssemblies",
-                BindingFlags.Public | BindingFlags.Static,
-                null,
-                Type.EmptyTypes,
-                null);
+            var method = type.GetMethod("GetLoadedAssemblies", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
 
             if (method == null || !typeof(Assembly[]).IsAssignableFrom(method.ReturnType))
                 return null;

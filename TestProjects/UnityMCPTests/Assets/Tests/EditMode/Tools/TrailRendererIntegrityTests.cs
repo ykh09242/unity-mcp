@@ -1,10 +1,10 @@
 using System.Collections.Generic;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Vfx;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
@@ -28,17 +28,25 @@ namespace MCPForUnityTests.EditMode.Tools
         [TearDown]
         public void TearDown()
         {
-            if (_object != null) Object.DestroyImmediate(_object);
-            if (_material != null) Object.DestroyImmediate(_material);
+            if (_object != null)
+                Object.DestroyImmediate(_object);
+            if (_material != null)
+                Object.DestroyImmediate(_material);
         }
 
         private JObject Send(string action, JObject properties)
         {
-            return JObject.FromObject(ManageVFX.HandleCommand(new JObject
-            {
-                ["action"] = action, ["target"] = _object.GetInstanceIDCompat(),
-                ["search_method"] = "by_id", ["properties"] = properties
-            }));
+            return JObject.FromObject(
+                ManageVFX.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["target"] = _object.GetInstanceIDCompat(),
+                        ["search_method"] = "by_id",
+                        ["properties"] = properties,
+                    }
+                )
+            );
         }
 
         private void AssignUsableMaterial()
@@ -113,8 +121,10 @@ namespace MCPForUnityTests.EditMode.Tools
         public void FalseAndZeroBulkFieldsRemainAccepted()
         {
             AssignUsableMaterial();
-            JObject response = Send("trail_set_properties", JObject.Parse(
-                "{time:0,width:0,emitting:false,autodestruct:false,sorting_order:0,rendering_layer_mask:0}"));
+            JObject response = Send(
+                "trail_set_properties",
+                JObject.Parse("{time:0,width:0,emitting:false,autodestruct:false,sorting_order:0,rendering_layer_mask:0}")
+            );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(0, _trail.time);
             Assert.IsFalse(_trail.emitting);
@@ -154,18 +164,26 @@ namespace MCPForUnityTests.EditMode.Tools
                     other.AddComponent<ParticleSystem>();
                     renderer = other.GetComponent<ParticleSystemRenderer>();
                 }
-                else renderer = other.AddComponent<LineRenderer>();
+                else
+                    renderer = other.AddComponent<LineRenderer>();
                 var changes = new List<string>();
-                RendererHelpers.ApplyCommonRendererProperties(renderer, JObject.Parse(
-                    "{shadowCastingMode:'bad',receiveShadows:'false',sortingOrder:'0',renderingLayerMask:0}"), changes);
+                RendererHelpers.ApplyCommonRendererProperties(
+                    renderer,
+                    JObject.Parse("{shadowCastingMode:'bad',receiveShadows:'false',sortingOrder:'0',renderingLayerMask:0}"),
+                    changes
+                );
                 Assert.IsFalse(renderer.receiveShadows);
                 Assert.AreEqual(0, renderer.sortingOrder);
                 CollectionAssert.AreEqual(new[] { "receiveShadows", "sortingOrder", "renderingLayerMask" }, changes);
-                Assert.Catch(() => RendererHelpers.ApplyCommonRendererProperties(renderer, JObject.Parse(
-                    "{receiveShadows:true,renderingLayerMask:-1}"), new List<string>()));
+                Assert.Catch(() =>
+                    RendererHelpers.ApplyCommonRendererProperties(renderer, JObject.Parse("{receiveShadows:true,renderingLayerMask:-1}"), new List<string>())
+                );
                 Assert.IsFalse(renderer.receiveShadows);
             }
-            finally { Object.DestroyImmediate(other); }
+            finally
+            {
+                Object.DestroyImmediate(other);
+            }
         }
     }
 }

@@ -7,6 +7,7 @@ Usage:
     --asset-project /path/to/AssetStoreUploads \
     --backup
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,8 +19,7 @@ import tempfile
 from pathlib import Path
 
 
-REPO_ROOT_DEFAULT = Path(__file__).resolve(
-).parents[1]  # adjust if you place elsewhere
+REPO_ROOT_DEFAULT = Path(__file__).resolve().parents[1]  # adjust if you place elsewhere
 
 
 def read_text(path: Path) -> str:
@@ -37,8 +37,7 @@ def replace_once(path: Path, pattern: str, repl: str, *, dry_run: bool = False) 
     original = read_text(path)
     new, n = re.subn(pattern, lambda match: repl, original, flags=re.MULTILINE)
     if n != 1:
-        raise RuntimeError(
-            f"{path}: expected 1 replacement for pattern, got {n}")
+        raise RuntimeError(f"{path}: expected 1 replacement for pattern, got {n}")
     if new != original and not dry_run:
         write_text(path, new)
 
@@ -56,8 +55,7 @@ def remove_line_exact(path: Path, line: str, *, dry_run: bool = False) -> None:
         kept.append(l)
 
     if removed != 1:
-        raise RuntimeError(
-            f"{path}: expected to remove exactly 1 line '{line}', removed {removed}")
+        raise RuntimeError(f"{path}: expected to remove exactly 1 line '{line}', removed {removed}")
 
     if not dry_run:
         write_text(path, "".join(kept))
@@ -67,8 +65,9 @@ def apply_asset_store_edits(mcp_dir: Path, remote_url: str, *, dry_run: bool = F
     setup_service = mcp_dir / "Editor" / "Setup" / "SetupWindowService.cs"
     menu_file = mcp_dir / "Editor" / "MenuItems" / "MCPForUnityMenu.cs"
     http_util = mcp_dir / "Editor" / "Helpers" / "HttpEndpointUtility.cs"
-    connection_section = mcp_dir / "Editor" / "Windows" / \
-        "Components" / "Connection" / "McpConnectionSection.cs"
+    connection_section = (
+        mcp_dir / "Editor" / "Windows" / "Components" / "Connection" / "McpConnectionSection.cs"
+    )
 
     for path in (setup_service, menu_file, http_util, connection_section):
         if not path.is_file():
@@ -78,13 +77,13 @@ def apply_asset_store_edits(mcp_dir: Path, remote_url: str, *, dry_run: bool = F
     replace_once(
         http_util,
         r'private const string DefaultRemoteBaseUrl = "";',
-        f'private const string DefaultRemoteBaseUrl = {json.dumps(remote_url)};',
+        f"private const string DefaultRemoteBaseUrl = {json.dumps(remote_url)};",
         dry_run=dry_run,
     )
     replace_once(
         connection_section,
-        r'transportDropdown\.Init\(TransportProtocol\.HTTPLocal\);',
-        'transportDropdown.Init(TransportProtocol.HTTPRemote);',
+        r"transportDropdown\.Init\(TransportProtocol\.HTTPLocal\);",
+        "transportDropdown.Init(TransportProtocol.HTTPRemote);",
         dry_run=dry_run,
     )
     replace_once(
@@ -103,8 +102,7 @@ def backup_dir(src: Path, backup_root: Path) -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Prepare MCPForUnity for Asset Store upload.")
+    parser = argparse.ArgumentParser(description="Prepare MCPForUnity for Asset Store upload.")
     parser.add_argument(
         "--repo-root",
         default=str(REPO_ROOT_DEFAULT),
@@ -133,16 +131,18 @@ def main() -> int:
     args = parser.parse_args()
 
     repo_root = Path(args.repo_root).expanduser().resolve()
-    asset_project = Path(args.asset_project).expanduser().resolve(
-    ) if args.asset_project else (repo_root / "TestProjects" / "AssetStoreUploads")
+    asset_project = (
+        Path(args.asset_project).expanduser().resolve()
+        if args.asset_project
+        else (repo_root / "TestProjects" / "AssetStoreUploads")
+    )
     remote_url = args.remote_url.strip()
     if not remote_url:
         raise RuntimeError("--remote-url must be a non-empty URL")
 
     source_mcp = repo_root / "MCPForUnity"
     if not source_mcp.is_dir():
-        raise RuntimeError(
-            f"Source MCPForUnity folder not found: {source_mcp}")
+        raise RuntimeError(f"Source MCPForUnity folder not found: {source_mcp}")
 
     assets_dir = asset_project / "Assets"
     if not assets_dir.is_dir():
@@ -151,8 +151,11 @@ def main() -> int:
     dest_mcp = assets_dir / "MCPForUnity"
     resolved_dest = dest_mcp.resolve()
     resolved_source = source_mcp.resolve()
-    if (resolved_dest == resolved_source or resolved_source in resolved_dest.parents
-            or resolved_dest in resolved_source.parents):
+    if (
+        resolved_dest == resolved_source
+        or resolved_source in resolved_dest.parents
+        or resolved_dest in resolved_source.parents
+    ):
         raise RuntimeError("Source and destination MCPForUnity folders must not overlap")
     if dest_mcp.exists() and not dest_mcp.is_dir():
         raise RuntimeError(f"Destination MCPForUnity is not a folder: {dest_mcp}")
@@ -161,15 +164,17 @@ def main() -> int:
 
     if args.dry_run:
         print("[dry-run] Validated paths and Asset Store edits. No changes applied.")
-        print("[dry-run] Would stage a temporary copy of MCPForUnity and apply Asset Store edits there.")
         print(
-            f"[dry-run] Would replace:\n- {dest_mcp}\n  with\n- {source_mcp}")
+            "[dry-run] Would stage a temporary copy of MCPForUnity and apply Asset Store edits there."
+        )
+        print(f"[dry-run] Would replace:\n- {dest_mcp}\n  with\n- {source_mcp}")
         return 0
 
     # 1) Stage a temporary copy of MCPForUnity and apply Asset Store-specific edits there.
     # Stage on the destination filesystem so installation uses directory renames.
-    staging_root = Path(tempfile.mkdtemp(
-        prefix="mcpforunity_assetstore_", dir=assets_dir.resolve().parent))
+    staging_root = Path(
+        tempfile.mkdtemp(prefix="mcpforunity_assetstore_", dir=assets_dir.resolve().parent)
+    )
     cleanup_stage = True
     try:
         staged_mcp = staging_root / "MCPForUnity"

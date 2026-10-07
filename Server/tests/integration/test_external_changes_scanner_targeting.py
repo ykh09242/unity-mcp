@@ -1,4 +1,5 @@
 """Real filesystem coverage for scanner path and per-project state contracts."""
+
 import importlib.util
 import json
 import os
@@ -47,7 +48,11 @@ def _scanner(module, *, scan_interval_ms=0):
 @pytest.mark.parametrize("form", ["uri", "native", "relative"])
 def test_local_package_path_forms_detect_changes(tmp_path, scanner_module, form):
     # Windows native paths and all relative paths must retain literal percent escapes.
-    name = "Package with spaces %20 literal" if form != "native" or os.name == "nt" else "Package with spaces % literal"
+    name = (
+        "Package with spaces %20 literal"
+        if form != "native" or os.name == "nt"
+        else "Package with spaces % literal"
+    )
     package = tmp_path / name
     target = package / "package.json"
     _write_at(target, 2_000_000_000)
@@ -122,12 +127,18 @@ def test_changed_root_resets_dirty_timestamps_and_throttle(tmp_path, scanner_mod
     assert scanner.update_and_get("one")["external_changes_dirty"] is True
     scanner.set_project_root("one", str(new_project))
     observed = scanner.update_and_get("one")
-    assert observed == {"external_changes_dirty": False, "external_changes_last_seen_unix_ms": None,
-                        "dirty_since_unix_ms": None, "last_cleared_unix_ms": None}
+    assert observed == {
+        "external_changes_dirty": False,
+        "external_changes_last_seen_unix_ms": None,
+        "dirty_since_unix_ms": None,
+        "last_cleared_unix_ms": None,
+    }
     assert scanner._get_state("one").last_seen_mtime_ns == 1_000_000_000
 
 
-def test_same_root_and_missing_root_preserve_dirty_state_and_throttle(tmp_path, scanner_module, monkeypatch):
+def test_same_root_and_missing_root_preserve_dirty_state_and_throttle(
+    tmp_path, scanner_module, monkeypatch
+):
     project = _project(tmp_path / "Project", "file:")
     target = project / "Assets/asset.txt"
     _write_at(target, 2_000_000_000)

@@ -13,12 +13,12 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             using var stream = new MemoryStream();
             using (var zip = new ZipArchive(stream, ZipArchiveMode.Create, true))
-                for (int i = 0; i < count; i++) zip.CreateEntry(i + ".png");
+                for (int i = 0; i < count; i++)
+                    zip.CreateEntry(i + ".png");
             return stream.ToArray();
         }
 
-        private static void Set(byte[] data, int offset, byte[] value)
-            => Buffer.BlockCopy(value, 0, data, offset, value.Length);
+        private static void Set(byte[] data, int offset, byte[] value) => Buffer.BlockCopy(value, 0, data, offset, value.Length);
 
         [TestCase("count")]
         [TestCase("size")]
@@ -35,13 +35,19 @@ namespace MCPForUnityTests.Editor.AssetGen
                     Set(data, end + 8, BitConverter.GetBytes((ushort)5000));
                     Set(data, end + 10, BitConverter.GetBytes((ushort)5000));
                     break;
-                case "size": Set(data, end + 12, BitConverter.GetBytes((uint)ZipMetadataPreflight.MaxDirectoryBytes + 1)); break;
+                case "size":
+                    Set(data, end + 12, BitConverter.GetBytes((uint)ZipMetadataPreflight.MaxDirectoryBytes + 1));
+                    break;
                 case "hidden":
                     Set(data, end + 8, BitConverter.GetBytes((ushort)1));
                     Set(data, end + 10, BitConverter.GetBytes((ushort)1));
                     break;
-                case "offset": Set(data, end + 16, BitConverter.GetBytes(uint.MaxValue - 1)); break;
-                case "truncated": Array.Resize(ref data, data.Length - 1); break;
+                case "offset":
+                    Set(data, end + 16, BitConverter.GetBytes(uint.MaxValue - 1));
+                    break;
+                case "truncated":
+                    Array.Resize(ref data, data.Length - 1);
+                    break;
             }
             using var stream = new MemoryStream(data);
             Assert.Throws<IOException>(() => ZipMetadataPreflight.Validate(stream, 4096, CancellationToken.None));
@@ -56,12 +62,18 @@ namespace MCPForUnityTests.Editor.AssetGen
             writer.Write(regular, 0, end);
             writer.Write(0x06064b50u);
             writer.Write(44UL);
-            writer.Write((ushort)45); writer.Write((ushort)45);
-            writer.Write(0u); writer.Write(0u);
-            writer.Write(count); writer.Write(count);
+            writer.Write((ushort)45);
+            writer.Write((ushort)45);
+            writer.Write(0u);
+            writer.Write(0u);
+            writer.Write(count);
+            writer.Write(count);
             writer.Write((ulong)BitConverter.ToUInt32(regular, end + 12));
             writer.Write((ulong)BitConverter.ToUInt32(regular, end + 16));
-            writer.Write(0x07064b50u); writer.Write(0u); writer.Write((ulong)end); writer.Write(1u);
+            writer.Write(0x07064b50u);
+            writer.Write(0u);
+            writer.Write((ulong)end);
+            writer.Write(1u);
             Set(regular, end + 8, BitConverter.GetBytes(ushort.MaxValue));
             Set(regular, end + 10, BitConverter.GetBytes(inconsistent ? (ushort)2 : ushort.MaxValue));
             Set(regular, end + 12, BitConverter.GetBytes(uint.MaxValue));
@@ -82,7 +94,10 @@ namespace MCPForUnityTests.Editor.AssetGen
                 SafeZipExtractor.ExtractTo(zip, Path.Combine(root, "output"));
                 Assert.IsTrue(File.Exists(Path.Combine(root, "output/0.png")));
             }
-            finally { Directory.Delete(root, true); }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
         }
 
         [TestCase(5000UL, false)]

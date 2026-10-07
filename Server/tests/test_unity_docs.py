@@ -99,6 +99,7 @@ SAMPLE_DOC_HTML_MODERN = """\
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def ctx():
     return SimpleNamespace(info=AsyncMock(), warning=AsyncMock())
@@ -107,6 +108,7 @@ def ctx():
 # ---------------------------------------------------------------------------
 # Version extraction (pure)
 # ---------------------------------------------------------------------------
+
 
 def test_extract_version_full():
     assert _extract_version("6000.0.38f1") == "6000.0"
@@ -136,6 +138,7 @@ def test_extract_version_already_short():
 # URL construction (pure)
 # ---------------------------------------------------------------------------
 
+
 def test_build_url_class_only():
     url = _build_doc_url("Physics", None, "6000.0")
     assert url == "https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Physics.html"
@@ -143,7 +146,9 @@ def test_build_url_class_only():
 
 def test_build_url_with_member():
     url = _build_doc_url("Physics", "Raycast", "6000.0")
-    assert url == "https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Physics.Raycast.html"
+    assert (
+        url == "https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Physics.Raycast.html"
+    )
 
 
 def test_build_url_versionless():
@@ -153,7 +158,10 @@ def test_build_url_versionless():
 
 def test_build_property_url():
     url = _build_property_url("Transform", "position", "6000.0")
-    assert url == "https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Transform-position.html"
+    assert (
+        url
+        == "https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Transform-position.html"
+    )
 
 
 def test_build_property_url_versionless():
@@ -164,6 +172,7 @@ def test_build_property_url_versionless():
 # ---------------------------------------------------------------------------
 # HTML parsing (pure)
 # ---------------------------------------------------------------------------
+
 
 def test_parse_html_description():
     result = _parse_unity_doc_html(SAMPLE_DOC_HTML)
@@ -209,6 +218,7 @@ def test_parse_empty_html():
 # Modern HTML format (h3 headings, "name lbl", "desc", "signature-CS")
 # ---------------------------------------------------------------------------
 
+
 def test_parse_modern_description():
     result = _parse_unity_doc_html(SAMPLE_DOC_HTML_MODERN)
     assert "Casts a ray" in result["description"]
@@ -242,6 +252,7 @@ def test_parse_modern_examples():
 # Tool action tests (mock _fetch_url)
 # ---------------------------------------------------------------------------
 
+
 def test_unknown_action_returns_error():
     result = asyncio.run(unity_docs(SimpleNamespace(), action="bad_action"))
     assert result["success"] is False
@@ -259,9 +270,7 @@ def test_get_doc_success():
         return (200, SAMPLE_DOC_HTML)
 
     with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch):
-        result = asyncio.run(
-            unity_docs(SimpleNamespace(), action="get_doc", class_name="Physics")
-        )
+        result = asyncio.run(unity_docs(SimpleNamespace(), action="get_doc", class_name="Physics"))
     assert result["success"] is True
     assert result["data"]["found"] is True
     assert result["data"]["class"] == "Physics"
@@ -314,15 +323,14 @@ def test_get_doc_network_error():
         raise ConnectionError("Network unreachable")
 
     with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch):
-        result = asyncio.run(
-            unity_docs(SimpleNamespace(), action="get_doc", class_name="Physics")
-        )
+        result = asyncio.run(unity_docs(SimpleNamespace(), action="get_doc", class_name="Physics"))
     assert result["success"] is False
     assert "Could not reach" in result["message"]
 
 
 def test_get_doc_version_fallback():
     """Versioned URL 404s, versionless succeeds."""
+
     async def mock_fetch(url):
         if "/6000.0/" in url:
             return (404, "")
@@ -367,9 +375,7 @@ def test_get_doc_class_only_no_member_in_response():
         return (200, SAMPLE_DOC_HTML)
 
     with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch):
-        result = asyncio.run(
-            unity_docs(SimpleNamespace(), action="get_doc", class_name="Physics")
-        )
+        result = asyncio.run(unity_docs(SimpleNamespace(), action="get_doc", class_name="Physics"))
     assert result["data"]["member"] is None
 
 
@@ -382,12 +388,19 @@ def test_no_duplicate_actions():
 
 
 @pytest.mark.parametrize("status", [403, 429, 503])
-@pytest.mark.parametrize("options", [
-    {"action": "get_doc", "class_name": "Physics"},
-    {"action": "get_manual", "slug": "execution-order"},
-    {"action": "get_package_doc", "package": "com.unity.render-pipelines.universal",
-     "page": "index", "pkg_version": "17.0"},
-])
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"action": "get_doc", "class_name": "Physics"},
+        {"action": "get_manual", "slug": "execution-order"},
+        {
+            "action": "get_package_doc",
+            "package": "com.unity.render-pipelines.universal",
+            "page": "index",
+            "pkg_version": "17.0",
+        },
+    ],
+)
 def test_documentation_http_errors_return_failure(status, options):
     # Given: a documentation endpoint returns an HTTP error page.
     async def fetch(url):
@@ -397,8 +410,10 @@ def test_documentation_http_errors_return_failure(status, options):
         code, body = await fetch(url)
         return code, body, url
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=fetch), \
-         patch("services.tools.unity_docs._fetch_url_full", side_effect=fetch_full):
+    with (
+        patch("services.tools.unity_docs._fetch_url", side_effect=fetch),
+        patch("services.tools.unity_docs._fetch_url_full", side_effect=fetch_full),
+    ):
         # When: the public action attempts to retrieve the documentation.
         result = asyncio.run(unity_docs(SimpleNamespace(), **options))
 
@@ -417,10 +432,15 @@ def test_member_version_fallback_stops_when_endpoint_reports_http_error(status):
 
     with patch("services.tools.unity_docs._fetch_url", side_effect=fetch) as fetch_mock:
         # When: a member lookup traverses the version fallback.
-        result = asyncio.run(unity_docs(
-            SimpleNamespace(), action="get_doc", class_name="Transform",
-            member_name="position", version="6000.0.38f1",
-        ))
+        result = asyncio.run(
+            unity_docs(
+                SimpleNamespace(),
+                action="get_doc",
+                class_name="Transform",
+                member_name="position",
+                version="6000.0.38f1",
+            )
+        )
 
     # Then: HTTP errors remain errors without another property request.
     assert result["success"] is False
@@ -455,6 +475,7 @@ SAMPLE_MANUAL_HTML = """\
 # Manual HTML parsing (pure)
 # ---------------------------------------------------------------------------
 
+
 def test_parse_manual_title():
     result = _parse_manual_html(SAMPLE_MANUAL_HTML)
     assert result["title"] == "Execution Order"
@@ -485,6 +506,7 @@ def test_parse_manual_empty():
 # ---------------------------------------------------------------------------
 # get_manual action tests (mock _fetch_url)
 # ---------------------------------------------------------------------------
+
 
 def test_get_manual_success():
     async def mock_fetch(url):
@@ -522,6 +544,7 @@ def test_get_manual_404():
 
 def test_get_manual_version_fallback():
     """Versioned URL 404s, unversioned succeeds."""
+
     async def mock_fetch(url):
         if "/6000.0/" in url:
             return (404, "")
@@ -544,6 +567,7 @@ def test_get_manual_version_fallback():
 # ---------------------------------------------------------------------------
 # get_package_doc action tests (mock _fetch_url_full)
 # ---------------------------------------------------------------------------
+
 
 def test_get_package_doc_success():
     async def mock_fetch_full(url):
@@ -631,6 +655,7 @@ def test_get_package_doc_404():
 # lookup action tests
 # ---------------------------------------------------------------------------
 
+
 def test_lookup_requires_query():
     result = asyncio.run(unity_docs(SimpleNamespace(), action="lookup"))
     assert result["success"] is False
@@ -639,6 +664,7 @@ def test_lookup_requires_query():
 
 def test_lookup_single_query():
     """lookup with a single query finds it via ScriptReference."""
+
     async def mock_fetch(url):
         if "ScriptReference/Physics" in url:
             return (200, SAMPLE_DOC_HTML)
@@ -647,11 +673,11 @@ def test_lookup_single_query():
     async def mock_fetch_full(url):
         return (404, "", url)
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch), \
-         patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch_full):
-        result = asyncio.run(
-            unity_docs(SimpleNamespace(), action="lookup", query="Physics")
-        )
+    with (
+        patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch),
+        patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch_full),
+    ):
+        result = asyncio.run(unity_docs(SimpleNamespace(), action="lookup", query="Physics"))
     assert result["success"] is True
     assert result["data"]["found"] is True
     assert result["data"]["summary"]["found"] == 1
@@ -659,6 +685,7 @@ def test_lookup_single_query():
 
 def test_lookup_batch_queries():
     """lookup with multiple queries searches all in parallel."""
+
     async def mock_fetch(url):
         if "ScriptReference/Physics" in url or "ScriptReference/Camera" in url:
             return (200, SAMPLE_DOC_HTML)
@@ -667,11 +694,12 @@ def test_lookup_batch_queries():
     async def mock_fetch_full(url):
         return (404, "", url)
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch), \
-         patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch_full):
+    with (
+        patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch),
+        patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch_full),
+    ):
         result = asyncio.run(
-            unity_docs(SimpleNamespace(), action="lookup",
-                       queries="Physics,Camera,zzz-nonexistent")
+            unity_docs(SimpleNamespace(), action="lookup", queries="Physics,Camera,zzz-nonexistent")
         )
     assert result["success"] is True
     assert result["data"]["summary"]["total"] == 3
@@ -681,14 +709,17 @@ def test_lookup_batch_queries():
 
 def test_lookup_no_results():
     """lookup with garbage returns found=False with suggestions."""
+
     async def mock_fetch(url):
         return (404, "")
 
     async def mock_fetch_full(url):
         return (404, "", url)
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch), \
-         patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch_full):
+    with (
+        patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch),
+        patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch_full),
+    ):
         result = asyncio.run(
             unity_docs(SimpleNamespace(), action="lookup", query="zzz-nonexistent-xyz")
         )
@@ -700,6 +731,7 @@ def test_lookup_no_results():
 def test_asset_keyword_detection():
     """Queries with asset keywords trigger project asset search."""
     from services.tools.unity_docs import _should_search_assets
+
     assert _should_search_assets("Mesh2D shader") is True
     assert _should_search_assets("Lit material") is True
     assert _should_search_assets("URP 2D lighting") is True
@@ -712,6 +744,7 @@ def test_asset_keyword_detection():
 def test_build_asset_search_terms():
     """Extract meaningful search terms from query, infer filter types."""
     from services.tools.unity_docs import _build_asset_search_terms
+
     # "Mesh2D shader" → search for *mesh2d* with filter_type=Shader
     terms = _build_asset_search_terms("Mesh2D shader")
     assert len(terms) >= 1

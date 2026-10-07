@@ -2,19 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using BigInteger = System.Numerics.BigInteger;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Runtime.Helpers;
+using BigInteger = System.Numerics.BigInteger;
 
 namespace MCPForUnity.Editor.Resources.Scene
 {
     /// <summary>
     /// Resource handler for reading GameObject data.
     /// Provides read-only access to GameObject information without component serialization.
-    /// 
+    ///
     /// URI: unity://scene/gameobject/{instanceID}
     /// </summary>
     [McpForUnityResource("get_gameobject")]
@@ -29,7 +29,7 @@ namespace MCPForUnity.Editor.Resources.Scene
 
             // Get instance ID from params
             int? instanceID = null;
-            
+
             var idToken = @params["instanceID"] ?? @params["instance_id"] ?? @params["id"];
             if (idToken != null)
             {
@@ -53,11 +53,7 @@ namespace MCPForUnity.Editor.Resources.Scene
                     return new ErrorResponse($"GameObject with instance ID {instanceID} not found.");
                 }
 
-                return new
-                {
-                    success = true,
-                    data = SerializeGameObject(go)
-                };
+                return new { success = true, data = SerializeGameObject(go) };
             }
             catch (Exception e)
             {
@@ -76,12 +72,9 @@ namespace MCPForUnity.Editor.Resources.Scene
                 return null;
 
             var transform = go.transform;
-            
+
             // Get component type names (not full serialization)
-            var componentTypes = go.GetComponents<Component>()
-                .Where(c => c != null)
-                .Select(c => c.GetType().Name)
-                .ToList();
+            var componentTypes = go.GetComponents<Component>().Where(c => c != null).Select(c => c.GetType().Name).ToList();
 
             // Get children instance IDs (not full serialization)
             var childrenIds = new List<int>();
@@ -107,24 +100,29 @@ namespace MCPForUnity.Editor.Resources.Scene
                     rotation = SerializeVector3(transform.eulerAngles),
                     localRotation = SerializeVector3(transform.localEulerAngles),
                     scale = SerializeVector3(transform.localScale),
-                    lossyScale = SerializeVector3(transform.lossyScale)
+                    lossyScale = SerializeVector3(transform.lossyScale),
                 },
                 parent = transform.parent != null ? transform.parent.gameObject.GetInstanceIDCompat() : (int?)null,
                 children = childrenIds,
                 componentTypes = componentTypes,
-                path = GameObjectLookup.GetGameObjectPath(go)
+                path = GameObjectLookup.GetGameObjectPath(go),
             };
         }
 
         private static object SerializeVector3(Vector3 v)
         {
-            return new { x = v.x, y = v.y, z = v.z };
+            return new
+            {
+                x = v.x,
+                y = v.y,
+                z = v.z,
+            };
         }
     }
 
     /// <summary>
     /// Resource handler for reading all components on a GameObject.
-    /// 
+    ///
     /// URI: unity://scene/gameobject/{instanceID}/components
     /// </summary>
     [McpForUnityResource("get_gameobject_components")]
@@ -165,7 +163,7 @@ namespace MCPForUnity.Editor.Resources.Scene
                 cursor = Mathf.Clamp(cursor, 0, total);
 
                 var pagedComponents = allComponents.Skip(cursor).Take(pageSize).ToList();
-                
+
                 var componentData = new List<object>();
                 foreach (var component in pagedComponents)
                 {
@@ -175,11 +173,7 @@ namespace MCPForUnity.Editor.Resources.Scene
                     }
                     else
                     {
-                        componentData.Add(new
-                        {
-                            typeName = component.GetType().FullName,
-                            instanceID = component.GetInstanceIDCompat()
-                        });
+                        componentData.Add(new { typeName = component.GetType().FullName, instanceID = component.GetInstanceIDCompat() });
                     }
                 }
 
@@ -198,8 +192,8 @@ namespace MCPForUnity.Editor.Resources.Scene
                         nextCursor = nextCursor,
                         totalCount = total,
                         hasMore = nextCursor.HasValue,
-                        includeProperties = includeProperties
-                    }
+                        includeProperties = includeProperties,
+                    },
                 };
             }
             catch (Exception e)
@@ -212,8 +206,11 @@ namespace MCPForUnity.Editor.Resources.Scene
         private static int CoercePaginationInt(JToken token, int defaultValue)
         {
             // Saturate whole numbers before Int32 conversion can reset paging to its defaults.
-            if (token != null && (token.Type == JTokenType.Integer || token.Type == JTokenType.String)
-                && BigInteger.TryParse(token.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+            if (
+                token != null
+                && (token.Type == JTokenType.Integer || token.Type == JTokenType.String)
+                && BigInteger.TryParse(token.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+            )
                 return (int)BigInteger.Min(BigInteger.Max(value, int.MinValue), int.MaxValue);
 
             return ParamCoercion.CoerceInt(token, defaultValue);
@@ -222,7 +219,7 @@ namespace MCPForUnity.Editor.Resources.Scene
 
     /// <summary>
     /// Resource handler for reading a single component on a GameObject.
-    /// 
+    ///
     /// URI: unity://scene/gameobject/{instanceID}/component/{componentName}
     /// </summary>
     [McpForUnityResource("get_gameobject_component")]
@@ -260,13 +257,16 @@ namespace MCPForUnity.Editor.Resources.Scene
                 Component targetComponent = null;
                 foreach (var component in go.GetComponents<Component>())
                 {
-                    if (component == null) continue;
-                    
+                    if (component == null)
+                        continue;
+
                     var typeName = component.GetType().Name;
                     var fullTypeName = component.GetType().FullName;
-                    
-                    if (string.Equals(typeName, componentName, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(fullTypeName, componentName, StringComparison.OrdinalIgnoreCase))
+
+                    if (
+                        string.Equals(typeName, componentName, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(fullTypeName, componentName, StringComparison.OrdinalIgnoreCase)
+                    )
                     {
                         targetComponent = component;
                         break;
@@ -285,8 +285,8 @@ namespace MCPForUnity.Editor.Resources.Scene
                     {
                         gameObjectID = instanceID,
                         gameObjectName = go.name,
-                        component = GameObjectSerializer.GetComponentData(targetComponent)
-                    }
+                        component = GameObjectSerializer.GetComponentData(targetComponent),
+                    },
                 };
             }
             catch (Exception e)

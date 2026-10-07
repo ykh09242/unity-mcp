@@ -1,6 +1,7 @@
 """
 MCP Resources package - Auto-discovers and registers all resources in this directory.
 """
+
 import functools
 import inspect
 import logging
@@ -17,7 +18,7 @@ from utils.module_discovery import discover_modules
 logger = logging.getLogger("mcp-for-unity-server")
 
 # Export decorator for easy imports within tools
-__all__ = ['register_all_resources']
+__all__ = ["register_all_resources"]
 
 
 def _serialize_pydantic(func):
@@ -27,6 +28,7 @@ def _serialize_pydantic(func):
     Our resource functions return MCPResponse (a Pydantic BaseModel). This wrapper
     converts them to JSON strings automatically.
     """
+
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         result = await func(*args, **kwargs)
@@ -34,8 +36,10 @@ def _serialize_pydantic(func):
             return result.model_dump_json()
         if isinstance(result, dict):
             import json
+
             return json.dumps(result)
         return result
+
     return wrapper
 
 
@@ -61,33 +65,32 @@ def register_all_resources(mcp: FastMCP, *, project_scoped_tools: bool = True):
 
     registered_count = 0
     for resource_info in resources:
-        func = resource_info['func']
-        uri = resource_info['uri']
-        resource_name = resource_info['name']
-        description = resource_info['description']
-        kwargs = resource_info['kwargs']
+        func = resource_info["func"]
+        uri = resource_info["uri"]
+        resource_name = resource_info["name"]
+        description = resource_info["description"]
+        kwargs = resource_info["kwargs"]
 
         if not project_scoped_tools and resource_name == "custom_tools":
             logger.info(
-                "Skipping custom_tools resource registration (project-scoped tools disabled)")
+                "Skipping custom_tools resource registration (project-scoped tools disabled)"
+            )
             continue
 
         # Check if URI contains query parameters (e.g., {?unity_instance})
-        has_query_params = '{?' in uri
+        has_query_params = "{?" in uri
 
         if has_query_params:
             wrapped_template = _serialize_pydantic(func)
             wrapped_template = log_execution(resource_name, "Resource")(wrapped_template)
-            wrapped_template = telemetry_resource(
-                resource_name)(wrapped_template)
+            wrapped_template = telemetry_resource(resource_name)(wrapped_template)
             wrapped_template = mcp.resource(
                 uri=uri,
                 name=resource_name,
                 description=description,
                 **kwargs,
             )(wrapped_template)
-            logger.debug(
-                f"Registered resource template: {resource_name} - {uri}")
+            logger.debug(f"Registered resource template: {resource_name} - {uri}")
             registered_count += 1
         else:
             wrapped = _serialize_pydantic(func)
@@ -99,9 +102,7 @@ def register_all_resources(mcp: FastMCP, *, project_scoped_tools: bool = True):
                 description=description,
                 **kwargs,
             )(wrapped)
-            logger.debug(
-                f"Registered resource: {resource_name} - {description}")
+            logger.debug(f"Registered resource: {resource_name} - {description}")
             registered_count += 1
 
-    logger.info(
-        f"Registered {registered_count} MCP resources ({len(resources)} unique)")
+    logger.info(f"Registered {registered_count} MCP resources ({len(resources)} unique)")

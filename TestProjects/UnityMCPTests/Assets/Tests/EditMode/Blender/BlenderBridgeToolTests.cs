@@ -38,14 +38,17 @@ namespace MCPForUnityTests.Editor.Blender
         [TearDown]
         public void RestoreConsent()
         {
-            if (savedEnabled.HasValue) EditorPrefs.SetBool(EnabledKey, savedEnabled.Value);
-            else EditorPrefs.DeleteKey(EnabledKey);
-            if (savedConsent.HasValue) EditorPrefs.SetBool(ConsentKey, savedConsent.Value);
-            else EditorPrefs.DeleteKey(ConsentKey);
+            if (savedEnabled.HasValue)
+                EditorPrefs.SetBool(EnabledKey, savedEnabled.Value);
+            else
+                EditorPrefs.DeleteKey(EnabledKey);
+            if (savedConsent.HasValue)
+                EditorPrefs.SetBool(ConsentKey, savedConsent.Value);
+            else
+                EditorPrefs.DeleteKey(ConsentKey);
         }
 
-        private static JObject Call(JObject p)
-            => JObject.Parse(JsonConvert.SerializeObject(BlenderBridgeTool.HandleCommand(p).GetAwaiter().GetResult()));
+        private static JObject Call(JObject p) => JObject.Parse(JsonConvert.SerializeObject(BlenderBridgeTool.HandleCommand(p).GetAwaiter().GetResult()));
 
         [Test]
         public void NullParams_ReturnsError()
@@ -100,7 +103,14 @@ namespace MCPForUnityTests.Editor.Blender
         [Test]
         public void ImportModel_RejectsOutputFolderBeforeContactingBlender()
         {
-            JObject resp = Call(new JObject { ["action"] = "import_model", ["format"] = "fbx", ["output_folder"] = "Assets/../../outside" });
+            JObject resp = Call(
+                new JObject
+                {
+                    ["action"] = "import_model",
+                    ["format"] = "fbx",
+                    ["output_folder"] = "Assets/../../outside",
+                }
+            );
             Assert.AreEqual(false, (bool)resp["success"]);
             StringAssert.Contains("Assets", (string)resp["error"]);
         }
@@ -151,7 +161,10 @@ namespace MCPForUnityTests.Editor.Blender
                 Assert.IsFalse(Directory.Exists(root));
                 Assert.IsFalse(File.Exists(root + ".meta"));
             }
-            finally { AssetDatabase.AllowAutoRefresh(); }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+            }
         }
 
         [Test]
@@ -176,7 +189,8 @@ namespace MCPForUnityTests.Editor.Blender
             finally
             {
                 File.Delete(sibling);
-                if (ownsRoot) Directory.Delete(root);
+                if (ownsRoot)
+                    Directory.Delete(root);
                 AssetDatabase.AllowAutoRefresh();
             }
         }
@@ -196,13 +210,13 @@ namespace MCPForUnityTests.Editor.Blender
                 MethodInfo save = typeof(BlenderBridgeTool).GetMethod("SavePrefab", BindingFlags.Static | BindingFlags.NonPublic);
                 Assert.IsNotNull(save);
                 LogAssert.ignoreFailingMessages = true;
-                Assert.Throws<TargetInvocationException>(() => save.Invoke(null,
-                    new object[] { go, root + "/Model.fbx", "MissingParent/Result" }));
+                Assert.Throws<TargetInvocationException>(() => save.Invoke(null, new object[] { go, root + "/Model.fbx", "MissingParent/Result" }));
                 LogAssert.ignoreFailingMessages = previousIgnore;
 
                 Assert.AreEqual(preexisting, AssetDatabase.IsValidFolder(folder));
                 Assert.AreEqual(preexisting, Directory.Exists(MCPForUnity.Editor.Helpers.AssetGenPaths.ToAbsolute(folder)));
-                if (preexisting) Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(folder));
+                if (preexisting)
+                    Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(folder));
             }
             finally
             {
@@ -223,8 +237,7 @@ namespace MCPForUnityTests.Editor.Blender
         [Test]
         public void ExportScript_EmbedsValuesAsOneJsonLiteral()
         {
-            string script = BlenderBridgeTool.BuildExportScript(
-                "C:/tmp/O'Brien_1.glb", new[] { "O'Brien", "__APPLY__" }, false, true, "glb");
+            string script = BlenderBridgeTool.BuildExportScript("C:/tmp/O'Brien_1.glb", new[] { "O'Brien", "__APPLY__" }, false, true, "glb");
 
             StringAssert.Contains("cfg = json.loads(\"", script);
             Assert.IsFalse(script.Contains("__CFG__"), "placeholder must be replaced exactly once");
@@ -249,26 +262,19 @@ namespace MCPForUnityTests.Editor.Blender
         [Test]
         public void RedactRemoteUrl_StripsEmbeddedCredentials()
         {
-            Assert.AreEqual("https://github.com/o/r.git",
-                BlenderBridgeTool.RedactRemoteUrl("https://user:ghp_secret@github.com/o/r.git"));
-            Assert.AreEqual("https://github.com/o/r.git",
-                BlenderBridgeTool.RedactRemoteUrl("https://ghp_secret@github.com/o/r.git"));
-            Assert.AreEqual("https://github.com/o/r.git",
-                BlenderBridgeTool.RedactRemoteUrl("https://github.com/o/r.git"));
-            Assert.AreEqual("git@github.com:o/r.git",
-                BlenderBridgeTool.RedactRemoteUrl("git@github.com:o/r.git"));
+            Assert.AreEqual("https://github.com/o/r.git", BlenderBridgeTool.RedactRemoteUrl("https://user:ghp_secret@github.com/o/r.git"));
+            Assert.AreEqual("https://github.com/o/r.git", BlenderBridgeTool.RedactRemoteUrl("https://ghp_secret@github.com/o/r.git"));
+            Assert.AreEqual("https://github.com/o/r.git", BlenderBridgeTool.RedactRemoteUrl("https://github.com/o/r.git"));
+            Assert.AreEqual("git@github.com:o/r.git", BlenderBridgeTool.RedactRemoteUrl("git@github.com:o/r.git"));
             Assert.AreEqual(string.Empty, BlenderBridgeTool.RedactRemoteUrl(null));
         }
 
         [Test]
         public void RedactRemoteUrl_StripsQueryAndFragmentCredentials()
         {
-            Assert.AreEqual("https://github.com/o/r.git",
-                BlenderBridgeTool.RedactRemoteUrl("https://github.com/o/r.git?token=ghp_secret"));
-            Assert.AreEqual("https://github.com/o/r.git",
-                BlenderBridgeTool.RedactRemoteUrl("https://github.com/o/r.git#access_token=ghp_secret"));
-            Assert.AreEqual("https://github.com/o/r.git",
-                BlenderBridgeTool.RedactRemoteUrl("https://user:pw@github.com/o/r.git?x=1#y"));
+            Assert.AreEqual("https://github.com/o/r.git", BlenderBridgeTool.RedactRemoteUrl("https://github.com/o/r.git?token=ghp_secret"));
+            Assert.AreEqual("https://github.com/o/r.git", BlenderBridgeTool.RedactRemoteUrl("https://github.com/o/r.git#access_token=ghp_secret"));
+            Assert.AreEqual("https://github.com/o/r.git", BlenderBridgeTool.RedactRemoteUrl("https://user:pw@github.com/o/r.git?x=1#y"));
         }
 
         [Test]
@@ -307,8 +313,18 @@ namespace MCPForUnityTests.Editor.Blender
         public void LegacyClips_UseLoopingAnimationAndPreserveValidDefault(bool existingDefault)
         {
             var go = new GameObject("Model");
-            var walk = new AnimationClip { name = "Walk", legacy = true, wrapMode = WrapMode.Once };
-            var idle = new AnimationClip { name = "Idle", legacy = true, wrapMode = WrapMode.Once };
+            var walk = new AnimationClip
+            {
+                name = "Walk",
+                legacy = true,
+                wrapMode = WrapMode.Once,
+            };
+            var idle = new AnimationClip
+            {
+                name = "Idle",
+                legacy = true,
+                wrapMode = WrapMode.Once,
+            };
             try
             {
                 UnityEngine.Animation existing = null;
@@ -323,7 +339,8 @@ namespace MCPForUnityTests.Editor.Blender
                 JObject report = BlenderBridgeTool.SetupAnimation(go, "Assets/unused.fbx", "Model", true, new[] { walk, idle });
                 var animation = go.GetComponentInChildren<UnityEngine.Animation>(true);
                 Assert.NotNull(animation);
-                if (existingDefault) Assert.AreSame(existing, animation);
+                if (existingDefault)
+                    Assert.AreSame(existing, animation);
                 Assert.IsNull(go.GetComponentInChildren<Animator>(true));
                 Assert.AreSame(existingDefault ? idle : walk, animation.clip);
                 Assert.AreSame(walk, animation.GetClip("Walk"));
@@ -383,7 +400,12 @@ namespace MCPForUnityTests.Editor.Blender
         public void AutoAnimateFalse_LeavesEitherClipKindUnconfigured(bool legacy)
         {
             var go = new GameObject("Model");
-            var clip = new AnimationClip { name = "Walk", legacy = legacy, wrapMode = WrapMode.Once };
+            var clip = new AnimationClip
+            {
+                name = "Walk",
+                legacy = legacy,
+                wrapMode = WrapMode.Once,
+            };
             try
             {
                 Assert.IsNull(BlenderBridgeTool.SetupAnimation(go, "invalid asset path", "Model", false, new[] { clip }));
@@ -407,7 +429,9 @@ namespace MCPForUnityTests.Editor.Blender
             var mecanim = new AnimationClip { name = "Mecanim" };
             try
             {
-                Assert.Throws<InvalidOperationException>(() => BlenderBridgeTool.SetupAnimation(go, "Assets/unused.fbx", "Model", true, new[] { legacy, mecanim }));
+                Assert.Throws<InvalidOperationException>(() =>
+                    BlenderBridgeTool.SetupAnimation(go, "Assets/unused.fbx", "Model", true, new[] { legacy, mecanim })
+                );
                 Assert.IsNull(go.GetComponentInChildren<Animator>(true));
                 Assert.IsNull(go.GetComponentInChildren<UnityEngine.Animation>(true));
             }
@@ -433,8 +457,14 @@ namespace MCPForUnityTests.Editor.Blender
             root = Path.Combine(Path.GetTempPath(), "blender-git-test-" + Guid.NewGuid().ToString("N"));
             checkout = Path.Combine(root, "checkout");
             Directory.CreateDirectory(checkout);
-            try { Git("--version"); }
-            catch (System.ComponentModel.Win32Exception) { Assert.Ignore("Git is required for update-check integration tests."); }
+            try
+            {
+                Git("--version");
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                Assert.Ignore("Git is required for update-check integration tests.");
+            }
             Git("init --quiet --initial-branch=main");
             addon = Path.Combine(checkout, "addon.py");
             File.WriteAllText(addon, "# inert test addon\n");
@@ -445,7 +475,8 @@ namespace MCPForUnityTests.Editor.Blender
         [TearDown]
         public void TearDown()
         {
-            if (root == null || !Directory.Exists(root)) return;
+            if (root == null || !Directory.Exists(root))
+                return;
             foreach (string file in Directory.GetFiles(root, "*", SearchOption.AllDirectories))
                 File.SetAttributes(file, FileAttributes.Normal);
             Directory.Delete(root, true);
@@ -455,8 +486,11 @@ namespace MCPForUnityTests.Editor.Blender
         {
             var start = new ProcessStartInfo("git", args)
             {
-                WorkingDirectory = checkout, UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true,
+                WorkingDirectory = checkout,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
             };
             start.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
             using var process = Process.Start(start);
@@ -523,8 +557,7 @@ namespace MCPForUnityTests.Editor.Blender
         [Test]
         public void InvalidWorkingDirectory_DoesNotEchoExceptionDetails()
         {
-            string serialized = JsonConvert.SerializeObject(BlenderBridgeTool.CheckUpdatesBlocking(
-                Path.Combine(root, Canary), addon, addon));
+            string serialized = JsonConvert.SerializeObject(BlenderBridgeTool.CheckUpdatesBlocking(Path.Combine(root, Canary), addon, addon));
             StringAssert.DoesNotContain(Canary, serialized);
             Assert.IsFalse((bool)JObject.Parse(serialized)["success"]);
         }

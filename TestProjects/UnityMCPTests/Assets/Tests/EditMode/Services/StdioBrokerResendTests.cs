@@ -5,10 +5,9 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Threading;
-using NUnit.Framework;
-
-using UnityEngine.TestTools;
 using MCPForUnity.Editor.Services.Transport.Transports;
+using NUnit.Framework;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -45,8 +44,10 @@ namespace MCPForUnityTests.Editor.Services
             object first = new object();
             object second = new object();
 
-            Assert.IsTrue(StdioBridgeHost.IsBrokerResend("{\"type\":\"a\"}", first, "{\"type\":\"a\"}", second),
-                "same payload arriving on a different connection is the resend signature");
+            Assert.IsTrue(
+                StdioBridgeHost.IsBrokerResend("{\"type\":\"a\"}", first, "{\"type\":\"a\"}", second),
+                "same payload arriving on a different connection is the resend signature"
+            );
         }
 
         [Test]
@@ -54,24 +55,32 @@ namespace MCPForUnityTests.Editor.Services
         {
             object connection = new object();
 
-            Assert.IsFalse(StdioBridgeHost.IsBrokerResend("{\"type\":\"a\"}", connection, "{\"type\":\"a\"}", connection),
-                "one connection handles commands sequentially, so identical payloads are distinct requests");
+            Assert.IsFalse(
+                StdioBridgeHost.IsBrokerResend("{\"type\":\"a\"}", connection, "{\"type\":\"a\"}", connection),
+                "one connection handles commands sequentially, so identical payloads are distinct requests"
+            );
         }
 
         [Test]
         public void IsBrokerResend_DifferentPayload_IsNotAResend()
         {
-            Assert.IsFalse(StdioBridgeHost.IsBrokerResend("{\"type\":\"a\"}", new object(), "{\"type\":\"b\"}", new object()),
-                "different work must never be collapsed");
+            Assert.IsFalse(
+                StdioBridgeHost.IsBrokerResend("{\"type\":\"a\"}", new object(), "{\"type\":\"b\"}", new object()),
+                "different work must never be collapsed"
+            );
         }
 
         [Test]
         public void IsBrokerResend_UnknownOwner_IsNotAResend()
         {
-            Assert.IsFalse(StdioBridgeHost.IsBrokerResend("{\"type\":\"a\"}", null, "{\"type\":\"a\"}", new object()),
-                "a command with no recorded owner cannot be proven to be a resend");
-            Assert.IsFalse(StdioBridgeHost.IsBrokerResend("{\"type\":\"a\"}", new object(), "{\"type\":\"a\"}", null),
-                "an incoming command with no owner cannot be proven to be a resend");
+            Assert.IsFalse(
+                StdioBridgeHost.IsBrokerResend("{\"type\":\"a\"}", null, "{\"type\":\"a\"}", new object()),
+                "a command with no recorded owner cannot be proven to be a resend"
+            );
+            Assert.IsFalse(
+                StdioBridgeHost.IsBrokerResend("{\"type\":\"a\"}", new object(), "{\"type\":\"a\"}", null),
+                "an incoming command with no owner cannot be proven to be a resend"
+            );
         }
 
         /// <summary>
@@ -92,8 +101,8 @@ namespace MCPForUnityTests.Editor.Services
             int port = StdioBridgeHost.GetCurrentPort();
             // MCP polls this same bridge while the test runs. Identify only our command,
             // so unrelated get_test_job traffic does not look like a duplicate resend.
-            string commandJson = "{\"type\":\"read_console\",\"test_nonce\":\""
-                + Guid.NewGuid().ToString("N") + "\",\"params\":{\"action\":\"get\",\"count\":1}}";
+            string commandJson =
+                "{\"type\":\"read_console\",\"test_nonce\":\"" + Guid.NewGuid().ToString("N") + "\",\"params\":{\"action\":\"get\",\"count\":1}}";
             byte[] command = Encoding.UTF8.GetBytes(commandJson);
 
             TcpClient first = null;
@@ -128,12 +137,18 @@ namespace MCPForUnityTests.Editor.Services
             for (int i = 0; i < 120; i++)
                 yield return null;
 
-            Assert.AreEqual(1, queuedAfterFirst,
+            Assert.AreEqual(
+                1,
+                queuedAfterFirst,
                 "precondition: the first command must be sitting in the queue undrained — "
-                + $"found {queuedAfterFirst} matching entries, so this run proves nothing about the resend");
-            Assert.AreEqual(1, queuedAfterResend,
+                    + $"found {queuedAfterFirst} matching entries, so this run proves nothing about the resend"
+            );
+            Assert.AreEqual(
+                1,
+                queuedAfterResend,
                 $"the resend should have attached to the in-flight command, but {queuedAfterResend} "
-                + "matching entries were queued — the command would run that many times");
+                    + "matching entries were queued — the command would run that many times"
+            );
         }
 
         private static int CountQueuedPayload(string commandJson)
@@ -148,7 +163,8 @@ namespace MCPForUnityTests.Editor.Services
                 var queue = (IDictionary)queueField.GetValue(null);
                 int count = 0;
                 foreach (QueuedCommand queued in queue.Values)
-                    if (queued.CommandJson == commandJson) count++;
+                    if (queued.CommandJson == commandJson)
+                        count++;
                 return count;
             }
         }
@@ -165,7 +181,8 @@ namespace MCPForUnityTests.Editor.Services
 
         private static void SafeClose(TcpClient client)
         {
-            if (client == null) return;
+            if (client == null)
+                return;
             try
             {
                 client.Client.LingerState = new LingerOption(true, 0);
@@ -182,8 +199,10 @@ namespace MCPForUnityTests.Editor.Services
             while (DateTime.UtcNow <= deadline)
             {
                 int b = stream.ReadByte();
-                if (b < 0) throw new IOException("Connection closed while reading handshake");
-                if (b == '\n') return sb.ToString();
+                if (b < 0)
+                    throw new IOException("Connection closed while reading handshake");
+                if (b == '\n')
+                    return sb.ToString();
                 sb.Append((char)b);
             }
             throw new TimeoutException("Timed out reading handshake line");

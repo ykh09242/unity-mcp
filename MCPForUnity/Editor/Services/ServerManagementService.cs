@@ -27,7 +27,8 @@ namespace MCPForUnity.Editor.Services
         /// <summary>
         /// Creates a new ServerManagementService with default dependencies.
         /// </summary>
-        public ServerManagementService() : this(null, null, null, null, null) { }
+        public ServerManagementService()
+            : this(null, null, null, null, null) { }
 
         /// <summary>
         /// Creates a new ServerManagementService with injected dependencies (for testing).
@@ -42,7 +43,8 @@ namespace MCPForUnity.Editor.Services
             IPidFileManager pidFileManager = null,
             IProcessTerminator processTerminator = null,
             IServerCommandBuilder commandBuilder = null,
-            ITerminalLauncher terminalLauncher = null)
+            ITerminalLauncher terminalLauncher = null
+        )
         {
             _processDetector = processDetector ?? new ProcessDetector();
             _pidFileManager = pidFileManager ?? new PidFileManager();
@@ -165,12 +167,13 @@ namespace MCPForUnity.Editor.Services
                 }
                 string combinedOutput = string.Join(
                     Environment.NewLine,
-                    new[] { stderr, stdout }.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()));
+                    new[] { stderr, stdout }.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim())
+                );
 
-                string lockHint = (!string.IsNullOrEmpty(combinedOutput) &&
-                                   combinedOutput.IndexOf("currently in-use", StringComparison.OrdinalIgnoreCase) >= 0)
-                    ? "Another uv process may be holding the cache lock; wait a moment and try again or clear with '--force' from a terminal."
-                    : string.Empty;
+                string lockHint =
+                    (!string.IsNullOrEmpty(combinedOutput) && combinedOutput.IndexOf("currently in-use", StringComparison.OrdinalIgnoreCase) >= 0)
+                        ? "Another uv process may be holding the cache lock; wait a moment and try again or clear with '--force' from a terminal."
+                        : string.Empty;
 
                 if (string.IsNullOrEmpty(combinedOutput))
                 {
@@ -178,8 +181,9 @@ namespace MCPForUnity.Editor.Services
                 }
 
                 McpLog.Error(
-                    $"Failed to clear uv cache using '{uvCommand} {args}'. " +
-                    $"Details: {combinedOutput}{(string.IsNullOrEmpty(lockHint) ? string.Empty : " Hint: " + lockHint)}");
+                    $"Failed to clear uv cache using '{uvCommand} {args}'. "
+                        + $"Details: {combinedOutput}{(string.IsNullOrEmpty(lockHint) ? string.Empty : " Hint: " + lockHint)}"
+                );
                 return false;
             }
             catch (Exception ex)
@@ -248,7 +252,8 @@ namespace MCPForUnity.Editor.Services
                     EditorUtility.DisplayDialog(
                         "Cannot Start HTTP Server",
                         error ?? "The server command could not be constructed with the current settings.",
-                        "OK");
+                        "OK"
+                    );
                 }
                 return false;
             }
@@ -269,10 +274,11 @@ namespace MCPForUnity.Editor.Services
                         {
                             EditorUtility.DisplayDialog(
                                 "Port In Use",
-                                $"Cannot start the local HTTP server because port {uri.Port} is already in use by PID(s): " +
-                                $"{string.Join(", ", remaining)}\n\n" +
-                                $"{ProductInfo.ProductName} will not terminate unrelated processes. Stop the owning process manually or change the HTTP URL.",
-                                "OK");
+                                $"Cannot start the local HTTP server because port {uri.Port} is already in use by PID(s): "
+                                    + $"{string.Join(", ", remaining)}\n\n"
+                                    + $"{ProductInfo.ProductName} will not terminate unrelated processes. Stop the owning process manually or change the HTTP URL.",
+                                "OK"
+                            );
                         }
                         return false;
                     }
@@ -298,17 +304,24 @@ namespace MCPForUnity.Editor.Services
             // First-time-only confirmation. Subsequent launches (and the quiet auto-start path) skip the dialog.
             if (!quiet && !EditorPrefs.GetBool(EditorPrefKeys.HttpServerLaunchConfirmed, false))
             {
-                if (!EditorUtility.DisplayDialog(
-                    "Start Local HTTP Server",
-                    "Start the local MCP server in the background?\n\n" +
-                    "It launches headless (no terminal window) and logs progress to the Unity Console. " +
-                    "This confirmation is shown only once.",
-                    "Start",
-                    "Cancel"))
+                if (
+                    !EditorUtility.DisplayDialog(
+                        "Start Local HTTP Server",
+                        "Start the local MCP server in the background?\n\n"
+                            + "It launches headless (no terminal window) and logs progress to the Unity Console. "
+                            + "This confirmation is shown only once.",
+                        "Start",
+                        "Cancel"
+                    )
+                )
                 {
                     return false;
                 }
-                try { EditorPrefs.SetBool(EditorPrefKeys.HttpServerLaunchConfirmed, true); } catch { }
+                try
+                {
+                    EditorPrefs.SetBool(EditorPrefKeys.HttpServerLaunchConfirmed, true);
+                }
+                catch { }
             }
 
             string launchLog = portForPid > 0 ? GetLocalHttpServerLaunchLogPath(portForPid) : null;
@@ -371,10 +384,7 @@ namespace MCPForUnity.Editor.Services
                 McpLog.Error($"Failed to start server: {ex.Message}");
                 if (!quiet)
                 {
-                    EditorUtility.DisplayDialog(
-                        "Error",
-                        $"Failed to start server: {ex.Message}",
-                        "OK");
+                    EditorUtility.DisplayDialog("Error", $"Failed to start server: {ex.Message}", "OK");
                 }
                 return false;
             }
@@ -399,9 +409,7 @@ namespace MCPForUnity.Editor.Services
             if (!TryGetPortFromPidFilePath(pidFilePath, out port) || port <= 0)
             {
                 string baseUrl = HttpEndpointUtility.GetLocalBaseUrl();
-                if (IsLocalUrl(baseUrl)
-                    && Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri)
-                    && uri.Port > 0)
+                if (IsLocalUrl(baseUrl) && Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) && uri.Port > 0)
                 {
                     port = uri.Port;
                 }
@@ -433,9 +441,11 @@ namespace MCPForUnity.Editor.Services
                 int port = uri.Port;
 
                 // Handshake path: if we have a pidfile+token and the PID is still the listener, treat as running.
-                if (TryGetLocalHttpServerHandshake(out var pidFilePath, out var instanceToken)
+                if (
+                    TryGetLocalHttpServerHandshake(out var pidFilePath, out var instanceToken)
                     && TryReadPidFromPidFile(pidFilePath, out var pidFromFile)
-                    && pidFromFile > 0)
+                    && pidFromFile > 0
+                )
                 {
                     var pidsNow = GetListeningProcessIdsForPort(port);
                     if (pidsNow.Contains(pidFromFile))
@@ -462,7 +472,8 @@ namespace MCPForUnity.Editor.Services
                 // Best-effort: if anything listening looks like our server, treat as running.
                 foreach (var pid in pids)
                 {
-                    if (pid <= 0) continue;
+                    if (pid <= 0)
+                        continue;
                     if (LooksLikeMcpServerProcess(pid))
                     {
                         return true;
@@ -569,8 +580,9 @@ namespace MCPForUnity.Editor.Services
             {
                 AddHostCandidate(hosts, "127.0.0.1");
             }
-            else if (string.Equals(host, "::", StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(host, "0:0:0:0:0:0:0:0", StringComparison.OrdinalIgnoreCase))
+            else if (
+                string.Equals(host, "::", StringComparison.OrdinalIgnoreCase) || string.Equals(host, "0:0:0:0:0:0:0:0", StringComparison.OrdinalIgnoreCase)
+            )
             {
                 AddHostCandidate(hosts, "::1");
             }
@@ -648,8 +660,9 @@ namespace MCPForUnity.Editor.Services
                             if (!quiet)
                             {
                                 McpLog.Warn(
-                                    $"Cannot stop local HTTP server on port {port}: pidfile not available yet at '{pidFilePath}'. " +
-                                    "If you just started the server, wait a moment and try again.");
+                                    $"Cannot stop local HTTP server on port {port}: pidfile not available yet at '{pidFilePath}'. "
+                                        + "If you just started the server, wait a moment and try again."
+                                );
                             }
                             return false;
                         }
@@ -674,7 +687,11 @@ namespace MCPForUnity.Editor.Services
                             if (listeners.Count == 0)
                             {
                                 // Nothing is listening anymore; clear stale handshake state.
-                                try { DeletePidFile(pidFilePath); } catch { }
+                                try
+                                {
+                                    DeletePidFile(pidFilePath);
+                                }
+                                catch { }
                                 ClearLocalServerPidTracking();
                                 if (!quiet)
                                 {
@@ -701,7 +718,11 @@ namespace MCPForUnity.Editor.Services
                                 if (TerminateProcess(pidFromFile))
                                 {
                                     stoppedAny = true;
-                                    try { DeletePidFile(pidFilePath); } catch { }
+                                    try
+                                    {
+                                        DeletePidFile(pidFilePath);
+                                    }
+                                    catch { }
                                     ClearLocalServerPidTracking();
                                     if (!quiet)
                                     {
@@ -723,10 +744,15 @@ namespace MCPForUnity.Editor.Services
                                 if (!quiet)
                                 {
                                     McpLog.Warn(
-                                        $"Stale pidfile for port {port}: pidfile PID {pidFromFile} is not the current listener " +
-                                        $"(tokenMatch={tokenMatches}, tokenQueryOk={tokenQueryOk}). Falling back to guarded port heuristics.");
+                                        $"Stale pidfile for port {port}: pidfile PID {pidFromFile} is not the current listener "
+                                            + $"(tokenMatch={tokenMatches}, tokenQueryOk={tokenQueryOk}). Falling back to guarded port heuristics."
+                                    );
                                 }
-                                try { DeletePidFile(pidFilePath); } catch { }
+                                try
+                                {
+                                    DeletePidFile(pidFilePath);
+                                }
+                                catch { }
                                 ClearLocalServerPidTracking();
                             }
                             else
@@ -736,8 +762,9 @@ namespace MCPForUnity.Editor.Services
                                 if (!quiet)
                                 {
                                     McpLog.Warn(
-                                        $"Refusing to stop port {port}: pidfile PID {pidFromFile} failed validation " +
-                                        $"(listener={pidIsListener}, tokenMatch={tokenMatches}, tokenQueryOk={tokenQueryOk}).");
+                                        $"Refusing to stop port {port}: pidfile PID {pidFromFile} failed validation "
+                                            + $"(listener={pidIsListener}, tokenMatch={tokenMatches}, tokenQueryOk={tokenQueryOk})."
+                                    );
                                 }
                                 return false;
                             }
@@ -781,12 +808,15 @@ namespace MCPForUnity.Editor.Services
                         {
                             // Never kill Unity/Hub.
                             // Note: "mcp-for-unity" includes "unity", so detect MCP indicators first.
-                            bool storedMentionsMcp = storedArgsLowerNow.Contains("mcp-for-unity")
-                                                     || storedArgsLowerNow.Contains("mcp_for_unity")
-                                                     || storedArgsLowerNow.Contains("mcpforunity");
-                            if (storedArgsLowerNow.Contains("unityhub")
+                            bool storedMentionsMcp =
+                                storedArgsLowerNow.Contains("mcp-for-unity")
+                                || storedArgsLowerNow.Contains("mcp_for_unity")
+                                || storedArgsLowerNow.Contains("mcpforunity");
+                            if (
+                                storedArgsLowerNow.Contains("unityhub")
                                 || storedArgsLowerNow.Contains("unity hub")
-                                || (storedArgsLowerNow.Contains("unity") && !storedMentionsMcp))
+                                || (storedArgsLowerNow.Contains("unity") && !storedMentionsMcp)
+                            )
                             {
                                 if (!quiet)
                                 {
@@ -803,13 +833,14 @@ namespace MCPForUnity.Editor.Services
                                 else
                                 {
                                     // Older versions didn't store a fingerprint; accept common server indicators.
-                                    allowKill = storedArgsLowerNow.Contains("uvicorn")
-                                                || storedArgsLowerNow.Contains("fastmcp")
-                                                || storedArgsLowerNow.Contains("mcpforunity")
-                                                || storedArgsLowerNow.Contains("mcp-for-unity")
-                                                || storedArgsLowerNow.Contains("mcp_for_unity")
-                                                || storedArgsLowerNow.Contains("uvx")
-                                                || storedArgsLowerNow.Contains("python");
+                                    allowKill =
+                                        storedArgsLowerNow.Contains("uvicorn")
+                                        || storedArgsLowerNow.Contains("fastmcp")
+                                        || storedArgsLowerNow.Contains("mcpforunity")
+                                        || storedArgsLowerNow.Contains("mcp-for-unity")
+                                        || storedArgsLowerNow.Contains("mcp_for_unity")
+                                        || storedArgsLowerNow.Contains("uvx")
+                                        || storedArgsLowerNow.Contains("python");
                                 }
 
                                 if (allowKill && TerminateProcess(storedPid))
@@ -839,7 +870,8 @@ namespace MCPForUnity.Editor.Services
 
                 foreach (var pid in pids)
                 {
-                    if (pid <= 0) continue;
+                    if (pid <= 0)
+                        continue;
                     if (unityPid > 0 && pid == unityPid)
                     {
                         if (!quiet)
@@ -960,7 +992,8 @@ namespace MCPForUnity.Editor.Services
         /// </summary>
         private static bool IsLocalUrl(string url)
         {
-            if (string.IsNullOrEmpty(url)) return false;
+            if (string.IsNullOrEmpty(url))
+                return false;
 
             try
             {
@@ -1050,9 +1083,7 @@ namespace MCPForUnity.Editor.Services
             string logRef = string.IsNullOrEmpty(logPath) ? "(launch log unavailable)" : logPath;
             string body = string.IsNullOrEmpty(tail) ? "(no output captured)" : tail;
 
-            McpLog.Error(
-                "Local HTTP server did not become reachable. " +
-                $"Launch log: {logRef}\n{body}\n{copyHint}");
+            McpLog.Error("Local HTTP server did not become reachable. " + $"Launch log: {logRef}\n{body}\n{copyHint}");
         }
 
         private static string TailFile(string path, int maxLines)

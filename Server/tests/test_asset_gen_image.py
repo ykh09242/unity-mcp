@@ -18,17 +18,34 @@ from services.tools.generate_image import generate_image
 
 COMMAND = "generate_image"
 ALLOWED_KEYS = {
-    "action", "provider", "mode", "prompt", "imagePath", "imageUrl",
-    "model", "transparent", "width", "height", "name", "outputFolder", "jobId",
+    "action",
+    "provider",
+    "mode",
+    "prompt",
+    "imagePath",
+    "imageUrl",
+    "model",
+    "transparent",
+    "width",
+    "height",
+    "name",
+    "outputFolder",
+    "jobId",
 }
 
 
 def _call_tool(**kwargs):
     ctx = MagicMock()
-    with patch.object(generate_image_module, "get_unity_instance_from_context",
-                      new=AsyncMock(return_value="unity-1")):
-        with patch.object(generate_image_module, "send_with_unity_instance",
-                          new=AsyncMock(return_value={"success": True, "data": {}})) as mock_send:
+    with patch.object(
+        generate_image_module,
+        "get_unity_instance_from_context",
+        new=AsyncMock(return_value="unity-1"),
+    ):
+        with patch.object(
+            generate_image_module,
+            "send_with_unity_instance",
+            new=AsyncMock(return_value={"success": True, "data": {}}),
+        ) as mock_send:
             result = asyncio.run(generate_image(ctx, **kwargs))
     return result, mock_send.call_args.args
 
@@ -55,10 +72,13 @@ def mock_config():
 def cli_runner(runner, mock_config):
     def _invoke(args):
         with patch("cli.commands.asset_gen.get_config", return_value=mock_config):
-            with patch("cli.commands.asset_gen.run_command",
-                       return_value={"success": True, "message": "OK", "data": {}}) as mock_run:
+            with patch(
+                "cli.commands.asset_gen.run_command",
+                return_value={"success": True, "message": "OK", "data": {}},
+            ) as mock_run:
                 result = runner.invoke(asset_gen, args)
                 return result, mock_run
+
     return _invoke
 
 
@@ -89,8 +109,13 @@ class TestGenerateImageRouting:
 
     def test_param_camelcase_mapping(self):
         _, sent = _call_tool(
-            action="generate", provider="fal", mode="image",
-            image_path="a.png", image_url="http://b", width=512, height=512,
+            action="generate",
+            provider="fal",
+            mode="image",
+            image_path="a.png",
+            image_url="http://b",
+            width=512,
+            height=512,
             output_folder="Assets/Generated/Images",
         )
         params = _sent_params(sent)
@@ -111,10 +136,19 @@ class TestGenerateImageRouting:
 
     def test_no_secret_keys_in_payload(self):
         _, sent = _call_tool(
-            action="generate", provider="fal", mode="text", prompt="p",
-            image_path="a.png", image_url="b", model="flux", transparent=True,
-            width=256, height=256, name="Tex",
-            output_folder="Assets/Generated/Images", job_id="j",
+            action="generate",
+            provider="fal",
+            mode="text",
+            prompt="p",
+            image_path="a.png",
+            image_url="b",
+            model="flux",
+            transparent=True,
+            width=256,
+            height=256,
+            name="Tex",
+            output_folder="Assets/Generated/Images",
+            job_id="j",
         )
         params = _sent_params(sent)
         assert set(params.keys()).issubset(ALLOWED_KEYS)
@@ -124,10 +158,14 @@ class TestGenerateImageRouting:
 
     def test_non_dict_response_guarded(self):
         ctx = MagicMock()
-        with patch.object(generate_image_module, "get_unity_instance_from_context",
-                          new=AsyncMock(return_value="u")):
-            with patch.object(generate_image_module, "send_with_unity_instance",
-                              new=AsyncMock(return_value=42)):
+        with patch.object(
+            generate_image_module,
+            "get_unity_instance_from_context",
+            new=AsyncMock(return_value="u"),
+        ):
+            with patch.object(
+                generate_image_module, "send_with_unity_instance", new=AsyncMock(return_value=42)
+            ):
                 result = asyncio.run(generate_image(ctx, action="status", job_id="j"))
         assert result["success"] is False
         assert "42" in result["message"]
@@ -136,19 +174,31 @@ class TestGenerateImageRouting:
 class TestGenerateImageCLI:
     def test_invalid_mode_preserves_unity_failure(self, runner, mock_config):
         failure = {"success": False, "error": "'mode' must be 'text' or 'image'."}
-        with patch("cli.commands.asset_gen.get_config", return_value=mock_config), \
-             patch("cli.commands.asset_gen.run_command", return_value=failure) as send:
-            result = runner.invoke(asset_gen, ["generate-image", "--mode", "garbage", "--prompt", "fixture"])
+        with (
+            patch("cli.commands.asset_gen.get_config", return_value=mock_config),
+            patch("cli.commands.asset_gen.run_command", return_value=failure) as send,
+        ):
+            result = runner.invoke(
+                asset_gen, ["generate-image", "--mode", "garbage", "--prompt", "fixture"]
+            )
         assert result.exit_code == 0
         assert send.call_args.args[1]["mode"] == "garbage"
         assert "mode" in result.output and "text" in result.output
         assert "started" not in result.output and "Poll with" not in result.output
 
     def test_generate_image_cli(self, cli_runner):
-        result, mock_run = cli_runner([
-            "generate-image", "--provider", "fal", "--prompt", "a stone texture",
-            "--width", "512", "--transparent",
-        ])
+        result, mock_run = cli_runner(
+            [
+                "generate-image",
+                "--provider",
+                "fal",
+                "--prompt",
+                "a stone texture",
+                "--width",
+                "512",
+                "--transparent",
+            ]
+        )
         assert result.exit_code == 0
         command = mock_run.call_args.args[0]
         params = mock_run.call_args.args[1]

@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
-using NUnit.Framework;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
+using NUnit.Framework;
 using UnityEditor;
 
 namespace MCPForUnity.Editor.Tests.EditMode.Services
@@ -77,7 +77,7 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
         {
             // Arrange
             string key = EditorPrefKeys.ToolEnabledPrefix + TestToolName;
-            EditorPrefs.SetBool(key, false);  // Store false value
+            EditorPrefs.SetBool(key, false); // Store false value
             var service = new ToolDiscoveryService();
 
             // Act
@@ -135,7 +135,7 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
                 "manage_ugui",
                 "read_console",
                 "execute_menu_item",
-                "manage_prefabs"
+                "manage_prefabs",
             };
 
             var service = new ToolDiscoveryService();
@@ -161,8 +161,7 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
             service.InvalidateCache();
             var second = service.DiscoverAllTools().Select(tool => tool.Name).ToList();
 
-            CollectionAssert.AreEqual(first, second,
-                "repeated discovery must produce the same registration order");
+            CollectionAssert.AreEqual(first, second, "repeated discovery must produce the same registration order");
         }
 
         /// <summary>
@@ -178,24 +177,20 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
             Type fromA = EmitTypeInOwnAssembly("McpTieBreakAssemblyA", sharedName);
             Type fromB = EmitTypeInOwnAssembly("McpTieBreakAssemblyB", sharedName);
 
-            Assert.AreEqual(fromA.FullName, fromB.FullName,
-                "precondition: the two types must share a full name for this to test a tie");
-            Assert.AreNotEqual(fromA.Assembly.FullName, fromB.Assembly.FullName,
-                "precondition: the two types must live in different assemblies");
+            Assert.AreEqual(fromA.FullName, fromB.FullName, "precondition: the two types must share a full name for this to test a tie");
+            Assert.AreNotEqual(fromA.Assembly.FullName, fromB.Assembly.FullName, "precondition: the two types must live in different assemblies");
 
             var forward = ToolDiscoveryService.InRegistrationOrder(new[] { fromA, fromB }).ToList();
             var reversed = ToolDiscoveryService.InRegistrationOrder(new[] { fromB, fromA }).ToList();
 
-            CollectionAssert.AreEqual(forward, reversed,
-                "input order must not decide the winner once full names tie");
+            CollectionAssert.AreEqual(forward, reversed, "input order must not decide the winner once full names tie");
             Assert.AreSame(fromA, forward[0], "assembly A sorts before assembly B");
             Assert.AreSame(fromB, forward[1], "assembly B registers last, so it would win a name collision");
         }
 
         private static Type EmitTypeInOwnAssembly(string assemblyName, string typeFullName)
         {
-            AssemblyBuilder assembly = AssemblyBuilder.DefineDynamicAssembly(
-                new AssemblyName(assemblyName), AssemblyBuilderAccess.Run);
+            AssemblyBuilder assembly = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName(assemblyName), AssemblyBuilderAccess.Run);
             ModuleBuilder module = assembly.DefineDynamicModule(assemblyName);
             TypeBuilder type = module.DefineType(typeFullName, TypeAttributes.Public);
             return type.CreateType();
@@ -206,8 +201,7 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
         {
             // Arrange
             var service = new ToolDiscoveryService();
-            var builtInTool = service.DiscoverAllTools()
-                .FirstOrDefault(tool => tool.IsBuiltIn && !tool.AutoRegister);
+            var builtInTool = service.DiscoverAllTools().FirstOrDefault(tool => tool.IsBuiltIn && !tool.AutoRegister);
 
             Assert.IsNotNull(builtInTool, "Expected at least one built-in tool with AutoRegister=false.");
 
