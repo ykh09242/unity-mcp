@@ -94,12 +94,12 @@ namespace MCPForUnityTests.Editor.Tools
             Create(root, "One");
 
             // Imports may recreate managed wrappers; compare the native Unity object identity.
-            Assert.AreNotEqual(first.sharedMaterials[0].GetInstanceID(), second.sharedMaterials[0].GetInstanceID());
+            Assert.IsTrue(first.sharedMaterials[0] != second.sharedMaterials[0]);
             AssertColor(first.sharedMaterials[0], Color.red);
             AssertColor(second.sharedMaterials[0], Color.blue);
             Renderer[] saved = Saved("One").GetComponentsInChildren<Renderer>(true);
             Assert.AreEqual(2, saved.Length);
-            Assert.AreNotEqual(saved[0].sharedMaterials[0].GetInstanceID(), saved[1].sharedMaterials[0].GetInstanceID());
+            Assert.IsTrue(saved[0].sharedMaterials[0] != saved[1].sharedMaterials[0]);
             AssertColor(saved[0].sharedMaterials[0], Color.red);
             AssertColor(saved[1].sharedMaterials[0], Color.blue);
         }
@@ -116,8 +116,8 @@ namespace MCPForUnityTests.Editor.Tools
 
             Create(root, "One");
 
-            Assert.AreEqual(existing.GetInstanceID(), otherUser.sharedMaterials[0].GetInstanceID());
-            Assert.AreNotEqual(existing.GetInstanceID(), source.sharedMaterials[0].GetInstanceID());
+            Assert.IsTrue(existing == otherUser.sharedMaterials[0]);
+            Assert.IsTrue(existing != source.sharedMaterials[0]);
             AssertColor(existing, Color.green);
             AssertColor(source.sharedMaterials[0], Color.red);
             Assert.AreEqual(originalGuid, AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(existing)));
@@ -135,7 +135,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             Create(secondRoot, "Two");
 
-            Assert.AreNotEqual(firstAsset.GetInstanceID(), second.sharedMaterials[0].GetInstanceID());
+            Assert.IsTrue(firstAsset != second.sharedMaterials[0]);
             AssertColor(firstAsset, Color.red);
             AssertColor(Saved("One").GetComponentInChildren<Renderer>().sharedMaterials[0], Color.red);
             AssertColor(Saved("Two").GetComponentInChildren<Renderer>().sharedMaterials[0], Color.blue);
@@ -172,10 +172,10 @@ namespace MCPForUnityTests.Editor.Tools
 
             Create(root, "One");
 
-            Assert.AreEqual(existing.GetInstanceID(), source.sharedMaterials[1].GetInstanceID());
+            Assert.IsTrue(existing == source.sharedMaterials[1]);
             Assert.AreEqual(Color.blue, Read(source, 1).GetColor("_Color"));
             Assert.AreEqual(2.5f, Read(source, 1).GetFloat("_SyntheticFloat"));
-            Assert.AreEqual(existing.GetInstanceID(), Saved("One").GetComponentInChildren<Renderer>().sharedMaterials[1].GetInstanceID());
+            Assert.IsTrue(existing == Saved("One").GetComponentInChildren<Renderer>().sharedMaterials[1]);
         }
 
         [TestCase(0f)]
@@ -213,7 +213,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             Assert.AreEqual(0, (int)response["data"]["materialsPersisted"]);
             Assert.IsNull(source.sharedMaterials[0]);
-            Assert.AreEqual(texture.GetInstanceID(), Read(source, 0).GetTexture("_SyntheticTexture").GetInstanceID());
+            Assert.IsTrue(texture == Read(source, 0).GetTexture("_SyntheticTexture"));
         }
 
         [TestCase(false)]
@@ -312,7 +312,7 @@ namespace MCPForUnityTests.Editor.Tools
             JObject response = Create(root, "One");
 
             Assert.AreEqual(0, (int)response["data"]["materialsPersisted"]);
-            Assert.AreEqual(existing.GetInstanceID(), source.sharedMaterials[0].GetInstanceID());
+            Assert.IsTrue(existing == source.sharedMaterials[0]);
             Assert.IsNull(source.sharedMaterials[1]);
             Assert.AreEqual(Color.blue, Read(source, 0).GetColor("_Color"));
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(existing)));
@@ -333,7 +333,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             Create(root, "One");
 
-            Assert.AreNotEqual(source.sharedMaterials[0].GetInstanceID(), source.sharedMaterials[1].GetInstanceID());
+            Assert.IsTrue(source.sharedMaterials[0] != source.sharedMaterials[1]);
             AssertColor(source.sharedMaterials[0], Color.blue);
             AssertColor(source.sharedMaterials[1], Color.green);
             AssertColor(original, Color.red);
