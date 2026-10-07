@@ -26,7 +26,7 @@ def _strip_stacktrace_from_list(items: list) -> None:
 
 
 @mcp_for_unity_tool(
-    description="Gets messages from or clears the Unity Editor console. Defaults to 10 most recent entries. Use page_size/cursor for paging. Note: For maximum client compatibility, pass count as a quoted string (e.g., '5'). The 'get' action is read-only; 'clear' modifies ephemeral UI state (not project data).",
+    description="Gets messages from or clears the Unity Editor console. Defaults to 10 most recent entries, excluding MCP internal logs; set include_mcp_logs=true for troubleshooting. Use page_size/cursor for paging. Note: For maximum client compatibility, pass count as a quoted string (e.g., '5'). The 'get' action is read-only; 'clear' modifies ephemeral UI state (not project data).",
     annotations=ToolAnnotations(
         title="Read Console",
         # 'clear' wipes the ephemeral Editor console buffer only — Unity still
@@ -71,6 +71,10 @@ async def read_console(
         "Optional fields for get with json/detailed format; accepts a list or JSON list string. Must include type and message. stackTrace requires include_stacktrace=true. Omit to preserve the full existing entry schema.",
     ]
     | None = None,
+    include_mcp_logs: Annotated[
+        bool | str,
+        "Include MCP internal logger messages (default false). Filtering occurs before count and pagination.",
+    ] = False,
 ) -> dict[str, Any]:
     # Get active instance from session state
     # Removed session_state import
@@ -115,6 +119,7 @@ async def read_console(
     # Coerce booleans defensively (strings like 'true'/'false')
 
     include_stacktrace = coerce_bool(include_stacktrace, default=False)
+    include_mcp_logs = coerce_bool(include_mcp_logs, default=False)
     coerced_page_size = coerce_int(page_size, default=None)
     coerced_cursor = coerce_int(cursor, default=None)
 
@@ -188,6 +193,9 @@ async def read_console(
 
     if selected_fields is not None:
         params_dict["fields"] = selected_fields
+    # Omission uses the Editor's false default, preserving legacy request shape.
+    if include_mcp_logs:
+        params_dict["includeMcpLogs"] = True
 
     # Use centralized retry helper with instance routing
     unity_instance = await get_unity_instance_from_context(ctx)

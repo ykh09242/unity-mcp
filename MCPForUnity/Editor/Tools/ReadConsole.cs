@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers; // For Response class
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -174,6 +175,10 @@ namespace MCPForUnity.Editor.Tools
                     string filterText = p.Get("filterText");
                     string format = p.Get("format", "plain").ToLower();
                     bool includeStacktrace = p.GetBool("includeStacktrace", false);
+                    JToken includeMcpLogsToken = p.GetRaw("includeMcpLogs");
+                    if (includeMcpLogsToken != null && includeMcpLogsToken.Type != JTokenType.Null && includeMcpLogsToken.Type != JTokenType.Boolean)
+                        return new ErrorResponse("'includeMcpLogs' must be a boolean.");
+                    bool includeMcpLogs = p.GetBool("includeMcpLogs", false);
                     HashSet<string> fields = null;
                     JToken fieldsToken = p.GetRaw("fields");
                     if (fieldsToken != null && fieldsToken.Type != JTokenType.Null)
@@ -215,7 +220,7 @@ namespace MCPForUnity.Editor.Tools
                         types = new List<string> { "error", "warning", "log" }; // Expand 'all'
                     }
 
-                    return GetConsoleEntries(types, count, pageSize, cursor, filterText, format, includeStacktrace, fields);
+                    return GetConsoleEntries(types, count, pageSize, cursor, filterText, format, includeStacktrace, fields, includeMcpLogs);
                 }
                 else
                 {
@@ -353,7 +358,8 @@ namespace MCPForUnity.Editor.Tools
             string filterText,
             string format,
             bool includeStacktrace,
-            HashSet<string> fields = null
+            HashSet<string> fields = null,
+            bool includeMcpLogs = false
         )
         {
             List<object> formattedEntries = new List<object>();
@@ -431,6 +437,11 @@ namespace MCPForUnity.Editor.Tools
                     }
 
                     if (!want)
+                        continue;
+
+                    // Only an anchored logger prefix identifies package output. A user's
+                    // message or stack trace mentioning the package remains visible.
+                    if (!includeMcpLogs && IsMcpLogMessage(message))
                         continue;
 
                     // Filter by text (case-insensitive)
@@ -568,6 +579,46 @@ namespace MCPForUnity.Editor.Tools
         }
 
         // --- Internal Helpers ---
+
+        internal static bool IsMcpLogMessage(string message)
+        {
+            if (string.IsNullOrEmpty(message))
+                return false;
+            // McpLog wraps the product label in <b><color=...>...</color></b>.
+            // Strip only those leading label tags, never arbitrary body text.
+            string label = message;
+            int start = 0;
+            while (start < label.Length && label[start] == '<')
+            {
+                int end = label.IndexOf('>', start);
+                if (end < 0)
+                    return false;
+                string tag = label.Substring(start + 1, end - start - 1);
+                if (tag != "b" && !tag.StartsWith("color=", StringComparison.OrdinalIgnoreCase))
+                    return false;
+                start = end + 1;
+            }
+            string[] names = { ProductInfo.ProductName, "MCP-FOR-UNITY", "MCPForUnity" };
+            foreach (string name in names)
+            {
+                if (string.CompareOrdinal(label, start, name, 0, name.Length) != 0)
+                    continue;
+                int after = start + name.Length;
+                while (after < label.Length && label[after] == '<')
+                {
+                    int end = label.IndexOf('>', after);
+                    if (end < 0)
+                        break;
+                    string tag = label.Substring(after + 1, end - after - 1);
+                    if (tag != "/b" && tag != "/color")
+                        break;
+                    after = end + 1;
+                }
+                if (after < label.Length && label[after] == ':')
+                    return true;
+            }
+            return label.StartsWith("[MCP-FOR-UNITY]", StringComparison.Ordinal) || label.StartsWith("[MCPForUnity]", StringComparison.Ordinal);
+        }
 
         // Mapping bits from LogEntry.mode, mirroring UnityEditor.ConsoleWindow.Mode.
         // These values are stable from 2021.3 through 6000.x.

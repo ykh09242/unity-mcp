@@ -11,6 +11,73 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ReadConsoleTests
     {
+        [TestCase("MCP-FOR-UNITY: [IO] internal", true)]
+        [TestCase("<b><color=#2EA3FF>Unity MCP (ykh09242)</color></b>: internal", true)]
+        [TestCase("Unity MCP (ykh09242): internal", true)]
+        [TestCase("A user mentions MCP-FOR-UNITY: in the body", false)]
+        [TestCase("MCP-FOR-UNITY game object", false)]
+        [TestCase("Gameplay\nMCP-FOR-UNITY: a stack entry", false)]
+        [TestCase("<bad>MCP-FOR-UNITY: user markup", false)]
+        public void McpLogDetection_RequiresAnAnchoredLoggerPrefix(string message, bool expected)
+        {
+            Assert.AreEqual(expected, ReadConsole.IsMcpLogMessage(message));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Get_InternalLogFilterRunsBeforeCount(bool includeMcpLogs)
+        {
+            // Given an internal log preceding a user log with the same unique text filter.
+            string marker = "MCP-console-policy-" + Guid.NewGuid().ToString("N");
+            Debug.Log("MCP-FOR-UNITY: " + marker);
+            Debug.Log("User mentions MCP-FOR-UNITY: " + marker);
+            // When requesting just one match.
+            var response = ToJObject(
+                ReadConsole.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "get",
+                        ["types"] = new JArray("all"),
+                        ["filterText"] = marker,
+                        ["count"] = 1,
+                        ["includeMcpLogs"] = includeMcpLogs,
+                    }
+                )
+            );
+            // Then internal messages consume the count only after explicit opt-in.
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(1, ((JArray)response["data"]).Count);
+            StringAssert.StartsWith(includeMcpLogs ? "MCP-FOR-UNITY:" : "User mentions", response["data"][0].Value<string>());
+        }
+
+        [Test]
+        public void Get_InternalLogFilterRunsBeforePaging()
+        {
+            // Given package output before two matching user entries.
+            string marker = "MCP-console-page-" + Guid.NewGuid().ToString("N");
+            Debug.Log("<b><color=#2EA3FF>Unity MCP (ykh09242)</color></b>: " + marker);
+            Debug.Log("First " + marker);
+            Debug.Log("Second " + marker);
+            // When requesting the second filtered entry, without opting into package logs.
+            var response = ToJObject(
+                ReadConsole.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "get",
+                        ["types"] = new JArray("all"),
+                        ["filterText"] = marker,
+                        ["pageSize"] = 1,
+                        ["cursor"] = 1,
+                    }
+                )
+            );
+            // Then the cursor and total count only user entries.
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(2, response["data"].Value<int>("total"));
+            Assert.AreEqual("Second " + marker, response["data"]["items"][0].Value<string>());
+            Assert.IsFalse(response["data"].Value<bool>("truncated"));
+        }
+
         [TestCase(0)]
         [TestCase(-1)]
         [TestCase(int.MinValue)]

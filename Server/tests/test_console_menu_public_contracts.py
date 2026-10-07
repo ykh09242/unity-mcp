@@ -57,6 +57,7 @@ defaults = {'action': 'get', 'types': ['error', 'warning', 'log'], 'count': 10,
             'include_stacktrace': False}
 cases = [
     (['console'], 'read_console', defaults),
+    (['console', '--include-mcp-logs'], 'read_console', {**defaults, 'include_mcp_logs': True}),
     (['console', '--count', '0'], 'read_console', {**defaults, 'count': 0}),
     (['console', '--count', '-1'], 'read_console', {**defaults, 'count': -1}),
     (['console', '--type', 'all', '--count', '2'], 'read_console',
@@ -148,6 +149,9 @@ defaults = {'action': 'get', 'types': ['error', 'warning', 'log'], 'count': 10,
             'format': 'plain', 'includeStacktrace': False}
 console_cases = [
     ({}, defaults),
+    ({'include_mcp_logs': True}, {**defaults, 'includeMcpLogs': True}),
+    ({'include_mcp_logs': 'true'}, {**defaults, 'includeMcpLogs': True}),
+    ({'include_mcp_logs': False}, defaults),
     ({'action': None, 'count': None, 'format': None, 'types': None}, defaults),
     *[({'count': value}, {**defaults, 'count': expected})
       for value, expected in ((0, 0), ('5', 5), ('all', None), ('*', None), (' ALL ', None),

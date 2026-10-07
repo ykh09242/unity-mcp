@@ -12,7 +12,7 @@ description: "Gets messages from or clears the Unity Editor console."
 
 ## Description
 
-Gets messages from or clears the Unity Editor console. Defaults to 10 most recent entries. Use page_size/cursor for paging. Note: For maximum client compatibility, pass count as a quoted string (e.g., '5'). The 'get' action is read-only; 'clear' modifies ephemeral UI state (not project data).
+Gets messages from or clears the Unity Editor console. Defaults to 10 most recent entries, excluding MCP internal logs; set include_mcp_logs=true for troubleshooting. Use page_size/cursor for paging. Note: For maximum client compatibility, pass count as a quoted string (e.g., '5'). The 'get' action is read-only; 'clear' modifies ephemeral UI state (not project data).
 
 ## Parameters
 
@@ -27,6 +27,7 @@ Gets messages from or clears the Unity Editor console. Defaults to 10 most recen
 | `format` | `Literal['plain', 'detailed', 'json'] \| None` | — | Output format |
 | `include_stacktrace` | `bool \| str \| None` | — | Include stack traces in output (accepts true/false or 'true'/'false') |
 | `fields` | `list[Literal['type', 'message', 'file', 'line', 'stackTrace']] \| str \| None` | — | Optional fields for get with json/detailed format; accepts a list or JSON list string. Must include type and message. stackTrace requires include_stacktrace=true. Omit to preserve the full existing entry schema. |
+| `include_mcp_logs` | `bool \| str` | — | Include MCP internal logger messages (default false). Filtering occurs before count and pagination. |
 
 ## Returns
 

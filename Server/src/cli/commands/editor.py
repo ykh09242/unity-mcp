@@ -235,9 +235,15 @@ def stop():
 )
 @click.option("--stacktrace", "-s", is_flag=True, help="Include stack traces.")
 @click.option("--clear", is_flag=True, help="Clear the console instead of reading.")
+@click.option("--include-mcp-logs", is_flag=True, help="Include MCP internal logger messages.")
 @handle_unity_errors
 def console(
-    log_types: tuple, count: int, filter_text: Optional[str], stacktrace: bool, clear: bool
+    log_types: tuple,
+    count: int,
+    filter_text: Optional[str],
+    stacktrace: bool,
+    clear: bool,
+    include_mcp_logs: bool,
 ):
     """Read or clear the Unity console.
 
@@ -265,6 +271,8 @@ def console(
     }
     if stacktrace:
         params["format"] = "detailed"
+    if include_mcp_logs:
+        params["include_mcp_logs"] = True
 
     if filter_text:
         params["filter_text"] = filter_text

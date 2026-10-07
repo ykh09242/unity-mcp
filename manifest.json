@@ -208,7 +208,7 @@
     },
     {
       "name": "read_console",
-      "description": "Read Unity Editor console output (logs, warnings, errors)"
+      "description": "Read Unity Editor console output; MCP logs are excluded unless include_mcp_logs is enabled"
     },
     {
       "name": "refresh_unity",
