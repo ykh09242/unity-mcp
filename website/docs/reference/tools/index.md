@@ -86,9 +86,9 @@ Test runner, async test jobs & bounded Play Mode input simulation
 - **[`run_tests`](./testing/run_tests.md)** — Starts a Unity test run asynchronously and returns a job_id immediately.
 
 ## `ui` &nbsp; (2 tools)
-UI Toolkit (UXML, USS, UIDocument) and Canvas-based uGUI editing and diagnostics
+UI Toolkit (UXML, USS, UIDocument, optional PanelRenderer) and Canvas-based uGUI editing and diagnostics
 - **[`manage_ugui`](./ui/manage_ugui.md)** — Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings.
-- **[`manage_ui`](./ui/manage_ui.md)** — Manages Unity UI Toolkit elements (UXML documents, USS stylesheets, UIDocument components).
+- **[`manage_ui`](./ui/manage_ui.md)** — Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer components).
 
 ## `vfx` &nbsp; (3 tools)
 Visual effects – VFX Graph, shaders, procedural textures

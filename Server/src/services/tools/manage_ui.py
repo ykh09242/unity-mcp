@@ -1,8 +1,8 @@
 """
 Defines the manage_ui tool for creating and managing Unity UI Toolkit elements.
 
-Supports creating UXML documents and USS stylesheets, attaching UIDocument
-components to GameObjects, and inspecting visual trees.
+Supports creating UXML documents and USS stylesheets, attaching UIDocument or
+PanelRenderer components to GameObjects, and inspecting visual trees.
 """
 
 import base64
@@ -41,7 +41,7 @@ def _canonical_ui_path(path: str) -> str:
 @mcp_for_unity_tool(
     group="ui",
     description=(
-        "Manages Unity UI Toolkit elements (UXML documents, USS stylesheets, UIDocument components). "
+        "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer components). "
         "Read-only actions: ping, read, get_visual_tree, list. "
         "Modifying actions: create, update, delete, attach_ui_document, detach_ui_document, create_panel_settings, update_panel_settings, modify_visual_element.\n"
         "Visual actions: render_ui (captures UI panel to a PNG screenshot for self-evaluation).\n"
@@ -51,14 +51,16 @@ def _canonical_ui_path(path: str) -> str:
         "2. Create a UXML file (structure, like HTML)\n"
         "3. Create a USS file (styling, like CSS)\n"
         "4. Link stylesheet to UXML via link_stylesheet\n"
-        "5. Attach UIDocument to a GameObject with the UXML source\n"
+        "5. Attach a UI component with the UXML source via attach_ui_document and component_type\n"
+        "   - auto (default) preserves existing UIDocument; new objects prefer PanelRenderer when available.\n"
+        "   - ui_document explicitly selects UIDocument; panel_renderer requires Unity 6.5+ API support.\n"
         "6. Use get_visual_tree to inspect the result\n"
         "7. Use modify_visual_element to change text, classes, or inline styles on live elements\n"
         "8. Use render_ui to capture a visual preview for self-evaluation\n"
         "   - In play mode: first call queues a WaitForEndOfFrame screen capture and returns pending=true;\n"
         "     call render_ui a second time to retrieve the saved PNG (hasContent will be true).\n"
         "   - In editor mode: assigns a RenderTexture to PanelSettings (best-effort; may stay blank).\n"
-        "9. Use detach_ui_document to remove UIDocument from a GameObject\n"
+        "9. Use detach_ui_document to remove the selected UI component from a GameObject\n"
         "10. Use delete to remove .uxml/.uss files\n\n"
         "Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not bare <Style>. "
         "UI Builder will fail to open files that use <Style> without the prefix."
@@ -105,11 +107,19 @@ async def manage_ui(
         str, "Target GameObject name or path for attach_ui_document / get_visual_tree / render_ui."
     ]
     | None = None,
+    component_type: Annotated[
+        Literal["auto", "ui_document", "panel_renderer"],
+        "UI component for attach/detach, get_visual_tree, modify_visual_element and render_ui. "
+        "Default auto preserves an existing UIDocument, otherwise resolves PanelRenderer; "
+        "new attachments prefer PanelRenderer when available and fall back to UIDocument. "
+        "panel_renderer requires Unity 6.5+ API support.",
+    ]
+    | None = None,
     source_asset: Annotated[str, "Path to UXML VisualTreeAsset (e.g., 'Assets/UI/MainMenu.uxml')."]
     | None = None,
     panel_settings: Annotated[str, "Path to PanelSettings asset. Auto-creates default if omitted."]
     | None = None,
-    sort_order: Annotated[int, "UIDocument sort order (default 0)."] | None = None,
+    sort_order: Annotated[int, "UI component sort order (default 0)."] | None = None,
     # create_panel_settings
     scale_mode: Annotated[
         Literal[
@@ -218,6 +228,16 @@ async def manage_ui(
 ) -> dict[str, Any]:
     action_lower = action.lower()
 
+    if component_type is not None and component_type not in (
+        "auto",
+        "ui_document",
+        "panel_renderer",
+    ):
+        return {
+            "success": False,
+            "message": "component_type must be auto, ui_document, or panel_renderer.",
+        }
+
     if action_lower == "list":
         try:
             page_size, page_number = validate_page(page_size, page_number)
@@ -261,6 +281,8 @@ async def manage_ui(
         params_dict["path"] = path
     if target is not None:
         params_dict["target"] = target
+    if component_type is not None:
+        params_dict["componentType"] = component_type
     if source_asset is not None:
         params_dict["sourceAsset"] = source_asset
     if panel_settings is not None:

@@ -327,6 +327,8 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Could not find target GameObject: {target}");
             }
 
+            Type componentType = UIComponentAdapter.ResolveType(go, p.Get("component_type"), true);
+
             // Load the VisualTreeAsset
             var vta = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(sourceAssetPath);
             if (vta == null)
@@ -372,27 +374,18 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
 
-            Undo.RecordObject(go, "Attach UIDocument");
-
-            // Add or get UIDocument component
-            var uiDoc = go.GetComponent<UIDocument>();
-            if (uiDoc == null)
-            {
-                uiDoc = Undo.AddComponent<UIDocument>(go);
-            }
-
-            uiDoc.visualTreeAsset = vta;
-            uiDoc.panelSettings = panelSettings;
-
-            uiDoc.sortingOrder = sortOrder;
+            var ui = UIComponentAdapter.Attach(go, componentType);
+            Undo.RecordObject(ui.Component, "Configure UI component");
+            ui.Configure(vta, panelSettings, sortOrder);
 
             EditorUtility.SetDirty(go);
 
             var response = new SuccessResponse(
-                $"Attached UIDocument to {go.name}",
+                $"Attached {ui.DisplayName} to {go.name}",
                 new
                 {
                     gameObject = go.name,
+                    componentType = ui.Kind,
                     sourceAsset = sourceAssetPath,
                     panelSettings = AssetDatabase.GetAssetPath(panelSettings),
                     sortOrder,
@@ -788,21 +781,17 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Could not find target GameObject: {target}");
             }
 
-            var uiDoc = go.GetComponent<UIDocument>();
-            if (uiDoc == null)
-            {
-                return new ErrorResponse($"GameObject {go.name} has no UIDocument component.");
-            }
-
-            var root = uiDoc.rootVisualElement;
+            var ui = UIComponentAdapter.Resolve(go, p.Get("component_type"));
+            var root = ui.Root;
             if (root == null)
             {
                 return new SuccessResponse(
-                    $"UIDocument on {go.name} has no visual tree (not yet built).",
+                    $"{ui.DisplayName} on {go.name} has no visual tree (not yet built).",
                     new
                     {
                         gameObject = go.name,
-                        sourceAsset = uiDoc.visualTreeAsset != null ? AssetDatabase.GetAssetPath(uiDoc.visualTreeAsset) : null,
+                        componentType = ui.Kind,
+                        sourceAsset = ui.SourceAsset != null ? AssetDatabase.GetAssetPath(ui.SourceAsset) : null,
                         tree = (object)null,
                     }
                 );
@@ -811,11 +800,12 @@ namespace MCPForUnity.Editor.Tools
             var tree = SerializeVisualElement(root, 0, maxDepth);
 
             return new SuccessResponse(
-                $"Visual tree for UIDocument on {go.name}",
+                $"Visual tree for {ui.DisplayName} on {go.name}",
                 new
                 {
                     gameObject = go.name,
-                    sourceAsset = uiDoc.visualTreeAsset != null ? AssetDatabase.GetAssetPath(uiDoc.visualTreeAsset) : null,
+                    componentType = ui.Kind,
+                    sourceAsset = ui.SourceAsset != null ? AssetDatabase.GetAssetPath(ui.SourceAsset) : null,
                     tree,
                 }
             );
@@ -937,7 +927,23 @@ namespace MCPForUnity.Editor.Tools
 
             if (string.IsNullOrEmpty(target) && string.IsNullOrEmpty(uxmlPath))
             {
-                return new ErrorResponse("Either 'target' (GameObject with UIDocument) or 'path' (UXML asset path) is required.");
+                return new ErrorResponse("Either 'target' (GameObject with UIDocument or PanelRenderer) or 'path' (UXML asset path) is required.");
+            }
+
+            UIComponentAdapter targetUI = null;
+            Type renderComponentType;
+            if (!string.IsNullOrEmpty(target))
+            {
+                var goInstruction = new JObject { ["find"] = target };
+                var go = ObjectResolver.Resolve(goInstruction, typeof(GameObject)) as GameObject;
+                if (go == null)
+                    return new ErrorResponse($"Could not find target GameObject: {target}");
+                targetUI = UIComponentAdapter.Resolve(go, p.Get("component_type"));
+                renderComponentType = targetUI.Component.GetType();
+            }
+            else
+            {
+                renderComponentType = UIComponentAdapter.ResolveType(null, p.Get("component_type"), true);
             }
 
             string resolvedFolderSpec = ScreenshotPreferences.Resolve(outputFolderOverride);
@@ -1011,6 +1017,8 @@ namespace MCPForUnity.Editor.Tools
 
                     if (!string.IsNullOrEmpty(target))
                         playData["gameObject"] = target;
+                    if (targetUI != null)
+                        playData["componentType"] = targetUI.Kind;
                     if (!string.IsNullOrEmpty(uxmlPath))
                         playData["sourceAsset"] = uxmlPath;
 
@@ -1086,6 +1094,7 @@ namespace MCPForUnity.Editor.Tools
                     new Dictionary<string, object>
                     {
                         { "pending", true },
+                        { "componentType", renderComponentType == typeof(UIDocument) ? "ui_document" : "panel_renderer" },
                         { "gameObject", (object)target ?? uxmlPath },
                         { "note", "A screen capture was scheduled for the end of this frame. Call render_ui once more to get the result." },
                     }
@@ -1093,8 +1102,8 @@ namespace MCPForUnity.Editor.Tools
             }
             // ── End play-mode branch ────────────────────────────────────────────────
 
-            // Resolve UIDocument
-            UIDocument uiDoc = null;
+            // Resolve the scene component or create a temporary component for the asset.
+            UIComponentAdapter ui = targetUI;
             GameObject tempGo = null;
             PanelSettings tempPs = null;
             Texture2D tex = null;
@@ -1102,18 +1111,7 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                if (!string.IsNullOrEmpty(target))
-                {
-                    var goInstruction = new JObject { ["find"] = target };
-                    GameObject go = ObjectResolver.Resolve(goInstruction, typeof(GameObject)) as GameObject;
-                    if (go == null)
-                        return new ErrorResponse($"Could not find target GameObject: {target}");
-
-                    uiDoc = go.GetComponent<UIDocument>();
-                    if (uiDoc == null)
-                        return new ErrorResponse($"GameObject '{go.name}' has no UIDocument component.");
-                }
-                else
+                if (ui == null)
                 {
                     uxmlPath = AssetPathUtility.GetContainedAssetPath(uxmlPath);
                     if (uxmlPath == null)
@@ -1125,7 +1123,7 @@ namespace MCPForUnity.Editor.Tools
 
                     tempGo = new GameObject("__MCP_UI_Render_Temp__");
                     tempGo.hideFlags = HideFlags.HideAndDontSave;
-                    uiDoc = tempGo.AddComponent<UIDocument>();
+                    ui = new UIComponentAdapter(tempGo.AddComponent(renderComponentType));
 
                     string[] guids = AssetDatabase.FindAssets("t:PanelSettings");
                     PanelSettings ps = null;
@@ -1137,14 +1135,13 @@ namespace MCPForUnity.Editor.Tools
                         tempPs = ps;
                     }
 
-                    uiDoc.panelSettings = ps;
-                    uiDoc.visualTreeAsset = vta;
+                    ui.Configure(vta, ps, 0);
                 }
 
-                if (uiDoc.panelSettings == null)
-                    return new ErrorResponse("UIDocument has no PanelSettings assigned.");
+                if (ui.PanelSettings == null)
+                    return new ErrorResponse($"{ui.DisplayName} has no PanelSettings assigned.");
 
-                var panelSettings = uiDoc.panelSettings;
+                var panelSettings = ui.PanelSettings;
                 int psId = panelSettings.GetInstanceIDCompat();
                 ValidateUICacheBudget(psId, width, height);
                 bool rememberBinding = !s_panelRTs.TryGetValue(psId, out var ownedTarget) || panelSettings.targetTexture != ownedTarget;
@@ -1172,7 +1169,7 @@ namespace MCPForUnity.Editor.Tools
                             panelSettings.targetTexture = rt;
                             rtJustAssigned = true;
 
-                            uiDoc.rootVisualElement?.MarkDirtyRepaint();
+                            ui.Root?.MarkDirtyRepaint();
                             EditorUtility.SetDirty(panelSettings);
                             UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
                             Canvas.ForceUpdateCanvases();
@@ -1234,7 +1231,7 @@ namespace MCPForUnity.Editor.Tools
                     rtJustAssigned = true;
 
                     // Mark dirty and force editor repaint so the panel renders into the RT
-                    uiDoc.rootVisualElement?.MarkDirtyRepaint();
+                    ui.Root?.MarkDirtyRepaint();
                     EditorUtility.SetDirty(panelSettings);
                     UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
 
@@ -1299,6 +1296,7 @@ namespace MCPForUnity.Editor.Tools
                     { "width", width },
                     { "height", height },
                     { "hasContent", hasContent },
+                    { "componentType", ui.Kind },
                 };
 
                 if (rtJustAssigned)
@@ -1609,18 +1607,23 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Could not find target GameObject: {target}");
             }
 
-            var uiDoc = go.GetComponent<UIDocument>();
-            if (uiDoc == null)
-            {
-                return new ErrorResponse($"GameObject '{go.name}' has no UIDocument component.");
-            }
+            var ui = UIComponentAdapter.Resolve(go, p.Get("component_type"));
+            string sourceAsset = ui.SourceAsset != null ? AssetDatabase.GetAssetPath(ui.SourceAsset) : null;
 
-            string sourceAsset = uiDoc.visualTreeAsset != null ? AssetDatabase.GetAssetPath(uiDoc.visualTreeAsset) : null;
-
-            Undo.DestroyObjectImmediate(uiDoc);
+            string componentKind = ui.Kind;
+            string componentName = ui.DisplayName;
+            Undo.DestroyObjectImmediate(ui.Component);
             EditorUtility.SetDirty(go);
 
-            return new SuccessResponse($"Removed UIDocument from {go.name}", new { gameObject = go.name, removedSourceAsset = sourceAsset });
+            return new SuccessResponse(
+                $"Removed {componentName} from {go.name}",
+                new
+                {
+                    gameObject = go.name,
+                    componentType = componentKind,
+                    removedSourceAsset = sourceAsset,
+                }
+            );
         }
 
         // ---- Modify Visual Element ----
@@ -1647,16 +1650,13 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Could not find target GameObject: {target}");
             }
 
-            var uiDoc = go.GetComponent<UIDocument>();
-            if (uiDoc == null)
-            {
-                return new ErrorResponse($"GameObject '{go.name}' has no UIDocument component.");
-            }
-
-            var root = uiDoc.rootVisualElement;
+            var ui = UIComponentAdapter.Resolve(go, p.Get("component_type"));
+            var root = ui.Root;
             if (root == null)
             {
-                return new ErrorResponse($"UIDocument on {go.name} has no visual tree (not yet built).");
+                return new ErrorResponse(
+                    $"{ui.DisplayName} on {go.name} has no visual tree (not yet built). Enable the component and retry after initialization."
+                );
             }
 
             // Find the target element by name
@@ -1774,6 +1774,7 @@ namespace MCPForUnity.Editor.Tools
             var responseData = new Dictionary<string, object>
             {
                 { "gameObject", go.name },
+                { "componentType", ui.Kind },
                 { "elementName", elementName },
                 { "elementType", element.GetType().Name },
                 { "modifications", applied },

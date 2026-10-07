@@ -1,7 +1,7 @@
 ---
 title: manage_ui
 sidebar_label: manage_ui
-description: "Manages Unity UI Toolkit elements (UXML documents, USS stylesheets, UIDocument components)."
+description: "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer components)."
 ---
 
 # `manage_ui`
@@ -12,7 +12,7 @@ description: "Manages Unity UI Toolkit elements (UXML documents, USS stylesheets
 
 ## Description
 
-Manages Unity UI Toolkit elements (UXML documents, USS stylesheets, UIDocument components). Read-only actions: ping, read, get_visual_tree, list. Modifying actions: create, update, delete, attach_ui_document, detach_ui_document, create_panel_settings, update_panel_settings, modify_visual_element.
+Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer components). Read-only actions: ping, read, get_visual_tree, list. Modifying actions: create, update, delete, attach_ui_document, detach_ui_document, create_panel_settings, update_panel_settings, modify_visual_element.
 Visual actions: render_ui (captures UI panel to a PNG screenshot for self-evaluation).
 Structural actions: link_stylesheet (adds a Style src reference to a UXML file).
 
@@ -21,14 +21,16 @@ UI Toolkit workflow:
 2. Create a UXML file (structure, like HTML)
 3. Create a USS file (styling, like CSS)
 4. Link stylesheet to UXML via link_stylesheet
-5. Attach UIDocument to a GameObject with the UXML source
+5. Attach a UI component with the UXML source via attach_ui_document and component_type
+   - auto (default) preserves existing UIDocument; new objects prefer PanelRenderer when available.
+   - ui_document explicitly selects UIDocument; panel_renderer requires Unity 6.5+ API support.
 6. Use get_visual_tree to inspect the result
 7. Use modify_visual_element to change text, classes, or inline styles on live elements
 8. Use render_ui to capture a visual preview for self-evaluation
    - In play mode: first call queues a WaitForEndOfFrame screen capture and returns pending=true;
      call render_ui a second time to retrieve the saved PNG (hasContent will be true).
    - In editor mode: assigns a RenderTexture to PanelSettings (best-effort; may stay blank).
-9. Use detach_ui_document to remove UIDocument from a GameObject
+9. Use detach_ui_document to remove the selected UI component from a GameObject
 10. Use delete to remove .uxml/.uss files
 
 Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not bare <Style>. UI Builder will fail to open files that use <Style> without the prefix.
@@ -41,9 +43,10 @@ Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not ba
 | `path` | `str \| None` | — | Assets-relative path (e.g., 'Assets/UI/MainMenu.uxml' or 'Assets/UI/Styles.uss'). For render_ui: optional UXML path to render directly without a scene GameObject. |
 | `contents` | `str \| None` | — | File content (UXML or USS markup). Plain text - encoding handled automatically. |
 | `target` | `str \| None` | — | Target GameObject name or path for attach_ui_document / get_visual_tree / render_ui. |
+| `component_type` | `Literal['auto', 'ui_document', 'panel_renderer'] \| None` | — | UI component for attach/detach, get_visual_tree, modify_visual_element and render_ui. Default auto preserves an existing UIDocument, otherwise resolves PanelRenderer; new attachments prefer PanelRenderer when available and fall back to UIDocument. panel_renderer requires Unity 6.5+ API support. |
 | `source_asset` | `str \| None` | — | Path to UXML VisualTreeAsset (e.g., 'Assets/UI/MainMenu.uxml'). |
 | `panel_settings` | `str \| None` | — | Path to PanelSettings asset. Auto-creates default if omitted. |
-| `sort_order` | `int \| None` | — | UIDocument sort order (default 0). |
+| `sort_order` | `int \| None` | — | UI component sort order (default 0). |
 | `scale_mode` | `Literal['ConstantPixelSize', 'ConstantPhysicalSize', 'ScaleWithScreenSize'] \| None` | — | Panel scale mode. Legacy shorthand; prefer using 'settings' dict. |
 | `reference_resolution` | `dict[str, int] \| None` | — | Reference resolution as {width, height}. Legacy shorthand; prefer using 'settings' dict. |
 | `settings` | `dict[str, Any] \| None` | — | Generic PanelSettings properties dict for create_panel_settings. Keys: scaleMode (ConstantPixelSize\|ConstantPhysicalSize\|ScaleWithScreenSize), referenceResolution ({width,height}), screenMatchMode (MatchWidthOrHeight\|ShrinkToFit\|ExpandToFill), match (0-1 float), referenceDpi, fallbackDpi, sortingOrder, targetDisplay, clearColor (bool), colorClearValue (#RRGGBB or {r,g,b,a}), clearDepthStencil, themeStyleSheet (asset path), dynamicAtlasSettings ({minAtlasSize,maxAtlasSize,maxSubTextureSize,activeFilters}). |

@@ -208,7 +208,7 @@
     },
     {
       "name": "manage_ui",
-      "description": "Manage Unity UI Toolkit elements (UXML documents, USS stylesheets, UIDocument components)"
+      "description": "Manage UI Toolkit UXML, USS and UIDocument or optional Unity 6.5+ PanelRenderer components (group: ui)"
     },
     {
       "name": "manage_vfx",

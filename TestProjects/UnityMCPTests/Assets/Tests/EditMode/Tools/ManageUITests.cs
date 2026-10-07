@@ -337,6 +337,7 @@ namespace MCPForUnityTests.Editor.Tools
                         new JObject
                         {
                             ["action"] = "attach_ui_document",
+                            ["component_type"] = "ui_document",
                             ["target"] = go.name,
                             ["source_asset"] = uxmlPath,
                         }
@@ -530,6 +531,7 @@ namespace MCPForUnityTests.Editor.Tools
                     new JObject
                     {
                         ["action"] = "attach_ui_document",
+                        ["component_type"] = "ui_document",
                         ["target"] = go.name,
                         ["source_asset"] = uxmlPath,
                     }

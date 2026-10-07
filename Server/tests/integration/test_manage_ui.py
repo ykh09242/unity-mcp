@@ -467,3 +467,83 @@ class TestManageUILinkStylesheet:
         assert p["stylesheet"] == "Assets/UI/Styles.uss"
         for k in ("width", "height", "include_image"):
             assert k not in p
+
+
+class TestManageUIComponentSelection:
+    @pytest.mark.parametrize("component_type", ["auto", "ui_document", "panel_renderer"])
+    @pytest.mark.parametrize(
+        "action",
+        [
+            "attach_ui_document",
+            "detach_ui_document",
+            "get_visual_tree",
+            "modify_visual_element",
+            "render_ui",
+        ],
+    )
+    def test_component_selection_reaches_each_unity_action(
+        self, monkeypatch, component_type, action
+    ):
+        captured = []
+
+        async def fake_send(_context_or_sender, _instance, command, params, **kwargs):
+            captured.append((command, params))
+            return {"success": True, "data": {"componentType": component_type}}
+
+        monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
+        monkeypatch.setattr(manage_ui_mod, "send_with_unity_instance", fake_send)
+        response = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action=action,
+                target="UIRoot",
+                source_asset="Assets/UI/Main.uxml",
+                component_type=component_type,
+            )
+        )
+        assert response["success"] is True
+        assert captured == [
+            (
+                "manage_ui",
+                {
+                    "action": action,
+                    "target": "UIRoot",
+                    "componentType": component_type,
+                    "sourceAsset": "Assets/UI/Main.uxml",
+                },
+            )
+        ]
+
+    def test_omitted_selector_preserves_existing_request_shape(self, monkeypatch):
+        captured = []
+
+        async def fake_send(_ctx, _instance, _command, params, **kwargs):
+            captured.append(params)
+            return {"success": True}
+
+        monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
+        run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="attach_ui_document",
+                target="UIRoot",
+                source_asset="Assets/UI/Main.uxml",
+            )
+        )
+        assert "componentType" not in captured[0]
+
+    def test_invalid_selector_is_rejected_before_transport(self, monkeypatch):
+        async def unexpected_send(*args, **kwargs):
+            pytest.fail("Invalid component selection must not reach Unity.")
+
+        monkeypatch.setattr(manage_ui_mod, "send_mutation", unexpected_send)
+        response = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="render_ui",
+                target="UIRoot",
+                component_type="unknown",
+            )
+        )
+        assert response["success"] is False
+        assert "component_type" in response["message"]
