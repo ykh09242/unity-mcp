@@ -17,7 +17,7 @@ def runner_steps():
 
 def test_every_runner_step_pins_the_action_commit_and_cli_release():
     steps = runner_steps()
-    assert len(steps) == 2
+    assert len(steps) == 3  # Domain reload, base EditMode and optional integration runner.
     for step in steps:
         # Both failures flow into their XML gate, which checks the raw outcome.
         assert re.search(r"^        continue-on-error: true$", step, re.M), step

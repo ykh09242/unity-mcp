@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 1,
+  "suites": [
+    {
+      "id": "cinemachine-configuration",
+      "filter": "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests",
+      "requiredTests": [
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.MissingRequestedTargetDoesNotChangeEitherReference",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.ExplicitNullClearsBothReferences",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.OmittedTargetsKeepBothReferences",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.NameAndIdReferencesAreApplied",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.PriorityPreservesZeroAndNegativeValues",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.MissingPriorityLayoutReportsFailureWithoutDirtyingComponent",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.ExtensionOperationsRejectNonExtensionAndAbstractTypesWithoutMutation",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.PipelineReplacementRejectsNonPipelineAndAbstractTypesWithoutMutation",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.InvalidLaterPipelinePropertyPreservesExistingStage",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.InvalidLaterExistingPipelinePropertyPreservesEarlierValue",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.InvalidLaterAddedComponentPropertyDoesNotAddComponent",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.InvalidLaterNoisePropertyPreservesExistingComponentAndValue",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.NullNoiseProfilePathDoesNotAddOrChangeNoiseComponent",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.ConcreteExtensionCanBeAdded",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.ConcreteExtensionCanBeRemoved",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.ConcretePipelineComponentCanReplaceItsStage",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.OverrideReleaseClearsTheRecordedOwnerAndId",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.SameBrainReusesItsOverrideId",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.DestroyedOwnerCanBeReleasedWithoutAnotherBrain",
+        "MCPForUnityTests.Editor.Tools.CameraConfigurationIntegrityTests.DestroyedOwnerDoesNotBlockANewOwnedBrain"
+      ]
+    },
+    {
+      "id": "cinemachine-creation",
+      "filter": "MCPForUnityTests.Editor.Tools.CameraCreationIntegrityTests",
+      "requiredTests": [
+        "MCPForUnityTests.Editor.Tools.CameraCreationIntegrityTests.InstalledCinemachineCreationAppliesExplicitFieldOfView",
+        "MCPForUnityTests.Editor.Tools.CameraCreationIntegrityTests.ExplicitBrainTargetDoesNotAcknowledgeOtherBrain",
+        "MCPForUnityTests.Editor.Tools.CameraCreationIntegrityTests.ExplicitMissingCameraRejectsDespiteExistingBrain",
+        "MCPForUnityTests.Editor.Tools.CameraCreationIntegrityTests.ExistingSelectedBrainRetainsBlendAndComponentIdentity"
+      ]
+    },
+    {
+      "id": "probuilder",
+      "filter": "MCPForUnityTests.Editor.Tools.ProBuilderUtilityIntegrityTests",
+      "requiredTests": [
+        "MCPForUnityTests.Editor.Tools.ProBuilderUtilityIntegrityTests.TypeDiscoveryDoesNotPatchDefaultMaterial",
+        "MCPForUnityTests.Editor.Tools.ProBuilderUtilityIntegrityTests.SuccessfulShapeCreationStillPatchesDefaultMaterial",
+        "MCPForUnityTests.Editor.Tools.ProBuilderUtilityIntegrityTests.MergeObjects_InvalidLaterMeshPreservesEarlierOrdinaryMesh",
+        "MCPForUnityTests.Editor.Tools.ProBuilderUtilityIntegrityTests.SetFaceColor_InvalidSkipSwapPreservesColorsAndMaterial",
+        "MCPForUnityTests.Editor.Tools.ProBuilderUtilityIntegrityTests.SetFaceUVs_InvalidLaterSettingPreservesAllFaces",
+        "MCPForUnityTests.Editor.Tools.ProBuilderUtilityIntegrityTests.InvalidMeshEdit_PreservesPositionsAndCleanScene",
+        "MCPForUnityTests.Editor.Tools.ProBuilderUtilityIntegrityTests.FreezeKeepsEveryWorldVertexAndExistingResetSemantics",
+        "MCPForUnityTests.Editor.Tools.ProBuilderUtilityIntegrityTests.AutoSmoothReportsFacesSuppliedToSmoothing"
+      ]
+    },
+    {
+      "id": "probuilder-creation",
+      "filter": "MCPForUnityTests.Editor.Tools.ProBuilderCreationIntegrityTests",
+      "requiredTests": [
+        "MCPForUnityTests.Editor.Tools.ProBuilderCreationIntegrityTests.RealCubeReturnsOwnedSceneObjectAndDimensions",
+        "MCPForUnityTests.Editor.Tools.ProBuilderCreationIntegrityTests.RealPolygonCreationUsesFourArgumentApi",
+        "MCPForUnityTests.Editor.Tools.ProBuilderCreationIntegrityTests.RealModernImporterConvertsOwnedMesh",
+        "MCPForUnityTests.Editor.Tools.ProBuilderCreationIntegrityTests.RealUnsupportedTopologyFailureRestoresBorrowedInput",
+        "MCPForUnityTests.Editor.Tools.ProBuilderCreationIntegrityTests.ExistingRealComponentIsRetainedOnRejection"
+      ]
+    },
+    {
+      "id": "probuilder-actions",
+      "filter": "MCPForUnityTests.Editor.Tools.ManageProBuilderTests",
+      "requiredTests": [
+        "MCPForUnityTests.Editor.Tools.ManageProBuilderTests.SetFaceUVs_WritesNativeSettingsAndPreservesOtherFaces",
+        "MCPForUnityTests.Editor.Tools.ManageProBuilderTests.CreateShape_Cube_CreatesGameObject",
+        "MCPForUnityTests.Editor.Tools.ManageProBuilderTests.CreatePolyShape_CreatesFromPoints",
+        "MCPForUnityTests.Editor.Tools.ManageProBuilderTests.ExtrudeFaces_IncreaseFaceCount",
+        "MCPForUnityTests.Editor.Tools.ManageProBuilderTests.DeleteFaces_DecreasesFaceCount"
+      ]
+    },
+    {
+      "id": "input-system",
+      "filter": "MCPForUnityTests.EditMode.Tools.Input.InputSystemSimulationTests",
+      "requiredTests": [
+        "MCPForUnityTests.EditMode.Tools.Input.InputSystemSimulationTests.KeyRemainsPressedForRequestedUpdatesThenReleases",
+        "MCPForUnityTests.EditMode.Tools.Input.InputSystemSimulationTests.QueuedVirtualKeyTriggersRealInputActionAndCancellation",
+        "MCPForUnityTests.EditMode.Tools.Input.InputSystemSimulationTests.ChordReleasePreservesTheOtherHeldKey",
+        "MCPForUnityTests.EditMode.Tools.Input.InputSystemSimulationTests.MouseMovePreservesHeldButtonsUntilTheirOwnRelease",
+        "MCPForUnityTests.EditMode.Tools.Input.InputSystemSimulationTests.TwoTouchesHaveIndependentIdsAndAutomaticEndings",
+        "MCPForUnityTests.EditMode.Tools.Input.InputSystemSimulationTests.ReleasingSimulationRemovesOnlyOwnedDevicesAndRestoresCurrent",
+        "MCPForUnityTests.EditMode.Tools.Input.InputSystemSimulationTests.ManualUpdateModeRejectsInjectionBeforeCreatingDevices",
+        "MCPForUnityTests.EditMode.Tools.Input.InputSystemSimulationTests.UnknownTouchMoveCannotAllocateAContactOrDevice",
+        "MCPForUnityTests.EditMode.Tools.Input.InputSystemSimulationTests.HardTimeoutRemovesHeldVirtualDevicesWithoutGameUpdates",
+        "MCPForUnityTests.EditMode.Tools.Input.InputSystemSimulationTests.StoppingPlayModeRemovesHeldDevicesBeforeTheDeadline"
+      ]
+    },
+    {
+      "id": "input-pause",
+      "filter": "MCPForUnityTests.EditMode.Tools.Input.InputPauseCleanupTests",
+      "requiredTests": [
+        "MCPForUnityTests.EditMode.Tools.Input.InputPauseCleanupTests.PausingPlayModeImmediatelyReleasesOwnedInputAndPreservesUnrelatedDevices"
+      ]
+    },
+    {
+      "id": "vfx-graph",
+      "filter": "MCPForUnityTests.EditMode.Tools.VfxGraphIntegrityTests",
+      "requiredTests": [
+        "MCPForUnityTests.EditMode.Tools.VfxGraphIntegrityTests.MissingTemplate_DoesNotCreateFoldersOrReplaceExistingFolder",
+        "MCPForUnityTests.EditMode.Tools.VfxGraphIntegrityTests.InvalidCreateInputRejectsBeforeTemplateLookupOrFolderCreation",
+        "MCPForUnityTests.EditMode.Tools.VfxGraphIntegrityTests.MissingExposedParameterRejectsBeforeNativeOverride",
+        "MCPForUnityTests.EditMode.Tools.VfxGraphIntegrityTests.InvalidPlaybackRatePreservesNativeState",
+        "MCPForUnityTests.EditMode.Tools.VfxGraphIntegrityTests.PauseTogglesOwnedComponentInBothDirections",
+        "MCPForUnityTests.EditMode.Tools.VfxGraphIntegrityTests.SuccessfulOverwritePreservesDestinationGuidAndCleansStaging",
+        "MCPForUnityTests.EditMode.Tools.VfxGraphIntegrityTests.DestinationAsItsOwnTemplatePreservesContentsAndGuid"
+      ],
+      "requiredTestsWindows": [
+        "MCPForUnityTests.EditMode.Tools.VfxGraphIntegrityTests.FailedTemplateCopyPreservesDestinationAndCleansStaging",
+        "MCPForUnityTests.EditMode.Tools.VfxGraphIntegrityTests.FailedOverwritePreservesDestinationAndCleansStaging"
+      ]
+    },
+    {
+      "id": "volumes",
+      "filter": "MCPForUnityTests.Editor.Tools.VolumeProfileIntegrityTests",
+      "requiredTests": [
+        "MCPForUnityTests.Editor.Tools.VolumeProfileIntegrityTests.PersistentAddedEffectBelongsToTheProfileAsset",
+        "MCPForUnityTests.Editor.Tools.VolumeProfileIntegrityTests.DuplicateRequestedEffectsRejectBeforeProfileOrSceneMutation",
+        "MCPForUnityTests.Editor.Tools.VolumeProfileIntegrityTests.ExistingProfileIsBorrowedWithFalseAndZeroProperties",
+        "MCPForUnityTests.Editor.Tools.VolumeProfileIntegrityTests.EmbeddedProfileDefaultsAndUnsupportedEffectsRemainAccepted"
+      ]
+    },
+    {
+      "id": "graphics-mutation",
+      "filter": "MCPForUnityTests.Editor.Tools.GraphicsMutationContractTests",
+      "requiredTests": [
+        "MCPForUnityTests.Editor.Tools.GraphicsMutationContractTests.MissingVolumeTexture_DoesNotClearValueOrEnableOverride",
+        "MCPForUnityTests.Editor.Tools.GraphicsMutationContractTests.WrongTypeVolumeTexture_DoesNotClearValueOrEnableOverride",
+        "MCPForUnityTests.Editor.Tools.GraphicsMutationContractTests.ValidVolumeTexture_AssignsAssetAndEnablesOverride",
+        "MCPForUnityTests.Editor.Tools.GraphicsMutationContractTests.NullVolumeTexture_ClearsValueAndEnablesOverride"
+      ]
+    },
+    {
+      "id": "graphics-actions",
+      "filter": "MCPForUnityTests.Editor.Tools.ManageGraphicsTests",
+      "requiredTests": [
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeCreate_ProfileInNewNestedFolders_PersistsAndReusesProfile",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeCreate_Global_CreatesVolume",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeCreate_WithEffects_AddsEffects",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeCreate_Local_CreatesNonGlobal",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeAddEffect_AddsEffect",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeAddEffect_Duplicate_ReturnsError",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeAddEffect_InvalidEffect_ReturnsError",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeSetEffect_SetsParameters",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeSetEffect_InvalidParam_ReportsFailed",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeRemoveEffect_RemovesEffect",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeRemoveEffect_NonExistent_ReturnsError",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeGetInfo_ReturnsEffectList",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeGetInfo_NonExistentTarget_ReturnsError",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeSetProperties_UpdatesWeightAndPriority",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeListEffects_ReturnsAvailableTypes",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeCreateProfile_NewNestedFolders_DuplicateRefusalPreservesOutput",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.VolumeCreateProfile_CreatesAsset",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.PipelineGetSettings_ReturnsSettings",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.FeatureList_ReturnsFeatures",
+        "MCPForUnityTests.Editor.Tools.ManageGraphicsTests.FeatureAdd_InvalidType_ReturnsError"
+      ]
+    },
+    {
+      "id": "textmeshpro",
+      "filter": "MCPForUnityTests.EditMode.Tools.ManageUGUITests",
+      "requiredTests": [
+        "MCPForUnityTests.EditMode.Tools.ManageUGUITests.TmpComputedSizeCanBecomeAuthoredSizeAcrossAutoSizingTransitions",
+        "MCPForUnityTests.EditMode.Tools.ManageUGUITests.TmpAutoSizingTransitionAndFontSizeEditPersistIdenticallyInEitherPropertyOrder",
+        "MCPForUnityTests.EditMode.Tools.ManageUGUITests.TmpTextCreationAndEditingUseConfiguredFontAndSupportUndo"
+      ]
+    },
+    {
+      "id": "ui-references",
+      "filter": "MCPForUnityTests.Editor.Tools.ComponentOpsObjectReferenceTests",
+      "requiredTests": [
+        "MCPForUnityTests.Editor.Tools.ComponentOpsObjectReferenceTests.SetProperty_UiComponentReference_IntegerAndObjectFormsRoundTrip"
+      ]
+    },
+    {
+      "id": "ui-font-diagnostics",
+      "filter": "MCPForUnityTests.Editor.Tools.UguiDiagnosticsTests",
+      "requiredTests": [
+        "MCPForUnityTests.Editor.Tools.UguiDiagnosticsTests.PublicLegacyTextPreviewPreservesSharedFontAndOriginalDirtyCallbacks"
+      ]
+    }
+  ]
+}

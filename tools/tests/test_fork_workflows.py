@@ -44,13 +44,13 @@ def test_legacy_publication_and_adoption_jobs_exclude_forks(name: str, job: str)
 
 
 def test_forks_keep_python_and_unity_validation() -> None:
-    # Given: fork beta validation has separate Unity and Python entry points.
-    unity = workflow("beta-release.yml")["jobs"]["unity_tests"]
+    # Given: one fork beta entry point owns both kinds of validation.
+    unity = workflow("fork-beta-tools.yml")["jobs"]["unity_tests"]
     python = workflow("fork-beta-tools.yml")["jobs"]["python_tests"]
     # When: each entry point's reusable workflow and repository condition are read.
     definitions = (unity, python)
     # Then: forks retain both kinds of validation without passing new secrets.
-    assert unity["if"] == "github.actor != 'github-actions[bot]'"
+    assert unity["if"] == "github.repository != 'CoplayDev/unity-mcp'"
     assert python["if"] == "github.repository != 'CoplayDev/unity-mcp'"
     assert all(job["uses"].startswith("./.github/workflows/") for job in definitions)
     assert "secrets" not in python
@@ -166,11 +166,37 @@ def test_fork_beta_tools_pushes_select_reusable_python_validation(path: str) -> 
     assert selected
     config = workflow(wrapper.name)
     assert config["permissions"] == {"contents": "read"}
-    assert list(config["jobs"]) == ["python_tests"]
+    assert list(config["jobs"]) == ["python_tests", "unity_tests"]
     job = config["jobs"]["python_tests"]
     assert job["if"] == "github.repository != 'CoplayDev/unity-mcp'"
     assert job["uses"] == "./.github/workflows/python-tests.yml"
     assert "secrets" not in job
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "tools/unity-ci-packages.json",
+        "tools/unity-optional-tests.json",
+        "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/CameraConfigurationIntegrityTests.cs",
+        "MCPForUnity/Editor/Tools/ManageCamera.cs",
+        "Server/src/main.py",
+    ],
+)
+def test_fork_beta_profile_and_test_changes_select_exactly_one_unity_caller(path: str) -> None:
+    fork = workflow("fork-beta-tools.yml")["jobs"]["unity_tests"]
+    upstream = workflow("beta-release.yml")["jobs"]["unity_tests"]
+    assert fork["uses"] == upstream["uses"] == "./.github/workflows/unity-tests.yml"
+    assert fork["if"] == "github.repository != 'CoplayDev/unity-mcp'"
+    assert upstream["if"] == f"{UPSTREAM_ONLY} && github.actor != 'github-actions[bot]'"
+    selected = []
+    for name, job in (("fork-beta-tools.yml", fork), ("beta-release.yml", upstream)):
+        if push_selects(name, "beta", path) and job["if"] == fork["if"]:
+            selected.append(name)
+    # The standalone push trigger must not duplicate the reusable fork caller.
+    if push_selects("unity-tests.yml", "beta", path):
+        selected.append("unity-tests.yml")
+    assert selected == ["fork-beta-tools.yml"]
 
 
 @pytest.mark.parametrize(

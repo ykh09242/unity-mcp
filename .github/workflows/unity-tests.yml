@@ -37,6 +37,7 @@ on:
       - tools/unity-ci/**
       - tools/unity_ci_packages.py
       - tools/unity-ci-packages.json
+      - tools/unity-optional-tests.json
   # Same-repo PRs get a unity-tests status check on every open / push via this trigger
   # (mirrors python-tests.yml). Fork PRs ALSO fire this trigger but run in the fork's
   # context without secrets — the `license` gate job writes unity_ok=false and the test
@@ -61,6 +62,7 @@ on:
       - tools/unity-ci/**
       - tools/unity_ci_packages.py
       - tools/unity-ci-packages.json
+      - tools/unity-optional-tests.json
 
 # Dedup runs for the same branch across push / pull_request / workflow_call.
 # Same-repo PRs would otherwise fire both push (on the branch SHA) AND pull_request (on the PR);
@@ -80,6 +82,8 @@ jobs:
       contents: read
     outputs:
       versions: ${{ steps.set.outputs.versions }}
+      optional_versions: ${{ steps.set.outputs.optional_versions }}
+      optional_suites: ${{ steps.set.outputs.optional_suites }}
     steps:
       - name: Checkout version manifest
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -88,6 +92,9 @@ jobs:
           sparse-checkout: |
             tools/unity-versions.json
             tools/unity_ci.py
+            tools/unity_ci_packages.py
+            tools/unity-ci-packages.json
+            tools/unity-optional-tests.json
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Select all supported Unity channels
@@ -96,6 +103,10 @@ jobs:
           set -euo pipefail
           versions=$(python3 tools/unity_ci.py matrix)
           echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          optional_versions=$(python3 tools/unity_ci_packages.py optional-matrix)
+          echo "optional_versions=$optional_versions" >> "$GITHUB_OUTPUT"
+          optional_suites=$(python3 -c 'import json; print(json.dumps(json.load(open("tools/unity-optional-tests.json"))["suites"], separators=(",", ":")))')
+          echo "optional_suites=$optional_suites" >> "$GITHUB_OUTPUT"
 
   license:
     # Hoisted out of testAllModes so the gate is a JOB-level condition. A step-level `if:`
@@ -119,7 +130,7 @@ jobs:
           UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
         run: |
           set -e
-          if [ -n "$UNITY_LICENSE" ] || { [ -n "$UNITY_EMAIL" ] && [ -n "$UNITY_PASSWORD" ] && [ -n "$UNITY_SERIAL" ]; }; then
+          if [ -n "$UNITY_EMAIL" ] && [ -n "$UNITY_PASSWORD" ] && { [ -n "$UNITY_LICENSE" ] || [ -n "$UNITY_SERIAL" ]; }; then
             echo "unity_ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "unity_ok=false" >> "$GITHUB_OUTPUT"
@@ -128,11 +139,11 @@ jobs:
       - name: Explain why the Unity suite will not run
         if: steps.detect.outputs.unity_ok != 'true'
         run: |
-          echo "::warning::Unity tests will be SKIPPED - no license secrets in scope (normal for fork PRs). Nothing will be compiled or tested."
+          echo "::warning::Native Unity tests will be SKIPPED - no license secrets in scope (normal for fork PRs). Optional package preparation still runs."
           {
             echo "## :warning: Unity tests will be SKIPPED"
             echo
-            echo "No Unity license secrets were in scope for this run, so **no C# will be compiled and no test will be executed**."
+            echo "No Unity license secrets were in scope, so **no native Unity test will be executed**."
             echo "The dependent job reports **Skipped**, not a pass."
             echo
             echo "GitHub withholds repository secrets from workflow runs triggered by a fork's pull request."
@@ -140,7 +151,158 @@ jobs:
             echo "push the reviewed fork branch into this repo and the \`push\` trigger runs the full suite."
             echo
             echo "The separate license-free compile matrix and \`Run Python Tests\` DO run on fork PRs."
+            echo "Optional package preparation also runs without a license; it validates dependencies, not optional C# execution."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  optionalPackageInputs:
+    name: Prepare optional packages for Unity ${{ matrix.unity.version }}
+    needs: [matrix]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        unity: ${{ fromJson(needs.matrix.outputs.optional_versions) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+          ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.ref }}
+          persist-credentials: false
+
+      # The small compiler cache intentionally excludes graphics package sources.
+      # Read the complete BuiltInPackages from the matching Editor image instead.
+      - name: Prepare Unity Editor image
+        id: editor
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+        run: python3 tools/unity_ci.py prepare "$UNITY_VERSION" --purpose tests
+
+      - name: Prepare optional integration packages
+        id: packages
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+          UNITY_IMAGE: ${{ steps.editor.outputs.image }}
+        run: |
+          set -euo pipefail
+          python3 tools/unity_ci_packages.py prepare \
+            --unity-version "$UNITY_VERSION" --image "$UNITY_IMAGE" \
+            --output ".unity-ci/optional-$UNITY_VERSION" --include-optional
+
+      # Preserve relative file: links and package executable modes across jobs.
+      # The generator copies only source inputs, excluding Library and credentials.
+      - name: Archive prepared optional project
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+        run: |
+          set -euo pipefail
+          tar -czf optional-project.tar.gz -C ".unity-ci/optional-$UNITY_VERSION" \
+            package packages project resolved-packages.json
+
+      - name: Upload prepared optional project
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: optional-project-${{ matrix.unity.version }}
+          path: optional-project.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Report package preparation scope
+        run: |
+          echo "Optional package pins, minimum Editor versions and dependency closure validated. Native execution is reported by the separate licensed integration jobs." >> "$GITHUB_STEP_SUMMARY"
+
+  optionalIntegrations:
+    name: Optional ${{ matrix.suite.id }} on Unity ${{ matrix.unity.version }}
+    needs: [matrix, license, optionalPackageInputs]
+    if: needs.license.outputs.unity_ok == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        unity: ${{ fromJson(needs.matrix.outputs.optional_versions) }}
+        suite: ${{ fromJson(needs.matrix.outputs.optional_suites) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.ref }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: optional-project-${{ matrix.unity.version }}
+          path: .unity-ci/download
+
+      - name: Restore prepared optional project
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p ".unity-ci/optional-$UNITY_VERSION"
+          tar -xzf .unity-ci/download/optional-project.tar.gz -C ".unity-ci/optional-$UNITY_VERSION"
+
+      - name: Prepare Unity Editor image
+        id: editor
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+        run: python3 tools/unity_ci.py prepare "$UNITY_VERSION" --purpose tests
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .unity-ci/optional-${{ matrix.unity.version }}/project/Library
+          key: Library-optional-${{ matrix.unity.version }}-${{ hashFiles('tools/unity-versions.json', 'tools/unity-ci-packages.json', 'tools/unity_ci_packages.py') }}
+
+      # Each fixture gets its own Editor process and owned scene bootstrap.
+      - name: Run optional integration tests
+        id: tests
+        uses: game-ci/unity-test-runner@32e57712352b500e17974b245a6dce9e11a73213 # v4.4.0
+        continue-on-error: true
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: .unity-ci/optional-${{ matrix.unity.version }}/project
+          unityVersion: ${{ matrix.unity.version }}
+          customImage: ${{ steps.editor.outputs.image }}
+          testMode: editmode
+          customParameters: -testFilter ${{ matrix.suite.filter }}
+          cliVersion: v0.1.69
+          githubToken: ""
+          artifactsPath: artifacts/optional
+
+      - name: Require optional tests to execute and pass
+        env:
+          RESULTS_XML: artifacts/optional/editmode-results.xml
+          TEST_RUN_OUTCOME: ${{ steps.tests.outcome }}
+          REQUIRED_TESTS: ${{ toJson(matrix.suite.requiredTests) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          arguments = [sys.executable, "tools/check_unity_test_results.py", os.environ["RESULTS_XML"],
+                       "--runner-outcome", os.environ["TEST_RUN_OUTCOME"]]
+          for name in json.loads(os.environ["REQUIRED_TESTS"]):
+              arguments.extend(["--require-test", name])
+          sys.exit(subprocess.call(arguments))
+          PY
+
+      - name: Upload optional integration evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: optional-results-${{ matrix.unity.version }}-${{ matrix.suite.id }}
+          path: |
+            artifacts/optional/
+            .unity-ci/optional-${{ matrix.unity.version }}/resolved-packages.json
+          include-hidden-files: true
+          if-no-files-found: error
 
   testAllModes:
     name: Test ${{ matrix.unity.channel }} Unity ${{ matrix.unity.version }} (${{ matrix.testMode }})

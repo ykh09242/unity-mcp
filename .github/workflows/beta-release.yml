@@ -18,7 +18,7 @@ permissions:
 jobs:
   unity_tests:
     name: Unity tests gate
-    if: github.actor != 'github-actions[bot]'
+    if: github.repository == 'CoplayDev/unity-mcp' && github.actor != 'github-actions[bot]'
     uses: ./.github/workflows/unity-tests.yml
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}

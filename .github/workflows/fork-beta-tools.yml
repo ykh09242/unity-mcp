@@ -1,14 +1,15 @@
 name: Fork Beta Tool Tests
 
-# This is the single Python validation entry point for fork beta pushes.
+# This is the single Python and native Unity entry point for fork beta pushes.
 # Keep product, tooling and CI-policy paths together so mixed pushes run once.
-# beta-release.yml retains upstream Python validation and the Unity gate.
+# beta-release.yml retains upstream release validation.
 on:
   push:
     branches: [beta]
     paths:
       - Server/**
       - MCPForUnity/**
+      - TestProjects/UnityMCPTests/**
       - tools/**
       - manifest.json
       - unity-mcp-skill/**
@@ -31,3 +32,13 @@ jobs:
     name: Python and hermetic tool tests
     if: github.repository != 'CoplayDev/unity-mcp'
     uses: ./.github/workflows/python-tests.yml
+
+  unity_tests:
+    name: Unity and optional integration tests
+    if: github.repository != 'CoplayDev/unity-mcp'
+    uses: ./.github/workflows/unity-tests.yml
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}

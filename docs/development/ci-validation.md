@@ -63,6 +63,66 @@ Earlier Unity profiles retain their existing reference and compiler contracts.
 The existing license gate stays explicit. A skipped licensed-test job is not runtime test
 evidence, and a successful compile is not proof that an Editor session was executed.
 
+### Optional package integrations
+
+The separate optional profile in `tools/unity-ci-packages.json` enables Cinemachine 3,
+ProBuilder 6, Input System, URP/Core volumes and VFX Graph on the reviewed Unity 6000.0
+matrix row. `optional-matrix` selects that row from the existing version manifest; it
+does not introduce a second Editor version pin or claim coverage on every matrix version.
+Registry versions are pinned and checked against the registry archive digest, package
+minimum Editor versions and the complete dependency closure. Graphics packages come from
+the selected Editor's BuiltInPackages. The generated project enables both input backends
+and Input System test helpers without changing the source project's settings or manifest.
+The profile also stages the official uGUI package's TMP Essential Resources into the
+generated project, retaining font/settings GUIDs. It excludes example resources and
+rejects archive path escapes or collisions with existing project assets before writing.
+
+`optionalPackageInputs` runs without license secrets and uploads the prepared source
+project as a tar archive, preserving package modes and relative `file:` references.
+This proves package preparation only. The small reference-compiler cache lacks graphics
+package sources and cannot substitute for the complete Editor image in this job.
+
+Licensed `optionalIntegrations` jobs execute the fixtures listed in
+`tools/unity-optional-tests.json` in separate Editor processes. Their Library cache is
+isolated from the base profile. `check_unity_test_results.py --require-test` requires each
+listed method to appear as an actual passed NUnit case; every parameterized variant must
+pass. Missing, ignored or skipped required cases fail even when unrelated cases pass.
+Each job retains NUnit XML, Editor logs and the package resolution receipt. These tests
+exercise package APIs and mutation boundaries, not rendered image quality or user scenes.
+Coverage includes native ProBuilder creation/conversion/UVs, volume texture references,
+TMP font sizing and Undo, and shared-font preview preservation. The renderer-feature
+tests temporarily activate their own URP asset/renderer and restore the original pipeline
+selection afterward. Installing URP alone would leave those tests skipped.
+Windows file-lock failure cases are listed separately in `requiredTestsWindows`; the
+Linux CI jobs require the platform-independent list. Record local Windows results
+separately, including the deliberately skipped case-sensitive AssetDatabase scenario.
+
+Fork beta pushes enter through `fork-beta-tools.yml`, including changes limited to test
+sources or package profiles. The upstream beta release caller remains upstream-only, so
+mixed product/tooling pushes do not start the same Unity workflow twice on a fork.
+
+### Configure the Unity license
+
+In the GitHub repository, open **Settings > Secrets and variables > Actions** and create
+repository secrets with **New repository secret**. Keep `${{ secrets.NAME }}` references
+in YAML; enter the actual values only in GitHub's secret fields.
+
+| Secret | Personal | Pro |
+| --- | --- | --- |
+| `UNITY_EMAIL` | Unity account email | Unity account email |
+| `UNITY_PASSWORD` | Unity account password | Unity account password |
+| `UNITY_LICENSE` | Entire activated `.ulf` file contents, not its path | Not required |
+| `UNITY_SERIAL` | Not required | Serial issued by Unity |
+
+For Personal, activate the license in **Unity Hub > Preferences > Licenses > Add > Get a
+free personal license**. GameCI documents the Windows license file at
+`C:\ProgramData\Unity\Unity_lic.ulf`. Follow its
+[current activation guide](https://game.ci/docs/github/activation/) if the file is absent.
+Do not commit or attach license files. After registering the secrets, rerun the latest
+workflow. The gate requires email and password plus either license contents or a serial;
+the Editor activation step still verifies whether those credentials are valid. Fork PRs
+do not receive repository secrets and retain an explicit native-test skip.
+
 ## Warning policy
 
 Repository-owned Unity assemblies compile with warnings as errors. The existing CS1701/CS1702

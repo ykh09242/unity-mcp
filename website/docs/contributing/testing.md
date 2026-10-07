@@ -67,10 +67,30 @@ CI tests the Python 3.11 support floor and a newer interpreter with locked depen
 |---|---|---|
 | License-free reference compilation | Assemblies compile against selected Editor APIs/platform defines, including optional examples. | Native Editor import, Play mode, rendering, callbacks or provider behavior. |
 | Managed regression harness | Behavior of the exercised model/fixture and source contract. | All native Unity side effects. |
+| Optional package preparation | Pinned dependencies resolve for the selected Editor. | Compilation or execution of optional package code. |
 | Licensed EditMode/PlayMode run | Executed tests in the named Editor/project. | Other versions/platforms or unexecuted workflows. |
 | Skipped license-gated job | No execution evidence. | A pass. |
 
 The matrix's exact versions/profile roles live in `tools/unity-versions.json`; workflow triggers and permissions live in `.github/workflows/`. Record the actual run/revision rather than promising that every PR runs every job. Reference-only compilation is separate from licensed Unity tests.
+
+Optional integrations have a separate reviewed Unity 6000.0 profile in
+`tools/unity-ci-packages.json`: Cinemachine 3, ProBuilder 6, Input System, URP/Core volumes
+and VFX Graph. CI first prepares an isolated project without license secrets, then runs
+the fixture list in `tools/unity-optional-tests.json` through licensed Editor jobs. Each
+required NUnit method must execute and pass, including its parameterized cases; a missing
+package, disabled assembly or skipped required test cannot silently count as a pass.
+The base compatibility matrix still runs separately. Other Editor/package versions and
+rendered output are outside this optional profile's evidence.
+The generated project includes TMP Essential Resources for font-dependent cases. URP
+feature tests create and restore their own pipeline settings, and Windows-only file-lock
+cases stay separate from Linux CI's required list.
+
+Native CI requires repository Actions secrets. Personal uses `UNITY_EMAIL`,
+`UNITY_PASSWORD` and the complete `.ulf` contents in `UNITY_LICENSE`; Pro uses the same
+account credentials plus `UNITY_SERIAL`. Enter values in **Settings > Secrets and variables
+> Actions**, keeping only secret references in YAML. Follow the
+[GameCI activation guide](https://game.ci/docs/github/activation/), then rerun the workflow.
+A license-gated skip provides no runtime evidence, even if package preparation passed.
 
 ### Feature and platform boundaries
 

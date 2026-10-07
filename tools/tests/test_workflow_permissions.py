@@ -87,7 +87,7 @@ def test_pages_build_is_read_only_and_only_deploy_can_write() -> None:
     assert setup["with"]["enablement"] is False
 
 
-@pytest.mark.parametrize("name", ["beta-release.yml", "release.yml"])
+@pytest.mark.parametrize("name", ["beta-release.yml", "release.yml", "fork-beta-tools.yml"])
 def test_reusable_unity_validation_receives_only_license_secrets(name: str) -> None:
     caller = workflow(name)
     job = caller["jobs"]["unity_tests"]
