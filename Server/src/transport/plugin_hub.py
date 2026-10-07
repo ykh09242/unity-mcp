@@ -1778,10 +1778,41 @@ class PluginHub(WebSocketEndpoint):
 
     @classmethod
     async def _evict_connection(cls, session_id: str, reason: str) -> None:
+        # Once routing disappears, only this task can finish registry/socket cleanup.
+        # Keep ownership through explicit Task.cancel() and AnyIO level cancellation.
+        cleanup = asyncio.create_task(
+            cls._evict_connection_owned(session_id, asyncio.current_task())
+        )
+        cancellation: asyncio.CancelledError | None = None
+        with anyio.CancelScope(shield=True):
+            while not cleanup.done():
+                try:
+                    await asyncio.wait({cleanup})
+                except asyncio.CancelledError as error:
+                    if cancellation is None:
+                        cancellation = error
+            cleanup_error = None if cleanup.cancelled() else cleanup.exception()
+        try:
+            await anyio.lowlevel.checkpoint_if_cancelled()
+        except asyncio.CancelledError as error:
+            if cancellation is None:
+                cancellation = error
+        if cancellation is not None:
+            raise cancellation from cleanup_error
+        had_registry = cleanup.result()
+        if had_registry and not config.http_remote_hosted:
+            await cls._refresh_server_tool_visibility()
+            await cls._notify_mcp_tool_list_changed()
+        logger.debug("Evicted plugin session %s (%s)", session_id, reason)
+
+    @classmethod
+    async def _evict_connection_owned(
+        cls, session_id: str, initiating_task: asyncio.Task | None
+    ) -> bool:
         """Drop a stale session from in-memory maps and registry."""
         lock = cls._lock
         if lock is None:
-            return
+            return False
 
         websocket: WebSocket | None = None
         ping_task: asyncio.Task | None = None
@@ -1803,11 +1834,7 @@ class PluginHub(WebSocketEndpoint):
             for key in keys_to_remove:
                 cls._pending.pop(key, None)
 
-        if (
-            ping_task is not None
-            and ping_task is not asyncio.current_task()
-            and not ping_task.done()
-        ):
+        if ping_task is not None and ping_task is not initiating_task and not ping_task.done():
             ping_task.cancel()
 
         for future in pending_futures:
@@ -1832,11 +1859,7 @@ class PluginHub(WebSocketEndpoint):
         if websocket is not None:
             await cls._close_websocket(websocket)
 
-        if registry is not None and not config.http_remote_hosted:
-            await cls._refresh_server_tool_visibility()
-            await cls._notify_mcp_tool_list_changed()
-
-        logger.debug("Evicted plugin session %s (%s)", session_id, reason)
+        return registry is not None
 
     @classmethod
     async def _ensure_live_connection(cls, session_id: str) -> bool:
