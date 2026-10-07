@@ -63,9 +63,28 @@ Earlier Unity profiles retain their existing reference and compiler contracts.
 The existing license gate stays explicit. A skipped licensed-test job is not runtime test
 evidence, and a successful compile is not proof that an Editor session was executed.
 
+## Warning policy
+
+Repository-owned Unity assemblies compile with warnings as errors. The existing CS1701/CS1702
+reference-facade exceptions remain. Bundled `UnityEditor.TestRunner` suppresses CS0169/CS0649,
+matching native Unity's unused-field policy. Only its pinned `6000.0.84f1` build also suppresses
+CS0618 for UTF 1.6.0's obsolete Switch host-I/O call. These vendor exceptions do not apply to
+the package or its tests; reassess the version-specific exception when updating that Editor.
+
+The documentation build disables Node's experimental Web Storage because static rendering
+does not need file-backed browser storage. Only the pinned Pages deploy action filters DEP0040
+while its bundled code still imports `node:punycode`; other diagnostics remain visible. Remove
+that exception when the action fixes its dependency. These are scoped vendor/runtime policies,
+not a claim that third-party source has been repaired.
+
+The website pins a nested `encoding-sniffer` override for search-local's Cheerio dependency to
+remove deprecated `whatwg-encoding`. Dependency contracts exercise its CommonJS API and HTML
+buffer/stream decoding. Reassess the override when Cheerio publishes the newer dependency.
+
 ## Reference material
 
 - [Unity alpha releases](https://unity.com/releases/editor/alpha)
 - [Unity October 2026 CoreCLR update](https://discussions.unity.com/t/coreclr-scripting-and-net-update-october-2026/1738338)
 - [GitHub matrix jobs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations)
 - [Pinned setup-uv inputs](https://github.com/astral-sh/setup-uv/blob/c18668ad3cf93ea998bef934396af7bb5c839dc7/action.yml)
+- [Node 26.10 command-line options](https://github.com/nodejs/node/blob/v26.10.0/doc/api/cli.md)
