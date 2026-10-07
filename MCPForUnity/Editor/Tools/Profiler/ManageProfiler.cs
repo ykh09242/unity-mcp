@@ -72,6 +72,10 @@ namespace MCPForUnity.Editor.Tools.Profiler
                         );
                 }
             }
+            catch (ArgumentException ex)
+            {
+                return new ErrorResponse($"Invalid parameters for action '{action}': {ex.Message}");
+            }
             catch (Exception ex)
             {
                 McpLog.Error($"[ManageProfiler] Action '{action}' failed: {ex}");

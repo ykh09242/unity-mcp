@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
@@ -19,20 +20,30 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
         internal static async Task<object> TakeSnapshotAsync(JObject @params)
         {
+            var p = new ToolParams(@params);
+            if (!ProfilerPathUtility.TryResolve(p, "snapshot_path", false, false, out string snapshotPath, out var pathError))
+                return pathError;
+            bool defaultPath = snapshotPath == null;
+            if (defaultPath)
+            {
+                string dir = Path.Combine(Application.temporaryCachePath, "MemoryCaptures");
+                try
+                {
+                    snapshotPath = ProfilerPathUtility.Resolve(Path.Combine(dir, $"snapshot_{DateTime.Now:yyyyMMdd_HHmmss}.snap"));
+                }
+                catch (Exception ex)
+                {
+                    return new ErrorResponse($"Invalid 'snapshot_path': {ex.Message}");
+                }
+            }
+            else if (!Directory.Exists(Path.GetDirectoryName(snapshotPath)))
+                return new ErrorResponse("Invalid 'snapshot_path': parent directory does not exist.");
+
             if (!HasPackage)
                 return PackageMissingError();
 
-            var p = new ToolParams(@params);
-            string snapshotPath = p.Get("snapshot_path");
-
-            if (string.IsNullOrEmpty(snapshotPath))
-            {
-                string dir = Path.Combine(Application.temporaryCachePath, "MemoryCaptures");
-                Directory.CreateDirectory(dir);
-                snapshotPath = Path.Combine(dir, $"snapshot_{DateTime.Now:yyyyMMdd_HHmmss}.snap");
-            }
-
             var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            OutputFolderScope folders = null;
 
             try
             {
@@ -77,29 +88,48 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 if (takeMethod == null)
                     return new ErrorResponse("Could not find TakeSnapshot method on MemoryProfiler. API may have changed.");
 
-                Action<string, bool> callback = (path, result) => CompleteSnapshot(tcs, path, result);
-
                 var takeMethodParams = takeMethod.GetParameters();
                 int paramCount = takeMethodParams.Length;
+                if (
+                    !(paramCount == 4 && (takeMethodParams[3].ParameterType == captureFlagsType || takeMethodParams[3].ParameterType == typeof(uint)))
+                    && !(paramCount == 3 && takeMethodParams[2].ParameterType == captureFlagsType)
+                    && paramCount != 2
+                )
+                    return new ErrorResponse($"TakeSnapshot has unexpected {paramCount} parameters. API may have changed.");
+
+                if (defaultPath)
+                {
+                    folders = new OutputFolderScope(Application.temporaryCachePath);
+                    folders.EnsureParentDirectory(snapshotPath);
+                }
+                snapshotPath = ProfilerPathUtility.Resolve(snapshotPath);
+                Action<string, bool> callback = (path, result) =>
+                {
+                    if (result)
+                        folders?.Complete();
+                    folders?.Dispose();
+                    CompleteSnapshot(tcs, path, result);
+                };
+
                 if (paramCount == 4 && takeMethodParams[3].ParameterType == captureFlagsType)
                     takeMethod.Invoke(null, new object[] { snapshotPath, callback, null, GetCaptureFlagsDefault(takeMethodParams[3]) });
                 else if (paramCount == 3 && takeMethodParams[2].ParameterType == captureFlagsType)
                     takeMethod.Invoke(null, new object[] { snapshotPath, callback, GetCaptureFlagsDefault(takeMethodParams[2]) });
                 else if (paramCount == 4 && takeMethodParams[3].ParameterType == typeof(uint))
                     takeMethod.Invoke(null, new object[] { snapshotPath, callback, null, GetCaptureFlagsDefault(takeMethodParams[3]) });
-                else if (paramCount == 2)
-                    takeMethod.Invoke(null, new object[] { snapshotPath, callback });
                 else
-                    return new ErrorResponse($"TakeSnapshot has unexpected {paramCount} parameters. API may have changed.");
+                    takeMethod.Invoke(null, new object[] { snapshotPath, callback });
             }
             catch (Exception ex)
             {
+                folders?.Dispose();
                 return new ErrorResponse($"Failed to take snapshot: {ex.Message}");
             }
 
             var timeout = Task.Delay(TimeSpan.FromSeconds(30));
             var completed = await Task.WhenAny(tcs.Task, timeout);
             if (completed == timeout)
+                // A native capture may still be writing. Only its eventual callback owns folder cleanup.
                 return new ErrorResponse("Snapshot timed out after 30 seconds.");
 
             return await tcs.Task;
@@ -148,7 +178,8 @@ namespace MCPForUnity.Editor.Tools.Profiler
         internal static object ListSnapshots(JObject @params)
         {
             var p = new ToolParams(@params);
-            string searchPath = p.Get("search_path");
+            if (!ProfilerPathUtility.TryResolve(p, "search_path", false, true, out string searchPath, out var pathError))
+                return pathError;
 
             var dirs = new List<string>();
             if (!string.IsNullOrEmpty(searchPath))
@@ -158,27 +189,35 @@ namespace MCPForUnity.Editor.Tools.Profiler
             else
             {
                 dirs.Add(Path.Combine(Application.temporaryCachePath, "MemoryCaptures"));
-                dirs.Add(Path.Combine(Application.dataPath, "..", "MemoryCaptures"));
+                dirs.Add(Path.Combine(Path.GetDirectoryName(Application.dataPath), "MemoryCaptures"));
             }
 
             var snapshots = new List<object>();
-            foreach (string dir in dirs)
+            try
             {
-                if (!Directory.Exists(dir))
-                    continue;
-                foreach (string file in Directory.GetFiles(dir, "*.snap"))
+                for (int i = 0; i < dirs.Count; i++)
                 {
-                    var fi = new FileInfo(file);
-                    snapshots.Add(
-                        new
-                        {
-                            path = fi.FullName,
-                            size_bytes = fi.Length,
-                            size_mb = Math.Round(fi.Length / (1024.0 * 1024.0), 2),
-                            created = fi.CreationTimeUtc.ToString("o"),
-                        }
-                    );
+                    string dir = dirs[i] = ProfilerPathUtility.Resolve(dirs[i]);
+                    if (!Directory.Exists(dir))
+                        continue;
+                    foreach (string file in Directory.EnumerateFiles(dir, "*.snap"))
+                    {
+                        var fi = new FileInfo(ProfilerPathUtility.Resolve(file));
+                        snapshots.Add(
+                            new
+                            {
+                                path = fi.FullName,
+                                size_bytes = fi.Length,
+                                size_mb = Math.Round(fi.Length / (1024.0 * 1024.0), 2),
+                                created = fi.CreationTimeUtc.ToString("o"),
+                            }
+                        );
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                return new ErrorResponse($"Invalid 'search_path': {ex.Message}");
             }
 
             return new SuccessResponse($"Found {snapshots.Count} snapshot(s).", new { snapshots, searched_dirs = dirs });
@@ -187,16 +226,10 @@ namespace MCPForUnity.Editor.Tools.Profiler
         internal static object CompareSnapshots(JObject @params)
         {
             var p = new ToolParams(@params);
-            var pathAResult = p.GetRequired("snapshot_a");
-            if (!pathAResult.IsSuccess)
-                return new ErrorResponse(pathAResult.ErrorMessage);
-
-            var pathBResult = p.GetRequired("snapshot_b");
-            if (!pathBResult.IsSuccess)
-                return new ErrorResponse(pathBResult.ErrorMessage);
-
-            string pathA = pathAResult.Value;
-            string pathB = pathBResult.Value;
+            if (!ProfilerPathUtility.TryResolve(p, "snapshot_a", true, false, out string pathA, out var pathAError))
+                return pathAError;
+            if (!ProfilerPathUtility.TryResolve(p, "snapshot_b", true, false, out string pathB, out var pathBError))
+                return pathBError;
 
             if (!File.Exists(pathA))
                 return new ErrorResponse($"Snapshot file not found: {pathA}");
@@ -241,6 +274,94 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 "Package com.unity.memoryprofiler is required. "
                     + "Install via Package Manager or: manage_packages action=add_package package_id=com.unity.memoryprofiler"
             );
+        }
+    }
+
+    internal static class ProfilerPathUtility
+    {
+        internal static bool TryResolve(ToolParams parameters, string key, bool required, bool directory, out string path, out ErrorResponse error)
+        {
+            path = null;
+            error = null;
+            var token = parameters.GetRaw(key);
+            if (token == null || token.Type == JTokenType.Null || (token.Type == JTokenType.String && token.Value<string>() == ""))
+            {
+                if (!required)
+                    return true;
+                error = new ErrorResponse($"'{key}' parameter is required.");
+                return false;
+            }
+            try
+            {
+                if (token.Type != JTokenType.String)
+                    throw new ArgumentException("Path must be a string.");
+                path = Resolve(token.Value<string>());
+                if (directory && File.Exists(path))
+                    throw new ArgumentException("Path must name a directory.");
+                if (!directory && (Directory.Exists(path) || string.IsNullOrEmpty(Path.GetFileName(path))))
+                    throw new ArgumentException("Path must name a file.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = new ErrorResponse($"Invalid '{key}': {ex.Message}");
+                return false;
+            }
+        }
+
+        internal static string Resolve(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("Path must not be blank.");
+            foreach (char character in path)
+                if (char.IsControl(character) || "*?\"<>|".IndexOf(character) >= 0)
+                    throw new ArgumentException("Path contains an invalid character.");
+            string normalized = path.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
+            foreach (string part in normalized.Split(Path.DirectorySeparatorChar))
+            {
+                if (part == "..")
+                    throw new InvalidOperationException("Parent traversal is not permitted.");
+                if (Path.DirectorySeparatorChar != '\\' || part.Length == 0 || part == ".")
+                    continue;
+                if (part.EndsWith(".", StringComparison.Ordinal) || part.EndsWith(" ", StringComparison.Ordinal))
+                    throw new ArgumentException("Windows path components must not end in a dot or space.");
+                string name = part.Split('.')[0].ToUpperInvariant();
+                if (
+                    name == "CON"
+                    || name == "PRN"
+                    || name == "AUX"
+                    || name == "NUL"
+                    || (
+                        name.Length == 4
+                        && (name.StartsWith("COM", StringComparison.Ordinal) || name.StartsWith("LPT", StringComparison.Ordinal))
+                        && name[3] >= '1'
+                        && name[3] <= '9'
+                    )
+                )
+                    throw new ArgumentException("Windows device names are not permitted.");
+            }
+            int colon = normalized.IndexOf(':');
+            if (
+                colon >= 0
+                && !(
+                    Path.DirectorySeparatorChar == '\\'
+                    && colon == 1
+                    && char.IsLetter(normalized[0])
+                    && normalized.Length > 2
+                    && normalized[2] == '\\'
+                    && normalized.LastIndexOf(':') == colon
+                )
+            )
+                throw new ArgumentException("Drive-relative paths and alternate data streams are not permitted.");
+
+            string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+            string fullPath = Path.GetFullPath(Path.Combine(projectRoot, normalized));
+            var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            string root =
+                fullPath.Equals(projectRoot, comparison) || fullPath.StartsWith(projectRoot + Path.DirectorySeparatorChar, comparison)
+                    ? projectRoot
+                    : Path.GetFullPath(Application.temporaryCachePath);
+            return SafePathUtility.ResolveWithinRoot(root, fullPath);
         }
     }
 }

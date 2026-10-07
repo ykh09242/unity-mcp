@@ -86,20 +86,36 @@ async def manage_profiler(
     object_path: Annotated[
         Optional[str], "Scene hierarchy or asset path for get_object_memory."
     ] = None,
-    log_file: Annotated[Optional[str], "Path to .raw file for profiler_start recording."] = None,
+    log_file: Annotated[
+        Optional[str],
+        "Path to .raw file for profiler_start recording. Project-relative or absolute inside "
+        "the project or Unity temporary cache directory.",
+    ] = None,
     enable_callstacks: Annotated[
         Optional[bool], "Enable allocation callstacks for profiler_start."
     ] = None,
     areas: Annotated[
         Optional[dict[str, bool]], "Dict of area name to bool for profiler_set_areas."
     ] = None,
-    snapshot_path: Annotated[Optional[str], "Output path for memory_take_snapshot."] = None,
-    search_path: Annotated[Optional[str], "Search directory for memory_list_snapshots."] = None,
+    snapshot_path: Annotated[
+        Optional[str],
+        "Output path for memory_take_snapshot. Project-relative or absolute inside the project "
+        "or Unity temporary cache directory.",
+    ] = None,
+    search_path: Annotated[
+        Optional[str],
+        "Search directory for memory_list_snapshots. Project-relative or absolute inside the "
+        "project or Unity temporary cache directory.",
+    ] = None,
     snapshot_a: Annotated[
-        Optional[str], "First snapshot path for memory_compare_snapshots."
+        Optional[str],
+        "First snapshot path for memory_compare_snapshots. Project-relative or absolute inside "
+        "the project or Unity temporary cache directory.",
     ] = None,
     snapshot_b: Annotated[
-        Optional[str], "Second snapshot path for memory_compare_snapshots."
+        Optional[str],
+        "Second snapshot path for memory_compare_snapshots. Project-relative or absolute inside "
+        "the project or Unity temporary cache directory.",
     ] = None,
     page_size: Annotated[
         Optional[int], "Page size for frame_debugger_get_events (default 50, clamped to 1..500)."

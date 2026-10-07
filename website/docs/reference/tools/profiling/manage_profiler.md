@@ -43,13 +43,13 @@ FRAME DEBUGGER:
 | `category` | `str \| None` | — | Profiler category name for get_counters (e.g. Render, Scripts, Memory, Physics). |
 | `counters` | `list[str] \| None` | — | Specific counter names for get_counters. Omit to read all in category. |
 | `object_path` | `str \| None` | — | Scene hierarchy or asset path for get_object_memory. |
-| `log_file` | `str \| None` | — | Path to .raw file for profiler_start recording. |
+| `log_file` | `str \| None` | — | Path to .raw file for profiler_start recording. Project-relative or absolute inside the project or Unity temporary cache directory. |
 | `enable_callstacks` | `bool \| None` | — | Enable allocation callstacks for profiler_start. |
 | `areas` | `dict[str, bool] \| None` | — | Dict of area name to bool for profiler_set_areas. |
-| `snapshot_path` | `str \| None` | — | Output path for memory_take_snapshot. |
-| `search_path` | `str \| None` | — | Search directory for memory_list_snapshots. |
-| `snapshot_a` | `str \| None` | — | First snapshot path for memory_compare_snapshots. |
-| `snapshot_b` | `str \| None` | — | Second snapshot path for memory_compare_snapshots. |
+| `snapshot_path` | `str \| None` | — | Output path for memory_take_snapshot. Project-relative or absolute inside the project or Unity temporary cache directory. |
+| `search_path` | `str \| None` | — | Search directory for memory_list_snapshots. Project-relative or absolute inside the project or Unity temporary cache directory. |
+| `snapshot_a` | `str \| None` | — | First snapshot path for memory_compare_snapshots. Project-relative or absolute inside the project or Unity temporary cache directory. |
+| `snapshot_b` | `str \| None` | — | Second snapshot path for memory_compare_snapshots. Project-relative or absolute inside the project or Unity temporary cache directory. |
 | `page_size` | `int \| None` | — | Page size for frame_debugger_get_events (default 50, clamped to 1..500). |
 | `cursor` | `int \| None` | — | Cursor offset for frame_debugger_get_events (default 0, negative values treated as 0). |
 

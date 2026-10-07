@@ -16,7 +16,8 @@ namespace MCPForUnity.Editor.Tools.Profiler
         internal static object Start(JObject @params)
         {
             var p = new ToolParams(@params);
-            string logFile = p.Get("log_file");
+            if (!ProfilerPathUtility.TryResolve(p, "log_file", false, false, out string logFile, out var pathError))
+                return pathError;
             bool? enableCallstacks = ParamCoercion.CoerceBoolNullable(p.GetRaw("enable_callstacks"));
 
             if (!string.IsNullOrEmpty(logFile))
