@@ -98,21 +98,28 @@ namespace MCPForUnity.Editor.Helpers
             if (texture == null || pixelsToken == null)
                 return;
 
+            var pixels = PreparePixelData(pixelsToken, regionWidth, regionHeight);
+            ApplyPreparedPixelDataToRegion(texture, pixels, offsetX, offsetY, regionWidth, regionHeight);
+        }
+
+        internal static Color32[] PreparePixelData(JToken pixelsToken, int regionWidth, int regionHeight)
+        {
             if (regionWidth <= 0 || regionHeight <= 0)
                 throw new ArgumentException("Pixel region width and height must be positive.");
             long expectedCount = (long)regionWidth * regionHeight;
-            byte[] rawData = null;
             var pixelArray = pixelsToken as JArray;
 
-            // Validate the complete payload before changing even an in-memory pixel.
+            // Parse once, before a native texture is allocated or decoded.
             if (pixelArray != null)
             {
                 if (pixelArray.Count != expectedCount)
                     throw new ArgumentException($"Pixel array size mismatch: expected {expectedCount} entries, got {pixelArray.Count}.");
-                foreach (var pixel in pixelArray)
-                    ParseRequiredColor32(pixel as JArray);
+                var colors = new Color32[pixelArray.Count];
+                for (int i = 0; i < colors.Length; i++)
+                    colors[i] = ParseRequiredColor32(pixelArray[i] as JArray);
+                return colors;
             }
-            else if (pixelsToken.Type == JTokenType.String)
+            if (pixelsToken?.Type == JTokenType.String)
             {
                 string pixelString = pixelsToken.ToString();
                 string base64 = pixelString.StartsWith("base64:") ? pixelString.Substring(7) : pixelString;
@@ -121,16 +128,25 @@ namespace MCPForUnity.Editor.Helpers
                     McpLog.Warn("[TextureOps] Base64 pixel data missing 'base64:' prefix; attempting to decode.");
                 }
 
-                rawData = Convert.FromBase64String(base64);
+                byte[] rawData = Convert.FromBase64String(base64);
 
                 // Assume RGBA32 format: 4 bytes per pixel
                 // Compare pixels after divisibility to avoid overflowing count * 4.
                 if (rawData.Length % 4 != 0 || rawData.Length / 4 != expectedCount)
                     throw new ArgumentException($"Base64 data size mismatch: expected {expectedCount} RGBA32 pixels, got {rawData.Length} bytes.");
+                var colors = new Color32[rawData.Length / 4];
+                for (int i = 0; i < colors.Length; i++)
+                {
+                    int byteIndex = i * 4;
+                    colors[i] = new Color32(rawData[byteIndex], rawData[byteIndex + 1], rawData[byteIndex + 2], rawData[byteIndex + 3]);
+                }
+                return colors;
             }
-            else
-                throw new ArgumentException("Pixels must be an array of colors or a base64 RGBA32 string.");
+            throw new ArgumentException("Pixels must be an array of colors or a base64 RGBA32 string.");
+        }
 
+        internal static void ApplyPreparedPixelDataToRegion(Texture2D texture, Color32[] pixels, int offsetX, int offsetY, int regionWidth, int regionHeight)
+        {
             int startX = Math.Max(0, offsetX);
             int startY = Math.Max(0, offsetY);
             int endX = (int)Math.Min((long)offsetX + regionWidth, texture.width);
@@ -139,6 +155,11 @@ namespace MCPForUnity.Editor.Helpers
                 return;
             int clippedWidth = endX - startX;
             int clippedHeight = endY - startY;
+            if (clippedWidth == regionWidth && clippedHeight == regionHeight)
+            {
+                texture.SetPixels32(startX, startY, clippedWidth, clippedHeight, pixels);
+                return;
+            }
             var colors = new Color32[clippedWidth * clippedHeight];
             // Iterate only the intersection; source indices still address the requested region.
             for (int py = startY; py < endY; py++)
@@ -146,15 +167,7 @@ namespace MCPForUnity.Editor.Helpers
                 for (int px = startX; px < endX; px++)
                 {
                     int index = (int)(((long)py - offsetY) * regionWidth + ((long)px - offsetX));
-                    Color32 color;
-                    if (pixelArray != null)
-                        color = ParseRequiredColor32((JArray)pixelArray[index]);
-                    else
-                    {
-                        int byteIndex = index * 4;
-                        color = new Color32(rawData[byteIndex], rawData[byteIndex + 1], rawData[byteIndex + 2], rawData[byteIndex + 3]);
-                    }
-                    colors[(py - startY) * clippedWidth + px - startX] = color;
+                    colors[(py - startY) * clippedWidth + px - startX] = pixels[index];
                 }
             }
             texture.SetPixels32(startX, startY, clippedWidth, clippedHeight, colors);

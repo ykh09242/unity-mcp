@@ -340,6 +340,7 @@ namespace MCPForUnity.Editor.Tools
                     if (patternSize <= 0)
                         return new ErrorResponse("patternSize must be greater than 0.");
                 }
+                var applyContents = !hasImage ? PrepareTextureContents(@params, width, height, patternSize) : null;
 
                 if (hasImage)
                 {
@@ -368,33 +369,7 @@ namespace MCPForUnity.Editor.Tools
                 else
                 {
                     texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
-
-                    // Check for fill color
-                    if (fillColorToken != null && fillColorToken.Type == JTokenType.Array)
-                    {
-                        Color32 fillColor = TextureOps.ParseColor32(fillColorToken as JArray);
-                        TextureOps.FillTexture(texture, fillColor);
-                    }
-
-                    // Check for pattern
-                    if (patternToken != null)
-                    {
-                        string pattern = patternToken.ToString();
-                        var palette = TextureOps.ParsePalette(@params["palette"] as JArray);
-                        ApplyPatternToTexture(texture, pattern, palette, patternSize);
-                    }
-
-                    // Check for direct pixel data
-                    if (pixelsToken != null && pixelsToken.Type != JTokenType.Null)
-                    {
-                        TextureOps.ApplyPixelData(texture, pixelsToken, width, height);
-                    }
-
-                    // If nothing specified, create transparent texture
-                    if (fillColorToken == null && patternToken == null && pixelsToken == null)
-                    {
-                        TextureOps.FillTexture(texture, new Color32(0, 0, 0, 0));
-                    }
+                    applyContents(texture);
                 }
 
                 texture.Apply();
@@ -441,6 +416,28 @@ namespace MCPForUnity.Editor.Tools
                 if (texture != null)
                     UnityEngine.Object.DestroyImmediate(texture);
             }
+        }
+
+        private static Action<Texture2D> PrepareTextureContents(JObject @params, int width, int height, int patternSize)
+        {
+            var fillColorToken = @params["fillColor"];
+            var patternToken = @params["pattern"];
+            var pixelsToken = @params["pixels"];
+            Color32? fillColor = fillColorToken is JArray fill ? TextureOps.ParseColor32(fill) : null;
+            string pattern = patternToken?.ToString();
+            var palette = patternToken != null ? TextureOps.ParsePalette(@params["palette"] as JArray) : null;
+            var pixels = pixelsToken != null && pixelsToken.Type != JTokenType.Null ? TextureOps.PreparePixelData(pixelsToken, width, height) : null;
+            return texture =>
+            {
+                if (fillColor.HasValue)
+                    TextureOps.FillTexture(texture, fillColor.Value);
+                if (patternToken != null)
+                    ApplyPatternToTexture(texture, pattern, palette, patternSize);
+                if (pixels != null)
+                    TextureOps.ApplyPreparedPixelDataToRegion(texture, pixels, 0, 0, width, height);
+                if (fillColorToken == null && patternToken == null && pixelsToken == null)
+                    TextureOps.FillTexture(texture, new Color32(0, 0, 0, 0));
+            };
         }
 
         private static object ModifyTexture(JObject @params)
@@ -500,6 +497,14 @@ namespace MCPForUnity.Editor.Tools
                     var pixelError = ValidatePixelPayload(pixelsToken, w, h);
                     if (pixelError != null)
                         return pixelError;
+                    Color32[] pixels = null;
+                    Color32 color = default;
+                    if (pixelsToken != null)
+                        pixels = TextureOps.PreparePixelData(pixelsToken, w, h);
+                    else if (colorToken != null)
+                        color = TextureOps.ParseRequiredColor32(colorToken as JArray);
+                    else
+                        return new ErrorResponse("setPixels requires 'color' or 'pixels'.");
                     // Inspect the file before asking Unity to load a possibly uncached texture.
                     string absolutePath = GetAbsolutePath(fullPath);
                     byte[] fileData = ReadBoundedImage(absolutePath);
@@ -522,11 +527,10 @@ namespace MCPForUnity.Editor.Tools
 
                     if (pixelsToken != null)
                     {
-                        TextureOps.ApplyPixelDataToRegion(editableTexture, pixelsToken, x, y, w, h);
+                        TextureOps.ApplyPreparedPixelDataToRegion(editableTexture, pixels, x, y, w, h);
                     }
                     else if (colorToken != null)
                     {
-                        Color32 color = TextureOps.ParseRequiredColor32(colorToken as JArray);
                         int startX = Mathf.Max(0, x);
                         int startY = Mathf.Max(0, y);
                         int endX = (int)Math.Min((long)x + w, editableTexture.width);
@@ -539,10 +543,6 @@ namespace MCPForUnity.Editor.Tools
                                 editableTexture.SetPixel(px, py, color);
                             }
                         }
-                    }
-                    else
-                    {
-                        return new ErrorResponse("setPixels requires 'color' or 'pixels'.");
                     }
 
                     editableTexture.Apply();

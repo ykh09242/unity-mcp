@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Reflection;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -69,6 +71,69 @@ namespace MCPForUnityTests.EditMode.Tools
             request["action"] = action;
             request["path"] = path ?? _path;
             return JObject.FromObject(ManageTexture.HandleCommand(request));
+        }
+
+        [TestCase("{fillColor:['bad',0,0]}")]
+        [TestCase("{pattern:'checkerboard',palette:[[1,2,3],['bad',0,0]]}")]
+        [TestCase("{pixels:[[1,2,3],['bad',0,0]]}")]
+        [TestCase("{pixels:'base64:!!!!'}")]
+        public void TextureContentsRejectMalformedInputsWithoutAllocatingNativeTexture(string json)
+        {
+            var prepare = typeof(ManageTexture).GetMethod("PrepareTextureContents", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(prepare);
+            int count = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Length;
+            var error = Assert.Throws<TargetInvocationException>(() => prepare.Invoke(null, new object[] { JObject.Parse(json), 2, 1, 8 }));
+            Assert.That(error.InnerException, Is.InstanceOf<ArgumentException>().Or.InstanceOf<FormatException>());
+            Assert.AreEqual(count, UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Length);
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
+        public void PreparedTextureContentsApplyCachedPixelsAfterPayloadChanges()
+        {
+            if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+                Assert.Ignore("Pixel application requires a graphics device.");
+            var prepare = typeof(ManageTexture).GetMethod("PrepareTextureContents", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(prepare);
+            var request = JObject.Parse("{pixels:[[1,2,3,4],[5,6,7,8]]}");
+            var apply = (Action<Texture2D>)prepare.Invoke(null, new object[] { request, 2, 1, 8 });
+            ((JArray)request["pixels"])[0] = new JValue("changed after preparation");
+            var texture = new Texture2D(2, 1, TextureFormat.RGBA32, false);
+            try
+            {
+                apply(texture);
+                CollectionAssert.AreEqual(new[] { new Color32(1, 2, 3, 4), new Color32(5, 6, 7, 8) }, texture.GetPixels32());
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(texture);
+            }
+        }
+
+        [TestCase("{color:[1]}", "Pixel colors must contain")]
+        [TestCase("{}", "setPixels requires")]
+        [TestCase("{pixels:[[1,2,'bad']]}", "Invalid parameter")]
+        public void InvalidPixelEditRejectsBeforeInspectingOrDecodingImage(string options, string errorText)
+        {
+            byte[] incompleteImage = new byte[] { 1, 2, 3, 4 };
+            File.WriteAllBytes(Absolute(_path), incompleteImage);
+            var response = Send("modify", new JObject { ["setPixels"] = JObject.Parse(options) });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains(errorText, response.Value<string>("error"));
+            CollectionAssert.AreEqual(incompleteImage, File.ReadAllBytes(Absolute(_path)));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("[[1,2,3,4],[5,6,7,8]]")]
+        [TestCase("'base64:AQIDBAUGBwg='")]
+        public void PreparedPixelDataCachesConvertedColorsWithoutNativeAllocation(string json)
+        {
+            var prepare = typeof(TextureOps).GetMethod("PreparePixelData", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(prepare);
+            int count = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Length;
+            var colors = (Color32[])prepare.Invoke(null, new object[] { JToken.Parse(json), 2, 1 });
+            CollectionAssert.AreEqual(new[] { new Color32(1, 2, 3, 4), new Color32(5, 6, 7, 8) }, colors);
+            Assert.AreEqual(count, UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Length);
         }
 
         [TestCase("create", 4097, 1, 1)]
