@@ -39,6 +39,7 @@ dependencies = [
  "uvicorn>=0.54.0",
  "click>=8.5.0",
  "regex>=2026.9.29",
+ "typing-extensions>=4.14.1",
 ]
 
 [project.optional-dependencies]

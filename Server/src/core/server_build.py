@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from importlib import metadata
 import json
 import re
-from typing import TypedDict
 from urllib.parse import urlsplit
 from uuid import uuid4
+
+from typing_extensions import TypedDict
 
 from core.telemetry import MCP_VERSION, PACKAGE_NAME
 

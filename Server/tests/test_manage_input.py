@@ -4,10 +4,31 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastmcp import FastMCP
 from pydantic import TypeAdapter, ValidationError
 
 from models.models import MCPResponse
 from services.tools.manage_input import InputCommand, manage_input
+
+
+@pytest.mark.asyncio
+async def test_input_tool_registration_exposes_optional_response_schema():
+    # Given: the production response annotation must work on Python 3.11 too.
+    server = FastMCP("input-response-schema")
+    # When: FastMCP builds the tool's Pydantic output schema during registration.
+    server.tool(manage_input)
+    tool = next(
+        tool
+        for tool in await server.list_tools(run_middleware=False)
+        if tool.name == "manage_input"
+    )
+    # Then: partial success and capability-error responses remain valid objects.
+    schema = tool.output_schema
+    assert schema["type"] == "object"
+    assert schema["properties"]["success"] == {"type": "boolean"}
+    assert schema["properties"]["error"] == {"type": "string"}
+    assert "data" in schema["properties"]
+    assert not schema.get("required")
 
 
 @pytest.fixture

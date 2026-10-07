@@ -7,6 +7,7 @@ import socket
 import struct
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
 from core.config import config
 from core import server_build as build
@@ -14,6 +15,23 @@ from transport.legacy import unity_connection as uc
 
 
 COMMIT = "a" * 40
+
+
+def test_build_metadata_supports_pydantic_schema_and_required_fields():
+    # Given: build metadata is a typed JSON envelope on every supported Python.
+    adapter = TypeAdapter(build.ServerBuildMetadata)
+    snapshot = build.ServerBuild("1.2.0", None, "b" * 32).command_metadata()
+    # When: a schema consumer validates the frozen build's public envelope.
+    schema = adapter.json_schema()
+    assert adapter.validate_python(snapshot) == snapshot
+    # Then: identity fields stay required while an unknown source commit allows null.
+    assert set(schema["required"]) == {"version", "source_commit", "server_id"}
+    assert {entry["type"] for entry in schema["properties"]["source_commit"]["anyOf"]} == {
+        "string",
+        "null",
+    }
+    with pytest.raises(ValidationError):
+        adapter.validate_python({"version": "1.2.0", "source_commit": None})
 
 
 @pytest.mark.parametrize(

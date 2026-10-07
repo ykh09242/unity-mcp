@@ -1,10 +1,11 @@
 """Bounded in-editor Play Mode input simulation; never sends OS input."""
 
-from typing import Annotated, Literal, TypedDict, assert_never
+from typing import Annotated, Literal, assert_never
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
+from typing_extensions import TypedDict
 
 from models.models import MCPResponse
 from services.registry import mcp_for_unity_tool

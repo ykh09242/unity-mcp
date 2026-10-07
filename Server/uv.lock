@@ -2071,6 +2071,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-core" },
     { name = "regex" },
+    { name = "typing-extensions" },
     { name = "uvicorn" },
 ]
 
@@ -2096,6 +2097,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.4.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.1.0" },
     { name = "regex", specifier = ">=2026.9.29" },
+    { name = "typing-extensions", specifier = ">=4.14.1" },
     { name = "uvicorn", specifier = ">=0.54.0" },
 ]
 provides-extras = ["dev"]
