@@ -122,6 +122,8 @@ exit $result
         )
         if name in os.environ
     }
+    # These controls must exist before PowerShell starts, including in stripped environments.
+    env.update(POWERSHELL_TELEMETRY_OPTOUT="1", POWERSHELL_UPDATECHECK="Off")
     result = subprocess.run(
         command, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30
     )
