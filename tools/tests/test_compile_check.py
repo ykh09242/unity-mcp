@@ -427,7 +427,11 @@ def test_unity63_profile_removes_only_confirmed_absent_test_protocol_module(name
     assert default - selected == {
         "DATA/Managed/UnityEngine/UnityEngine.UnityTestProtocolModule.dll"
     }
-    assert not selected - default
+    assert selected - default == {
+        entry
+        for entry in ("DATA/Managed/UnityEngine/UnityEditor.MediaModule.dll",)
+        if name == "Editor"
+    }
 
 
 @pytest.mark.parametrize("name", ["Runtime", "Editor"])
@@ -444,7 +448,11 @@ def test_unity66_profile_removes_only_compiler_proven_absent_modules(name: str) 
         f"DATA/Managed/UnityEngine/UnityEngine.{module}Module.dll"
         for module in ("SharedInternals", "UnityTestProtocol", "VR")
     }
-    assert selected - default == {"DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll"}
+    assert selected - default == {"DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll"} | {
+        entry
+        for entry in ("DATA/Managed/UnityEngine/UnityEditor.MediaModule.dll",)
+        if name == "Editor"
+    }
 
 
 @pytest.mark.parametrize("version", ["6000.6.4f1", "6000.7.0b2", "6000.7.0a6"])
@@ -458,6 +466,46 @@ def test_current_scripting_module_is_required_metadata(
     result = harness.run(version)
     assert result.returncode != 0
     assert entry in result.stderr
+    assert not harness.calls.exists()
+
+
+@pytest.mark.parametrize("version", ["6000.3.25f1", "6000.6.4f1", "6000.7.0b2", "6000.7.0a6"])
+def test_split_media_module_resolves_from_real_editor_profile(
+    harness: CompileHarness, staged_tests: tuple[Path, Path], version: str
+) -> None:
+    project, framework = staged_tests
+    family = ".".join(version.split(".")[:2])
+    profile = Path("tools/compile-refs") / family / "Editor.txt"
+    entries = (ROOT / profile).read_text(encoding="utf-8").splitlines()
+    media = "DATA/Managed/UnityEngine/UnityEditor.MediaModule.dll"
+    assert media in entries
+    (harness.repo / profile).write_text("\n".join(entries) + "\n", encoding="utf-8")
+    roots = {
+        "DATA": harness.data,
+        "EXTRA": harness.extra,
+        "LIBCACHE": harness.data
+        / "Resources/PackageManager/ProjectTemplates/libcache/fixture/ScriptAssemblies",
+    }
+    for entry in entries:
+        prefix, relative = entry.split("/", 1)
+        target = roots[prefix] / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.touch()
+    result = harness.run(version, "win osx linux", test_project=project, framework=framework)
+    assert result.returncode == 0, result.stdout + result.stderr
+    for platform in ("win", "osx", "linux"):
+        for assembly in ("MCPForUnity.Editor", "MCPForUnityTests.EditMode"):
+            rsp = (harness.output / platform / f"{assembly}.rsp").read_text(encoding="utf-8")
+            assert '/Managed/UnityEngine/UnityEditor.MediaModule.dll"' in rsp
+        runtime = (harness.output / platform / "MCPForUnity.Runtime.rsp").read_text(
+            encoding="utf-8"
+        )
+        assert "UnityEditor.MediaModule.dll" not in runtime
+    harness.calls.unlink()
+    (harness.data / media.removeprefix("DATA/")).unlink()
+    result = harness.run(version, framework=framework)
+    assert result.returncode != 0
+    assert f"required reference not found: {media}" in result.stderr
     assert not harness.calls.exists()
 
 
@@ -479,6 +527,10 @@ def test_unity67_profile_removes_only_beta_compiler_proven_absent_modules(name: 
         "DATA/Managed/UnityEngine/UnityEngine.ManagedKernelModule.dll",
         "DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll",
         "DATA/Managed/UnityEngine/UnityEngine.UICommonModule.dll",
+    } | {
+        entry
+        for entry in ("DATA/Managed/UnityEngine/UnityEditor.MediaModule.dll",)
+        if name == "Editor"
     }
 
 

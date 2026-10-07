@@ -4,6 +4,7 @@ DATA/Managed/UnityEngine/UnityEditor.DeviceSimulatorModule.dll
 DATA/Managed/UnityEngine/UnityEditor.DiagnosticsModule.dll
 DATA/Managed/UnityEngine/UnityEditor.dll
 DATA/Managed/UnityEngine/UnityEditor.GraphViewModule.dll
+DATA/Managed/UnityEngine/UnityEditor.MediaModule.dll
 DATA/Managed/UnityEngine/UnityEditor.QuickSearchModule.dll
 DATA/Managed/UnityEngine/UnityEditor.SceneTemplateModule.dll
 DATA/Managed/UnityEngine/UnityEditor.TextCoreFontEngineModule.dll

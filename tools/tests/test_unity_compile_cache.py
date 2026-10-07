@@ -235,6 +235,26 @@ def test_valid_hit_calls_no_docker_or_image_preparation(environment, monkeypatch
     preparation.assert_not_called()
 
 
+def test_split_media_module_is_copied_and_verified_on_cache_restore(environment, monkeypatch):
+    relative = "Managed/UnityEngine/UnityEditor.MediaModule.dll"
+    source = environment[2] / relative
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"split editor media module")
+    directory, _, _ = populate(environment, monkeypatch)
+    restored = directory / "Data" / relative
+    assert restored.read_bytes() == source.read_bytes()
+    receipt = json.loads((directory / cache.RECEIPT).read_text(encoding="utf-8"))
+    assert relative in receipt["files"]
+    assert "Managed" in receipt["directories"]
+    docker = Mock(side_effect=AssertionError("cache restore must not call Docker"))
+    monkeypatch.setattr(cache.subprocess, "run", docker)
+    assert cache.prepare(environment[1], VERSION, directory)["populated"] is False
+    restored.unlink()
+    with pytest.raises(ValueError, match="Invalid compiler cache"):
+        cache.prepare(environment[1], VERSION, directory)
+    docker.assert_not_called()
+
+
 def test_key_ignores_repo_sources_profiles_and_unrelated_versions(environment):
     repo, manifest, _ = environment
     first = cache.identity(manifest, VERSION)["cache_key"]
