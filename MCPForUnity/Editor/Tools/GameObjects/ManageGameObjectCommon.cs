@@ -14,6 +14,57 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 {
     internal static class ManageGameObjectCommon
     {
+        internal static Vector3? ReadOptionalVector3(JObject parameters, string field)
+        {
+            JToken token = parameters[field];
+            Vector3? value = VectorParsing.ParseVector3(token);
+            if (!value.HasValue && token != null && token.Type != JTokenType.Null)
+                throw new ArgumentException($"'{field}' must be a vector [x, y, z] or an object with x, y and z values.");
+            return value;
+        }
+
+        internal static void ValidateComponentParameters(JObject parameters, bool validateRemovals)
+        {
+            JToken additions = parameters["componentsToAdd"];
+            if (additions != null && additions.Type != JTokenType.Null)
+            {
+                if (!(additions is JArray components))
+                    throw new ArgumentException("'componentsToAdd' must be an array.");
+                foreach (JToken component in components)
+                {
+                    JToken typeName = component is JObject entry ? entry["typeName"] : component;
+                    if (typeName?.Type != JTokenType.String || string.IsNullOrWhiteSpace(typeName.ToString()))
+                        throw new ArgumentException("Each 'componentsToAdd' entry must contain a nonempty component type name.");
+                    if (
+                        component is JObject definition
+                        && definition["properties"] is JToken properties
+                        && properties.Type != JTokenType.Null
+                        && !(properties is JObject)
+                    )
+                        throw new ArgumentException("Component 'properties' must be an object.");
+                }
+            }
+
+            JToken removals = parameters["componentsToRemove"];
+            if (validateRemovals && removals != null && removals.Type != JTokenType.Null)
+            {
+                if (!(removals is JArray components))
+                    throw new ArgumentException("'componentsToRemove' must be an array.");
+                foreach (JToken component in components)
+                    if (component.Type != JTokenType.String || string.IsNullOrWhiteSpace(component.ToString()))
+                        throw new ArgumentException("Each 'componentsToRemove' entry must be a nonempty component type name.");
+            }
+
+            JToken componentProperties = parameters["componentProperties"];
+            if (componentProperties == null || componentProperties.Type == JTokenType.Null)
+                return;
+            if (!(componentProperties is JObject propertyMap))
+                throw new ArgumentException("'componentProperties' must be an object.");
+            foreach (JProperty component in propertyMap.Properties())
+                if (string.IsNullOrWhiteSpace(component.Name) || !(component.Value is JObject))
+                    throw new ArgumentException("Each 'componentProperties' entry must map a nonempty component type name to an object.");
+        }
+
         internal static GameObject FindObjectInternal(JToken targetToken, string searchMethod, JObject findParams = null)
         {
             bool findAll = findParams?["findAll"]?.ReadScalar<bool?>() ?? false;

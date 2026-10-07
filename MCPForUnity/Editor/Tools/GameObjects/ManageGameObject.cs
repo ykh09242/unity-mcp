@@ -61,9 +61,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     var parsed = JObject.Parse(componentPropsToken.ToString());
                     @params["componentProperties"] = parsed;
                 }
-                catch (Exception e)
+                catch (Newtonsoft.Json.JsonException e)
                 {
-                    McpLog.Warn($"[ManageGameObject] Could not parse 'componentProperties' JSON string: {e.Message}");
+                    return new ErrorResponse($"'componentProperties' must be a JSON object: {e.Message}");
                 }
             }
 

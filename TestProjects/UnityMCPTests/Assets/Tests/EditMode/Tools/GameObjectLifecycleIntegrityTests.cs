@@ -3,6 +3,7 @@ using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -15,6 +16,7 @@ namespace MCPForUnityTests.Editor.Tools
     public class GameObjectLifecycleIntegrityTests
     {
         private Scene originalScene;
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private Scene ownedScene;
         private Scene secondaryScene;
         private UnityEngine.Object[] originalSelection;
@@ -22,6 +24,13 @@ namespace MCPForUnityTests.Editor.Tools
         private string prefix;
         private string assetRoot;
         private bool ownsAssetRoot;
+        private string assetRootGuid;
+
+        [OneTimeSetUp]
+        public void OneTimeSetUp() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void OneTimeTearDown() => sceneFixture.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
@@ -30,11 +39,12 @@ namespace MCPForUnityTests.Editor.Tools
             originalSelection = Selection.objects;
             originalActiveObject = Selection.activeObject;
             ownsAssetRoot = false;
+            assetRootGuid = null;
+            ownedScene = default;
             secondaryScene = default;
             prefix = "LifecycleIntegrity_" + Guid.NewGuid().ToString("N");
             assetRoot = "Assets/__McpGameObjectLifecycleIntegrity_" + Guid.NewGuid().ToString("N");
-            ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            SceneManager.SetActiveScene(ownedScene);
+            ownedScene = sceneFixture.Create("McpGameObjectLifecycle_", Guid.NewGuid().ToString("N"));
         }
 
         [TearDown]
@@ -59,6 +69,7 @@ namespace MCPForUnityTests.Editor.Tools
                 if (ownsAssetRoot)
                 {
                     Assert.IsTrue(assetRoot.StartsWith("Assets/__McpGameObjectLifecycleIntegrity_", StringComparison.Ordinal));
+                    Assert.AreEqual(assetRootGuid, AssetDatabase.AssetPathToGUID(assetRoot), "Only the folder owned by this fixture may be removed.");
                     Assert.IsTrue(AssetDatabase.DeleteAsset(assetRoot), "Only the exact folder created by this fixture is removed.");
                 }
             }
@@ -66,10 +77,9 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 if (originalScene.IsValid() && originalScene.isLoaded)
                     SceneManager.SetActiveScene(originalScene);
-                if (ownedScene.IsValid() && ownedScene.isLoaded)
-                    EditorSceneManager.CloseScene(ownedScene, true);
                 if (secondaryScene.IsValid() && secondaryScene.isLoaded)
                     EditorSceneManager.CloseScene(secondaryScene, true);
+                sceneFixture.Close();
                 Selection.objects = originalSelection;
                 Selection.activeObject = originalActiveObject;
             }
@@ -115,6 +125,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot));
             string guid = AssetDatabase.CreateFolder("Assets", assetRoot.Substring("Assets/".Length));
             ownsAssetRoot = !string.IsNullOrEmpty(guid);
+            assetRootGuid = guid;
             Assert.IsTrue(ownsAssetRoot && AssetDatabase.IsValidFolder(assetRoot));
             Assert.AreEqual(assetRoot, AssetDatabase.GUIDToAssetPath(guid));
         }
@@ -206,19 +217,99 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(System.IO.Directory.Exists(System.IO.Path.Combine(projectRoot, assetRoot, "First")));
         }
 
-        [TestCase("null")]
-        [TestCase("short")]
-        [TestCase("malformed")]
-        public void NullableVectorFallback_RemainsSupported(string kind)
+        [Test]
+        public void NullVector_RemainsOptional()
         {
             var request = Create();
-            request["position"] =
-                kind == "null" ? JValue.CreateNull()
-                : kind == "short" ? new JArray(1)
-                : new JArray(1, "bad", 3);
+            request["position"] = JValue.CreateNull();
             var response = Call(request);
             Succeeded(response);
             Assert.AreEqual(Vector3.zero, ResponseObject(response).transform.localPosition);
+        }
+
+        private static System.Collections.Generic.IEnumerable<TestCaseData> InvalidMutationInputs()
+        {
+            foreach (string field in new[] { "position", "rotation", "scale" })
+            foreach (string value in new[] { "[1]", "[1,true,3]", "[1,\"bad\",3]", "[1,1e100,3]", "{\"x\":1,\"y\":2}", "false" })
+                yield return new TestCaseData(field, value);
+            foreach (
+                string value in new[]
+                {
+                    "true",
+                    "{}",
+                    "[\"BoxCollider\",42]",
+                    "[\"BoxCollider\",{}]",
+                    "[\"BoxCollider\",\"\"]",
+                    "[{\"typeName\":true}]",
+                    "[{\"typeName\":\"BoxCollider\",\"properties\":[]}]",
+                }
+            )
+                yield return new TestCaseData("componentsToAdd", value);
+            foreach (string value in new[] { "[]", "true", "{\"Transform\":null}", "{\"Transform\":[]}", "{\"\":{}}", "\"{bad\"", "\"[]\"" })
+                yield return new TestCaseData("componentProperties", value);
+        }
+
+        [TestCaseSource(nameof(InvalidMutationInputs))]
+        public void InvalidCreateMutationInput_PreservesObjectsAssetsAndSelection(string field, string json)
+        {
+            CreateAssetRoot();
+            var existing = Owned("Existing");
+            Selection.activeGameObject = existing;
+            var before = Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray();
+            int dirtyCount = EditorUtility.GetDirtyCount(existing);
+            var request = Create();
+            request["saveAsPrefab"] = true;
+            request["prefabPath"] = assetRoot + "/Nested/Rejected.prefab";
+            request[field] = JToken.Parse(json);
+
+            var response = Call(request);
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(before, Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray());
+            Assert.AreSame(existing, Selection.activeGameObject);
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(existing));
+            Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot + "/Nested"), "Rejected creation must not leave even an empty asset folder.");
+            Assert.IsFalse(System.IO.Directory.Exists(assetRoot + "/Nested"));
+        }
+
+        [TestCaseSource(nameof(InvalidMutationInputs))]
+        [TestCase("componentsToRemove", "true")]
+        [TestCase("componentsToRemove", "[\"BoxCollider\",{}]")]
+        [TestCase("componentsToRemove", "[\"BoxCollider\",\"\"]")]
+        public void InvalidModifyMutationInput_PreservesEarlierFields(string field, string json)
+        {
+            var target = Owned("Target");
+            var parent = Owned("Parent");
+            var collider = target.AddComponent<BoxCollider>();
+            string originalName = target.name;
+            Selection.activeGameObject = parent;
+            int goDirty = EditorUtility.GetDirtyCount(target);
+            int transformDirty = EditorUtility.GetDirtyCount(target.transform);
+            var request = new JObject
+            {
+                ["action"] = "modify",
+                ["target"] = target.GetInstanceIDCompat(),
+                ["searchMethod"] = "by_id",
+                ["name"] = prefix + "Renamed",
+                ["parent"] = parent.GetInstanceIDCompat(),
+                ["setActive"] = false,
+                ["position"] = new JArray(1, 2, 3),
+            };
+            request[field] = JToken.Parse(json);
+
+            var response = Call(request);
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(originalName, target.name);
+            Assert.IsNull(target.transform.parent);
+            Assert.IsTrue(target.activeSelf);
+            Assert.AreEqual(Vector3.zero, target.transform.localPosition);
+            Assert.AreEqual(Vector3.zero, target.transform.localEulerAngles);
+            Assert.AreEqual(Vector3.one, target.transform.localScale);
+            CollectionAssert.AreEqual(new Component[] { target.transform, collider }, target.GetComponents<Component>());
+            Assert.AreEqual(goDirty, EditorUtility.GetDirtyCount(target));
+            Assert.AreEqual(transformDirty, EditorUtility.GetDirtyCount(target.transform));
+            Assert.AreSame(parent, Selection.activeGameObject);
         }
 
         [Test]
@@ -237,6 +328,50 @@ namespace MCPForUnityTests.Editor.Tools
             var go = ResponseObject(response);
             Assert.AreEqual(new Vector3(0, -1, 2), go.transform.localPosition);
             Assert.AreEqual(new Vector3(0, 1, 2), go.transform.localScale);
+        }
+
+        [TestCase("create", "null")]
+        [TestCase("create", "empty")]
+        [TestCase("create", "properties")]
+        [TestCase("modify", "null")]
+        [TestCase("modify", "empty")]
+        [TestCase("modify", "properties")]
+        public void ValidComponentParameterShapes_RemainSupported(string action, string kind)
+        {
+            GameObject target = action == "modify" ? Owned("Target") : null;
+            var request =
+                action == "create"
+                    ? Create()
+                    : new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = target.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                    };
+            if (kind == "null")
+            {
+                request["componentsToAdd"] = JValue.CreateNull();
+                request["componentsToRemove"] = JValue.CreateNull();
+                request["componentProperties"] = JValue.CreateNull();
+            }
+            else if (kind == "empty")
+            {
+                request["componentsToAdd"] = new JArray();
+                request["componentsToRemove"] = new JArray();
+                request["componentProperties"] = new JObject();
+            }
+            else
+            {
+                request["componentsToAdd"] = new JArray(new JObject { ["typeName"] = "BoxCollider", ["properties"] = JValue.CreateNull() });
+                request["componentProperties"] = "{\"BoxCollider\":{\"isTrigger\":true}}";
+            }
+            var response = Call(request);
+            Succeeded(response);
+            var result = target != null ? target : ResponseObject(response);
+            if (kind == "properties")
+                Assert.IsTrue(result.GetComponent<BoxCollider>().isTrigger);
+            else
+                CollectionAssert.AreEqual(new Component[] { result.transform }, result.GetComponents<Component>());
         }
 
         [Test]
@@ -357,9 +492,49 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(source.transform.position, clone.transform.position);
         }
 
+        [TestCase("omitted")]
+        [TestCase("existing")]
+        [TestCase("null")]
+        [TestCase("empty")]
+        [TestCase("missing")]
+        public void DuplicateChild_PreservesWorldTransformForEveryParentMode(string parentMode)
+        {
+            var originalParent = Owned("OriginalParent");
+            originalParent.transform.SetPositionAndRotation(new Vector3(10, 0, 0), Quaternion.Euler(0, 30, 0));
+            originalParent.transform.localScale = Vector3.one * 2;
+            var otherParent = Owned("OtherParent");
+            otherParent.transform.SetPositionAndRotation(new Vector3(-4, 0, 5), Quaternion.Euler(0, 90, 0));
+            otherParent.transform.localScale = Vector3.one * 0.5f;
+            var source = Owned("Source");
+            source.transform.SetParent(originalParent.transform, false);
+            source.transform.SetPositionAndRotation(new Vector3(1, 2, 3), Quaternion.Euler(0, 45, 0));
+            source.transform.localScale = new Vector3(0.5f, 1, 1.5f);
+            var request = Duplicate(source);
+            if (parentMode != "omitted")
+                request["parent"] =
+                    parentMode == "null" ? JValue.CreateNull()
+                    : parentMode == "empty" ? new JValue("")
+                    : parentMode == "existing" ? new JValue(otherParent.GetInstanceIDCompat())
+                    : new JValue(prefix + "Missing");
+            var response = Call(request);
+            Succeeded(response);
+            var clone = ResponseObject(response, true);
+            Assert.AreEqual(
+                parentMode == "omitted" ? originalParent.transform
+                    : parentMode == "existing" ? otherParent.transform
+                    : null,
+                clone.transform.parent
+            );
+            Assert.Less(Vector3.Distance(source.transform.position, clone.transform.position), 0.0001f);
+            Assert.Less(Quaternion.Angle(source.transform.rotation, clone.transform.rotation), 0.01f);
+            Assert.Less(Vector3.Distance(source.transform.lossyScale, clone.transform.lossyScale), 0.0001f);
+        }
+
         [Test]
         public void Duplicate_DirtiesCloneSceneInsteadOfUnrelatedActiveScene()
         {
+            CreateAssetRoot();
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"));
             var parent = Owned("Parent");
             var source = Owned("Source");
             source.transform.SetParent(parent.transform, true);

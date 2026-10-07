@@ -56,6 +56,21 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             bool? isStatic = @params["isStatic"]?.ReadScalar<bool?>();
 
+            Vector3? position;
+            Vector3? rotation;
+            Vector3? scale;
+            try
+            {
+                position = ManageGameObjectCommon.ReadOptionalVector3(@params, "position");
+                rotation = ManageGameObjectCommon.ReadOptionalVector3(@params, "rotation");
+                scale = ManageGameObjectCommon.ReadOptionalVector3(@params, "scale");
+                ManageGameObjectCommon.ValidateComponentParameters(@params, validateRemovals: true);
+            }
+            catch (ArgumentException e)
+            {
+                return new ErrorResponse(e.Message);
+            }
+
             Undo.RecordObject(targetGo.transform, "Modify GameObject Transform");
             Undo.RecordObject(targetGo, "Modify GameObject Properties");
 
@@ -168,10 +183,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     modified = true;
                 }
             }
-
-            Vector3? position = VectorParsing.ParseVector3(@params["position"]);
-            Vector3? rotation = VectorParsing.ParseVector3(@params["rotation"]);
-            Vector3? scale = VectorParsing.ParseVector3(@params["scale"]);
 
             if (position.HasValue && targetGo.transform.localPosition != position.Value)
             {

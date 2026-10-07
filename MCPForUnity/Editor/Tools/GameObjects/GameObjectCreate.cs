@@ -28,6 +28,21 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             bool? setActive = @params["setActive"]?.ReadScalar<bool?>();
             GameObject newGo = null;
 
+            Vector3? position;
+            Vector3? rotation;
+            Vector3? scale;
+            try
+            {
+                position = ManageGameObjectCommon.ReadOptionalVector3(@params, "position");
+                rotation = ManageGameObjectCommon.ReadOptionalVector3(@params, "rotation");
+                scale = ManageGameObjectCommon.ReadOptionalVector3(@params, "scale");
+                ManageGameObjectCommon.ValidateComponentParameters(@params, validateRemovals: false);
+            }
+            catch (ArgumentException e)
+            {
+                return new ErrorResponse(e.Message);
+            }
+
             if (saveAsPrefab && string.IsNullOrEmpty(prefabPath))
             {
                 return new ErrorResponse("'prefabPath' is required when 'saveAsPrefab' is true and creating a new object.");
@@ -225,10 +240,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             // Set Transform
-            Vector3? position = VectorParsing.ParseVector3(@params["position"]);
-            Vector3? rotation = VectorParsing.ParseVector3(@params["rotation"]);
-            Vector3? scale = VectorParsing.ParseVector3(@params["scale"]);
-
             if (position.HasValue)
                 newGo.transform.localPosition = position.Value;
             if (rotation.HasValue)

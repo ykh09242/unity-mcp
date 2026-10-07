@@ -30,9 +30,18 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             )
             {
                 newParent = ManageGameObjectCommon.FindObjectInternal(parentToken, "by_id_or_name_or_path");
+                if (newParent == null)
+                    McpLog.Warn($"[ManageGameObject.Duplicate] Parent '{parentToken}' not found. Object will remain at root level.");
             }
 
-            GameObject duplicatedGo = UnityEngine.Object.Instantiate(sourceGo);
+            Transform duplicateParent = parentToken == null ? sourceGo.transform.parent : newParent?.transform;
+            GameObject duplicatedGo = UnityEngine.Object.Instantiate(sourceGo, duplicateParent, true);
+            if (duplicateParent == null && sourceGo.transform.parent != null)
+            {
+                // Unity's parentless clone path copies a child's local transform.
+                duplicatedGo.transform.SetPositionAndRotation(sourceGo.transform.position, sourceGo.transform.rotation);
+                duplicatedGo.transform.localScale = sourceGo.transform.lossyScale;
+            }
             Undo.RegisterCreatedObjectUndo(duplicatedGo, $"Duplicate {sourceGo.name}");
 
             if (!string.IsNullOrEmpty(newName))
@@ -51,29 +60,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             else if (offset.HasValue)
             {
                 duplicatedGo.transform.position = sourceGo.transform.position + offset.Value;
-            }
-
-            if (parentToken != null)
-            {
-                if (parentToken.Type == JTokenType.Null || (parentToken.Type == JTokenType.String && string.IsNullOrEmpty(parentToken.ToString())))
-                {
-                    duplicatedGo.transform.SetParent(null);
-                }
-                else
-                {
-                    if (newParent != null)
-                    {
-                        duplicatedGo.transform.SetParent(newParent.transform, true);
-                    }
-                    else
-                    {
-                        McpLog.Warn($"[ManageGameObject.Duplicate] Parent '{parentToken}' not found. Object will remain at root level.");
-                    }
-                }
-            }
-            else
-            {
-                duplicatedGo.transform.SetParent(sourceGo.transform.parent, true);
             }
 
             EditorUtility.SetDirty(duplicatedGo);
