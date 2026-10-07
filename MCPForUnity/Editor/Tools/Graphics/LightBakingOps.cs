@@ -141,6 +141,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (!TryReadRealtimeGI(settings, out bool realtimeGI))
                 return new ErrorResponse(RealtimeGIUnavailable);
 #endif
+#if UNITY_7000_0_OR_NEWER
+            if (!TryReadSerializedLightmapper(settings, out var lightmapper))
+                return new ErrorResponse(LightmapperUnavailable);
+#else
+            var lightmapper = settings.lightmapper;
+#endif
 
             var data = new Dictionary<string, object>
             {
@@ -152,7 +158,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 #else
                 ["realtimeGI"] = settings.realtimeGI,
 #endif
-                ["lightmapper"] = settings.lightmapper.ToString(),
+                ["lightmapper"] = lightmapper.ToString(),
                 ["lightmapResolution"] = settings.lightmapResolution,
                 ["lightmapMaxSize"] = settings.lightmapMaxSize,
                 ["directSampleCount"] = settings.directSampleCount,
@@ -170,7 +176,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             return new
             {
                 success = true,
-                message = $"Lighting settings: {settings.lightmapper}, resolution {settings.lightmapResolution}.",
+                message = $"Lighting settings: {lightmapper}, resolution {settings.lightmapResolution}.",
                 data,
             };
         }
@@ -187,7 +193,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var prepared = new List<(string name, Func<LightingSettings, bool> apply)>();
             foreach (var prop in settingsToken.Properties())
             {
-                TryPrepareLightingSetting(prop.Name, prop.Value, out var apply);
+                Func<LightingSettings, bool> apply = null;
+                try
+                {
+                    TryPrepareLightingSetting(prop.Name, prop.Value, out apply);
+                }
+                catch (ArgumentException) { /* Invalid input belongs in the failed list, before settings are created. */ }
                 prepared.Add((prop.Name, apply));
             }
             if (prepared.All(entry => entry.apply == null))
@@ -195,18 +206,28 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
 #if UNITY_6000_7_OR_NEWER
             if (
-                settingsToken
-                    .Properties()
-                    .Any(prop =>
-                        string.Equals(prop.Name, "realtimeGI", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(prop.Name, "realtime_gi", StringComparison.OrdinalIgnoreCase)
+                prepared.Any(entry =>
+                    entry.apply != null
+                    && (
+                        string.Equals(entry.name, "realtimeGI", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(entry.name, "realtime_gi", StringComparison.OrdinalIgnoreCase)
                     )
+                )
             )
             {
                 if (!Lightmapping.TryGetLightingSettings(out var current))
                     current = Lightmapping.lightingSettingsDefaults;
                 if (!TryReadRealtimeGI(current, out _))
                     return new ErrorResponse(RealtimeGIUnavailable);
+            }
+#endif
+#if UNITY_7000_0_OR_NEWER
+            if (prepared.Any(entry => entry.apply != null && string.Equals(entry.name, "lightmapper", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (!Lightmapping.TryGetLightingSettings(out var current))
+                    current = Lightmapping.lightingSettingsDefaults;
+                if (!TryReadSerializedLightmapper(current, out _))
+                    return new ErrorResponse(LightmapperUnavailable);
             }
 #endif
             var lightingSettings = EnsureLightingSettings();
@@ -458,6 +479,36 @@ namespace MCPForUnity.Editor.Tools.Graphics
         }
 #endif
 
+        private const string LightmapperUnavailable =
+            "lightmapper is unavailable: LightingSettings does not expose the integer or enum m_BakeBackend property.";
+
+        // Keep the scene backend values used by Unity's Lighting Inspector; the project-wide LightBaker enum is different.
+        internal static bool TryReadSerializedLightmapper(LightingSettings settings, out LightingSettings.Lightmapper value)
+        {
+            value = default;
+            if (settings == null)
+                return false;
+            using var serializedSettings = new SerializedObject(settings);
+            var property = serializedSettings.FindProperty("m_BakeBackend");
+            if (property == null || (property.propertyType != SerializedPropertyType.Integer && property.propertyType != SerializedPropertyType.Enum))
+                return false;
+            value = (LightingSettings.Lightmapper)property.intValue;
+            return true;
+        }
+
+        internal static bool TrySetSerializedLightmapper(LightingSettings settings, LightingSettings.Lightmapper value)
+        {
+            if (settings == null || !Enum.IsDefined(typeof(LightingSettings.Lightmapper), value))
+                return false;
+            using var serializedSettings = new SerializedObject(settings);
+            var property = serializedSettings.FindProperty("m_BakeBackend");
+            if (property == null || (property.propertyType != SerializedPropertyType.Integer && property.propertyType != SerializedPropertyType.Enum))
+                return false;
+            property.intValue = (int)value;
+            serializedSettings.ApplyModifiedPropertiesWithoutUndo();
+            return true;
+        }
+
         // --- Helper: Ensure a LightingSettings asset exists ---
         private static LightingSettings EnsureLightingSettings()
         {
@@ -531,6 +582,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 case "bakedgi":
                 case "baked_gi":
+                    ParamCoercion.CoerceBool(value, false);
                     apply = settings =>
                     {
                         settings.bakedGI = ParamCoercion.CoerceBool(value, settings.bakedGI);
@@ -540,6 +592,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
                 case "realtimegi":
                 case "realtime_gi":
+                    ParamCoercion.CoerceBool(value, false);
 #if UNITY_6000_7_OR_NEWER
                     apply = settings => TrySetRealtimeGI(settings, value);
 #else
@@ -552,19 +605,24 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     return true;
 
                 case "lightmapper":
-                    if (TryParseEnum<LightingSettings.Lightmapper>(value, out var lm))
+                    if (TryParseEnum<LightingSettings.Lightmapper>(value, out var lm) && Enum.IsDefined(typeof(LightingSettings.Lightmapper), lm))
                     {
+#if UNITY_7000_0_OR_NEWER
+                        apply = settings => TrySetSerializedLightmapper(settings, lm);
+#else
                         apply = settings =>
                         {
                             settings.lightmapper = lm;
                             return true;
                         };
+#endif
                         return true;
                     }
                     return false;
 
                 case "lightmapresolution":
                 case "lightmap_resolution":
+                    ParamCoercion.CoerceFloat(value, 0);
                     apply = settings =>
                     {
                         settings.lightmapResolution = ParamCoercion.CoerceFloat(value, settings.lightmapResolution);
@@ -574,6 +632,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
                 case "lightmapmaxsize":
                 case "lightmap_max_size":
+                    ParamCoercion.CoerceInt(value, 0);
                     apply = settings =>
                     {
                         settings.lightmapMaxSize = ParamCoercion.CoerceInt(value, settings.lightmapMaxSize);
@@ -583,6 +642,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
                 case "directsamplecount":
                 case "direct_sample_count":
+                    ParamCoercion.CoerceInt(value, 0);
                     apply = settings =>
                     {
                         settings.directSampleCount = ParamCoercion.CoerceInt(value, settings.directSampleCount);
@@ -592,6 +652,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
                 case "indirectsamplecount":
                 case "indirect_sample_count":
+                    ParamCoercion.CoerceInt(value, 0);
                     apply = settings =>
                     {
                         settings.indirectSampleCount = ParamCoercion.CoerceInt(value, settings.indirectSampleCount);
@@ -601,6 +662,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
                 case "environmentsamplecount":
                 case "environment_sample_count":
+                    ParamCoercion.CoerceInt(value, 0);
                     apply = settings =>
                     {
                         settings.environmentSampleCount = ParamCoercion.CoerceInt(value, settings.environmentSampleCount);
@@ -656,6 +718,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     return true;
 
                 case "ao":
+                    ParamCoercion.CoerceBool(value, false);
                     apply = settings =>
                     {
                         settings.ao = ParamCoercion.CoerceBool(value, settings.ao);
@@ -665,6 +728,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
                 case "aomaxdistance":
                 case "ao_max_distance":
+                    ParamCoercion.CoerceFloat(value, 0);
                     apply = settings =>
                     {
                         settings.aoMaxDistance = ParamCoercion.CoerceFloat(value, settings.aoMaxDistance);

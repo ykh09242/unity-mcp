@@ -1,36 +1,49 @@
 using MCPForUnity.Editor.Tools.Graphics;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
-using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
     public class GraphicsMutationContractTests
     {
-        private Scene _originalScene;
+        private readonly PrefabTestSceneFixture _sceneFixture = new PrefabTestSceneFixture();
         private Scene _testScene;
         private LightingSettings _ownedSettings;
+
+        [OneTimeSetUp]
+        public void PrepareRunnerBootstrap() => _sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void RestoreRunnerBootstrap() => _sceneFixture.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
         {
-            _originalScene = SceneManager.GetActiveScene();
-            _testScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            SceneManager.SetActiveScene(_testScene);
+            _ownedSettings = null;
+            _testScene = default;
+            _testScene = _sceneFixture.Create("McpGraphicsMutation_", System.Guid.NewGuid().ToString("N"));
         }
 
         [TearDown]
         public void TearDown()
         {
-            if (_originalScene.IsValid() && _originalScene.isLoaded)
-                SceneManager.SetActiveScene(_originalScene);
-            if (_testScene.IsValid() && _testScene.isLoaded)
-                EditorSceneManager.CloseScene(_testScene, true);
-            if (_ownedSettings != null)
-                Object.DestroyImmediate(_ownedSettings);
+            try
+            {
+                _sceneFixture.Close();
+            }
+            finally
+            {
+                if (_ownedSettings != null)
+                {
+                    Undo.ClearUndo(_ownedSettings);
+                    Object.DestroyImmediate(_ownedSettings);
+                }
+            }
         }
 
         [Test]
@@ -80,11 +93,11 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [TestCase("realtimeGI", "false", false)]
-        [TestCase("realtime_gi", "0", false)]
-        [TestCase("REALTIME_GI", "\"off\"", false)]
+        [TestCase("realtime_gi", "false", false)]
+        [TestCase("REALTIME_GI", "\"false\"", false)]
         [TestCase("realtimeGI", "null", true)]
-        [TestCase("realtime_gi", "\"invalid\"", true)]
-        public void RealtimeGIWrite_PreservesAliasesCoercionAndIdentity(string alias, string json, bool expected)
+        [TestCase("realtime_gi", "\"true\"", true)]
+        public void RealtimeGIWrite_PreservesAliasesStrictValuesAndIdentity(string alias, string json, bool expected)
         {
             AssignOwnedSettings(true);
             var response = SetLightingSettings(new JObject { [alias] = JToken.Parse(json) });
@@ -115,14 +128,195 @@ namespace MCPForUnityTests.Editor.Tools
         public void MixedInvalidLightingSetting_RetainsFailedKeyContract()
         {
             AssignOwnedSettings(true);
-            var originalMapper = _ownedSettings.lightmapper;
+            var originalMapper = ReadLightmapper(_ownedSettings);
             var response = SetLightingSettings(new JObject { ["realtimeGI"] = false, ["lightmapper"] = "invalid" });
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             CollectionAssert.AreEqual(new[] { "realtimeGI" }, response["data"]["changed"].ToObject<string[]>());
             CollectionAssert.AreEqual(new[] { "lightmapper" }, response["data"]["failed"].ToObject<string[]>());
             Assert.IsFalse(ReadRealtimeGI(_ownedSettings));
-            Assert.AreEqual(originalMapper, _ownedSettings.lightmapper);
+            Assert.AreEqual(originalMapper, ReadLightmapper(_ownedSettings));
             Assert.AreSame(_ownedSettings, Lightmapping.lightingSettings);
+        }
+
+        [TestCase("\"ProgressiveCPU\"", 1)]
+        [TestCase("\"progressivegpu\"", 2)]
+        [TestCase("1", 1)]
+        [TestCase("2", 2)]
+        public void LightmapperWrite_RoundTripsSceneBackendWithoutReplacingSettings(string json, int expected)
+        {
+            AssignOwnedSettings(true);
+            var response = SetLightingSettings(new JObject { ["lightmapper"] = JToken.Parse(json) });
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(new[] { "lightmapper" }, response["data"]["changed"].ToObject<string[]>());
+            Assert.IsEmpty(response["data"]["failed"]);
+            Assert.AreEqual(expected, ReadLightmapper(_ownedSettings));
+            Assert.AreSame(_ownedSettings, Lightmapping.lightingSettings);
+            Assert.IsEmpty(AssetDatabase.GetAssetPath(_ownedSettings));
+
+            int dirtyCount = EditorUtility.GetDirtyCount(_ownedSettings);
+            var read = JObject.FromObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "bake_get_settings" }));
+            Assert.IsTrue(read.Value<bool>("success"), read.ToString());
+            Assert.AreEqual(((LightingSettings.Lightmapper)expected).ToString(), read["data"].Value<string>("lightmapper"));
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(_ownedSettings));
+        }
+
+        [TestCase("\"invalid\"")]
+        [TestCase("999")]
+        [TestCase("true")]
+        [TestCase("null")]
+        public void InvalidOnlyLightmapper_DoesNotMutateAssignedSettings(string json)
+        {
+            AssignOwnedSettings(true);
+            string original = EditorJsonUtility.ToJson(_ownedSettings);
+            int dirtyCount = EditorUtility.GetDirtyCount(_ownedSettings);
+            var response = SetLightingSettings(new JObject { ["lightmapper"] = JToken.Parse(json) });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("lightmapper", response.Value<string>("error"));
+            Assert.AreEqual(original, EditorJsonUtility.ToJson(_ownedSettings));
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(_ownedSettings));
+            Assert.AreSame(_ownedSettings, Lightmapping.lightingSettings);
+        }
+
+        [TestCase("\"invalid\"")]
+        [TestCase("999")]
+        public void InvalidOnlyLightmapper_DoesNotCreateOrAssignSettings(string json)
+        {
+            Assert.IsFalse(Lightmapping.TryGetLightingSettings(out _));
+            var defaults = Lightmapping.lightingSettingsDefaults;
+            int settingsCount = UnityEngine.Resources.FindObjectsOfTypeAll<LightingSettings>().Length;
+            bool sceneDirty = _testScene.isDirty;
+            string originalDefaults = EditorJsonUtility.ToJson(defaults);
+            var response = SetLightingSettings(new JObject { ["lightmapper"] = JToken.Parse(json) });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(Lightmapping.TryGetLightingSettings(out _));
+            Assert.AreEqual(settingsCount, UnityEngine.Resources.FindObjectsOfTypeAll<LightingSettings>().Length);
+            Assert.AreEqual(sceneDirty, _testScene.isDirty);
+            Assert.AreEqual(originalDefaults, EditorJsonUtility.ToJson(defaults));
+        }
+
+        [TestCase(1)]
+        [TestCase(2)]
+        public void SerializedLightmapperAdapter_RoundTripsAndPreservesUndo(int expected)
+        {
+            AssignOwnedSettings(true);
+            int original = expected == 1 ? 2 : 1;
+            Assert.IsTrue(LightBakingOps.TrySetSerializedLightmapper(_ownedSettings, (LightingSettings.Lightmapper)original));
+            Undo.IncrementCurrentGroup();
+            Undo.RecordObject(_ownedSettings, "Test serialized lightmapper adapter");
+            Assert.IsTrue(LightBakingOps.TrySetSerializedLightmapper(_ownedSettings, (LightingSettings.Lightmapper)expected));
+            int dirtyCount = EditorUtility.GetDirtyCount(_ownedSettings);
+            Assert.IsTrue(LightBakingOps.TryReadSerializedLightmapper(_ownedSettings, out var actual));
+            Assert.AreEqual(expected, (int)actual);
+            Assert.AreEqual(expected, ReadLightmapper(_ownedSettings));
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(_ownedSettings));
+            Undo.FlushUndoRecordObjects();
+            Undo.PerformUndo();
+            Assert.AreEqual(original, ReadLightmapper(_ownedSettings));
+            Assert.AreSame(_ownedSettings, Lightmapping.lightingSettings);
+            Undo.IncrementCurrentGroup();
+        }
+
+        [Test]
+        public void SerializedLightmapperAdapter_RejectsInvalidValueWithoutMutation()
+        {
+            AssignOwnedSettings(true);
+            int original = ReadLightmapper(_ownedSettings);
+            int dirtyCount = EditorUtility.GetDirtyCount(_ownedSettings);
+            Assert.IsFalse(LightBakingOps.TrySetSerializedLightmapper(_ownedSettings, (LightingSettings.Lightmapper)999));
+            Assert.IsFalse(LightBakingOps.TrySetSerializedLightmapper(null, (LightingSettings.Lightmapper)1));
+            Assert.IsFalse(LightBakingOps.TryReadSerializedLightmapper(null, out _));
+            Assert.AreEqual(original, ReadLightmapper(_ownedSettings));
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(_ownedSettings));
+        }
+
+        private static int ReadLightmapper(LightingSettings settings)
+        {
+            using var serializedSettings = new SerializedObject(settings);
+            var property = serializedSettings.FindProperty("m_BakeBackend");
+            Assert.IsNotNull(property);
+            Assert.IsTrue(property.propertyType == SerializedPropertyType.Integer || property.propertyType == SerializedPropertyType.Enum);
+            return property.intValue;
+        }
+
+        private static System.Collections.IEnumerable InvalidScalarCases()
+        {
+            foreach (
+                var pair in new[]
+                {
+                    new[] { "realtimeGI", "0" },
+                    new[] { "realtime_gi", "\"off\"" },
+                    new[] { "baked_gi", "[]" },
+                    new[] { "ao", "{}" },
+                    new[] { "lightmapResolution", "true" },
+                    new[] { "lightmap_max_size", "1.5" },
+                    new[] { "direct_sample_count", "[]" },
+                    new[] { "indirectSampleCount", "{}" },
+                    new[] { "environment_sample_count", "true" },
+                    new[] { "aoMaxDistance", "\"bad\"" },
+                    new[] { "bounce_count", "{}" },
+                }
+            )
+            foreach (bool assigned in new[] { false, true })
+                yield return new TestCaseData(pair[0], pair[1], assigned);
+        }
+
+        [TestCaseSource(nameof(InvalidScalarCases))]
+        public void InvalidOnlyLightingScalar_PreservesSettingsAndDoesNotAllocate(string key, string json, bool assigned)
+        {
+            if (assigned)
+                AssignOwnedSettings(true);
+            var defaults = Lightmapping.lightingSettingsDefaults;
+            var original = assigned ? _ownedSettings : defaults;
+            string originalJson = EditorJsonUtility.ToJson(original);
+            int dirtyCount = EditorUtility.GetDirtyCount(original);
+            int settingsCount = UnityEngine.Resources.FindObjectsOfTypeAll<LightingSettings>().Length;
+            bool sceneDirty = _testScene.isDirty;
+
+            var response = SetLightingSettings(new JObject { [key] = JToken.Parse(json) });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains(key, response.Value<string>("error"));
+            Assert.AreEqual(assigned, Lightmapping.TryGetLightingSettings(out var current));
+            if (assigned)
+                Assert.AreSame(_ownedSettings, current);
+            Assert.AreEqual(originalJson, EditorJsonUtility.ToJson(original));
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(original));
+            Assert.AreEqual(settingsCount, UnityEngine.Resources.FindObjectsOfTypeAll<LightingSettings>().Length);
+            Assert.AreEqual(sceneDirty, _testScene.isDirty);
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("realtimeGI")]
+        [TestCase("bounce_count")]
+        public void MixedInvalidLightingScalar_AppliesValidKeysWithoutWarning(string invalidKey)
+        {
+            AssignOwnedSettings(true);
+            var response = SetLightingSettings(new JObject { [invalidKey] = new JObject(), ["bakedGI"] = false });
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(new[] { "bakedGI" }, response["data"]["changed"].ToObject<string[]>());
+            CollectionAssert.AreEqual(new[] { invalidKey }, response["data"]["failed"].ToObject<string[]>());
+            Assert.IsFalse(_ownedSettings.bakedGI);
+            Assert.IsTrue(ReadRealtimeGI(_ownedSettings));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
+        public void LightingScalarNullAliases_PreserveEarlierWrites()
+        {
+            AssignOwnedSettings(true);
+            var response = SetLightingSettings(
+                new JObject
+                {
+                    ["lightmapResolution"] = 13.5f,
+                    ["lightmap_resolution"] = JValue.CreateNull(),
+                    ["directSampleCount"] = 16,
+                    ["direct_sample_count"] = JValue.CreateNull(),
+                }
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(13.5f, _ownedSettings.lightmapResolution);
+            Assert.AreEqual(16, _ownedSettings.directSampleCount);
+            Assert.AreEqual(4, ((JArray)response["data"]["changed"]).Count);
+            Assert.IsEmpty(response["data"]["failed"]);
         }
 
         private void AssignOwnedSettings(bool realtimeGI)
@@ -275,7 +469,10 @@ namespace MCPForUnityTests.Editor.Tools
                 var effect = CreateTextureEffect(null, !cubemap);
                 AssetDatabase.CreateAsset(texture, path);
                 Assert.IsTrue(VolumeOps.SetVolumeParameter(effect, "texture", new JValue(path)));
-                Assert.AreSame(texture, effect.texture.GetType().GetProperty("value").GetValue(effect.texture));
+                var actual = (Texture)effect.texture.GetType().GetProperty("value").GetValue(effect.texture);
+                Assert.IsNotNull(actual);
+                Assert.IsTrue(texture == actual, "The assigned reference must point to the same native texture asset.");
+                Assert.AreEqual(path, AssetDatabase.GetAssetPath(actual));
                 Assert.IsTrue((bool)effect.texture.GetType().GetProperty("overrideState").GetValue(effect.texture));
             }
             finally
