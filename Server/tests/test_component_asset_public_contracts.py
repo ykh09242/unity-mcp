@@ -367,6 +367,7 @@ async def main():
                 ('manage_components', {'action': 'set_property', 'target': 'Fixture',
                                        'component_type': 'Owned', 'property': 'value', 'value': 'undefined'}),
                 ('manage_asset', {'action': 'modify', 'path': 'Assets/Fixture.mat', 'properties': '[]'}),
+                ('manage_asset', {'action': 'get_info', 'path': None}),
                 ('manage_asset', {'action': 'search', 'path': 'Assets', 'page_size': 0}),
                 ('manage_asset', {'action': 'search', 'path': 'Assets', 'page_number': 0}),
                 ('manage_asset', {'action': 'search', 'path': 'Assets', 'page_number': 'bad'}),
@@ -386,7 +387,6 @@ async def main():
                 ('manage_components', {'action': 'remove', 'target': 'Fixture', 'component_type': 'BoxCollider',
                                        'component_index': 1.9}),
                 ('manage_asset', {'action': 'bad', 'path': 'Assets'}),
-                ('manage_asset', {'action': 'get_info', 'path': None}),
                 *[('manage_asset', {'action': 'search', 'path': 'Assets', key: value})
                   for key in ('page_size', 'page_number') for value in (True, False)],
                 *[('manage_asset', {'action': 'get_info', 'path': 'Assets/Fixture.mat', 'generate_preview': value})

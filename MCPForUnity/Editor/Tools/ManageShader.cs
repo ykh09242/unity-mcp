@@ -28,6 +28,8 @@ namespace MCPForUnity.Editor.Tools
 
             // Extract parameters
             string action = @params["action"]?.ToString()?.ToLowerInvariant();
+            if (action == "inspect_graph")
+                return ShaderGraphInspection.Inspect(@params);
             string name = @params["name"]?.ToString();
             string path = @params["path"]?.ToString(); // Relative to Assets/
             string contents = null;
@@ -36,7 +38,10 @@ namespace MCPForUnity.Editor.Tools
             bool contentsEncoded;
             try
             {
-                contentsEncoded = @params["contentsEncoded"]?.ReadScalar<bool?>() ?? false;
+                JToken encodingFlag = @params["contentsEncoded"];
+                if (encodingFlag?.Type == JTokenType.Null)
+                    return new ErrorResponse("Invalid contentsEncoded value: explicit null is not a boolean flag.");
+                contentsEncoded = encodingFlag?.ReadScalar<bool?>() ?? false;
             }
             catch (Exception e) when (e is ArgumentException || e is FormatException || e is InvalidCastException || e is Newtonsoft.Json.JsonException)
             {

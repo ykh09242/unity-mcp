@@ -41,6 +41,9 @@ namespace MCPForUnity.Editor.Tools
             "get_info",
             "create_folder",
             "get_components",
+            "list_asset_bundles",
+            "get_bundle_assets",
+            "get_bundle_dependencies",
         };
 
         public static object HandleCommand(JObject @params)
@@ -129,6 +132,10 @@ namespace MCPForUnity.Editor.Tools
                         return CreateFolder(path);
                     case "get_components":
                         return GetComponentsFromAsset(path);
+                    case "list_asset_bundles":
+                    case "get_bundle_assets":
+                    case "get_bundle_dependencies":
+                        return AssetBundleInspection.Inspect(@params);
 
                     default:
                         // This error message is less likely to be hit now, but kept here as a fallback or for potential future modifications.

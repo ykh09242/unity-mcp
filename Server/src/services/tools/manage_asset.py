@@ -16,14 +16,16 @@ from services.tools.utils import parse_json_payload, coerce_int, normalize_prope
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
-from services.tools.pagination import validate_page
+from services.tools.pagination import validate_page, page_integer
 
 logger = logging.getLogger("mcp-for-unity-server")
 
 
 @mcp_for_unity_tool(
     description=(
-        "Performs asset operations (import, create, modify, delete, etc.) in Unity.\n\n"
+        "Performs asset operations (import, create, modify, delete, etc.) in Unity. "
+        "Read-only list_asset_bundles/get_bundle_assets/get_bundle_dependencies inspect AssetDatabase "
+        "assignments, not built bundle files; use bundle_name and pages of at most 100.\n\n"
         'Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_number`) and keep '
         "`generate_preview=false` (previews can add large base64 blobs)."
     ),
@@ -47,12 +49,18 @@ async def manage_asset(
             "get_info",
             "create_folder",
             "get_components",
+            "list_asset_bundles",
+            "get_bundle_assets",
+            "get_bundle_dependencies",
         ],
         "Perform CRUD operations on assets.",
     ],
     path: Annotated[
-        str, "Asset path (e.g., 'Materials/MyMaterial.mat') or search scope (e.g., 'Assets')."
-    ],
+        str,
+        "Asset path required for asset operations; search defaults to Assets. "
+        "Ignored for bundle assignment inspection.",
+    ]
+    | None = None,
     asset_type: Annotated[
         str,
         "Asset type (e.g., 'Material', 'Folder') - required for 'create'. Note: For ScriptableObjects, use manage_scriptable_object.",
@@ -78,10 +86,15 @@ async def manage_asset(
     filter_type: Annotated[str, "Filter type for search"] | None = None,
     filter_date_after: Annotated[str, "Date after which to filter"] | None = None,
     page_size: Annotated[
-        int | str, "Page size: 1-1000 (default 50), or 1-32 with previews (default 32)."
+        int | str,
+        "Page size: search 1-1000 (default 50), previews 1-32 (default 32), "
+        "bundle inspection 1-100 (default 50).",
     ]
     | None = None,
     page_number: Annotated[int | str, "Page number for pagination (1-based)."] | None = None,
+    bundle_name: Annotated[str, "Registered bundle assignment name for get_bundle_* actions."]
+    | None = None,
+    recursive: Annotated[bool, "Include indirect bundle dependencies (default false)."] = False,
 ) -> dict[str, Any]:
     action_l = (action or "").lower()
     if action_l not in {
@@ -96,10 +109,20 @@ async def manage_asset(
         "get_info",
         "create_folder",
         "get_components",
+        "list_asset_bundles",
+        "get_bundle_assets",
+        "get_bundle_dependencies",
     }:
         return {"success": False, "message": f"Unknown asset action: '{action}'."}
-    if action_l != "search" and not path:
+    bundle_inspection = action_l in {
+        "list_asset_bundles",
+        "get_bundle_assets",
+        "get_bundle_dependencies",
+    }
+    if action_l != "search" and not bundle_inspection and not path:
         return {"success": False, "message": f"Action '{action}' requires parameter 'path'."}
+    if action_l == "search" and path is None:
+        path = "Assets"
     if action_l == "create" and not asset_type:
         return {"success": False, "message": "Action 'create' requires parameter 'asset_type'."}
     if action_l == "create" and asset_type.lower() not in {"folder", "material", "physicsmaterial"}:
@@ -109,6 +132,13 @@ async def manage_asset(
         }
     if action_l in {"move", "rename"} and not destination:
         return {"success": False, "message": f"Action '{action}' requires parameter 'destination'."}
+    if action_l in {"get_bundle_assets", "get_bundle_dependencies"} and (
+        not bundle_name or not bundle_name.strip() or len(bundle_name) > 512
+    ):
+        return {
+            "success": False,
+            "message": "A registered bundle_name of 1-512 characters is required.",
+        }
 
     try:
         page_size = coerce_int(page_size)
@@ -119,7 +149,13 @@ async def manage_asset(
     except ValueError as exc:
         return {"success": False, "message": f"Invalid 'page_number': {exc}"}
 
-    if action_l == "search":
+    if bundle_inspection:
+        try:
+            page_size = page_integer(page_size, 50, 1, 100, "page_size")
+            page_number = page_integer(page_number, 1, 1, 2_147_483_647, "page_number")
+        except ValueError as exc:
+            return {"success": False, "message": str(exc)}
+    elif action_l == "search":
         try:
             page_size, page_number = validate_page(page_size, page_number, preview=generate_preview)
         except ValueError as exc:
@@ -177,11 +213,17 @@ async def manage_asset(
 
     # Remove None values to avoid sending unnecessary nulls
     params_dict = {k: v for k, v in params_dict.items() if v is not None}
+    if bundle_inspection:
+        if bundle_name is not None:
+            params_dict["bundleName"] = bundle_name
+        if action_l == "get_bundle_dependencies":
+            params_dict["recursive"] = recursive
 
     unity_instance = await get_unity_instance_from_context(ctx)
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-    if gate is not None:
-        return gate.model_dump()
+    if not bundle_inspection:
+        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+        if gate is not None:
+            return gate.model_dump()
 
     # Get the current asyncio event loop
     loop = asyncio.get_running_loop()
