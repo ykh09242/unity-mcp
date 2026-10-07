@@ -109,25 +109,33 @@ namespace MCPForUnity.Editor.Clients.Configurators
 
             JObject root = File.Exists(path) ? LoadConfig(path) : new JObject();
 
-            JObject plugins = root["plugins"] as JObject ?? new JObject();
-            root["plugins"] = plugins;
-
-            JObject entries = plugins["entries"] as JObject ?? new JObject();
-            plugins["entries"] = entries;
-
-            JObject pluginEntry = entries[PluginName] as JObject ?? new JObject();
-            entries[PluginName] = pluginEntry;
+            JObject plugins = EnsureConfigObject(root, "plugins");
+            JObject entries = EnsureConfigObject(plugins, "entries");
+            JObject pluginEntry = EnsureConfigObject(entries, PluginName);
             pluginEntry["enabled"] = true;
 
-            JObject pluginConfig = pluginEntry["config"] as JObject ?? new JObject();
-            pluginEntry["config"] = pluginConfig;
+            JObject pluginConfig = EnsureConfigObject(pluginEntry, "config");
             pluginConfig.Remove("timeout");  // removed in openclaw-mcp-bridge v2+
             pluginConfig.Remove("retries");  // removed in openclaw-mcp-bridge v2+
             pluginConfig["servers"] = UpsertUnityServer(pluginConfig["servers"]);
 
             McpConfigurationHelper.WriteAtomicFile(path, root.ToString(Formatting.Indented));
-            client.SetStatus(McpStatus.Configured);
-            client.configuredTransport = HttpEndpointUtility.GetCurrentServerTransport();
+            CheckStatus(attemptAutoRewrite: false);
+        }
+
+        private static JObject EnsureConfigObject(JObject parent, string key)
+        {
+            if (parent[key] is JObject existing)
+            {
+                return existing;
+            }
+            if (parent[key] != null)
+            {
+                throw new FormatException($"OpenClaw '{key}' must be an object. The existing configuration was not changed.");
+            }
+            var created = new JObject();
+            parent[key] = created;
+            return created;
         }
 
         public override string GetManualSnippet()
@@ -225,6 +233,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
             entry.Remove("command");
             entry.Remove("args");
             entry.Remove("env");
+            entry.Remove("headers");
             entry.Remove("connectTimeoutMs");
 
             foreach (var property in desiredEntry.Properties())
@@ -356,6 +365,12 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 if (string.IsNullOrWhiteSpace(configuredUrl) ||
                     (!UrlsEqual(configuredUrl, HttpEndpointUtility.GetLocalMcpRpcUrl()) &&
                      !UrlsEqual(configuredUrl, HttpEndpointUtility.GetRemoteMcpRpcUrl())))
+                {
+                    return false;
+                }
+                var expectedHeaders = HttpEndpointUtility.GetAuthHeaders();
+                if ((!HttpEndpointUtility.IsRemoteScope() && !expectedHeaders.ContainsKey(Constants.AuthConstants.LocalTokenHeader))
+                    || !ConfigJsonBuilder.TryValidateAuthHeaders(server["headers"], expectedHeaders, out _))
                 {
                     return false;
                 }

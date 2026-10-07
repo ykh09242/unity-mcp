@@ -41,7 +41,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
 
         /// <summary>
         /// Attempts to load and parse the config file.
-        /// Returns null if file doesn't exist or cannot be read.
+        /// Returns null only if the file doesn't exist.
         /// Returns parsed JObject if valid JSON found.
         /// Logs warning if file exists but contains malformed JSON.
         /// </summary>
@@ -57,28 +57,23 @@ namespace MCPForUnity.Editor.Clients.Configurators
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[OpenCodeConfigurator] Failed to read config file {path}: {ex.Message}");
-                return null;
+                throw new InvalidOperationException("Could not read the existing OpenCode configuration. It was not changed.", ex);
             }
 
             try
             {
-                return JsonConvert.DeserializeObject<JObject>(content) ?? new JObject();
+                return JsonConvert.DeserializeObject<JObject>(content)
+                    ?? throw new JsonException("The configuration must be an object.");
             }
             catch (JsonException ex)
             {
-                // Malformed JSON - log warning and return null.
-                // When Configure() receives null, it will do: TryLoadConfig(path) ?? new JObject()
-                // This creates a fresh empty JObject, which replaces the entire file with only the unityMCP section.
-                // Existing config sections are lost. To preserve sections, a different recovery strategy
-                // (e.g., line-by-line parsing, JSON repair, or manual user intervention) would be needed.
-                UnityEngine.Debug.LogWarning($"[OpenCodeConfigurator] Malformed JSON in {path}: {ex.Message}");
-                return null;
+                throw new InvalidOperationException("The existing OpenCode configuration is not a JSON object. Fix it manually; it was not changed.", ex);
             }
         }
 
         public override McpStatus CheckStatus(bool attemptAutoRewrite = true)
         {
+            client.configuredTransport = ConfiguredTransport.Unknown;
             try
             {
                 string path = GetConfigPath();
@@ -101,6 +96,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 if (EntryMatchesCurrentTransport(unityMcp))
                 {
                     client.SetStatus(McpStatus.Configured);
+                    client.configuredTransport = HttpEndpointUtility.GetCurrentServerTransport();
                 }
                 else if (attemptAutoRewrite)
                 {
@@ -136,13 +132,21 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 }
 
                 // Preserve existing mcp section and only update our server entry
-                var mcpSection = config["mcp"] as JObject ?? new JObject();
-                config["mcp"] = mcpSection;
+                if (config["mcp"] != null && !(config["mcp"] is JObject))
+                {
+                    throw new InvalidOperationException("OpenCode 'mcp' must be an object. The existing configuration was not changed.");
+                }
+                var mcpSection = config["mcp"] as JObject;
+                if (mcpSection == null)
+                {
+                    mcpSection = new JObject();
+                    config["mcp"] = mcpSection;
+                }
 
                 mcpSection[ServerName] = BuildServerEntry();
 
                 McpConfigurationHelper.WriteAtomicFile(path, JsonConvert.SerializeObject(config, Formatting.Indented));
-                client.SetStatus(McpStatus.Configured);
+                CheckStatus(attemptAutoRewrite: false);
             }
             catch (Exception ex)
             {
@@ -209,17 +213,29 @@ namespace MCPForUnity.Editor.Clients.Configurators
 
         private bool EntryMatchesCurrentTransport(JObject entry)
         {
+            if (entry["enabled"]?.Value<bool>() == false)
+            {
+                return false;
+            }
             string entryType = entry["type"]?.ToString();
             ConfiguredTransport expected = HttpEndpointUtility.GetCurrentServerTransport();
 
             if (expected == ConfiguredTransport.Stdio)
             {
-                return string.Equals(entryType, LocalType, StringComparison.OrdinalIgnoreCase)
-                    && entry["command"] is JArray;
+                if (!string.Equals(entryType, LocalType, StringComparison.OrdinalIgnoreCase)
+                    || !(entry["command"] is JArray command) || command.Count == 0)
+                {
+                    return false;
+                }
+                string source = McpConfigurationHelper.ExtractUvxUrl(command.ToObject<string[]>());
+                return McpConfigurationHelper.PathsEqual(source, GetExpectedPackageSourceForValidation());
             }
 
+            var expectedHeaders = HttpEndpointUtility.GetAuthHeaders();
             return string.Equals(entryType, RemoteType, StringComparison.OrdinalIgnoreCase)
-                && UrlsEqual(entry["url"]?.ToString(), HttpEndpointUtility.GetMcpRpcUrl());
+                && UrlsEqual(entry["url"]?.ToString(), HttpEndpointUtility.GetMcpRpcUrl())
+                && (HttpEndpointUtility.IsRemoteScope() || expectedHeaders.ContainsKey(Constants.AuthConstants.LocalTokenHeader))
+                && ConfigJsonBuilder.TryValidateAuthHeaders(entry["headers"], expectedHeaders, out _);
         }
     }
 }

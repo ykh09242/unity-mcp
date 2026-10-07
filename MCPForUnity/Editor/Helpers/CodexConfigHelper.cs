@@ -39,9 +39,6 @@ namespace MCPForUnity.Editor.Helpers
                 string httpUrl = HttpEndpointUtility.GetMcpRpcUrl();
                 unityMCP["url"] = new TomlString { Value = httpUrl };
                 AddHttpAuthHeaders(unityMCP);
-
-                // Enable Codex's Rust MCP client for HTTP/SSE transport
-                EnsureRmcpClientFeature(table);
             }
             else
             {
@@ -105,9 +102,13 @@ namespace MCPForUnity.Editor.Helpers
                 ? new[] { "env_vars", "cwd", "bearer_token" }
                 : new[] { "bearer_token_env_var", "bearer_token", "http_headers_helper",
                     "env_http_headers", "oauth", "oauth_resource", "auth" };
+            bool managedHelper = IsManagedHttpHelper(unityMcp);
             foreach (var key in incompatibleKeys)
+            {
+                if (key == "http_headers_helper" && managedHelper) continue;
                 if (unityMcp.TryGetNode(key, out _))
                     throw IncompatibleTransportSetting(key, useHttpTransport);
+            }
             if (useHttpTransport && unityMcp.TryGetNode("env", out var envNode))
             {
                 if (((TomlTable)envNode).Keys.Any(key => key != "SystemRoot"))
@@ -120,10 +121,16 @@ namespace MCPForUnity.Editor.Helpers
 
             if (useHttpTransport)
             {
-                EnsureRmcpClientFeature(root);
+                ValidateOptionalTable(unityMcp, "env_http_headers", "mcp_servers.unityMCP.env_http_headers");
+                if ((unityMcp.TryGetNode("http_headers_helper", out _) && !managedHelper)
+                    || (TryGetTable(unityMcp, "env_http_headers", out var envHeaders)
+                        && envHeaders.Keys.Any(IsManagedAuthHeader)))
+                    throw new FormatException("Custom Codex HTTP authentication is preserved. "
+                        + "Update it manually before using automatic configuration.");
             }
 
             var generated = CreateUnityMcpTable(uvPath);
+            if (managedHelper) unityMcp.Delete("http_headers_helper");
             unityMcp.Delete(useHttpTransport ? "command" : "url");
             if (useHttpTransport) unityMcp.Delete("args");
 
@@ -276,6 +283,18 @@ namespace MCPForUnity.Editor.Helpers
 
         private static void AddHttpAuthHeaders(TomlTable server)
         {
+            if (!HttpEndpointUtility.IsRemoteScope())
+            {
+                if (!CodexHttpAuth.SupportsHeadersHelper())
+                {
+                    throw new InvalidOperationException(CodexHttpAuth.UnsupportedMessage);
+                }
+                server["http_headers_helper"] = new TomlString
+                {
+                    Value = LocalHttpAuth.CommandForEndpoint(GetTomlString(server, "url"))
+                };
+                return;
+            }
             var headers = HttpEndpointUtility.GetAuthHeaders();
             if (headers.Count == 0)
             {
@@ -289,15 +308,110 @@ namespace MCPForUnity.Editor.Helpers
             server["http_headers"] = table;
         }
 
-        /// <summary>
-        /// Ensures the features table contains the rmcp_client flag for HTTP/SSE transport.
-        /// </summary>
-        private static void EnsureRmcpClientFeature(TomlTable root)
+        internal static bool TryValidateHttpServer(string toml, IDictionary<string, string> expectedHeaders, out string reason)
         {
-            if (root == null) return;
+            reason = "Invalid Codex HTTP configuration. Click Configure to update.";
+            var root = TryParseToml(toml);
+            if (root == null || !root.TryGetNode("mcp_servers", out var serversNode)
+                || serversNode is not TomlTable servers || !servers.TryGetNode("unityMCP", out var serverNode)
+                || serverNode is not TomlTable server)
+            {
+                return false;
+            }
 
-            var features = GetOrCreateTable(root, "features", "features");
-            features["rmcp_client"] = new TomlBoolean { Value = true };
+            if (server.TryGetNode("enabled", out var enabled) && (enabled is not TomlBoolean flag || !flag.Value))
+            {
+                reason = "Codex unityMCP is disabled or has an invalid enabled setting. Enable it in the config file.";
+                return false;
+            }
+            foreach (var key in new[] { "command", "args", "env", "env_vars", "cwd", "bearer_token" })
+            {
+                if (server.TryGetNode(key, out _))
+                {
+                    return false;
+                }
+            }
+
+            bool hasHelper = server.TryGetNode("http_headers_helper", out _);
+            bool managedHelper = IsManagedHttpHelper(server);
+            if ((hasHelper && !managedHelper)
+                || (TryGetTable(server, "env_http_headers", out var envHeaders)
+                    && envHeaders.Keys.Any(IsManagedAuthHeader)))
+            {
+                reason = "Custom Codex HTTP authentication requires manual validation in Codex; it has not been changed.";
+                return false;
+            }
+            if (server.TryGetNode("env_http_headers", out var envNode) && envNode is not TomlTable)
+            {
+                return false;
+            }
+
+            TomlTable headers = null;
+            if (server.TryGetNode("http_headers", out var headersNode))
+            {
+                if (headersNode is not TomlTable table)
+                {
+                    return false;
+                }
+                headers = table;
+            }
+            if (managedHelper)
+            {
+                if (headers != null && headers.Keys.Any(IsManagedAuthHeader))
+                {
+                    return false;
+                }
+                reason = CodexHttpAuth.SupportsHeadersHelper() ? null : CodexHttpAuth.UnsupportedMessage;
+                return reason == null;
+            }
+            if (expectedHeaders == null)
+            {
+                expectedHeaders = HttpEndpointUtility.GetAuthHeaders();
+                if (!HttpEndpointUtility.IsRemoteScope())
+                {
+                    reason = "Codex uses a static local token. Click Configure for automatic token lookup, or select stdio for an older Codex.";
+                    return false;
+                }
+            }
+            reason = "Codex HTTP authentication is missing or outdated. Click Configure, then restart Codex.";
+            foreach (var expected in expectedHeaders)
+            {
+                var keys = headers?.Keys.Where(key => string.Equals(key, expected.Key, StringComparison.OrdinalIgnoreCase)).ToArray();
+                if (keys == null || keys.Length != 1 || headers[keys[0]] is not TomlString value
+                    || !string.Equals(value.Value, expected.Value, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+            if (headers != null && headers.Keys.Where(IsManagedAuthHeader).Any(key =>
+                !expectedHeaders.Keys.Any(expected => string.Equals(key, expected, StringComparison.OrdinalIgnoreCase))))
+            {
+                return false;
+            }
+
+            reason = null;
+            return true;
+        }
+
+        private static bool IsManagedHttpHelper(TomlTable server)
+        {
+            string helper = GetTomlString(server, "http_headers_helper");
+            if (string.IsNullOrEmpty(helper))
+            {
+                return false;
+            }
+            try
+            {
+                return helper == LocalHttpAuth.CommandForEndpoint(GetTomlString(server, "url"));
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
         }
 
         private static void ValidateOptionalTable(TomlTable parent, string key, string path)

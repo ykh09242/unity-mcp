@@ -36,22 +36,8 @@ namespace MCPForUnity.Editor.Helpers
                 return token.Trim();
             }
 
-            string path = Environment.GetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE");
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                // Do not disclose a local credential to an arbitrary configured host.
-                if (!endpoint.IsLoopback && !IsBindAllInterfacesHost(endpoint.Host))
-                {
-                    return string.Empty;
-                }
-                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                path = Path.Combine(home, ".unity-mcp", "auth", $"token-{endpoint.Port}");
-            }
-            else if (path.StartsWith("~/", StringComparison.Ordinal)
-                || path.StartsWith("~\\", StringComparison.Ordinal))
-            {
-                path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path.Substring(2));
-            }
+            string path = GetLocalAuthTokenPath(endpoint);
+            if (path == null) return string.Empty;
 
             try
             {
@@ -65,6 +51,28 @@ namespace MCPForUnity.Editor.Helpers
             {
                 return string.Empty;
             }
+        }
+
+        internal static string GetLocalAuthTokenPath(Uri endpoint)
+        {
+            string path = Environment.GetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE");
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                // Do not disclose a local credential to an arbitrary configured host.
+                if (!endpoint.IsLoopback && !IsBindAllInterfacesHost(endpoint.Host))
+                {
+                    return null;
+                }
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                path = Path.Combine(home, ".unity-mcp", "auth", $"token-{endpoint.Port}");
+            }
+            else if (path.StartsWith("~/", StringComparison.Ordinal)
+                || path.StartsWith("~\\", StringComparison.Ordinal))
+            {
+                path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path.Substring(2));
+            }
+
+            return Path.GetFullPath(path);
         }
 
         /// <summary>Authentication headers for generated native MCP client configurations.</summary>

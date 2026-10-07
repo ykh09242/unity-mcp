@@ -54,10 +54,13 @@ namespace MCPForUnityTests.Editor.Helpers
         private bool _hadDevForceRefresh;
         private bool _originalDevForceRefresh;
         private IPlatformService _originalPlatformService;
+        private System.Func<bool> _originalCodexCapabilityProbe;
 
         [OneTimeSetUp]
         public void OneTimeSetUp()
         {
+            _originalCodexCapabilityProbe = CodexHttpAuth.SupportsHeadersHelper;
+            CodexHttpAuth.SupportsHeadersHelper = () => true;
             _hadGitOverride = EditorPrefs.HasKey(EditorPrefKeys.GitUrlOverride);
             _originalGitOverride = EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, string.Empty);
             _hadHttpTransport = EditorPrefs.HasKey(EditorPrefKeys.UseHttpTransport);
@@ -103,6 +106,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [OneTimeTearDown]
         public void OneTimeTearDown()
         {
+            CodexHttpAuth.SupportsHeadersHelper = _originalCodexCapabilityProbe;
             if (_hadGitOverride)
             {
                 EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, _originalGitOverride);
@@ -161,6 +165,137 @@ namespace MCPForUnityTests.Editor.Helpers
             StringAssert.Contains("stdio", error.Message);
             StringAssert.DoesNotContain("synthetic-private-value", error.Message);
         }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void HttpUpsertPreservesExistingLegacyFeatureChoice(bool enabled)
+        {
+            EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
+            EditorConfigurationCache.Instance.Refresh();
+            string result = CodexConfigHelper.UpsertCodexServerBlock(
+                "[features]\nrmcp_client = " + enabled.ToString().ToLowerInvariant()
+                + "\ncustom_feature = true\n[mcp_servers.other]\ncommand = \"other\"", null);
+            using var reader = new StringReader(result);
+            var root = TOML.Parse(reader);
+            Assert.AreEqual(enabled, ((TomlBoolean)root["features"]["rmcp_client"]).Value);
+            Assert.IsTrue(((TomlBoolean)root["features"]["custom_feature"]).Value);
+            Assert.AreEqual("other", ((TomlString)root["mcp_servers"]["other"]["command"]).Value);
+        }
+
+        [Test]
+        public void TransportRoundTripRemovesOnlyManagedTransportFields()
+        {
+            MCPServiceLocator.Register<IPlatformService>(new MockPlatformService(isWindows: true));
+            string stdio = CodexConfigHelper.UpsertCodexServerBlock(
+                "[mcp_servers.unityMCP]\ntool_timeout_sec = 17\n", null);
+            EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
+            EditorConfigurationCache.Instance.Refresh();
+            string http = CodexConfigHelper.UpsertCodexServerBlock(stdio, null);
+            using (var reader = new StringReader(http))
+            {
+                var server = (TomlTable)TOML.Parse(reader)["mcp_servers"]["unityMCP"];
+                Assert.IsTrue(server.TryGetNode("url", out _));
+                foreach (string key in new[] { "command", "args", "env" })
+                    Assert.IsFalse(server.TryGetNode(key, out _), key);
+                Assert.AreEqual(17, ((TomlInteger)server["tool_timeout_sec"]).Value);
+            }
+            EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, false);
+            EditorConfigurationCache.Instance.Refresh();
+            using var backReader = new StringReader(CodexConfigHelper.UpsertCodexServerBlock(http, null));
+            var back = (TomlTable)TOML.Parse(backReader)["mcp_servers"]["unityMCP"];
+            Assert.IsTrue(back.TryGetNode("command", out _));
+            Assert.IsTrue(back.TryGetNode("args", out _));
+            Assert.IsFalse(back.TryGetNode("url", out _));
+            Assert.IsFalse(back.TryGetNode("http_headers", out _));
+            Assert.IsFalse(back.TryGetNode("http_headers_helper", out _));
+            Assert.AreEqual(17, ((TomlInteger)back["tool_timeout_sec"]).Value);
+        }
+
+        [TestCase("", false)]
+        [TestCase("http_headers = { 'X-Unity-MCP-Token' = 'synthetic-current' }", true)]
+        [TestCase("http_headers = { 'x-unity-mcp-token' = 'synthetic-current', Custom = 'retained' }", true)]
+        [TestCase("http_headers = { 'X-Unity-MCP-Token' = 'synthetic-stale' }", false)]
+        [TestCase("http_headers = { 'X-Unity-MCP-Token' = 7 }", false)]
+        [TestCase("http_headers = { 'X-Unity-MCP-Token' = 'synthetic-current', 'x-unity-mcp-token' = 'synthetic-current' }", false)]
+        [TestCase("http_headers = { 'X-Unity-MCP-Token' = 'synthetic-current', 'X-API-Key' = 'synthetic-stale' }", false)]
+        [TestCase("enabled = false\nhttp_headers = { 'X-Unity-MCP-Token' = 'synthetic-current' }", false)]
+        [TestCase("command = 'old-uvx'\nhttp_headers = { 'X-Unity-MCP-Token' = 'synthetic-current' }", false)]
+        [TestCase("http_headers = 'synthetic-private-value'", false)]
+        [TestCase("env_http_headers = { 'X-Unity-MCP-Token' = 'SYNTHETIC_ENV' }", false)]
+        [TestCase("http_headers_helper = ['synthetic-helper']", false)]
+        public void HttpValidationChecksManagedCredentialsWithoutLeakingValues(string settings, bool expected)
+        {
+            var headers = new Dictionary<string, string> { ["X-Unity-MCP-Token"] = "synthetic-current" };
+            Assert.AreEqual(expected, CodexConfigHelper.TryValidateHttpServer(
+                "[mcp_servers.unityMCP]\nurl = 'http://127.0.0.1:8080/mcp'\n" + settings, headers, out var reason));
+            if (expected) Assert.IsNull(reason);
+            else
+            {
+                Assert.IsNotEmpty(reason);
+                StringAssert.DoesNotContain("synthetic-", reason);
+            }
+        }
+
+        [TestCase("http_headers_helper = ['synthetic-helper']")]
+        [TestCase("env_http_headers = { 'x-unity-mcp-token' = 'SYNTHETIC_ENV' }")]
+        public void HttpUpsertRefusesToConflictWithCustomAuthentication(string settings)
+        {
+            EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
+            EditorConfigurationCache.Instance.Refresh();
+            var error = Assert.Throws<System.FormatException>(() => CodexConfigHelper.UpsertCodexServerBlock(
+                "[mcp_servers.unityMCP]\nurl = 'http://127.0.0.1:8080/mcp'\n" + settings, null));
+            StringAssert.Contains("preserved", error.Message);
+            StringAssert.DoesNotContain("synthetic-", error.Message);
+        }
+
+        [TestCase("{}", false)]
+        [TestCase("not-json", false)]
+        [TestCase("{\"transport\":{\"type\":\"streamable_http\"}}", false)]
+        [TestCase("{\"transport\":{\"type\":\"streamable_http\",\"http_headers_helper\":null}}", false)]
+        [TestCase("{\"transport\":{\"type\":\"streamable_http\",\"http_headers_helper\":\"<redacted>\"}}", true)]
+        public void HelperCapabilityRequiresRecognizedField(string output, bool supported)
+            => Assert.AreEqual(supported, CodexHttpAuth.RecognizesHeadersHelper(output));
+
+        [Test]
+        public void LocalHttpWithoutHelperSupportRefusesToWriteStaticToken()
+        {
+            bool hadScope = EditorPrefs.HasKey(EditorPrefKeys.HttpTransportScope);
+            string scope = EditorPrefs.GetString(EditorPrefKeys.HttpTransportScope);
+            try
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
+                EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "local");
+                EditorConfigurationCache.Instance.Refresh();
+                CodexHttpAuth.SupportsHeadersHelper = () => false;
+                var error = Assert.Throws<System.InvalidOperationException>(() => CodexConfigHelper.BuildCodexServerBlock(null));
+                StringAssert.Contains("stdio", error.Message);
+            }
+            finally
+            {
+                CodexHttpAuth.SupportsHeadersHelper = () => true;
+                if (hadScope) EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, scope);
+                else EditorPrefs.DeleteKey(EditorPrefKeys.HttpTransportScope);
+                EditorConfigurationCache.Instance.Refresh();
+            }
+        }
+
+        [Test]
+        public void WindowsTokenHelperQuotesPathsWithoutEmbeddingCredentials()
+        {
+            string path = "C:\\synthetic dir\\O'Brien\\token-8080";
+            string command = LocalHttpAuth.BuildCommand(path, true);
+            string script = System.Text.Encoding.Unicode.GetString(System.Convert.FromBase64String(
+                command.Substring(command.LastIndexOf(' ') + 1)));
+            StringAssert.Contains("O''Brien", script);
+            StringAssert.Contains("ReadAllText", script);
+            StringAssert.Contains("ConvertTo-Json", script);
+            StringAssert.DoesNotContain("ExecutionPolicy Bypass", command);
+        }
+
+        [TestCase("https://synthetic.example.test/mcp")]
+        [TestCase("file:///synthetic/path")]
+        public void TokenHelperNeverTargetsArbitraryRemoteEndpoints(string url)
+            => Assert.Throws<System.InvalidOperationException>(() => LocalHttpAuth.CommandForEndpoint(url));
 
         [Test]
         public void TryParseCodexServer_SingleLineArgs_ParsesSuccessfully()
@@ -514,14 +649,8 @@ namespace MCPForUnityTests.Editor.Helpers
 
             var unityMcp = unityMcpNode as TomlTable;
 
-            // Verify features.rmcp_client is enabled for HTTP transport
-            Assert.IsTrue(parsed.TryGetNode("features", out var featuresNode), "HTTP mode should include features table");
-            Assert.IsInstanceOf<TomlTable>(featuresNode, "features should be a table");
-            var features = featuresNode as TomlTable;
-            Assert.IsTrue(features.TryGetNode("rmcp_client", out var rmcpNode), "features should include rmcp_client flag");
-            Assert.IsInstanceOf<TomlBoolean>(rmcpNode, "rmcp_client should be a boolean");
-            Assert.IsTrue((rmcpNode as TomlBoolean).Value, "rmcp_client should be true");
-            
+            Assert.IsFalse(parsed.TryGetNode("features", out _), "HTTP must not force obsolete global feature flags");
+
             // Verify url field is present
             Assert.IsTrue(unityMcp.TryGetNode("url", out var urlNode), "unityMCP should contain url in HTTP mode");
             Assert.IsInstanceOf<TomlString>(urlNode, "url should be a string");
@@ -596,13 +725,7 @@ namespace MCPForUnityTests.Editor.Helpers
 
             var unityMcp = unityMcpNode as TomlTable;
 
-            // Verify features.rmcp_client is enabled for HTTP transport
-            Assert.IsTrue(parsed.TryGetNode("features", out var featuresNode), "HTTP mode should include features table");
-            Assert.IsInstanceOf<TomlTable>(featuresNode, "features should be a table");
-            var features = featuresNode as TomlTable;
-            Assert.IsTrue(features.TryGetNode("rmcp_client", out var rmcpNode), "features should include rmcp_client flag");
-            Assert.IsInstanceOf<TomlBoolean>(rmcpNode, "rmcp_client should be a boolean");
-            Assert.IsTrue((rmcpNode as TomlBoolean).Value, "rmcp_client should be true");
+            Assert.IsFalse(parsed.TryGetNode("features", out _), "HTTP must not force obsolete global feature flags");
 
             // Verify url field is present
             Assert.IsTrue(unityMcp.TryGetNode("url", out var urlNode), "unityMCP should contain url in HTTP mode");

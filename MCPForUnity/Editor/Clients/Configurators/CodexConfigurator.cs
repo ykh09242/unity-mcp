@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using MCPForUnity.Editor.Models;
 
@@ -24,11 +23,5 @@ namespace MCPForUnity.Editor.Clients.Configurators
             return Path.Combine(userHome, ".codex", "skills", "unity-mcp-skill");
         }
 
-        public override IList<string> GetInstallationSteps() => new List<string>
-        {
-            "Run 'codex config edit' in a terminal\nOR open the config file at the path above",
-            "Paste the configuration TOML",
-            "Save and restart Codex"
-        };
     }
 }

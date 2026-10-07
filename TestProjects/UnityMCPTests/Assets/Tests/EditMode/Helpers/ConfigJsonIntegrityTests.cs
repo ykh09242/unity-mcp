@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
+using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using Newtonsoft.Json.Linq;
@@ -9,6 +11,60 @@ namespace MCPForUnityTests.Editor.Helpers
 {
     public class ConfigJsonIntegrityTests
     {
+        [TestCase("{\"X-API-Key\":\"synthetic-current\"}", true)]
+        [TestCase("{\"x-api-key\":\"synthetic-current\"}", true)]
+        [TestCase("{\"X-API-Key\":\"synthetic-stale\"}", false)]
+        [TestCase("{\"X-API-Key\":123}", false)]
+        [TestCase("{\"X-API-Key\":\"synthetic-current\",\"x-api-key\":\"duplicate\"}", false)]
+        [TestCase("{}", false)]
+        [TestCase("[]", false)]
+        public void ManagedHttpHeadersAreComparedWithoutLeakingCredentials(string json, bool expected)
+        {
+            var headers = new Dictionary<string, string> { ["X-API-Key"] = "synthetic-current" };
+            Assert.AreEqual(expected, ConfigJsonBuilder.TryValidateAuthHeaders(JToken.Parse(json), headers, out string reason));
+            StringAssert.DoesNotContain("synthetic-current", reason ?? string.Empty);
+            StringAssert.DoesNotContain("synthetic-stale", reason ?? string.Empty);
+        }
+
+        [TestCase("headersHelper")]
+        [TestCase("http_headers_helper")]
+        public void CustomAuthenticationProviderIsNotOverwritten(string field)
+        {
+            var root = JObject.Parse("{\"mcpServers\":{\"unityMCP\":{\"" + field + "\":\"custom-provider\"}}}");
+            var original = root.DeepClone();
+            Assert.Throws<InvalidOperationException>(() => ConfigJsonBuilder.ApplyUnityServerToExistingConfig(root, null, new McpClient()));
+            Assert.IsTrue(JToken.DeepEquals(original, root));
+        }
+
+        [TestCase("{broken")]
+        [TestCase("null")]
+        [TestCase("[]")]
+        [TestCase("{\"mcp\":[]}")]
+        public void OpenCodePreservesInvalidExistingConfiguration(string json)
+        {
+            WithOwnedRoot(root =>
+            {
+                string path = Owned(root, "opencode.json");
+                File.WriteAllText(path, json);
+                var configurator = new OwnedOpenCode(path);
+                configurator.Configure();
+                Assert.AreEqual(McpStatus.Error, configurator.Status);
+                Assert.AreEqual(json, File.ReadAllText(path));
+            });
+        }
+
+        private sealed class OwnedOpenCode : OpenCodeConfigurator
+        {
+            private readonly string path;
+
+            public OwnedOpenCode(string path)
+            {
+                this.path = path;
+            }
+
+            public override string GetConfigPath() => path;
+        }
+
         [TestCase("mcpServers", "[]")]
         [TestCase("mcpServers", "null")]
         [TestCase("mcpServers", "false")]

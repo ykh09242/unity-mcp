@@ -30,10 +30,13 @@ namespace MCPForUnityTests.Editor.Helpers
         private string _originalTokenFile;
         private string _originalToken;
         private string _tokenPath;
+        private Func<bool> _originalCodexCapabilityProbe;
 
         [SetUp]
         public void SetUp()
         {
+            _originalCodexCapabilityProbe = CodexHttpAuth.SupportsHeadersHelper;
+            CodexHttpAuth.SupportsHeadersHelper = () => true;
             _hadHttpTransport = EditorPrefs.HasKey(UseHttpTransportPrefKey);
             _originalHttpTransport = EditorPrefs.GetBool(UseHttpTransportPrefKey, true);
             _hadScope = EditorPrefs.HasKey(EditorPrefKeys.HttpTransportScope);
@@ -54,6 +57,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [TearDown]
         public void TearDown()
         {
+            CodexHttpAuth.SupportsHeadersHelper = _originalCodexCapabilityProbe;
             Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", _originalTokenFile);
             Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN", _originalToken);
             File.Delete(_tokenPath);
@@ -201,15 +205,96 @@ namespace MCPForUnityTests.Editor.Helpers
 
         [TestCase(false)]
         [TestCase(true)]
-        public void CodexConfiguration_IncludesLocalAuthHeader(bool updateExisting)
+        public void CodexConfiguration_LooksUpLocalAuthWithoutEmbeddingToken(bool updateExisting)
         {
             string text = updateExisting
                 ? CodexConfigHelper.UpsertCodexServerBlock("", null)
                 : CodexConfigHelper.BuildCodexServerBlock(null);
             using var reader = new StringReader(text);
             var root = MCPForUnity.External.Tommy.TOML.Parse(reader);
-            Assert.AreEqual("first-test-launch",
-                root["mcp_servers"]["unityMCP"]["http_headers"]["X-Unity-MCP-Token"].AsString.Value);
+            Assert.IsNotEmpty(root["mcp_servers"]["unityMCP"]["http_headers_helper"].AsString.Value);
+            StringAssert.DoesNotContain("first-test-launch", text);
+        }
+
+        [TestCase("url")]
+        [TestCase("serverUrl")]
+        [TestCase("httpUrl")]
+        public void SwitchingToStdioRemovesEveryHttpUrlAlias(string urlProperty)
+        {
+            var client = new McpClient { name = "Synthetic", HttpUrlProperty = urlProperty };
+            var root = JObject.Parse(ConfigJsonBuilder.BuildManualConfigJson(null, client));
+            EditorConfigCache.Instance.SetUseHttpTransport(false);
+
+            var result = ConfigJsonBuilder.ApplyUnityServerToExistingConfig(root, null, client);
+            var entry = (JObject)result["mcpServers"]["unityMCP"];
+            Assert.IsNull(entry["url"]);
+            Assert.IsNull(entry["serverUrl"]);
+            Assert.IsNull(entry["httpUrl"]);
+            Assert.IsNull(entry["headers"]);
+            Assert.IsNotNull(entry["command"]);
+            Assert.IsNotNull(entry["args"]);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ClientSpecificJsonRewritePersistsRotatedToken(bool openClaw)
+        {
+            string path = _tokenPath + ".json";
+            bool hadLock = EditorPrefs.HasKey(EditorPrefKeys.LockCursorConfig);
+            bool originalLock = EditorPrefs.GetBool(EditorPrefKeys.LockCursorConfig, false);
+            try
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, false);
+                MCPForUnity.Editor.Clients.IMcpClientConfigurator configurator = openClaw
+                    ? new OwnedOpenClaw(path) : new OwnedOpenCode(path);
+                configurator.Configure();
+                Assert.AreEqual(McpStatus.Configured, configurator.Status);
+                File.WriteAllText(_tokenPath, "second-test-launch");
+                configurator.Configure();
+
+                string entryPath = openClaw
+                    ? "plugins.entries.openclaw-mcp-bridge.config.servers.unityMCP"
+                    : "mcp.unityMCP";
+                var entry = JObject.Parse(File.ReadAllText(path)).SelectToken(entryPath);
+                Assert.AreEqual("second-test-launch", (string)entry["headers"]["X-Unity-MCP-Token"]);
+                Assert.AreEqual(McpStatus.Configured, configurator.Status);
+            }
+            finally
+            {
+                File.Delete(path);
+                if (hadLock)
+                {
+                    EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, originalLock);
+                }
+                else
+                {
+                    EditorPrefs.DeleteKey(EditorPrefKeys.LockCursorConfig);
+                }
+            }
+        }
+
+        private sealed class OwnedOpenCode : OpenCodeConfigurator
+        {
+            private readonly string path;
+
+            public OwnedOpenCode(string path)
+            {
+                this.path = path;
+            }
+
+            public override string GetConfigPath() => path;
+        }
+
+        private sealed class OwnedOpenClaw : OpenClawConfigurator
+        {
+            private readonly string path;
+
+            public OwnedOpenClaw(string path)
+            {
+                this.path = path;
+            }
+
+            public override string GetConfigPath() => path;
         }
 
         [Test]

@@ -58,12 +58,16 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         private static void PopulateUnityNode(JObject unity, string uvPath, McpClient client, bool isVSCode)
         {
+            if (unity["headersHelper"] != null || unity["http_headers_helper"] != null)
+            {
+                throw new InvalidOperationException("Custom HTTP authentication must be migrated manually. The existing configuration was not changed.");
+            }
             // Get transport preference (default to HTTP)
             bool prefValue = EditorConfigurationCache.Instance.UseHttpTransport;
             bool clientSupportsHttp = client?.SupportsHttpTransport != false;
             bool useHttpTransport = clientSupportsHttp && prefValue;
             string httpProperty = string.IsNullOrEmpty(client?.HttpUrlProperty) ? "url" : client.HttpUrlProperty;
-            var urlPropsToRemove = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "url", "serverUrl" };
+            var urlPropsToRemove = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "url", "serverUrl", "httpUrl" };
             urlPropsToRemove.Remove(httpProperty);
 
             if (useHttpTransport)
@@ -117,9 +121,10 @@ namespace MCPForUnity.Editor.Helpers
                 unity["command"] = uvxPath;
                 unity["args"] = JArray.FromObject(toolArgs.ToArray());
 
-                // Remove url/serverUrl if they exist from previous config
+                // Remove all supported HTTP endpoint aliases when switching to stdio.
                 if (unity["url"] != null) unity.Remove("url");
                 if (unity["serverUrl"] != null) unity.Remove("serverUrl");
+                if (unity["httpUrl"] != null) unity.Remove("httpUrl");
                 unity.Remove("headers");
 
                 // Include type for all clients — standard MCP protocol field. A few clients use a
@@ -152,6 +157,45 @@ namespace MCPForUnity.Editor.Helpers
                     }
                 }
             }
+        }
+
+        internal static bool TryValidateAuthHeaders(JToken configuredHeaders,
+            IDictionary<string, string> expectedHeaders, out string reason)
+        {
+            reason = null;
+            if (expectedHeaders == null)
+            {
+                reason = "HTTP authentication could not be verified. Check the server settings and configure again.";
+                return false;
+            }
+            if (configuredHeaders != null && !(configuredHeaders is JObject))
+            {
+                reason = "HTTP headers must be an object.";
+                return false;
+            }
+
+            var headers = configuredHeaders as JObject;
+            foreach (string name in new[] { AuthConstants.LocalTokenHeader, AuthConstants.ApiKeyHeader })
+            {
+                var properties = headers?.Properties().Where(p =>
+                    string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)).ToArray();
+                int count = properties?.Length ?? 0;
+                if (expectedHeaders.TryGetValue(name, out string expected))
+                {
+                    if (string.IsNullOrEmpty(expected) || count != 1 || properties[0].Value.Type != JTokenType.String
+                        || !string.Equals((string)properties[0].Value, expected, StringComparison.Ordinal))
+                    {
+                        reason = "HTTP authentication is missing or stale. Start the server, configure again and reconnect the client.";
+                        return false;
+                    }
+                }
+                else if (count != 0)
+                {
+                    reason = "HTTP authentication belongs to a different transport scope. Configure again.";
+                    return false;
+                }
+            }
+            return true;
         }
 
         private static string GetContainerKey(McpClient client, bool isVSCode)

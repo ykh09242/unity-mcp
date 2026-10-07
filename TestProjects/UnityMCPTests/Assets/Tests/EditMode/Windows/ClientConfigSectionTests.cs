@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using MCPForUnity.Editor.Clients;
 using MCPForUnity.Editor.Models;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Windows.Components.ClientConfig;
 using NUnit.Framework;
 using UnityEngine.UIElements;
@@ -53,6 +54,25 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.IsTrue(Get<Button>(section, "copyJsonButton").enabledSelf);
         }
 
+        [TestCase(McpStatus.Configured)]
+        [TestCase(McpStatus.IncorrectPath)]
+        public void CodexConfigureButtonAlwaysWritesAndCanBeRepeated(McpStatus initialStatus)
+        {
+            var originalService = MCPServiceLocator.Client;
+            try
+            {
+                MCPServiceLocator.Register<IClientConfigurationService>(new MemoryClientService());
+                var client = new MemoryCodexClient(initialStatus);
+                var section = CreateSection(client);
+                var click = typeof(McpClientConfigSection).GetMethod("OnConfigureClicked", BindingFlags.Instance | BindingFlags.NonPublic);
+                click.Invoke(section, null);
+                click.Invoke(section, null);
+                Assert.AreEqual(2, client.ConfigureCount, "A configured Codex client must not take the no-op Unregister path");
+                Assert.AreEqual("Configure", Get<Button>(section, "configureButton").text);
+            }
+            finally { MCPServiceLocator.Register<IClientConfigurationService>(originalService); }
+        }
+
         private static McpClientConfigSection CreateSection(IMcpClientConfigurator client)
         {
             // Bypass window initialization so these tests never resolve real clients or preferences.
@@ -64,6 +84,10 @@ namespace MCPForUnityTests.Editor.Windows
             Set(section, "copyPathButton", new Button());
             Set(section, "openFileButton", new Button());
             Set(section, "copyJsonButton", new Button());
+            Set(section, "configureButton", new Button());
+            Set(section, "clientStatusIndicator", new VisualElement());
+            Set(section, "clientStatusLabel", new Label());
+            Set(section, "lastStatusChecks", new Dictionary<IMcpClientConfigurator, DateTime>());
             return section;
         }
 
@@ -72,6 +96,24 @@ namespace MCPForUnityTests.Editor.Windows
 
         private static void Set(McpClientConfigSection section, string field, object value)
             => typeof(McpClientConfigSection).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(section, value);
+
+        private sealed class MemoryCodexClient : CodexMcpConfigurator
+        {
+            public int ConfigureCount;
+            public MemoryCodexClient(McpStatus status) : base(new McpClient { name = "Memory Codex" }) => client.SetStatus(status);
+            public override string GetConfigPath() => "memory-config";
+            public override string GetManualSnippet() => "memory-toml";
+            public override McpStatus CheckStatus(bool attemptAutoRewrite = true) => Status;
+            public override void Configure() { ConfigureCount++; client.SetStatus(McpStatus.Configured); }
+        }
+
+        private sealed class MemoryClientService : IClientConfigurationService
+        {
+            public void ConfigureClient(IMcpClientConfigurator configurator) => configurator.Configure();
+            public bool CheckClientStatus(IMcpClientConfigurator configurator, bool attemptAutoRewrite = true) => false;
+            public IReadOnlyList<IMcpClientConfigurator> GetAllClients() => Array.Empty<IMcpClientConfigurator>();
+            public ClientConfigurationSummary ConfigureAllDetectedClients() => throw new InvalidOperationException("Bulk configuration is forbidden in this test.");
+        }
 
         private sealed class ManualClient : IMcpClientConfigurator
         {

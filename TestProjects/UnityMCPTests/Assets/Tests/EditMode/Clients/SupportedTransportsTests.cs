@@ -1,6 +1,7 @@
 using System.Linq;
 using MCPForUnity.Editor.Clients;
 using MCPForUnity.Editor.Clients.Configurators;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
 using NUnit.Framework;
@@ -43,8 +44,10 @@ namespace MCPForUnityTests.Editor.Clients
         {
             var cache = EditorConfigurationCache.Instance;
             bool original = cache.UseHttpTransport;
+            var originalProbe = CodexHttpAuth.SupportsHeadersHelper;
             try
             {
+                CodexHttpAuth.SupportsHeadersHelper = () => true;
                 cache.SetUseHttpTransport(true);
                 string snippet = new CodexConfigurator().GetManualSnippet();
 
@@ -53,6 +56,7 @@ namespace MCPForUnityTests.Editor.Clients
             }
             finally
             {
+                CodexHttpAuth.SupportsHeadersHelper = originalProbe;
                 cache.SetUseHttpTransport(original);
             }
         }

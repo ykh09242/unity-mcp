@@ -356,11 +356,8 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
             try
             {
-                // Per-client toggle: Configure→register, Unregister→remove. The Configure path
-                // on JsonFile / Codex configurators is always idempotent-write so the bulk
-                // "Configure All" can call it unconditionally; the toggle lives here in the UI
-                // handler so the manual button still does what its label says.
-                if (client.Status == McpStatus.Configured)
+                // Only JSON configurators offer removal here; CLI configurators are handled above.
+                if (client is JsonFileMcpConfigurator jsonClient && jsonClient.ShouldUnregister)
                 {
                     client.Unregister();
                 }
@@ -389,7 +386,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             statusRefreshInFlight.Add(client);
             try
             {
-                bool isCurrentlyConfigured = client.Status == McpStatus.Configured;
+                bool isCurrentlyConfigured = client is ClaudeCliMcpConfigurator claudeClient && claudeClient.ShouldUnregister;
                 ApplyStatusToUi(client, showChecking: true, customMessage: isCurrentlyConfigured ? "Unregistering..." : "Configuring...");
 
                 // Capture ALL main-thread-only values before async task
@@ -679,6 +676,8 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                     // HTTP status needs no stdio source; transport mismatch detection is independent.
                     string expectedPackageSource = useHttpTransport ? null : GetExpectedPackageSourceForCurrentPackage();
                     bool hasProjectDirOverride = ClaudeCliMcpConfigurator.HasClientProjectDirOverride;
+                    string expectedHttpUrl = useHttpTransport ? HttpEndpointUtility.GetMcpRpcUrl() : null;
+                    var expectedHttpHeaders = useHttpTransport && isRemoteScope ? HttpEndpointUtility.GetAuthHeaders() : null;
 
                     Task.Run(() =>
                     {
@@ -687,7 +686,10 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                         if (client is ClaudeCliMcpConfigurator claudeConfigurator)
                         {
                             // Use thread-safe version with captured main-thread values
-                            claudeConfigurator.CheckStatusWithProjectDir(projectDir, useHttpTransport, claudePath, platform, isRemoteScope, expectedPackageSource, attemptAutoRewrite: false, hasProjectDirOverride: hasProjectDirOverride);
+                            claudeConfigurator.CheckStatusWithProjectDir(projectDir, useHttpTransport, claudePath, platform,
+                                isRemoteScope, expectedPackageSource, attemptAutoRewrite: false,
+                                hasProjectDirOverride: hasProjectDirOverride, expectedHttpUrl: expectedHttpUrl,
+                                expectedHttpHeaders: expectedHttpHeaders);
                         }
                     }).ContinueWith(t =>
                     {
@@ -808,6 +810,8 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             }
 
             clientStatusLabel.style.color = StyleKeyword.Null;
+            clientStatusLabel.tooltip = client is McpClientConfiguratorBase configuredClient
+                ? configuredClient.Client.configStatus : string.Empty;
             configureButton.text = client.GetConfigureActionLabel();
 
             // Notify listeners about the client's configured transport

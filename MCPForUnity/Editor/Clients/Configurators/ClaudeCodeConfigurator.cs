@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using MCPForUnity.Editor.Models;
 
@@ -26,12 +25,5 @@ namespace MCPForUnity.Editor.Clients.Configurators
             return Path.Combine(userHome, ".claude", "skills", "unity-mcp-skill");
         }
 
-        public override IList<string> GetInstallationSteps() => new List<string>
-        {
-            "Ensure Claude CLI is installed (comes with Claude Code)",
-            "Click Configure to add UnityMCP via 'claude mcp add'",
-            "The server will be automatically available in Claude Code",
-            "Use Unregister to remove via 'claude mcp remove'"
-        };
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -194,7 +195,8 @@ namespace MCPForUnity.Editor.Helpers
             out string stdout,
             out string stderr,
             int timeoutMs = 15000,
-            string extraPathPrepend = null)
+            string extraPathPrepend = null,
+            IDictionary<string, string> environmentOverrides = null)
         {
             stdout = string.Empty;
             stderr = string.Empty;
@@ -241,6 +243,17 @@ namespace MCPForUnity.Editor.Helpers
                     RedirectStandardError = true,
                     CreateNoWindow = true,
                 };
+                if (environmentOverrides != null)
+                {
+                    foreach (var entry in environmentOverrides)
+                    {
+                        string key = isWindows
+                            ? psi.EnvironmentVariables.Keys.Cast<string>().FirstOrDefault(existing =>
+                                string.Equals(existing, entry.Key, StringComparison.OrdinalIgnoreCase)) ?? entry.Key
+                            : entry.Key;
+                        psi.EnvironmentVariables[key] = entry.Value;
+                    }
+                }
                 if (!string.IsNullOrEmpty(extraPathPrepend))
                 {
                     string currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
