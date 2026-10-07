@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -14,7 +15,7 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ComponentMutationIntegrityTests
     {
-        private Scene originalScene;
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private Scene ownedScene;
         private UnityEngine.Object[] originalSelection;
         private UnityEngine.Object originalActiveObject;
@@ -27,6 +28,12 @@ namespace MCPForUnityTests.Editor.Tools
         private bool ownsAssetRoot;
         private bool boxDefaultTrigger;
 
+        [OneTimeSetUp]
+        public void OneTimeSetUp() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void OneTimeTearDown() => sceneFixture.RestoreRunnerBootstrap();
+
         [SetUp]
         public void SetUp()
         {
@@ -37,20 +44,18 @@ namespace MCPForUnityTests.Editor.Tools
             target = null;
             if (PrefabStageUtility.GetCurrentPrefabStage() != null)
                 Assert.Ignore("This fixture does not change an existing Prefab Stage or its lookup context.");
-            originalScene = SceneManager.GetActiveScene();
             originalSelection = Selection.objects;
             originalActiveObject = Selection.activeObject;
             capturedState = true;
-            assetRoot = "Assets/__McpComponentMutationIntegrity_" + Guid.NewGuid().ToString("N");
+            string suffix = Guid.NewGuid().ToString("N");
+            ownedScene = sceneFixture.Create("McpComponentMutationIntegrity_", suffix);
+            assetRoot = "Assets/__McpComponentMutationIntegrity_" + suffix;
             Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot));
             Assert.IsFalse(Directory.Exists(Path.Combine(Application.dataPath, assetRoot.Substring("Assets/".Length))));
             assetRootGuid = AssetDatabase.CreateFolder("Assets", assetRoot.Substring("Assets/".Length));
             Assert.IsNotEmpty(assetRootGuid);
             Assert.AreEqual(assetRoot, AssetDatabase.GUIDToAssetPath(assetRootGuid));
             ownsAssetRoot = true;
-            ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            Assert.IsTrue(ownedScene.IsValid() && ownedScene.isLoaded);
-            Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
             target = new GameObject("ComponentIntegrity_" + Guid.NewGuid().ToString("N"));
             Assert.AreEqual(ownedScene, target.scene);
             target.AddComponent<BoxCollider>();
@@ -63,7 +68,7 @@ namespace MCPForUnityTests.Editor.Tools
             boxDefaultTrigger = first.isTrigger;
             Assert.AreEqual(boxDefaultTrigger, second.isTrigger);
             first.isTrigger = second.isTrigger = true;
-            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/Fixture.unity"));
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"));
             Assert.IsFalse(ownedScene.isDirty, "Only the saved owned scene establishes a clean dirty-state oracle.");
         }
 
@@ -81,10 +86,7 @@ namespace MCPForUnityTests.Editor.Tools
                     Undo.ClearUndo(target);
                     UnityEngine.Object.DestroyImmediate(target);
                 }
-                if (originalScene.IsValid() && originalScene.isLoaded)
-                    SceneManager.SetActiveScene(originalScene);
-                if (ownedScene.IsValid())
-                    Assert.IsTrue(EditorSceneManager.CloseScene(ownedScene, true));
+                sceneFixture.Close();
                 if (ownsAssetRoot)
                 {
                     Assert.IsTrue(assetRoot.StartsWith("Assets/__McpComponentMutationIntegrity_", StringComparison.Ordinal));
@@ -94,8 +96,6 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                if (originalScene.IsValid() && originalScene.isLoaded)
-                    SceneManager.SetActiveScene(originalScene);
                 Selection.objects = originalSelection;
                 Selection.activeObject = originalActiveObject;
             }
@@ -128,15 +128,21 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("set_property", "array")]
         [TestCase("set_property", "object")]
         [TestCase("set_property", "overflow")]
+        [TestCase("set_property", "blank")]
+        [TestCase("set_property", "fraction")]
         [TestCase("remove", "string")]
         [TestCase("remove", "boolean")]
         [TestCase("remove", "array")]
         [TestCase("remove", "object")]
         [TestCase("remove", "overflow")]
+        [TestCase("remove", "blank")]
+        [TestCase("remove", "fraction")]
         public void InvalidExplicitIndex_PreservesBothComponentsAndCleanScene(string action, string kind)
         {
             JToken index =
                 kind == "string" ? new JValue("bad")
+                : kind == "blank" ? new JValue("  ")
+                : kind == "fraction" ? new JValue(1.9)
                 : kind == "boolean" ? new JValue(true)
                 : kind == "array" ? new JArray(1)
                 : kind == "object" ? new JObject()
@@ -169,30 +175,24 @@ namespace MCPForUnityTests.Editor.Tools
 
         [TestCase("set_property", "omitted")]
         [TestCase("set_property", "null")]
-        [TestCase("set_property", "blank")]
         [TestCase("set_property", "zero")]
         [TestCase("set_property", "one")]
         [TestCase("set_property", "string")]
-        [TestCase("set_property", "fraction")]
         [TestCase("remove", "omitted")]
         [TestCase("remove", "null")]
-        [TestCase("remove", "blank")]
         [TestCase("remove", "zero")]
         [TestCase("remove", "one")]
         [TestCase("remove", "string")]
-        [TestCase("remove", "fraction")]
-        public void ExistingIndexConversions_SelectOnlyRequestedComponent(string action, string kind)
+        public void ValidIndexValues_SelectOnlyRequestedComponent(string action, string kind)
         {
             JObject request = Request(action);
             if (kind != "omitted")
                 request["componentIndex"] =
                     kind == "null" ? JValue.CreateNull()
-                    : kind == "blank" ? new JValue("  ")
                     : kind == "zero" ? new JValue(0)
                     : kind == "one" ? new JValue(1)
-                    : kind == "string" ? new JValue("1")
-                    : new JValue(1.9);
-            bool selectsSecond = kind == "one" || kind == "string" || kind == "fraction";
+                    : new JValue("1");
+            bool selectsSecond = kind == "one" || kind == "string";
             Success(Call(request));
             if (action == "remove")
                 CollectionAssert.AreEqual(new[] { selectsSecond ? first : second }, target.GetComponents<BoxCollider>());

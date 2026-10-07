@@ -58,6 +58,10 @@ namespace MCPForUnity.Editor.Tools
                     _ => new ErrorResponse($"Unknown action: '{action}'. Supported actions: add, remove, set_property"),
                 };
             }
+            catch (ArgumentException e)
+            {
+                return new ErrorResponse(e.Message);
+            }
             catch (Exception e)
             {
                 McpLog.Error($"[ManageComponents] Action '{action}' failed: {e}");

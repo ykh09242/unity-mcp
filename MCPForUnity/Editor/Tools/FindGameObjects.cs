@@ -30,40 +30,40 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("Parameters cannot be null.");
             }
 
-            var p = new ToolParams(@params);
-
-            // Parse search parameters
-            string searchMethod = p.Get("searchMethod", "by_name");
-
-            // Try searchTerm, search_term, or target (for backwards compatibility)
-            string searchTerm = p.Get("searchTerm");
-            if (string.IsNullOrEmpty(searchTerm))
-            {
-                searchTerm = p.Get("target");
-            }
-
-            if (string.IsNullOrEmpty(searchTerm))
-            {
-                return new ErrorResponse("'searchTerm' or 'target' parameter is required.");
-            }
-
-            // Pagination parameters using standard PaginationRequest
-            int requestedPageSize = CoercePaginationInt(@params["page_size"] ?? @params["pageSize"], 50);
-            int clampedPageSize = requestedPageSize <= 0 ? 50 : Mathf.Clamp(requestedPageSize, 1, 500);
-            var paginationParams = new JObject(@params);
-            paginationParams["page_size"] = clampedPageSize;
-            if (@params["cursor"] != null)
-                paginationParams["cursor"] = CoercePaginationInt(@params["cursor"], 0);
-            var pageNumberToken = @params["page_number"] ?? @params["pageNumber"];
-            if (pageNumberToken != null)
-                paginationParams["page_number"] = CoercePaginationInt(pageNumberToken, 1);
-            var pagination = PaginationRequest.FromParams(paginationParams, defaultPageSize: 50);
-
-            // Search options (supports multiple parameter name variants)
-            bool includeInactive = p.GetBool("includeInactive", false) || p.GetBool("searchInactive", false);
-
             try
             {
+                var p = new ToolParams(@params);
+
+                // Parse search parameters
+                string searchMethod = p.Get("searchMethod", "by_name");
+
+                // Try searchTerm, search_term, or target (for backwards compatibility)
+                string searchTerm = p.Get("searchTerm");
+                if (string.IsNullOrEmpty(searchTerm))
+                {
+                    searchTerm = p.Get("target");
+                }
+
+                if (string.IsNullOrEmpty(searchTerm))
+                {
+                    return new ErrorResponse("'searchTerm' or 'target' parameter is required.");
+                }
+
+                // Pagination parameters using standard PaginationRequest
+                int requestedPageSize = CoercePaginationInt(@params["page_size"] ?? @params["pageSize"], 50);
+                int clampedPageSize = requestedPageSize <= 0 ? 50 : Mathf.Clamp(requestedPageSize, 1, 500);
+                var paginationParams = new JObject(@params);
+                paginationParams["page_size"] = clampedPageSize;
+                if (@params["cursor"] != null)
+                    paginationParams["cursor"] = CoercePaginationInt(@params["cursor"], 0);
+                var pageNumberToken = @params["page_number"] ?? @params["pageNumber"];
+                if (pageNumberToken != null)
+                    paginationParams["page_number"] = CoercePaginationInt(pageNumberToken, 1);
+                var pagination = PaginationRequest.FromParams(paginationParams, defaultPageSize: 50);
+
+                // Search options (supports multiple parameter name variants)
+                bool includeInactive = p.GetBool("includeInactive", false) || p.GetBool("searchInactive", false);
+
                 // Get all matching instance IDs
                 var allIds = GameObjectLookup.SearchGameObjects(searchMethod, searchTerm, includeInactive, 0);
 
@@ -82,6 +82,10 @@ namespace MCPForUnity.Editor.Tools
                         hasMore = paginatedResult.HasMore,
                     }
                 );
+            }
+            catch (System.ArgumentException ex)
+            {
+                return new ErrorResponse(ex.Message);
             }
             catch (System.Exception ex)
             {

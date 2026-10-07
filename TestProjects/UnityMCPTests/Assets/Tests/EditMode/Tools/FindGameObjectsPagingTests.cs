@@ -4,6 +4,7 @@ using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -91,12 +92,10 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [TestCase("null", "null", 50, 0, 1)]
-        [TestCase("\"garbage\"", "\"garbage\"", 50, 0, 1)]
         [TestCase("-1", "-1", 50, 0, 1)]
         [TestCase("-1000000000000000000000000000000", "-1000000000000000000000000000000", 50, 0, 1)]
-        [TestCase("1.9", "0.9", 1, 0, 1)]
-        [TestCase("\"2.9\"", "\"1.9\"", 2, 1, 0)]
-        public void DefaultAndFractionalPagination_PreservesCoercion(string size, string cursor, int expectedSize, int expectedCursor, int expectedCount)
+        [TestCase("\"2\"", "\"1\"", 2, 1, 0)]
+        public void DefaultAndIntegerPagination_PreservesCoercion(string size, string cursor, int expectedSize, int expectedCursor, int expectedCount)
         {
             string name = "Paging_" + Guid.NewGuid().ToString("N");
             _objects.Add(new GameObject(name));
@@ -113,6 +112,54 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(expectedSize, response["data"]["pageSize"].Value<int>());
             Assert.AreEqual(expectedCursor, response["data"]["cursor"].Value<int>());
             Assert.AreEqual(expectedCount, ((JArray)response["data"]["instanceIDs"]).Count);
+        }
+
+        [Test]
+        public void MalformedPaginationReturnsValidationError(
+            [Values("page_size", "pageSize", "page_number", "pageNumber", "cursor")] string key,
+            [Values("\"garbage\"", "1.9", "\"2.9\"", "true", "[]", "{}")] string value
+        )
+        {
+            AssertValidationError(key, value);
+        }
+
+        [Test]
+        public void MalformedSearchFlagReturnsValidationError(
+            [Values("includeInactive", "include_inactive", "searchInactive", "search_inactive")] string key,
+            [Values("\"not-bool\"", "[]", "{}")] string value
+        )
+        {
+            AssertValidationError(key, value);
+        }
+
+        private static void AssertValidationError(string key, string value)
+        {
+            var parameters = new JObject { ["searchTerm"] = "Paging_" + Guid.NewGuid().ToString("N"), [key] = JToken.Parse(value) };
+            JToken original = parameters.DeepClone();
+
+            var response = JObject.FromObject(FindGameObjects.HandleCommand(parameters));
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains(key, response.Value<string>("error"));
+            Assert.IsTrue(JToken.DeepEquals(original, parameters));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
+        public void ValidSearchFlagsPreserveInactiveFiltering(
+            [Values("includeInactive", "include_inactive", "searchInactive", "search_inactive")] string key,
+            [Values(false, true)] bool includeInactive
+        )
+        {
+            string name = "Paging_" + Guid.NewGuid().ToString("N");
+            var inactive = new GameObject(name);
+            _objects.Add(inactive);
+            inactive.SetActive(false);
+
+            var response = JObject.FromObject(FindGameObjects.HandleCommand(new JObject { ["searchTerm"] = name, [key] = includeInactive }));
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(includeInactive ? 1 : 0, response["data"]["totalCount"].Value<int>());
         }
 
         [Test]
