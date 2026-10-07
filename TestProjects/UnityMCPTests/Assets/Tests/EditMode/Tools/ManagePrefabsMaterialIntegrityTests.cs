@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Prefabs;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
-using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
@@ -15,48 +15,73 @@ namespace MCPForUnityTests.Editor.Tools
     public class ManagePrefabsMaterialIntegrityTests
     {
         private string assetRoot;
-        private Scene originalScene;
+        private string folderGuid;
         private Scene ownedScene;
         private Object[] originalSelection;
         private Object originalActiveSelection;
         private readonly List<Object> runtimeObjects = new List<Object>();
+        private readonly PrefabTestSceneFixture testScene = new PrefabTestSceneFixture();
+        private bool capturedState;
+
+        [OneTimeSetUp]
+        public void PrepareRunnerBootstrap() => testScene.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void RestoreRunnerBootstrap() => testScene.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
         {
+            ownedScene = default;
+            assetRoot = null;
+            folderGuid = null;
+            originalSelection = null;
+            originalActiveSelection = null;
+            capturedState = false;
+            runtimeObjects.Clear();
             originalSelection = Selection.objects;
             originalActiveSelection = Selection.activeObject;
+            capturedState = true;
             string suffix = Guid.NewGuid().ToString("N");
+            ownedScene = testScene.Create("McpPrefabMaterialIntegrity_", suffix);
             assetRoot = "Assets/__McpPrefabMaterialIntegrity_" + suffix;
             Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot));
-            AssetDatabase.CreateFolder("Assets", "__McpPrefabMaterialIntegrity_" + suffix);
-            originalScene = SceneManager.GetActiveScene();
-            ownedScene = SceneManager.CreateScene("McpPrefabMaterialIntegrity_" + suffix);
-            SceneManager.SetActiveScene(ownedScene);
+            folderGuid = AssetDatabase.CreateFolder("Assets", "__McpPrefabMaterialIntegrity_" + suffix);
+            Assert.IsNotEmpty(folderGuid);
         }
 
         [TearDown]
         public void TearDown()
         {
-            foreach (Object item in runtimeObjects)
-                if (item != null && !EditorUtility.IsPersistent(item))
-                    Object.DestroyImmediate(item);
-            runtimeObjects.Clear();
-            if (originalScene.IsValid() && originalScene.isLoaded)
-                SceneManager.SetActiveScene(originalScene);
-            if (ownedScene.IsValid() && ownedScene.isLoaded)
+            if (!capturedState)
+                return;
+            try
             {
-                Assert.IsTrue(ownedScene.name.StartsWith("McpPrefabMaterialIntegrity_", StringComparison.Ordinal));
-                EditorSceneManager.CloseScene(ownedScene, true);
+                foreach (Object item in runtimeObjects)
+                    if (item != null && !EditorUtility.IsPersistent(item))
+                        Object.DestroyImmediate(item);
+                runtimeObjects.Clear();
+                if (!string.IsNullOrEmpty(folderGuid))
+                {
+                    Assert.IsTrue(assetRoot.StartsWith("Assets/__McpPrefabMaterialIntegrity_", StringComparison.Ordinal));
+                    Assert.AreEqual(32, assetRoot.Substring("Assets/__McpPrefabMaterialIntegrity_".Length).Length);
+                    Assert.AreEqual(folderGuid, AssetDatabase.AssetPathToGUID(assetRoot));
+                    Assert.IsTrue(AssetDatabase.DeleteAsset(assetRoot));
+                }
             }
-            if (!string.IsNullOrEmpty(assetRoot))
+            finally
             {
-                Assert.IsTrue(assetRoot.StartsWith("Assets/__McpPrefabMaterialIntegrity_", StringComparison.Ordinal));
-                Assert.AreEqual(32, assetRoot.Substring("Assets/__McpPrefabMaterialIntegrity_".Length).Length);
-                AssetDatabase.DeleteAsset(assetRoot);
+                try
+                {
+                    testScene.Close();
+                }
+                finally
+                {
+                    Selection.objects = originalSelection ?? Array.Empty<Object>();
+                    Selection.activeObject = originalActiveSelection;
+                    capturedState = false;
+                }
             }
-            Selection.objects = originalSelection ?? Array.Empty<Object>();
-            Selection.activeObject = originalActiveSelection;
         }
 
         [Test]
@@ -68,12 +93,13 @@ namespace MCPForUnityTests.Editor.Tools
 
             Create(root, "One");
 
-            Assert.AreNotSame(first.sharedMaterials[0], second.sharedMaterials[0]);
+            // Imports may recreate managed wrappers; compare the native Unity object identity.
+            Assert.AreNotEqual(first.sharedMaterials[0].GetInstanceID(), second.sharedMaterials[0].GetInstanceID());
             AssertColor(first.sharedMaterials[0], Color.red);
             AssertColor(second.sharedMaterials[0], Color.blue);
             Renderer[] saved = Saved("One").GetComponentsInChildren<Renderer>(true);
             Assert.AreEqual(2, saved.Length);
-            Assert.AreNotSame(saved[0].sharedMaterials[0], saved[1].sharedMaterials[0]);
+            Assert.AreNotEqual(saved[0].sharedMaterials[0].GetInstanceID(), saved[1].sharedMaterials[0].GetInstanceID());
             AssertColor(saved[0].sharedMaterials[0], Color.red);
             AssertColor(saved[1].sharedMaterials[0], Color.blue);
         }
@@ -90,8 +116,8 @@ namespace MCPForUnityTests.Editor.Tools
 
             Create(root, "One");
 
-            Assert.AreSame(existing, otherUser.sharedMaterials[0]);
-            Assert.AreNotSame(existing, source.sharedMaterials[0]);
+            Assert.AreEqual(existing.GetInstanceID(), otherUser.sharedMaterials[0].GetInstanceID());
+            Assert.AreNotEqual(existing.GetInstanceID(), source.sharedMaterials[0].GetInstanceID());
             AssertColor(existing, Color.green);
             AssertColor(source.sharedMaterials[0], Color.red);
             Assert.AreEqual(originalGuid, AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(existing)));
@@ -109,7 +135,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             Create(secondRoot, "Two");
 
-            Assert.AreNotSame(firstAsset, second.sharedMaterials[0]);
+            Assert.AreNotEqual(firstAsset.GetInstanceID(), second.sharedMaterials[0].GetInstanceID());
             AssertColor(firstAsset, Color.red);
             AssertColor(Saved("One").GetComponentInChildren<Renderer>().sharedMaterials[0], Color.red);
             AssertColor(Saved("Two").GetComponentInChildren<Renderer>().sharedMaterials[0], Color.blue);
@@ -146,10 +172,10 @@ namespace MCPForUnityTests.Editor.Tools
 
             Create(root, "One");
 
-            Assert.AreSame(existing, source.sharedMaterials[1]);
+            Assert.AreEqual(existing.GetInstanceID(), source.sharedMaterials[1].GetInstanceID());
             Assert.AreEqual(Color.blue, Read(source, 1).GetColor("_Color"));
             Assert.AreEqual(2.5f, Read(source, 1).GetFloat("_SyntheticFloat"));
-            Assert.AreSame(existing, Saved("One").GetComponentInChildren<Renderer>().sharedMaterials[1]);
+            Assert.AreEqual(existing.GetInstanceID(), Saved("One").GetComponentInChildren<Renderer>().sharedMaterials[1].GetInstanceID());
         }
 
         [TestCase(0f)]
@@ -187,7 +213,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             Assert.AreEqual(0, (int)response["data"]["materialsPersisted"]);
             Assert.IsNull(source.sharedMaterials[0]);
-            Assert.AreSame(texture, Read(source, 0).GetTexture("_SyntheticTexture"));
+            Assert.AreEqual(texture.GetInstanceID(), Read(source, 0).GetTexture("_SyntheticTexture").GetInstanceID());
         }
 
         [TestCase(false)]
@@ -286,7 +312,7 @@ namespace MCPForUnityTests.Editor.Tools
             JObject response = Create(root, "One");
 
             Assert.AreEqual(0, (int)response["data"]["materialsPersisted"]);
-            Assert.AreSame(existing, source.sharedMaterials[0]);
+            Assert.AreEqual(existing.GetInstanceID(), source.sharedMaterials[0].GetInstanceID());
             Assert.IsNull(source.sharedMaterials[1]);
             Assert.AreEqual(Color.blue, Read(source, 0).GetColor("_Color"));
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(existing)));
@@ -307,7 +333,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             Create(root, "One");
 
-            Assert.AreNotSame(source.sharedMaterials[0], source.sharedMaterials[1]);
+            Assert.AreNotEqual(source.sharedMaterials[0].GetInstanceID(), source.sharedMaterials[1].GetInstanceID());
             AssertColor(source.sharedMaterials[0], Color.blue);
             AssertColor(source.sharedMaterials[1], Color.green);
             AssertColor(original, Color.red);

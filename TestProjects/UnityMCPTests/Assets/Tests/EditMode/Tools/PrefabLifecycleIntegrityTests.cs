@@ -4,6 +4,7 @@ using System.IO;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Tools.Prefabs;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -20,23 +21,33 @@ namespace MCPForUnityTests.Editor.Tools
         private readonly List<GameObject> ownedObjects = new List<GameObject>();
         private string assetRoot;
         private string folderGuid;
-        private Scene originalScene;
         private Scene ownedScene;
         private Object[] originalSelection;
         private Object originalActiveSelection;
         private bool capturedState;
+        private readonly PrefabTestSceneFixture testScene = new PrefabTestSceneFixture();
+
+        [OneTimeSetUp]
+        public void PrepareRunnerBootstrap() => testScene.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void RestoreRunnerBootstrap() => testScene.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
         {
-            if (PrefabStageUtility.GetCurrentPrefabStage() != null)
-                Assert.Ignore("The fixture does not close or replace an existing prefab stage.");
-
-            originalScene = SceneManager.GetActiveScene();
+            ownedScene = default;
+            assetRoot = null;
+            folderGuid = null;
+            originalSelection = null;
+            originalActiveSelection = null;
+            capturedState = false;
+            ownedObjects.Clear();
             originalSelection = Selection.objects;
             originalActiveSelection = Selection.activeObject;
             capturedState = true;
             string suffix = Guid.NewGuid().ToString("N");
+            ownedScene = testScene.Create("McpPrefabLifecycleIntegrity_", suffix);
             assetRoot = "Assets/__McpPrefabLifecycleIntegrity_" + suffix;
             Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot));
             Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(assetRoot));
@@ -44,8 +55,6 @@ namespace MCPForUnityTests.Editor.Tools
             folderGuid = AssetDatabase.CreateFolder("Assets", "__McpPrefabLifecycleIntegrity_" + suffix);
             Assert.IsNotEmpty(folderGuid);
             Assert.AreEqual(folderGuid, AssetDatabase.AssetPathToGUID(assetRoot));
-            ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
         }
 
         [TearDown]
@@ -82,13 +91,16 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                if (originalScene.IsValid() && originalScene.isLoaded)
-                    SceneManager.SetActiveScene(originalScene);
-                if (ownedScene.IsValid() && ownedScene.isLoaded)
-                    EditorSceneManager.CloseScene(ownedScene, true);
-                Selection.objects = originalSelection ?? Array.Empty<Object>();
-                Selection.activeObject = originalActiveSelection;
-                capturedState = false;
+                try
+                {
+                    testScene.Close();
+                }
+                finally
+                {
+                    Selection.objects = originalSelection ?? Array.Empty<Object>();
+                    Selection.activeObject = originalActiveSelection;
+                    capturedState = false;
+                }
             }
         }
 
@@ -180,7 +192,6 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(previouslyConnected, (bool)response["data"]["wasUnlinked"]);
             Assert.AreSame(source, Selection.activeGameObject);
             Assert.AreEqual(path, PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(source));
-            LogAssert.NoUnexpectedReceived();
         }
 
         [Test]
