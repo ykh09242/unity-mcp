@@ -11,6 +11,8 @@ from urllib.parse import parse_qs
 from fastmcp.server.middleware import Middleware, MiddlewareContext, CallNext
 from fastmcp.tools.base import ToolResult
 from fastmcp.resources.base import ResourceResult
+from mcp_types import CallToolResult
+from pydantic import BaseModel, ConfigDict
 
 from models.response_limits import (
     MAX_RESPONSE_BYTES, ResponseOwner, response_owner, response_size, response_limit_error,
@@ -73,6 +75,11 @@ def _release_http_owner(key: tuple[str, str, type, str], *, closing: bool = Fals
 
 class ResponseLimitMiddleware(Middleware):
     """Measure both text and structured content before the final MCP serializer."""
+
+    class _WireCallToolResult(CallToolResult):
+        """Freeze admitted JSON extras using only the trusted SDK result schema."""
+
+        model_config = ConfigDict(extra="allow")
 
     async def on_message(self, context: MiddlewareContext, call_next: CallNext) -> Any:
         owner = ResponseOwner()
@@ -168,6 +175,12 @@ class ResponseLimitMiddleware(Middleware):
         if response_size(wire, max_bytes=MAX_RESPONSE_BYTES - 32_768) is None:
             error = response_limit_error()
             return ToolResult(content=error, structured_content=error, is_error=True)
+        if raw is not None:
+            # Eligibility and stored/alias/extra bounds precede this allocation.
+            # Extension serializers are never executed by either this dump or the
+            # SDK. Normalization removes subclasses from nested SDK content too.
+            projection = BaseModel.model_dump(raw, by_alias=True, mode="json", exclude_none=True)
+            result = ToolResult.from_mcp_result(self._WireCallToolResult.model_validate(projection))
         return result
 
     async def on_read_resource(self, context: MiddlewareContext, call_next: CallNext) -> ResourceResult:

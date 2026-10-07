@@ -4,13 +4,13 @@ from __future__ import annotations
 import json
 import math
 import sys
-from collections.abc import MutableMapping
+from collections.abc import Iterator, MutableMapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from pydantic import BaseModel, AnyUrl
-from pydantic_core import to_json
+from pydantic_core import SchemaSerializer, to_json
 
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 MAX_RESPONSE_DEPTH = 64
@@ -73,6 +73,66 @@ def response_limit_error(reason: str = "response_payload_limit") -> dict[str, An
     """Return a constant-sized error without retaining or echoing rejected data."""
     return {"success": False, "error": "Unity response exceeds supported limits",
             "data": {"reason": reason}}
+
+
+def _model_wire_is_safe(model: BaseModel) -> bool:
+    """Refuse extension hooks before a serializer can allocate an unbounded value."""
+    model_type = type(model)
+    decorators = model_type.__pydantic_decorators__
+    if (model_type.model_dump is not BaseModel.model_dump
+            or getattr(model_type.__get_pydantic_core_schema__, "__func__", None)
+            is not BaseModel.__get_pydantic_core_schema__.__func__
+            or type(model.__pydantic_serializer__) is not SchemaSerializer
+            or decorators.field_serializers or decorators.model_serializers
+            or decorators.computed_fields):
+        return False
+    pending = [model_type.__pydantic_core_schema__]
+    nodes = 0
+    while pending:
+        node = pending.pop()
+        nodes += 1
+        if nodes > MAX_RESPONSE_NODES:
+            return False
+        if type(node) is dict:
+            if len(node) + len(pending) + nodes > MAX_RESPONSE_NODES:
+                return False
+            serializer = node.get("serialization")
+            if serializer is not None:
+                # Native Pydantic URL fields are present in standard MCP resource
+                # models. Their serializer cannot expand an already bounded URL.
+                function = serializer.get("function") if type(serializer) is dict else None
+                owner = getattr(function, "__self__", None)
+                if (getattr(function, "__func__", None) is not AnyUrl.serialize_url.__func__
+                        or getattr(owner, "__module__", None) != "pydantic.networks"):
+                    return False
+            if node.get("computed_fields") or node.get("serialization_exclude_if"):
+                return False
+            pending.extend(child for key, child in node.items()
+                           if key not in {"metadata", "function", "serialization", "config"}
+                           and type(child) in (dict, list))
+        elif type(node) is list:
+            if len(node) + len(pending) + nodes > MAX_RESPONSE_NODES:
+                return False
+            pending.extend(node)
+    return True
+
+
+def _model_wire_items(model: BaseModel) -> Iterator[tuple[str, Any]]:
+    """Inspect emitted names and stored values without calling model properties."""
+    for name, model_field in type(model).model_fields.items():
+        value = model.__dict__.get(name)
+        if model_field.exclude or value is None:
+            continue
+        yield model_field.serialization_alias or model_field.alias or name, value
+    if model.__pydantic_extra__:
+        # exclude_none applies to declared fields, but SDK dumps retain null extras.
+        yield from model.__pydantic_extra__.items()
+
+
+def _native_url_is_safe(value: AnyUrl) -> bool:
+    """Accept native URL serialization without invoking a subclass string hook."""
+    return (type(value).__module__ == "pydantic.networks"
+            and type(value).__str__ is AnyUrl.__str__)
 
 
 def _large_ascii_json_size(value: object, *, max_bytes: int,
@@ -157,8 +217,42 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
     has_large_ascii = False
     exact_ascii_graph = True
 
+    storage_nodes = 0
+    storage_covered = False
+
+    def retain_storage(item: Any, depth: int) -> bool:
+        """Charge original model storage independently of the emitted node budget."""
+        nonlocal retained, storage_nodes
+        storage_nodes += 1
+        if depth > max_depth or storage_nodes > max_nodes:
+            return False
+        retained += 128 + 2 * sys.getsizeof(item)
+        if retained > max_retained:
+            return False
+        if isinstance(item, str):
+            retained += 4 * len(item)
+            return retained <= max_retained
+        if isinstance(item, dict):
+            return all(isinstance(key, str) and retain_storage(key, depth + 1)
+                       and retain_storage(child, depth + 1) for key, child in item.items())
+        if isinstance(item, (list, tuple)):
+            return all(retain_storage(child, depth + 1) for child in item)
+        if isinstance(item, BaseModel):
+            return (retain_storage(item.__dict__, depth)
+                    and (item.__pydantic_extra__ is None
+                         or retain_storage(item.__pydantic_extra__, depth))
+                    and (item.__pydantic_private__ is None
+                         or retain_storage(item.__pydantic_private__, depth)))
+        if isinstance(item, AnyUrl):
+            return _native_url_is_safe(item) and retain_storage(str(item), depth)
+        if isinstance(item, float):
+            return math.isfinite(item)
+        if isinstance(item, int):
+            return item.bit_length() <= 14_000
+        return item is None
+
     def visit(item: Any, depth: int) -> bool:
-        nonlocal retained, nodes, encoded_bound, has_large_ascii, exact_ascii_graph
+        nonlocal retained, nodes, encoded_bound, has_large_ascii, exact_ascii_graph, storage_covered
         nodes += 1
         if depth > max_depth or nodes > max_nodes:
             return False
@@ -214,9 +308,28 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
             return True
         exact_ascii_graph = False
         if isinstance(item, BaseModel):
-            return visit(item.__dict__, depth)
+            if not _model_wire_is_safe(item):
+                return False
+            # Excluded fields do not consume wire bytes, but their original
+            # objects still remain retained until normalization/delivery ends.
+            if not storage_covered:
+                if not retain_storage(item.__dict__, depth):
+                    return False
+                if (item.__pydantic_extra__ is not None
+                        and not retain_storage(item.__pydantic_extra__, depth)):
+                    return False
+                if (item.__pydantic_private__ is not None
+                        and not retain_storage(item.__pydantic_private__, depth)):
+                    return False
+            previous_coverage = storage_covered
+            storage_covered = True
+            try:
+                return all(visit(key, depth + 1) and visit(child, depth + 1)
+                           for key, child in _model_wire_items(item))
+            finally:
+                storage_covered = previous_coverage
         if isinstance(item, AnyUrl):
-            return visit(str(item), depth)
+            return _native_url_is_safe(item) and visit(str(item), depth)
         if isinstance(item, str):
             if len(item) > max_bytes:
                 return False
@@ -247,7 +360,9 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
                 retained += exact_bytes
                 return retained if retained <= max_retained else None
         encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False,
-                                   default=lambda model: model.__dict__ if isinstance(model, BaseModel) else str(model))
+                                   default=lambda model: BaseModel.model_dump(
+                                       model, by_alias=True, mode="json", exclude_none=True)
+                                   if isinstance(model, BaseModel) else str(model))
         # Leave room for strings/buffers and older C encoders' temporary chunks
         # and item tuples. A conservative bound selects a path, never a rejection.
         if (encoded_bound is not None
