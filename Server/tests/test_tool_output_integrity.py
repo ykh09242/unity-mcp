@@ -89,3 +89,23 @@ async def test_invalid_cleanup_request_stops_before_routing(transport, arguments
     assert response["success"] is False
     lookup.assert_not_awaited()
     send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_compiler_hint_survives_normalization(transport):
+    # Given a native diagnostic from the chosen compiler.
+    module, send, _ = transport("execute_code")
+    diagnostic = {
+        "errors": ["Line 2: Invalid syntax"],
+        "compiler": "codedom",
+        "hint": "Use supported syntax or Roslyn.",
+    }
+    send.return_value = {"success": False, "error": "Compilation failed", "data": diagnostic}
+    # When the public tool normalizes the response.
+    response = await module.execute_code(
+        SimpleNamespace(), action="execute", code="return Object.name;"
+    )
+    # Then the original line, backend and actionable hint remain available.
+    assert response["success"] is False
+    assert response["data"] == diagnostic
+    assert response["message"] == "Compilation failed"

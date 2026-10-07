@@ -21,6 +21,54 @@ namespace MCPForUnityTests.Editor.Tools
 
         // ──────────────────── Execute: success cases ────────────────────
 
+        [TestCase("auto")]
+        [TestCase("codedom")]
+        public void Execute_ObjectAliasResolvesUnityEngineObject(string compiler)
+        {
+            // Given both System and UnityEngine are imported by the wrapper.
+            // When the snippet uses their otherwise ambiguous Object name.
+            var result = ToJObject(
+                ExecuteCode.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "execute",
+                        ["code"] = "return typeof(Object).FullName;",
+                        ["compiler"] = compiler,
+                    }
+                )
+            );
+            // Then the common Unity object spelling compiles on either backend.
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual("UnityEngine.Object", result["data"]["result"].Value<string>());
+        }
+
+        [TestCase("auto")]
+        [TestCase("codedom")]
+        public void Execute_DiagnosticsKeepSnippetLineNumbersAfterAlias(string compiler)
+        {
+            // Given an error on the second user line.
+            // When the shared wrapper is compiled.
+            var result = ToJObject(
+                ExecuteCode.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "execute",
+                        ["code"] = "int valid = 1;\nreturn MissingAliasRegressionSymbol;",
+                        ["compiler"] = compiler,
+                    }
+                )
+            );
+            // Then wrapper imports do not shift the reported snippet line.
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("Line 2:", result["data"]["errors"].ToString());
+            StringAssert.Contains("method body", result["data"].Value<string>("hint"));
+            if (result["data"].Value<string>("compiler") == "codedom")
+            {
+                StringAssert.Contains("compiler='roslyn'", result["data"].Value<string>("hint"));
+                StringAssert.DoesNotContain("C# 6", result["data"].Value<string>("hint"));
+            }
+        }
+
         [Test]
         public void Execute_ReturnString_ReturnsSuccess()
         {
@@ -407,6 +455,23 @@ namespace MCPForUnityTests.Editor.Tools
 
         // ──────────────────── CodeDom backend ────────────────────
 
+        [TestCase("", "\uFEFF", 0, 0, true)]
+        [TestCase("", " \uFEFF\r\n", 0, 0, true)]
+        [TestCase("", "", 0, 0, false)]
+        [TestCase("", "Compiler failed", 0, 0, false)]
+        [TestCase("CS0001", "\uFEFF", 0, 0, false)]
+        [TestCase("", "\uFEFF", 1, 0, false)]
+        [TestCase("", "\uFEFF", 0, 1, false)]
+        public void FixtureCompiler_BomWorkaroundDoesNotHideRealDiagnostics(string number, string text, int line, int column, bool expected)
+        {
+            // Given either the observed Mono BOM artifact or a genuine diagnostic.
+            var diagnostic = new CompilerError("", line, column, number, text);
+            // When classifying the fixture compiler output.
+            bool ignored = IsStandaloneBomDiagnostic(diagnostic);
+            // Then only an unlocated BOM-only diagnostic is eligible for the workaround.
+            Assert.AreEqual(expected, ignored);
+        }
+
         // Regression for CoplayDev/unity-mcp#1144: large projects (~100+ asmdefs) blew past the
         // Windows 32 KB CreateProcess limit because every reference became an inline /r: flag.
         // The fix routes references through a @responsefile, so this just verifies that the
@@ -562,7 +627,10 @@ namespace MCPForUnityTests.Editor.Tools
                     OutputAssembly = outputPath,
                 };
                 var results = provider.CompileAssemblyFromSource(parameters, source);
-                AssertCompilerSuccess(results);
+                AssertCompilerSuccess(results, outputPath);
+                var identity = AssemblyName.GetAssemblyName(outputPath);
+                Assert.AreEqual(assemblyName, identity.Name);
+                Assert.AreEqual(new Version(version), identity.Version);
             }
 
             return outputPath;
@@ -570,24 +638,58 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static void LoadAssemblyReferencing(string referencedAssemblyPath)
         {
+            // Mono CodeDom can report the compiler's standalone BOM as an error and
+            // then refuse CompiledAssembly even after successfully writing a DLL.
+            // Keep the fixture on disk and verify the result before loading its bytes.
+            string outputPath = Path.Combine(Path.GetDirectoryName(referencedAssemblyPath), "ReferenceHolder-" + Guid.NewGuid().ToString("N") + ".dll");
             using (var provider = new CSharpCodeProvider())
             {
-                var parameters = new CompilerParameters { GenerateExecutable = false, GenerateInMemory = true };
+                var parameters = new CompilerParameters
+                {
+                    GenerateExecutable = false,
+                    GenerateInMemory = false,
+                    OutputAssembly = outputPath,
+                };
                 parameters.ReferencedAssemblies.Add(referencedAssemblyPath);
 
                 var results = provider.CompileAssemblyFromSource(
                     parameters,
                     "public static class ReferenceHolder { " + "public static System.Type Get() { return typeof(VersionMarker); } }"
                 );
-                AssertCompilerSuccess(results);
-                Assert.IsNotNull(results.CompiledAssembly);
+                AssertCompilerSuccess(results, outputPath);
+                var assembly = Assembly.Load(File.ReadAllBytes(outputPath));
+                var expected = AssemblyName.GetAssemblyName(referencedAssemblyPath);
+                Assert.IsTrue(
+                    assembly.GetReferencedAssemblies().Any(reference => reference.Name == expected.Name && reference.Version.Equals(expected.Version)),
+                    "The fixture must load a genuine reference to the requested assembly version."
+                );
             }
         }
 
-        private static void AssertCompilerSuccess(CompilerResults results)
+        private static void AssertCompilerSuccess(CompilerResults results, string outputPath)
         {
-            var errors = results.Errors.Cast<CompilerError>().Where(error => !error.IsWarning).Select(error => error.ToString()).ToArray();
-            Assert.IsFalse(results.Errors.HasErrors, string.Join("\n", errors));
+            var errors = results
+                .Errors.Cast<CompilerError>()
+                .Where(error => !error.IsWarning)
+                .Where(error => !IsStandaloneBomDiagnostic(error))
+                .Select(error => error.ToString())
+                .ToArray();
+            Assert.AreEqual(0, results.NativeCompilerReturnValue, "Fixture compiler failed: " + string.Join("\n", errors));
+            CollectionAssert.IsEmpty(errors);
+            Assert.IsTrue(File.Exists(outputPath), "Fixture compiler produced no DLL.");
+            Assert.DoesNotThrow(() => AssemblyName.GetAssemblyName(outputPath), "Fixture compiler output must be a readable managed assembly.");
+        }
+
+        private static bool IsStandaloneBomDiagnostic(CompilerError error)
+        {
+            // Do not hide ordinary empty errors: this workaround is only for the
+            // observed, unlocated BOM emitted by Unity's installed Mono compiler.
+            string text = error.ErrorText ?? "";
+            return string.IsNullOrEmpty(error.ErrorNumber)
+                && error.Line == 0
+                && error.Column == 0
+                && text.IndexOf('\uFEFF') >= 0
+                && text.Trim('\uFEFF', ' ', '\t', '\r', '\n').Length == 0;
         }
 
         private static JObject Execute(string code)

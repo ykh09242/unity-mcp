@@ -22,7 +22,7 @@ namespace MCPForUnity.Editor.Tools
         private const int MaxCodeLength = 50000;
         private const int MaxHistoryEntries = 50;
         private const int MaxHistoryCodePreview = 500;
-        internal const int WrapperLineOffset = 10;
+        internal const int WrapperLineOffset = 11;
         private const string WrapperClassName = "MCPDynamicCode";
         private const string WrapperMethodName = "Execute";
 
@@ -314,7 +314,17 @@ namespace MCPForUnity.Editor.Tools
             }
 
             if (compiled == null)
-                return new ErrorResponse("Compilation failed", new { errors, compiler = usedCompiler });
+                return new ErrorResponse(
+                    "Compilation failed",
+                    new
+                    {
+                        errors,
+                        compiler = usedCompiler,
+                        hint = usedCompiler == "codedom"
+                            ? "CodeDom uses the CSharpCodeProvider compiler available in this Unity installation; its language support may differ from Unity's script compiler. Rewrite unsupported syntax, or use compiler='roslyn' when Microsoft.CodeAnalysis is available. execute_code accepts a method body, not a complete script."
+                            : "execute_code accepts a method body, not a complete script. Roslyn language support depends on the installed Microsoft.CodeAnalysis version.",
+                    }
+                );
 
             // Keep recently used snippets when the cache fills. Loaded assemblies cannot
             // be unloaded individually on Mono; this bounds cache bookkeeping only.
@@ -595,6 +605,7 @@ namespace MCPForUnity.Editor.Tools
             sb.AppendLine("using System.Reflection;");
             sb.AppendLine("using UnityEngine;");
             sb.AppendLine("using UnityEditor;");
+            sb.AppendLine("using Object = UnityEngine.Object;");
             sb.AppendLine($"public static class {WrapperClassName}");
             sb.AppendLine("{");
             sb.AppendLine($"    public static object {WrapperMethodName}()");

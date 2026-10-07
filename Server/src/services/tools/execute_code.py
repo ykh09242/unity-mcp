@@ -23,12 +23,12 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 @mcp_for_unity_tool(
     description=(
         "Execute arbitrary C# code inside the Unity Editor. "
-        "The code runs as a method body with access to UnityEngine and UnityEditor namespaces. "
+        "The code runs as a method body with access to UnityEngine and UnityEditor namespaces; Object aliases UnityEngine.Object. "
         "Use 'return' to send data back. Compiled in-memory — no script files created. "
         "Actions: execute (run code), get_history (list past executions), "
         "replay (re-run a history entry with its saved safety and compiler settings), clear_history. "
         "NOTE: safety_checks blocks known dangerous patterns but is not a full sandbox. "
-        "Compiler options: 'auto' (Roslyn if available, else CodeDom), 'roslyn' (language support depends on the installed Microsoft.CodeAnalysis version), 'codedom' (C# 6 only)."
+        "Compiler options: 'auto' (Roslyn if available, else CodeDom), 'roslyn' (language support depends on the installed Microsoft.CodeAnalysis version), 'codedom' (language support depends on Unity's installed CSharpCodeProvider compiler)."
     ),
     group="scripting_ext",
     annotations=ToolAnnotations(
@@ -73,7 +73,7 @@ async def execute_code(
         "Compiler backend for 'execute' action. "
         "'auto' uses Roslyn if Microsoft.CodeAnalysis is installed, else falls back to CodeDom. "
         "'roslyn' forces Roslyn; supported language features depend on the installed Microsoft.CodeAnalysis version. "
-        "'codedom' forces legacy CSharpCodeProvider (C# 6). Default: auto.",
+        "'codedom' forces legacy CSharpCodeProvider; language support depends on the Unity installation. Default: auto.",
     ] = "auto",
 ) -> dict[str, Any]:
     params_dict: dict[str, Any] = {"action": action}
