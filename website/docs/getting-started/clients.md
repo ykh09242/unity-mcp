@@ -112,7 +112,7 @@ Unity package 1.2.1 uses the unchanged Python server 1.2.0 at the following immu
         "--python",
         ">=3.11",
         "--from",
-        "https://github.com/ykh09242/unity-mcp/archive/54e3f1464620e1300fe8b81aef45dc14e6678e33.zip#subdirectory=Server",
+        "https://github.com/ykh09242/unity-mcp/archive/e22e0b16b922b01e7efc0be66506d9e738d2cb4f.zip#subdirectory=Server",
         "mcp-for-unity",
         "--transport",
         "stdio"
