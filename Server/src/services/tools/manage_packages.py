@@ -1,4 +1,5 @@
 from typing import Annotated, Any, Optional
+from urllib.parse import urlsplit
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -22,6 +23,20 @@ ALL_ACTIONS = [
     "remove_registry",
     "list_registries",
 ]
+
+
+def _is_valid_registry_url(url: str) -> bool:
+    try:
+        parsed = urlsplit(url)
+        # Accessing port also rejects malformed and out-of-range explicit ports.
+        _ = parsed.port
+        return (
+            parsed.scheme in {"http", "https"}
+            and bool(parsed.hostname)
+            and not any(char.isspace() for char in parsed.hostname)
+        )
+    except ValueError:
+        return False
 
 
 async def _send_packages_command(
@@ -80,6 +95,12 @@ async def manage_packages(
         return {
             "success": False,
             "message": f"Unknown action '{action}'. Valid actions: {', '.join(ALL_ACTIONS)}",
+        }
+
+    if action_lower == "add_registry" and url is not None and not _is_valid_registry_url(url):
+        return {
+            "success": False,
+            "message": "'url' must be an absolute HTTP or HTTPS registry URL with a valid host and port.",
         }
 
     params_dict: dict[str, Any] = {"action": action_lower}

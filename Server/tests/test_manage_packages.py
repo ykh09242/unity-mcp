@@ -101,6 +101,68 @@ class TestActionLists:
 class TestManagePackagesToolValidation:
     """Test action validation in the manage_packages tool function."""
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "not a URL",
+            "registry.example.test",
+            "/registry",
+            "ftp://example.test",
+            "https://",
+            "http://localhost:invalid",
+            "http://localhost:65536",
+        ],
+    )
+    def test_invalid_registry_url_rejected_before_unity(self, url):
+        from services.tools.manage_packages import manage_packages
+
+        with patch(
+            "services.tools.manage_packages._send_packages_command", new_callable=AsyncMock
+        ) as send:
+            send.return_value = {"success": True}
+            result = asyncio.run(
+                manage_packages(
+                    MagicMock(),
+                    action="add_registry",
+                    name="Fixture",
+                    url=url,
+                    scopes=["com.fixture"],
+                )
+            )
+        assert result["success"] is False, result
+        send.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://registry.example.test",
+            "http://localhost:4873",
+            "http://registry/packages?channel=stable",
+            "http://127.0.0.1:4873",
+            "http://[::1]:4873",
+            "HTTPS://registry.example.test/npm/",
+        ],
+    )
+    def test_valid_registry_url_reaches_unity_unchanged(self, url):
+        from services.tools.manage_packages import manage_packages
+
+        with patch(
+            "services.tools.manage_packages._send_packages_command", new_callable=AsyncMock
+        ) as send:
+            send.return_value = {"success": True}
+            result = asyncio.run(
+                manage_packages(
+                    MagicMock(),
+                    action="ADD_REGISTRY",
+                    name="Fixture",
+                    url=url,
+                    scopes=["com.fixture"],
+                )
+            )
+        assert result["success"] is True
+        send.assert_awaited_once()
+        assert send.await_args.args[1]["url"] == url
+
     def test_unknown_action_returns_error(self):
         """An unrecognised action must return success=False with an error message."""
         from services.tools.manage_packages import manage_packages

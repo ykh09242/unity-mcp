@@ -457,8 +457,10 @@ namespace MCPForUnity.Editor.Tools
             var urlResult = p.GetRequired("url", "'url' parameter is required for add_registry.");
             if (!urlResult.IsSuccess)
                 return new ErrorResponse(urlResult.ErrorMessage);
+            if (!IsValidRegistryUrl(urlResult.Value))
+                return new ErrorResponse("'url' must be an absolute HTTP or HTTPS registry URL with a valid host and port.");
 
-            string[] scopes = p.GetStringArray("scopes");
+            string[] scopes = p.GetStringArray("scopes", strict: true);
             if (scopes == null || scopes.Length == 0)
                 return new ErrorResponse("'scopes' parameter is required (array of scope strings).");
 
@@ -660,6 +662,13 @@ namespace MCPForUnity.Editor.Tools
             if (registries != null && registries.Type != JTokenType.Null && registries is not JArray)
                 throw new FormatException("'scopedRegistries' must be an array; the manifest was not changed.");
             return manifest;
+        }
+
+        private static bool IsValidRegistryUrl(string url)
+        {
+            return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+                && !string.IsNullOrEmpty(uri.Host);
         }
 
         private static void RegisterCompletionCallback(string jobId, Request request)

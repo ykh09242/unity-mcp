@@ -99,6 +99,63 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(text, File.ReadAllText(path));
         }
 
+        [TestCase("not a URL", false)]
+        [TestCase("registry.example.test", false)]
+        [TestCase("/registry", false)]
+        [TestCase("ftp://example.test", false)]
+        [TestCase("https://", false)]
+        [TestCase("http://localhost:invalid", false)]
+        [TestCase("http://localhost:65536", false)]
+        [TestCase("https://registry.example.test", true)]
+        [TestCase("http://localhost:4873", true)]
+        [TestCase("http://registry/packages?channel=stable", true)]
+        [TestCase("http://127.0.0.1:4873", true)]
+        [TestCase("http://[::1]:4873", true)]
+        [TestCase("HTTPS://registry.example.test/npm/", true)]
+        public void RegistryUrlValidationAllowsHttpRegistriesAndRejectsMalformedUrls(string url, bool expected)
+        {
+            Assert.AreEqual(expected, Method("IsValidRegistryUrl").Invoke(null, new object[] { url }));
+        }
+
+        [TestCase("[42]")]
+        [TestCase("[\"com.fixture\",42]")]
+        [TestCase("[true]")]
+        [TestCase("[null]")]
+        [TestCase("42")]
+        [TestCase("false")]
+        [TestCase("{}")]
+        [TestCase("\"[42]\"")]
+        [TestCase("[\"[42]\"]")]
+        [TestCase("[[42]]")]
+        public void RegistryScopesStrictBoundaryRejectsNonStringTokens(string json)
+        {
+            var parameters = new ToolParams(new JObject { ["scopes"] = JToken.Parse(json) });
+            Assert.Throws<ArgumentException>(() => parameters.GetStringArray("scopes", strict: true));
+        }
+
+        [TestCase("\"com.fixture\"", "com.fixture")]
+        [TestCase("[\"com.fixture\"]", "com.fixture")]
+        [TestCase("\"[\\\"com.fixture\\\"]\"", "com.fixture")]
+        [TestCase("[\"[\\\"com.fixture\\\"]\"]", "com.fixture")]
+        [TestCase("[[\"com.fixture\"]]", "com.fixture")]
+        [TestCase("\"42\"", "42")]
+        public void RegistryScopesStrictBoundaryPreservesLegacyStrings(string json, string expected)
+        {
+            var parameters = new ToolParams(new JObject { ["scopes"] = JToken.Parse(json) });
+            CollectionAssert.AreEqual(new[] { expected }, parameters.GetStringArray("scopes", strict: true));
+        }
+
+        [TestCase("null")]
+        [TestCase("[]")]
+        [TestCase("\"\"")]
+        [TestCase("[\" \"]")]
+        public void RegistryScopesStrictBoundaryRetainsEmptyDefaults(string json)
+        {
+            var parameters = new ToolParams(new JObject { ["scopes"] = JToken.Parse(json) });
+            Assert.IsNull(parameters.GetStringArray("scopes", strict: true));
+            Assert.IsNull(new ToolParams(new JObject()).GetStringArray("scopes", strict: true));
+        }
+
         [TestCase("{\"keep\":1,\"keep\":2}")]
         [TestCase("{\"dependencies\":{\"com.fixture\":\"1\",\"com.fixture\":\"2\"}}")]
         public void DuplicatePropertiesAreNotSilentlyDiscarded(string text)
