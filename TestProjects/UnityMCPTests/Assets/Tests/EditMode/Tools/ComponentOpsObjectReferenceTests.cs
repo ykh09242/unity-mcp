@@ -1,6 +1,10 @@
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnity.Runtime.Serialization;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
@@ -14,10 +18,19 @@ namespace MCPForUnityTests.Editor.Tools
         public Behaviour behaviour;
         public GameObject target;
         public int count;
+        public Light[] lightReferences;
+        public ObjectReferenceData data;
 
         [SerializeField]
         private Light privateLight = null;
         public Light PrivateLight => privateLight;
+    }
+
+    [System.Serializable]
+    public class ObjectReferenceData
+    {
+        public Light first;
+        public List<Light> references;
     }
 
     public class ComponentOpsObjectReferenceTests
@@ -171,6 +184,171 @@ namespace MCPForUnityTests.Editor.Tools
             probe.lightReference = light;
             Assert.IsTrue(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.lightReference), JValue.CreateNull(), out string error), error);
             Assert.IsNull(probe.lightReference);
+        }
+
+        [Test]
+        public void SetProperty_MaterialArray_ResolvesReferencesAndExplicitNull()
+        {
+            var renderer = owner.AddComponent<MeshRenderer>();
+            var material = new Material(Shader.Find("Hidden/InternalErrorShader"));
+            try
+            {
+                Assert.IsTrue(
+                    ComponentOps.SetProperty(renderer, "sharedMaterials", new JArray(Reference(material, true), JValue.CreateNull()), out string error),
+                    error
+                );
+                CollectionAssert.AreEqual(new Material[] { material, null }, renderer.sharedMaterials);
+            }
+            finally
+            {
+                Object.DestroyImmediate(material);
+            }
+        }
+
+        [TestCase("incompatible")]
+        [TestCase("unresolved")]
+        [TestCase("boolean")]
+        [TestCase("integer")]
+        [TestCase("object")]
+        [TestCase("array")]
+        [TestCase("boolean-id")]
+        [TestCase("fractional-id")]
+        public void SetProperty_MaterialArray_InvalidLateReferencePreservesEntireArray(string invalidKind)
+        {
+            var renderer = owner.AddComponent<MeshRenderer>();
+            var first = new Material(Shader.Find("Hidden/InternalErrorShader"));
+            var second = new Material(Shader.Find("Hidden/InternalErrorShader"));
+            var destroyed = new GameObject("DestroyedNestedReference");
+            JToken unresolved = Reference(destroyed, true);
+            Object.DestroyImmediate(destroyed);
+            try
+            {
+                var original = new[] { first, second };
+                renderer.sharedMaterials = original;
+                JToken invalid = invalidKind switch
+                {
+                    "incompatible" => Reference(source.transform, true),
+                    "unresolved" => unresolved,
+                    "boolean" => new JValue(true),
+                    "integer" => Reference(second, false),
+                    "object" => new JObject { ["unexpected"] = true },
+                    "array" => new JArray(),
+                    "boolean-id" => new JObject { ["instanceID"] = true },
+                    "fractional-id" => new JObject { ["instanceID"] = 1.5 },
+                    _ => throw new System.ArgumentOutOfRangeException(nameof(invalidKind)),
+                };
+
+                bool success = ComponentOps.SetProperty(renderer, "sharedMaterials", new JArray(Reference(second, true), invalid), out string error);
+
+                CollectionAssert.AreEqual(original, renderer.sharedMaterials, "Invalid input must preserve every existing material reference.");
+                Assert.IsFalse(success);
+                Assert.IsNotEmpty(error);
+                LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                Object.DestroyImmediate(first);
+                Object.DestroyImmediate(second);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SetPropertyCommand_InvalidMaterialArrayPreservesReferences(bool bulkProperties)
+        {
+            var renderer = owner.AddComponent<MeshRenderer>();
+            var material = new Material(Shader.Find("Hidden/InternalErrorShader"));
+            try
+            {
+                renderer.sharedMaterials = new[] { material };
+                var value = new JArray(JValue.CreateNull(), Reference(source.transform, true));
+                var parameters = new JObject
+                {
+                    ["action"] = "set_property",
+                    ["target"] = owner.GetInstanceIDCompat(),
+                    ["componentType"] = "MeshRenderer",
+                };
+                if (bulkProperties)
+                    parameters["properties"] = new JObject { ["sharedMaterials"] = value };
+                else
+                {
+                    parameters["property"] = "sharedMaterials";
+                    parameters["value"] = value;
+                }
+                LogAssert.Expect(LogType.Warning, new Regex("\\[ManageComponents\\].*expected 'Material'"));
+
+                var response = JObject.FromObject(ManageComponents.HandleCommand(parameters));
+
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                CollectionAssert.AreEqual(new[] { material }, renderer.sharedMaterials);
+                StringAssert.Contains("expected 'Material'", response["data"]["errors"].ToString());
+                LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                Object.DestroyImmediate(material);
+            }
+        }
+
+        [Test]
+        public void SetProperty_NullReferenceArray_ClearsExistingArray()
+        {
+            probe.lightReferences = new[] { light };
+            Assert.IsTrue(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.lightReferences), JValue.CreateNull(), out string error), error);
+            Assert.IsNull(probe.lightReferences);
+        }
+
+        [Test]
+        public void SetProperty_NestedReferenceData_ResolvesListAndExplicitNull()
+        {
+            var value = new JObject { ["first"] = Reference(light, true), ["references"] = new JArray(Reference(source, true), JValue.CreateNull()) };
+
+            Assert.IsTrue(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.data), value, out string error), error);
+            Assert.AreSame(light, probe.data.first);
+            CollectionAssert.AreEqual(new Light[] { light, null }, probe.data.references);
+        }
+
+        [TestCase("incompatible")]
+        [TestCase("unresolved")]
+        [TestCase("boolean")]
+        public void SetProperty_NestedReferenceData_InvalidLateReferencePreservesExistingData(string invalidKind)
+        {
+            var original = new ObjectReferenceData
+            {
+                first = light,
+                references = new List<Light> { light, light },
+            };
+            probe.data = original;
+            var destroyed = new GameObject("DestroyedNestedDataReference");
+            JToken unresolved = Reference(destroyed, true);
+            Object.DestroyImmediate(destroyed);
+            JToken invalid = invalidKind switch
+            {
+                "incompatible" => Reference(source.transform, true),
+                "unresolved" => unresolved,
+                "boolean" => new JValue(true),
+                _ => throw new System.ArgumentOutOfRangeException(nameof(invalidKind)),
+            };
+            var value = new JObject { ["first"] = JValue.CreateNull(), ["references"] = new JArray(Reference(light, true), invalid) };
+
+            bool success = ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.data), value, out string error);
+
+            Assert.AreSame(original, probe.data, "Invalid nested input must preserve the existing DTO.");
+            Assert.AreSame(light, probe.data.first);
+            CollectionAssert.AreEqual(new[] { light, light }, probe.data.references);
+            Assert.IsFalse(success);
+            Assert.IsNotEmpty(error);
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
+        public void DefaultObjectConverter_UnsupportedReferenceRetainsTolerantReadBehavior()
+        {
+            var serializer = new JsonSerializer();
+            serializer.Converters.Add(new UnityEngineObjectConverter());
+            LogAssert.Expect(LogType.Warning, new Regex("Unexpected token type 'Boolean' when deserializing Light"));
+
+            Assert.IsNull(new JValue(true).ToObject<Light>(serializer));
         }
 
         [Test]

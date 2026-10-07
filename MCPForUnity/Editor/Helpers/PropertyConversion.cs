@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Serialization;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
@@ -38,6 +39,12 @@ namespace MCPForUnity.Editor.Helpers
                 // Use the shared Unity serializer with custom converters
                 JToken input = token is JArray && HasNullableUnityArrayTarget(targetType, null) ? NormalizeNullableUnityArrays(token, targetType) : token;
                 return input.ToObject(targetType, UnityJsonSerializer.Instance);
+            }
+            catch (InvalidUnityObjectReferenceException)
+            {
+                // Expected input rejection is returned by the tool as an error.
+                // Do not report it as an unexpected Unity execution failure.
+                throw;
             }
             catch (Exception ex)
             {

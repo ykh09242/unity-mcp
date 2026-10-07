@@ -342,8 +342,21 @@ namespace MCPForUnity.Runtime.Serialization
         }
     }
 
+    internal sealed class InvalidUnityObjectReferenceException : JsonSerializationException
+    {
+        public InvalidUnityObjectReferenceException(string message, Exception inner = null)
+            : base(message, inner) { }
+    }
+
     internal class UnityEngineObjectConverter : JsonConverter<UnityEngine.Object>
     {
+        private readonly bool rejectInvalidReferences;
+
+        public UnityEngineObjectConverter(bool rejectInvalidReferences = false)
+        {
+            this.rejectInvalidReferences = rejectInvalidReferences;
+        }
+
         public override bool CanRead => true; // We need to implement ReadJson
         public override bool CanWrite => true;
 
@@ -428,8 +441,7 @@ namespace MCPForUnity.Runtime.Serialization
                         if (asset != null)
                             return asset;
                     }
-                    UnityEngine.Debug.LogWarning($"[UnityEngineObjectConverter] Could not load asset with GUID '{strValue}' as type '{objectType.Name}'.");
-                    return null;
+                    return RejectReference($"[UnityEngineObjectConverter] Could not load asset with GUID '{strValue}' as type '{objectType.Name}'.");
                 }
 
                 // Assume it's an asset path
@@ -439,7 +451,7 @@ namespace MCPForUnity.Runtime.Serialization
                 );
                 if (loadedAsset == null)
                 {
-                    UnityEngine.Debug.LogWarning($"[UnityEngineObjectConverter] Could not load asset at path '{strValue}' as type '{objectType.Name}'.");
+                    return RejectReference($"[UnityEngineObjectConverter] Could not load asset at path '{strValue}' as type '{objectType.Name}'.");
                 }
                 return loadedAsset;
             }
@@ -450,9 +462,9 @@ namespace MCPForUnity.Runtime.Serialization
                 // Reject malformed IDs before trying a different reference form.
                 // A guid/path must not hide an invalid Boolean or fractional ID.
                 if (jo.TryGetValue("instanceID", out JToken scalarId) && scalarId.Type != JTokenType.Null)
-                    JsonScalarConversion.Read(scalarId, typeof(int));
+                    ReadReferenceId(scalarId, typeof(int));
                 if (jo.TryGetValue("entityID", out JToken scalarEntityId) && scalarEntityId.Type != JTokenType.Null)
-                    JsonScalarConversion.Read(scalarEntityId, typeof(ulong));
+                    ReadReferenceId(scalarEntityId, typeof(ulong));
 
                 // Try to resolve by GUID first (for assets like ScriptableObjects, Materials, etc.)
                 if (jo.TryGetValue("guid", out JToken guidToken) && guidToken.Type == JTokenType.String)
@@ -468,8 +480,7 @@ namespace MCPForUnity.Runtime.Serialization
                         if (asset != null)
                             return asset;
                     }
-                    UnityEngine.Debug.LogWarning($"[UnityEngineObjectConverter] Could not load asset with GUID '{guidToken}' as type '{objectType.Name}'.");
-                    return null;
+                    return RejectReference($"[UnityEngineObjectConverter] Could not load asset with GUID '{guidToken}' as type '{objectType.Name}'.");
                 }
 
 #if UNITY_6000_5_OR_NEWER
@@ -516,7 +527,7 @@ namespace MCPForUnity.Runtime.Serialization
                 // Try to resolve by instanceID
                 if (jo.TryGetValue("instanceID", out JToken idToken) && idToken.Type != JTokenType.Null)
                 {
-                    int instanceId = (int)JsonScalarConversion.Read(idToken, typeof(int));
+                    int instanceId = (int)ReadReferenceId(idToken, typeof(int));
                     UnityEngine.Object obj = UnityObjectIdCompat.InstanceIDToObjectCompat(instanceId);
                     if (obj != null)
                     {
@@ -543,24 +554,21 @@ namespace MCPForUnity.Runtime.Serialization
                             {
                                 return component;
                             }
-                            UnityEngine.Debug.LogWarning(
+                            return RejectReference(
                                 $"[UnityEngineObjectConverter] GameObject '{gameObj.name}' (ID: {instanceId}) does not have a '{objectType.Name}' component."
                             );
-                            return null;
                         }
 
                         // Type mismatch with no automatic conversion available
-                        UnityEngine.Debug.LogWarning(
+                        return RejectReference(
                             $"[UnityEngineObjectConverter] Instance ID {instanceId} resolved to '{obj.GetType().Name}' but expected '{objectType.Name}'."
                         );
-                        return null;
                     }
                     // Instance ID lookup failed - this can happen if the object was destroyed or ID is stale
                     string objectName = jo.TryGetValue("name", out JToken nameToken) ? nameToken.ToString() : "unknown";
-                    UnityEngine.Debug.LogWarning(
+                    return RejectReference(
                         $"[UnityEngineObjectConverter] Could not resolve instance ID {instanceId} (name: '{objectName}') to a valid {objectType.Name}. The object may have been destroyed or the ID is stale."
                     );
-                    return null;
                 }
 
                 // Check if there's an asset path in the object
@@ -575,22 +583,19 @@ namespace MCPForUnity.Runtime.Serialization
                     {
                         return asset;
                     }
-                    UnityEngine.Debug.LogWarning($"[UnityEngineObjectConverter] Could not load asset at path '{path}' as type '{objectType.Name}'.");
-                    return null;
+                    return RejectReference($"[UnityEngineObjectConverter] Could not load asset at path '{path}' as type '{objectType.Name}'.");
                 }
 
                 // Object format not recognized
-                UnityEngine.Debug.LogWarning(
+                return RejectReference(
                     $"[UnityEngineObjectConverter] JSON object missing 'instanceID', 'entityID', 'guid', or 'path' field for {objectType.Name} deserialization. Object: {jo.ToString(Formatting.None)}"
                 );
-                return null;
             }
 
             // Unexpected token type
-            UnityEngine.Debug.LogWarning(
+            return RejectReference(
                 $"[UnityEngineObjectConverter] Unexpected token type '{reader.TokenType}' when deserializing {objectType.Name}. Expected Null, String, or Object."
             );
-            return null;
 #else
             // Runtime deserialization is tricky without AssetDatabase/EditorUtility
             UnityEngine.Debug.LogWarning("UnityEngineObjectConverter cannot deserialize complex objects in non-Editor mode.");
@@ -599,6 +604,26 @@ namespace MCPForUnity.Runtime.Serialization
             // Return existing value since we can't deserialize without Editor APIs
             return existingValue;
 #endif
+        }
+
+        private UnityEngine.Object RejectReference(string message)
+        {
+            if (rejectInvalidReferences)
+                throw new InvalidUnityObjectReferenceException(message);
+            UnityEngine.Debug.LogWarning(message);
+            return null;
+        }
+
+        private object ReadReferenceId(JToken token, Type type)
+        {
+            try
+            {
+                return JsonScalarConversion.Read(token, type);
+            }
+            catch (JsonSerializationException ex) when (rejectInvalidReferences)
+            {
+                throw new InvalidUnityObjectReferenceException(ex.Message, ex);
+            }
         }
 
         /// <summary>
