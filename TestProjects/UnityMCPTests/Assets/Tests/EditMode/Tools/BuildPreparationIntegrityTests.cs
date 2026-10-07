@@ -36,6 +36,82 @@ namespace MCPForUnityTests.EditMode.Tools
         [Test]
         public void UnknownActionHasNoMutation() => Reject(new JObject { ["action"] = "not-an-action" }, "Unknown action");
 
+        [Test]
+        public void InvalidOutputPathRejectsBeforeProfilePreparation()
+        {
+            Reject(
+                new JObject
+                {
+                    ["action"] = "build",
+                    ["output_path"] = "Builds/invalid\0.exe",
+                    ["profile"] = "Assets/__McpMissingBuildProfile_" + Guid.NewGuid().ToString("N") + ".asset",
+                    ["scripting_backend"] = "mono",
+                },
+                "output_path"
+            );
+        }
+
+        [TestCase("Assets/__McpMissingScene.unity")]
+        [TestCase("Assets/not-a-scene.txt")]
+        [TestCase("")]
+        public void CreateBuildOptions_RejectsInvalidSceneWithoutScheduling(string scene)
+        {
+            string before = Snapshot();
+            Assert.Throws<ArgumentException>(() =>
+                BuildRunner.CreateBuildOptions(BuildTarget.StandaloneWindows64, "Builds/Test.exe", new[] { scene }, BuildOptions.None, 0)
+            );
+            Assert.AreEqual(before, Snapshot());
+        }
+
+        [Test]
+        public void CreateBuildOptions_RejectsInvalidOutputPathWithoutScheduling()
+        {
+            string before = Snapshot();
+            Assert.Throws<ArgumentException>(() =>
+                BuildRunner.CreateBuildOptions(BuildTarget.StandaloneWindows64, "Builds/invalid\0.exe", Array.Empty<string>(), BuildOptions.None, 0)
+            );
+            Assert.AreEqual(before, Snapshot());
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CreateBuildOptions_PreservesValidOutputAndEmptyScenesWithoutScheduling(bool absolute)
+        {
+            string path = absolute ? Path.Combine(Path.GetTempPath(), "McpBuildValidation", "Test.exe") : "Builds/Test.exe";
+            string before = Snapshot();
+            var options = BuildRunner.CreateBuildOptions(BuildTarget.StandaloneWindows64, path, Array.Empty<string>(), BuildOptions.None, 0);
+            Assert.AreEqual(path, options.locationPathName);
+            Assert.IsEmpty(options.scenes);
+            Assert.AreEqual(before, Snapshot());
+        }
+
+#if UNITY_6000_0_OR_NEWER
+        [TestCase("{scenes:3}")]
+        [TestCase("{scenes:{path:'Assets/Test.unity'}}")]
+        [TestCase("{scenes:['']}")]
+        [TestCase("{scenes:[null]}")]
+        [TestCase("{scenes:['[\"\"]']}")]
+        [TestCase("{scenes:[['']]}")]
+        public void MalformedSceneArgumentRejectsBeforeProfileOrSettings(string json)
+        {
+            JObject request = JObject.Parse(json);
+            request["action"] = "build";
+            request["profile"] = "Assets/__McpMissingBuildProfile_" + Guid.NewGuid().ToString("N") + ".asset";
+            request["scripting_backend"] = "mono";
+            Reject(request, "scenes");
+        }
+
+        [TestCase("{scenes:[]}")]
+        [TestCase("{scenes:null}")]
+        public void EmptyOrNullSceneArgumentPreservesProfileLookup(string json)
+        {
+            JObject request = JObject.Parse(json);
+            request["action"] = "build";
+            request["profile"] = "Assets/__McpMissingBuildProfile_" + Guid.NewGuid().ToString("N") + ".asset";
+            Reject(request, "Build profile not found");
+        }
+#endif
+
         [TestCase("build")]
         [TestCase("platform")]
         public void UnknownTargetRejectsEvenWithProfile(string action)

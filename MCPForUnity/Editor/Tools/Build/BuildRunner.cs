@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using UnityEditor;
@@ -44,12 +45,15 @@ namespace MCPForUnity.Editor.Tools.Build
 
         public static BuildPlayerOptions CreateBuildOptions(BuildTarget target, string outputPath, string[] scenes, BuildOptions buildOptions, int subtarget)
         {
+            ValidateOutputPath(outputPath);
+            scenes ??= GetDefaultScenes();
+            ValidateScenePaths(scenes);
             var options = new BuildPlayerOptions
             {
                 target = target,
                 targetGroup = BuildTargetMapping.GetTargetGroup(target),
                 locationPathName = outputPath,
-                scenes = scenes ?? GetDefaultScenes(),
+                scenes = scenes,
                 options = buildOptions,
             };
 
@@ -70,6 +74,36 @@ namespace MCPForUnity.Editor.Tools.Build
             }
 
             return options;
+        }
+
+        internal static void ValidateOutputPath(string outputPath, string parameterName = "output_path")
+        {
+            if (string.IsNullOrWhiteSpace(outputPath))
+                throw new ArgumentException($"'{parameterName}' must be a valid build output path.");
+            try
+            {
+                // Build output supports both project-relative and absolute destinations.
+                // Resolve syntax only; Unity creates missing output directories during the build.
+                Path.GetFullPath(outputPath);
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is NotSupportedException || ex is PathTooLongException)
+            {
+                throw new ArgumentException($"'{parameterName}' must be a valid build output path.", ex);
+            }
+        }
+
+        internal static void ValidateScenePaths(string[] scenes)
+        {
+            if (scenes == null)
+                return;
+            foreach (string scene in scenes)
+            {
+                if (string.IsNullOrWhiteSpace(scene))
+                    throw new ArgumentException("'scenes' must contain existing scene asset paths.");
+                ValidateOutputPath(scene, "scenes");
+                if (AssetDatabase.LoadAssetAtPath<SceneAsset>(scene.Replace('\\', '/')) == null)
+                    throw new ArgumentException($"'scenes' contains a missing or invalid scene asset: {scene}");
+            }
         }
 
         public static BuildOptions ParseBuildOptions(string[] optionNames, bool development)

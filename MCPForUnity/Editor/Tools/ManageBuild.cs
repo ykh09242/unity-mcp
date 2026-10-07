@@ -99,11 +99,15 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Platform '{target}' is not installed. Install it via Unity Hub.");
 
             string outputPath = p.Get("output_path") ?? (useProfile ? null : BuildTargetMapping.GetDefaultOutputPath(target, PlayerSettings.productName));
+            ValidateSceneArgument(p.GetRaw("scenes"));
             string[] scenes = p.GetStringArray("scenes");
             bool development = p.GetBool("development");
             string[] optionNames = p.GetStringArray("options");
             string subtargetStr = p.Get("subtarget");
             string scriptingBackend = p.Get("scripting_backend");
+            if (outputPath != null)
+                BuildRunner.ValidateOutputPath(outputPath);
+            BuildRunner.ValidateScenePaths(scenes);
 
             // Validate first; apply this persistent setting only after build preparation succeeds.
             ScriptingImplementation? scriptingImplementation = null;
@@ -138,6 +142,42 @@ namespace MCPForUnity.Editor.Tools
             return BuildRunner.ScheduleBuild(job, options);
         }
 
+        private static void ValidateSceneArgument(JToken token)
+        {
+            if (token == null || token.Type == JTokenType.Null)
+                return;
+            if (token.Type == JTokenType.String)
+            {
+                string value = token.ToString().Trim();
+                if (string.IsNullOrEmpty(value))
+                    throw new ArgumentException("'scenes' must contain non-empty scene asset paths.");
+                if (value.StartsWith("[", StringComparison.Ordinal) && value.EndsWith("]", StringComparison.Ordinal))
+                {
+                    try
+                    {
+                        ValidateSceneArgument(JArray.Parse(value));
+                    }
+                    catch (Newtonsoft.Json.JsonException ex)
+                    {
+                        throw new ArgumentException("'scenes' must contain scene asset paths.", ex);
+                    }
+                }
+                return;
+            }
+            if (token is not JArray array)
+                throw new ArgumentException("'scenes' must be an array of scene asset paths.");
+
+            // Preserve the stringified/single nested array forms accepted by ToolParams.
+            if (array.Count == 1 && (array[0].Type == JTokenType.String || array[0].Type == JTokenType.Array))
+            {
+                ValidateSceneArgument(array[0]);
+                return;
+            }
+            foreach (JToken scene in array)
+                if (scene.Type != JTokenType.String || string.IsNullOrWhiteSpace(scene.ToString()))
+                    throw new ArgumentException("'scenes' must contain non-empty scene asset paths.");
+        }
+
 #if UNITY_6000_0_OR_NEWER
         private static object HandleProfileBuild(
             string profilePath,
@@ -158,6 +198,7 @@ namespace MCPForUnity.Editor.Tools
             if (!BuildPipeline.IsBuildTargetSupported(targetGroup, target))
                 return new ErrorResponse($"Platform '{target}' is not installed. Install it via Unity Hub.");
             outputPath ??= BuildTargetMapping.GetDefaultOutputPath(target, PlayerSettings.productName);
+            BuildRunner.ValidateOutputPath(outputPath);
 
             var buildOptions = BuildRunner.ParseBuildOptions(optionNames, development);
             var options = new BuildPlayerWithProfileOptions
@@ -493,6 +534,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("'targets' or 'profiles' is required for batch builds.");
             if (targets != null && targets.Length > 0 && profiles != null && profiles.Length > 0)
                 return new ErrorResponse("Provide 'targets' or 'profiles', not both.");
+            BuildRunner.ValidateOutputPath(outputDir, "output_dir");
 
             // Validate all targets/profiles upfront before creating store entries
             if (targets != null && targets.Length > 0)
@@ -507,6 +549,7 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse($"Platform '{bt}' is not installed. Install it via Unity Hub.");
                     string defaultPath = BuildTargetMapping.GetDefaultOutputPath(bt, PlayerSettings.productName);
                     string path = defaultPath.StartsWith("Builds/") ? $"{outputDir}/{defaultPath.Substring(7)}" : $"{outputDir}/{defaultPath}";
+                    BuildRunner.CreateBuildOptions(bt, path, null, BuildOptions.None, (int)StandaloneBuildSubtarget.Player);
                     resolvedTargets.Add((bt, path));
                 }
 
@@ -567,6 +610,8 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse(targetError);
                     if (!BuildPipeline.IsBuildTargetSupported(BuildPipeline.GetBuildTargetGroup(target), target))
                         return new ErrorResponse($"Platform '{target}' is not installed. Install it via Unity Hub.");
+                    string name = System.IO.Path.GetFileNameWithoutExtension(profilePath);
+                    BuildRunner.ValidateOutputPath($"{outputDir}/{name}/{PlayerSettings.productName}");
                     loadedProfiles.Add(profile);
                     profileTargets.Add(target);
                 }
