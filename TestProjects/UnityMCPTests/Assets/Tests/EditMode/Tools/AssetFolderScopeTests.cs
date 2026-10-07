@@ -93,9 +93,11 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 folders.EnsureFolder(path);
                 string original = AssetDatabase.AssetPathToGUID(path);
-                Assert.IsTrue(AssetDatabase.DeleteAsset(path));
-                replacement = AssetDatabase.CreateFolder(root, "Replaced");
+                string replacementPath = root + "/Replacement";
+                replacement = AssetDatabase.CreateFolder(root, "Replacement");
                 Assert.AreNotEqual(original, replacement);
+                Assert.IsTrue(AssetDatabase.DeleteAsset(path));
+                Assert.IsEmpty(AssetDatabase.MoveAsset(replacementPath, path));
             }
             Assert.AreEqual(replacement, AssetDatabase.AssetPathToGUID(path));
         }
