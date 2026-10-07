@@ -277,28 +277,54 @@ namespace MCPForUnity.Editor.Helpers
             bool fadeEndAlpha = false
         )
         {
+            PrepareColorProperties(@params, changes, setStartColor, setEndColor, setGradient, parseColor, parseGradient, fadeEndAlpha)();
+        }
+
+        /// <summary>
+        /// Parses all color properties before returning their setters, preserving override order.
+        /// </summary>
+        public static Action PrepareColorProperties(
+            JObject @params,
+            List<string> changes,
+            Action<Color> setStartColor,
+            Action<Color> setEndColor,
+            Action<Gradient> setGradient,
+            Func<JToken, Color> parseColor,
+            Func<JToken, Gradient> parseGradient,
+            bool fadeEndAlpha = false
+        )
+        {
+            var updates = new List<Action>();
             if (@params["color"] != null)
             {
                 Color c = parseColor(@params["color"]);
-                setStartColor(c);
-                setEndColor(fadeEndAlpha ? new Color(c.r, c.g, c.b, 0f) : c);
+                updates.Add(() => setStartColor(c));
+                updates.Add(() => setEndColor(fadeEndAlpha ? new Color(c.r, c.g, c.b, 0f) : c));
                 changes.Add("color");
             }
             if (@params["startColor"] != null)
             {
-                setStartColor(parseColor(@params["startColor"]));
+                Color c = parseColor(@params["startColor"]);
+                updates.Add(() => setStartColor(c));
                 changes.Add("startColor");
             }
             if (@params["endColor"] != null)
             {
-                setEndColor(parseColor(@params["endColor"]));
+                Color c = parseColor(@params["endColor"]);
+                updates.Add(() => setEndColor(c));
                 changes.Add("endColor");
             }
             if (@params["gradient"] != null)
             {
-                setGradient(parseGradient(@params["gradient"]));
+                Gradient gradient = parseGradient(@params["gradient"]);
+                updates.Add(() => setGradient(gradient));
                 changes.Add("gradient");
             }
+            return () =>
+            {
+                foreach (var update in updates)
+                    update();
+            };
         }
 
         /// <summary>

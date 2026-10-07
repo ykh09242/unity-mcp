@@ -24,9 +24,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (tr == null)
                 return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
 
-            RendererHelpers.EnsureMaterial(tr);
-
             Vector3 pos = ManageVfxCommon.ParseVector3(@params["position"]);
+            RendererHelpers.EnsureMaterial(tr);
             tr.AddPosition(pos);
             return new { success = true, message = $"Emitted at ({pos.x}, {pos.y}, {pos.z})" };
         }

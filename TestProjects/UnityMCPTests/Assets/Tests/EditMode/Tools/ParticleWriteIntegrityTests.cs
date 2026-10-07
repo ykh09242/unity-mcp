@@ -3,16 +3,20 @@ using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Vfx;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.Editor.Tools
 {
     public class ParticleWriteIntegrityTests
     {
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
+        private Scene ownedScene;
         private GameObject root;
         private ParticleSystem particles;
         private ParticleSystem child;
@@ -23,6 +27,12 @@ namespace MCPForUnityTests.Editor.Tools
         private UnityEngine.Object[] previousSelection;
         private UnityEngine.Object previousActiveObject;
 
+        [OneTimeSetUp]
+        public void OneTimeSetUp() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void OneTimeTearDown() => sceneFixture.RestoreRunnerBootstrap();
+
         [SetUp]
         public void SetUp()
         {
@@ -31,6 +41,7 @@ namespace MCPForUnityTests.Editor.Tools
             previousSelection = Selection.objects;
             previousActiveObject = Selection.activeObject;
             string suffix = Guid.NewGuid().ToString("N");
+            ownedScene = sceneFixture.Create("McpParticleWriteIntegrity_", suffix);
             assetRoot = "Assets/__McpParticleWriteIntegrity_" + suffix;
             Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot));
             root = new GameObject("__McpParticleWriteIntegrity_" + suffix);
@@ -83,16 +94,141 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
+                sceneFixture.Close();
                 Selection.objects = previousSelection;
                 Selection.activeObject = previousActiveObject;
             }
+        }
+
+        [TestCase("{position:[9,8,7],rotation:[0,'bad',0]}")]
+        [TestCase("{position:[9,8,7],rotation:[0,20,0],scale:[1,'bad',1]}")]
+        [TestCase("{position:[9,8,7],playOnAwake:'bad'}")]
+        [TestCase("{position:[9,8,7],playOnAwake:true,looping:'bad'}")]
+        public void InvalidCreatePreservesExistingObjectComponentsAndTransforms(string json)
+        {
+            sceneFixture.ClearDirtiness();
+            Vector3 position = root.transform.position;
+            Quaternion rotation = root.transform.rotation;
+            Vector3 scale = root.transform.localScale;
+            string before = Snapshot();
+            int dirty = EditorUtility.GetDirtyCount(root);
+            int particleDirty = EditorUtility.GetDirtyCount(particles);
+            int rendererDirty = EditorUtility.GetDirtyCount(renderer);
+            JObject response = Call("particle_create", JObject.Parse(json));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreSame(particles, root.GetComponent<ParticleSystem>());
+            Assert.AreSame(renderer, root.GetComponent<ParticleSystemRenderer>());
+            Assert.AreEqual(position, root.transform.position);
+            Assert.AreEqual(rotation, root.transform.rotation);
+            Assert.AreEqual(scale, root.transform.localScale);
+            Assert.AreEqual(before, Snapshot());
+            Assert.IsNull(renderer.sharedMaterial);
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(root));
+            Assert.AreEqual(particleDirty, EditorUtility.GetDirtyCount(particles));
+            Assert.AreEqual(rendererDirty, EditorUtility.GetDirtyCount(renderer));
+            Assert.IsFalse(ownedScene.isDirty);
+        }
+
+        [TestCase("{position:[9,8,7],looping:'bad'}")]
+        [TestCase("{position:[9,8,7],rotation:[0,'bad',0]}")]
+        public void InvalidCreateDoesNotAllocateNewObjectOrParticleComponent(string json)
+        {
+            sceneFixture.ClearDirtiness();
+            string name = "McpRejectedParticle_" + Guid.NewGuid().ToString("N");
+            int count = ownedScene.rootCount;
+            JObject response = JObject.FromObject(
+                ManageVFX.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "particle_create",
+                        ["target"] = name,
+                        ["properties"] = JObject.Parse(json),
+                    }
+                )
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(count, ownedScene.rootCount);
+            Assert.IsNull(GameObject.Find(name));
+            Assert.IsFalse(ownedScene.isDirty);
+            var empty = new GameObject(name);
+            sceneFixture.ClearDirtiness();
+            int dirty = EditorUtility.GetDirtyCount(empty);
+            response = JObject.FromObject(
+                ManageVFX.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "particle_create",
+                        ["target"] = empty.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["properties"] = JObject.Parse(json),
+                    }
+                )
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.IsNull(empty.GetComponent<ParticleSystem>());
+            Assert.IsNull(empty.GetComponent<ParticleSystemRenderer>());
+            Assert.AreEqual(Vector3.zero, empty.transform.position);
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(empty));
+            Assert.IsFalse(ownedScene.isDirty);
+        }
+
+        [TestCase("particle_play", "{withChildren:'bad'}")]
+        [TestCase("particle_restart", "{withChildren:'bad'}")]
+        [TestCase("particle_add_burst", "{time:'bad'}")]
+        [TestCase("particle_add_burst", "{time:1,count:'bad'}")]
+        [TestCase("particle_add_burst", "{time:1,minCount:2,maxCount:'bad'}")]
+        [TestCase("particle_add_burst", "{time:1,count:2,cycles:'bad'}")]
+        [TestCase("particle_add_burst", "{time:1,count:2,interval:'bad'}")]
+        [TestCase("particle_add_burst", "{time:1,count:2,probability:'bad'}")]
+        public void InvalidControlDoesNotAssignMaterialOrChangeParticles(string action, string json)
+        {
+            sceneFixture.ClearDirtiness();
+            string before = Snapshot();
+            int bursts = particles.emission.burstCount;
+            int dirty = EditorUtility.GetDirtyCount(particles);
+            int rendererDirty = EditorUtility.GetDirtyCount(renderer);
+            JObject response = Call(action, JObject.Parse(json));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(before, Snapshot());
+            Assert.AreEqual(bursts, particles.emission.burstCount);
+            Assert.IsNull(renderer.sharedMaterial);
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(particles));
+            Assert.AreEqual(rendererDirty, EditorUtility.GetDirtyCount(renderer));
+            Assert.IsFalse(ownedScene.isDirty);
+        }
+
+        [Test]
+        public void ValidCreateAndControlPreserveOverridesAndBurstConversions()
+        {
+            AssignUsableMaterial();
+            JObject response = Call("particle_create", JObject.Parse("{position:[0,'-2',3],rotation:[0,20,0],scale:[1,2,1],playOnAwake:false,looping:false}"));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(response.Value<bool>("createdGameObject"));
+            Assert.IsFalse(response.Value<bool>("addedParticleSystem"));
+            Assert.AreEqual(new Vector3(0, -2, 3), root.transform.position);
+            Assert.AreEqual(new Vector3(1, 2, 1), root.transform.localScale);
+            Assert.IsFalse(particles.main.playOnAwake);
+            Assert.IsFalse(particles.main.loop);
+            Assert.IsTrue(Call("particle_play", JObject.Parse("{withChildren:false}")).Value<bool>("success"));
+            Assert.IsTrue(particles.isPlaying);
+            Assert.IsFalse(child.isPlaying);
+            Assert.IsTrue(Call("particle_restart", JObject.Parse("{withChildren:false}")).Value<bool>("success"));
+            response = Call("particle_add_burst", JObject.Parse("{time:'1',minCount:-2,maxCount:40000,cycles:'2',interval:'0.5',probability:'0.75'}"));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var burst = particles.emission.GetBurst(response.Value<int>("burstIndex"));
+            Assert.AreEqual(1f, burst.time);
+            Assert.AreEqual(0, burst.minCount);
+            Assert.AreEqual(short.MaxValue, burst.maxCount);
+            Assert.AreEqual(2, burst.cycleCount);
+            Assert.AreEqual(0.5f, burst.repeatInterval);
+            Assert.AreEqual(0.75f, burst.probability);
+            Assert.AreSame(material, renderer.sharedMaterial);
         }
 
         [TestCase("particle_set_main", "{duration:'bad'}")]
         [TestCase("particle_set_main", "{duration:3,looping:'bad'}")]
         [TestCase("particle_set_main", "{duration:3,startSpeed:2,maxParticles:'bad'}")]
         [TestCase("particle_set_main", "{duration:3,startDelay:{value:'bad'}}")]
-        [TestCase("particle_set_main", "{duration:null}")]
         [TestCase("particle_set_emission", "{enabled:false,rateOverTime:{value:'bad'}}")]
         [TestCase("particle_set_emission", "{rateOverTime:3,rateOverDistance:{mode:'two_constants',min:1,max:'bad'}}")]
         [TestCase("particle_set_shape", "{enabled:false,radius:3,angle:'bad'}")]
@@ -170,6 +306,22 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(child.isPlaying);
         }
 
+        [Test]
+        public void NullDurationRetainsNativeZeroClamp()
+        {
+            AssignUsableMaterial();
+            var main = particles.main;
+            float duration = main.duration;
+            main.duration = 0;
+            float nativeZeroDuration = main.duration;
+            main.duration = duration;
+            JObject response = Call("particle_set_main", JObject.Parse("{duration:null}"));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(nativeZeroDuration, particles.main.duration);
+            Assert.IsFalse(particles.isPlaying);
+            Assert.AreSame(material, renderer.sharedMaterial);
+        }
+
         [TestCase("{size:3,separateAxes:false}", true, 3f)]
         [TestCase("{enabled:false,size:3}", false, 3f)]
         [TestCase("{size:null}", true, 1f)]
@@ -204,7 +356,10 @@ namespace MCPForUnityTests.Editor.Tools
             ownsAssetFolder = true;
             string path = assetRoot + "/Explicit.mat";
             AssetDatabase.CreateAsset(material, path);
-            Assert.AreSame(material, AssetDatabase.LoadAssetAtPath<Material>(path));
+            Material importedMaterial = AssetDatabase.LoadAssetAtPath<Material>(path);
+            Assert.IsTrue(material == importedMaterial, "Import may return another managed wrapper for the same native material.");
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(importedMaterial));
+            material = importedMaterial;
             renderer.sharedMaterial = null;
             JObject response = Call(
                 "particle_set_renderer",
@@ -216,7 +371,8 @@ namespace MCPForUnityTests.Editor.Tools
                 }
             );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
-            Assert.AreSame(material, renderer.sharedMaterial);
+            Assert.IsTrue(material == renderer.sharedMaterial);
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(renderer.sharedMaterial));
             Assert.IsFalse(response.Value<bool>("materialReplaced"));
             Assert.AreEqual(string.Empty, response.Value<string>("replacementReason"));
         }
@@ -404,10 +560,17 @@ namespace MCPForUnityTests.Editor.Tools
             new
             {
                 gradient.mode,
-                minColor = ColorSnapshot(gradient.colorMin),
-                maxColor = ColorSnapshot(gradient.colorMax),
-                minGradient = GradientKeys(gradient.gradientMin),
-                maxGradient = GradientKeys(gradient.gradientMax),
+                // Inactive native color slots are unspecified and can contain changing garbage.
+                minColor = gradient.mode == ParticleSystemGradientMode.TwoColors ? ColorSnapshot(gradient.colorMin) : null,
+                maxColor = gradient.mode == ParticleSystemGradientMode.Color || gradient.mode == ParticleSystemGradientMode.TwoColors
+                    ? ColorSnapshot(gradient.colorMax)
+                    : null,
+                minGradient = gradient.mode == ParticleSystemGradientMode.TwoGradients ? GradientKeys(gradient.gradientMin) : null,
+                maxGradient = gradient.mode == ParticleSystemGradientMode.Gradient
+                || gradient.mode == ParticleSystemGradientMode.TwoGradients
+                || gradient.mode == ParticleSystemGradientMode.RandomColor
+                    ? GradientKeys(gradient.gradientMax)
+                    : null,
             };
 
         private static object GradientKeys(Gradient gradient) =>

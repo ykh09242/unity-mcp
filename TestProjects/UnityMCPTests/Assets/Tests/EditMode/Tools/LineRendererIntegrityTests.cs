@@ -2,15 +2,18 @@ using System;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Vfx;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.Editor.Tools
 {
     public class LineRendererIntegrityTests
     {
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private GameObject root;
         private LineRenderer line;
         private Material material;
@@ -18,11 +21,19 @@ namespace MCPForUnityTests.Editor.Tools
         private UnityEngine.Object previousActiveObject;
         private readonly Vector3[] originalPositions = { new Vector3(1, 2, 3), new Vector3(4, 5, 6) };
 
+        [OneTimeSetUp]
+        public void OneTimeSetUp() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void OneTimeTearDown() => sceneFixture.RestoreRunnerBootstrap();
+
         [SetUp]
         public void SetUp()
         {
+            material = null;
             previousSelection = Selection.objects;
             previousActiveObject = Selection.activeObject;
+            sceneFixture.Create("McpLineIntegrity_", Guid.NewGuid().ToString("N"));
             root = new GameObject("__McpLineIntegrity_" + Guid.NewGuid().ToString("N"));
             line = root.AddComponent<LineRenderer>();
             line.sharedMaterial = null;
@@ -40,8 +51,53 @@ namespace MCPForUnityTests.Editor.Tools
                 UnityEngine.Object.DestroyImmediate(root);
             if (material != null)
                 UnityEngine.Object.DestroyImmediate(material);
+            sceneFixture.Close();
             Selection.objects = previousSelection;
             Selection.activeObject = previousActiveObject;
+        }
+
+        [TestCase("{color:[1,'bad',0,1]}", false)]
+        [TestCase("{startColor:[1,0,0,1],endColor:[0,'bad',0,1]}", false)]
+        [TestCase("{startColor:[1,0,0,1],endColor:[0,'bad',0,1]}", true)]
+        [TestCase("{color:[1,0,0,1],gradient:{colorKeys:[{color:[0,'bad',0,1],time:0}]}}", false)]
+        public void InvalidColorPreservesColorsMaterialAndDirtyCount(string json, bool existingMaterial)
+        {
+            if (existingMaterial)
+                AssignUsableMaterial();
+            sceneFixture.ClearDirtiness();
+            Color start = line.startColor;
+            Color end = line.endColor;
+            GradientColorKey[] colors = line.colorGradient.colorKeys;
+            GradientAlphaKey[] alphas = line.colorGradient.alphaKeys;
+            int dirty = EditorUtility.GetDirtyCount(line);
+            JObject response = Call("line_set_color", JObject.Parse(json));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(start, line.startColor);
+            Assert.AreEqual(end, line.endColor);
+            CollectionAssert.AreEqual(colors, line.colorGradient.colorKeys);
+            CollectionAssert.AreEqual(alphas, line.colorGradient.alphaKeys);
+            Assert.AreSame(material, line.sharedMaterial);
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(line));
+            Assert.IsFalse(SceneManager.GetActiveScene().isDirty);
+        }
+
+        [Test]
+        public void ValidColorKeepsOverrideOrderAndMaterialIdentity()
+        {
+            AssignUsableMaterial();
+            JObject response = Call("line_set_color", JObject.Parse("{color:[1,0,0,0.5],startColor:[0,'1',0,1],endColor:[0,0,1,0]}"));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(Color.green, line.startColor);
+            Assert.AreEqual(new Color(0, 0, 1, 0), line.endColor);
+            Assert.AreEqual("Updated: color, startColor, endColor", response.Value<string>("message"));
+            Assert.AreSame(material, line.sharedMaterial);
+            response = Call("line_set_color", JObject.Parse("{color:[0,1,0,1],gradient:{startColor:[0,0,1,1],endColor:[1,0,0,0]}}"));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(Color.blue, line.startColor);
+            Assert.AreEqual(new Color(1, 0, 0, 0), line.endColor);
+            Assert.IsTrue(Call("line_set_color", JObject.Parse("{color:null}")).Value<bool>("success"));
+            Assert.AreEqual(Color.white, line.startColor);
+            Assert.AreEqual(Color.white, line.endColor);
         }
 
         [TestCase("line_set_positions", "{}")]

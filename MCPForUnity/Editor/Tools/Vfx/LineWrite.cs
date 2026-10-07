@@ -126,12 +126,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (lr == null)
                 return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
-            RendererHelpers.EnsureMaterial(lr);
-
-            Undo.RecordObject(lr, "Set Line Color");
             var changes = new List<string>();
-
-            RendererHelpers.ApplyColorProperties(
+            var apply = RendererHelpers.PrepareColorProperties(
                 @params,
                 changes,
                 v => lr.startColor = v,
@@ -142,6 +138,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 fadeEndAlpha: false
             );
 
+            RendererHelpers.EnsureMaterial(lr);
+            Undo.RecordObject(lr, "Set Line Color");
+            apply();
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
         }

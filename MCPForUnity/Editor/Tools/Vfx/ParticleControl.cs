@@ -17,6 +17,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = "target is required for particle_create" };
             }
 
+            Vector3? position = @params["position"] != null ? ManageVfxCommon.ParseVector3(@params["position"]) : null;
+            Vector3? rotation = @params["rotation"] != null ? ManageVfxCommon.ParseVector3(@params["rotation"]) : null;
+            Vector3? scale = @params["scale"] != null ? ManageVfxCommon.ParseVector3(@params["scale"]) : null;
+            bool? playOnAwake = @params["playOnAwake"] != null ? @params["playOnAwake"].ReadScalar<bool>() : null;
+            bool? looping = @params["looping"] != null ? @params["looping"].ReadScalar<bool>() : null;
+
             GameObject go = ManageVfxCommon.FindTargetGameObject(@params);
             bool createdGameObject = false;
             bool addedParticleSystem = false;
@@ -39,17 +45,17 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 }
             }
 
-            if (@params["position"] != null)
+            if (position.HasValue)
             {
-                go.transform.position = ManageVfxCommon.ParseVector3(@params["position"]);
+                go.transform.position = position.Value;
             }
-            if (@params["rotation"] != null)
+            if (rotation.HasValue)
             {
-                go.transform.eulerAngles = ManageVfxCommon.ParseVector3(@params["rotation"]);
+                go.transform.eulerAngles = rotation.Value;
             }
-            if (@params["scale"] != null)
+            if (scale.HasValue)
             {
-                go.transform.localScale = ManageVfxCommon.ParseVector3(@params["scale"]);
+                go.transform.localScale = scale.Value;
             }
 
             var ps = go.GetComponent<ParticleSystem>();
@@ -70,13 +76,13 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             // Allow caller overrides for playOnAwake and looping.
             var main = ps.main;
-            if (@params["playOnAwake"] != null)
+            if (playOnAwake.HasValue)
             {
-                main.playOnAwake = @params["playOnAwake"].ReadScalar<bool>();
+                main.playOnAwake = playOnAwake.Value;
             }
-            if (@params["looping"] != null)
+            if (looping.HasValue)
             {
-                main.loop = @params["looping"].ReadScalar<bool>();
+                main.loop = looping.Value;
             }
 
             EditorUtility.SetDirty(go);
@@ -163,6 +169,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (ps == null)
                 return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
 
+            bool withChildren = @params["withChildren"]?.ReadScalar<bool?>() ?? true;
+
             RendererHelpers.EnsureMaterialResult ensureResult = default;
             bool materialChecked = false;
 
@@ -176,8 +184,6 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     materialChecked = true;
                 }
             }
-
-            bool withChildren = @params["withChildren"]?.ReadScalar<bool?>() ?? true;
 
             switch (action)
             {
@@ -216,6 +222,16 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (ps == null)
                 return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
 
+            float time = @params["time"]?.ReadScalar<float?>() ?? 0f;
+            int minCountRaw = @params["minCount"]?.ReadScalar<int?>() ?? @params["count"]?.ReadScalar<int?>() ?? 30;
+            int maxCountRaw = @params["maxCount"]?.ReadScalar<int?>() ?? @params["count"]?.ReadScalar<int?>() ?? 30;
+            short minCount = (short)Math.Clamp(minCountRaw, 0, short.MaxValue);
+            short maxCount = (short)Math.Clamp(maxCountRaw, 0, short.MaxValue);
+            int cycles = @params["cycles"]?.ReadScalar<int?>() ?? 1;
+            float interval = @params["interval"]?.ReadScalar<float?>() ?? 0.01f;
+            var burst = new ParticleSystem.Burst(time, minCount, maxCount, cycles, interval);
+            burst.probability = @params["probability"]?.ReadScalar<float?>() ?? 1f;
+
             // Ensure material is assigned
             var renderer = ParticleCommon.FindParticleSystemRenderer(ps);
             RendererHelpers.EnsureMaterialResult ensureResult = default;
@@ -228,17 +244,6 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             Undo.RecordObject(ps, "Add Burst");
             var emission = ps.emission;
-
-            float time = @params["time"]?.ReadScalar<float?>() ?? 0f;
-            int minCountRaw = @params["minCount"]?.ReadScalar<int?>() ?? @params["count"]?.ReadScalar<int?>() ?? 30;
-            int maxCountRaw = @params["maxCount"]?.ReadScalar<int?>() ?? @params["count"]?.ReadScalar<int?>() ?? 30;
-            short minCount = (short)Math.Clamp(minCountRaw, 0, short.MaxValue);
-            short maxCount = (short)Math.Clamp(maxCountRaw, 0, short.MaxValue);
-            int cycles = @params["cycles"]?.ReadScalar<int?>() ?? 1;
-            float interval = @params["interval"]?.ReadScalar<float?>() ?? 0.01f;
-
-            var burst = new ParticleSystem.Burst(time, minCount, maxCount, cycles, interval);
-            burst.probability = @params["probability"]?.ReadScalar<float?>() ?? 1f;
 
             int idx = emission.burstCount;
             var bursts = new ParticleSystem.Burst[idx + 1];

@@ -83,6 +83,16 @@ namespace MCPForUnityTests.Editor.Helpers
             return ownedScene;
         }
 
+        public void ClearDirtiness()
+        {
+            Assert.IsTrue(ownedScene.IsValid() && ownedScene.isLoaded, "Only the owned fixture scene may be marked clean.");
+            StringAssert.StartsWith(scenePrefix, ownedScene.name);
+            MethodInfo clear = typeof(EditorSceneManager).GetMethod("ClearSceneDirtiness", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(clear, "The editor must expose the scene-dirtiness test seam.");
+            clear.Invoke(null, new object[] { ownedScene });
+            Assert.IsFalse(ownedScene.isDirty, "The rejection test requires a clean owned scene.");
+        }
+
         public void Close()
         {
             if (previousScene.IsValid() && previousScene.isLoaded)

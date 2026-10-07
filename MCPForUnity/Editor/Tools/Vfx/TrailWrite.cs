@@ -77,12 +77,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (tr == null)
                 return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
 
-            RendererHelpers.EnsureMaterial(tr);
-
-            Undo.RecordObject(tr, "Set Trail Color");
             var changes = new List<string>();
-
-            RendererHelpers.ApplyColorProperties(
+            var apply = RendererHelpers.PrepareColorProperties(
                 @params,
                 changes,
                 v => tr.startColor = v,
@@ -93,6 +89,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 fadeEndAlpha: true
             );
 
+            RendererHelpers.EnsureMaterial(tr);
+            Undo.RecordObject(tr, "Set Trail Color");
+            apply();
             EditorUtility.SetDirty(tr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
         }
