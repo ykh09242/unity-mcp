@@ -81,6 +81,16 @@ The website pins a nested `encoding-sniffer` override for search-local's Cheerio
 remove deprecated `whatwg-encoding`. Dependency contracts exercise its CommonJS API and HTML
 buffer/stream decoding. Reassess the override when Cheerio publishes the newer dependency.
 
+The npm audit output remains enabled. As of 2026-10-08,
+[GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) affects `braces` through
+3.0.3 and has no published fix. npm also counts its affected parent dependencies, so multiple
+high-severity entries can refer to this single advisory. The existing braces contract test
+demonstrates the library's explicit `maxLength` option; it does not install a guard in every
+transitive caller. Keep this limitation visible, recheck upstream releases, and review the
+dependency paths instead of applying npm's suggested breaking downgrade automatically.
+The checked deployment uses these packages during site generation and publishes static files;
+repository and plugin glob configuration remain inputs to review.
+
 ## Reference material
 
 - [Unity alpha releases](https://unity.com/releases/editor/alpha)
