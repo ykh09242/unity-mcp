@@ -172,11 +172,13 @@ namespace MCPForUnity.Tests.EditMode.Tools
             return result["data"]["entries"].Single(e => e.Value<string>("propertyPath") == path).Value<string>("overrideId");
         }
 
-        [Test]
-        public void List_ReportsValuesAndGroupsWithoutChangingOverrides()
+        [TestCase("list_overrides")]
+        [TestCase("LIST_OVERRIDES")]
+        [TestCase("List_Overrides")]
+        public void List_ReportsValuesAndGroupsWithoutChangingOverrides(string action)
         {
             BoxCollider collider = OverrideCollider();
-            var result = Command("list_overrides");
+            var result = Command(action);
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var entry = result["data"]["entries"].Single(e => e.Value<string>("propertyPath") == "m_IsTrigger");
             Assert.AreEqual(true, entry.Value<bool>("currentValue"));
@@ -186,11 +188,13 @@ namespace MCPForUnity.Tests.EditMode.Tools
             Assert.IsTrue(collider.isTrigger);
         }
 
-        [Test]
-        public void Revert_OnlySelectedPropertyAndSupportsUndo()
+        [TestCase("revert_overrides")]
+        [TestCase("REVERT_OVERRIDES")]
+        [TestCase("Revert_Overrides")]
+        public void Revert_OnlySelectedPropertyAndSupportsUndo(string action)
         {
             BoxCollider collider = OverrideCollider();
-            var result = Command("revert_overrides", new JArray(PropertyId("m_IsTrigger")));
+            var result = Command(action, new JArray(PropertyId("m_IsTrigger")));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsFalse(collider.isTrigger);
             Assert.AreEqual(new Vector3(2, 3, 4), collider.size);
@@ -199,16 +203,42 @@ namespace MCPForUnity.Tests.EditMode.Tools
             Assert.IsTrue(collider.isTrigger);
         }
 
-        [Test]
-        public void Apply_OnlySelectedPropertyPersistsToAsset()
+        [TestCase("apply_overrides")]
+        [TestCase("APPLY_OVERRIDES")]
+        [TestCase("Apply_Overrides")]
+        public void Apply_OnlySelectedPropertyPersistsToAsset(string action)
         {
             OverrideCollider();
-            var result = Command("apply_overrides", new JArray(PropertyId("m_IsTrigger")), PrefabPath);
+            var result = Command(action, new JArray(PropertyId("m_IsTrigger")), PrefabPath);
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var assetCollider = AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath).GetComponentInChildren<BoxCollider>();
             Assert.IsTrue(assetCollider.isTrigger);
             Assert.AreEqual(Vector3.one, assetCollider.size);
             Assert.AreEqual(new Vector3(2, 3, 4), instance.GetComponentInChildren<BoxCollider>().size);
+        }
+
+        [TestCase("LIST_OVERRIDES")]
+        [TestCase("List_Overrides")]
+        public void List_WithSelectionRemainsReadOnly(string action)
+        {
+            BoxCollider collider = OverrideCollider();
+            var result = Command(action, new JArray(PropertyId("m_IsTrigger")));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.IsTrue(collider.isTrigger, "Listing must not revert a selected override.");
+            Assert.IsNotEmpty((JArray)result["data"]["entries"]);
+            Assert.IsFalse(AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath).GetComponentInChildren<BoxCollider>().isTrigger);
+        }
+
+        [TestCase("APPLY_OVERRIDES")]
+        [TestCase("Apply_Overrides")]
+        public void Apply_RequiresDestinationBeforeChangingOverrides(string action)
+        {
+            BoxCollider collider = OverrideCollider();
+            var result = Command(action, new JArray(PropertyId("m_IsTrigger")));
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.IsTrue(collider.isTrigger);
+            Assert.AreEqual(new Vector3(2, 3, 4), collider.size);
+            Assert.IsFalse(AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath).GetComponentInChildren<BoxCollider>().isTrigger);
         }
 
         [Test]
@@ -281,8 +311,10 @@ namespace MCPForUnity.Tests.EditMode.Tools
             Assert.IsNotNull(instance.GetComponentInChildren<BoxCollider>());
         }
 
-        [Test]
-        public void StructuralOverrides_ApplyAddedObjectIncludesItsSubtreeOnly()
+        [TestCase("apply_overrides")]
+        [TestCase("APPLY_OVERRIDES")]
+        [TestCase("Apply_Overrides")]
+        public void StructuralOverrides_ApplyAddedObjectIncludesItsSubtreeOnly(string action)
         {
             var added = new GameObject("Added");
             added.transform.SetParent(instance.transform);
@@ -291,7 +323,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
             OverrideCollider();
             var listed = Command("list_overrides");
             var entry = listed["data"]["entries"].Single(e => e.Value<string>("kind") == "added_gameobject");
-            var result = Command("apply_overrides", new JArray(entry.Value<string>("overrideId")), PrefabPath);
+            var result = Command(action, new JArray(entry.Value<string>("overrideId")), PrefabPath);
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var asset = AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath);
             Assert.IsNotNull(asset.transform.Find("Added/Grandchild"));

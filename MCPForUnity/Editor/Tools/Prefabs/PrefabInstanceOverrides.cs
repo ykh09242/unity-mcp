@@ -28,7 +28,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             public GameObject Owner => Instance is Component c ? c.gameObject : (GameObject)Instance;
         }
 
-        public static object Handle(GameObject target, JObject args)
+        public static object Handle(GameObject target, string action, JObject args)
         {
             try
             {
@@ -53,7 +53,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         pending.Push(current.GetChild(i));
                 }
                 string assetPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(root);
-                string action = args["action"]?.ToString();
                 int offset = Integer(args, "offset", 0);
                 int pageSize = Integer(args, "pageSize", 100);
                 if (offset < 0 || pageSize < 1 || pageSize > 500)

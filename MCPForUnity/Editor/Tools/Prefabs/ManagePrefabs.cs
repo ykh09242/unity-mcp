@@ -72,7 +72,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                             return new ErrorResponse(error);
                         if (instance == null)
                             return new ErrorResponse($"Scene target '{target}' not found.");
-                        return PrefabInstanceOverrides.Handle(instance, @params);
+                        return PrefabInstanceOverrides.Handle(instance, action, @params);
                     }
                     case ACTION_CREATE_FROM_GAMEOBJECT:
                         return CreatePrefabFromGameObject(@params);
