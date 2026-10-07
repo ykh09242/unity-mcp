@@ -1142,6 +1142,10 @@ async def script_apply_edits(
         )
         if op:
             e["op"] = op
+        # Unity accepts mode as an op alias too; forward only the canonical op
+        # so preflight and application cannot disagree about the operation.
+        for alias in ("operation", "type", "mode"):
+            e.pop(alias, None)
 
         # Common field aliases
         if "class_name" in e and "className" not in e:
@@ -1400,6 +1404,29 @@ async def script_apply_edits(
         )
 
     unity_instance = await get_unity_instance_from_context(ctx)
+
+    if mixed:
+        # Validate shape and .NET regex syntax before the text phase writes.
+        # Matching must wait until that phase has created any dependent anchors.
+        preflight = await send_with_unity_instance(
+            async_send_command_with_retry,
+            unity_instance,
+            "manage_script",
+            {
+                "action": "validate_edit",
+                "name": name,
+                "path": path,
+                "edits": [edit for edit in edits if edit.get("op") in STRUCT],
+            },
+        )
+        if not isinstance(preflight, dict) or not preflight.get("success"):
+            return _with_norm(
+                preflight
+                if isinstance(preflight, dict)
+                else _err("invalid_edit", "Structured edit preflight did not succeed."),
+                normalized_for_echo,
+                routing="mixed/text-first",
+            )
 
     # If everything is structured (method/class/anchor ops), forward directly to Unity's structured editor.
     if all_struct:

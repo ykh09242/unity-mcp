@@ -253,6 +253,10 @@ namespace MCPForUnity.Editor.Tools
                     var structEdits = @params["edits"] as JArray;
                     var options = @params["options"] as JObject;
                     return EditScript(fullPath, relativePath, name, structEdits, options, action == "preview_edit");
+                // Internal mixed-edit preflight: inspect input without reading or matching the file.
+                case "validate_edit":
+                    var editError = ValidateStructuredEdits(@params["edits"] as JArray);
+                    return (object)editError ?? new SuccessResponse("Structured edit input is valid.");
                 case "get_sha":
                 {
                     try
@@ -1497,6 +1501,94 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
+        private static ErrorResponse ValidateStructuredEdits(JArray edits)
+        {
+            if (edits == null || edits.Count == 0)
+                return new ErrorResponse("invalid_edit", "No structured edits provided.");
+            foreach (var token in edits)
+            {
+                if (token is not JObject edit)
+                    return new ErrorResponse("invalid_edit", "Each structured edit must be an object.");
+                foreach (
+                    string field in new[]
+                    {
+                        "mode",
+                        "op",
+                        "className",
+                        "namespace",
+                        "methodName",
+                        "replacement",
+                        "replacementBase64",
+                        "text",
+                        "anchor",
+                        "position",
+                        "returnType",
+                        "parametersSignature",
+                        "attributesContains",
+                        "afterMethodName",
+                        "beforeMethodName",
+                        "afterReturnType",
+                        "afterParametersSignature",
+                        "afterAttributesContains",
+                    }
+                )
+                {
+                    var value = edit[field];
+                    if (value != null && value.Type != JTokenType.Null && value.Type != JTokenType.String)
+                        return new ErrorResponse("invalid_edit", $"Structured edit '{field}' must be a string.");
+                }
+                string mode = (edit.Value<string>("mode") ?? edit.Value<string>("op") ?? string.Empty).ToLowerInvariant();
+                switch (mode)
+                {
+                    case "replace_class":
+                    case "delete_class":
+                    case "replace_method":
+                    case "delete_method":
+                    case "insert_method":
+                        if (string.IsNullOrWhiteSpace(edit.Value<string>("className")))
+                            return new ErrorResponse("invalid_edit", $"{mode} requires 'className'.");
+                        if ((mode == "replace_method" || mode == "delete_method") && string.IsNullOrWhiteSpace(edit.Value<string>("methodName")))
+                            return new ErrorResponse("invalid_edit", $"{mode} requires 'methodName'.");
+                        if (mode == "replace_class" || mode == "replace_method" || mode == "insert_method")
+                        {
+                            string replacement = ExtractReplacement(edit);
+                            if (replacement == null || (mode == "insert_method" && string.IsNullOrWhiteSpace(replacement)))
+                                return new ErrorResponse("invalid_edit", $"{mode} requires valid 'replacement' text (inline or base64).");
+                            var snippetError = ValidateReplacementSnippet(replacement, mode == "replace_class", edit.Value<string>("className"));
+                            if (snippetError != null)
+                                return snippetError;
+                        }
+                        if (mode == "insert_method")
+                        {
+                            string position = (edit.Value<string>("position") ?? "end").ToLowerInvariant();
+                            if ((position == "before" || position == "after") && string.IsNullOrEmpty(edit.Value<string>(position + "MethodName")))
+                                return new ErrorResponse("invalid_edit", $"insert_method with position='{position}' requires '{position}MethodName'.");
+                        }
+                        break;
+                    case "anchor_insert":
+                    case "anchor_replace":
+                    case "anchor_delete":
+                        string anchor = edit.Value<string>("anchor");
+                        if (string.IsNullOrWhiteSpace(anchor))
+                            return new ErrorResponse("invalid_edit", $"{mode} requires 'anchor' (regex).");
+                        try
+                        {
+                            _ = new Regex(anchor, RegexOptions.Multiline, TimeSpan.FromSeconds(2));
+                        }
+                        catch (ArgumentException ex)
+                        {
+                            return new ErrorResponse("invalid_edit", $"{mode} has an invalid anchor regex: {ex.Message}");
+                        }
+                        if (mode == "anchor_insert" && (edit.Value<string>("text") ?? ExtractReplacement(edit)) == null)
+                            return new ErrorResponse("invalid_edit", "anchor_insert requires 'text' or valid replacement text.");
+                        break;
+                    default:
+                        return new ErrorResponse("invalid_edit", $"Unknown edit mode: '{mode}'.");
+                }
+            }
+            return null;
+        }
+
         /// <summary>
         /// Structured edits (AST-backed where available) on existing scripts.
         /// Supports class-level replace/delete with Roslyn span computation if USE_ROSLYN is defined,
@@ -1504,6 +1596,9 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static object EditScript(string fullPath, string relativePath, string name, JArray edits, JObject options, bool preview = false)
         {
+            var editError = ValidateStructuredEdits(edits);
+            if (editError != null)
+                return editError;
             if (!File.Exists(fullPath))
                 return new ErrorResponse($"Script not found at '{relativePath}'.");
             try
@@ -2372,6 +2467,23 @@ namespace MCPForUnity.Editor.Tools
             string text = FormatStructuralSnippet(snippet, classIndent + unit, unit, newline);
             string before = insertAt > 0 && source[insertAt - 1] != '\n' && source[insertAt - 1] != '\r' ? newline : string.Empty;
             return before + text + newline;
+        }
+
+        private static ErrorResponse ValidateReplacementSnippet(string snippet, bool replacesClass, string className)
+        {
+            if (!CheckBalancedDelimiters(snippet, out int line, out char expected))
+                return new ErrorResponse(
+                    "unbalanced_braces",
+                    new
+                    {
+                        status = "unbalanced_braces",
+                        line,
+                        expected = expected.ToString(),
+                    }
+                );
+            if (replacesClass && !ValidateClassSnippet(snippet, className, out string classError))
+                return new ErrorResponse("invalid_edit", $"Replacement snippet invalid: {classError}");
+            return null;
         }
 
         private static bool ValidateClassSnippet(string snippet, string expectedName, out string err)

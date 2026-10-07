@@ -98,6 +98,142 @@ namespace MCPForUnityTests.Editor.Tools
             );
         }
 
+        [TestCase("validate_edit")]
+        [TestCase("edit")]
+        [TestCase("preview_edit")]
+        public void InvalidStructuredInput_RejectsWithoutWriting(string action)
+        {
+            var malformed = new JToken[]
+            {
+                new JObject
+                {
+                    ["op"] = "anchor_replace",
+                    ["anchor"] = "[",
+                    ["text"] = "x",
+                },
+                new JObject
+                {
+                    ["op"] = "ANCHOR_REPLACE",
+                    ["anchor"] = "[",
+                    ["text"] = "x",
+                },
+                new JObject { ["op"] = "unknown" },
+                new JObject
+                {
+                    ["op"] = "delete_method",
+                    ["className"] = "ContractEditProbe",
+                    ["methodName"] = 12,
+                },
+                new JObject
+                {
+                    ["op"] = "anchor_replace",
+                    ["anchor"] = "A",
+                    ["text"] = new JArray("x"),
+                },
+                new JObject
+                {
+                    ["op"] = "insert_method",
+                    ["className"] = "ContractEditProbe",
+                    ["replacementBase64"] = "!",
+                },
+                new JValue("not an edit"),
+            };
+            var bytes = File.ReadAllBytes(_path);
+            var modified = File.GetLastWriteTimeUtc(_path);
+            foreach (var invalid in malformed)
+            {
+                var response = Apply(new JArray(invalid.DeepClone()), action);
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual("invalid_edit", response.Value<string>("code"), response.ToString());
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(_path));
+                Assert.AreEqual(modified, File.GetLastWriteTimeUtc(_path));
+            }
+        }
+
+        [Test]
+        public void StructuredPreflight_UsesDotNetSyntaxWithoutMatchingOrReadingScript()
+        {
+            File.Delete(_path);
+            var response = Apply(
+                new JArray(
+                    new JObject
+                    {
+                        ["op"] = "AnChOr_RePlAcE",
+                        ["anchor"] = @"(?<added>created)\k<added>",
+                        ["text"] = "done",
+                    }
+                ),
+                "validate_edit"
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(File.Exists(_path));
+        }
+
+        [TestCase("replace_class", "not a class", false)]
+        [TestCase("replace_class", "not a class", true)]
+        [TestCase("replace_class", "public class ContractEditProbe {", false)]
+        [TestCase("replace_method", "public void A() {", false)]
+        [TestCase("replace_method", "public void A() {", true)]
+        [TestCase("insert_method", "public void Added() {", false)]
+        public void StructuredSnippetPreflight_RejectsInvalidReplacementWithoutWriting(string op, string snippet, bool encoded)
+        {
+            var bytes = File.ReadAllBytes(_path);
+            var modified = File.GetLastWriteTimeUtc(_path);
+            var edit = new JObject
+            {
+                ["op"] = op,
+                ["className"] = "ContractEditProbe",
+                ["methodName"] = "A",
+                [encoded ? "replacementBase64" : "replacement"] = encoded ? Convert.ToBase64String(Encoding.UTF8.GetBytes(snippet)) : snippet,
+            };
+            var response = Apply(new JArray(edit), "validate_edit");
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(_path));
+            Assert.AreEqual(modified, File.GetLastWriteTimeUtc(_path));
+        }
+
+        [TestCase("replace_class", "public class ContractEditProbe { public void Added() { } }")]
+        [TestCase("replace_method", "public void Added() { var value = @\"{ literal }\"; }")]
+        [TestCase("insert_method", "public void Added() { var value = @\"{ literal }\"; }")]
+        [TestCase("replace_method", "public void Added() { /* } unmatched comment ] */ }")]
+        [TestCase("insert_method", "public void Added() { var value = $\"value: {1}\"; }")]
+        public void StructuredSnippetPreflight_AcceptsValidReplacementWithoutLookingUpTargets(string op, string snippet)
+        {
+            File.Delete(_path);
+            var response = Apply(
+                new JArray(
+                    new JObject
+                    {
+                        ["op"] = op,
+                        ["className"] = "ContractEditProbe",
+                        ["methodName"] = "Added",
+                        ["replacement"] = snippet,
+                    }
+                ),
+                "validate_edit"
+            );
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(File.Exists(_path));
+        }
+
+        [TestCase("apply_text_edits", false)]
+        [TestCase("apply_text_edits", true)]
+        [TestCase("preview_text_edits", false)]
+        [TestCase("preview_text_edits", true)]
+        public void MissingOrEmptyTextEdits_KeepOriginalErrorWithoutWriting(string action, bool missing)
+        {
+            var bytes = File.ReadAllBytes(_path);
+            var modified = File.GetLastWriteTimeUtc(_path);
+            var response = Apply(missing ? null : new JArray(), action);
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("No edits provided.", response.Value<string>("error"));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(_path));
+            Assert.AreEqual(modified, File.GetLastWriteTimeUtc(_path));
+        }
+
         [TestCase("startLine", false)]
         [TestCase("startCol", false)]
         [TestCase("endLine", false)]

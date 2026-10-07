@@ -54,7 +54,9 @@ async def test_script_operations_stay_in_authenticated_plugin_session(monkeypatc
         ctx, "Foo", "Assets", edits, {"preview": mode == "preview"}
     )
     assert result["success"], result
-    assert calls[0] == ("get_sha" if mode == "structured" else "read")
+    assert calls[0] == (
+        "get_sha" if mode == "structured" else "validate_edit" if mode == "mixed" else "read"
+    )
     if mode == "preview":
         assert calls == ["read", "preview_text_edits"]
         assert result["data"]["native_apply"]["status"] == "unavailable_remote"

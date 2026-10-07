@@ -281,3 +281,79 @@ async def test_unknown_script_operation_rejects_entire_batch(script_transport, p
     assert response["code"] == "unsupported_op"
     reader.assert_not_awaited()
     writer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "structured",
+    [
+        {"op": "anchor_replace", "anchor": "[", "text": "x"},
+        {"operation": "AnChOr_RePlAcE", "pattern": "[", "newText": "x"},
+        {"anchor_replace": {"anchorText": "[", "text": "x"}},
+        {"op": "anchor_replace", "mode": "bad_mode", "anchor": "[", "text": "x"},
+        {"op": "delete_method", "methodName": 123},
+        {"op": "replace_class", "replacement": "not a class"},
+        {"op": "replace_class", "replacementBase64": "bm90IGEgY2xhc3M="},
+        {"op": "replace_method", "methodName": "M", "replacement": "void M() {"},
+        {"op": "insert_method", "replacement": "void M() {"},
+    ],
+)
+async def test_mixed_structured_preflight_rejection_prevents_first_write(monkeypatch, structured):
+    calls = []
+
+    async def read_or_validate(_sender, _instance, _command, params):
+        calls.append(params)
+        if params["action"] == "validate_edit":
+            return {"success": False, "code": "invalid_edit", "error": "Invalid structured edit"}
+        return {"success": True, "data": {"contents": "class Foo {}"}}
+
+    monkeypatch.setattr(
+        script_edits, "get_unity_instance_from_context", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(script_edits, "send_with_unity_instance", read_or_validate)
+    writer = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(script_edits, "send_mutation", writer)
+
+    response = await script_edits.script_apply_edits(
+        AsyncMock(), "Foo", "Assets", [{"op": "append", "text": "// first write"}, structured]
+    )
+
+    assert response["success"] is False
+    writer.assert_not_awaited()
+    assert [call["action"] for call in calls] == ["validate_edit"]
+    assert "mode" not in calls[0]["edits"][0]
+
+
+@pytest.mark.asyncio
+async def test_mixed_preflight_keeps_dotnet_patterns_and_text_created_anchors(monkeypatch):
+    calls = []
+
+    async def read_or_validate(_sender, _instance, _command, params):
+        calls.append(params)
+        return {"success": True, "data": {"contents": "class Foo {}"}}
+
+    monkeypatch.setattr(
+        script_edits, "get_unity_instance_from_context", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(script_edits, "send_with_unity_instance", read_or_validate)
+    writer = AsyncMock(return_value={"success": True, "data": {"sha256": "a" * 64}})
+    monkeypatch.setattr(script_edits, "send_mutation", writer)
+    anchor = r"(?<added>created)\k<added>"
+
+    response = await script_edits.script_apply_edits(
+        AsyncMock(),
+        "Foo",
+        "Assets",
+        [
+            {"op": "append", "text": "// createdcreated"},
+            {"type": "ANCHOR_REPLACE", "anchor": anchor, "text": "// done"},
+        ],
+    )
+
+    assert response["success"] is True
+    assert [call["action"] for call in calls] == ["validate_edit", "read"]
+    assert calls[0]["edits"][0]["anchor"] == anchor
+    assert [call.args[3]["action"] for call in writer.await_args_list] == [
+        "apply_text_edits",
+        "edit",
+    ]

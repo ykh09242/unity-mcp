@@ -36,6 +36,10 @@ async def wire(sender, target, command, params, **kwargs):
     action = params["action"]
     state["calls"].append(action)
     case = state["case"]
+    if action == "validate_edit":
+        assert len(state["calls"]) == 1
+        assert state["text"] == "class Foo {}\n"
+        return {"success": True}
     if action == "read":
         return {"success": True, "data": {"contents": state["text"]}}
     if action == "apply_text_edits":
@@ -94,16 +98,16 @@ async def main():
                 try:
                     assert response["success"] is (case in ("applied", "missing_applied", "success")), response
                     if case == "text_failure":
-                        assert state["calls"] == ["read", "apply_text_edits"]
+                        assert state["calls"] == ["validate_edit", "read", "apply_text_edits"]
                         assert state["text"] == "class Foo {}\n"
                     elif case in ("missing", "missing_applied", "malformed", "null_hash"):
-                        assert state["calls"] == ["read", "apply_text_edits", "get_sha", "edit", "get_sha"]
+                        assert state["calls"] == ["validate_edit", "read", "apply_text_edits", "get_sha", "edit", "get_sha"]
                     elif case in ("unavailable", "fallback_invalid", "fallback_empty"):
-                        assert state["calls"] == ["read", "apply_text_edits", "get_sha", "edit"]
+                        assert state["calls"] == ["validate_edit", "read", "apply_text_edits", "get_sha", "edit"]
                     elif case == "success":
-                        assert state["calls"] == ["read", "apply_text_edits", "edit"]
+                        assert state["calls"] == ["validate_edit", "read", "apply_text_edits", "edit"]
                     else:
-                        assert state["calls"] == ["read", "apply_text_edits", "edit", "get_sha"]
+                        assert state["calls"] == ["validate_edit", "read", "apply_text_edits", "edit", "get_sha"]
                     if case not in ("applied", "missing_applied", "success", "text_failure"):
                         assert response["error"] == "connection closed"
                     passed += 1
