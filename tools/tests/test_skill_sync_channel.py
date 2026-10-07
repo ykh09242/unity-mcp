@@ -19,4 +19,4 @@ def test_install_skills_reuses_the_fork_update_channel() -> None:
         method,
     )
     assert "IsPreReleaseVersion" not in method
-    assert "SkillSyncService.SyncAsync(installPath, branch," in method
+    assert re.search(r"SkillSyncService\.SyncAsync\(\s*installPath\s*,\s*branch\s*,", method)
