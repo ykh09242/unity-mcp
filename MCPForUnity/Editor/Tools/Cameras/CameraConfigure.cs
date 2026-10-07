@@ -55,16 +55,21 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 return new ErrorResponse($"No Camera component on '{go.name}'.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
+            float fieldOfView = ParamCoercion.CoerceFloat(props["fieldOfView"], cam.fieldOfView);
+            float nearClipPlane = ParamCoercion.CoerceFloat(props["nearClipPlane"], cam.nearClipPlane);
+            float farClipPlane = ParamCoercion.CoerceFloat(props["farClipPlane"], cam.farClipPlane);
+            float orthographicSize = ParamCoercion.CoerceFloat(props["orthographicSize"], cam.orthographicSize);
+
             Undo.RecordObject(cam, "Set Camera Lens");
 
             if (props["fieldOfView"] != null)
-                cam.fieldOfView = ParamCoercion.CoerceFloat(props["fieldOfView"], cam.fieldOfView);
+                cam.fieldOfView = fieldOfView;
             if (props["nearClipPlane"] != null)
-                cam.nearClipPlane = ParamCoercion.CoerceFloat(props["nearClipPlane"], cam.nearClipPlane);
+                cam.nearClipPlane = nearClipPlane;
             if (props["farClipPlane"] != null)
-                cam.farClipPlane = ParamCoercion.CoerceFloat(props["farClipPlane"], cam.farClipPlane);
+                cam.farClipPlane = farClipPlane;
             if (props["orthographicSize"] != null)
-                cam.orthographicSize = ParamCoercion.CoerceFloat(props["orthographicSize"], cam.orthographicSize);
+                cam.orthographicSize = orthographicSize;
 
             CameraHelpers.MarkDirty(go);
             return new
