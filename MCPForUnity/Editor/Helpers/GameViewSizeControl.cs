@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -54,7 +55,7 @@ namespace MCPForUnity.Editor.Helpers
                 window = UnityEngine
                     .Resources.FindObjectsOfTypeAll(viewType)
                     .OfType<EditorWindow>()
-                    .FirstOrDefault(view => !viewId.HasValue || view.GetInstanceID() == viewId.Value);
+                    .FirstOrDefault(view => !viewId.HasValue || view.GetInstanceIDCompat() == viewId.Value);
                 if (window == null)
                     throw new InvalidOperationException("Open a Game View before querying or changing its size.");
                 selectedIndex = Require(viewType.GetProperty("selectedSizeIndex", Members), "selectedSizeIndex");
@@ -83,7 +84,7 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     group = groupName,
                     index = index,
-                    view_instance_id = window.GetInstanceID(),
+                    view_instance_id = window.GetInstanceIDCompat(),
                     width = (int)sizeType.GetProperty("width", Members).GetValue(size),
                     height = (int)sizeType.GetProperty("height", Members).GetValue(size),
                     size_type = sizeType.GetProperty("sizeType", Members).GetValue(size).ToString(),
@@ -133,7 +134,7 @@ namespace MCPForUnity.Editor.Helpers
                         {
                             current_size = previous,
                             render_size = api.RenderSize,
-                            view_instance_id = api.window.GetInstanceID(),
+                            view_instance_id = api.window.GetInstanceIDCompat(),
                             presets = Enumerable.Range(0, Math.Min(api.Count, 256)).Select(api.Read).ToArray(),
                             presets_truncated = api.Count > 256,
                         }

@@ -3,6 +3,7 @@ using System.Collections;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.Prefabs;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -148,7 +149,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
 
         private JObject Command(string action, JArray ids = null, string path = null)
         {
-            var args = new JObject { ["action"] = action, ["target"] = instance.GetInstanceID() };
+            var args = new JObject { ["action"] = action, ["target"] = instance.GetInstanceIDCompat() };
             if (ids != null)
                 args["overrideIds"] = ids;
             if (path != null)
@@ -183,7 +184,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
             var entry = result["data"]["entries"].Single(e => e.Value<string>("propertyPath") == "m_IsTrigger");
             Assert.AreEqual(true, entry.Value<bool>("currentValue"));
             Assert.AreEqual(false, entry.Value<bool>("prefabValue"));
-            Assert.AreEqual(collider.GetInstanceID(), entry["target"].Value<int>("instanceId"));
+            Assert.AreEqual(collider.GetInstanceIDCompat(), entry["target"].Value<int>("instanceId"));
             Assert.IsNotEmpty((JArray)result["data"]["groups"]);
             Assert.IsTrue(collider.isTrigger);
         }
@@ -269,8 +270,8 @@ namespace MCPForUnity.Tests.EditMode.Tools
             var args = new JObject
             {
                 ["action"] = "list_overrides",
-                ["target"] = instance.GetInstanceID(),
-                ["objectId"] = collider.GetInstanceID(),
+                ["target"] = instance.GetInstanceIDCompat(),
+                ["objectId"] = collider.GetInstanceIDCompat(),
                 ["propertyFilter"] = "m_",
                 ["pageSize"] = 1,
             };
@@ -353,7 +354,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
             var listed = Command("list_overrides");
             var entry = listed["data"]
                 ["entries"]
-                .Single(e => e.Value<string>("kind") == "added_component" && e["target"].Value<int>("instanceId") == source.GetInstanceID());
+                .Single(e => e.Value<string>("kind") == "added_component" && e["target"].Value<int>("instanceId") == source.GetInstanceIDCompat());
             var result = Command(apply ? "apply_overrides" : "revert_overrides", new JArray(entry.Value<string>("overrideId")), apply ? PrefabPath : null);
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("RequireComponent", result.Value<string>("error"));
@@ -372,7 +373,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
             var listed = Command("list_overrides");
             var entry = listed["data"]
                 ["entries"]
-                .Single(e => e.Value<string>("kind") == "added_component" && e["target"].Value<int>("instanceId") == particles.GetInstanceID());
+                .Single(e => e.Value<string>("kind") == "added_component" && e["target"].Value<int>("instanceId") == particles.GetInstanceIDCompat());
             var result = Command(apply ? "apply_overrides" : "revert_overrides", new JArray(entry.Value<string>("overrideId")), apply ? PrefabPath : null);
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("Coupled", result.Value<string>("error"));

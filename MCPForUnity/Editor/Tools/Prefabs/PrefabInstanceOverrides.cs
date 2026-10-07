@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -69,7 +70,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     string filter = args["propertyFilter"]?.Value<string>();
                     var filtered = entries
                         .Where(e =>
-                            (!objectId.HasValue || e.Instance.GetInstanceID() == objectId || e.Owner.GetInstanceID() == objectId)
+                            (!objectId.HasValue || e.Instance.GetInstanceIDCompat() == objectId || e.Owner.GetInstanceIDCompat() == objectId)
                             && (
                                 string.IsNullOrEmpty(filter)
                                 || (e.PropertyPath != null && e.PropertyPath.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0)
@@ -89,7 +90,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                             nextOffset = offset + page.Count < filtered.Count ? (int?)(offset + page.Count) : null,
                             removedGameObjectsSupported = RemovedGameObjectsSupported,
                             entries = page.Select(e => e.Data).ToArray(),
-                            groups = page.GroupBy(e => e.Instance.GetInstanceID())
+                            groups = page.GroupBy(e => e.Instance.GetInstanceIDCompat())
                                 .Select(g => new { target = Describe(g.First().Instance), overrideIds = g.Select(e => e.Id).ToArray() })
                                 .ToArray(),
                         }
@@ -188,7 +189,12 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             {
                 if (entries.Count >= MaxRows)
                     throw new InvalidOperationException($"Instance exceeds {MaxRows} overrides; target a smaller nested instance.");
-                entry.Id = entry.Kind + ":" + entry.Instance.GetInstanceID() + ":" + (entry.PropertyPath ?? entry.Asset?.GetInstanceID().ToString() ?? "added");
+                entry.Id =
+                    entry.Kind
+                    + ":"
+                    + entry.Instance.GetInstanceIDCompat()
+                    + ":"
+                    + (entry.PropertyPath ?? entry.Asset?.GetInstanceIDCompat().ToString() ?? "added");
                 entry.Data = new JObject
                 {
                     ["overrideId"] = entry.Id,
@@ -283,10 +289,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             GameObject go = obj is Component component ? component.gameObject : obj as GameObject;
             return new JObject
             {
-                ["instanceId"] = obj.GetInstanceID(),
+                ["instanceId"] = obj.GetInstanceIDCompat(),
                 ["name"] = obj.name,
                 ["type"] = obj.GetType().FullName,
-                ["gameObjectInstanceId"] = go?.GetInstanceID(),
+                ["gameObjectInstanceId"] = go?.GetInstanceIDCompat(),
                 ["path"] = go == null ? null : GameObjectLookup.GetGameObjectPath(go),
                 ["assetPath"] = AssetDatabase.GetAssetPath(obj),
             };
