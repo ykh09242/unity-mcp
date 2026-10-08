@@ -37,6 +37,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new { success = false, message = $"An asset already exists at '{clipPath}'. Delete it first or use a different path." };
 
             using var folders = new AssetFolderScope();
+            folders.EnsureParentDirectory(clipPath);
             var clip = new AnimationClip();
             try
             {
@@ -49,7 +50,6 @@ namespace MCPForUnity.Editor.Tools.Animation
                 settings.stopTime = length;
                 AnimationUtility.SetAnimationClipSettings(clip, settings);
 
-                folders.EnsureParentDirectory(clipPath);
                 AssetPathUtility.GetFullAssetPath(clipPath);
                 AssetDatabase.CreateAsset(clip, clipPath);
                 if (!EditorUtility.IsPersistent(clip))
