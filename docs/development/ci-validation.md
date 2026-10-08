@@ -123,6 +123,39 @@ workflow. The gate requires email and password plus either license contents or a
 the Editor activation step still verifies whether those credentials are valid. Fork PRs
 do not receive repository secrets and retain an explicit native-test skip.
 
+### Diagnose activation failures
+
+Personal secrets use the complete, unchanged XML from the Hub-generated `.ulf` file,
+including its opening and closing tags. Do not wrap it in quotes or paste an `.alf`
+activation request. Register credentials for the account that issued that license.
+The secret-presence gate does not validate activation or choose a license based on other
+machines signed in to the same account. The pinned GameCI CLI chooses a configured
+serial before a license file; Personal does not need `UNITY_SERIAL`.
+
+Both licensed jobs prepare `$HOME/.local/share/unity3d/Unity` before GameCI mounts the
+host home at `/root`. This supplies the parent directories required for Editor preferences
+and license storage. It does not renew a license or resolve a rejected license timestamp.
+
+Read the first failure in the Unity runner step before interpreting result-upload errors:
+
+- `Code 500` with `No ULF license found` / `Token not found in cache` reports unavailable
+  license state; inspect the subsequent activation attempt before judging the final cause.
+- `Code 400` with `TimeStamp validation failed` during manual file activation means Unity
+  rejected that attempt. The message alone does not establish expiration, clock skew or
+  a conflict between Personal and Pro licenses on the same account.
+- If activation fails before tests start, missing NUnit XML is a consequence. Keep the
+  result gate failing; do not mark a skipped or unstarted suite as successful.
+- `Unable to find image ... locally` can precede a successful Docker pull. Check the pull's
+  final status and the later Unity failure instead of treating that line alone as the cause.
+
+If an existing Personal file is rejected, repeat the explicit Hub activation step in the
+[GameCI guide](https://game.ci/docs/github/activation/#setting-up-your-unity-license), then
+replace the secret with the newly issued file. Updating a secret with the same old file
+is not a renewal. If a newly issued file also fails, consult
+[Unity license troubleshooting](https://docs.unity3d.com/6000.6/Documentation/Manual/ActivationFAQ.html)
+or Unity Support; retain sanitized diagnostics and do not attach credentials or license files.
+After changing credentials, verify one licensed job before rerunning the remaining matrix.
+
 ## Warning policy
 
 Repository-owned Unity assemblies compile with warnings as errors. The existing CS1701/CS1702
