@@ -1196,6 +1196,11 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (faceIndices == null)
                 return new ErrorResponse("faceIndices must be an array, not null.");
 
+            int faceCount = GetFaceCount(pbMesh);
+            foreach (int index in faceIndices)
+                if (index < 0 || index >= faceCount)
+                    return new ErrorResponse($"Face index {index} out of range (0-{faceCount - 1}).");
+
             // Prefer DeleteFaces(ProBuilderMesh, IList<int>) overload
             var deleteMethod = _deleteElementsType.GetMethod(
                 "DeleteFaces",

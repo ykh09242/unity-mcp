@@ -84,6 +84,7 @@ namespace MCPForUnityTests.Editor.Tools
             ProBuilderContractAppend.PolygonCalls = ProBuilderContractVertexEditing.WeldCalls = 0;
             ProBuilderContractAppend.BridgeCalls = 0;
             ProBuilderContractDelete.Calls = ProBuilderContractVertexEditing.SplitCalls = 0;
+            ProBuilderContractDelete.Last = null;
             ProBuilderContractImporter.Calls = ProBuilderContractCombine.Calls = 0;
             ProBuilderContractGenerator.Created.Clear();
             ProBuilderContractExtrude.Calls = 0;
@@ -255,6 +256,71 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.That(response.Value<bool>("success"), Is.True, response.ToString());
             Assert.That(response["data"].Value<bool>("bridgeCreated"), Is.False);
             Assert.That(ProBuilderContractAppend.BridgeCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        [Combinatorial]
+        public void InvalidDeleteFaceIndicesStopBeforeEveryOverloadAndUndo(
+            [Values(typeof(ProBuilderContractDelete), typeof(ProBuilderContractDeleteArray), typeof(ProBuilderContractDeleteFaces))] Type deleteType,
+            [Values("[-1]", "[2]", "[0,999]")] string indices,
+            [Values(false, true)] bool jsonProperties
+        )
+        {
+            SetField("_deleteElementsType", deleteType);
+            SaveOwnedScene();
+            int dirty = EditorUtility.GetDirtyCount(mesh);
+            var faces = (ProBuilderContractFace[])mesh.faces.Clone();
+            var positions = new List<Vector3>(mesh.positions);
+            var properties = JObject.Parse("{\"faceIndices\":" + indices + "}");
+            var response = JObject.FromObject(
+                ManageProBuilder.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "delete_faces",
+                        ["target"] = target.GetInstanceIDCompat().ToString(),
+                        ["searchMethod"] = "by_id",
+                        ["properties"] = jsonProperties ? (JToken)new JValue(properties.ToString()) : properties,
+                    }
+                )
+            );
+            Assert.That(response.Value<bool>("success"), Is.False, response.ToString());
+            Assert.That(response.Value<string>("error"), Does.Contain("out of range"));
+            Assert.That(ProBuilderContractDelete.Calls, Is.Zero);
+            Assert.That(ProBuilderContractDelete.Last, Is.Null);
+            Assert.That(mesh.Refreshes, Is.Zero);
+            Assert.That(mesh.ToMeshes, Is.Zero);
+            CollectionAssert.AreEqual(faces, mesh.faces);
+            CollectionAssert.AreEqual(positions, mesh.positions);
+            Assert.That(EditorUtility.GetDirtyCount(mesh), Is.EqualTo(dirty));
+            Assert.That(ownedScene.isDirty, Is.False);
+        }
+
+        [Test]
+        [Combinatorial]
+        public void ValidDeleteFaceIndicesRetainEmptyOrderDuplicatesAndAliases(
+            [Values(typeof(ProBuilderContractDelete), typeof(ProBuilderContractDeleteArray), typeof(ProBuilderContractDeleteFaces))] Type deleteType,
+            [Values(
+                "{\"faceIndices\":[]}",
+                "{\"faceIndices\":[0]}",
+                "{\"faceIndices\":[0,1]}",
+                "{\"faceIndices\":[1,0]}",
+                "{\"faceIndices\":[0,0]}",
+                "{\"faceIndices\":[1,0,1]}",
+                "{\"face_indices\":[\"0\"]}"
+            )]
+                string properties
+        )
+        {
+            SetField("_deleteElementsType", deleteType);
+            JObject props = JObject.Parse(properties);
+            int[] expected = (props["faceIndices"] ?? props["face_indices"]).ToObject<int[]>();
+            var response = Dispatch("delete_faces", properties);
+            Assert.That(response.Value<bool>("success"), Is.True, response.ToString());
+            Assert.That(response["data"].Value<int>("facesDeleted"), Is.EqualTo(expected.Length));
+            Assert.That(ProBuilderContractDelete.Calls, Is.EqualTo(1));
+            CollectionAssert.AreEqual(expected, ProBuilderContractDelete.Last);
+            Assert.That(mesh.Refreshes, Is.EqualTo(1));
+            Assert.That(mesh.ToMeshes, Is.EqualTo(1));
         }
 
         [TestCase("weld_vertices", "vertexIndices")]
@@ -719,10 +785,30 @@ namespace MCPForUnityTests.Editor.Tools
     public static class ProBuilderContractDelete
     {
         public static int Calls;
+        public static int[] Last;
 
         public static void DeleteFaces(ProBuilderContractMesh mesh, IList<int> indices)
         {
             Calls++;
+            Last = new List<int>(indices).ToArray();
+        }
+    }
+
+    public static class ProBuilderContractDeleteArray
+    {
+        public static void DeleteFaces(ProBuilderContractMesh mesh, int[] indices)
+        {
+            ProBuilderContractDelete.Calls++;
+            ProBuilderContractDelete.Last = (int[])indices.Clone();
+        }
+    }
+
+    public static class ProBuilderContractDeleteFaces
+    {
+        public static void DeleteFaces(ProBuilderContractMesh mesh, ProBuilderContractFace[] faces)
+        {
+            ProBuilderContractDelete.Calls++;
+            ProBuilderContractDelete.Last = Array.ConvertAll(faces, face => Array.IndexOf(mesh.faces, face));
         }
     }
 
