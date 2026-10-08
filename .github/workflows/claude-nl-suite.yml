@@ -13,7 +13,24 @@ env:
   UNITY_IMAGE: unityci/editor:ubuntu-2021.3.45f2-linux-il2cpp-3
 
 jobs:
+  license-free:
+    name: Report skipped live Unity suite
+    if: vars.UNITY_RUN_LICENSED_TESTS != 'true'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Report license-free validation
+        run: |
+          {
+            echo "## License-free validation"
+            echo
+            echo "The live Unity suite is **SKIPPED** because licensed Editor execution is disabled."
+            echo "No Unity activation, Editor execution or LLM request was attempted."
+            echo "Python tests and license-free compilation remain independent checks."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   nl-suite:
+    if: vars.UNITY_RUN_LICENSED_TESTS == 'true'
     runs-on: ubuntu-26.04
     permissions:
       contents: read

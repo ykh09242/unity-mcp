@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 import re
 
+import pytest
+import yaml
+
 
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "unity-tests.yml"
 
@@ -40,3 +43,49 @@ def test_unity_test_project_uses_the_packages_test_framework():
         project["dependencies"]["com.unity.test-framework"]
         == package["dependencies"]["com.unity.test-framework"]
     )
+
+
+@pytest.mark.parametrize("filename", ["unity-tests.yml", "e2e-bridge.yml"])
+def test_native_gate_requires_opt_in_before_reading_license_secrets(filename):
+    config = yaml.safe_load(WORKFLOW.with_name(filename).read_text(encoding="utf-8"))
+    gate = config["jobs"]["license"]
+    # Existing credentials must not turn an opted-out workflow into an activation attempt.
+    assert gate["outputs"]["unity_ok"] == "${{ steps.detect.outputs.unity_ok || 'false' }}"
+    steps = gate["steps"]
+    detect = next(step for step in steps if step.get("id") == "detect")
+    assert detect["if"] == "vars.UNITY_RUN_LICENSED_TESTS == 'true'"
+    for step in steps:
+        if "secrets." in json.dumps(step):
+            assert step["if"] == "vars.UNITY_RUN_LICENSED_TESTS == 'true'"
+    report = next(step for step in steps if step.get("id") == "license-free")
+    assert report["if"] == "vars.UNITY_RUN_LICENSED_TESTS != 'true'"
+    assert "secrets." not in json.dumps(report)
+    assert "SKIPPED" in report["run"]
+    assert "GITHUB_STEP_SUMMARY" in report["run"]
+    assert "::warning::" not in report["run"]
+    native_jobs = (
+        ["testAllModes", "optionalIntegrations"]
+        if filename == "unity-tests.yml"
+        else ["e2e-bridge"]
+    )
+    for name in native_jobs:
+        assert "license" in config["jobs"][name]["needs"]
+        assert config["jobs"][name]["if"] == "needs.license.outputs.unity_ok == 'true'"
+
+
+def test_manual_live_suite_cannot_bypass_license_free_policy():
+    config = yaml.safe_load(WORKFLOW.with_name("claude-nl-suite.yml").read_text(encoding="utf-8"))
+    assert config["jobs"]["nl-suite"]["if"] == "vars.UNITY_RUN_LICENSED_TESTS == 'true'"
+    report = config["jobs"]["license-free"]
+    assert report["if"] == "vars.UNITY_RUN_LICENSED_TESTS != 'true'"
+    assert "secrets." not in json.dumps(report)
+    assert "SKIPPED" in json.dumps(report)
+
+
+def test_optional_package_preparation_remains_independent_of_native_policy():
+    config = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    prepare = config["jobs"]["optionalPackageInputs"]
+    assert prepare["needs"] == ["matrix"]
+    assert "if" not in prepare
+    assert "secrets." not in json.dumps(prepare)
+    assert "game-ci/unity-test-runner" not in json.dumps(prepare)

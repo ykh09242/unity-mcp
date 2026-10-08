@@ -36,14 +36,28 @@ jobs:
     # so this workflow reported a green check having booted no Editor and exercised no tool
     # call. A job skipped by a job-level `if:` reports "Skipped" in the merge box instead.
     # Branch protection treats a skipped required check as satisfied, so merges are not blocked.
-    name: Detect Unity license secrets
+    name: Check Unity runtime test policy
     runs-on: ubuntu-latest
     permissions: {}
     outputs:
-      unity_ok: ${{ steps.detect.outputs.unity_ok }}
+      unity_ok: ${{ steps.detect.outputs.unity_ok || 'false' }}
     steps:
+      - name: Report license-free validation
+        id: license-free
+        if: vars.UNITY_RUN_LICENSED_TESTS != 'true'
+        run: |
+          {
+            echo "## License-free validation"
+            echo
+            echo "Live E2E bridge tests are **SKIPPED** because licensed Editor execution is disabled."
+            echo "No Unity activation or Editor test execution was attempted."
+            echo "Python tests and license-free compilation remain independent checks."
+            echo "A skipped live suite is not evidence that real Editor tool calls passed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Detect Unity license secrets
         id: detect
+        if: vars.UNITY_RUN_LICENSED_TESTS == 'true'
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}

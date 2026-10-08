@@ -2,10 +2,9 @@ name: Compile Check (no license)
 
 # Real semantic compile verification for EVERY pull request, including forks.
 #
-# unity-tests.yml needs Unity license secrets, and GitHub withholds secrets from runs
-# triggered by a fork's pull request -- so it skips and reports a green check having
-# compiled nothing. Since practically every PR to this repo comes from a fork, that has
-# meant no PR was ever compile-verified.
+# Native Editor tests require an explicit opt-in and usable Unity license secrets.
+# This independent workflow keeps API compatibility checked in license-free mode,
+# including fork pull requests whose jobs cannot access repository secrets.
 #
 # This job never launches the Unity Editor, so it needs no license and no secrets. It
 # reads reference assemblies from pinned public GameCI images or official preview

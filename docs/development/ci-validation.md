@@ -3,6 +3,31 @@
 The workflows validate the server, repository tools and Unity package independently.
 Compilation checks API compatibility; licensed Editor tests exercise runtime behavior.
 
+## Default license-free mode
+
+CI defaults to license-free validation. Registered Unity secrets do not enable native
+Editor tests by themselves. Keep the repository Actions variable
+`UNITY_RUN_LICENSED_TESTS` unset or set to `false` to retain this mode.
+
+| Check | What runs without a license |
+| --- | --- |
+| Python 3.11–3.14 | Server and repository tool test suites, plus correctness lint |
+| Windows, Linux and macOS bootstrap | Cold/offline server bootstrap checks |
+| Unity version matrix | Runtime, Editor and test assembly compilation for Windows, macOS and Linux defines |
+| Optional packages | Pinned Cinemachine, ProBuilder and graphics dependency preparation and integrity checks |
+| Native EditMode and optional integration tests | **Skipped**; compilation and package preparation do not execute these tests |
+| Live E2E bridge and manual NL suite | **Skipped**; no Editor activation or live tool calls |
+
+The shared Unity workflow and both live workflows check this policy before reading
+license secrets or starting their native jobs. Their summaries state the skipped scope;
+the native jobs report `Skipped`, not a successful Editor test run. Python tests,
+license-free compilation and optional package preparation keep their own failure gates.
+
+To intentionally restore native execution later, set the repository variable to `true`
+and provide usable license credentials as described below. A manual workflow dispatch
+also respects this variable. Review the Personal-only activation limits before enabling
+native jobs for an account that also has company entitlements.
+
 ## Python
 
 [`python-tests.yml`](../../.github/workflows/python-tests.yml) runs both complete suites on
@@ -60,8 +85,9 @@ their consumers because this alpha no longer ships the template's precompiled UI
 Its cache validates those source inputs, and its defines select CoreCLR instead of Mono.
 Earlier Unity profiles retain their existing reference and compiler contracts.
 
-The existing license gate stays explicit. A skipped licensed-test job is not runtime test
-evidence, and a successful compile is not proof that an Editor session was executed.
+The native-execution policy and license gate stay explicit. A skipped licensed-test job is
+not runtime test evidence, and a successful compile is not proof that an Editor session was
+executed.
 
 ### Optional package integrations
 
@@ -118,8 +144,9 @@ For Personal, activate the license in **Unity Hub > Preferences > Licenses > Add
 free personal license**. GameCI documents the Windows license file at
 `C:\ProgramData\Unity\Unity_lic.ulf`. Follow its
 [current activation guide](https://game.ci/docs/github/activation/) if the file is absent.
-Do not commit or attach license files. After registering the secrets, rerun the latest
-workflow. The gate requires email and password plus either license contents or a serial;
+Do not commit or attach license files. For an intentionally enabled native run, set
+`UNITY_RUN_LICENSED_TESTS` to `true` and rerun the latest workflow after registering the
+secrets. The gate requires email and password plus either license contents or a serial;
 the Editor activation step still verifies whether those credentials are valid. Fork PRs
 do not receive repository secrets and retain an explicit native-test skip.
 

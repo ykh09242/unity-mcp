@@ -115,14 +115,28 @@ jobs:
     # skipped by a job-level `if:` reports "Skipped" in the merge box instead, which is
     # what a reviewer actually reads. Branch protection still treats a skipped required
     # check as satisfied, so this does not block merges.
-    name: Detect Unity license secrets
+    name: Check Unity runtime test policy
     runs-on: ubuntu-latest
     permissions: {}
     outputs:
-      unity_ok: ${{ steps.detect.outputs.unity_ok }}
+      unity_ok: ${{ steps.detect.outputs.unity_ok || 'false' }}
     steps:
+      - name: Report license-free validation
+        id: license-free
+        if: vars.UNITY_RUN_LICENSED_TESTS != 'true'
+        run: |
+          {
+            echo "## License-free validation"
+            echo
+            echo "Native Unity tests are **SKIPPED** because licensed Editor execution is disabled."
+            echo "No Unity activation or Editor test execution was attempted."
+            echo "Python tests and license-free compilation remain independent checks."
+            echo "Optional package preparation still runs; it does not execute package integration tests."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Detect Unity license secrets
         id: detect
+        if: vars.UNITY_RUN_LICENSED_TESTS == 'true'
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -137,7 +151,7 @@ jobs:
           fi
 
       - name: Explain why the Unity suite will not run
-        if: steps.detect.outputs.unity_ok != 'true'
+        if: vars.UNITY_RUN_LICENSED_TESTS == 'true' && steps.detect.outputs.unity_ok != 'true'
         run: |
           echo "::warning::Native Unity tests will be SKIPPED - no license secrets in scope (normal for fork PRs). Optional package preparation still runs."
           {
