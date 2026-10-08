@@ -895,6 +895,44 @@ namespace MCPForUnity.Editor.Tools
                 throw new ArgumentException($"UI rendering can cache at most {MaxCachedPanels} panels.");
         }
 
+        internal static void FinishPanelRender(int panelId, PanelSettings panel, RenderTexture ownedTarget, bool keepWarmupBinding, bool releaseCache)
+        {
+            // Destroyed Unity wrappers must remain distinct from null and replacement cache entries.
+            if (ReferenceEquals(ownedTarget, null))
+                return;
+            if (!s_panelRTs.TryGetValue(panelId, out var cachedTarget) || !ReferenceEquals(cachedTarget, ownedTarget))
+                return;
+            try
+            {
+                if ((!keepWarmupBinding || releaseCache) && panel != null && s_panelBindings.TryGetValue(panelId, out var binding))
+                {
+                    var currentTarget = panel.targetTexture;
+                    if (ReferenceEquals(currentTarget, ownedTarget) || (ownedTarget != null && currentTarget == ownedTarget))
+                    {
+                        panel.targetTexture = binding.previousTarget;
+                        EditorUtility.SetDirty(panel);
+                    }
+                }
+            }
+            finally
+            {
+                if (releaseCache)
+                {
+                    s_panelRTs.Remove(panelId);
+                    s_panelBindings.Remove(panelId);
+                    if (ownedTarget != null)
+                    {
+                        string assetPath = AssetDatabase.GetAssetPath(ownedTarget);
+                        ownedTarget.Release();
+                        if (!string.IsNullOrEmpty(assetPath))
+                            AssetDatabase.DeleteAsset(assetPath);
+                        else
+                            UnityEngine.Object.DestroyImmediate(ownedTarget);
+                    }
+                }
+            }
+        }
+
         // Play-mode coroutine capture state.  Only one capture is in-flight at a
         // time; concurrent render_ui calls while a capture is pending are rejected
         // with an explicit error.
@@ -1110,6 +1148,10 @@ namespace MCPForUnity.Editor.Tools
             GameObject tempGo = null;
             PanelSettings tempPs = null;
             Texture2D tex = null;
+            PanelSettings renderPanel = null;
+            int renderPanelId = 0;
+            RenderTexture renderTarget = null;
+            bool keepWarmupBinding = false;
             var renderAssetFolders = new AssetFolderScope();
 
             try
@@ -1145,7 +1187,9 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse($"{ui.DisplayName} has no PanelSettings assigned.");
 
                 var panelSettings = ui.PanelSettings;
+                renderPanel = panelSettings;
                 int psId = panelSettings.GetInstanceIDCompat();
+                renderPanelId = psId;
                 ValidateUICacheBudget(psId, width, height);
                 bool rememberBinding = !s_panelRTs.TryGetValue(psId, out var ownedTarget) || panelSettings.targetTexture != ownedTarget;
                 var previousTarget = rememberBinding ? panelSettings.targetTexture : s_panelBindings[psId].previousTarget;
@@ -1164,6 +1208,7 @@ namespace MCPForUnity.Editor.Tools
                     if (cachedRt.width == width && cachedRt.height == height)
                     {
                         rt = cachedRt;
+                        renderTarget = rt;
                         if (rememberBinding)
                             s_panelBindings[psId] = (panelSettings, previousTarget);
                         // Re-attach if it was detached after the previous read
@@ -1209,6 +1254,7 @@ namespace MCPForUnity.Editor.Tools
                         AssetDatabase.SaveAssets();
 
                         s_panelRTs[psId] = rt;
+                        renderTarget = rt;
                         s_panelBindings[psId] = (panelSettings, previousTarget);
                         adopted = true;
                         panelSettings.targetTexture = rt;
@@ -1254,16 +1300,6 @@ namespace MCPForUnity.Editor.Tools
                 finally
                 {
                     RenderTexture.active = prevActive;
-                }
-
-                // Restore the caller's target so the UI renders back to its
-                // prior display / render target. The RT stays cached in s_panelRTs
-                // and will be re-attached on the next render_ui call.
-                if (!rtJustAssigned)
-                {
-                    if (panelSettings.targetTexture == rt)
-                        panelSettings.targetTexture = s_panelBindings[psId].previousTarget;
-                    EditorUtility.SetDirty(panelSettings);
                 }
 
                 // Check if any content was rendered
@@ -1342,24 +1378,33 @@ namespace MCPForUnity.Editor.Tools
                     : rtJustAssigned ? $"RenderTexture assigned to PanelSettings. Call render_ui again to capture the rendered content."
                     : $"UI render saved to '{projectRelPath}' (no visible content detected).";
 
-                renderAssetFolders.Complete();
+                keepWarmupBinding = rtJustAssigned;
+                if (ReferenceEquals(tempPs, null))
+                    renderAssetFolders.Complete();
                 return new SuccessResponse(msg, data);
             }
             finally
             {
                 try
                 {
-                    if (tex != null)
-                        UnityEngine.Object.DestroyImmediate(tex);
-                    if (tempGo != null)
-                        UnityEngine.Object.DestroyImmediate(tempGo);
-                    if (tempPs != null)
+                    try
                     {
-                        string tempPsPath = AssetDatabase.GetAssetPath(tempPs);
-                        if (!string.IsNullOrEmpty(tempPsPath))
-                            AssetDatabase.DeleteAsset(tempPsPath);
-                        else
-                            UnityEngine.Object.DestroyImmediate(tempPs, true);
+                        FinishPanelRender(renderPanelId, renderPanel, renderTarget, keepWarmupBinding, !ReferenceEquals(tempPs, null));
+                    }
+                    finally
+                    {
+                        if (tex != null)
+                            UnityEngine.Object.DestroyImmediate(tex);
+                        if (tempGo != null)
+                            UnityEngine.Object.DestroyImmediate(tempGo);
+                        if (tempPs != null)
+                        {
+                            string tempPsPath = AssetDatabase.GetAssetPath(tempPs);
+                            if (!string.IsNullOrEmpty(tempPsPath))
+                                AssetDatabase.DeleteAsset(tempPsPath);
+                            else
+                                UnityEngine.Object.DestroyImmediate(tempPs, true);
+                        }
                     }
                 }
                 finally
