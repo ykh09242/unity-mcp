@@ -132,11 +132,14 @@ namespace MCPForUnity.Editor.Tools
 
             // Check if we have base64 encoded contents
             bool contentsEncoded = p.GetBool("contentsEncoded", false);
-            if (contentsEncoded && p.Has("encodedContents"))
+            if (contentsEncoded)
             {
                 try
                 {
-                    contents = DecodeBase64(p.Get("encodedContents"));
+                    var encodedContents = p.GetRaw("encodedContents");
+                    if (encodedContents == null || encodedContents.Type != JTokenType.String)
+                        return new ErrorResponse("invalid_contents", "contentsEncoded requires a string encodedContents payload.");
+                    contents = DecodeBase64(encodedContents.Value<string>());
                 }
                 catch (Exception e)
                 {
@@ -193,8 +196,9 @@ namespace MCPForUnity.Editor.Tools
                 {
                     var textEdits = p.GetRaw("edits") as JArray;
                     string precondition = p.Get("precondition_sha256");
-                    // Respect optional options (guard type before indexing)
-                    var optionsObj = p.GetRaw("options") as JObject;
+                    var optionsError = ValidateScriptOptions(p.GetRaw("options"), out var optionsObj);
+                    if (optionsError != null)
+                        return optionsError;
                     string refreshOpt = optionsObj?["refresh"]?.ToString()?.ToLowerInvariant();
                     string validateOpt = optionsObj?["validate"]?.ToString()?.ToLowerInvariant();
                     bool preview = action == "preview_text_edits" || optionsObj?.ReadScalar<bool?>("preview") == true;
@@ -249,10 +253,14 @@ namespace MCPForUnity.Editor.Tools
                 }
                 case "edit":
                 case "preview_edit":
+                {
                     McpLog.Warn("manage_script.edit is deprecated; prefer apply_text_edits. Serving structured edit for backward compatibility.");
                     var structEdits = @params["edits"] as JArray;
-                    var options = @params["options"] as JObject;
+                    var optionsError = ValidateScriptOptions(p.GetRaw("options"), out var options);
+                    if (optionsError != null)
+                        return optionsError;
                     return EditScript(fullPath, relativePath, name, structEdits, options, action == "preview_edit");
+                }
                 // Internal mixed-edit preflight: inspect input without reading or matching the file.
                 case "validate_edit":
                     var editError = ValidateStructuredEdits(@params["edits"] as JArray);
@@ -298,13 +306,37 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
+        private static ErrorResponse ValidateScriptOptions(JToken token, out JObject options)
+        {
+            options = token as JObject;
+            if (token == null || token.Type == JTokenType.Null)
+                return null;
+            if (options == null)
+                return new ErrorResponse("invalid_options", "Script options must be an object or null.");
+            foreach (string selector in new[] { "refresh", "validate", "applyMode", "apply_mode" })
+            {
+                var value = options[selector];
+                if (value != null && value.Type != JTokenType.Null && value.Type != JTokenType.String)
+                    return new ErrorResponse("invalid_options", $"Script option '{selector}' must be a string or null.");
+            }
+            try
+            {
+                _ = options.ReadScalar<bool?>("preview");
+            }
+            catch (ArgumentException ex)
+            {
+                return new ErrorResponse("invalid_options", ex.Message);
+            }
+            return null;
+        }
+
         /// <summary>
         /// Decode base64 string to normal text
         /// </summary>
         private static string DecodeBase64(string encoded)
         {
             byte[] data = Convert.FromBase64String(encoded);
-            return System.Text.Encoding.UTF8.GetString(data);
+            return StrictFileUtf8.GetString(data);
         }
 
         /// <summary>
@@ -312,7 +344,7 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static string EncodeBase64(string text)
         {
-            byte[] data = System.Text.Encoding.UTF8.GetBytes(text);
+            byte[] data = StrictFileUtf8.GetBytes(text);
             return Convert.ToBase64String(data);
         }
 
@@ -328,6 +360,15 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(contents))
             {
                 contents = GenerateDefaultScriptContent(name, scriptType, namespaceName);
+            }
+
+            try
+            {
+                _ = StrictFileUtf8.GetByteCount(contents);
+            }
+            catch (System.Text.EncoderFallbackException ex)
+            {
+                return new ErrorResponse("invalid_contents", $"Script contents must contain valid Unicode: {ex.Message}");
             }
 
             // Validate syntax with detailed error reporting using GUI setting
@@ -365,6 +406,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static void WriteScriptFile(string fullPath, string contents, bool overwrite)
         {
+            byte[] bytes = StrictFileUtf8.GetBytes(contents ?? string.Empty);
             string attempt = Guid.NewGuid().ToString("N");
             string tempPath = fullPath + "." + attempt + ".tmp";
             string backupPath = fullPath + "." + attempt + ".bak";
@@ -375,8 +417,7 @@ namespace MCPForUnity.Editor.Tools
                 using (var stream = File.Open(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
                     ownsTemp = true;
-                    using (var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false)))
-                        writer.Write(contents);
+                    stream.Write(bytes, 0, bytes.Length);
                 }
 
                 if (!overwrite)
@@ -627,7 +668,7 @@ namespace MCPForUnity.Editor.Tools
                     spans.Add((sidx, eidx, newText));
                     checked
                     {
-                        totalBytes += System.Text.Encoding.UTF8.GetByteCount(newText);
+                        totalBytes += StrictFileUtf8.GetByteCount(newText);
                     }
                 }
                 catch (Exception ex)
@@ -831,7 +872,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static object ScriptPreviewResponse(string fullPath, string relativePath, string original, string candidate, int preparedCount)
         {
-            long textBytes = (long)System.Text.Encoding.UTF8.GetByteCount(original) + System.Text.Encoding.UTF8.GetByteCount(candidate);
+            long textBytes = (long)StrictFileUtf8.GetByteCount(original) + StrictFileUtf8.GetByteCount(candidate);
             if (textBytes > MaxPreviewTextBytes)
                 return new ErrorResponse(
                     "too_large",
@@ -919,7 +960,7 @@ namespace MCPForUnity.Editor.Tools
         {
             using (var sha = SHA256.Create())
             {
-                var bytes = System.Text.Encoding.UTF8.GetBytes(contents);
+                var bytes = StrictFileUtf8.GetBytes(contents);
                 var hash = sha.ComputeHash(bytes);
                 return BitConverter.ToString(hash).Replace("-", string.Empty).ToLowerInvariant();
             }
@@ -1536,6 +1577,24 @@ namespace MCPForUnity.Editor.Tools
                     var value = edit[field];
                     if (value != null && value.Type != JTokenType.Null && value.Type != JTokenType.String)
                         return new ErrorResponse("invalid_edit", $"Structured edit '{field}' must be a string.");
+                    if (value?.Type == JTokenType.String)
+                    {
+                        try
+                        {
+                            string text = value.Value<string>();
+                            _ = StrictFileUtf8.GetByteCount(text);
+                            if (field == "replacementBase64" && !string.IsNullOrEmpty(text))
+                                _ = DecodeBase64(text);
+                        }
+                        catch (Exception ex)
+                            when (ex is FormatException || ex is System.Text.DecoderFallbackException || ex is System.Text.EncoderFallbackException)
+                        {
+                            return new ErrorResponse(
+                                "invalid_edit",
+                                $"Structured edit '{field}' must contain valid Unicode and base64 where applicable: {ex.Message}"
+                            );
+                        }
+                    }
                 }
                 string mode = (edit.Value<string>("mode") ?? edit.Value<string>("op") ?? string.Empty).ToLowerInvariant();
                 switch (mode)
@@ -2171,7 +2230,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 try
                 {
-                    return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(b64));
+                    return DecodeBase64(b64);
                 }
                 catch
                 {

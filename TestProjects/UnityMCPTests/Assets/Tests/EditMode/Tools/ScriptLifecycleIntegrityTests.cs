@@ -88,6 +88,27 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(0, Directory.GetFiles(tempRoot, "Fixture.txt.*.bak").Length);
         }
 
+        [TestCase(false, 0xD800)]
+        [TestCase(false, 0xDC00)]
+        [TestCase(true, 0xD800)]
+        [TestCase(true, 0xDC00)]
+        public void WriterRejectsInvalidUnicodeBeforeCreatingTemporaryFiles(bool overwrite, int surrogate)
+        {
+            if (overwrite)
+                File.WriteAllText(target, "original", new UTF8Encoding(false));
+            var entries = Directory.GetFileSystemEntries(tempRoot);
+            var original = overwrite ? File.ReadAllBytes(target) : null;
+
+            var error = Assert.Throws<TargetInvocationException>(() => Write("/* " + (char)surrogate + " */", overwrite));
+
+            Assert.IsInstanceOf<EncoderFallbackException>(error.InnerException);
+            CollectionAssert.AreEquivalent(entries, Directory.GetFileSystemEntries(tempRoot));
+            if (overwrite)
+                CollectionAssert.AreEqual(original, File.ReadAllBytes(target));
+            else
+                Assert.IsFalse(File.Exists(target));
+        }
+
         [Test]
         public void WriterCreateNeverOverwritesOccupiedDestination()
         {

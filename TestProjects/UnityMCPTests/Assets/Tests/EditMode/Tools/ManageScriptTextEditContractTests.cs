@@ -359,6 +359,188 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(modified, File.GetLastWriteTimeUtc(_path));
         }
 
+        [TestCase("\"{\\\"preview\\\":true}\"")]
+        [TestCase("[]")]
+        [TestCase("{\"refresh\":{},\"validate\":[]}")]
+        [TestCase("{\"refresh\":123}")]
+        [TestCase("{\"validate\":false}")]
+        [TestCase("{\"applyMode\":{}}")]
+        [TestCase("{\"apply_mode\":[]}")]
+        [TestCase("{\"preview\":[]}")]
+        public void MalformedOptions_RejectWithoutWritingOrScheduling(string json)
+        {
+            foreach (string action in new[] { "apply_text_edits", "edit", "preview_text_edits", "preview_edit" })
+            {
+                var request = BoundaryRequest(action);
+                request["options"] = JToken.Parse(json);
+                AssertRejectedWithoutChanges(request, "invalid_options");
+            }
+        }
+
+        [TestCase("null")]
+        [TestCase("{\"preview\":\"TrUe\",\"refresh\":\"sync\",\"validate\":\"syntax\",\"applyMode\":\"sequential\"}")]
+        [TestCase("{\"refresh\":null,\"validate\":null,\"applyMode\":null}")]
+        [TestCase("{\"refresh\":\"\",\"validate\":\"legacy\",\"applyMode\":\"legacy\",\"extension\":{}}")]
+        public void ValidOptions_PreservePreviewAndLegacyDefaults(string json)
+        {
+            foreach (string action in new[] { "preview_text_edits", "preview_edit" })
+            {
+                var request = BoundaryRequest(action);
+                request["options"] = JToken.Parse(json);
+                var callbacks = EditorApplication.delayCall;
+                var response = JObject.FromObject(ManageScript.HandleCommand(request));
+
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.IsTrue(response["data"].Value<bool>("preview"));
+                Assert.AreEqual(Original, File.ReadAllText(_path));
+                Assert.AreSame(callbacks, EditorApplication.delayCall);
+            }
+        }
+
+        [TestCase("missing")]
+        [TestCase("null")]
+        [TestCase("1234")]
+        [TestCase("{}")]
+        public void EncodedCreateRequiresStringPayloadBeforeCreatingFolders(string json)
+        {
+            string folder = _folder + "/Rejected";
+            var request = new JObject
+            {
+                ["action"] = "create",
+                ["name"] = "ContractEditProbe",
+                ["path"] = folder,
+                ["contentsEncoded"] = true,
+            };
+            if (json != "missing")
+                request["encodedContents"] = JToken.Parse(json);
+            AssertRejectedWithoutChanges(request, "invalid_contents");
+            Assert.IsFalse(Directory.Exists(folder));
+            Assert.IsFalse(File.Exists(folder + ".meta"));
+        }
+
+        [Test]
+        public void MalformedUtf8CreateRejectsBeforeCreatingFolders()
+        {
+            string folder = _folder + "/Rejected";
+            AssertRejectedWithoutChanges(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["name"] = "ContractEditProbe",
+                    ["path"] = folder,
+                    ["contentsEncoded"] = true,
+                    ["encodedContents"] = InvalidUtf8Replacement(),
+                }
+            );
+            Assert.IsFalse(Directory.Exists(folder));
+            Assert.IsFalse(File.Exists(folder + ".meta"));
+        }
+
+        [TestCase("replace_class")]
+        [TestCase("anchor_replace")]
+        [TestCase("anchor_insert")]
+        public void MalformedUtf8StructuredReplacementRejectsWithoutWritingOrScheduling(string operation)
+        {
+            var request = BoundaryRequest("edit");
+            request["edits"] = new JArray(
+                new JObject
+                {
+                    ["op"] = operation,
+                    ["className"] = "ContractEditProbe",
+                    ["anchor"] = "public class ContractEditProbe",
+                    ["replacementBase64"] = InvalidUtf8Replacement(),
+                }
+            );
+            AssertRejectedWithoutChanges(request, "invalid_edit");
+        }
+
+        [TestCase(0xD800)]
+        [TestCase(0xDC00)]
+        public void InvalidUnicodeRejectsBeforeCreateOrEditEffects(int surrogate)
+        {
+            string replacement = "public class ContractEditProbe { /* " + (char)surrogate + " */ }";
+            var structured = BoundaryRequest("edit");
+            structured["edits"][0]["replacement"] = replacement;
+            AssertRejectedWithoutChanges(structured, "invalid_edit");
+
+            var text = BoundaryRequest("apply_text_edits");
+            text["edits"][0]["newText"] = "// " + (char)surrogate + "\n";
+            AssertRejectedWithoutChanges(text);
+
+            string folder = _folder + "/Rejected";
+            AssertRejectedWithoutChanges(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["name"] = "ContractEditProbe",
+                    ["path"] = folder,
+                    ["contents"] = replacement,
+                },
+                "invalid_contents"
+            );
+            Assert.IsFalse(Directory.Exists(folder));
+            Assert.IsFalse(File.Exists(folder + ".meta"));
+        }
+
+        private static string InvalidUtf8Replacement()
+        {
+            byte[] bytes = Encoding.ASCII.GetBytes("public class ContractEditProbe { /* X */ }");
+            bytes[Array.IndexOf(bytes, (byte)'X')] = 0xFF;
+            return Convert.ToBase64String(bytes);
+        }
+
+        private JObject BoundaryRequest(string action)
+        {
+            string hash;
+            using (var sha = SHA256.Create())
+                hash = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(Original))).Replace("-", string.Empty).ToLowerInvariant();
+            bool structured = action == "edit" || action == "preview_edit";
+            return new JObject
+            {
+                ["action"] = action,
+                ["name"] = "ContractEditProbe",
+                ["path"] = _folder,
+                ["precondition_sha256"] = hash,
+                ["edits"] = structured
+                    ? new JArray(
+                        new JObject
+                        {
+                            ["op"] = "replace_class",
+                            ["className"] = "ContractEditProbe",
+                            ["replacement"] = "public class ContractEditProbe { int X; }",
+                        }
+                    )
+                    : new JArray(
+                        new JObject
+                        {
+                            ["startLine"] = 2,
+                            ["startCol"] = 1,
+                            ["endLine"] = 2,
+                            ["endCol"] = 1,
+                            ["newText"] = "//ok\n",
+                        }
+                    ),
+            };
+        }
+
+        private void AssertRejectedWithoutChanges(JObject request, string code = null)
+        {
+            byte[] bytes = File.ReadAllBytes(_path);
+            var modified = File.GetLastWriteTimeUtc(_path);
+            var entries = Directory.GetFileSystemEntries(_folder);
+            var callbacks = EditorApplication.delayCall;
+
+            var response = JObject.FromObject(ManageScript.HandleCommand(request));
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            if (code != null)
+                Assert.AreEqual(code, response.Value<string>("code"), response.ToString());
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(_path));
+            Assert.AreEqual(modified, File.GetLastWriteTimeUtc(_path));
+            CollectionAssert.AreEquivalent(entries, Directory.GetFileSystemEntries(_folder));
+            Assert.AreSame(callbacks, EditorApplication.delayCall);
+        }
+
         private JObject Apply(JArray edits, string action = "apply_text_edits")
         {
             string hash;
