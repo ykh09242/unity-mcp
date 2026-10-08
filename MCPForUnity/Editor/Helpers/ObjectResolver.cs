@@ -36,7 +36,7 @@ namespace MCPForUnity.Editor.Helpers
                 return null;
 
             string findTerm = instruction["find"]?.ToString();
-            string method = instruction["method"]?.ToString()?.ToLower();
+            string method = instruction["method"]?.ToString();
             string componentName = instruction["component"]?.ToString();
 
             if (string.IsNullOrEmpty(findTerm))

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -153,6 +154,37 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.AreSame(numericName, ObjectResolver.ResolveGameObject(new JValue(id), "by_name"));
             Assert.AreSame(numericName, ObjectResolver.Resolve<GameObject>(new JObject { ["find"] = id, ["method"] = "by_name" }));
             Assert.AreSame(wanted, ObjectResolver.ResolveGameObject(new JValue(id), "by_id"));
+        }
+
+        [TestCase("en-US", "BY_ID")]
+        [TestCase("tr-TR", "BY_ID")]
+        [TestCase("az-Latn-AZ", "BY_ID")]
+        [TestCase("tr-TR", "By_Id")]
+        [TestCase("tr-TR", "BY_ID_OR_NAME_OR_PATH")]
+        [TestCase("az-Latn-AZ", "BY_ID_OR_NAME_OR_PATH")]
+        public void InstructionMethod_IsCultureIndependent(string culture, string method)
+        {
+            CultureInfo previous = CultureInfo.CurrentCulture;
+            try
+            {
+                CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
+                GameObject wanted = CreateObject("ResolverCulture_" + Guid.NewGuid().ToString("N"));
+                string id = wanted.GetInstanceIDCompat().ToString(CultureInfo.InvariantCulture);
+                GameObject numericName = CreateObject(id);
+                var instruction = new JObject { ["find"] = id, ["method"] = method };
+
+                Assert.IsTrue(wanted == ObjectResolver.Resolve<GameObject>(instruction));
+                Assert.IsTrue(wanted == ObjectResolver.ResolveGameObject(instruction));
+                Assert.IsTrue(wanted.transform == ObjectResolver.Resolve<Transform>(instruction));
+                Assert.IsTrue(numericName == ObjectResolver.Resolve<GameObject>(new JObject { ["find"] = id, ["method"] = "BY_NAME" }));
+
+                wanted.SetActive(false);
+                Assert.IsNull(ObjectResolver.Resolve<GameObject>(instruction), "An inactive ID must not fall back to a different object's numeric name.");
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = previous;
+            }
         }
 
         [Test]
