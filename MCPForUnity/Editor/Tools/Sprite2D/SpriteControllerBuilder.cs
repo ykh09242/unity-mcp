@@ -23,7 +23,8 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             if (clipsToken == null || clipsToken.Count == 0)
                 return diagnostics.Fail("BAD_PARAM", "'clips' array is required.");
 
-            string controllerPath = @params["controller_path"]?.ToString();
+            if (!SpriteParams.TryReadString(@params, "controller_path", null, out string controllerPath, out string pathError))
+                return diagnostics.Fail("BAD_PARAM", pathError);
             if (string.IsNullOrEmpty(controllerPath))
                 return diagnostics.Fail("BAD_PARAM", "'controller_path' is required.");
 
@@ -39,13 +40,22 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     diagnostics.AddWarning("CLIP_NOT_AN_OBJECT", "A clips entry is not an object - skipped.", "Each clip must be an object with a 'name'.");
                     continue;
                 }
-                string name = cd["name"]?.ToString();
+                if (!SpriteParams.TryReadString(cd, "name", null, out string name, out string nameError))
+                {
+                    diagnostics.AddWarning("CLIP_BAD_NAME", $"{nameError} - skipped.", "Give the clip a string name.");
+                    continue;
+                }
                 if (string.IsNullOrEmpty(name))
                 {
                     diagnostics.AddWarning("CLIP_NO_NAME", "A clips entry has no name - skipped.", "Each clip must be an object with a 'name'.");
                     continue;
                 }
-                clips.Add((name, cd["path"]?.ToString() ?? "", null));
+                if (!SpriteParams.TryReadString(cd, "path", "", out string clipPath, out pathError))
+                {
+                    diagnostics.AddWarning("CLIP_BAD_PATH", $"Clip '{name}': {pathError} - skipped.");
+                    continue;
+                }
+                clips.Add((name, clipPath, null));
             }
 
             var built = BuildController(clips, controllerPath, overwrite, diagnostics);

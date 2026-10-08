@@ -34,17 +34,42 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             )
                 return diagnostics.Fail("BAD_PARAM", flagError);
 
-            string outputDir = @params["output_dir"]?.ToString() ?? Path.GetDirectoryName(path)?.Replace('\\', '/') ?? "Assets";
+            if (
+                !SpriteParams.TryReadString(
+                    @params,
+                    "output_dir",
+                    Path.GetDirectoryName(path)?.Replace('\\', '/') ?? "Assets",
+                    out string outputDir,
+                    out pathError
+                )
+            )
+                return diagnostics.Fail("BAD_PARAM", pathError);
             if (!SpriteParams.TryReadAssetPath(new JObject { ["output_dir"] = outputDir }, "output_dir", out outputDir, out pathError))
                 return diagnostics.Fail("BAD_PARAM", pathError);
 
-            string controllerPath = @params["controller_path"]?.ToString() ?? $"{outputDir}/{Path.GetFileNameWithoutExtension(path)}_Controller.controller";
+            if (
+                !SpriteParams.TryReadString(
+                    @params,
+                    "controller_path",
+                    $"{outputDir}/{Path.GetFileNameWithoutExtension(path)}_Controller.controller",
+                    out string controllerPath,
+                    out pathError
+                )
+            )
+                return diagnostics.Fail("BAD_PARAM", pathError);
             if (!SpriteControllerBuilder.TryResolveControllerPath(controllerPath, out controllerPath, out pathError))
                 return diagnostics.Fail("BAD_PARAM", pathError);
 
             var clipsToken = @params["clips"] as JArray;
             if (@params["clips"] != null && @params["clips"].Type != JTokenType.Null && clipsToken == null)
                 return diagnostics.Fail("BAD_PARAM", "'clips' must be an array of clip definitions.");
+
+            string animName = null;
+            if (
+                (clipsToken == null || clipsToken.Count == 0)
+                && !SpriteParams.TryReadString(@params, "animation_name", Path.GetFileNameWithoutExtension(path), out animName, out pathError)
+            )
+                return diagnostics.Fail("BAD_PARAM", pathError);
 
             // ── Step 1: Slice ──────────────────────────────────────────────────
 
@@ -56,7 +81,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             if (clipsToken == null || clipsToken.Count == 0)
             {
-                string animName = @params["animation_name"]?.ToString() ?? Path.GetFileNameWithoutExtension(path);
                 int totalFrames = GetSliceCount(path);
                 clipsToken = new JArray(
                     new JObject

@@ -218,6 +218,209 @@ namespace MCPForUnityTests.Editor.Tools
             UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
         }
 
+        private static IEnumerable<TestCaseData> NonStringSettings()
+        {
+            foreach (string key in new[] { "output_dir", "controller_path", "animation_name", "base_name" })
+            foreach (JToken token in new JToken[] { new JValue(0), new JValue(false), new JArray("walk"), new JObject() })
+                yield return new TestCaseData(key, token).SetName($"FullSetup_NonString_{key}_{token.Type}_DoesNotMutate");
+        }
+
+        [TestCaseSource(nameof(NonStringSettings))]
+        public void FullSetup_NonStringSetting_IsRefusedBeforeChangingImporterOrWritingAssets(string key, JToken value)
+        {
+            string path = CreateSheet("string_preflight", 4, 1);
+            string before = ImportState(path);
+            string outputDir = $"{TempRoot}/Refused/Nested";
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    ["output_dir"] = outputDir,
+                    [key] = value.DeepClone(),
+                }
+            );
+
+            Assert.IsFalse(result.Value<bool>("success"));
+            Assert.That(ErrorText(result), Does.Contain($"'{key}' must be a string"));
+            Assert.That(result["diagnostics"].ToString(), Does.Not.Contain("INTERNAL"));
+            Assert.AreEqual(before, ImportState(path));
+            Assert.IsEmpty(AssetDatabase.FindAssets("t:AnimationClip", new[] { TempRoot }));
+            Assert.IsEmpty(AssetDatabase.FindAssets("t:AnimatorController", new[] { TempRoot }));
+            Assert.IsFalse(Directory.Exists(AssetPathUtility.GetFullAssetPath($"{TempRoot}/Refused")));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("slice_sheet", "base_name")]
+        [TestCase("setup_clips", "output_dir")]
+        public void SpriteAction_NonStringSetting_IsRefusedBeforeWriting(string action, string key)
+        {
+            string path = CreateSheet("setting_type", 4, 1);
+            if (action == "setup_clips")
+                Slice(path, 4, 1);
+            string before = ImportState(path);
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = action,
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    ["clips"] = OneClip("walk", 0, 3),
+                    [key] = false,
+                }
+            );
+
+            Assert.IsFalse(result.Value<bool>("success"));
+            Assert.That(ErrorText(result), Does.Contain($"'{key}' must be a string"));
+            Assert.AreEqual(before, ImportState(path));
+            Assert.IsEmpty(AssetDatabase.FindAssets("t:AnimationClip", new[] { TempRoot }));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("base_name")]
+        [TestCase("output_dir")]
+        [TestCase("controller_path")]
+        [TestCase("animation_name")]
+        public void FullSetup_NullOptionalString_UsesTheDocumentedDefault(string key)
+        {
+            string path = CreateSheet("null_string", 4, 1);
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    [key] = JValue.CreateNull(),
+                }
+            );
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual($"{TempRoot}/null_string_Controller.controller", result.Value<string>("controller_path"));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{TempRoot}/null_string.anim"));
+            Assert.AreEqual("null_string_0", SpritesOf(path).First().name);
+        }
+
+        [Test]
+        public void SetupClips_NullOutputDirectory_UsesTheSpriteFolder()
+        {
+            string path = CreateSheet("null_clip_dir", 4, 1);
+            Slice(path, 4, 1);
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "setup_clips",
+                    ["path"] = path,
+                    ["clips"] = OneClip("walk", 0, 3),
+                    ["output_dir"] = JValue.CreateNull(),
+                }
+            );
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(1, result.Value<int>("clip_count"));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{TempRoot}/walk.anim"));
+        }
+
+        private static IEnumerable<TestCaseData> NonStringClipNames()
+        {
+            foreach (JToken token in new JToken[] { new JValue(0), new JValue(false), new JArray("walk"), new JObject() })
+                yield return new TestCaseData(token).SetName($"SetupClips_NonStringName_{token.Type}_IsSkipped");
+        }
+
+        [TestCaseSource(nameof(NonStringClipNames))]
+        public void SetupClips_NonStringName_IsSkippedWithoutCreatingTheOutputFolder(JToken name)
+        {
+            string path = CreateSheet("name_type", 4, 1);
+            Slice(path, 4, 1);
+            string outputDir = $"{TempRoot}/Refused/Nested";
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "setup_clips",
+                    ["path"] = path,
+                    ["output_dir"] = outputDir,
+                    ["clips"] = new JArray(new JObject { ["name"] = name.DeepClone() }),
+                }
+            );
+
+            Assert.IsTrue(result.Value<bool>("success"), "Per-clip refusal stays a warning.");
+            Assert.AreEqual(0, result.Value<int>("clip_count"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_BAD_NAME"));
+            Assert.IsEmpty(AssetDatabase.FindAssets("t:AnimationClip", new[] { TempRoot }));
+            Assert.IsFalse(Directory.Exists(AssetPathUtility.GetFullAssetPath($"{TempRoot}/Refused")));
+        }
+
+        [Test]
+        public void SetupClips_NonStringNameBetweenValidClips_PreservesPartialSuccess()
+        {
+            string path = CreateSheet("partial_name", 4, 1);
+            Slice(path, 4, 1);
+            var clips = OneClip("idle", 0, 1);
+            clips.Add(new JObject { ["name"] = false });
+            clips.Add(
+                new JObject
+                {
+                    ["name"] = "walk",
+                    ["start_frame"] = 2,
+                    ["end_frame"] = 3,
+                    ["loop"] = false,
+                }
+            );
+            var result = SetupClips(path, clips);
+
+            Assert.IsTrue(result.Value<bool>("success"));
+            Assert.AreEqual(2, result.Value<int>("clip_count"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_BAD_NAME"));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{TempRoot}/idle.anim"));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{TempRoot}/walk.anim"));
+            Assert.IsNull(AssetDatabase.LoadMainAssetAtPath($"{TempRoot}/False.anim"));
+        }
+
+        [Test]
+        public void SetupController_NonStringClipName_IsSkippedBeforeWriting()
+        {
+            var clips = BuildClips("controller_name_type", "idle");
+            ((JObject)clips[0])["name"] = new JObject();
+            var result = SetupController(clips);
+
+            Assert.IsFalse(result.Value<bool>("success"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_BAD_NAME"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("NO_CLIPS"));
+            Assert.IsNull(AssetDatabase.LoadMainAssetAtPath($"{TempRoot}/Hero.controller"));
+        }
+
+        [Test]
+        public void SetupController_NonStringClipPath_IsSkippedWithTheParameterWarning()
+        {
+            var clips = BuildClips("controller_path_type", "idle");
+            ((JObject)clips[0])["path"] = 0;
+            var result = SetupController(clips);
+
+            Assert.IsFalse(result.Value<bool>("success"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_BAD_PATH"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("'path' must be a string"));
+            Assert.IsNull(AssetDatabase.LoadMainAssetAtPath($"{TempRoot}/Hero.controller"));
+        }
+
+        [Test]
+        public void FullSetup_ExplicitClips_KeepIgnoringTheUnusedAnimationName()
+        {
+            string path = CreateSheet("unused_name", 4, 1);
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    ["clips"] = OneClip("walk", 0, 3),
+                    ["animation_name"] = false,
+                }
+            );
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{TempRoot}/walk.anim"));
+        }
+
         // =====================================================================
         // get_info
         // =====================================================================

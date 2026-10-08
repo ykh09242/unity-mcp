@@ -40,7 +40,10 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             if (!SpriteParams.TryReadBool(@params, "overwrite", false, out bool overwrite, out string overwriteError))
                 return diagnostics.Fail("BAD_PARAM", overwriteError);
 
-            var clips = CreateClips(path, clipsToken, @params["output_dir"]?.ToString(), overwrite, diagnostics);
+            if (!SpriteParams.TryReadString(@params, "output_dir", null, out string outputDir, out string dirError))
+                return diagnostics.Fail("BAD_PARAM", dirError);
+
+            var clips = CreateClips(path, clipsToken, outputDir, overwrite, diagnostics);
             if (diagnostics.HasErrors)
                 return diagnostics.Fail();
 
@@ -83,7 +86,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     continue;
                 }
 
-                string clipName = clipDef["name"]?.ToString();
+                if (!SpriteParams.TryReadString(clipDef, "name", null, out string clipName, out string nameError))
+                {
+                    diagnostics.AddWarning("CLIP_BAD_NAME", $"{nameError} - skipped.", "Give the clip a string name.");
+                    continue;
+                }
                 if (string.IsNullOrEmpty(clipName))
                 {
                     diagnostics.AddWarning("CLIP_NO_NAME", "Clip name is missing — skipped.", "Add a 'name' field to each clip definition.");

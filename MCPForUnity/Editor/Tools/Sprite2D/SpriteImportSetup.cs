@@ -290,10 +290,13 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 }
             }
 
+            if (!SpriteParams.TryReadString(@params, "base_name", Path.GetFileNameWithoutExtension(path), out string baseName, out string nameError))
+                return diagnostics.Fail("BAD_PARAM", nameError);
+
             var snapshot = new ImporterSnapshot(importer);
             try
             {
-                return SliceTexture(@params, diagnostics, path, importer, snapshot, cols, rows, frameW, frameH, filterMode);
+                return SliceTexture(baseName, diagnostics, path, importer, snapshot, cols, rows, frameW, frameH, filterMode);
             }
             catch
             {
@@ -311,7 +314,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
         }
 
         private static object SliceTexture(
-            JObject @params,
+            string baseName,
             SpriteDiagnosticBuilder diagnostics,
             string path,
             TextureImporter importer,
@@ -391,8 +394,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     "Confirm the texture dimensions with get_info"
                 );
             }
-
-            string baseName = @params["base_name"]?.ToString() ?? Path.GetFileNameWithoutExtension(path);
 
             var metas = new SpriteMetaData[(int)totalFrames];
             for (int r = 0; r < rows; r++)

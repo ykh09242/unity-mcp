@@ -13,10 +13,27 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
     /// </summary>
     internal static class SpriteParams
     {
+        /// <summary>Missing/null uses the default; explicit empty strings retain each caller's existing policy.</summary>
+        internal static bool TryReadString(JObject @params, string key, string fallback, out string value, out string error)
+        {
+            value = fallback;
+            error = null;
+            JToken token = @params[key];
+            if (token == null || token.Type == JTokenType.Null)
+                return true;
+            if (token.Type != JTokenType.String)
+            {
+                error = $"'{key}' must be a string; got {token.Type.ToString().ToLowerInvariant()}.";
+                return false;
+            }
+            value = token.Value<string>();
+            return true;
+        }
+
         internal static bool TryReadAssetPath(JObject @params, string key, out string path, out string error)
         {
-            error = null;
-            path = @params[key]?.ToString();
+            if (!TryReadString(@params, key, null, out path, out error))
+                return false;
             if (string.IsNullOrEmpty(path))
             {
                 error = $"'{key}' is required.";
