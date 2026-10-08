@@ -44,8 +44,14 @@ def _script_lines_and_starts(text: str) -> tuple[list[str], list[int]]:
 
 
 def _normalize_script_options(options: dict[str, Any] | None) -> dict[str, Any]:
-    """Parse known legacy boolean options before any routing or Unity command."""
+    """Validate option shapes before routing; preserve legacy selector values."""
+    if options is not None and not isinstance(options, dict):
+        raise ValueError("Script options must be an object or null")
     parsed = dict(options or {})
+    for field in ("refresh", "validate", "applyMode", "apply_mode"):
+        value = parsed.get(field)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"Script option '{field}' must be a string or null")
     for field in ("preview", "debug_preview", "force_sentinel_reload"):
         if field in parsed:
             parsed[field] = coerce_bool(parsed[field], default=False)
