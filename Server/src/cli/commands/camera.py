@@ -186,9 +186,9 @@ def set_target(target, search_method, follow, look_at):
     """
     config = get_config()
     props: dict[str, Any] = {}
-    if follow:
+    if follow is not None:
         props["follow"] = follow
-    if look_at:
+    if look_at is not None:
         props["lookAt"] = look_at
 
     params = _normalize_cam_params(
