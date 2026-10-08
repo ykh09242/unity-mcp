@@ -263,3 +263,85 @@ def test_cancel_without_job_id_sends_minimal_params(mock_unity):
 def test_sends_to_correct_tool_name(mock_unity):
     asyncio.run(manage_build(SimpleNamespace(), action="status"))
     assert mock_unity["tool_name"] == "manage_build"
+
+
+@pytest.mark.parametrize("action", ["build", "batch"])
+@pytest.mark.parametrize(
+    "options",
+    [
+        "strict_mdoe",
+        '["strict_mode", "invalid"]',
+        '["strict_mode", 123]',
+        '["strict_mode", null]',
+        '["strict_mode", ""]',
+        '["strict_mode", " "]',
+        "123",
+        "{}",
+        "",
+        " ",
+        123,
+        True,
+        {},
+    ],
+)
+def test_invalid_build_options_reject_before_transport(mock_unity, action, options):
+    result = asyncio.run(manage_build(SimpleNamespace(), action=action, options=options))
+    assert result["success"] is False
+    assert "options" in result["message"]
+    assert mock_unity == {}
+
+
+@pytest.mark.parametrize("action", ["build", "platform"])
+@pytest.mark.parametrize("subtarget", ["sevrer", "123", "", " ", 123, {}, ["player"]])
+def test_invalid_subtarget_rejects_before_transport(mock_unity, action, subtarget):
+    result = asyncio.run(manage_build(SimpleNamespace(), action=action, subtarget=subtarget))
+    assert result["success"] is False
+    assert "subtarget" in result["message"]
+    assert mock_unity == {}
+
+
+@pytest.mark.parametrize(
+    "options, expected",
+    [
+        ("STRICT_MODE", "STRICT_MODE"),
+        (
+            '["STRICT_MODE", "allow_debugging", "connect_profiler", "scripts_only", "show_player", "include_tests"]',
+            [
+                "STRICT_MODE",
+                "allow_debugging",
+                "connect_profiler",
+                "scripts_only",
+                "show_player",
+                "include_tests",
+            ],
+        ),
+        ('["[\\"strict_mode\\"]"]', ['["strict_mode"]']),
+        ('[["strict_mode"]]', [["strict_mode"]]),
+        ("[]", []),
+        (None, None),
+    ],
+)
+def test_valid_build_option_forms_remain_forwarded(mock_unity, options, expected):
+    result = asyncio.run(manage_build(SimpleNamespace(), action="build", options=options))
+    assert result["success"] is True
+    assert mock_unity["params"].get("options") == expected
+
+
+@pytest.mark.parametrize("subtarget", [None, "player", "SERVER", "Player"])
+def test_valid_subtargets_remain_forwarded(mock_unity, subtarget):
+    result = asyncio.run(manage_build(SimpleNamespace(), action="build", subtarget=subtarget))
+    assert result["success"] is True
+    assert mock_unity["params"].get("subtarget") == subtarget
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        [[["strict_mode"]]],
+        ['["[\\"strict_mode\\"]"]'],
+    ],
+)
+def test_deep_option_wrappers_reject_before_transport(mock_unity, options):
+    result = asyncio.run(manage_build(SimpleNamespace(), action="build", options=options))
+    assert result["success"] is False
+    assert mock_unity == {}

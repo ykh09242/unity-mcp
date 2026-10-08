@@ -117,7 +117,7 @@ namespace MCPForUnity.Editor.Tools.Build
 
             foreach (var name in optionNames)
             {
-                switch (name.ToLowerInvariant())
+                switch (name?.ToLowerInvariant())
                 {
                     case "clean_build":
                         opts |= BuildOptions.CleanBuildCache;
@@ -152,6 +152,8 @@ namespace MCPForUnity.Editor.Tools.Build
                     case "include_tests":
                         opts |= BuildOptions.IncludeTestAssemblies;
                         break;
+                    default:
+                        throw new ArgumentException($"Unknown build options name '{name}'. Use supported BuildOptions names.", nameof(optionNames));
                 }
             }
             return opts;

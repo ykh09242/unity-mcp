@@ -24,6 +24,40 @@ ALL_ACTIONS = [
 ]
 
 
+BUILD_OPTION_NAMES = frozenset(
+    {
+        "clean_build",
+        "auto_run",
+        "deep_profiling",
+        "compress_lz4",
+        "strict_mode",
+        "detailed_report",
+        "allow_debugging",
+        "connect_profiler",
+        "scripts_only",
+        "show_player",
+        "include_tests",
+    }
+)
+
+
+def _valid_build_options(value: object) -> bool:
+    if isinstance(value, str):
+        return value.lower() in BUILD_OPTION_NAMES
+    if not isinstance(value, list):
+        return False
+    names = value
+    if len(names) == 1:
+        member = names[0]
+        if isinstance(member, list):
+            names = member
+        elif isinstance(member, str):
+            parsed = parse_json_payload(member)
+            if isinstance(parsed, list):
+                names = parsed
+    return all(isinstance(name, str) and name.lower() in BUILD_OPTION_NAMES for name in names)
+
+
 async def _send_build_command(
     ctx: Context,
     params_dict: dict[str, Any],
@@ -116,7 +150,16 @@ async def manage_build(
     # Support comma-separated scene paths as an alternative to JSON array
     if isinstance(parsed_scenes, str):
         parsed_scenes = [s.strip() for s in parsed_scenes.split(",") if s.strip()]
-    parsed_options = parse_json_payload(options) if options else None
+    parsed_options = parse_json_payload(options) if options is not None else None
+    if action_lower in {"build", "batch"} and options is not None:
+        if not _valid_build_options(parsed_options):
+            return {
+                "success": False,
+                "message": "options must contain supported BuildOptions names.",
+            }
+    if action_lower in {"build", "platform"} and subtarget is not None:
+        if not isinstance(subtarget, str) or subtarget.lower() not in {"player", "server"}:
+            return {"success": False, "message": "subtarget must be player or server."}
     parsed_targets = parse_json_payload(targets) if targets else None
     parsed_profiles = parse_json_payload(profiles) if profiles else None
 

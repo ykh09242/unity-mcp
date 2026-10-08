@@ -179,12 +179,17 @@ namespace MCPForUnity.Editor.Tools.Build
 
         public static int ResolveSubtarget(string subtarget)
         {
-            if (string.IsNullOrEmpty(subtarget))
+            if (subtarget == null)
                 return (int)StandaloneBuildSubtarget.Player;
-            string lower = subtarget.ToLowerInvariant();
-            if (lower == "server")
-                return (int)StandaloneBuildSubtarget.Server;
-            return (int)StandaloneBuildSubtarget.Player;
+            switch (subtarget.ToLowerInvariant())
+            {
+                case "player":
+                    return (int)StandaloneBuildSubtarget.Player;
+                case "server":
+                    return (int)StandaloneBuildSubtarget.Server;
+                default:
+                    throw new ArgumentException($"Unknown subtarget '{subtarget}'. Valid: player, server.", nameof(subtarget));
+            }
         }
     }
 }

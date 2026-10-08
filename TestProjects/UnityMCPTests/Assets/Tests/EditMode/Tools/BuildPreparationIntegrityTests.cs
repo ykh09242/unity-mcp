@@ -187,6 +187,66 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 #endif
 
+        [TestCase("strict_mdoe")]
+        [TestCase("invalid")]
+        [TestCase("")]
+        [TestCase(" ")]
+        [TestCase(null)]
+        public void UnknownOrEmptyOptionNamesAreRejected(string name)
+        {
+            Assert.Throws<ArgumentException>(() => BuildRunner.ParseBuildOptions(new[] { "strict_mode", name }, false));
+        }
+
+        [TestCase("sevrer")]
+        [TestCase("123")]
+        [TestCase("")]
+        [TestCase(" ")]
+        public void UnknownOrEmptySubtargetIsRejected(string name)
+        {
+            Assert.Throws<ArgumentException>(() => BuildTargetMapping.ResolveSubtarget(name));
+        }
+
+        [TestCase(null, StandaloneBuildSubtarget.Player)]
+        [TestCase("player", StandaloneBuildSubtarget.Player)]
+        [TestCase("PLAYER", StandaloneBuildSubtarget.Player)]
+        [TestCase("server", StandaloneBuildSubtarget.Server)]
+        [TestCase("SERVER", StandaloneBuildSubtarget.Server)]
+        public void SupportedSubtargetDefaultsAndCaseArePreserved(string name, StandaloneBuildSubtarget expected)
+        {
+            Assert.AreEqual((int)expected, BuildTargetMapping.ResolveSubtarget(name));
+        }
+
+        [TestCase("{options:['strict_mode','invalid']}")]
+        [TestCase("{options:['strict_mode',123]}")]
+        [TestCase("{options:['strict_mode',null]}")]
+        [TestCase("{options:['strict_mode','']}")]
+        [TestCase("{options:{}}")]
+        [TestCase("{options:''}")]
+        public void MalformedOptionsRejectBeforeProfileLookup(string json)
+        {
+            JObject request = JObject.Parse(json);
+            request["action"] = "build";
+            request["profile"] = "Assets/__McpMissingBuildProfile_" + Guid.NewGuid().ToString("N") + ".asset";
+            request["scripting_backend"] = "mono";
+            Reject(request, "options");
+        }
+
+        [TestCase("sevrer")]
+        [TestCase("123")]
+        [TestCase("")]
+        public void InvalidSubtargetRejectsBeforeAlreadyActivePlatform(string name)
+        {
+            Reject(
+                new JObject
+                {
+                    ["action"] = "platform",
+                    ["target"] = EditorUserBuildSettings.activeBuildTarget.ToString(),
+                    ["subtarget"] = name,
+                },
+                "subtarget"
+            );
+        }
+
         private static void Reject(JObject request, string diagnostic)
         {
             string before = Snapshot();

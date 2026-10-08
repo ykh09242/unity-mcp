@@ -102,8 +102,8 @@ namespace MCPForUnity.Editor.Tools
             ValidateSceneArgument(p.GetRaw("scenes"));
             string[] scenes = p.GetStringArray("scenes");
             bool development = p.GetBool("development");
-            string[] optionNames = p.GetStringArray("options");
-            string subtargetStr = p.Get("subtarget");
+            var buildOptions = BuildRunner.ParseBuildOptions(ReadBuildOptionNames(p.GetRaw("options")), development);
+            int subtarget = ReadSubtarget(p);
             string scriptingBackend = p.Get("scripting_backend");
             if (outputPath != null)
                 BuildRunner.ValidateOutputPath(outputPath);
@@ -121,14 +121,12 @@ namespace MCPForUnity.Editor.Tools
 
 #if UNITY_6000_0_OR_NEWER
             if (useProfile)
-                return HandleProfileBuild(profilePath, outputPath, development, optionNames, scriptingImplementation);
+                return HandleProfileBuild(profilePath, outputPath, buildOptions, scriptingImplementation);
 #else
             if (!string.IsNullOrEmpty(profilePath))
                 McpLog.Warn($"Build Profile param ignored — requires Unity 6+. Current: {UnityEngine.Application.unityVersion}");
 #endif
 
-            var buildOptions = BuildRunner.ParseBuildOptions(optionNames, development);
-            int subtarget = BuildTargetMapping.ResolveSubtarget(subtargetStr);
             var options = BuildRunner.CreateBuildOptions(target, outputPath, scenes, buildOptions, subtarget);
 
             if (scriptingImplementation.HasValue)
@@ -140,6 +138,56 @@ namespace MCPForUnity.Editor.Tools
             string jobId = BuildJobStore.CreateJobId();
             var job = new BuildJob(jobId, target, outputPath);
             return BuildRunner.ScheduleBuild(job, options);
+        }
+
+        private static int ReadSubtarget(ToolParams p)
+        {
+            var token = p.GetRaw("subtarget");
+            if (token == null || token.Type == JTokenType.Null)
+                return BuildTargetMapping.ResolveSubtarget(null);
+            if (token.Type != JTokenType.String)
+                throw new ArgumentException("'subtarget' must be player or server.");
+            return BuildTargetMapping.ResolveSubtarget(token.Value<string>());
+        }
+
+        private static string[] ReadBuildOptionNames(JToken token)
+        {
+            if (token == null || token.Type == JTokenType.Null)
+                return null;
+            JArray array;
+            try
+            {
+                if (token.Type == JTokenType.String)
+                {
+                    string value = token.Value<string>();
+                    string trimmed = value.Trim();
+                    if (!trimmed.StartsWith("[", StringComparison.Ordinal) || !trimmed.EndsWith("]", StringComparison.Ordinal))
+                        return new[] { value };
+                    array = JArray.Parse(trimmed);
+                }
+                else if (token is JArray values)
+                {
+                    array = values;
+                    // Preserve exactly the single wrapper forms accepted by ToolParams.
+                    if (array.Count == 1 && array[0] is JArray nested)
+                        array = nested;
+                    else if (array.Count == 1 && array[0].Type == JTokenType.String)
+                    {
+                        string inner = array[0].Value<string>().Trim();
+                        if (inner.StartsWith("[", StringComparison.Ordinal) && inner.EndsWith("]", StringComparison.Ordinal))
+                            array = JArray.Parse(inner);
+                    }
+                }
+                else
+                    throw new ArgumentException("'options' must be a string or an array of BuildOptions names.");
+            }
+            catch (Newtonsoft.Json.JsonException ex)
+            {
+                throw new ArgumentException("'options' must contain supported BuildOptions names.", ex);
+            }
+            if (array.Any(item => item.Type != JTokenType.String))
+                throw new ArgumentException("'options' must contain only BuildOptions names as strings.");
+            return array.Select(item => item.Value<string>()).ToArray();
         }
 
         private static void ValidateSceneArgument(JToken token)
@@ -182,8 +230,7 @@ namespace MCPForUnity.Editor.Tools
         private static object HandleProfileBuild(
             string profilePath,
             string outputPath,
-            bool development,
-            string[] optionNames,
+            BuildOptions buildOptions,
             ScriptingImplementation? scriptingImplementation
         )
         {
@@ -200,7 +247,6 @@ namespace MCPForUnity.Editor.Tools
             outputPath ??= BuildTargetMapping.GetDefaultOutputPath(target, PlayerSettings.productName);
             BuildRunner.ValidateOutputPath(outputPath);
 
-            var buildOptions = BuildRunner.ParseBuildOptions(optionNames, development);
             var options = new BuildPlayerWithProfileOptions
             {
                 buildProfile = profile,
@@ -314,6 +360,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static object HandlePlatform(ToolParams p)
         {
+            int subtarget = ReadSubtarget(p);
             string targetName = p.Get("target");
 
             if (string.IsNullOrEmpty(targetName))
@@ -344,15 +391,9 @@ namespace MCPForUnity.Editor.Tools
             // Capture previous target before switching
             string previousTarget = EditorUserBuildSettings.activeBuildTarget.ToString();
 
-            string subtargetStr = p.Get("subtarget");
-            if (!string.IsNullOrEmpty(subtargetStr))
-            {
-                string subtargetLower = subtargetStr.ToLowerInvariant();
-                if (subtargetLower == "server")
-                    EditorUserBuildSettings.standaloneBuildSubtarget = StandaloneBuildSubtarget.Server;
-                else if (subtargetLower == "player")
-                    EditorUserBuildSettings.standaloneBuildSubtarget = StandaloneBuildSubtarget.Player;
-            }
+            var subtargetToken = p.GetRaw("subtarget");
+            if (subtargetToken != null && subtargetToken.Type != JTokenType.Null)
+                EditorUserBuildSettings.standaloneBuildSubtarget = (StandaloneBuildSubtarget)subtarget;
 
             // SwitchActiveBuildTarget is synchronous — blocks until reimport completes
             if (!EditorUserBuildSettings.SwitchActiveBuildTarget(group, target))
@@ -528,7 +569,7 @@ namespace MCPForUnity.Editor.Tools
             string[] profiles = p.GetStringArray("profiles");
             string outputDir = p.Get("output_dir") ?? "Builds";
             bool development = p.GetBool("development");
-            string[] optionNames = p.GetStringArray("options");
+            var buildOpts = BuildRunner.ParseBuildOptions(ReadBuildOptionNames(p.GetRaw("options")), development);
 
             if ((targets == null || targets.Length == 0) && (profiles == null || profiles.Length == 0))
                 return new ErrorResponse("'targets' or 'profiles' is required for batch builds.");
@@ -563,8 +604,6 @@ namespace MCPForUnity.Editor.Tools
                     var child = new BuildJob(BuildJobStore.CreateJobId(), bt, path);
                     batch.Children.Add(child);
                 }
-
-                var buildOpts = BuildRunner.ParseBuildOptions(optionNames, development);
 
                 BuildRunner.ScheduleNextBatchBuild(
                     batch,
@@ -629,8 +668,6 @@ namespace MCPForUnity.Editor.Tools
                     var child = new BuildJob(BuildJobStore.CreateJobId(), target, path);
                     batch.Children.Add(child);
                 }
-
-                var buildOpts = BuildRunner.ParseBuildOptions(optionNames, development);
 
                 BuildRunner.ScheduleNextBatchBuild(
                     batch,
