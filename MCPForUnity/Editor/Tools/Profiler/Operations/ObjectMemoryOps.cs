@@ -13,6 +13,9 @@ namespace MCPForUnity.Editor.Tools.Profiler
         internal static object GetObjectMemory(JObject @params)
         {
             var p = new ToolParams(@params);
+            var objectPathToken = p.GetRaw("object_path");
+            if (objectPathToken != null && objectPathToken.Type != JTokenType.Null && objectPathToken.Type != JTokenType.String)
+                return new ErrorResponse("'object_path' must be a string or null.");
             var objectPathResult = p.GetRequired("object_path");
             if (!objectPathResult.IsSuccess)
                 return new ErrorResponse(objectPathResult.ErrorMessage);

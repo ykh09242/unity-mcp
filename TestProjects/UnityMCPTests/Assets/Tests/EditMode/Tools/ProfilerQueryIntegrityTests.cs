@@ -2,12 +2,80 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.Profiler;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEngine;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
     public class ProfilerQueryIntegrityTests
     {
+        [TestCase("object_path", "false")]
+        [TestCase("object_path", "0")]
+        [TestCase("object_path", "{}")]
+        [TestCase("object_path", "[]")]
+        [TestCase("objectPath", "false")]
+        [TestCase("objectPath", "0")]
+        [TestCase("objectPath", "{}")]
+        [TestCase("objectPath", "[]")]
+        public void NonStringObjectPath_IsRejectedEvenWhenItsTextNamesAnObject(string key, string json)
+        {
+            var owned = new GameObject(
+                json == "false" ? "False"
+                : json == "0" ? "0"
+                : "__ProfilerPath_" + Guid.NewGuid().ToString("N")
+            );
+            try
+            {
+                var response = JObject.FromObject(
+                    ManageProfiler.HandleCommand(new JObject { ["action"] = "get_object_memory", [key] = JToken.Parse(json) }).GetAwaiter().GetResult()
+                );
+
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("'object_path' must be a string or null", response.Value<string>("error"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(owned);
+            }
+        }
+
+        [TestCase(null)]
+        [TestCase("null")]
+        [TestCase("\"\"")]
+        public void MissingObjectPath_KeepsTheRequiredParameterError(string json)
+        {
+            var request = new JObject { ["action"] = "get_object_memory" };
+            if (json != null)
+                request["object_path"] = JToken.Parse(json);
+            var response = JObject.FromObject(ManageProfiler.HandleCommand(request).GetAwaiter().GetResult());
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("'object_path' parameter is required", response.Value<string>("error"));
+        }
+
+        [TestCase("object_path", "False")]
+        [TestCase("object_path", "0")]
+        [TestCase("objectPath", "__ProfilerStringPath")]
+        public void StringObjectPath_PreservesLiteralNamesAndCamelCaseAlias(string key, string name)
+        {
+            var owned = new GameObject(name);
+            try
+            {
+                var response = JObject.FromObject(
+                    ManageProfiler.HandleCommand(new JObject { ["action"] = "GET_OBJECT_MEMORY", [key] = name }).GetAwaiter().GetResult()
+                );
+
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(name, response["data"].Value<string>("object_name"));
+                Assert.AreEqual("scene_hierarchy", response["data"].Value<string>("source"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(owned);
+            }
+        }
+
         private static Type EventDataType()
         {
             var type =
