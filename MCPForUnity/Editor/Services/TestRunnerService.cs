@@ -153,15 +153,62 @@ namespace MCPForUnity.Editor.Services
 
         private readonly TestRunnerApi _testRunnerApi;
         private readonly SemaphoreSlim _operationLock = new SemaphoreSlim(1, 1);
+        private readonly CancellationTokenSource _lifetimeCancellation = new CancellationTokenSource();
         private readonly List<ITestResultAdaptor> _leafResults = new List<ITestResultAdaptor>();
         private TaskCompletionSource<TestRunResult> _runCompletionSource;
         private string _trackedJobId;
+        private bool _disposed;
+        private bool _runRetired;
+        private static TestRunnerService _activeRunOwner;
+        private const string RetiredRunSessionKey = "MCPForUnity.TestRunner.RetiredRunJobId";
+
+        private void ThrowIfDisposed()
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(TestRunnerService));
+        }
+
+        internal static bool HasRetiredRun => !string.IsNullOrEmpty(SessionState.GetString(RetiredRunSessionKey, string.Empty));
+
+        internal static void ThrowIfRetiredRunPending()
+        {
+            if (HasRetiredRun)
+                throw new InvalidOperationException(
+                    "The previous Unity test run was retired but has not stopped. Stop it in Test Runner or wait for its completion before retrying."
+                );
+        }
+
+        internal static void RetireJob(string jobId, string message)
+        {
+            var owner = _activeRunOwner;
+            if (owner == null || owner._trackedJobId != jobId)
+                return;
+
+            // Fault the caller without transferring ownership of Unity's untagged callbacks.
+            // SessionState preserves this quarantine if the managed domain reloads.
+            SessionState.SetString(RetiredRunSessionKey, jobId);
+            owner._runRetired = true;
+            var completion = owner._runCompletionSource;
+            owner._runCompletionSource = null;
+            owner._leafResults.Clear();
+            TestRunnerNoThrottle.RestoreThrottling();
+            if (PlayModeOptionsGuard.IsPending)
+                PlayModeOptionsGuard.Restore();
+            completion?.TrySetException(new InvalidOperationException(message));
+        }
 
         public TestRunnerService()
         {
             _testRunnerApi = ScriptableObject.CreateInstance<TestRunnerApi>();
             _testRunnerApi.hideFlags = HideFlags.HideAndDontSave;
             _testRunnerApi.RegisterCallbacks(this);
+            var retiredJobId = SessionState.GetString(RetiredRunSessionKey, string.Empty);
+            if (!string.IsNullOrEmpty(retiredJobId))
+            {
+                _trackedJobId = retiredJobId;
+                _runRetired = true;
+                _activeRunOwner = this;
+            }
         }
 
         internal void ResumeJobAfterReload(string jobId, string mode)
@@ -172,6 +219,7 @@ namespace MCPForUnity.Editor.Services
             }
 
             _trackedJobId = jobId;
+            _activeRunOwner = this;
             if (Enum.TryParse<TestMode>(mode, out var testMode))
             {
                 TestRunStatus.MarkStarted(testMode);
@@ -182,9 +230,13 @@ namespace MCPForUnity.Editor.Services
 
         public async Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode)
         {
-            await _operationLock.WaitAsync().ConfigureAwait(true);
+            ThrowIfDisposed();
+            ThrowIfRetiredRunPending();
+            await _operationLock.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(true);
             try
             {
+                ThrowIfDisposed();
+                ThrowIfRetiredRunPending();
                 var modes = mode.HasValue ? new[] { mode.Value } : AllModes;
 
                 var results = new List<Dictionary<string, string>>();
@@ -203,12 +255,15 @@ namespace MCPForUnity.Editor.Services
             }
             finally
             {
-                _operationLock.Release();
+                if (!_disposed)
+                    _operationLock.Release();
             }
         }
 
         public async Task<TestRunResult> RunTestsAsync(TestMode mode, TestFilterOptions filterOptions = null)
         {
+            ThrowIfDisposed();
+            ThrowIfRetiredRunPending();
             // The pre-reload Task no longer exists, but its Unity run may still be active.
             // Clearing a job must not let a second run consume the first run's callbacks.
             if (_trackedJobId != null && _runCompletionSource == null)
@@ -216,7 +271,7 @@ namespace MCPForUnity.Editor.Services
                 throw new InvalidOperationException("A recovered Unity test run is still in progress.");
             }
 
-            await _operationLock.WaitAsync().ConfigureAwait(true);
+            await _operationLock.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(true);
             Task<TestRunResult> runTask;
             TaskCompletionSource<TestRunResult> completionSource = null;
             bool adjustedPlayModeOptions = false;
@@ -225,6 +280,8 @@ namespace MCPForUnity.Editor.Services
             EnterPlayModeOptions originalEnterPlayModeOptions = EnterPlayModeOptions.None;
             try
             {
+                ThrowIfDisposed();
+                ThrowIfRetiredRunPending();
                 if (_runCompletionSource != null && !_runCompletionSource.Task.IsCompleted)
                 {
                     throw new InvalidOperationException("A Unity test run is already in progress.");
@@ -250,6 +307,8 @@ namespace MCPForUnity.Editor.Services
                 _leafResults.Clear();
                 completionSource = new TaskCompletionSource<TestRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
                 _trackedJobId = TestJobManager.CurrentJobId;
+                _runRetired = false;
+                _activeRunOwner = this;
                 _runCompletionSource = completionSource;
                 runTask = completionSource.Task;
                 // Mark running immediately so readiness snapshots reflect the busy state even before callbacks fire.
@@ -288,6 +347,8 @@ namespace MCPForUnity.Editor.Services
                 if (completionSource != null && _runCompletionSource == completionSource)
                 {
                     _trackedJobId = null;
+                    if (_activeRunOwner == this)
+                        _activeRunOwner = null;
                     _runCompletionSource = null;
                     _leafResults.Clear();
                 }
@@ -302,7 +363,8 @@ namespace MCPForUnity.Editor.Services
                     RestoreEnterPlayModeOptions(originalEnterPlayModeOptionsEnabled, originalEnterPlayModeOptions);
                 }
 
-                _operationLock.Release();
+                if (!_disposed)
+                    _operationLock.Release();
                 throw;
             }
 
@@ -312,17 +374,30 @@ namespace MCPForUnity.Editor.Services
             }
             finally
             {
-                if (adjustedPlayModeOptions)
+                // Retirement restores synchronously; a delayed caller must not restore again
+                // after a replacement service or the user has changed the editor settings.
+                if (adjustedPlayModeOptions && !_runRetired)
                 {
                     RestoreEnterPlayModeOptions(originalEnterPlayModeOptionsEnabled, originalEnterPlayModeOptions);
                 }
 
-                _operationLock.Release();
+                if (!_disposed)
+                    _operationLock.Release();
             }
         }
 
         public void Dispose()
         {
+            if (_disposed)
+                return;
+            _disposed = true;
+            _lifetimeCancellation.Cancel();
+            if (_activeRunOwner == this)
+            {
+                if (_trackedJobId != null)
+                    RetireJob(_trackedJobId, "Unity test service disposed before the run completed.");
+                _activeRunOwner = null;
+            }
             try
             {
                 _testRunnerApi?.UnregisterCallbacks(this);
@@ -337,7 +412,11 @@ namespace MCPForUnity.Editor.Services
                 ScriptableObject.DestroyImmediate(_testRunnerApi);
             }
 
-            _operationLock.Dispose();
+            // WaitAsync removes canceled waiters asynchronously. Disposing a held semaphore
+            // here can orphan them; no WaitHandle is used, so it can be collected after they unwind.
+            if (_operationLock.CurrentCount > 0)
+                _operationLock.Dispose();
+            _lifetimeCancellation.Dispose();
         }
 
         #region TestRunnerApi callbacks
@@ -376,7 +455,7 @@ namespace MCPForUnity.Editor.Services
             // This handles domain reload scenarios (e.g., PlayMode tests) where the TestRunnerService
             // is recreated and _runCompletionSource is lost, but TestJobManager state persists via
             // SessionState and the Test Runner still delivers the RunFinished callback.
-            var payload = TestRunResult.Create(result, _leafResults);
+            var payload = _runCompletionSource != null || IsTrackingCurrentJob ? TestRunResult.Create(result, _leafResults) : null;
             CompleteRun(payload, null);
         }
 
@@ -420,7 +499,11 @@ namespace MCPForUnity.Editor.Services
             // The caller's finally block handles restoration in this case.
             var completion = _runCompletionSource;
             _runCompletionSource = null;
+            if (SessionState.GetString(RetiredRunSessionKey, string.Empty) == _trackedJobId)
+                SessionState.SetString(RetiredRunSessionKey, string.Empty);
             _trackedJobId = null;
+            if (_activeRunOwner == this)
+                _activeRunOwner = null;
             // The payload owns materialized result values, not Unity's adaptor trees.
             _leafResults.Clear();
             if (completion != null)
@@ -456,7 +539,7 @@ namespace MCPForUnity.Editor.Services
 
         public void TestFinished(ITestResultAdaptor result)
         {
-            if (result == null || (_runCompletionSource == null && _trackedJobId == null))
+            if (result == null || (_runCompletionSource == null && !IsTrackingCurrentJob))
             {
                 return;
             }

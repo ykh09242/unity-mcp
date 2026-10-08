@@ -83,17 +83,24 @@ namespace MCPForUnity.Editor.Services
 
         private static void RestoreRunningJobCallbacks()
         {
-            TestJob job;
-            lock (LockObj)
-            {
-                if (string.IsNullOrEmpty(_currentJobId) || !Jobs.TryGetValue(_currentJobId, out job) || job.Status != TestJobStatus.Running)
-                {
-                    return;
-                }
-            }
-
             try
             {
+                if (TestRunnerService.HasRetiredRun)
+                {
+                    // A timed-out caller is gone, but Unity can still deliver its terminal callback.
+                    // Recreate the callback owner even though its manager record is already failed.
+                    _ = MCPServiceLocator.Tests;
+                    return;
+                }
+                TestJob job;
+                lock (LockObj)
+                {
+                    if (string.IsNullOrEmpty(_currentJobId) || !Jobs.TryGetValue(_currentJobId, out job) || job.Status != TestJobStatus.Running)
+                    {
+                        return;
+                    }
+                }
+
                 // Polling a restored job never otherwise touches the lazy test service.
                 // Re-register callbacks now, before the Test Runner resumes after reload.
                 if (MCPServiceLocator.Tests is TestRunnerService service)
@@ -135,6 +142,7 @@ namespace MCPForUnity.Editor.Services
         public static bool ClearStuckJob()
         {
             bool cleared = false;
+            string retiredJobId;
             lock (LockObj)
             {
                 if (string.IsNullOrEmpty(_currentJobId))
@@ -142,6 +150,7 @@ namespace MCPForUnity.Editor.Services
                     return false;
                 }
 
+                retiredJobId = _currentJobId;
                 if (Jobs.TryGetValue(_currentJobId, out var job) && job.Status == TestJobStatus.Running)
                 {
                     long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -155,6 +164,7 @@ namespace MCPForUnity.Editor.Services
 
                 _currentJobId = null;
             }
+            TestRunnerService.RetireJob(retiredJobId, "Job cleared manually (stuck or orphaned)");
             PersistToSessionState(force: true);
             return cleared;
         }
@@ -351,6 +361,7 @@ namespace MCPForUnity.Editor.Services
 
         public static string StartJob(TestMode mode, TestFilterOptions filterOptions = null, long initTimeoutMs = 0)
         {
+            TestRunnerService.ThrowIfRetiredRunPending();
             // Clamp to valid range: non-positive values mean "use default", cap at 10 minutes
             if (initTimeoutMs < 0)
                 initTimeoutMs = 0;
@@ -581,6 +592,7 @@ namespace MCPForUnity.Editor.Services
 
             TestJob jobToReturn = null;
             bool shouldPersist = false;
+            bool retiredCurrentJob = false;
             lock (LockObj)
             {
                 if (!Jobs.TryGetValue(jobId, out var job))
@@ -605,6 +617,7 @@ namespace MCPForUnity.Editor.Services
                         if (_currentJobId == jobId)
                         {
                             _currentJobId = null;
+                            retiredCurrentJob = true;
                             // Keep TestRunStatus in sync: when initialization times out, neither
                             // RunStarted nor RunFinished fires, so the running flag would otherwise leak.
                             // Only clear it if this job is still the active one — a newer job may have taken over.
@@ -617,6 +630,8 @@ namespace MCPForUnity.Editor.Services
                 jobToReturn = job;
             }
 
+            if (retiredCurrentJob)
+                TestRunnerService.RetireJob(jobId, jobToReturn.Error);
             if (shouldPersist)
             {
                 PersistToSessionState(force: true);
