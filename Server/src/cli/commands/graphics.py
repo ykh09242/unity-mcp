@@ -1,3 +1,6 @@
+import math
+import struct
+
 import click
 from cli.utils.connection import handle_unity_errors, run_command, get_config
 from cli.utils.output import format_output
@@ -17,6 +20,31 @@ def _coerce_cli_value(val: str):
         return float(val) if "." in val else int(val)
     except ValueError:
         return val
+
+
+def _parse_color_csv(value: str, parameter: str) -> list[float]:
+    """Parse RGB/RGBA with the receiver's minimum size and consumed float range."""
+    try:
+        components = [float(component) for component in value.split(",")]
+    except ValueError as exc:
+        raise click.BadParameter(
+            "Expected comma-separated color numbers.", param_hint=f"--{parameter}"
+        ) from exc
+    if len(components) < 3:
+        raise click.BadParameter(
+            "Expected at least three color components.", param_hint=f"--{parameter}"
+        )
+    if not all(math.isfinite(component) for component in components):
+        raise click.BadParameter("Color components must be finite.", param_hint=f"--{parameter}")
+    try:
+        for component in components[:4]:
+            if not math.isfinite(struct.unpack("f", struct.pack("f", component))[0]):
+                raise OverflowError
+    except OverflowError as exc:
+        raise click.BadParameter(
+            "Color components exceed the Unity float range.", param_hint=f"--{parameter}"
+        ) from exc
+    return components
 
 
 @graphics.command("ping")
@@ -431,7 +459,16 @@ def feature_configure(index, name, prop):
 def feature_reorder(order):
     """Reorder renderer features."""
     config = get_config()
-    order_list = [int(x.strip()) for x in order.split(",")]
+    try:
+        order_list = [int(x.strip()) for x in order.split(",")]
+    except ValueError as exc:
+        raise click.BadParameter(
+            "Expected comma-separated integer indices.", param_hint="--order"
+        ) from exc
+    if sorted(order_list) != list(range(len(order_list))):
+        raise click.BadParameter(
+            "Order must contain each index exactly once from 0 to N-1.", param_hint="--order"
+        )
     params = {"action": "feature_reorder", "order": order_list}
     result = run_command("manage_graphics", params, config)
     click.echo(format_output(result, config.format))
@@ -511,12 +548,12 @@ def skybox_set_ambient(mode, intensity, color, equator_color, ground_color):
         params["ambient_mode"] = mode
     if intensity is not None:
         params["intensity"] = intensity
-    if color:
-        params["color"] = [float(x) for x in color.split(",")]
-    if equator_color:
-        params["equator_color"] = [float(x) for x in equator_color.split(",")]
-    if ground_color:
-        params["ground_color"] = [float(x) for x in ground_color.split(",")]
+    if color is not None:
+        params["color"] = _parse_color_csv(color, "color")
+    if equator_color is not None:
+        params["equator_color"] = _parse_color_csv(equator_color, "equator-color")
+    if ground_color is not None:
+        params["ground_color"] = _parse_color_csv(ground_color, "ground-color")
     result = run_command("manage_graphics", params, config)
     click.echo(format_output(result, config.format))
 
@@ -539,8 +576,8 @@ def skybox_set_fog(fog_enabled, mode, color, density, start, end):
         params["fog_enabled"] = fog_enabled
     if mode:
         params["fog_mode"] = mode
-    if color:
-        params["fog_color"] = [float(x) for x in color.split(",")]
+    if color is not None:
+        params["fog_color"] = _parse_color_csv(color, "color")
     if density is not None:
         params["fog_density"] = density
     if start is not None:
