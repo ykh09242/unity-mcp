@@ -92,7 +92,7 @@ namespace MCPForUnityTests.EditMode.Tools
 
         private string Absolute(string path)
         {
-            Assert.IsTrue(path.StartsWith(_root + "/", StringComparison.Ordinal));
+            Assert.IsTrue(path == _root || path.StartsWith(_root + "/", StringComparison.Ordinal));
             return Path.Combine(Application.dataPath, path.Substring("Assets/".Length));
         }
 
@@ -392,6 +392,109 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsFalse(response.Value<bool>("success"));
             StringAssert.Contains("Asset not found", response.Value<string>("error"));
             Assert.IsFalse(File.Exists(Absolute(path)));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("get_info", "false")]
+        [TestCase("get_info", "0")]
+        [TestCase("get_info", "{}")]
+        [TestCase("get_info", "[]")]
+        [TestCase("import", "{}")]
+        [TestCase("import", "[]")]
+        public void UsedPath_RejectsNonStringsBeforeAccessingAssets(string action, string json)
+        {
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject { ["action"] = action, ["path"] = JToken.Parse(json) }));
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("'path' must be a string or null", response.Value<string>("error"));
+            Assert.IsEmpty(Directory.GetFileSystemEntries(Absolute(_root)));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("duplicate", "{}")]
+        [TestCase("duplicate", "[]")]
+        [TestCase("move", "{}")]
+        [TestCase("move", "[]")]
+        [TestCase("rename", "{}")]
+        [TestCase("rename", "[]")]
+        public void UsedDestination_RejectsNonStringsBeforeWritingAssets(string action, string json)
+        {
+            string source = CreateImportFixture();
+            string guid = AssetDatabase.AssetPathToGUID(source);
+            byte[] bytes = File.ReadAllBytes(Absolute(source));
+            var before = Directory.GetFileSystemEntries(Absolute(_root));
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["path"] = source,
+                        ["destination"] = JToken.Parse(json),
+                    }
+                )
+            );
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("'destination' must be a string or null", response.Value<string>("error"));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(source));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(Absolute(source)));
+            CollectionAssert.AreEquivalent(before, Directory.GetFileSystemEntries(Absolute(_root)));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("false")]
+        [TestCase("0")]
+        [TestCase("{}")]
+        [TestCase("[]")]
+        public void Import_DoesNotValidateUnusedDestination(string json)
+        {
+            string path = CreateImportFixture();
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "import",
+                        ["path"] = path,
+                        ["destination"] = JToken.Parse(json),
+                    }
+                )
+            );
+
+            AssertPersistentResponse(response, path);
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("duplicate", null)]
+        [TestCase("duplicate", "null")]
+        [TestCase("duplicate", "\"\"")]
+        [TestCase("move", null)]
+        [TestCase("move", "null")]
+        [TestCase("move", "\"\"")]
+        [TestCase("rename", null)]
+        [TestCase("rename", "null")]
+        [TestCase("rename", "\"\"")]
+        public void MissingDestination_PreservesEachActionsDefault(string action, string json)
+        {
+            string source = CreateImportFixture();
+            var request = new JObject { ["action"] = action, ["path"] = source };
+            if (json != null)
+                request["destination"] = JToken.Parse(json);
+            var response = JObject.FromObject(ManageAsset.HandleCommand(request));
+
+            if (action == "duplicate")
+            {
+                string output = response["data"]?["path"]?.Value<string>();
+                Assert.IsNotNull(output, response.ToString());
+                StringAssert.StartsWith(_root + "/", output);
+                Assert.AreNotEqual(source, output);
+                AssertPersistentResponse(response, output);
+            }
+            else
+            {
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("'destination' path is required", response.Value<string>("error"));
+            }
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<TextAsset>(source));
             LogAssert.NoUnexpectedReceived();
         }
 

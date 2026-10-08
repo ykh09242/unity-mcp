@@ -107,6 +107,19 @@ namespace MCPForUnity.Editor.Tools
                     if (consentError != null)
                         return consentError;
                 }
+                // Bundle inspection does not use path; validate only parameters used by this action.
+                bool usesPath = action != "list_asset_bundles" && action != "get_bundle_assets" && action != "get_bundle_dependencies";
+                var pathToken = @params["path"];
+                if (usesPath && pathToken != null && pathToken.Type != JTokenType.Null && pathToken.Type != JTokenType.String)
+                    return new ErrorResponse("'path' must be a string or null.");
+                var destinationToken = @params["destination"];
+                if (
+                    (action == "duplicate" || action == "move" || action == "rename")
+                    && destinationToken != null
+                    && destinationToken.Type != JTokenType.Null
+                    && destinationToken.Type != JTokenType.String
+                )
+                    return new ErrorResponse("'destination' must be a string or null.");
                 switch (action)
                 {
                     case "import":
