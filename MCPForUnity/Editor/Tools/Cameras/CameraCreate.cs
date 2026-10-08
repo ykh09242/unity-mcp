@@ -99,6 +99,10 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (cmType == null || (presetDef.body != null && bodyType == null) || (presetDef.aim != null && aimType == null))
                 return new ErrorResponse($"Required Cinemachine components for preset '{preset}' are unavailable.");
 
+            float? fieldOfView = ParamCoercion.CoerceFloatNullable(props["fieldOfView"]);
+            float? nearClipPlane = ParamCoercion.CoerceFloatNullable(props["nearClipPlane"]);
+            float? farClipPlane = ParamCoercion.CoerceFloatNullable(props["farClipPlane"]);
+
             var go = new GameObject(name);
             bool completed = false;
             try
@@ -134,7 +138,12 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         if (lensProp == null)
                             return new ErrorResponse("Could not find Lens property on CinemachineCamera.");
                         foreach (
-                            var (input, field) in new[] { ("fieldOfView", "FieldOfView"), ("nearClipPlane", "NearClipPlane"), ("farClipPlane", "FarClipPlane") }
+                            var (input, field, value) in new[]
+                            {
+                                ("fieldOfView", "FieldOfView", fieldOfView),
+                                ("nearClipPlane", "NearClipPlane", nearClipPlane),
+                                ("farClipPlane", "FarClipPlane", farClipPlane),
+                            }
                         )
                         {
                             if (props[input] == null)
@@ -142,7 +151,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                             var lensField = lensProp.FindPropertyRelative(field);
                             if (lensField == null)
                                 return new ErrorResponse($"Could not find Lens.{field} property on CinemachineCamera.");
-                            lensField.floatValue = ParamCoercion.CoerceFloat(props[input], lensField.floatValue);
+                            lensField.floatValue = value ?? lensField.floatValue;
                         }
                         so.ApplyModifiedProperties();
                     }
@@ -221,6 +230,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 return new ErrorResponse("No Camera found to add CinemachineBrain to.");
 
             var brainType = CameraHelpers.CinemachineBrainType;
+            string blendStyle = ParamCoercion.CoerceString(props["defaultBlendStyle"] ?? props["default_blend_style"], null);
+            float blendDuration = ParamCoercion.CoerceFloat(props["defaultBlendDuration"] ?? props["default_blend_duration"], -1f);
+
             Undo.RecordObject(cam.gameObject, "Add CinemachineBrain");
             Component brain = null;
             bool completed = false;
@@ -231,9 +243,6 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     return new ErrorResponse("Could not add CinemachineBrain component.");
 
                 // Configure default blend if provided
-                string blendStyle = ParamCoercion.CoerceString(props["defaultBlendStyle"] ?? props["default_blend_style"], null);
-                float blendDuration = ParamCoercion.CoerceFloat(props["defaultBlendDuration"] ?? props["default_blend_duration"], -1f);
-
                 if (blendStyle != null || blendDuration >= 0)
                 {
                     using var so = new SerializedObject(brain);

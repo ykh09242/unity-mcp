@@ -211,6 +211,130 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(response["data"].Value<bool>("alreadyExisted"));
         }
 
+        [TestCase(true, "defaultBlendDuration")]
+        [TestCase(true, "default_blend_duration")]
+        [TestCase(false, "defaultBlendDuration")]
+        [TestCase(false, "default_blend_duration")]
+        public void ExistingBrainIgnoresMalformedOptionalBlendDuration(bool explicitCamera, string durationKey)
+        {
+            SyntheticBrainMode();
+            Assert.IsNull(UnityFindObjectsCompat.FindAny(typeof(CameraCreationTestBrain)), "Unowned test Brain exists.");
+            GameObject target = NewObject();
+            target.AddComponent<Camera>();
+            var brain = target.AddComponent<CameraCreationTestBrain>();
+            int dirtyCount = EditorUtility.GetDirtyCount(target);
+            var properties = new JObject { [durationKey] = new JObject() };
+            if (explicitCamera)
+                properties["camera"] = target.GetInstanceIDCompat().ToString();
+            JObject response = Send("ensure_brain", properties);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(response["data"].Value<bool>("alreadyExisted"));
+            Assert.AreSame(brain, target.GetComponent<CameraCreationTestBrain>());
+            Assert.AreEqual(2f, brain.DefaultBlend.Time);
+            Assert.AreEqual(CameraCreationTestBlendStyle.EaseInOut, brain.DefaultBlend.Style);
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(target));
+        }
+
+        [TestCase("defaultBlendDuration", false)]
+        [TestCase("defaultBlendDuration", true)]
+        [TestCase("default_blend_duration", false)]
+        [TestCase("default_blend_duration", true)]
+        public void NewBrainKeepsNativeBlendDefaultsForOmittedOrNullDuration(string durationKey, bool explicitNull)
+        {
+            SyntheticBrainMode();
+            GameObject target = NewObject();
+            Camera camera = target.AddComponent<Camera>();
+            var properties = new JObject { ["camera"] = target.GetInstanceIDCompat().ToString() };
+            if (explicitNull)
+                properties[durationKey] = JValue.CreateNull();
+            JObject response = Send("ensure_brain", properties);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(response["data"].Value<bool>("alreadyExisted"));
+            Assert.AreSame(camera, target.GetComponent<Camera>());
+            var brain = target.GetComponent<CameraCreationTestBrain>();
+            Assert.IsNotNull(brain);
+            Assert.AreEqual(2f, brain.DefaultBlend.Time);
+            Assert.AreEqual(CameraCreationTestBlendStyle.EaseInOut, brain.DefaultBlend.Style);
+        }
+
+        [TestCase("defaultBlendDuration")]
+        [TestCase("default_blend_duration")]
+        public void NewBrainAcceptsNumericDurationStringsAndCaseInsensitiveStyle(string durationKey)
+        {
+            SyntheticBrainMode();
+            GameObject target = NewObject();
+            target.AddComponent<Camera>();
+            JObject response = Send(
+                "ensure_brain",
+                new JObject
+                {
+                    ["camera"] = target.GetInstanceIDCompat().ToString(),
+                    [durationKey] = "0.5",
+                    ["default_blend_style"] = "cUt",
+                }
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var brain = target.GetComponent<CameraCreationTestBrain>();
+            Assert.IsNotNull(brain);
+            Assert.AreEqual(.5f, brain.DefaultBlend.Time);
+            Assert.AreEqual(CameraCreationTestBlendStyle.Cut, brain.DefaultBlend.Style);
+        }
+
+        [TestCase("fieldOfView")]
+        [TestCase("nearClipPlane")]
+        [TestCase("farClipPlane")]
+        public void MalformedLensRejectsBeforeUnsupportedOwnedCameraLayout(string field)
+        {
+            UseInstalledCinemachine();
+            Cache("_cmCameraType").SetValue(null, typeof(CameraCreationTestCamera));
+            LogAssert.Expect(LogType.Error, new Regex("\\[ManageCamera\\] Action 'create_camera' failed:"));
+            JObject response = Send(
+                "create_camera",
+                new JObject
+                {
+                    ["name"] = UniqueName(),
+                    ["preset"] = "static",
+                    [field] = "bad",
+                }
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("Invalid parameter", response.Value<string>("error"));
+            StringAssert.Contains(field, response.Value<string>("error"));
+            Assert.AreEqual(0, ownedScene.rootCount);
+        }
+
+        [TestCase("omitted")]
+        [TestCase("null")]
+        [TestCase("partial")]
+        public void InstalledCinemachineUnspecifiedLensFieldsKeepNativeDefaults(string mode)
+        {
+            UseInstalledCinemachine();
+            Component nativeCamera = NewObject().AddComponent(CameraHelpers.CinemachineCameraType);
+            using var nativeSerialized = new SerializedObject(nativeCamera);
+            var nativeLens = nativeSerialized.FindProperty("Lens") ?? nativeSerialized.FindProperty("m_Lens");
+            Assert.IsNotNull(nativeLens, "Installed Cinemachine Lens layout precondition.");
+            float nativeFov = nativeLens.FindPropertyRelative("FieldOfView").floatValue;
+            float nativeNear = nativeLens.FindPropertyRelative("NearClipPlane").floatValue;
+            float nativeFar = nativeLens.FindPropertyRelative("FarClipPlane").floatValue;
+            var properties = new JObject { ["name"] = UniqueName(), ["preset"] = "static" };
+            if (mode == "null")
+            {
+                properties["fieldOfView"] = JValue.CreateNull();
+                properties["nearClipPlane"] = JValue.CreateNull();
+                properties["farClipPlane"] = JValue.CreateNull();
+            }
+            else if (mode == "partial")
+                properties["fieldOfView"] = "42.5";
+            JObject response = Send("create_camera", properties);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            using var createdSerialized = new SerializedObject(ReturnedObject(response).GetComponent(CameraHelpers.CinemachineCameraType));
+            var createdLens = createdSerialized.FindProperty("Lens") ?? createdSerialized.FindProperty("m_Lens");
+            Assert.IsNotNull(createdLens);
+            Assert.AreEqual(mode == "partial" ? 42.5f : nativeFov, createdLens.FindPropertyRelative("FieldOfView").floatValue);
+            Assert.AreEqual(nativeNear, createdLens.FindPropertyRelative("NearClipPlane").floatValue);
+            Assert.AreEqual(nativeFar, createdLens.FindPropertyRelative("FarClipPlane").floatValue);
+        }
+
         [Test]
         public void InstalledCinemachineCreationAppliesExplicitFieldOfView()
         {
