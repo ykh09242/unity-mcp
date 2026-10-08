@@ -363,6 +363,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
         public static object SetSun(JObject @params)
         {
             var p = new ToolParams(@params);
+            var targetToken = p.GetRaw("target") ?? p.GetRaw("name");
+            if (targetToken != null && targetToken.Type != JTokenType.Null && targetToken.Type != JTokenType.String && targetToken.Type != JTokenType.Integer)
+                return new ErrorResponse("'target' must be a GameObject name or integer instance ID.");
             string target = p.Get("target") ?? p.Get("name");
             if (string.IsNullOrEmpty(target))
                 return new ErrorResponse("'target' (light GameObject name or instance ID) is required.");

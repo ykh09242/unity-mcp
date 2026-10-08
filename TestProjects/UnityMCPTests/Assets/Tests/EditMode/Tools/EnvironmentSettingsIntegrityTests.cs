@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Tools.Graphics;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -298,6 +299,52 @@ namespace MCPForUnityTests.Editor.Tools
             );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.IsTrue(JToken.DeepEquals(before, Snapshot()));
+        }
+
+        [TestCase("target", "false")]
+        [TestCase("target", "true")]
+        [TestCase("target", "1.5")]
+        [TestCase("target", "0.0")]
+        [TestCase("target", "[]")]
+        [TestCase("target", "{}")]
+        [TestCase("name", "false")]
+        [TestCase("name", "true")]
+        [TestCase("name", "1.5")]
+        [TestCase("name", "0.0")]
+        [TestCase("name", "[]")]
+        [TestCase("name", "{}")]
+        public void MalformedSunSelectorDoesNotResolveStringifiedObject(string key, string json)
+        {
+            var token = JToken.Parse(json);
+            string objectName = token.ToString();
+            if (GameObject.Find(objectName) != null)
+                Assert.Ignore("An unowned scene object already uses the required fixture name.");
+            var gameObject = new GameObject(objectName);
+            objects.Add(gameObject);
+            gameObject.AddComponent<Light>();
+            RenderSettings.sun = null;
+
+            RejectUnchanged("skybox_set_sun", new JObject { [key] = token }, false);
+        }
+
+        [TestCase("target", false)]
+        [TestCase("target", true)]
+        [TestCase("name", false)]
+        [TestCase("name", true)]
+        public void SunSelectorAcceptsNameOrInstanceId(string key, bool instanceId)
+        {
+            var gameObject = new GameObject("SunSelector_" + Guid.NewGuid().ToString("N"));
+            objects.Add(gameObject);
+            var light = gameObject.AddComponent<Light>();
+            RenderSettings.sun = null;
+            JToken target = instanceId ? new JValue(gameObject.GetInstanceIDCompat()) : new JValue(gameObject.name);
+
+            var response = Send("skybox_set_sun", new JObject { [key] = target });
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreSame(light, RenderSettings.sun);
+            Assert.AreEqual(gameObject.GetInstanceIDCompat(), response["data"].Value<int>("instanceID"));
+            LogAssert.NoUnexpectedReceived();
         }
 
         [Test]
