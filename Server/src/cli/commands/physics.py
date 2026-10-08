@@ -1,4 +1,6 @@
 import json
+import math
+import struct
 
 import click
 
@@ -25,6 +27,33 @@ def _parse_properties(properties):
             raise click.BadParameter(f"Expected key=value, got {item!r}.", param_hint="properties")
         parsed[key] = _coerce_cli_value(value)
     return parsed
+
+
+def _parse_query_vector(value: str, parameter: str, dimension: str) -> list[float]:
+    """Parse query coordinates with the receiver's minimum length and finite float range."""
+    try:
+        coordinates = [float(component) for component in value.split(",")]
+    except ValueError as exc:
+        raise click.BadParameter(
+            "Expected comma-separated numbers.", param_hint=f"--{parameter}"
+        ) from exc
+    minimum = 2 if dimension.lower() == "2d" else 3
+    if len(coordinates) < minimum:
+        raise click.BadParameter(
+            f"Expected at least {minimum} coordinates for {dimension}.",
+            param_hint=f"--{parameter}",
+        )
+    if not all(math.isfinite(component) for component in coordinates):
+        raise click.BadParameter("Coordinates must be finite numbers.", param_hint=f"--{parameter}")
+    try:
+        for component in coordinates[:minimum]:
+            if not math.isfinite(struct.unpack("f", struct.pack("f", component))[0]):
+                raise OverflowError
+    except OverflowError as exc:
+        raise click.BadParameter(
+            "Coordinates exceed the Unity float range.", param_hint=f"--{parameter}"
+        ) from exc
+    return coordinates
 
 
 @click.group("physics")
@@ -176,8 +205,8 @@ def raycast(origin, direction, max_distance, dimension):
     config = get_config()
     params = {
         "action": "raycast",
-        "origin": [float(x) for x in origin.split(",")],
-        "direction": [float(x) for x in direction.split(",")],
+        "origin": _parse_query_vector(origin, "origin", dimension),
+        "direction": _parse_query_vector(direction, "direction", dimension),
         "dimension": dimension,
     }
     if max_distance is not None:
@@ -381,8 +410,8 @@ def linecast(start, end, dimension):
     config = get_config()
     params = {
         "action": "linecast",
-        "start": [float(x) for x in start.split(",")],
-        "end": [float(x) for x in end.split(",")],
+        "start": _parse_query_vector(start, "start", dimension),
+        "end": _parse_query_vector(end, "end", dimension),
         "dimension": dimension,
     }
     result = run_command("manage_physics", params, config)
