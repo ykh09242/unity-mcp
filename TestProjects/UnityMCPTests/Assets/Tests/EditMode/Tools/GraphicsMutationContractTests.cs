@@ -10,6 +10,7 @@ using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    [Parallelizable(ParallelScope.None)]
     public class GraphicsMutationContractTests
     {
         private readonly PrefabTestSceneFixture _sceneFixture = new PrefabTestSceneFixture();
@@ -81,6 +82,103 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.AreEqual(3, asset.ContractSetting);
                 Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(asset));
             });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void QualityLevelAcceptsConfiguredStringName(bool differentCase)
+        {
+            string[] names = QualitySettings.names;
+            int target = System.Array.FindIndex(
+                names,
+                name =>
+                    !string.IsNullOrEmpty(name)
+                    && !int.TryParse(name, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out _)
+            );
+            if (target < 0)
+                Assert.Ignore("Configured quality levels have no nonnumeric string name.");
+            string name = differentCase ? names[target].ToUpperInvariant() : names[target];
+            int expected = System.Array.FindIndex(names, candidate => string.Equals(candidate, name, System.StringComparison.OrdinalIgnoreCase));
+            WithQualityRestored(() =>
+            {
+                var response = SetQuality(new JValue(name));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(expected, QualitySettings.GetQualityLevel());
+                Assert.AreEqual(expected, response["data"].Value<int>("level"));
+                Assert.AreEqual(names[expected], response["data"].Value<string>("name"));
+                CollectionAssert.AreEqual(names, response["data"]["allLevels"].ToObject<string[]>());
+            });
+        }
+
+        [TestCase("integer")]
+        [TestCase("string")]
+        [TestCase("whitespace")]
+        public void QualityLevelKeepsZeroIndexAndNumericStringForms(string kind)
+        {
+            WithQualityRestored(() =>
+            {
+                JToken level = kind == "integer" ? new JValue(0) : new JValue(kind == "whitespace" ? " +0 " : "0");
+                var response = SetQuality(level);
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(0, QualitySettings.GetQualityLevel());
+                Assert.AreEqual(0, response["data"].Value<int>("level"));
+            });
+        }
+
+        [TestCase("boolean")]
+        [TestCase("integralFloat")]
+        [TestCase("fractionalFloat")]
+        [TestCase("array")]
+        [TestCase("object")]
+        [TestCase("integerOverflow")]
+        [TestCase("range")]
+        [TestCase("unknown")]
+        [TestCase("null")]
+        [TestCase("omitted")]
+        public void InvalidQualityLevelPreservesCurrentLevelWithoutLogging(string kind)
+        {
+            WithQualityRestored(() =>
+            {
+                int original = QualitySettings.GetQualityLevel();
+                JToken level = kind switch
+                {
+                    "boolean" => new JValue(true),
+                    "integralFloat" => new JValue(1.0),
+                    "fractionalFloat" => new JValue(1.5),
+                    "array" => new JArray(0),
+                    "object" => new JObject { ["value"] = 0 },
+                    "integerOverflow" => new JValue(2147483648L),
+                    "range" => new JValue(QualitySettings.names.Length),
+                    "unknown" => new JValue("MissingQuality_" + System.Guid.NewGuid().ToString("N")),
+                    _ => JValue.CreateNull(),
+                };
+                var response = SetQuality(level, kind == "omitted");
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(original, QualitySettings.GetQualityLevel());
+                LogAssert.NoUnexpectedReceived();
+            });
+        }
+
+        private static JObject SetQuality(JToken level, bool omitted = false)
+        {
+            var request = new JObject { ["action"] = "pipeline_set_quality" };
+            if (!omitted)
+                request["level"] = level;
+            return JObject.FromObject(ManageGraphics.HandleCommand(request));
+        }
+
+        private static void WithQualityRestored(System.Action action)
+        {
+            int original = QualitySettings.GetQualityLevel();
+            try
+            {
+                action();
+            }
+            finally
+            {
+                QualitySettings.SetQualityLevel(original, true);
+                Assert.AreEqual(original, QualitySettings.GetQualityLevel());
+            }
         }
 
         private static void WithOwnedPipeline(System.Action<ContractPipelineAsset> action)

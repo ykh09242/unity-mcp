@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
@@ -69,7 +70,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
         {
             var p = new ToolParams(@params);
             string levelName = p.Get("level");
-            int? levelIndex = p.GetInt("level");
+            int? levelIndex;
+            if (p.GetRaw("level")?.Type == JTokenType.String)
+                levelIndex = int.TryParse(levelName, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) ? parsed : (int?)null;
+            else
+                levelIndex = p.GetInt("level");
 
             string[] names = QualitySettings.names;
             int targetIndex = -1;
@@ -89,9 +94,6 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         break;
                     }
                 }
-                // Try parse as int
-                if (targetIndex < 0 && int.TryParse(levelName, out int parsed))
-                    targetIndex = parsed;
             }
             else
             {
