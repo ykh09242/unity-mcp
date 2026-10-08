@@ -20,10 +20,16 @@ namespace MCPForUnity.Editor.Tools.Graphics
         internal static object CreateVolume(JObject @params)
         {
             var p = new ToolParams(@params);
+            var nameError = ValidateStringParameter(p, "name");
+            if (nameError != null)
+                return nameError;
             string name = p.Get("name") ?? "Volume";
             bool isGlobal = p.GetBool("is_global", true);
             float weight = p.GetFloat("weight") ?? 1.0f;
             float priority = p.GetFloat("priority") ?? 0f;
+            var profilePathError = ValidateStringParameter(p, "profile_path");
+            if (profilePathError != null)
+                return profilePathError;
             string profilePath = p.Get("profile_path");
             if (!string.IsNullOrEmpty(profilePath))
             {
@@ -486,6 +492,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
         internal static object CreateProfile(JObject @params)
         {
             var p = new ToolParams(@params);
+            var pathError = ValidateStringParameter(p, "path");
+            if (pathError != null)
+                return pathError;
             string path = p.Get("path");
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' parameter is required (e.g., 'Settings/MyProfile' or 'Assets/Settings/MyProfile.asset').");
@@ -817,6 +826,14 @@ namespace MCPForUnity.Editor.Tools.Graphics
             }
 
             return PropertyConversion.ConvertToType(value, targetType);
+        }
+
+        private static ErrorResponse ValidateStringParameter(ToolParams parameters, string key)
+        {
+            var token = parameters.GetRaw(key);
+            return token != null && token.Type != JTokenType.Null && token.Type != JTokenType.String
+                ? new ErrorResponse($"'{key}' must be a string or null.")
+                : null;
         }
 
         // --- Reflection helpers (with field fallback for Volume.sharedProfile etc.) ---

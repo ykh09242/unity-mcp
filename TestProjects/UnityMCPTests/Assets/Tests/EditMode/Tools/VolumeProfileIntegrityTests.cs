@@ -375,10 +375,49 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(0, ownedScene.rootCount);
         }
 
+        [TestCase("false")]
+        [TestCase("0")]
+        [TestCase("{}")]
+        [TestCase("[]")]
+        public void MalformedCreationNameRejectsBeforeOwnedSceneOrProfileMutation(string json)
+        {
+            string path = assetRoot + "/Fresh/Profile.asset";
+            int profileCount = UnityEngine.Resources.FindObjectsOfTypeAll(GraphicsHelpers.VolumeProfileType).Length;
+            var response = Send("volume_create", new JObject { ["name"] = JToken.Parse(json), ["profile_path"] = path });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("'name'", response.Value<string>("error"));
+            Assert.AreEqual(0, ownedScene.rootCount);
+            Assert.AreEqual(profileCount, UnityEngine.Resources.FindObjectsOfTypeAll(GraphicsHelpers.VolumeProfileType).Length);
+            Assert.IsFalse(Directory.Exists(FullPath(assetRoot + "/Fresh")));
+            Assert.IsFalse(File.Exists(FullPath(path)));
+            Assert.IsTrue(string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(path)));
+        }
+
+        [TestCase("volume_create", "profile_path")]
+        [TestCase("volume_create_profile", "path")]
+        public void ContainerPathRejectsWithParameterErrorBeforeOwnedFolderMutation(string action, string parameter)
+        {
+            // Keep the serialized malformed token confined even against the old coercion behavior.
+            var token = new JObject { ["ownedPath"] = assetRoot + "/Fresh/Profile.asset" };
+            var response = Send(action, new JObject { ["name"] = UniqueName(), [parameter] = token });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("'" + parameter + "'", response.Value<string>("error"));
+            Assert.AreEqual(0, ownedScene.rootCount);
+            Assert.IsFalse(Directory.Exists(FullPath(assetRoot + "/Fresh")));
+        }
+
+        [Test]
+        public void OmittedCreationNameUsesTrackedOwnedDefault()
+        {
+            Component volume = ReturnedVolume(Send("volume_create", new JObject()));
+            Assert.AreEqual("Volume", volume.gameObject.name);
+            Assert.AreEqual(1, ownedScene.rootCount);
+        }
+
         private JObject Send(string action, JObject request)
         {
             request["action"] = action;
-            string name = request.Value<string>("name");
+            string name = request["name"]?.ToString() ?? "Volume";
             try
             {
                 return JObject.FromObject(ManageGraphics.HandleCommand(request));
