@@ -8,6 +8,7 @@
 import argparse
 from dataclasses import asdict, dataclass
 import hashlib
+from http.client import IncompleteRead
 import io
 import json
 import os
@@ -18,6 +19,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from time import sleep
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 from typing import TypedDict
@@ -182,10 +185,37 @@ def extract_package(content: bytes, destination: Path) -> None:
                     shutil.copyfileobj(stream, output)
 
 
+def _read_registry_bytes(url: str, identity: str) -> bytes:
+    """Retry interrupted GETs without retaining partial responses between attempts."""
+    attempt = 1
+    while True:
+        try:
+            with urlopen(url, timeout=60) as response:
+                return response.read()
+        except HTTPError as error:
+            error.close()
+            if error.code not in {408, 429, 500, 502, 503, 504} or attempt == 3:
+                raise PreparationError(
+                    f"Registry download failed for {identity} after {attempt} attempts: {error}"
+                ) from error
+        except URLError as error:
+            if not isinstance(error.reason, (TimeoutError, ConnectionError)) or attempt == 3:
+                raise PreparationError(
+                    f"Registry download failed for {identity} after {attempt} attempts: {error}"
+                ) from error
+        except (IncompleteRead, TimeoutError, ConnectionError) as error:
+            if attempt == 3:
+                raise PreparationError(
+                    f"Registry download failed for {identity} after {attempt} attempts: {error}"
+                ) from error
+        sleep(attempt)
+        attempt += 1
+
+
 def fetch_registry_package(name: str, version: str, destination: Path) -> str:
     """Fetch an exact official-registry version and verify the registry's archive digest."""
-    with urlopen(f"https://packages.unity.com/{name}", timeout=60) as response:
-        metadata = json.load(response)
+    identity = f"{name}@{version}"
+    metadata = json.loads(_read_registry_bytes(f"https://packages.unity.com/{name}", identity))
     release = metadata["versions"].get(version)
     if not release or release.get("name") != name or release.get("version") != version:
         raise PreparationError(f"Pinned registry package unavailable: {name}@{version}")
@@ -201,8 +231,7 @@ def fetch_registry_package(name: str, version: str, destination: Path) -> str:
     expected = dist.get("shasum", "")
     if not re.fullmatch(r"[0-9a-f]{40}", expected):
         raise PreparationError(f"Missing registry integrity digest: {name}@{version}")
-    with urlopen(url, timeout=60) as response:
-        content = response.read()
+    content = _read_registry_bytes(url, identity)
     if hashlib.sha1(content).hexdigest() != expected:
         raise PreparationError(f"Registry integrity mismatch: {name}@{version}")
     extract_package(content, destination)
