@@ -318,35 +318,34 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = "Event name required" };
             }
 
+            // Reject invalid payloads before allocating or writing native event attributes.
+            Vector3? position = @params["position"] != null ? ManageVfxCommon.ParseVector3(@params["position"]) : (Vector3?)null;
+            Vector3? velocity = @params["velocity"] != null ? ManageVfxCommon.ParseVector3(@params["velocity"]) : (Vector3?)null;
+            Color? color = @params["color"] != null ? ManageVfxCommon.ParseColor(@params["color"]) : (Color?)null;
+            float? sizeValue = @params["size"].ReadScalar<float?>();
+            float? lifetimeValue = @params["lifetime"].ReadScalar<float?>();
+
             using VFXEventAttribute attr = vfx.CreateVFXEventAttribute();
-            if (@params["position"] != null)
+            if (position.HasValue)
             {
-                attr.SetVector3("position", ManageVfxCommon.ParseVector3(@params["position"]));
+                attr.SetVector3("position", position.Value);
             }
-            if (@params["velocity"] != null)
+            if (velocity.HasValue)
             {
-                attr.SetVector3("velocity", ManageVfxCommon.ParseVector3(@params["velocity"]));
+                attr.SetVector3("velocity", velocity.Value);
             }
-            if (@params["color"] != null)
+            if (color.HasValue)
             {
-                var c = ManageVfxCommon.ParseColor(@params["color"]);
+                var c = color.Value;
                 attr.SetVector3("color", new Vector3(c.r, c.g, c.b));
             }
-            if (@params["size"] != null)
+            if (sizeValue.HasValue)
             {
-                float? sizeValue = @params["size"].ReadScalar<float?>();
-                if (sizeValue.HasValue)
-                {
-                    attr.SetFloat("size", sizeValue.Value);
-                }
+                attr.SetFloat("size", sizeValue.Value);
             }
-            if (@params["lifetime"] != null)
+            if (lifetimeValue.HasValue)
             {
-                float? lifetimeValue = @params["lifetime"].ReadScalar<float?>();
-                if (lifetimeValue.HasValue)
-                {
-                    attr.SetFloat("lifetime", lifetimeValue.Value);
-                }
+                attr.SetFloat("lifetime", lifetimeValue.Value);
             }
 
             vfx.SendEvent(eventName, attr);

@@ -513,9 +513,38 @@ namespace MCPForUnityTests.EditMode.Tools
         public void EventWithoutNameFailsWithoutSending()
         {
             RequireEnabledGraph();
-            JObject response = Send("vfx_send_event", new JObject());
+            JObject response = Send("vfx_send_event", JObject.Parse("{position:[],size:true}"));
             Assert.IsFalse(response.Value<bool>("success"));
             StringAssert.Contains("Event name required", response["message"]?.ToString());
+        }
+
+        [TestCase("position", "[true,0,0]", "position[0]")]
+        [TestCase("velocity", "[0,'Infinity',0]", "velocity[1]")]
+        [TestCase("color", "{r:1,g:1,b:true}", "color.b")]
+        [TestCase("size", "true", "size")]
+        [TestCase("lifetime", "'NaN'", "lifetime")]
+        [TestCase("position", "[]", "Invalid Vector3")]
+        [TestCase("color", "{}", "Invalid Color")]
+        public void InvalidEventPayloadRejectsBeforeNativeAttributeCreation(string field, string json, string expected)
+        {
+            RequireEnabledGraph();
+            Assert.IsNull(GetProperty<UnityEngine.Object>("visualEffectAsset"), "The fixture must have no asset for native event attributes.");
+            var properties = JObject.Parse("{event_name:'spawn',position:[1,2,3],velocity:[0,1,0],color:[1,1,1],size:1,lifetime:2}");
+            properties[field] = JToken.Parse(json);
+            JObject response = Send("vfx_send_event", properties);
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains(expected, response.Value<string>("message"));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
+        public void EventPayloadValidationPreservesPositionBeforeLaterErrors()
+        {
+            RequireEnabledGraph();
+            JObject response = Send("vfx_send_event", JObject.Parse("{event_name:'spawn',position:[true,0,0],velocity:[],color:{},size:true,lifetime:true}"));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("position[0]", response.Value<string>("message"));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
         }
 
         [TestCase(2)]
