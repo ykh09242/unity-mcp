@@ -160,6 +160,15 @@ namespace MCPForUnity.Editor.Services
         private bool _disposed;
         private bool _runRetired;
         private static TestRunnerService _activeRunOwner;
+        private static readonly HashSet<PendingRunAdmission> PendingRunAdmissions = new();
+
+        private sealed class PendingRunAdmission
+        {
+            internal string JobId;
+            internal string RetirementError;
+            internal CancellationTokenSource Cancellation;
+        }
+
         private const string RetiredRunSessionKey = "MCPForUnity.TestRunner.RetiredRunJobId";
 
         private void ThrowIfDisposed()
@@ -180,6 +189,14 @@ namespace MCPForUnity.Editor.Services
 
         internal static void RetireJob(string jobId, string message)
         {
+            lock (PendingRunAdmissions)
+            {
+                foreach (var pending in PendingRunAdmissions.Where(p => p.JobId == jobId).ToArray())
+                {
+                    pending.RetirementError ??= message;
+                    pending.Cancellation.Cancel();
+                }
+            }
             var owner = _activeRunOwner;
             if (owner == null || owner._trackedJobId != jobId)
                 return;
@@ -271,7 +288,36 @@ namespace MCPForUnity.Editor.Services
                 throw new InvalidOperationException("A recovered Unity test run is still in progress.");
             }
 
-            await _operationLock.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(true);
+            // Bind ownership before discovery or another operation can delay admission.
+            // A retired waiter must never inherit the manager's later current job.
+            var admission = new PendingRunAdmission
+            {
+                JobId = TestJobManager.CurrentJobId,
+                Cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token),
+            };
+            lock (PendingRunAdmissions)
+                PendingRunAdmissions.Add(admission);
+            try
+            {
+                await _operationLock.WaitAsync(admission.Cancellation.Token).ConfigureAwait(true);
+            }
+            catch (OperationCanceledException) when (admission.RetirementError != null)
+            {
+                throw new InvalidOperationException(admission.RetirementError);
+            }
+            finally
+            {
+                lock (PendingRunAdmissions)
+                {
+                    PendingRunAdmissions.Remove(admission);
+                    admission.Cancellation.Dispose();
+                }
+            }
+            return await RunAdmittedTestsAsync(mode, filterOptions, admission.JobId, admission.RetirementError).ConfigureAwait(true);
+        }
+
+        private async Task<TestRunResult> RunAdmittedTestsAsync(TestMode mode, TestFilterOptions filterOptions, string jobId, string retirementError)
+        {
             Task<TestRunResult> runTask;
             TaskCompletionSource<TestRunResult> completionSource = null;
             bool adjustedPlayModeOptions = false;
@@ -282,6 +328,8 @@ namespace MCPForUnity.Editor.Services
             {
                 ThrowIfDisposed();
                 ThrowIfRetiredRunPending();
+                if (retirementError != null || (jobId != null && TestJobManager.CurrentJobId != jobId))
+                    throw new InvalidOperationException(retirementError ?? "Test job was retired before execution started.");
                 if (_runCompletionSource != null && !_runCompletionSource.Task.IsCompleted)
                 {
                     throw new InvalidOperationException("A Unity test run is already in progress.");
@@ -306,7 +354,7 @@ namespace MCPForUnity.Editor.Services
 
                 _leafResults.Clear();
                 completionSource = new TaskCompletionSource<TestRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-                _trackedJobId = TestJobManager.CurrentJobId;
+                _trackedJobId = jobId;
                 _runRetired = false;
                 _activeRunOwner = this;
                 _runCompletionSource = completionSource;

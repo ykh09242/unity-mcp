@@ -350,7 +350,7 @@ namespace MCPForUnityTests.Editor.Services
                 }
                 StringAssert.Contains("Job cleared manually", ObserveFailure(run).Message);
                 Assert.IsInstanceOf<OperationCanceledException>(ObserveFailure(queuedDiscovery), "Disposal must settle previously queued discovery.");
-                Assert.IsInstanceOf<OperationCanceledException>(ObserveFailure(queuedRun), "Disposal must settle previously queued runs.");
+                StringAssert.Contains("Job cleared manually", ObserveFailure(queuedRun).Message, "Retirement must settle a pending request for that job.");
                 Assert.IsTrue(EditorSettings.enterPlayModeOptionsEnabled, "The retired caller must not restore settings a second time.");
                 Assert.AreEqual(EnterPlayModeOptions.DisableDomainReload, EditorSettings.enterPlayModeOptions);
             }
@@ -410,6 +410,188 @@ namespace MCPForUnityTests.Editor.Services
             public Task<TestRunResult> RunTestsAsync(TestMode mode, TestFilterOptions options = null) => LastRun = _service.RunTestsAsync(mode, options);
 
             public Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode) => _service.GetTestsAsync(mode);
+        }
+
+        [Test]
+        public Task PendingRunInitializationTimeout_DoesNotExecuteOrClaimReplacement() => CheckPendingRunRetirement(clear: false);
+
+        [Test]
+        public Task PendingRunClearedManually_DoesNotExecuteOrClaimReplacement() => CheckPendingRunRetirement(clear: true);
+
+        private async Task CheckPendingRunRetirement(bool clear)
+        {
+            var operationLock = (SemaphoreSlim)
+                typeof(TestRunnerService).GetField("_operationLock", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+            operationLock.Wait();
+            bool held = true;
+            var executed = new List<string>();
+            SetSchedule(settings =>
+            {
+                executed.Add(settings.filters[0].testNames[0]);
+                _service.RunFinished(null);
+                return "scheduled";
+            });
+            try
+            {
+                string retired = TestJobManager.StartJob(TestMode.EditMode, new TestFilterOptions { TestNames = new[] { "retired-filter" } }, initTimeoutMs: 1);
+                var retiredRun = _runner.LastRun;
+                if (clear)
+                    Assert.IsTrue(TestJobManager.ClearStuckJob());
+                else
+                {
+                    Jobs[retired].StartedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 100;
+                    Assert.AreEqual(TestJobStatus.Failed, TestJobManager.GetJob(retired).Status);
+                }
+                await ExpectFailure(retiredRun, clear ? "Job cleared manually" : "Test job failed to initialize");
+                Assert.IsFalse(TestRunnerService.HasRetiredRun, "A request that never executed must not quarantine the native Test Runner.");
+                Assert.AreEqual(0, executed.Count);
+                string replacement = TestJobManager.StartJob(TestMode.EditMode, new TestFilterOptions { TestNames = new[] { "replacement-filter" } });
+                var replacementRun = _runner.LastRun;
+                operationLock.Release();
+                held = false;
+                Assert.AreSame(replacementRun, await Task.WhenAny(replacementRun, Task.Delay(2000)));
+                await replacementRun;
+                CollectionAssert.AreEqual(new[] { "replacement-filter" }, executed);
+                Assert.AreEqual(TestJobStatus.Failed, Jobs[retired].Status);
+                Assert.AreEqual(TestJobStatus.Succeeded, Jobs[replacement].Status);
+            }
+            finally
+            {
+                if (held)
+                    operationLock.Release();
+            }
+        }
+
+        [Test]
+        public void RetirementBeforeAdmissionContinuation_DoesNotConsumeReplacementSlot()
+        {
+            var previous = SynchronizationContext.Current;
+            var paused = new PausedContext();
+            var operationLock = (SemaphoreSlim)
+                typeof(TestRunnerService).GetField("_operationLock", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+            operationLock.Wait();
+            bool held = true;
+            try
+            {
+                SynchronizationContext.SetSynchronizationContext(paused);
+                var executed = new List<string>();
+                SetSchedule(settings =>
+                {
+                    executed.Add(settings.filters[0].testNames[0]);
+                    _service.RunFinished(null);
+                    return "scheduled";
+                });
+                TestJobManager.StartJob(TestMode.EditMode, new TestFilterOptions { TestNames = new[] { "retired" } });
+                var retired = _runner.LastRun;
+                TestJobManager.ClearStuckJob();
+                TestJobManager.StartJob(TestMode.EditMode, new TestFilterOptions { TestNames = new[] { "replacement" } });
+                var replacement = _runner.LastRun;
+                operationLock.Release();
+                held = false;
+                var deadline = System.Diagnostics.Stopwatch.StartNew();
+                while ((!retired.IsCompleted || !replacement.IsCompleted) && deadline.ElapsedMilliseconds < 2000)
+                {
+                    paused.Drain();
+                    Thread.Sleep(1);
+                }
+                StringAssert.Contains("Job cleared manually", ObserveFailure(retired).Message);
+                Assert.IsTrue(replacement.IsCompleted);
+                replacement.GetAwaiter().GetResult();
+                CollectionAssert.AreEqual(new[] { "replacement" }, executed);
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previous);
+                if (held)
+                    operationLock.Release();
+            }
+        }
+
+        [Test]
+        public void RetiredAcquiredAdmission_RejectsEvenWhileManagerIdIsCurrent()
+        {
+            var previous = SynchronizationContext.Current;
+            var paused = new PausedContext();
+            var operationLock = (SemaphoreSlim)
+                typeof(TestRunnerService).GetField("_operationLock", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+            operationLock.Wait();
+            bool held = true;
+            try
+            {
+                SynchronizationContext.SetSynchronizationContext(paused);
+                int executions = 0;
+                SetSchedule(_ =>
+                {
+                    executions++;
+                    _service.RunFinished(null);
+                    return "unexpected";
+                });
+                string jobId = TestJobManager.StartJob(TestMode.EditMode);
+                var retired = _runner.LastRun;
+                operationLock.Release();
+                held = false;
+                TestRunnerService.RetireJob(jobId, "Retired before admitted continuation");
+                Assert.AreEqual(jobId, TestJobManager.CurrentJobId);
+                var deadline = System.Diagnostics.Stopwatch.StartNew();
+                while (!retired.IsCompleted && deadline.ElapsedMilliseconds < 2000)
+                {
+                    paused.Drain();
+                    Thread.Sleep(1);
+                }
+                StringAssert.Contains("Retired before admitted continuation", ObserveFailure(retired).Message);
+                Assert.AreEqual(0, executions);
+                Assert.IsFalse(TestRunnerService.HasRetiredRun);
+                Assert.AreEqual(1, operationLock.CurrentCount, "An acquired but retired request must release its own slot.");
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previous);
+                if (held)
+                    operationLock.Release();
+            }
+        }
+
+        [Test]
+        public async Task UnownedPendingRun_RemainsUnownedWhenManagerStartsAnotherJob()
+        {
+            var operationLock = (SemaphoreSlim)
+                typeof(TestRunnerService).GetField("_operationLock", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+            operationLock.Wait();
+            var executed = new List<string>();
+            SetSchedule(settings =>
+            {
+                var owner = (string)typeof(TestRunnerService).GetField("_trackedJobId", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+                executed.Add(settings.filters[0].testNames[0] + "/" + owner);
+                _service.RunFinished(null);
+                return "scheduled";
+            });
+            var unowned = _service.RunTestsAsync(TestMode.EditMode, new TestFilterOptions { TestNames = new[] { "unowned" } });
+            string jobId = TestJobManager.StartJob(TestMode.EditMode, new TestFilterOptions { TestNames = new[] { "owned" } });
+            var owned = _runner.LastRun;
+            operationLock.Release();
+            var both = Task.WhenAll(unowned, owned);
+            Assert.AreSame(both, await Task.WhenAny(both, Task.Delay(2000)));
+            await both;
+            CollectionAssert.AreEqual(new[] { "unowned/", "owned/" + jobId }, executed);
+            Assert.AreEqual(TestJobStatus.Succeeded, Jobs[jobId].Status);
+        }
+
+        [Test]
+        public async Task DisposedPendingAdmission_SettlesWithoutExecutingOrQuarantining()
+        {
+            var operationLock = (SemaphoreSlim)
+                typeof(TestRunnerService).GetField("_operationLock", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+            operationLock.Wait();
+            int executions = 0;
+            SetSchedule(_ => "unexpected-" + ++executions);
+            TestJobManager.StartJob(TestMode.EditMode);
+            var pending = _runner.LastRun;
+            _service.Dispose();
+            Assert.AreSame(pending, await Task.WhenAny(pending, Task.Delay(2000)));
+            Assert.IsInstanceOf<OperationCanceledException>(ObserveFailure(pending));
+            Assert.AreEqual(0, executions);
+            Assert.IsFalse(TestRunnerService.HasRetiredRun);
+            operationLock.Release();
         }
 
         [Test]
