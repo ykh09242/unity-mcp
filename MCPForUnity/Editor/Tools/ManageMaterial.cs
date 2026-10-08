@@ -55,8 +55,11 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static string NormalizePath(string path)
+        private static string NormalizePath(JToken pathToken)
         {
+            if (pathToken != null && pathToken.Type != JTokenType.Null && pathToken.Type != JTokenType.String)
+                throw new ArgumentException("'materialPath' must be a string or null.");
+            string path = pathToken?.ToString();
             if (string.IsNullOrEmpty(path))
                 return path;
 
@@ -74,7 +77,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static object SetMaterialShaderProperty(JObject @params)
         {
-            string materialPath = NormalizePath(@params["materialPath"]?.ToString());
+            string materialPath = NormalizePath(@params["materialPath"]);
             string property = @params["property"]?.ToString();
             JToken value = @params["value"];
 
@@ -135,7 +138,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static object SetMaterialColor(JObject @params)
         {
-            string materialPath = NormalizePath(@params["materialPath"]?.ToString());
+            string materialPath = NormalizePath(@params["materialPath"]);
             JToken colorToken = @params["color"];
             string property = @params["property"]?.ToString();
 
@@ -205,7 +208,7 @@ namespace MCPForUnity.Editor.Tools
         {
             string target = @params["target"]?.ToString();
             string searchMethod = @params["searchMethod"]?.ToString();
-            string materialPath = NormalizePath(@params["materialPath"]?.ToString());
+            string materialPath = NormalizePath(@params["materialPath"]);
             int slot = @params["slot"]?.ReadScalar<int?>() ?? 0;
             string mode = @params["mode"]?.ToString() ?? "shared";
 
@@ -546,7 +549,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static object GetMaterialInfo(JObject @params)
         {
-            string materialPath = NormalizePath(@params["materialPath"]?.ToString());
+            string materialPath = NormalizePath(@params["materialPath"]);
             if (string.IsNullOrEmpty(materialPath))
             {
                 return new ErrorResponse("materialPath is required");
@@ -707,8 +710,9 @@ namespace MCPForUnity.Editor.Tools
 
         private static object CreateMaterial(JObject @params)
         {
-            string materialPath = NormalizePath(@params["materialPath"]?.ToString());
-            string shaderName = @params["shader"]?.ToString() ?? "Standard";
+            string materialPath = NormalizePath(@params["materialPath"]);
+            JToken shaderToken = @params["shader"];
+            string shaderName = shaderToken?.ToString() ?? "Standard";
             JToken colorToken = @params["color"];
             string colorProperty = @params["property"]?.ToString();
 
@@ -743,6 +747,8 @@ namespace MCPForUnity.Editor.Tools
             }
 
             materialPath = AssetPathUtility.GetContainedAssetPath(materialPath);
+            if (shaderToken != null && shaderToken.Type != JTokenType.Null && shaderToken.Type != JTokenType.String)
+                return new ErrorResponse("'shader' must be a string or null.");
 
             Shader shader = RenderPipelineUtility.ResolveShader(shaderName);
             if (shader == null)
