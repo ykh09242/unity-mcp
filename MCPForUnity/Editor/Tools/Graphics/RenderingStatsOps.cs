@@ -68,11 +68,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 category = TryResolveCategory(categoryName);
             }
 
+            string resolvedCategoryName = category.Name;
             var allHandles = new List<ProfilerRecorderHandle>();
             ProfilerRecorderHandle.GetAvailable(allHandles);
             var counters = allHandles
                 .Select(h => ProfilerRecorderHandle.GetDescription(h))
-                .Where(d => string.Equals(d.Category.Name, category.Name, StringComparison.OrdinalIgnoreCase))
+                .Where(d => string.Equals(d.Category.Name, resolvedCategoryName, StringComparison.OrdinalIgnoreCase))
                 .Select(d => new
                 {
                     name = d.Name,
@@ -85,7 +86,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             return new
             {
                 success = true,
-                message = $"Found {counters.Count} counters in category '{category.Name}'.",
+                message = $"Found {counters.Count} counters in category '{resolvedCategoryName}'.",
                 data = new { counters },
             };
         }
