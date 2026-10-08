@@ -224,6 +224,63 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNull(line.sharedMaterial);
         }
 
+        [TestCase("line_create_circle", "{center:[3e38,0,0],radius:3e38,segments:4}", false)]
+        [TestCase("line_create_arc", "{center:[3e38,0,0],radius:3e38,segments:4}", false)]
+        [TestCase("line_create_circle", "{center:[-3e38,0,0],radius:3e38,segments:4}", false)]
+        [TestCase("line_create_arc", "{center:[-3e38,0,0],radius:3e38,segments:4}", false)]
+        [TestCase("line_create_circle", "{center:[-3e38,0,0],radius:3e38,segments:4}", true)]
+        [TestCase("line_create_arc", "{center:[-3e38,0,0],radius:3e38,segments:4}", true)]
+        [TestCase("line_create_circle", "{center:[0,3e38,0],normal:[0,0,1],radius:3e38,segments:4}", false)]
+        [TestCase("line_create_arc", "{center:[0,3e38,0],normal:[0,0,1],radius:3e38,segments:4}", false)]
+        [TestCase("line_create_circle", "{center:[0,0,3e38],radius:3e38,segments:4}", false)]
+        [TestCase("line_create_arc", "{center:[0,0,3e38],radius:3e38,segments:4}", false)]
+        public void GeneratedNonfiniteShapePreservesRendererAndScene(string action, string properties, bool existingMaterial)
+        {
+            if (existingMaterial)
+                AssignUsableMaterial();
+            sceneFixture.ClearDirtiness();
+            int dirtyCount = EditorUtility.GetDirtyCount(line);
+            JObject response = Call(action, JObject.Parse(properties));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("must be finite", response.Value<string>("message"));
+            CollectionAssert.AreEqual(originalPositions, Positions(line));
+            Assert.AreSame(material, line.sharedMaterial);
+            Assert.AreEqual(2f, line.startWidth);
+            Assert.AreEqual(4f, line.endWidth);
+            Assert.IsFalse(line.loop);
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(line));
+            Assert.IsFalse(SceneManager.GetActiveScene().isDirty);
+        }
+
+        [TestCase("line_create_circle")]
+        [TestCase("line_create_arc")]
+        public void MissingShapeTargetKeepsPrecedenceOverInvalidScalar(string action)
+        {
+            UnityEngine.Object.DestroyImmediate(line);
+            sceneFixture.ClearDirtiness();
+            JObject response = Call(action, JObject.Parse("{radius:'Infinity'}"));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("LineRenderer not found", response.Value<string>("message"));
+            Assert.IsNull(root.GetComponent<LineRenderer>());
+            Assert.IsFalse(SceneManager.GetActiveScene().isDirty);
+        }
+
+        [Test]
+        public void HugeFiniteArcAnglesRemainAcceptedWithFinitePoints()
+        {
+            AssignUsableMaterial();
+            JObject response = Call("line_create_arc", JObject.Parse("{startAngle:-3e38,endAngle:3e38,segments:4}"));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(5, line.positionCount);
+            foreach (Vector3 point in Positions(line))
+            {
+                Assert.IsFalse(float.IsNaN(point.x) || float.IsInfinity(point.x));
+                Assert.IsFalse(float.IsNaN(point.y) || float.IsInfinity(point.y));
+                Assert.IsFalse(float.IsNaN(point.z) || float.IsInfinity(point.z));
+            }
+            Assert.AreSame(material, line.sharedMaterial);
+        }
+
         [TestCase("line_create_line", 2)]
         [TestCase("line_create_circle", 1)]
         [TestCase("line_create_arc", 2)]

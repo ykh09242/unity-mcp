@@ -52,16 +52,27 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Vector3 forward = Vector3.Cross(right, normal).normalized;
             var applyAppearance = PrepareAppearance(@params, lr);
 
-            Undo.RecordObject(lr, "Create Circle");
-            lr.positionCount = segments;
-            lr.loop = true;
-
+            var positions = new Vector3[segments];
             for (int i = 0; i < segments; i++)
             {
                 float angle = (float)i / segments * Mathf.PI * 2f;
                 Vector3 point = center + (right * Mathf.Cos(angle) + forward * Mathf.Sin(angle)) * radius;
-                lr.SetPosition(i, point);
+                if (
+                    float.IsNaN(point.x)
+                    || float.IsInfinity(point.x)
+                    || float.IsNaN(point.y)
+                    || float.IsInfinity(point.y)
+                    || float.IsNaN(point.z)
+                    || float.IsInfinity(point.z)
+                )
+                    return new { success = false, message = $"Generated circle position at index {i} must be finite." };
+                positions[i] = point;
             }
+
+            Undo.RecordObject(lr, "Create Circle");
+            lr.positionCount = positions.Length;
+            lr.loop = true;
+            lr.SetPositions(positions);
 
             RendererHelpers.EnsureMaterial(lr);
 
@@ -93,17 +104,28 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Vector3 forward = Vector3.Cross(right, normal).normalized;
             var applyAppearance = PrepareAppearance(@params, lr);
 
-            Undo.RecordObject(lr, "Create Arc");
-            lr.positionCount = segments + 1;
-            lr.loop = false;
-
+            var positions = new Vector3[segments + 1];
             for (int i = 0; i <= segments; i++)
             {
                 float t = (float)i / segments;
                 float angle = Mathf.Lerp(startAngle, endAngle, t);
                 Vector3 point = center + (right * Mathf.Cos(angle) + forward * Mathf.Sin(angle)) * radius;
-                lr.SetPosition(i, point);
+                if (
+                    float.IsNaN(point.x)
+                    || float.IsInfinity(point.x)
+                    || float.IsNaN(point.y)
+                    || float.IsInfinity(point.y)
+                    || float.IsNaN(point.z)
+                    || float.IsInfinity(point.z)
+                )
+                    return new { success = false, message = $"Generated arc position at index {i} must be finite." };
+                positions[i] = point;
             }
+
+            Undo.RecordObject(lr, "Create Arc");
+            lr.positionCount = positions.Length;
+            lr.loop = false;
+            lr.SetPositions(positions);
 
             RendererHelpers.EnsureMaterial(lr);
 
