@@ -43,9 +43,16 @@ namespace MCPForUnity.Editor.Tools
             }
             string action = actionResult.Value.ToLowerInvariant();
 
-            // Parameters for specific actions
-            string tagName = p.Get("tagName");
-            string layerName = p.Get("layerName");
+            string nameKey =
+                action == "add_tag" || action == "remove_tag" ? "tagName"
+                : action == "add_layer" || action == "remove_layer" ? "layerName"
+                : null;
+            if (nameKey != null)
+            {
+                JToken nameToken = p.GetRaw(nameKey);
+                if (nameToken != null && nameToken.Type != JTokenType.Null && nameToken.Type != JTokenType.String)
+                    return new ErrorResponse($"'{nameKey}' must be a string.");
+            }
             // Route action
             switch (action)
             {

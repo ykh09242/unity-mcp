@@ -7,6 +7,41 @@ namespace MCPForUnityTests.EditMode.Tools
 {
     public class ManageEditorToolContractTests
     {
+        [TestCase("add_tag", "tagName")]
+        [TestCase("add_tag", "tag_name")]
+        [TestCase("remove_tag", "tagName")]
+        [TestCase("remove_tag", "tag_name")]
+        [TestCase("add_layer", "layerName")]
+        [TestCase("add_layer", "layer_name")]
+        [TestCase("remove_layer", "layerName")]
+        [TestCase("remove_layer", "layer_name")]
+        public void NonStringTagOrLayerName_RejectsWithoutChangingProjectSettings(string action, string key)
+        {
+            UnityEngine.Object[] assets = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset");
+            Assert.IsNotEmpty(assets, "TagManager must be available for the mutation regression.");
+            UnityEngine.Object tagManager = assets[0];
+            string before = EditorJsonUtility.ToJson(tagManager);
+            try
+            {
+                foreach (string json in new[] { "false", "0", "1.5", "[]", "{}" })
+                {
+                    var response = JObject.FromObject(ManageEditor.HandleCommand(new JObject { ["action"] = action, [key] = JToken.Parse(json) }));
+                    Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                    StringAssert.Contains("must be a string", response.Value<string>("error"));
+                    Assert.AreEqual(before, EditorJsonUtility.ToJson(tagManager), "Invalid names must not mutate tags or layers.");
+                }
+            }
+            finally
+            {
+                if (EditorJsonUtility.ToJson(tagManager) != before)
+                {
+                    EditorJsonUtility.FromJsonOverwrite(before, tagManager);
+                    EditorUtility.SetDirty(tagManager);
+                    AssetDatabase.SaveAssets();
+                }
+            }
+        }
+
         [TestCase("-999")]
         [TestCase("-2")]
         [TestCase("999")]
