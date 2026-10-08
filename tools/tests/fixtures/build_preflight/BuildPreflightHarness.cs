@@ -35,8 +35,12 @@ internal static class BuildPreflightHarness
         EditorApplication.update = null;
         PlayerSettings.Writes = 0;
         EditorUserBuildSettings.Switches = 0;
+        EditorUserBuildSettings.SwitchSucceeds = true;
+        EditorUserBuildSettings.ThrowOnSwitch = false;
+        BuildPipeline.TargetSupported = true;
         EditorUserBuildSettings.activeBuildTarget = BuildTarget.StandaloneWindows64;
         EditorUserBuildSettings.standaloneBuildSubtarget = StandaloneBuildSubtarget.Player;
+        EditorUserBuildSettings.SubtargetWrites = 0;
         BuildPipeline.Builds = 0;
     }
 
@@ -52,6 +56,7 @@ internal static class BuildPreflightHarness
         Check(PlayerSettings.Writes == 0, name + " backend untouched");
         Check(Store("_buildJobs").Count == 0 && Store("_batchJobs").Count == 0, name + " inventory untouched");
         Check(EditorApplication.update == null, name + " no scheduled callbacks");
+        Check(EditorUserBuildSettings.SubtargetWrites == 0, name + " no subtarget writes");
         Check(
             EditorUserBuildSettings.Switches == 0 && EditorUserBuildSettings.standaloneBuildSubtarget == StandaloneBuildSubtarget.Player,
             name + " platform untouched"
@@ -231,6 +236,117 @@ internal static class BuildPreflightHarness
                 subtarget.Type == JTokenType.Null || subtarget.Value<string>() == "SERVER" ? StandaloneBuildSubtarget.Server : StandaloneBuildSubtarget.Player;
             Check(EditorUserBuildSettings.standaloneBuildSubtarget == expected, "valid platform subtarget/default preserved");
         }
+        foreach (var previous in new[] { StandaloneBuildSubtarget.Player, StandaloneBuildSubtarget.Server })
+        foreach (var requested in new[] { StandaloneBuildSubtarget.Player, StandaloneBuildSubtarget.Server })
+        {
+            Reset();
+            EditorUserBuildSettings.standaloneBuildSubtarget = previous;
+            EditorUserBuildSettings.SubtargetWrites = 0;
+            var response = JObject.FromObject(
+                ManageBuild.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "platform",
+                        ["target"] = "windows64",
+                        ["subtarget"] = requested.ToString(),
+                    }
+                )
+            );
+            string name = "same target " + previous + " -> " + requested;
+            Check(response.Value<bool>("success"), name + " succeeds");
+            Check(EditorUserBuildSettings.standaloneBuildSubtarget == requested, name + " applies requested state");
+            Check(EditorUserBuildSettings.Switches == (previous == requested ? 0 : 1), name + " switches only on change");
+            Check(EditorUserBuildSettings.SubtargetWrites == (previous == requested ? 0 : 1), name + " writes only on change");
+            if (previous != requested)
+                Check(EditorUserBuildSettings.SubtargetAtSwitch == requested, name + " supplies subtarget to switch");
+        }
+        foreach (string target in new[] { "windows64", "linux64" })
+        foreach (bool explicitNull in new[] { false, true })
+        {
+            Reset();
+            EditorUserBuildSettings.standaloneBuildSubtarget = StandaloneBuildSubtarget.Server;
+            EditorUserBuildSettings.SubtargetWrites = 0;
+            var request = new JObject { ["action"] = "platform", ["target"] = target };
+            if (explicitNull)
+                request["subtarget"] = JValue.CreateNull();
+            var response = JObject.FromObject(ManageBuild.HandleCommand(request));
+            Check(response.Value<bool>("success"), "omitted/null platform subtarget succeeds");
+            Check(
+                EditorUserBuildSettings.standaloneBuildSubtarget == StandaloneBuildSubtarget.Server && EditorUserBuildSettings.SubtargetWrites == 0,
+                "omitted/null preserves prior subtarget without writes"
+            );
+            Check(EditorUserBuildSettings.Switches == (target == "windows64" ? 0 : 1), "omitted/null preserves target switch behavior");
+        }
+        foreach (var previous in new[] { StandaloneBuildSubtarget.Player, StandaloneBuildSubtarget.Server })
+        foreach (bool throwOnSwitch in new[] { false, true })
+        foreach (string target in new[] { "windows64", "linux64" })
+        {
+            Reset();
+            EditorUserBuildSettings.standaloneBuildSubtarget = previous;
+            EditorUserBuildSettings.SubtargetWrites = 0;
+            EditorUserBuildSettings.SwitchSucceeds = false;
+            EditorUserBuildSettings.ThrowOnSwitch = throwOnSwitch;
+            var requested = previous == StandaloneBuildSubtarget.Player ? StandaloneBuildSubtarget.Server : StandaloneBuildSubtarget.Player;
+            var response = JObject.FromObject(
+                ManageBuild.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "platform",
+                        ["target"] = target,
+                        ["subtarget"] = requested.ToString(),
+                    }
+                )
+            );
+            string name = "failed switch " + target + " " + previous + " -> " + requested + " throws=" + throwOnSwitch;
+            Check(!response.Value<bool>("success"), name + " rejects");
+            Check(EditorUserBuildSettings.Switches == 1 && EditorUserBuildSettings.SubtargetAtSwitch == requested, name + " attempts requested switch");
+            Check(EditorUserBuildSettings.standaloneBuildSubtarget == previous, name + " restores prior subtarget");
+            Check(
+                PlayerSettings.Writes == 0 && Store("_buildJobs").Count == 0 && Store("_batchJobs").Count == 0 && EditorApplication.update == null,
+                name + " leaves unrelated state unchanged"
+            );
+            Check(BuildPipeline.Builds == 0 && !Directory.Exists(outputRoot), name + " creates no build/output");
+        }
+        foreach (var previous in new[] { StandaloneBuildSubtarget.Player, StandaloneBuildSubtarget.Server })
+        foreach (bool explicitNull in new[] { false, true })
+        foreach (bool throwOnSwitch in new[] { false, true })
+        {
+            Reset();
+            EditorUserBuildSettings.standaloneBuildSubtarget = previous;
+            EditorUserBuildSettings.SubtargetWrites = 0;
+            EditorUserBuildSettings.SwitchSucceeds = false;
+            EditorUserBuildSettings.ThrowOnSwitch = throwOnSwitch;
+            var request = new JObject { ["action"] = "platform", ["target"] = "linux64" };
+            if (explicitNull)
+                request["subtarget"] = JValue.CreateNull();
+            var response = JObject.FromObject(ManageBuild.HandleCommand(request));
+            Check(!response.Value<bool>("success"), "failed switch with omitted/null subtarget rejects");
+            Check(EditorUserBuildSettings.Switches == 1, "failed switch with omitted/null subtarget attempts target switch");
+            Check(
+                EditorUserBuildSettings.standaloneBuildSubtarget == previous && EditorUserBuildSettings.SubtargetWrites == 0,
+                "failed switch with omitted/null subtarget preserves prior state without writes"
+            );
+        }
+        foreach (string target in new[] { "windows64", "linux64", "invalid" })
+        {
+            Reset();
+            BuildPipeline.TargetSupported = false;
+            var response = JObject.FromObject(
+                ManageBuild.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "platform",
+                        ["target"] = target,
+                        ["subtarget"] = "server",
+                    }
+                )
+            );
+            Check(!response.Value<bool>("success"), "unsupported/invalid target rejects before mutation");
+            Check(
+                EditorUserBuildSettings.Switches == 0 && EditorUserBuildSettings.SubtargetWrites == 0,
+                "unsupported/invalid target has no switch/subtarget writes"
+            );
+        }
         Reset();
         Console.WriteLine("BUILD_PREFLIGHT: " + checks + " checks, " + failures + " failures");
         return failures == 0 ? 0 : 1;
@@ -356,13 +472,31 @@ namespace UnityEditor
     public static class EditorUserBuildSettings
     {
         public static BuildTarget activeBuildTarget = BuildTarget.StandaloneWindows64;
-        public static StandaloneBuildSubtarget standaloneBuildSubtarget;
+        private static StandaloneBuildSubtarget _standaloneBuildSubtarget;
+        public static StandaloneBuildSubtarget standaloneBuildSubtarget
+        {
+            get => _standaloneBuildSubtarget;
+            set
+            {
+                SubtargetWrites++;
+                _standaloneBuildSubtarget = value;
+            }
+        }
+        public static int SubtargetWrites;
+        public static StandaloneBuildSubtarget SubtargetAtSwitch;
         public static bool buildAppBundle;
         public static int Switches;
+        public static bool SwitchSucceeds = true;
+        public static bool ThrowOnSwitch;
 
         public static bool SwitchActiveBuildTarget(BuildTargetGroup group, BuildTarget target)
         {
             Switches++;
+            SubtargetAtSwitch = standaloneBuildSubtarget;
+            if (ThrowOnSwitch)
+                throw new InvalidOperationException("Synthetic platform switch failure");
+            if (!SwitchSucceeds)
+                return false;
             activeBuildTarget = target;
             return true;
         }
@@ -384,7 +518,9 @@ namespace UnityEditor
         public static bool isBuildingPlayer;
         public static int Builds;
 
-        public static bool IsBuildTargetSupported(BuildTargetGroup group, BuildTarget target) => true;
+        public static bool TargetSupported = true;
+
+        public static bool IsBuildTargetSupported(BuildTargetGroup group, BuildTarget target) => TargetSupported;
 
         public static BuildTargetGroup GetBuildTargetGroup(BuildTarget target) => MCPForUnity.Editor.Tools.Build.BuildTargetMapping.GetTargetGroup(target);
 

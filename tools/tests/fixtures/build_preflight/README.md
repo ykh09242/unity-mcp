@@ -5,6 +5,10 @@ job and parameter sources against observable Unity API substitutes. It checks th
 invalid option names, malformed option arrays and invalid subtargets are rejected
 before backend changes, job registration, callbacks, platform changes or output
 folder creation. Valid controls cover builds, batches and Unity 6 build profiles.
+Platform probes also cover same-target Player/Server changes, exact no-ops,
+omitted/null subtarget preservation, and recovery when the switch returns false
+or throws. The managed switch seam records the selected subtarget at invocation;
+this does not establish native Unity reimport or compilation behavior.
 
 Run from the repository root with existing Unity Mono reference assemblies and a
 .NET SDK. The script downloads nothing and does not start the Unity Editor.

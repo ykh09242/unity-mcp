@@ -385,24 +385,33 @@ namespace MCPForUnity.Editor.Tools
             if (!BuildPipeline.IsBuildTargetSupported(group, target))
                 return new ErrorResponse($"Platform '{target}' is not installed. Install it via Unity Hub.");
 
-            if (EditorUserBuildSettings.activeBuildTarget == target)
+            var subtargetToken = p.GetRaw("subtarget");
+            var previousSubtarget = EditorUserBuildSettings.standaloneBuildSubtarget;
+            bool changeSubtarget = subtargetToken != null && subtargetToken.Type != JTokenType.Null && previousSubtarget != (StandaloneBuildSubtarget)subtarget;
+            if (EditorUserBuildSettings.activeBuildTarget == target && !changeSubtarget)
                 return new SuccessResponse("Already on this platform.", new { target = target.ToString() });
 
-            // Capture previous target before switching
             string previousTarget = EditorUserBuildSettings.activeBuildTarget.ToString();
+            bool switched = false;
+            try
+            {
+                // The public switch API reads the selected subtarget, including same-target changes.
+                if (changeSubtarget)
+                    EditorUserBuildSettings.standaloneBuildSubtarget = (StandaloneBuildSubtarget)subtarget;
+                switched = EditorUserBuildSettings.SwitchActiveBuildTarget(group, target);
+                if (!switched)
+                    return new ErrorResponse($"Failed to switch to build platform '{target}'.");
 
-            var subtargetToken = p.GetRaw("subtarget");
-            if (subtargetToken != null && subtargetToken.Type != JTokenType.Null)
-                EditorUserBuildSettings.standaloneBuildSubtarget = (StandaloneBuildSubtarget)subtarget;
-
-            // SwitchActiveBuildTarget is synchronous — blocks until reimport completes
-            if (!EditorUserBuildSettings.SwitchActiveBuildTarget(group, target))
-                return new ErrorResponse($"Failed to switch to build platform '{target}'.");
-
-            return new SuccessResponse(
-                $"Switched to {target}. Assets reimported for new platform.",
-                new { target = target.ToString(), previous = previousTarget }
-            );
+                return new SuccessResponse(
+                    $"Switched to {target}. Assets reimported for new platform.",
+                    new { target = target.ToString(), previous = previousTarget }
+                );
+            }
+            finally
+            {
+                if (!switched && changeSubtarget)
+                    EditorUserBuildSettings.standaloneBuildSubtarget = previousSubtarget;
+            }
         }
 
         // ── settings ───────────────────────────────────────────────────
