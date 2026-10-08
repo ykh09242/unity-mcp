@@ -5,9 +5,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services;
 using NUnit.Framework;
-using NUnit.Framework.Interfaces;
 using UnityEditor;
 using UnityEditor.TestTools.TestRunner.Api;
+using TNode = NUnit.Framework.Interfaces.TNode;
 
 namespace MCPForUnityTests.Editor.Services
 {
