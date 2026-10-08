@@ -101,6 +101,10 @@ namespace MCPForUnity.Editor.Tools
             string kind = (p.Get("element_type") ?? "").ToLowerInvariant();
             if (!new[] { "canvas", "panel", "image", "button", "text" }.Contains(kind))
                 throw new ArgumentException("element_type must be canvas, panel, image, button or text.");
+            JToken nameToken = p.GetRaw("name");
+            // The default Command JSON parser can represent ISO string names as Date tokens.
+            if (nameToken != null && nameToken.Type != JTokenType.Null && nameToken.Type != JTokenType.String && nameToken.Type != JTokenType.Date)
+                throw new ArgumentException("name must be a string.");
             string name = p.Get("name", kind == "canvas" ? "Canvas" : CultureInfo.InvariantCulture.TextInfo.ToTitleCase(kind));
             if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(new[] { '/', '\\', '\0', '\r', '\n' }) >= 0)
                 throw new ArgumentException("name must be a non-empty single hierarchy name.");
