@@ -749,10 +749,14 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(result["data"]["graphicsDriverMB"]);
         }
 
-        [Test]
-        public void StatsSetSceneDebug_ValidMode_Succeeds()
+        [TestCase("Wireframe")]
+        [TestCase("wireframe")]
+        [TestCase("1")]
+        [TestCase("Normal")]
+        [TestCase("-1")]
+        public void StatsSetSceneDebug_ValidMode_Succeeds(string mode)
         {
-            var result = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "stats_set_scene_debug", ["mode"] = "Wireframe" }));
+            var result = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "stats_set_scene_debug", ["mode"] = mode }));
             if (_hasSceneView)
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             else
@@ -765,6 +769,27 @@ namespace MCPForUnityTests.Editor.Tools
             var result = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "stats_set_scene_debug", ["mode"] = "InvalidMode" }));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("Valid:"));
+        }
+
+        [TestCase("999")]
+        [TestCase("-2")]
+        [TestCase("2147483647")]
+        [TestCase("UserDefined")]
+        [TestCase("-2147483648")]
+        [TestCase("Baked")]
+        public void StatsSetSceneDebug_UnavailableModeRejectsWithoutChangingViewOrLogging(string mode)
+        {
+            var sceneView = UnityEditor.SceneView.lastActiveSceneView;
+            var previousMode = sceneView != null ? sceneView.cameraMode : default;
+
+            var result = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "stats_set_scene_debug", ["mode"] = mode }));
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains($"'{mode}'", result.Value<string>("error"));
+            StringAssert.DoesNotContain("Error in action", result.Value<string>("error"));
+            if (sceneView != null)
+                Assert.AreEqual(previousMode, sceneView.cameraMode);
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
         }
 
         // =====================================================================

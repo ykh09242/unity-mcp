@@ -101,17 +101,27 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 return new ErrorResponse($"'mode' parameter required. Options: {validModes}");
             }
 
-            if (!Enum.TryParse<DrawCameraMode>(modeName, true, out var drawMode))
+            if (!Enum.TryParse<DrawCameraMode>(modeName, true, out var drawMode) || !Enum.IsDefined(typeof(DrawCameraMode), drawMode))
             {
                 var validModes = string.Join(", ", Enum.GetNames(typeof(DrawCameraMode)).Take(20));
                 return new ErrorResponse($"Unknown mode '{modeName}'. Valid: {validModes}");
+            }
+
+            SceneView.CameraMode cameraMode;
+            try
+            {
+                cameraMode = SceneView.GetBuiltinCameraMode(drawMode);
+            }
+            catch (InvalidOperationException)
+            {
+                return new ErrorResponse($"Mode '{modeName}' is not an available built-in Scene View mode.");
             }
 
             var sceneView = SceneView.lastActiveSceneView;
             if (sceneView == null)
                 return new ErrorResponse("No active Scene View found.");
 
-            sceneView.cameraMode = SceneView.GetBuiltinCameraMode(drawMode);
+            sceneView.cameraMode = cameraMode;
 
             sceneView.Repaint();
 
