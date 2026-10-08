@@ -31,14 +31,13 @@ def test_notification_observes_published_custom_tools(tmp_path):
         """
         import asyncio
         import sys
-        import weakref
         from unittest.mock import AsyncMock
 
         sys.path.insert(0, "src")
         from fastmcp import Client, FastMCP
+        from fastmcp.client.messages import MessageHandler
         from core.config import config
         from services.custom_tool_service import CustomToolService
-        import transport.plugin_hub as module
         from transport.plugin_hub import PluginHub
         from transport.plugin_registry import PluginRegistry
 
@@ -53,25 +52,31 @@ def test_notification_observes_published_custom_tools(tmp_path):
             PluginHub._connections["session"] = socket
             hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
 
-            async with Client(mcp) as client:
-                observed = []
+            observed = []
+            received = asyncio.Event()
 
-                class CatalogObserver:
-                    async def send_tool_list_changed(self):
-                        # A client may re-fetch before the notification send completes.
-                        observed.append({tool.name for tool in await client.list_tools()})
+            class CatalogObserver(MessageHandler):
+                async def on_tool_list_changed(self, message):
+                    # Re-fetch through the SDK as soon as the notification arrives.
+                    observed.append({tool.name for tool in await client.list_tools()})
+                    received.set()
 
-                observer = CatalogObserver()
-                module._active_mcp_sessions = weakref.WeakSet([observer])
-                await hub.on_receive(socket, {
-                    "type": "register_tools",
-                    "tools": [{"name": "published_custom", "description": "Published tool"}],
-                })
-                assert "published_custom" in (await registry.get_session("session")).tools
-                assert "published_custom" in service._global_tools
-                assert observed == [{"published_custom"}], observed
-
-            await PluginHub.shutdown()
+            try:
+                async with Client(mcp, mode="legacy", message_handler=CatalogObserver()) as client:
+                    # Given an initialized real legacy connection tracked by the hub.
+                    assert await client.list_tools() == []
+                    # When Unity publishes its custom tool catalog.
+                    await hub.on_receive(socket, {
+                        "type": "register_tools",
+                        "tools": [{"name": "published_custom", "description": "Published tool"}],
+                    })
+                    await asyncio.wait_for(received.wait(), 2)
+                    # Then a notification-triggered re-fetch already sees the published tool.
+                    assert "published_custom" in (await registry.get_session("session")).tools
+                    assert "published_custom" in service._global_tools
+                    assert observed == [{"published_custom"}], observed
+            finally:
+                await PluginHub.shutdown()
 
         asyncio.run(scenario())
     """,

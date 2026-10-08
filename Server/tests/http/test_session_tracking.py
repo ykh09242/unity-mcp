@@ -10,6 +10,7 @@ from mcp.server.connection import Connection
 from mcp_types import ToolListChangedNotification
 
 from transport.plugin_hub import PluginHub
+from transport.plugin_registry import PluginRegistry
 from transport.session_tracking import SessionTrackingMiddleware
 
 
@@ -22,8 +23,10 @@ class ToolChangeHandler(MessageHandler):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("restart", [False, True])
 async def test_catalog_notification_reaches_live_connection_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
+    restart: bool,
 ) -> None:
     connections: WeakSet[Connection] = WeakSet()
     monkeypatch.setattr("transport.plugin_hub._active_mcp_sessions", connections)
@@ -31,13 +34,23 @@ async def test_catalog_notification_reaches_live_connection_and_cleans_up(
     server.add_middleware(SessionTrackingMiddleware(connections))
     handler = ToolChangeHandler()
 
-    async with Client(server, mode="legacy", message_handler=handler) as client:
-        await client.list_tools()
-        assert len(connections) == 1
-        await PluginHub._notify_mcp_tool_list_changed()
-        with anyio.fail_after(2):
-            await handler.received.wait()
-    assert len(connections) == 0
+    # Given the hub lifespan that owns notification delivery, including a restart.
+    if restart:
+        PluginHub.configure(PluginRegistry(), mcp=server)
+        await PluginHub.shutdown()
+    PluginHub.configure(PluginRegistry(), mcp=server)
+    try:
+        async with Client(server, mode="legacy", message_handler=handler) as client:
+            await client.list_tools()
+            assert len(connections) == 1
+            # When the configured server publishes a catalog change.
+            await PluginHub._notify_mcp_tool_list_changed()
+            with anyio.fail_after(2):
+                await handler.received.wait()
+        # Then the real client receives it and SDK teardown removes its listener.
+        assert len(connections) == 0
+    finally:
+        await PluginHub.shutdown()
 
 
 @pytest.mark.asyncio
