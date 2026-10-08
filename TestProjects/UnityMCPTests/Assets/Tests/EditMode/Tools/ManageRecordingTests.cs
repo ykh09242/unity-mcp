@@ -62,10 +62,10 @@ namespace MCPForUnityTests.EditMode.Tools
                 Directory.Delete(_root, true);
         }
 
-        private FakeEncoder Start(RecordingOptions options = null)
+        private FakeEncoder Start(RecordingOptions options = null, string folder = null)
         {
             options = options ?? new RecordingOptions("game_view", 32, 32, 10, 2);
-            string output = RecordingOptions.ResolveOutputPath(_root, null, "fixture.mp4", "fixture");
+            string output = RecordingOptions.ResolveOutputPath(_root, folder, "fixture.mp4", "fixture");
             FakeEncoder encoder = null;
             _job = new RecordingJob("fixture", options, _root, output, 100, (path, config) => encoder = new FakeEncoder(path));
             return encoder;
@@ -149,7 +149,7 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(_job.Snapshot(102).Value<string>("error"), Does.Contain("No frames"));
             Assert.That(encoder.Disposals, Is.EqualTo(1));
             Assert.That(File.Exists(_job.OutputPath), Is.False);
-            Assert.That(Directory.GetFileSystemEntries(Path.GetDirectoryName(_job.OutputPath)), Is.Empty);
+            Assert.That(Directory.Exists(Path.Combine(_root, "Captures")), Is.False);
         }
 
         [TestCase("assembly_reload")]
@@ -163,7 +163,7 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(encoder.Disposals, Is.EqualTo(1));
             Assert.That(_job.Snapshot(101).Value<string>("reason"), Is.EqualTo(reason));
             Assert.That(File.Exists(_job.OutputPath), Is.False);
-            Assert.That(Directory.GetFileSystemEntries(Path.GetDirectoryName(_job.OutputPath)), Is.Empty);
+            Assert.That(Directory.Exists(Path.Combine(_root, "Captures")), Is.False);
         }
 
         [Test]
@@ -188,7 +188,7 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(_job.Status, Is.EqualTo("failed"));
             Assert.That(_job.Snapshot(101).Value<string>("error"), Does.Contain("finalization failed"));
             Assert.That(File.Exists(_job.OutputPath), Is.False);
-            Assert.That(Directory.GetFileSystemEntries(Path.GetDirectoryName(_job.OutputPath)), Is.Empty);
+            Assert.That(Directory.Exists(Path.Combine(_root, "Captures")), Is.False);
         }
 
         [Test]
@@ -232,7 +232,7 @@ namespace MCPForUnityTests.EditMode.Tools
                     }
                 )
             );
-            Assert.That(Directory.GetFileSystemEntries(Path.GetDirectoryName(output)), Is.Empty);
+            Assert.That(Directory.Exists(Path.Combine(_root, "Captures")), Is.False);
         }
 
         [Test]
@@ -245,7 +245,46 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(encoder.Disposals, Is.EqualTo(1));
             Assert.That(_job.Status, Is.EqualTo("failed"));
             Assert.That(File.Exists(_job.OutputPath), Is.False);
-            Assert.That(Directory.GetFileSystemEntries(Path.GetDirectoryName(_job.OutputPath)), Is.Empty);
+            Assert.That(Directory.Exists(Path.Combine(_root, "Captures")), Is.False);
+        }
+
+        [TestCase(null)]
+        [TestCase("Captures")]
+        [TestCase("Captures/Recordings")]
+        [TestCase("Captures/Recordings/Nested/Session")]
+        public void FailedRecordingRemovesOnlyNewEmptyOutputParents(string existingFolder)
+        {
+            string existing = existingFolder == null ? _root : Path.Combine(_root, existingFolder);
+            Directory.CreateDirectory(existing);
+            Start(folder: "Captures/Recordings/Nested/Session");
+            _job.Tick(102);
+            Assert.That(_job.Status, Is.EqualTo("failed"));
+            Assert.That(Directory.Exists(existing), Is.True, "Preexisting directories must remain.");
+            Assert.That(Directory.GetFileSystemEntries(existing), Is.Empty, "New empty descendants must be removed.");
+        }
+
+        [Test]
+        public void NullEncoderRemovesNewNestedOutputParents()
+        {
+            Directory.CreateDirectory(_root);
+            var options = new RecordingOptions("scene_view", 32, 32, 10, 2);
+            string output = RecordingOptions.ResolveOutputPath(_root, "Captures/Recordings/Nested/Session", "fixture.mp4", "fixture");
+            Assert.Throws<InvalidOperationException>(() => new RecordingJob("fixture", options, _root, output, 100, (path, config) => null));
+            Assert.That(Directory.Exists(_root), Is.True);
+            Assert.That(Directory.GetFileSystemEntries(_root), Is.Empty);
+        }
+
+        [Test]
+        public void FailedRecordingPreservesOtherFilesInNewOutputParents()
+        {
+            Start(folder: "Captures/Recordings/Nested/Session");
+            string parent = Path.GetDirectoryName(_job.OutputPath);
+            string otherFile = Path.Combine(parent, "keep.txt");
+            File.WriteAllText(otherFile, "preserve");
+            _job.Tick(102);
+            Assert.That(_job.Status, Is.EqualTo("failed"));
+            Assert.That(File.ReadAllText(otherFile), Is.EqualTo("preserve"));
+            Assert.That(Directory.GetFileSystemEntries(parent), Is.EqualTo(new[] { otherFile }));
         }
 
         [Test]

@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor.Media;
@@ -53,6 +55,8 @@ namespace MCPForUnity.Editor.Tools.Recording
         internal string Status { get; private set; } = "recording";
         internal int Frames { get; private set; }
         internal bool IsActive => Status == "recording";
+        private readonly string _projectRoot;
+        private readonly List<string> _createdParentDirectories = new List<string>();
         private readonly string _permittedRoot;
         private readonly string _stagingDirectory;
         private readonly string _stagingFile;
@@ -78,7 +82,8 @@ namespace MCPForUnity.Editor.Tools.Recording
             Id = id;
             Options = options;
             StartedAt = now;
-            _permittedRoot = SafePathUtility.ResolveWithinRoot(projectRoot, RecordingOptions.DefaultFolder);
+            _projectRoot = SafePathUtility.ResolveWithinRoot(projectRoot, ".");
+            _permittedRoot = SafePathUtility.ResolveWithinRoot(_projectRoot, RecordingOptions.DefaultFolder);
             OutputPath = SafePathUtility.ResolveWithinRoot(_permittedRoot, outputPath);
             _stagingDirectory = SafePathUtility.ResolveWithinRoot(
                 _permittedRoot,
@@ -87,6 +92,13 @@ namespace MCPForUnity.Editor.Tools.Recording
             _stagingFile = Path.Combine(_stagingDirectory, "video.mp4");
             try
             {
+                var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                for (
+                    string directory = Path.GetDirectoryName(_stagingDirectory);
+                    !string.Equals(directory, _projectRoot, comparison) && !Directory.Exists(directory);
+                    directory = Path.GetDirectoryName(directory)
+                )
+                    _createdParentDirectories.Add(SafePathUtility.ResolveWithinRoot(_projectRoot, directory));
                 Directory.CreateDirectory(_stagingDirectory);
                 SafePathUtility.ResolveWithinRoot(_permittedRoot, _stagingFile);
                 _encoder = createEncoder(_stagingFile, options);
@@ -216,6 +228,15 @@ namespace MCPForUnity.Editor.Tools.Recording
             SafePathUtility.ResolveWithinRoot(_permittedRoot, _stagingDirectory);
             if (Directory.Exists(_stagingDirectory))
                 Directory.Delete(_stagingDirectory, false);
+            foreach (string directory in _createdParentDirectories)
+            {
+                SafePathUtility.ResolveWithinRoot(_projectRoot, directory);
+                if (!Directory.Exists(directory))
+                    continue;
+                if (Directory.EnumerateFileSystemEntries(directory).Any())
+                    break;
+                Directory.Delete(directory, false);
+            }
         }
 
         internal JObject Snapshot(double now)
