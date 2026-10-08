@@ -323,9 +323,14 @@ def validate(repair: bool):
     result = run_command("manage_scene", params, config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
-        data = result.get("data", {})
-        total = data.get("totalIssues", 0)
-        repaired = data.get("repaired", 0)
+        data = result.get("data")
+        if not isinstance(data, dict):
+            return
+        total = data.get("totalIssues")
+        repaired = data.get("repaired")
+        # The optional summary needs the native integer counts; keep other payloads as printed.
+        if type(total) is not int or type(repaired) is not int:
+            return
         if total == 0:
             print_success("Scene is clean")
         elif repaired > 0:
