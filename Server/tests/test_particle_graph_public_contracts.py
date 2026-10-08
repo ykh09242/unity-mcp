@@ -115,10 +115,10 @@ def test_particle_graph_cli_payloads_and_responses(tmp_path):
             result = runner.invoke(cli, ["--format","json","vfx","raw",action,"Effects","--params",json.dumps({"parameter":"Direction","value":value})])
             check(result.exit_code == 0 and requests[-1]["params"]["properties"] == {"parameter":"Direction","value":value},"vector dimension/null wire " + action + repr(value))
         for malformed in ("[bad", "[]", "null", "1", "", " ", [], 1, False):
-            raw = {"success":False,"message":"'properties' must be a JSON object or a JSON string containing an object."}
+            before = len(requests)
             result = runner.invoke(cli, ["--format","json","vfx","raw","vfx_set_bool","Effects","--params",json.dumps({"parameter":"Enabled","value":False,"properties":malformed})])
-            check(result.exit_code == 1 and json.loads(result.stdout) == raw, "malformed native diagnostic " + repr(malformed))
-            check(requests[-1]["params"].get("properties") == malformed, "malformed properties retained " + repr(malformed))
+            check(result.exit_code == 1 and result.stdout == "" and "properties" in result.stderr, "malformed properties local diagnostic " + repr(malformed))
+            check(len(requests) == before, "malformed properties rejected before transport " + repr(malformed))
         for malformed in ("[]", "[bad", "null", "1"):
             before = len(requests)
             result = runner.invoke(cli, ["vfx","raw","vfx_set_bool","Effects","--params",malformed])

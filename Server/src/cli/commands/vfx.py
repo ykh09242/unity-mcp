@@ -31,10 +31,11 @@ def _normalize_vfx_params(params: dict[str, Any]) -> dict[str, Any]:
         )
         sys.exit(1)
 
-    if isinstance(existing, dict):
-        params["properties"] = {**properties, **existing}
-    elif properties:
-        params["properties"] = properties
+    if properties:
+        if isinstance(existing, dict):
+            params["properties"] = {**properties, **existing}
+        else:
+            params["properties"] = properties
 
     return {k: v for k, v in params.items() if v is not None}
 
