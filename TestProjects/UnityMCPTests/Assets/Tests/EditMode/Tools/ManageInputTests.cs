@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Input;
 using MCPForUnity.Runtime.Helpers;
@@ -82,6 +83,28 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(request.Frames, Is.EqualTo(20));
             Assert.That(request.Key, Is.EqualTo("LeftShift"));
             Assert.That(request.State, Is.EqualTo("press"));
+        }
+
+        [TestCase("en-US")]
+        [TestCase("de-DE")]
+        [TestCase("fr-FR")]
+        [TestCase("ar-SA")]
+        public void FractionalCoordinatesDoNotDependOnEditorCulture(string cultureName)
+        {
+            CultureInfo previousCulture = CultureInfo.CurrentCulture;
+            try
+            {
+                CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(cultureName);
+                var parameters = JObject.Parse("{\"action\":\"mouse\",\"state\":\"move\",\"position\":[1.5,2.25]}");
+
+                InputSimulationRequest request = InputSimulationRequest.Parse(parameters);
+
+                Assert.That(request.Position, Is.EqualTo(new Vector2(1.5f, 2.25f)));
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = previousCulture;
+            }
         }
 
         [Test]

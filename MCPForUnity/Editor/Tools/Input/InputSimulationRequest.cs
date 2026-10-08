@@ -94,7 +94,7 @@ namespace MCPForUnity.Editor.Tools.Input
         {
             if (
                 (token.Type != JTokenType.Integer && token.Type != JTokenType.Float)
-                || !float.TryParse(token.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out float value)
+                || !float.TryParse(token.ToString(Newtonsoft.Json.Formatting.None), NumberStyles.Float, CultureInfo.InvariantCulture, out float value)
                 || float.IsNaN(value)
                 || float.IsInfinity(value)
                 || value < 0
