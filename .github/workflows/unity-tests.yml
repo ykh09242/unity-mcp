@@ -254,6 +254,10 @@ jobs:
           path: .unity-ci/optional-${{ matrix.unity.version }}/project/Library
           key: Library-optional-${{ matrix.unity.version }}-${{ hashFiles('tools/unity-versions.json', 'tools/unity-ci-packages.json', 'tools/unity_ci_packages.py') }}
 
+      # GameCI mounts this home at /root; Unity needs the parent directories before activation.
+      - name: Prepare Unity preferences and license directory
+        run: mkdir -p "$HOME/.local/share/unity3d/Unity"
+
       # Each fixture gets its own Editor process and owned scene bootstrap.
       - name: Run optional integration tests
         id: tests
@@ -350,6 +354,10 @@ jobs:
         with:
           path: ${{ steps.packages.outputs.project_path }}/Library
           key: Library-${{ matrix.unity.version }}-${{ hashFiles('tools/unity-versions.json', 'tools/unity-ci-packages.json', 'tools/unity_ci_packages.py') }}
+
+      # GameCI mounts this home at /root; Unity needs the parent directories before activation.
+      - name: Prepare Unity preferences and license directory
+        run: mkdir -p "$HOME/.local/share/unity3d/Unity"
 
       # Run domain reload tests first (they're [Explicit] so need explicit category)
       # Both runner steps pin the action and its CLI. The floating v4 tag and the CLI's "latest"
