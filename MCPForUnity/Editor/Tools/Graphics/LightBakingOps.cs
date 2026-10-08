@@ -364,7 +364,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     ? new Vector3(sizeToken[0].ReadScalar<float>(), sizeToken[1].ReadScalar<float>(), sizeToken[2].ReadScalar<float>())
                     : new Vector3(10f, 10f, 10f);
 
-            if (!Enum.TryParse<ReflectionProbeMode>(modeStr, true, out var mode))
+            if (!Enum.TryParse<ReflectionProbeMode>(modeStr, true, out var mode) || !Enum.IsDefined(typeof(ReflectionProbeMode), mode))
                 return new ErrorResponse($"Invalid mode '{modeStr}'. Valid values: Baked, Realtime, Custom.");
 
             var go = new GameObject(name);
@@ -685,7 +685,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
                 case "mixedbakemode":
                 case "mixed_bake_mode":
-                    if (TryParseEnum<MixedLightingMode>(value, out var mlm))
+                    if (TryParseEnum<MixedLightingMode>(value, out var mlm) && Enum.IsDefined(typeof(MixedLightingMode), mlm))
                     {
                         apply = settings =>
                         {
@@ -710,6 +710,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         else
                             return false;
                     }
+                    if (!Enum.IsDefined(typeof(LightmapCompression), compression))
+                        return false;
                     apply = settings =>
                     {
                         settings.lightmapCompression = compression;

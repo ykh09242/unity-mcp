@@ -72,7 +72,7 @@ namespace MCPForUnityTests.Editor.Tools
                     {
                         if (settings == null)
                             continue;
-                        // Only a previously absent, nonpersistent result of our invalid request is owned.
+                        // Only explicitly created fixture settings or captured nonpersistent request results are owned.
                         Assert.IsFalse(AssetDatabase.Contains(settings));
                         Lightmapping.TryGetLightingSettings(out var assigned);
                         if (assigned == settings)
@@ -97,12 +97,16 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("unknown")]
         [TestCase("lightmapper")]
         [TestCase("compression")]
+        [TestCase("mixedNumeric")]
+        [TestCase("compressionNumeric")]
         public void AllInvalidSettingsPreserveAssignedIdentityAndInventory(string kind)
         {
             JObject settings = kind switch
             {
                 "unknown" => new JObject { ["unknown"] = 1 },
                 "lightmapper" => new JObject { ["lightmapper"] = "bad" },
+                "mixedNumeric" => new JObject { ["mixed_bake_mode"] = 3 },
+                "compressionNumeric" => new JObject { ["compress_lightmaps"] = -1 },
                 _ => new JObject { ["mixedBakeMode"] = "bad", ["lightmapCompression"] = "bad" },
             };
             Lightmapping.TryGetLightingSettings(out var before);
@@ -205,13 +209,81 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(probe.boxProjection);
         }
 
-        [Test]
-        public void InvalidReflectionModeRejectsWithoutAllocatingObject()
+        [TestCase("bad")]
+        [TestCase("3")]
+        [TestCase("-1")]
+        [TestCase("2147483647")]
+        [TestCase("Realtime, Custom")]
+        [TestCase(3)]
+        [TestCase(-1)]
+        public void InvalidReflectionModeRejectsWithoutAllocatingObject(object mode)
         {
             string name = UniqueName();
-            var response = Send("bake_create_reflection_probe", new JObject { ["name"] = name, ["mode"] = "bad" });
+            var response = Send("bake_create_reflection_probe", new JObject { ["name"] = name, ["mode"] = JToken.FromObject(mode) });
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("Valid values: Baked, Realtime, Custom", response.Value<string>("error"));
             Assert.IsFalse(ownedScene.GetRootGameObjects().Any(go => go.name == name));
+        }
+
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(2)]
+        public void DefinedNumericReflectionModesRemainSupported(int mode)
+        {
+            var response = Send("bake_create_reflection_probe", new JObject { ["name"] = UniqueName(), ["mode"] = mode });
+            ReflectionProbe probe = ReturnedObject(response).GetComponent<ReflectionProbe>();
+            Assert.AreEqual((ReflectionProbeMode)mode, probe.mode);
+            Assert.AreEqual(((ReflectionProbeMode)mode).ToString(), response["data"].Value<string>("mode"));
+        }
+
+        [TestCase("mixedBakeMode", 3)]
+        [TestCase("mixed_bake_mode", -1)]
+        [TestCase("lightmapCompression", 4)]
+        [TestCase("compress_lightmaps", -1)]
+        public void UndefinedLightingEnumRetainsPartialResultAndValidSetting(string name, int value)
+        {
+            var settings = OwnedLightingSettings();
+            settings.mixedBakeMode = MixedLightingMode.Shadowmask;
+            settings.lightmapCompression = LightmapCompression.HighQuality;
+            settings.bakedGI = true;
+
+            var response = Send(
+                "bake_set_settings",
+                new JObject
+                {
+                    ["settings"] = new JObject
+                    {
+                        [name] = value,
+                        ["bakedGI"] = false,
+                        ["unknown"] = 1,
+                    },
+                }
+            );
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(new[] { "bakedGI" }, response["data"]["changed"].Values<string>());
+            CollectionAssert.AreEqual(new[] { name, "unknown" }, response["data"]["failed"].Values<string>());
+            Assert.IsFalse(settings.bakedGI);
+            Assert.AreEqual(MixedLightingMode.Shadowmask, settings.mixedBakeMode);
+            Assert.AreEqual(LightmapCompression.HighQuality, settings.lightmapCompression);
+        }
+
+        [TestCase("mixedBakeMode", 0, 0)]
+        [TestCase("mixed_bake_mode", "Subtractive", 1)]
+        [TestCase("mixedBakeMode", "2", 2)]
+        [TestCase("lightmapCompression", 0, 0)]
+        [TestCase("lightmapCompression", 1, 1)]
+        [TestCase("lightmapCompression", 2, 2)]
+        [TestCase("lightmap_compression", "HighQuality", 3)]
+        [TestCase("compress_lightmaps", true, 2)]
+        [TestCase("compress_lightmaps", false, 0)]
+        public void DefinedLightingEnumsKeepNumericNamesBooleanCompressionAndAliases(string name, object value, int expected)
+        {
+            var settings = OwnedLightingSettings();
+            var response = Send("bake_set_settings", new JObject { ["settings"] = new JObject { [name] = JToken.FromObject(value) } });
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            int actual = name.StartsWith("mixed", StringComparison.Ordinal) ? (int)settings.mixedBakeMode : (int)settings.lightmapCompression;
+            Assert.AreEqual(expected, actual);
         }
 
         [TestCase("empty")]
@@ -275,6 +347,14 @@ namespace MCPForUnityTests.Editor.Tools
             GameObject go = ownedScene.GetRootGameObjects().Single(root => root.GetInstanceIDCompat() == id);
             Assert.AreEqual(ownedScene, go.scene);
             return go;
+        }
+
+        private LightingSettings OwnedLightingSettings()
+        {
+            var settings = new LightingSettings { name = UniqueName() };
+            ownedSettings.Add(settings);
+            Lightmapping.lightingSettings = settings;
+            return settings;
         }
 
         private LightProbeGroup OwnedGroup()
