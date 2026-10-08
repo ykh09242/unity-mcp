@@ -1,3 +1,4 @@
+using System.Linq;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -18,6 +19,8 @@ namespace MCPForUnity.Tests.EditMode.Tools
             var scenes = r["data"]?["scenes"] as JArray;
             Assert.IsNotNull(scenes);
             Assert.GreaterOrEqual(scenes.Count, 1);
+            int loadedSceneCount = scenes.Count(scene => scene.Value<bool>("isLoaded"));
+            Assert.AreEqual($"{loadedSceneCount} scene(s) loaded.", r.Value<string>("message"));
         }
 
         [Test]

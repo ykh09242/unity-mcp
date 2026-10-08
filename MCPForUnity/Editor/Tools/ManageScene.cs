@@ -1925,23 +1925,27 @@ namespace MCPForUnity.Editor.Tools
         {
             var activeScene = SceneManager.GetActiveScene();
             var scenes = new List<object>();
+            int loadedSceneCount = 0;
             for (int i = 0; i < SceneManager.sceneCount; i++)
             {
                 var s = SceneManager.GetSceneAt(i);
+                bool isLoaded = s.isLoaded;
+                if (isLoaded)
+                    loadedSceneCount++;
                 scenes.Add(
                     new
                     {
                         name = s.name,
                         path = s.path,
                         buildIndex = s.buildIndex,
-                        isLoaded = s.isLoaded,
+                        isLoaded = isLoaded,
                         isDirty = s.isDirty,
                         isActive = s == activeScene,
-                        rootCount = s.isLoaded ? s.rootCount : 0,
+                        rootCount = isLoaded ? s.rootCount : 0,
                     }
                 );
             }
-            return new SuccessResponse($"{CountLoadedScenes()} scene(s) loaded.", new { scenes });
+            return new SuccessResponse($"{loadedSceneCount} scene(s) loaded.", new { scenes });
         }
 
         private static object MoveToScene(SceneCommand cmd)
