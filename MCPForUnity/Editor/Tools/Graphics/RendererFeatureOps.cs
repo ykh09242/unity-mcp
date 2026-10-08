@@ -85,6 +85,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
         internal static object AddFeature(JObject @params)
         {
             var p = new ToolParams(@params);
+            var typeError = ValidateStringParameter(p, "type");
+            if (typeError != null)
+                return typeError;
             string typeName = p.Get("type");
             if (string.IsNullOrEmpty(typeName))
                 return new ErrorResponse("'type' parameter required (e.g., 'FullScreenPassRendererFeature', 'RenderObjects').");
@@ -111,6 +114,16 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 if (rendererFeaturesProp == null || !rendererFeaturesProp.isArray)
                     return new ErrorResponse("m_RendererFeatures array not found.");
             }
+
+            var materialError = ValidateStringParameter(p, "material");
+            if (materialError != null)
+                return materialError;
+            var nameError = ValidateStringParameter(p, "name");
+            if (nameError != null)
+                return nameError;
+            var initialProperties = p.GetRaw("properties");
+            if (initialProperties != null && initialProperties.Type != JTokenType.Null && initialProperties is not JObject)
+                return new ErrorResponse("'properties' must be a dictionary or null.");
 
             string materialPath = p.Get("material");
             if (!string.IsNullOrEmpty(materialPath))
@@ -155,7 +168,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 so.ApplyModifiedProperties();
 
                 // Configure initial properties if provided
-                var propertiesToken = p.GetRaw("properties") as JObject;
+                var propertiesToken = initialProperties as JObject;
                 if (propertiesToken != null)
                     ApplyFeatureProperties(feature, propertiesToken);
 
@@ -389,6 +402,14 @@ namespace MCPForUnity.Editor.Tools.Graphics
             AssetDatabase.SaveAssets();
 
             return new { success = true, message = $"Reordered {featuresList.Count} renderer features." };
+        }
+
+        private static ErrorResponse ValidateStringParameter(ToolParams parameters, string key)
+        {
+            var token = parameters.GetRaw(key);
+            return token != null && token.Type != JTokenType.Null && token.Type != JTokenType.String
+                ? new ErrorResponse($"'{key}' must be a string or null.")
+                : null;
         }
 
         // ==================== Helpers ====================
