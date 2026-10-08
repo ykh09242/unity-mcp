@@ -1,5 +1,8 @@
 """Texture CLI commands."""
 
+import math
+import re
+import struct
 import sys
 import click
 from typing import Optional, Any
@@ -77,7 +80,7 @@ def _is_normalized_color(values: list[Any]) -> bool:
 
     try:
         numeric_values = [float(v) for v in values]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
     all_small = all(0 <= v <= 1.0 for v in numeric_values)
@@ -120,7 +123,7 @@ def _normalize_color(value: Any, context: str) -> list[int]:
                 if _is_normalized_color(color):
                     return [int(round(float(c) * 255)) for c in color]
                 return [int(c) for c in color]
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 raise ValueError(f"{context} dict values must be numeric, got {value}")
         raise ValueError(f"{context} dict must have 'r', 'g', 'b' keys, got {list(value.keys())}")
 
@@ -132,7 +135,7 @@ def _normalize_color(value: Any, context: str) -> list[int]:
                 if _is_normalized_color(value):
                     return [int(round(float(c) * 255)) for c in value]
                 return [int(c) for c in value]
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 raise ValueError(f"{context} values must be numeric, got {value}")
         raise ValueError(f"{context} must have 3 or 4 components, got {len(value)}")
 
@@ -168,6 +171,47 @@ def _normalize_pixels(value: Any, width: int, height: int, context: str) -> list
     raise ValueError(f"{context} must be a list or base64 string")
 
 
+def _normalize_integer(value: Any, context: str) -> int | None:
+    """Match nullable receiver Int32 values without boolean conversion or truncation."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not (
+        isinstance(value, int)
+        or isinstance(value, str)
+        and re.fullmatch(r"[+-]?[0-9]+", value.strip(" \t\r\n\v\f"))
+    ):
+        raise ValueError(f"{context} must be an integer or base-10 integer string")
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise ValueError(f"{context} must be an Int32 integer") from exc
+    if not -2147483648 <= number <= 2147483647:
+        raise ValueError(f"{context} must fit the Int32 range")
+    return number
+
+
+def _normalize_import_float(value: Any, context: str) -> float | None:
+    """Preserve optional importer defaults and reject invalid native float values."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError(f"{context} must be a finite number")
+    if isinstance(value, str) and not re.fullmatch(
+        r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?",
+        value.strip(" \t\r\n\v\f"),
+    ):
+        raise ValueError(f"{context} must be a decimal number or exponent string")
+    try:
+        number = float(value)
+        if not math.isfinite(number) or not math.isfinite(
+            struct.unpack("f", struct.pack("f", number))[0]
+        ):
+            raise ValueError
+    except (ValueError, OverflowError) as exc:
+        raise ValueError(f"{context} must be a finite Unity float") from exc
+    return number
+
+
 def _normalize_set_pixels(value: Any) -> dict[str, Any]:
     if value is None:
         raise ValueError("set-pixels is required")
@@ -177,18 +221,17 @@ def _normalize_set_pixels(value: Any) -> dict[str, Any]:
         raise ValueError("set-pixels must be a JSON object")
 
     result: dict[str, Any] = dict(value)
+    for name in ("x", "y", "width", "height"):
+        if name in value:
+            result[name] = _normalize_integer(value[name], f"set-pixels {name}")
 
     if "pixels" in value:
-        width = value.get("width")
-        height = value.get("height")
-        if width is None or height is None:
+        if "width" not in value or "height" not in value:
             raise ValueError("set-pixels requires width and height when pixels are provided")
-        width = int(width)
-        height = int(height)
+        width = result["width"] if result["width"] is not None else 1
+        height = result["height"] if result["height"] is not None else 1
         if width <= 0 or height <= 0:
             raise ValueError("set-pixels width and height must be positive")
-        result["width"] = width
-        result["height"] = height
         result["pixels"] = _normalize_pixels(value["pixels"], width, height, "set-pixels pixels")
 
     if "color" in value:
@@ -196,16 +239,6 @@ def _normalize_set_pixels(value: Any) -> dict[str, Any]:
 
     if "pixels" not in value and "color" not in value:
         raise ValueError("set-pixels requires 'color' or 'pixels'")
-
-    if "x" in value:
-        result["x"] = int(value["x"])
-    if "y" in value:
-        result["y"] = int(value["y"])
-
-    if "width" in value and "pixels" not in value:
-        result["width"] = int(value["width"])
-    if "height" in value and "pixels" not in value:
-        result["height"] = int(value["height"])
 
     return result
 
@@ -279,22 +312,26 @@ def _normalize_import_settings(value: Any) -> dict[str, Any]:
         result["textureCompression"] = _map_enum(value["compression"], _COMPRESSIONS)
 
     if "aniso_level" in value:
-        result["anisoLevel"] = int(value["aniso_level"])
+        result["anisoLevel"] = _normalize_integer(value["aniso_level"], "aniso_level")
     if "max_texture_size" in value:
-        result["maxTextureSize"] = int(value["max_texture_size"])
+        result["maxTextureSize"] = _normalize_integer(value["max_texture_size"], "max_texture_size")
     if "compression_quality" in value:
-        result["compressionQuality"] = int(value["compression_quality"])
+        result["compressionQuality"] = _normalize_integer(
+            value["compression_quality"], "compression_quality"
+        )
 
     if "sprite_mode" in value:
         result["spriteImportMode"] = _map_enum(value["sprite_mode"], _SPRITE_MODES)
     if "sprite_pixels_per_unit" in value:
-        result["spritePixelsPerUnit"] = float(value["sprite_pixels_per_unit"])
+        result["spritePixelsPerUnit"] = _normalize_import_float(
+            value["sprite_pixels_per_unit"], "sprite_pixels_per_unit"
+        )
     if "sprite_pivot" in value:
         result["spritePivot"] = value["sprite_pivot"]
     if "sprite_mesh_type" in value:
         result["spriteMeshType"] = _map_enum(value["sprite_mesh_type"], _SPRITE_MESH_TYPES)
     if "sprite_extrude" in value:
-        result["spriteExtrude"] = int(value["sprite_extrude"])
+        result["spriteExtrude"] = _normalize_integer(value["sprite_extrude"], "sprite_extrude")
 
     for key, val in value.items():
         if key in result:
@@ -403,8 +440,7 @@ def create(
         try:
             params["fillColor"] = _normalize_color(color, "color")
         except ValueError as e:
-            print_error(str(e))
-            sys.exit(1)
+            raise click.BadParameter(str(e), param_hint="--color") from e
     elif not pattern and not image_path:
         # Default to white if no color or pattern specified
         params["fillColor"] = [255, 255, 255, 255]
@@ -416,15 +452,13 @@ def create(
         try:
             params["palette"] = _normalize_palette(palette, "palette")
         except ValueError as e:
-            print_error(str(e))
-            sys.exit(1)
+            raise click.BadParameter(str(e), param_hint="--palette") from e
 
     if import_settings is not None:
         try:
             params["importSettings"] = _normalize_import_settings(import_settings)
         except ValueError as e:
-            print_error(str(e))
-            sys.exit(1)
+            raise click.BadParameter(str(e), param_hint="--import-settings") from e
 
     if image_path:
         params["imagePath"] = image_path
@@ -500,8 +534,7 @@ def sprite(
         try:
             params["fillColor"] = _normalize_color(color, "color")
         except ValueError as e:
-            print_error(str(e))
-            sys.exit(1)
+            raise click.BadParameter(str(e), param_hint="--color") from e
 
     # Only default pattern if no color is specified
     if pattern:
@@ -667,8 +700,7 @@ def modify(
         try:
             params["setPixels"] = _normalize_set_pixels(set_pixels)
         except ValueError as e:
-            print_error(str(e))
-            sys.exit(1)
+            raise click.BadParameter(str(e), param_hint="--set-pixels") from e
     elif not has_import:
         print_error("At least one of --set-pixels or an import-setting flag must be provided")
         sys.exit(1)
