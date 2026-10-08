@@ -115,50 +115,52 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (string.IsNullOrEmpty(moduleName))
                 return new { success = false, message = "Module name required" };
 
-            Undo.RecordObject(ps, $"Toggle {moduleName}");
+            Action update;
 
             switch (moduleName.Replace("_", ""))
             {
                 case "emission":
                     var em = ps.emission;
-                    em.enabled = enabled;
+                    update = () => em.enabled = enabled;
                     break;
                 case "shape":
                     var sh = ps.shape;
-                    sh.enabled = enabled;
+                    update = () => sh.enabled = enabled;
                     break;
                 case "coloroverlifetime":
                     var col = ps.colorOverLifetime;
-                    col.enabled = enabled;
+                    update = () => col.enabled = enabled;
                     break;
                 case "sizeoverlifetime":
                     var sol = ps.sizeOverLifetime;
-                    sol.enabled = enabled;
+                    update = () => sol.enabled = enabled;
                     break;
                 case "velocityoverlifetime":
                     var vol = ps.velocityOverLifetime;
-                    vol.enabled = enabled;
+                    update = () => vol.enabled = enabled;
                     break;
                 case "noise":
                     var n = ps.noise;
-                    n.enabled = enabled;
+                    update = () => n.enabled = enabled;
                     break;
                 case "collision":
                     var coll = ps.collision;
-                    coll.enabled = enabled;
+                    update = () => coll.enabled = enabled;
                     break;
                 case "trails":
                     var tr = ps.trails;
-                    tr.enabled = enabled;
+                    update = () => tr.enabled = enabled;
                     break;
                 case "lights":
                     var li = ps.lights;
-                    li.enabled = enabled;
+                    update = () => li.enabled = enabled;
                     break;
                 default:
                     return new { success = false, message = $"Unknown module: {moduleName}" };
             }
 
+            Undo.RecordObject(ps, $"Toggle {moduleName}");
+            update();
             EditorUtility.SetDirty(ps);
             return new { success = true, message = $"Module '{moduleName}' {(enabled ? "enabled" : "disabled")}" };
         }
