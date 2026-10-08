@@ -132,6 +132,15 @@ The secret-presence gate does not validate activation or choose a license based 
 machines signed in to the same account. The pinned GameCI CLI chooses a configured
 serial before a license file; Personal does not need `UNITY_SERIAL`.
 
+For Personal-only CI, omitting `UNITY_SERIAL` does not isolate a mixed account from its
+other entitlements. The pinned CLI can fall back from file activation to account login
+when machine bindings differ. Its modern-client account path uses
+[`--activate-all --include-personal`](https://github.com/game-ci/cli/blob/v0.1.69/dist/platforms/ubuntu/steps/resolve_unity_path.sh#L44),
+which does not select Personal exclusively. Before enabling native jobs with that
+fallback, use an account configuration restricted to Personal or obtain a Unity-supported
+way to select only Personal. Do not try credentials-only activation on a mixed account
+as a supposedly Personal-only diagnostic.
+
 Both licensed jobs prepare `$HOME/.local/share/unity3d/Unity` before GameCI mounts the
 host home at `/root`. This supplies the parent directories required for Editor preferences
 and license storage. It does not renew a license or resolve a rejected license timestamp.
