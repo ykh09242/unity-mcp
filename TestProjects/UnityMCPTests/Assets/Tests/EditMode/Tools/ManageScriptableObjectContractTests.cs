@@ -119,6 +119,65 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreSame(_asset, AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(_path));
         }
 
+        [TestCase("array_resize", "true")]
+        [TestCase("array_resize", "{}")]
+        [TestCase("array_resize", "[]")]
+        [TestCase("array_resize", "1.5")]
+        [TestCase("array_resize", "-1")]
+        [TestCase("array_resize", "2147483648")]
+        [TestCase("set", "true")]
+        [TestCase("set", "{}")]
+        [TestCase("set", "[]")]
+        [TestCase("set", "1.5")]
+        [TestCase("set", "-1")]
+        [TestCase("set", "2147483648")]
+        [TestCase("set", "null")]
+        public void InvalidCreateArraySizePreservesExistingAsset(string op, string encoded)
+        {
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+            int dirtyCount = EditorUtility.GetDirtyCount(_asset);
+            JObject response = Create(
+                new JArray(
+                    new JObject
+                    {
+                        ["path"] = op == "set" ? "items.Array.size" : "items",
+                        ["op"] = op,
+                        ["value"] = JToken.Parse(encoded),
+                    }
+                )
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("invalid_params", response.Value<string>("code"));
+            Assert.AreSame(_asset, AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(_path));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(_path));
+            Assert.AreEqual(99, _asset.intValue);
+            CollectionAssert.AreEqual(new[] { 7, 8 }, _asset.items);
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(_asset));
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("  ")]
+        public void BlankCreateResizePathKeepsPartialPatchSuccess(string path)
+        {
+            JObject response = Create(
+                new JArray(
+                    new JObject
+                    {
+                        ["path"] = path,
+                        ["op"] = "array_resize",
+                        ["value"] = true,
+                    },
+                    new JObject { ["path"] = "intValue", ["value"] = 42 }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(response["data"]["patchResults"][0].Value<bool>("ok"));
+            Assert.IsTrue(response["data"]["patchResults"][1].Value<bool>("ok"));
+            Assert.AreEqual(42, _asset.intValue);
+            CollectionAssert.AreEqual(new[] { 7, 8 }, _asset.items);
+        }
+
         [Test]
         public void EmptyCreatePatches_PreserveOverwriteAndGuidBehavior()
         {

@@ -178,6 +178,27 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse(CodeAssetCreateFailed, new { message = ex.Message, path = finalPath });
             }
 
+            if (patchesToken is JArray sizePatches)
+            {
+                foreach (JObject patch in sizePatches)
+                {
+                    string path = patch["propertyPath"]?.ToString() ?? patch["property_path"]?.ToString() ?? patch["path"]?.ToString();
+                    if (string.IsNullOrWhiteSpace(path))
+                        continue;
+                    string op = patch["op"]?.ToString()?.Trim().ToLowerInvariant();
+                    if (string.IsNullOrEmpty(op))
+                        op = "set";
+                    if (
+                        (op == "array_resize" || (op == "set" && NormalizePropertyPath(path).EndsWith(".Array.size", StringComparison.Ordinal)))
+                        && !TryReadArraySize(patch["value"], out _)
+                    )
+                        return new ErrorResponse(
+                            CodeInvalidParams,
+                            new { message = "Serialized array growth rejected: Array size must be a non-negative Int32 value." }
+                        );
+                }
+            }
+
             ScriptableObject instance;
             try
             {
