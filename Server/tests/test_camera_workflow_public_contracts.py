@@ -104,7 +104,7 @@ cases = [
     (['ensure-brain', '--camera-ref', '321'],
      {'action': 'ensure_brain', 'properties': {'camera': '321'}}),
     (['set-target', 'Fixture', '--follow', '', '--look-at', ''],
-     {'action': 'set_target', 'target': 'Fixture'}),
+     {'action': 'set_target', 'target': 'Fixture', 'properties': {'follow': '', 'lookAt': ''}}),
 ]
 for args, wire in cases:
     for failed, wrapped in ((False, False), (False, True), (True, False)):
