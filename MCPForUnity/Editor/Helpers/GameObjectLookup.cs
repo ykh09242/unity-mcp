@@ -61,7 +61,17 @@ namespace MCPForUnity.Editor.Helpers
             if (target == null)
                 return null;
 
-            var results = SearchGameObjects(searchMethod, target.ToString(), includeInactive, 1);
+            var method = ParseSearchMethod(searchMethod);
+            if (method == SearchMethod.ById)
+            {
+                if (!int.TryParse(target.ToString(), out int instanceId))
+                    return null;
+
+                var gameObject = FindById(instanceId);
+                return gameObject != null && (includeInactive || gameObject.activeInHierarchy) ? gameObject : null;
+            }
+
+            var results = SearchGameObjects(method, target.ToString(), includeInactive, 1);
             return results.Count > 0 ? FindById(results[0]) : null;
         }
 

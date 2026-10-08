@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -11,7 +13,7 @@ using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.Editor.Tools
 {
-    // Tests only owned hierarchy path matching, never global object-search APIs.
+    // Tests owned hierarchy paths and known instance IDs without enumerating unowned objects.
     public class GameObjectPathIntegrityTests
     {
         private readonly List<GameObject> owned = new List<GameObject>();
@@ -153,6 +155,51 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(string.Join("/", names), GameObjectLookup.GetGameObjectPath(leaf));
             leaf.transform.SetParent(root.transform, false);
             Assert.AreEqual(root.name + "/" + leaf.name, GameObjectLookup.GetGameObjectPath(leaf));
+        }
+
+        [TestCase("by_id")]
+        [TestCase("BY_ID")]
+        public void OwnedInstanceIdAcceptsIntegerAndPaddedString(string searchMethod)
+        {
+            int instanceId = root.GetInstanceIDCompat();
+            Assert.IsTrue(root == GameObjectLookup.FindByTarget(new JValue(instanceId), searchMethod));
+            Assert.IsTrue(root == GameObjectLookup.FindByTarget(new JValue(" \t" + instanceId + "\r\n"), searchMethod));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void InstanceIdHonorsIncludeInactive(bool includeInactive)
+        {
+            root.SetActive(false);
+
+            GameObject found = GameObjectLookup.FindByTarget(new JValue(root.GetInstanceIDCompat()), "by_id", includeInactive);
+
+            Assert.IsTrue(found == (includeInactive ? root : null));
+        }
+
+        [TestCase("null")]
+        [TestCase("false")]
+        [TestCase("true")]
+        [TestCase("[]")]
+        [TestCase("{}")]
+        [TestCase("'bad'")]
+        [TestCase("'2147483648'")]
+        [TestCase("-2147483649")]
+        public void InvalidIdTokensReturnNullWithoutNameFallback(string json)
+        {
+            Assert.IsNull(GameObjectLookup.FindByTarget(JToken.Parse(json), "by_id", true));
+        }
+
+        [Test]
+        public void MissingOrDestroyedOwnedIdReturnsNull()
+        {
+            Assert.IsNull(GameObjectLookup.FindByTarget(null, "by_id", true));
+            GameObject child = Child("DestroyedId");
+            int instanceId = child.GetInstanceIDCompat();
+            UnityEngine.Object.DestroyImmediate(child);
+            Assert.IsTrue(child == null, "The managed reference must retain Unity's destroyed-object semantics.");
+            Assert.IsNull(GameObjectLookup.FindByTarget(new JValue(instanceId), "by_id"));
+            Assert.IsNull(GameObjectLookup.FindByTarget(new JValue(instanceId.ToString(CultureInfo.InvariantCulture)), "by_id", true));
         }
 
         [Test]
