@@ -74,8 +74,6 @@ async def manage_material(
     ]
     | None = None,
 ) -> dict[str, Any]:
-    unity_instance = await get_unity_instance_from_context(ctx)
-
     # --- Normalize color with validation ---
     color, color_error = normalize_color(color, output_range="float")
     if color_error:
@@ -111,6 +109,8 @@ async def manage_material(
 
     # Remove None values
     params_dict = {k: v for k, v in params_dict.items() if v is not None}
+
+    unity_instance = await get_unity_instance_from_context(ctx)
 
     # Use centralized async retry helper with instance routing
     result = await send_with_unity_instance(
