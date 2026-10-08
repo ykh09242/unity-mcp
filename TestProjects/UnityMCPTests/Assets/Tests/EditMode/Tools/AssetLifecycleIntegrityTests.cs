@@ -315,6 +315,86 @@ namespace MCPForUnityTests.EditMode.Tools
             LogAssert.NoUnexpectedReceived();
         }
 
+        private string CreateImportFixture()
+        {
+            string path = _root + "/Import.txt";
+            File.WriteAllText(Absolute(path), "owned import fixture");
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<TextAsset>(path));
+            return path;
+        }
+
+        [TestCase("{\"isReadable\":false}")]
+        [TestCase("{\"maxTextureSize\":0}")]
+        [TestCase("{\"unsupported\":null}")]
+        [TestCase("\"{\\\"isReadable\\\":true}\"")]
+        [TestCase("\"not-json\"")]
+        [TestCase("\"[]\"")]
+        [TestCase("\"null\"")]
+        [TestCase("[]")]
+        [TestCase("false")]
+        [TestCase("0")]
+        public void Import_UnsupportedProperties_AreRefusedWithoutReimporting(string json)
+        {
+            string path = CreateImportFixture();
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            byte[] assetBytes = File.ReadAllBytes(Absolute(path));
+            byte[] metaBytes = File.ReadAllBytes(Absolute(path) + ".meta");
+            AssetImportAttemptTracker.Target = path;
+            AssetImportAttemptTracker.ImportBatches = 0;
+            try
+            {
+                var response = Send("import", path, properties: JToken.Parse(json));
+
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("properties", response.Value<string>("error"));
+                Assert.AreEqual(0, AssetImportAttemptTracker.ImportBatches, "A refused import must not run the importer.");
+                Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+                CollectionAssert.AreEqual(assetBytes, File.ReadAllBytes(Absolute(path)));
+                CollectionAssert.AreEqual(metaBytes, File.ReadAllBytes(Absolute(path) + ".meta"));
+                LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                AssetImportAttemptTracker.Target = null;
+            }
+        }
+
+        [TestCase(null)]
+        [TestCase("null")]
+        [TestCase("{}")]
+        [TestCase("\"{}\"")]
+        public void Import_EmptyProperties_StillReimportsAndReportsTheAsset(string json)
+        {
+            string path = CreateImportFixture();
+            AssetImportAttemptTracker.Target = path;
+            AssetImportAttemptTracker.ImportBatches = 0;
+            try
+            {
+                var response = Send("import", path, properties: json == null ? null : JToken.Parse(json));
+
+                AssertPersistentResponse(response, path);
+                Assert.Greater(AssetImportAttemptTracker.ImportBatches, 0, "The control must observe an actual reimport.");
+                LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                AssetImportAttemptTracker.Target = null;
+            }
+        }
+
+        [Test]
+        public void Import_MissingAsset_KeepsTheExistingErrorBeforeUnsupportedProperties()
+        {
+            string path = _root + "/Missing.txt";
+            var response = Send("import", path, properties: new JObject { ["isReadable"] = true });
+
+            Assert.IsFalse(response.Value<bool>("success"));
+            StringAssert.Contains("Asset not found", response.Value<string>("error"));
+            Assert.IsFalse(File.Exists(Absolute(path)));
+            LogAssert.NoUnexpectedReceived();
+        }
+
         [Test]
         public void InvalidNativeExtensionCannotReportCreateSuccess()
         {
@@ -346,6 +426,21 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsTrue((bool)Send("create_folder", path)["success"]);
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
             LogAssert.NoUnexpectedReceived();
+        }
+    }
+
+    internal sealed class AssetImportAttemptTracker : AssetPostprocessor
+    {
+        internal static string Target;
+        internal static int ImportBatches;
+
+        private static void OnPostprocessAllAssets(string[] importedAssets, string[] deletedAssets, string[] movedAssets, string[] movedFromAssetPaths)
+        {
+            if (Target == null)
+                return;
+            foreach (string path in importedAssets)
+                if (string.Equals(path, Target, StringComparison.Ordinal))
+                    ImportBatches++;
         }
     }
 }

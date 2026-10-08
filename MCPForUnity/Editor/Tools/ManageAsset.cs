@@ -76,7 +76,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse("'properties' must be a JSON object or null for create.");
             }
-            if (propertiesToken != null && propertiesToken.Type == JTokenType.String)
+            if (action != "import" && propertiesToken != null && propertiesToken.Type == JTokenType.String)
             {
                 try
                 {
@@ -111,7 +111,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     case "import":
                         // Note: Unity typically auto-imports. This might re-import or configure import settings.
-                        return ReimportAsset(path, @params["properties"] as JObject);
+                        return ReimportAsset(path, @params["properties"]);
                     case "create":
                         return CreateAsset(@params);
                     case "modify":
@@ -238,7 +238,7 @@ namespace MCPForUnity.Editor.Tools
             return false;
         }
 
-        private static object ReimportAsset(string path, JObject properties)
+        private static object ReimportAsset(string path, JToken properties)
         {
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' is required for reimport.");
@@ -248,15 +248,21 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                // TODO: Apply importer properties before reimporting?
-                // This is complex as it requires getting the AssetImporter, casting it,
-                // applying properties via reflection or specific methods, saving, then reimporting.
-                if (properties != null && properties.HasValues)
+                if (properties?.Type == JTokenType.String)
                 {
-                    McpLog.Warn("[ManageAsset.Reimport] Modifying importer properties before reimport is not fully implemented yet.");
-                    // AssetImporter importer = AssetImporter.GetAtPath(fullPath);
-                    // if (importer != null) { /* Apply properties */ AssetDatabase.WriteImportSettingsIfDirty(fullPath); }
+                    try
+                    {
+                        properties = JObject.Parse(properties.Value<string>());
+                    }
+                    catch (Newtonsoft.Json.JsonReaderException)
+                    {
+                        return new ErrorResponse("'properties' must be a JSON object or null for import.");
+                    }
                 }
+                // Import is a plain reimport. Settings were previously ignored after a warning,
+                // yet the asset was still reimported and the caller received a success response.
+                if (properties != null && properties.Type != JTokenType.Null && (!(properties is JObject importProperties) || importProperties.HasValues))
+                    return new ErrorResponse("Importer 'properties' are not supported by import. Omit 'properties' to reimport the asset.");
 
                 AssetPathUtility.GetFullAssetPath(fullPath);
                 var consentError = RequireScriptConsent(fullPath);
