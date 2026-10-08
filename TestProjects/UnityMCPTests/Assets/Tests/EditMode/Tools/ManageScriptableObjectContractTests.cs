@@ -9,6 +9,7 @@ using UnityEngine;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    [Parallelizable(ParallelScope.None)]
     public class ManageScriptableObjectContractTests
     {
         private string _root;
@@ -64,6 +65,108 @@ namespace MCPForUnityTests.Editor.Tools
                     }
                 )
             );
+
+        private JObject CreationRequest() =>
+            new JObject
+            {
+                ["action"] = "create",
+                ["typeName"] = typeof(ScriptableObjectContractDefinition).FullName,
+                ["folderPath"] = _root + "/RejectedScalar/Nested",
+                ["assetName"] = "Scalar_" + Guid.NewGuid().ToString("N"),
+            };
+
+        [TestCase("typeName", "type_name", false)]
+        [TestCase("folderPath", "folder_path", false)]
+        [TestCase("assetName", "asset_name", false)]
+        [TestCase("typeName", "type_name", true)]
+        [TestCase("folderPath", "folder_path", true)]
+        [TestCase("assetName", "asset_name", true)]
+        public void Create_NonStringSelectedFieldRejectsBeforeAssetOrFolderMutation(string primary, string alias, bool useAlias)
+        {
+            var request = CreationRequest();
+            // Keep even a pre-fix native run inside the fixture's ownership: a malformed folder
+            // uses a nonexistent type, so it cannot allocate or create a generic Assets/False folder.
+            if (primary == "folderPath")
+                request["typeName"] = "Missing_Scriptable_Type_" + Guid.NewGuid().ToString("N");
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+            bool dirty = EditorUtility.IsDirty(_asset);
+            // A valid fallback cannot rescue a malformed primary; an absent primary selects the fallback.
+            request[alias] = request[primary];
+            if (useAlias)
+                request.Remove(primary);
+            request[useAlias ? alias : primary] = false;
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("invalid_params", response.Value<string>("error"));
+            Assert.AreEqual("'" + primary + "' must be a string.", response["data"].Value<string>("message"));
+            Assert.AreEqual(99, _asset.intValue);
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(_path));
+            Assert.IsTrue(_asset == AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(_path));
+            Assert.AreEqual(dirty, EditorUtility.IsDirty(_asset));
+            Assert.IsFalse(AssetDatabase.IsValidFolder(_root + "/RejectedScalar"));
+        }
+
+        [TestCase("0")]
+        [TestCase("1.5")]
+        [TestCase("{}")]
+        [TestCase("[]")]
+        public void Create_NonStringAssetNameRejectsWithoutCreatingFolder(string encoded)
+        {
+            var request = CreationRequest();
+            request["assetName"] = JToken.Parse(encoded);
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("invalid_params", response.Value<string>("error"));
+            Assert.IsFalse(AssetDatabase.IsValidFolder(_root + "/RejectedScalar"));
+            Assert.AreEqual(99, _asset.intValue);
+        }
+
+        [TestCase("typeName", "type_name")]
+        [TestCase("folderPath", "folder_path")]
+        [TestCase("assetName", "asset_name")]
+        public void Create_NullPrimaryStillMasksValidFallback(string primary, string alias)
+        {
+            var request = CreationRequest();
+            request[alias] = request[primary];
+            request[primary] = JValue.CreateNull();
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("invalid_params", response.Value<string>("error"));
+            Assert.AreEqual("'" + primary + "' is required.", response["data"].Value<string>("message"));
+            Assert.IsFalse(AssetDatabase.IsValidFolder(_root + "/RejectedScalar"));
+        }
+
+        [TestCase("type_name")]
+        [TestCase("folder_path")]
+        [TestCase("asset_name")]
+        public void Create_UnusedMalformedFallbackDoesNotRejectValidPrimary(string alias)
+        {
+            var request = CreationRequest();
+            request[alias] = new JObject();
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(request));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(response["data"].Value<string>("path")));
+        }
+
+        [TestCase("False")]
+        [TestCase("0")]
+        public void Create_StringScalarLookingNamesAndSnakeAliasesRemainValid(string name)
+        {
+            var response = JObject.FromObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = " CREATE_SO ",
+                        ["type_name"] = typeof(ScriptableObjectContractDefinition).FullName,
+                        ["folder_path"] = _root,
+                        ["asset_name"] = name,
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(_root + "/" + name + ".asset", response["data"].Value<string>("path"));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(_root + "/" + name + ".asset"));
+        }
 
         [TestCase("sett", false)]
         [TestCase("delete", false)]

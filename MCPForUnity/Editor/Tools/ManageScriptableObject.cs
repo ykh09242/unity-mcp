@@ -114,19 +114,37 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse(CodeInvalidParams, new { message = $"Patch at index {i} requires integer 'value'." });
                 }
             }
-            string typeName = @params["typeName"]?.ToString() ?? @params["type_name"]?.ToString();
-            string folderPath = @params["folderPath"]?.ToString() ?? @params["folder_path"]?.ToString();
-            string assetName = @params["assetName"]?.ToString() ?? @params["asset_name"]?.ToString();
+            var typeNameToken = @params["typeName"] ?? @params["type_name"];
+            var folderPathToken = @params["folderPath"] ?? @params["folder_path"];
+            var assetNameToken = @params["assetName"] ?? @params["asset_name"];
+            string typeName = typeNameToken?.ToString();
+            string folderPath = folderPathToken?.ToString();
+            string assetName = assetNameToken?.ToString();
             bool overwrite = @params["overwrite"]?.ReadScalar<bool?>() ?? false;
+
+            if (typeNameToken != null && typeNameToken.Type != JTokenType.Null && typeNameToken.Type != JTokenType.String)
+            {
+                return new ErrorResponse(CodeInvalidParams, new { message = "'typeName' must be a string." });
+            }
 
             if (string.IsNullOrWhiteSpace(typeName))
             {
                 return new ErrorResponse(CodeInvalidParams, new { message = "'typeName' is required." });
             }
 
+            if (folderPathToken != null && folderPathToken.Type != JTokenType.Null && folderPathToken.Type != JTokenType.String)
+            {
+                return new ErrorResponse(CodeInvalidParams, new { message = "'folderPath' must be a string." });
+            }
+
             if (string.IsNullOrWhiteSpace(folderPath))
             {
                 return new ErrorResponse(CodeInvalidParams, new { message = "'folderPath' is required." });
+            }
+
+            if (assetNameToken != null && assetNameToken.Type != JTokenType.Null && assetNameToken.Type != JTokenType.String)
+            {
+                return new ErrorResponse(CodeInvalidParams, new { message = "'assetName' must be a string." });
             }
 
             if (string.IsNullOrWhiteSpace(assetName))
