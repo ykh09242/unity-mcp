@@ -445,6 +445,75 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(20f, info["data"]["priority"].Value<float>(), 0.01f);
         }
 
+        [TestCase("priority", false)]
+        [TestCase("priority", true)]
+        [TestCase("is_global", false)]
+        [TestCase("is_global", true)]
+        [TestCase("blend_distance", false)]
+        [TestCase("blend_distance", true)]
+        public void VolumeSetProperties_InvalidLaterScalarPreservesAllPropertiesAndDirtyState(string invalidProperty, bool nested)
+        {
+            RequireVolumeSystem();
+            const string name = "GfxTest_RejectedProps";
+            CreateTestVolume(name);
+            var go = GameObject.Find(name);
+            var volume = go.GetComponent(GraphicsHelpers.VolumeType);
+            string before = EditorJsonUtility.ToJson(volume);
+            int dirtyBefore = EditorUtility.GetDirtyCount(volume);
+            bool sceneDirtyBefore = go.scene.isDirty;
+            var values = new JObject
+            {
+                ["weight"] = 0.25f,
+                ["priority"] = 2.5f,
+                ["is_global"] = false,
+                ["blend_distance"] = 3.75f,
+            };
+            values[invalidProperty] = "bad";
+            var request = nested ? new JObject { ["properties"] = values } : values;
+            request["action"] = "volume_set_properties";
+            request["target"] = name;
+
+            var result = ToJObject(ManageGraphics.HandleCommand(request));
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains(invalidProperty, result.Value<string>("error"));
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(volume));
+            Assert.AreEqual(dirtyBefore, EditorUtility.GetDirtyCount(volume));
+            Assert.AreEqual(sceneDirtyBefore, go.scene.isDirty);
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void VolumeSetProperties_NullNumericValuesSkipAndNullBooleanSetsFalse(bool nested)
+        {
+            RequireVolumeSystem();
+            const string name = "GfxTest_NullProps";
+            CreateTestVolume(name);
+            var original = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "volume_get_info", ["target"] = name }));
+            var values = new JObject
+            {
+                ["weight"] = JValue.CreateNull(),
+                ["priority"] = 2.5f,
+                ["is_global"] = JValue.CreateNull(),
+                ["blend_distance"] = JValue.CreateNull(),
+            };
+            var request = nested ? new JObject { ["properties"] = values } : values;
+            request["action"] = "volume_set_properties";
+            request["target"] = name;
+
+            var result = ToJObject(ManageGraphics.HandleCommand(request));
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            CollectionAssert.AreEqual(new[] { "priority", "isGlobal" }, result["data"]["changed"].Values<string>().ToArray());
+            var info = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "volume_get_info", ["target"] = name }));
+            Assert.AreEqual(original["data"]["weight"], info["data"]["weight"]);
+            Assert.AreEqual(2.5f, info["data"]["priority"].Value<float>());
+            Assert.IsFalse(info["data"]["is_global"].Value<bool>());
+            Assert.AreEqual(original["data"]["blend_distance"], info["data"]["blend_distance"]);
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
         [Test]
         public void VolumeListEffects_ReturnsAvailableTypes()
         {

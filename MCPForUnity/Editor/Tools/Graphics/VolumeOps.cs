@@ -418,29 +418,29 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 p = new ToolParams(@params);
             }
 
-            var changed = new List<string>();
-
             var weight = p.GetFloat("weight");
+            var priority = p.GetFloat("priority");
+            bool? isGlobal = p.Has("is_global") ? p.GetBool("is_global") : null;
+            var blendDist = p.GetFloat("blend_distance");
+            var changed = new List<string>();
             if (weight.HasValue)
             {
                 SetProperty(volume, "weight", weight.Value);
                 changed.Add("weight");
             }
 
-            var priority = p.GetFloat("priority");
             if (priority.HasValue)
             {
                 SetProperty(volume, "priority", priority.Value);
                 changed.Add("priority");
             }
 
-            if (p.Has("is_global"))
+            if (isGlobal.HasValue)
             {
-                SetProperty(volume, "isGlobal", p.GetBool("is_global"));
+                SetProperty(volume, "isGlobal", isGlobal.Value);
                 changed.Add("isGlobal");
             }
 
-            var blendDist = p.GetFloat("blend_distance");
             if (blendDist.HasValue)
             {
                 SetProperty(volume, "blendDistance", blendDist.Value);
