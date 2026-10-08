@@ -40,9 +40,6 @@ async def manage_shader(
     page_size: Annotated[int | str, "inspect_graph page size, 1-100 (default 50)."] | None = None,
     page_number: Annotated[int | str, "inspect_graph page number, 1-based."] | None = None,
 ) -> dict[str, Any]:
-    # Get active instance from session state
-    # Removed session_state import
-    unity_instance = await get_unity_instance_from_context(ctx)
     try:
         # Prepare parameters for Unity
         params = {
@@ -73,6 +70,9 @@ async def manage_shader(
         # Remove None values so they don't get sent as null
         params = {k: v for k, v in params.items() if v is not None}
 
+        # Resolve the instance only after local validation and payload preparation.
+        unity_instance = await get_unity_instance_from_context(ctx)
+
         # Send command via centralized retry helper with instance routing
         response = await send_with_unity_instance(
             async_send_command_with_retry, unity_instance, "manage_shader", params
@@ -81,7 +81,8 @@ async def manage_shader(
         # Process response from Unity
         if isinstance(response, dict) and response.get("success"):
             # If the response contains base64 encoded content, decode it
-            if response.get("data", {}).get("contentsEncoded"):
+            data = response.get("data")
+            if isinstance(data, dict) and data.get("contentsEncoded"):
                 decoded_contents = base64.b64decode(response["data"]["encodedContents"]).decode(
                     "utf-8"
                 )

@@ -54,7 +54,13 @@ def read_shader(path: str):
     )
 
     # If successful, display the contents nicely
-    if config.format != "json" and result.get("success") and result.get("data", {}).get("contents"):
+    data = result.get("data")
+    if (
+        config.format != "json"
+        and result.get("success")
+        and isinstance(data, dict)
+        and data.get("contents")
+    ):
         click.echo(result["data"]["contents"])
     else:
         click.echo(format_output(result, config.format))
@@ -71,7 +77,7 @@ def read_shader(path: str):
     "-f",
     "file_path",
     default=None,
-    type=click.Path(exists=True),
+    type=click.Path(exists=True, dir_okay=False),
     help="Read shader code from file.",
 )
 @handle_unity_errors
@@ -159,7 +165,7 @@ def create_shader(name: str, path: str, contents: Optional[str], file_path: Opti
     "-f",
     "file_path",
     default=None,
-    type=click.Path(exists=True),
+    type=click.Path(exists=True, dir_okay=False),
     help="Read shader code from file.",
 )
 @handle_unity_errors
