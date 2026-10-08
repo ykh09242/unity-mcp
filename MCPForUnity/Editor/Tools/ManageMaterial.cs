@@ -759,8 +759,6 @@ namespace MCPForUnity.Editor.Tools
             Material material = null;
             try
             {
-                material = new Material(shader);
-
                 // Apply color param during creation (keeps Python tool signature and C# implementation consistent).
                 // If "properties" already contains a color property, let properties win.
                 bool shouldApplyColor = false;
@@ -782,9 +780,9 @@ namespace MCPForUnity.Editor.Tools
                     }
                 }
 
+                Color color = default;
                 if (shouldApplyColor)
                 {
-                    Color color;
                     try
                     {
                         color = MaterialOps.ParseColor(colorToken, UnityJsonSerializer.Instance);
@@ -793,7 +791,13 @@ namespace MCPForUnity.Editor.Tools
                     {
                         return new ErrorResponse($"Invalid color format: {e.Message}");
                     }
+                }
 
+                MaterialOps.ValidateReferences(properties, UnityJsonSerializer.Instance);
+                material = new Material(shader);
+
+                if (shouldApplyColor)
+                {
                     if (!string.IsNullOrEmpty(colorProperty))
                     {
                         if (!material.HasProperty(colorProperty))
