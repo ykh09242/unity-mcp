@@ -56,6 +56,24 @@ def _parse_query_vector(value: str, parameter: str, dimension: str) -> list[floa
     return coordinates
 
 
+def _parse_csv_numbers(value: str, parameter: str) -> list[float]:
+    """Parse remaining scalar/vector CSV forms without changing native dimension policy."""
+    try:
+        numbers = [float(component) for component in value.split(",")]
+    except ValueError as exc:
+        raise click.BadParameter(
+            "Expected comma-separated numbers.", param_hint=f"--{parameter}"
+        ) from exc
+    if not all(math.isfinite(number) for number in numbers):
+        raise click.BadParameter("Values must be finite numbers.", param_hint=f"--{parameter}")
+    return numbers
+
+
+def _parse_query_size(value: str):
+    numbers = _parse_csv_numbers(value, "size")
+    return numbers[0] if len(numbers) == 1 else numbers
+
+
 @click.group("physics")
 def physics():
     """Manage 3D and 2D physics: settings, collision matrix, materials, joints, queries, validation."""
@@ -362,12 +380,8 @@ def remove_joint(target, joint_type, component_index):
 def overlap(shape, position, size, dimension):
     """Perform a physics overlap query."""
     config = get_config()
-    pos_parts = [float(x) for x in position.split(",")]
-    # Try to parse size as float first, then as array
-    try:
-        parsed_size = float(size)
-    except ValueError:
-        parsed_size = [float(x) for x in size.split(",")]
+    pos_parts = _parse_query_vector(position, "position", dimension)
+    parsed_size = _parse_query_size(size)
     params = {
         "action": "overlap",
         "shape": shape,
@@ -390,8 +404,8 @@ def raycast_all(origin, direction, max_distance, dimension):
     config = get_config()
     params = {
         "action": "raycast_all",
-        "origin": [float(x) for x in origin.split(",")],
-        "direction": [float(x) for x in direction.split(",")],
+        "origin": _parse_query_vector(origin, "origin", dimension),
+        "direction": _parse_query_vector(direction, "direction", dimension),
         "dimension": dimension,
     }
     if max_distance is not None:
@@ -436,15 +450,12 @@ def linecast(start, end, dimension):
 def shapecast(shape, origin, direction, size, max_distance, dimension):
     """Cast a shape (sphere, box, capsule) along a direction."""
     config = get_config()
-    try:
-        parsed_size = float(size)
-    except ValueError:
-        parsed_size = [float(x) for x in size.split(",")]
+    parsed_size = _parse_query_size(size)
     params = {
         "action": "shapecast",
         "shape": shape,
-        "origin": [float(x) for x in origin.split(",")],
-        "direction": [float(x) for x in direction.split(",")],
+        "origin": _parse_query_vector(origin, "origin", dimension),
+        "direction": _parse_query_vector(direction, "direction", dimension),
         "size": parsed_size,
         "dimension": dimension,
     }
@@ -468,18 +479,15 @@ def apply_force(target, force, force_mode, dimension, torque, position):
     params = {
         "action": "apply_force",
         "target": target,
-        "force": [float(x) for x in force.split(",")],
+        "force": _parse_csv_numbers(force, "force"),
         "force_mode": force_mode,
     }
     if dimension:
         params["dimension"] = dimension
-    if torque:
-        try:
-            params["torque"] = [float(torque)]
-        except ValueError:
-            params["torque"] = [float(x) for x in torque.split(",")]
-    if position:
-        params["position"] = [float(x) for x in position.split(",")]
+    if torque is not None:
+        params["torque"] = _parse_csv_numbers(torque, "torque")
+    if position is not None:
+        params["position"] = _parse_csv_numbers(position, "position")
     result = run_command("manage_physics", params, config)
     click.echo(format_output(result, config.format))
 
