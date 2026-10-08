@@ -318,14 +318,12 @@ def test_partial_exception_is_released_before_backoff_and_fresh_attempt(
 def test_each_transient_error_branch_exhausts_at_three_attempts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, kind: str
 ) -> None:
-    errors = [
-        {
-            "http": HTTPError(ARCHIVE_URL, 503, "temporary fixture", {}, io.BytesIO()),
-            "url": URLError(TimeoutError("temporary fixture")),
-            "direct": TimeoutError("temporary fixture"),
-        }[kind]
-        for _ in range(3)
-    ]
+    error_factory = {
+        "http": lambda: HTTPError(ARCHIVE_URL, 503, "temporary fixture", {}, io.BytesIO()),
+        "url": lambda: URLError(TimeoutError("temporary fixture")),
+        "direct": lambda: TimeoutError("temporary fixture"),
+    }[kind]
+    errors = [error_factory() for _ in range(3)]
     calls, delays = transport(monkeypatch, [response(metadata(archive()))], errors)
     with pytest.raises(packages.PreparationError, match=IDENTITY) as caught:
         packages.fetch_registry_package(NAME, VERSION, tmp_path / "package")
