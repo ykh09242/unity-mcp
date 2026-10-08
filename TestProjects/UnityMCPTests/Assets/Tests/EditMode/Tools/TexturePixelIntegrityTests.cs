@@ -157,6 +157,54 @@ namespace MCPForUnityTests.EditMode.Tools
             }
         }
 
+        [TestCase("en-US", "CHECKERBOARD")]
+        [TestCase("en-US", "cHeCkErBoArD")]
+        [TestCase("en-US", "STRIPES_H")]
+        [TestCase("en-US", "UNKNOWN")]
+        [TestCase("tr-TR", "STRIPES")]
+        [TestCase("tr-TR", "GRID")]
+        public void PatternApplicationPreservesCurrentCultureCasingAndUnknownFallback(string culture, string pattern)
+        {
+            var previous = System.Globalization.CultureInfo.CurrentCulture;
+            try
+            {
+                System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo(culture);
+                var method = typeof(ManageTexture).GetMethod(
+                    "ApplyPatternToTexture",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
+                );
+                Assert.IsNotNull(method);
+                var palette = new System.Collections.Generic.List<Color32> { new Color32(20, 30, 40, 255), new Color32(255, 0, 0, 255) };
+                method.Invoke(null, new object[] { _texture, pattern.ToLower(), palette, 1 });
+                var expected = _texture.GetPixels32();
+
+                method.Invoke(null, new object[] { _texture, pattern, palette, 1 });
+
+                CollectionAssert.AreEqual(expected, _texture.GetPixels32());
+            }
+            finally
+            {
+                System.Globalization.CultureInfo.CurrentCulture = previous;
+            }
+        }
+
+        [Test]
+        public void NullPatternApplicationStillRejectsBeforeChangingPixels()
+        {
+            var before = _texture.GetPixels32();
+            var method = typeof(ManageTexture).GetMethod(
+                "ApplyPatternToTexture",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
+            );
+            Assert.IsNotNull(method);
+            var palette = new System.Collections.Generic.List<Color32> { new Color32(255, 0, 0, 255) };
+
+            var error = Assert.Throws<System.Reflection.TargetInvocationException>(() => method.Invoke(null, new object[] { _texture, null, palette, 1 }));
+
+            Assert.IsInstanceOf<System.NullReferenceException>(error.InnerException);
+            CollectionAssert.AreEqual(before, _texture.GetPixels32());
+        }
+
         [TestCase(32768)]
         [TestCase(46341)]
         [TestCase(int.MaxValue)]

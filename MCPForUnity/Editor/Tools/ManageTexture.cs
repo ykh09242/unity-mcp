@@ -782,6 +782,8 @@ namespace MCPForUnity.Editor.Tools
 
             int width = texture.width;
             int height = texture.height;
+            if (width > 0 && height > 0)
+                pattern = pattern.ToLower();
 
             for (int y = 0; y < height; y++)
             {
@@ -797,7 +799,7 @@ namespace MCPForUnity.Editor.Tools
         {
             int colorIndex = 0;
 
-            switch (pattern.ToLower())
+            switch (pattern)
             {
                 case "checkerboard":
                     colorIndex = ((x / size) + (y / size)) % 2;
