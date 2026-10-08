@@ -20,6 +20,8 @@ namespace MCPForUnity.Editor.Tools
     {
         // (Calibration removed)
 
+        private static readonly string[] McpLogPrefixes = { ProductInfo.ProductName, "MCP-FOR-UNITY", "MCPForUnity" };
+
         // Reflection members for accessing internal LogEntry data
         // private static MethodInfo _getEntriesMethod; // Removed as it's unused and fails reflection
         private static MethodInfo _startGettingEntriesMethod;
@@ -598,8 +600,7 @@ namespace MCPForUnity.Editor.Tools
                     return false;
                 start = end + 1;
             }
-            string[] names = { ProductInfo.ProductName, "MCP-FOR-UNITY", "MCPForUnity" };
-            foreach (string name in names)
+            foreach (string name in McpLogPrefixes)
             {
                 if (string.CompareOrdinal(label, start, name, 0, name.Length) != 0)
                     continue;
