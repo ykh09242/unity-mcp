@@ -555,8 +555,6 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             updates.Add(RendererHelpers.PrepareCommonRendererProperties(renderer, @params, changes));
 
-            Material resolvedMaterial = null;
-
             if (@params["materialPath"] != null)
             {
                 string matPath = @params["materialPath"].ToString();
@@ -564,7 +562,6 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 Material mat = ObjectResolver.Resolve(findInst, typeof(Material)) as Material;
                 if (mat != null)
                 {
-                    resolvedMaterial = mat;
                     updates.Add(() => renderer.sharedMaterial = mat);
                     changes.Add($"material={mat.name}");
                 }
@@ -586,13 +583,11 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 }
             }
 
-            if (resolvedMaterial == null)
-                EnsureParticleRendererMaterial(renderer);
             Undo.RecordObject(renderer, "Set ParticleSystem Renderer");
             foreach (var update in updates)
                 update();
 
-            // Re-check after renderer/material edits to catch invalid pipeline shader assignments.
+            // Validate the final material after renderer edits to catch invalid pipeline shader assignments.
             var ensureResult = RendererHelpers.EnsureMaterial(renderer);
 
             EditorUtility.SetDirty(renderer);

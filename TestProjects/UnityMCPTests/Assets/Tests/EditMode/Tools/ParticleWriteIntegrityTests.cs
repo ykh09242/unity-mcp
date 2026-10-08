@@ -388,6 +388,46 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(response.Value<bool>("materialReplaced"));
         }
 
+        [TestCase(null)]
+        [TestCase("Missing.mat")]
+        public void RendererReportsMissingMaterialRepair(string missingMaterialName)
+        {
+            var properties = new JObject { ["sortingOrder"] = -2, ["allowRoll"] = false };
+            if (missingMaterialName != null)
+                properties["materialPath"] = assetRoot + "/" + missingMaterialName;
+
+            JObject response = Call("particle_set_renderer", properties);
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsNotNull(renderer.sharedMaterial, "The default particle material must be assigned.");
+            Assert.IsTrue(response.Value<bool>("materialReplaced"), response.ToString());
+            Assert.AreEqual("missing_material", response.Value<string>("replacementReason"));
+            Assert.AreEqual(-2, renderer.sortingOrder);
+            Assert.IsFalse(renderer.allowRoll);
+        }
+
+        [Test]
+        public void RendererReportsInvalidExistingMaterialRepair()
+        {
+            Shader shader = Shader.Find("Hidden/InternalErrorShader");
+            if (shader == null)
+                Assert.Ignore("The internal error shader is required for an invalid material.");
+
+            material = new Material(shader);
+            renderer.sharedMaterial = material;
+            RenderPipelineUtility.IsMaterialInvalidForActivePipeline(material, out string reason);
+            string expectedReason = !string.IsNullOrWhiteSpace(reason) ? reason : "invalid_material";
+
+            JObject response = Call("particle_set_renderer", new JObject { ["sortingOrder"] = 2 });
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsNotNull(renderer.sharedMaterial);
+            Assert.IsTrue(material != renderer.sharedMaterial);
+            Assert.IsTrue(response.Value<bool>("materialReplaced"), response.ToString());
+            Assert.AreEqual(expectedReason, response.Value<string>("replacementReason"));
+            Assert.AreEqual(2, renderer.sortingOrder);
+        }
+
         private JObject Call(string action, JObject properties)
         {
             return JObject.FromObject(
