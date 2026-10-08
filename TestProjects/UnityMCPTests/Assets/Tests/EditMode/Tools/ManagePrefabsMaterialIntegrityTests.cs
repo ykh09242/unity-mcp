@@ -339,6 +339,146 @@ namespace MCPForUnityTests.Editor.Tools
             AssertColor(original, Color.red);
         }
 
+        [Test]
+        public void AbortedPreparationRestoresSlotsAndRollsBackOnlyEmptyOwnedFolders()
+        {
+            GameObject root = Root();
+            Material original = Material(Color.red);
+            Renderer source = Child(root, "Shared", original);
+            var block = new MaterialPropertyBlock();
+            block.SetColor("_Color", Color.blue);
+            block.SetFloat("_SyntheticFloat", 2.5f);
+            source.SetPropertyBlock(block, 0);
+            string path = assetRoot + "/Prepared/Materials/Owned.mat";
+            Material owned;
+            using (var folders = new AssetFolderScope())
+            {
+                folders.EnsureParentDirectory(path);
+                using var transaction = new ManagePrefabs.RuntimeMaterialTransaction();
+                owned = transaction.CreateMaterial(original.shader, path);
+                transaction.Assign(source, 0, original, owned);
+            }
+            Assert.IsTrue(source.sharedMaterials[0] == original);
+            Assert.IsTrue(owned == null);
+            Assert.IsNull(AssetDatabase.LoadAssetAtPath<Material>(path));
+            Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot + "/Prepared"));
+            Assert.AreEqual(Color.blue, Read(source, 0).GetColor("_Color"));
+            Assert.AreEqual(2.5f, Read(source, 0).GetFloat("_SyntheticFloat"));
+        }
+
+        [Test]
+        public void CommittedPreparationKeepsOwnedAssetAndAssignment()
+        {
+            GameObject root = Root();
+            Material original = Material(Color.red);
+            Renderer source = Child(root, "Shared", original);
+            EnsureMaterialsFolder();
+            string path = assetRoot + "/Materials/Owned.mat";
+            Material owned;
+            using (var transaction = new ManagePrefabs.RuntimeMaterialTransaction())
+            {
+                owned = transaction.CreateMaterial(original.shader, path);
+                transaction.Assign(source, 0, original, owned);
+                transaction.Commit();
+            }
+            Assert.IsTrue(source.sharedMaterials[0] == owned);
+            Assert.IsTrue(EditorUtility.IsPersistent(owned));
+            Assert.IsTrue(AssetDatabase.LoadAssetAtPath<Material>(path) == owned);
+        }
+
+        [Test]
+        public void RollbackPreservesExternalSlotChangesAndPersistentNeighbors()
+        {
+            GameObject root = Root();
+            Material original = Material(Color.red);
+            Material persistent = Persist(Material(Color.green), "Existing.mat");
+            Renderer source = Child(root, "Shared", original, persistent);
+            Material external = Material(Color.blue);
+            string path = assetRoot + "/Materials/Owned.mat";
+            using (var transaction = new ManagePrefabs.RuntimeMaterialTransaction())
+            {
+                Material owned = transaction.CreateMaterial(original.shader, path);
+                transaction.Assign(source, 0, original, owned);
+                source.sharedMaterials = new[] { external, persistent };
+            }
+            Assert.IsTrue(source.sharedMaterials[0] == external);
+            Assert.IsTrue(source.sharedMaterials[1] == persistent);
+            Assert.IsTrue(EditorUtility.IsPersistent(persistent));
+            Assert.IsNull(AssetDatabase.LoadAssetAtPath<Material>(path));
+        }
+
+        [Test]
+        public void PreparationDoesNotOverwriteSlotChangedDuringAssetCreation()
+        {
+            GameObject root = Root();
+            Material original = Material(Color.red);
+            Renderer source = Child(root, "Shared", original);
+            Material external = Material(Color.blue);
+            EnsureMaterialsFolder();
+            string path = assetRoot + "/Materials/Owned.mat";
+            using (var transaction = new ManagePrefabs.RuntimeMaterialTransaction())
+            {
+                Material owned = transaction.CreateMaterial(original.shader, path);
+                source.sharedMaterials = new[] { external };
+                Assert.Throws<InvalidOperationException>(() => transaction.Assign(source, 0, original, owned));
+            }
+            Assert.IsTrue(source.sharedMaterials[0] == external);
+            Assert.IsNull(AssetDatabase.LoadAssetAtPath<Material>(path));
+        }
+
+        [Test]
+        public void RollbackPreservesReplacementAtPreviouslyOwnedAssetPath()
+        {
+            Material original = Material(Color.red);
+            EnsureMaterialsFolder();
+            string path = assetRoot + "/Materials/Owned.mat";
+            Material replacement = Material(Color.blue);
+            using (var transaction = new ManagePrefabs.RuntimeMaterialTransaction())
+            {
+                transaction.CreateMaterial(original.shader, path);
+                Assert.IsTrue(AssetDatabase.DeleteAsset(path));
+                AssetDatabase.CreateAsset(replacement, path);
+            }
+            Assert.IsTrue(AssetDatabase.LoadAssetAtPath<Material>(path) == replacement);
+            AssertColor(replacement, Color.blue);
+        }
+
+        [Test]
+        public void PreparationRejectsCallerOwnedDestination()
+        {
+            Material existing = Persist(Material(Color.green), "Existing.mat");
+            string path = AssetDatabase.GetAssetPath(existing);
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            using (var transaction = new ManagePrefabs.RuntimeMaterialTransaction())
+                Assert.Throws<InvalidOperationException>(() => transaction.CreateMaterial(existing.shader, path));
+            Assert.IsTrue(AssetDatabase.LoadAssetAtPath<Material>(path) == existing);
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+            AssertColor(existing, Color.green);
+        }
+
+        [Test]
+        public void ObservedSavedDependencyRetainsMaterialWhileSourceSlotIsRestored()
+        {
+            GameObject root = Root();
+            Material original = Material(Color.red);
+            Renderer source = Child(root, "Shared", original);
+            EnsureMaterialsFolder();
+            string materialPath = assetRoot + "/Materials/Owned.mat";
+            string prefabPath = assetRoot + "/Partial.prefab";
+            Material owned;
+            using (var transaction = new ManagePrefabs.RuntimeMaterialTransaction())
+            {
+                owned = transaction.CreateMaterial(original.shader, materialPath);
+                transaction.Assign(source, 0, original, owned);
+                PrefabUtility.SaveAsPrefabAsset(root, prefabPath, out bool saved);
+                Assert.IsTrue(saved);
+                transaction.RetainSavedDependencies(prefabPath);
+            }
+            Assert.IsTrue(source.sharedMaterials[0] == original);
+            Assert.IsTrue(AssetDatabase.LoadAssetAtPath<Material>(materialPath) == owned);
+            Assert.IsTrue(AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath).GetComponentInChildren<Renderer>().sharedMaterials[0] == owned);
+        }
+
         private GameObject Root()
         {
             var root = new GameObject("PrefabIntegrity_" + Guid.NewGuid().ToString("N"));

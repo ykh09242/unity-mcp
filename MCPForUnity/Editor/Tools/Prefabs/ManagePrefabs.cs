@@ -168,32 +168,42 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             using var folders = new AssetFolderScope();
             folders.EnsureParentDirectory(finalPath);
 
-            // 6. Unlink from existing prefab if needed
-            if (unlinkIfInstance && objectValidation.shouldUnlink)
-            {
-                try
-                {
-                    // UnpackPrefabInstance requires the prefab instance root, not a child object
-                    GameObject rootToUnlink = PrefabUtility.GetOutermostPrefabInstanceRoot(sourceObject);
-                    if (rootToUnlink != null)
-                    {
-                        PrefabUtility.UnpackPrefabInstance(rootToUnlink, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
-                        McpLog.Info($"[ManagePrefabs] Unpacked prefab instance '{rootToUnlink.name}' before creating new prefab.");
-                    }
-                }
-                catch (Exception e)
-                {
-                    return new ErrorResponse($"Failed to unlink prefab instance: {e.Message}");
-                }
-            }
-
-            // 7. Persist any runtime-only materials so they survive prefab serialization
-            var persistResult = PersistRuntimeMaterials(sourceObject, finalPath, folders);
-
-            // 8. Create the prefab
+            using var materials = new RuntimeMaterialTransaction();
+            bool saveAttempted = false;
             try
             {
-                if (!CreatePrefabAsset(sourceObject, finalPath, replaceExisting))
+                // Prepare and verify materials before the caller-authorized, nonreversible unpack.
+                var persistResult = PersistRuntimeMaterials(sourceObject, finalPath, folders, materials);
+                if (unlinkIfInstance && objectValidation.shouldUnlink)
+                {
+                    try
+                    {
+                        GameObject rootToUnlink = PrefabUtility.GetOutermostPrefabInstanceRoot(sourceObject);
+                        if (rootToUnlink != null)
+                        {
+                            PrefabUtility.UnpackPrefabInstance(rootToUnlink, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
+                            McpLog.Info($"[ManagePrefabs] Unpacked prefab instance '{rootToUnlink.name}' before creating new prefab.");
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        return new ErrorResponse($"Failed to unlink prefab instance: {e.Message}");
+                    }
+                }
+
+                saveAttempted = true;
+                if (
+                    !CreatePrefabAsset(
+                        sourceObject,
+                        finalPath,
+                        replaceExisting,
+                        () =>
+                        {
+                            materials.Commit();
+                            folders.Complete();
+                        }
+                    )
+                )
                 {
                     return new ErrorResponse($"Failed to create prefab asset at '{finalPath}'.");
                 }
@@ -219,13 +229,18 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         materialsPersisted = persistResult.count,
                     }
                 );
-                folders.Complete();
                 return response;
             }
             catch (Exception e)
             {
                 McpLog.Error($"[ManagePrefabs] Error creating prefab at '{finalPath}': {e}");
                 return new ErrorResponse($"Error saving prefab asset: {e.Message}");
+            }
+            finally
+            {
+                // A failed native save can still have written dependencies. Unlink itself is not rolled back.
+                if (saveAttempted)
+                    materials.RetainSavedDependencies(finalPath);
             }
         }
 
@@ -322,10 +337,12 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// <summary>
         /// Creates a prefab asset from a GameObject.
         /// </summary>
-        private static bool CreatePrefabAsset(GameObject sourceObject, string path, bool replaceExisting)
+        private static bool CreatePrefabAsset(GameObject sourceObject, string path, bool replaceExisting, Action onSaved)
         {
             path = AssetPathUtility.GetContainedAssetPath(path);
             PrefabUtility.SaveAsPrefabAssetAndConnect(sourceObject, path, InteractionMode.AutomatedAction, out bool success);
+            if (success)
+                onSaved();
 
             string action = replaceExisting ? "Replaced existing" : "Created new";
             McpLog.Info($"[ManagePrefabs] {action} prefab at '{path}'.");
@@ -343,7 +360,12 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// (MaterialPropertyBlock overrides or in-memory instances from renderer.material)
         /// as .mat assets so they survive prefab serialization.
         /// </summary>
-        private static (int count, List<string> paths) PersistRuntimeMaterials(GameObject root, string prefabPath, AssetFolderScope folders)
+        private static (int count, List<string> paths) PersistRuntimeMaterials(
+            GameObject root,
+            string prefabPath,
+            AssetFolderScope folders,
+            RuntimeMaterialTransaction transaction
+        )
         {
             var renderers = root.GetComponentsInChildren<Renderer>(true);
             var persistedPaths = new List<string>();
@@ -353,8 +375,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             foreach (var renderer in renderers)
             {
                 Material[] sharedMats = renderer.sharedMaterials;
-                bool changed = false;
-
                 for (int slot = 0; slot < sharedMats.Length; slot++)
                 {
                     Material mat = sharedMats[slot];
@@ -364,7 +384,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     // Case 2: Material exists but is not a persistent asset (runtime instance).
                     bool isRuntimeInstance = mat != null && !EditorUtility.IsPersistent(mat);
                     bool isNullWithPropertyBlock = mat == null && HasPropertyBlockColors(renderer, slot);
-                    bool isNullMaterial = mat == null && !isNullWithPropertyBlock;
 
                     if (!isRuntimeInstance && !isNullWithPropertyBlock)
                         continue;
@@ -383,9 +402,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     matPath = AssetDatabase.GenerateUniqueAssetPath(matPath);
                     // Never update an existing asset just because its generated name matches this slot.
                     Shader shader = isRuntimeInstance && mat.shader != null ? mat.shader : RenderPipelineUtility.ResolveShader("Standard");
-                    Material persisted = new Material(shader);
-                    AssetPathUtility.GetFullAssetPath(matPath);
-                    AssetDatabase.CreateAsset(persisted, matPath);
+                    Material persisted = transaction.CreateMaterial(shader, matPath);
 
                     // Copy properties from the runtime instance if available
                     if (isRuntimeInstance)
@@ -395,18 +412,9 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     ApplyPropertyBlockToMaterial(renderer, slot, persisted);
                     EditorUtility.SetDirty(persisted);
 
-                    sharedMats[slot] = persisted;
-                    changed = true;
+                    transaction.Assign(renderer, slot, mat, persisted);
                     persistedPaths.Add(matPath);
                     McpLog.Info($"[ManagePrefabs] Persisted runtime material for '{renderer.gameObject.name}' slot {slot} → {matPath}");
-                }
-
-                if (changed)
-                {
-                    Undo.RecordObject(renderer, "Persist runtime materials for prefab");
-                    renderer.sharedMaterials = sharedMats;
-                    // Keep source overrides, including unsupported properties that were not baked into the asset.
-                    EditorUtility.SetDirty(renderer);
                 }
             }
 
@@ -417,6 +425,113 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             return (persistedPaths.Count, persistedPaths);
+        }
+
+        internal sealed class RuntimeMaterialTransaction : IDisposable
+        {
+            private readonly List<(Material material, string path)> created = new();
+            private readonly List<(Renderer renderer, int slot, Material previous, Material owned)> assignments = new();
+            private readonly HashSet<string> savedDependencies = new(StringComparer.Ordinal);
+            private readonly List<Material> retained = new();
+            private bool committed;
+            private bool disposed;
+
+            internal Material CreateMaterial(Shader shader, string path)
+            {
+                string fullPath = AssetPathUtility.GetFullAssetPath(path);
+                if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null || File.Exists(fullPath) || Directory.Exists(fullPath))
+                    throw new InvalidOperationException($"Material destination '{path}' is already occupied.");
+                var material = new Material(shader);
+                created.Add((material, path));
+                AssetDatabase.CreateAsset(material, path);
+                if (!EditorUtility.IsPersistent(material) || AssetDatabase.LoadAssetAtPath<Material>(path) != material)
+                    throw new InvalidOperationException($"Could not persist runtime material at '{path}'.");
+                return material;
+            }
+
+            internal void Assign(Renderer renderer, int slot, Material previous, Material owned)
+            {
+                Material[] current = renderer.sharedMaterials;
+                if (slot >= current.Length || !SameMaterial(current[slot], previous))
+                    throw new InvalidOperationException("Renderer materials changed while preparing the prefab.");
+                Undo.RecordObject(renderer, "Persist runtime materials for prefab");
+                assignments.Add((renderer, slot, previous, owned));
+                current[slot] = owned;
+                renderer.sharedMaterials = current;
+                // Keep property blocks, including overrides not baked into the material.
+                EditorUtility.SetDirty(renderer);
+            }
+
+            internal void Commit() => committed = true;
+
+            internal void RetainSavedDependencies(string prefabPath)
+            {
+                if (committed)
+                    return;
+                try
+                {
+                    foreach (string dependency in AssetDatabase.GetDependencies(prefabPath, false))
+                        savedDependencies.Add(dependency);
+                }
+                catch (Exception ex)
+                {
+                    // An unreadable saved destination must not lose potentially committed materials.
+                    retained.AddRange(created.Select(item => item.material));
+                    McpLog.Warn($"[ManagePrefabs] Could not verify saved material dependencies: {ex.Message}");
+                }
+            }
+
+            private static bool SameMaterial(Material first, Material second) =>
+                ReferenceEquals(first, second) || (first != null && second != null && first == second);
+
+            public void Dispose()
+            {
+                if (disposed)
+                    return;
+                disposed = true;
+                if (committed)
+                    return;
+                for (int i = assignments.Count - 1; i >= 0; i--)
+                {
+                    var assignment = assignments[i];
+                    if (assignment.renderer == null)
+                        continue;
+                    try
+                    {
+                        Material[] current = assignment.renderer.sharedMaterials;
+                        if (assignment.slot < current.Length && SameMaterial(current[assignment.slot], assignment.owned))
+                        {
+                            current[assignment.slot] = assignment.previous;
+                            assignment.renderer.sharedMaterials = current;
+                            EditorUtility.SetDirty(assignment.renderer);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        retained.Add(assignment.owned);
+                        McpLog.Warn($"[ManagePrefabs] Could not restore a runtime material slot: {ex.Message}");
+                    }
+                }
+                foreach (var item in created)
+                {
+                    if (item.material == null || savedDependencies.Contains(item.path) || retained.Any(material => SameMaterial(material, item.material)))
+                        continue;
+                    try
+                    {
+                        if (AssetDatabase.LoadAssetAtPath<Material>(item.path) == item.material && AssetDatabase.GetAssetPath(item.material) == item.path)
+                        {
+                            if (!AssetDatabase.DeleteAsset(item.path))
+                                McpLog.Warn($"[ManagePrefabs] Could not remove runtime material '{item.path}'.");
+                        }
+                        else if (!EditorUtility.IsPersistent(item.material))
+                            UnityEngine.Object.DestroyImmediate(item.material);
+                    }
+                    catch (Exception ex)
+                    {
+                        McpLog.Warn($"[ManagePrefabs] Could not remove runtime material '{item.path}': {ex.Message}");
+                    }
+                }
+            }
         }
 
         private static string GetRuntimeMaterialPath(Renderer renderer, int slot, string materialsFolder)
