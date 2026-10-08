@@ -17,11 +17,7 @@ _PB_TOP_LEVEL_KEYS = {"action", "target", "searchMethod", "properties"}
 
 def _parse_edges_param(edges: str) -> dict[str, Any]:
     """Parse edge JSON into either 'edges' (vertex pairs) or 'edgeIndices' (flat indices)."""
-    try:
-        parsed = json.loads(edges)
-    except json.JSONDecodeError:
-        print_error("Invalid JSON for edges parameter")
-        raise SystemExit(1)
+    parsed = parse_json_list_or_exit(edges, "edges")
     if parsed and isinstance(parsed[0], dict):
         return {"edges": parsed}
     return {"edgeIndices": parsed}
