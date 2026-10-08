@@ -22,7 +22,19 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse(error);
 
             string action = parameters.Value<string>("action")?.ToLowerInvariant();
-            string bundle = parameters.Value<string>("bundleName") ?? parameters.Value<string>("bundle_name");
+            string bundle = null;
+            if (action != "list_asset_bundles")
+            {
+                JToken bundleToken = parameters["bundleName"];
+                if (bundleToken == null || bundleToken.Type == JTokenType.Null)
+                    bundleToken = parameters["bundle_name"];
+                // Default Command JSON deserialization represents ISO string values as Date tokens.
+                if (bundleToken != null && bundleToken.Type != JTokenType.Null && bundleToken.Type != JTokenType.String && bundleToken.Type != JTokenType.Date)
+                    return new ErrorResponse("'bundleName' must be a string.");
+                bundle = bundleToken?.Value<string>();
+                if (string.IsNullOrWhiteSpace(bundle) || bundle.Length > 512)
+                    return new ErrorResponse("'bundleName' must name a registered AssetDatabase bundle (maximum 512 characters).");
+            }
             string[] names = AssetDatabase.GetAllAssetBundleNames();
             if (names.Length > MaxEntries || names.Any(name => name == null || name.Length > 2048))
                 return new ErrorResponse($"Bundle assignment inspection exceeds {MaxEntries} names.");
@@ -34,7 +46,7 @@ namespace MCPForUnity.Editor.Tools
             }
             else
             {
-                if (string.IsNullOrWhiteSpace(bundle) || bundle.Length > 512 || !names.Contains(bundle, StringComparer.Ordinal))
+                if (!names.Contains(bundle, StringComparer.Ordinal))
                     return new ErrorResponse("'bundleName' must name a registered AssetDatabase bundle (maximum 512 characters).");
                 if (action == "get_bundle_assets")
                     entries = AssetDatabase.GetAssetPathsFromAssetBundle(bundle);
