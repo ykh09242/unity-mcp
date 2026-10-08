@@ -1,11 +1,27 @@
 """Lighting CLI commands."""
 
+import math
+import struct
+
 import click
 from typing import Optional, Tuple
 
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success
 from cli.utils.connection import run_command, handle_unity_errors, UnityCommandError
+
+
+def _validate_light_number(value: float, parameter: str) -> None:
+    """Require numbers that the Unity float receiver can represent before creating a light."""
+    if not math.isfinite(value):
+        raise click.BadParameter("Expected a finite number.", param_hint=f"--{parameter}")
+    try:
+        if not math.isfinite(struct.unpack("f", struct.pack("f", value))[0]):
+            raise OverflowError
+    except OverflowError as exc:
+        raise click.BadParameter(
+            "Value exceeds the Unity float range.", param_hint=f"--{parameter}"
+        ) from exc
 
 
 @click.group()
@@ -45,6 +61,14 @@ def create(
         unity-mcp lighting create "PointLight1" --position 0 5 0 --intensity 2
         unity-mcp lighting create "RedLight" --type Spot --color 1 0 0
     """
+    for value in position:
+        _validate_light_number(value, "position")
+    if color is not None:
+        for value in color:
+            _validate_light_number(value, "color")
+    if intensity is not None:
+        _validate_light_number(intensity, "intensity")
+
     config = get_config()
 
     # Step 1: Create empty GameObject with position
