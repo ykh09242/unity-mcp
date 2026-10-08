@@ -152,6 +152,8 @@ namespace MCPForUnity.Editor.Services
         private static readonly TestMode[] AllModes = { TestMode.EditMode, TestMode.PlayMode };
 
         private readonly TestRunnerApi _testRunnerApi;
+        private readonly Action<TestMode, Action<ITestAdaptor>> _retrieveTestList;
+        private readonly TimeSpan _retrievalTimeout;
         private readonly SemaphoreSlim _operationLock = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _lifetimeCancellation = new CancellationTokenSource();
         private readonly List<ITestResultAdaptor> _leafResults = new List<ITestResultAdaptor>();
@@ -215,8 +217,13 @@ namespace MCPForUnity.Editor.Services
         }
 
         public TestRunnerService()
+            : this(null, TimeSpan.FromSeconds(30)) { }
+
+        internal TestRunnerService(Action<TestMode, Action<ITestAdaptor>> retrieveTestList, TimeSpan retrievalTimeout)
         {
             _testRunnerApi = ScriptableObject.CreateInstance<TestRunnerApi>();
+            _retrieveTestList = retrieveTestList ?? _testRunnerApi.RetrieveTestList;
+            _retrievalTimeout = retrievalTimeout;
             _testRunnerApi.hideFlags = HideFlags.HideAndDontSave;
             _testRunnerApi.RegisterCallbacks(this);
             var retiredJobId = SessionState.GetString(RetiredRunSessionKey, string.Empty);
@@ -249,9 +256,11 @@ namespace MCPForUnity.Editor.Services
         {
             ThrowIfDisposed();
             ThrowIfRetiredRunPending();
-            await _operationLock.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(true);
+            var cancellationToken = _lifetimeCancellation.Token;
+            await _operationLock.WaitAsync(cancellationToken).ConfigureAwait(true);
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 ThrowIfDisposed();
                 ThrowIfRetiredRunPending();
                 var modes = mode.HasValue ? new[] { mode.Value } : AllModes;
@@ -261,7 +270,9 @@ namespace MCPForUnity.Editor.Services
 
                 foreach (var m in modes)
                 {
-                    var root = await RetrieveTestRootAsync(m).ConfigureAwait(true);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var root = await RetrieveTestRootAsync(m, cancellationToken).ConfigureAwait(true);
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (root != null)
                     {
                         CollectFromNode(root, m, results, seen, new List<string>());
@@ -726,36 +737,34 @@ namespace MCPForUnity.Editor.Services
 
         #region Test list helpers
 
-        private async Task<ITestAdaptor> RetrieveTestRootAsync(TestMode mode)
+        private async Task<ITestAdaptor> RetrieveTestRootAsync(TestMode mode, CancellationToken cancellationToken)
         {
-            var tcs = new TaskCompletionSource<ITestAdaptor>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            _testRunnerApi.RetrieveTestList(
-                mode,
-                root =>
-                {
-                    tcs.TrySetResult(root);
-                }
+            cancellationToken.ThrowIfCancellationRequested();
+            var completion = new TaskCompletionSource<ITestAdaptor>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = cancellationToken.Register(() => completion.TrySetCanceled());
+            using var timeout = new Timer(
+                _ => completion.TrySetException(new TimeoutException($"Timed out retrieving the {mode} test list.")),
+                null,
+                _retrievalTimeout,
+                Timeout.InfiniteTimeSpan
             );
-
-            // Ensure the editor pumps at least one additional update in case the window is unfocused.
-            EditorApplication.QueuePlayerLoopUpdate();
-
-            var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(30))).ConfigureAwait(true);
-            if (completed != tcs.Task)
-            {
-                McpLog.Warn($"[TestRunnerService] Timeout waiting for test retrieval callback for {mode}");
-                throw new TimeoutException($"Timed out retrieving the {mode} test list.");
-            }
-
             try
             {
-                return await tcs.Task.ConfigureAwait(true);
+                cancellationToken.ThrowIfCancellationRequested();
+                _retrieveTestList(mode, root => completion.TrySetResult(root));
+                // Ensure the editor pumps at least one additional update in case the window is unfocused.
+                EditorApplication.QueuePlayerLoopUpdate();
+                return await completion.Task.ConfigureAwait(true);
             }
             catch (Exception ex)
             {
-                McpLog.Error($"[TestRunnerService] Error retrieving tests for {mode}: {ex.Message}\n{ex.StackTrace}");
-                return null;
+                // Startup can throw after the timer won. Settle and observe the owned task
+                // before rethrowing so no unawaited timeout fault remains.
+                completion.TrySetException(ex);
+                _ = completion.Task.Exception;
+                if (ex is TimeoutException)
+                    McpLog.Warn($"[TestRunnerService] Timeout waiting for test retrieval callback for {mode}");
+                throw;
             }
         }
 

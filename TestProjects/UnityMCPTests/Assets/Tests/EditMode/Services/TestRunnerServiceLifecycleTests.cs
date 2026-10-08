@@ -616,6 +616,252 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsNull(typeof(TestRunnerService).GetField("_runCompletionSource", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service));
         }
 
+        private void SetDiscovery(Action<TestMode, Action<ITestAdaptor>> retrieve, TimeSpan? timeout = null)
+        {
+            _service.Dispose();
+            _service = new TestRunnerService(retrieve, timeout ?? TimeSpan.FromSeconds(30));
+            _runner = new CapturingRunner(_service);
+            MCPServiceLocator.Register<ITestRunnerService>(_runner);
+            _api = (TestRunnerApi)typeof(TestRunnerService).GetField("_testRunnerApi", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+        }
+
+        private sealed class DiscoveryNode : ITestAdaptor
+        {
+            public bool Unexpected;
+            public int Reads;
+            public string Name
+            {
+                get
+                {
+                    Reads++;
+                    if (Unexpected)
+                        throw new InvalidOperationException("A discarded discovery adaptor was traversed.");
+                    return "discovered-test";
+                }
+            }
+            public string FullName => Name;
+            public string Id => "discovery-id";
+            public int TestCaseCount => 1;
+            public bool HasChildren => false;
+            public bool IsSuite => false;
+            public IEnumerable<ITestAdaptor> Children => Array.Empty<ITestAdaptor>();
+            public ITestAdaptor Parent => null;
+            public int TestCaseTimeout => 0;
+            public NUnit.Framework.Interfaces.ITypeInfo TypeInfo => null;
+            public NUnit.Framework.Interfaces.IMethodInfo Method => null;
+            public object[] Arguments => Array.Empty<object>();
+            public string[] Categories => Array.Empty<string>();
+            public bool IsTestAssembly => false;
+            public RunState RunState => default;
+            public string Description => null;
+            public string SkipReason => null;
+            public string ParentId => null;
+            public string ParentFullName => null;
+            public string UniqueName => "discovery-id";
+            public string ParentUniqueName => null;
+            public int ChildIndex => 0;
+            public TestMode TestMode => TestMode.EditMode;
+        }
+
+        [Test]
+        public async Task ActiveDiscovery_DisposeCancelsAndIgnoresLateCallbacks()
+        {
+            Action<ITestAdaptor> callback = null;
+            int retrievals = 0;
+            SetDiscovery(
+                (_, received) =>
+                {
+                    retrievals++;
+                    callback = received;
+                }
+            );
+            var discovery = _service.GetTestsAsync(null);
+            _service.Dispose();
+            Assert.AreSame(discovery, await Task.WhenAny(discovery, Task.Delay(2000)), "Active discovery must settle on disposal without its native callback.");
+            Assert.IsInstanceOf<OperationCanceledException>(ObserveFailure(discovery));
+            Assert.IsTrue(discovery.IsCanceled);
+            var discarded = new DiscoveryNode { Unexpected = true };
+            callback(discarded);
+            callback(discarded);
+            Assert.AreEqual(0, discarded.Reads);
+            Assert.AreEqual(1, retrievals, "Disposal must prevent retrieval of the second mode.");
+            using var replacement = new TestRunnerService((_, received) => received(new DiscoveryNode()), TimeSpan.FromSeconds(30));
+            var results = await replacement.GetTestsAsync(TestMode.EditMode);
+            Assert.AreEqual(1, results.Count, "A disposed discovery must not prevent an independent service from being used.");
+        }
+
+        [Test]
+        public async Task Discovery_CallbackBeforeDisposeSucceedsAndIgnoresDuplicates()
+        {
+            Action<ITestAdaptor> callback = null;
+            var discarded = new DiscoveryNode { Unexpected = true };
+            SetDiscovery(
+                (_, received) =>
+                {
+                    callback = received;
+                    received(new DiscoveryNode());
+                    received(discarded);
+                }
+            );
+            var results = await _service.GetTestsAsync(TestMode.EditMode);
+            Assert.AreEqual(1, results.Count);
+            Assert.AreEqual("discovered-test", results[0]["full_name"]);
+            _service.Dispose();
+            callback(discarded);
+            Assert.AreEqual(0, discarded.Reads);
+        }
+
+        [Test]
+        public void Discovery_DisposeAfterCallbackAcceptancePreventsTraversalAndNextMode()
+        {
+            var previous = SynchronizationContext.Current;
+            var paused = new PausedContext();
+            try
+            {
+                SynchronizationContext.SetSynchronizationContext(paused);
+                Action<ITestAdaptor> callback = null;
+                int retrievals = 0;
+                SetDiscovery(
+                    (_, received) =>
+                    {
+                        retrievals++;
+                        callback = received;
+                    }
+                );
+                var discovery = _service.GetTestsAsync(null);
+                var discarded = new DiscoveryNode { Unexpected = true };
+                callback(discarded);
+                _service.Dispose();
+                var deadline = System.Diagnostics.Stopwatch.StartNew();
+                while (!discovery.IsCompleted && deadline.ElapsedMilliseconds < 2000)
+                {
+                    paused.Drain();
+                    Thread.Sleep(1);
+                }
+                Assert.IsInstanceOf<OperationCanceledException>(ObserveFailure(discovery));
+                Assert.IsTrue(discovery.IsCanceled);
+                callback(discarded);
+                Assert.AreEqual(0, discarded.Reads);
+                Assert.AreEqual(1, retrievals);
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previous);
+            }
+        }
+
+        [Test]
+        public async Task Discovery_TimeoutIgnoresLateCallbacksAndAllowsRetry()
+        {
+            Action<ITestAdaptor> callback = null;
+            int retrievals = 0;
+            SetDiscovery(
+                (_, received) =>
+                {
+                    retrievals++;
+                    if (retrievals == 1)
+                        callback = received;
+                    else
+                        received(new DiscoveryNode());
+                },
+                TimeSpan.FromMilliseconds(20)
+            );
+            var discovery = _service.GetTestsAsync(TestMode.EditMode);
+            Assert.AreSame(discovery, await Task.WhenAny(discovery, Task.Delay(2000)));
+            Assert.IsInstanceOf<TimeoutException>(ObserveFailure(discovery));
+            var discarded = new DiscoveryNode { Unexpected = true };
+            callback(discarded);
+            callback(discarded);
+            Assert.AreEqual(0, discarded.Reads);
+            Assert.IsTrue(discovery.IsFaulted);
+            var results = await _service.GetTestsAsync(TestMode.EditMode);
+            Assert.AreEqual(1, results.Count);
+            Assert.AreEqual(2, retrievals);
+        }
+
+        [Test]
+        public async Task Discovery_StartupFailurePreservesErrorAndAllowsRetry()
+        {
+            int retrievals = 0;
+            SetDiscovery(
+                (_, received) =>
+                {
+                    if (++retrievals == 1)
+                        throw new InvalidOperationException("Retrieval startup failed");
+                    received(new DiscoveryNode());
+                }
+            );
+            var failed = _service.GetTestsAsync(TestMode.EditMode);
+            StringAssert.Contains("Retrieval startup failed", ObserveFailure(failed).Message);
+            var results = await _service.GetTestsAsync(TestMode.EditMode);
+            Assert.AreEqual(1, results.Count);
+            Assert.AreEqual(2, retrievals);
+        }
+
+        [Test]
+        public async Task Discovery_StartupFailurePreservesErrorAfterCallbackOrCancellationWins()
+        {
+            foreach (bool cancel in new[] { false, true })
+            {
+                int retrievals = 0;
+                var discarded = new DiscoveryNode { Unexpected = true };
+                SetDiscovery(
+                    (_, received) =>
+                    {
+                        if (++retrievals == 1)
+                        {
+                            if (cancel)
+                                _service.Dispose();
+                            else
+                                received(discarded);
+                            throw new InvalidOperationException("Retrieval failed after completion");
+                        }
+                        received(new DiscoveryNode());
+                    }
+                );
+                var failed = _service.GetTestsAsync(TestMode.EditMode);
+                StringAssert.Contains("Retrieval failed after completion", ObserveFailure(failed).Message);
+                Assert.IsTrue(failed.IsFaulted, "A synchronous startup failure must retain its original exception.");
+                Assert.AreEqual(0, discarded.Reads);
+                if (!cancel)
+                {
+                    var results = await _service.GetTestsAsync(TestMode.EditMode);
+                    Assert.AreEqual(1, results.Count, "Startup failure after an accepted callback must release its slot.");
+                }
+            }
+        }
+
+        [Test]
+        public void Discovery_AcceptedCallbackWinsTimeoutWhileContinuationIsPaused()
+        {
+            var previous = SynchronizationContext.Current;
+            var paused = new PausedContext();
+            try
+            {
+                SynchronizationContext.SetSynchronizationContext(paused);
+                Action<ITestAdaptor> callback = null;
+                SetDiscovery((_, received) => callback = received, TimeSpan.FromMilliseconds(20));
+                var discovery = _service.GetTestsAsync(TestMode.EditMode);
+                callback(new DiscoveryNode());
+                Thread.Sleep(50);
+                var deadline = System.Diagnostics.Stopwatch.StartNew();
+                while (!discovery.IsCompleted && deadline.ElapsedMilliseconds < 2000)
+                {
+                    paused.Drain();
+                    Thread.Sleep(1);
+                }
+                Assert.IsTrue(discovery.IsCompleted);
+                Assert.AreEqual(1, discovery.GetAwaiter().GetResult().Count, "A timeout must not replace an already accepted root.");
+                var discarded = new DiscoveryNode { Unexpected = true };
+                callback(discarded);
+                Assert.AreEqual(0, discarded.Reads);
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previous);
+            }
+        }
+
         private static void SetCurrent(string id) => typeof(TestJobManager).GetField("_currentJobId", StaticPrivate).SetValue(null, id);
 
         private static Exception ObserveFailure(Task task)
