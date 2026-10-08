@@ -420,6 +420,40 @@ namespace MCPForUnityTests.EditMode.Tools
             LogAssert.NoUnexpectedReceived();
         }
 
+        [TestCase("set_import_settings", "{isReadable:true}")]
+        [TestCase("modify", "{isReadable:true}")]
+        [TestCase("set_import_settings", "{spriteMeshType:'future-enum',isReadable:true}")]
+        [TestCase("modify", "{spriteMeshType:'future-enum',isReadable:true}")]
+        public void BasicImporterSettingsPreserveSpriteGeometry(string action, string json)
+        {
+            var importer = AssetImporter.GetAtPath(_path) as TextureImporter;
+            importer.textureType = TextureImporterType.Sprite;
+            var seeded = new TextureImporterSettings();
+            importer.ReadTextureSettings(seeded);
+            seeded.spriteMeshType = SpriteMeshType.FullRect;
+            seeded.spriteExtrude = 3;
+            importer.SetTextureSettings(seeded);
+            importer.SaveAndReimport();
+            importer = AssetImporter.GetAtPath(_path) as TextureImporter;
+            var before = new TextureImporterSettings();
+            importer.ReadTextureSettings(before);
+            Assert.AreEqual(SpriteMeshType.FullRect, before.spriteMeshType);
+            Assert.AreEqual(3u, before.spriteExtrude);
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+
+            var response = Send(action, new JObject { ["import_settings"] = JObject.Parse(json) });
+
+            Assert.IsTrue((bool)response["success"], response.ToString());
+            importer = AssetImporter.GetAtPath(_path) as TextureImporter;
+            var after = new TextureImporterSettings();
+            importer.ReadTextureSettings(after);
+            Assert.AreEqual(before.spriteMeshType, after.spriteMeshType);
+            Assert.AreEqual(before.spriteExtrude, after.spriteExtrude);
+            Assert.IsTrue(importer.isReadable);
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(_path));
+            LogAssert.NoUnexpectedReceived();
+        }
+
         [Test]
         public void UnknownEnumStillLeavesTheTypeUnchanged()
         {

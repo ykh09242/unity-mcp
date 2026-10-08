@@ -1300,14 +1300,16 @@ namespace MCPForUnity.Editor.Tools
                 foreach (var set in setters)
                     set(importer);
 
-                var importerSettings = new TextureImporterSettings();
-                importer.ReadTextureSettings(importerSettings);
-                if (meshType.HasValue)
-                    importerSettings.spriteMeshType = meshType.Value;
-                if (extrude.HasValue)
-                    importerSettings.spriteExtrude = extrude.Value;
                 if (meshType.HasValue || extrude.HasValue)
+                {
+                    var importerSettings = new TextureImporterSettings();
+                    importer.ReadTextureSettings(importerSettings);
+                    if (meshType.HasValue)
+                        importerSettings.spriteMeshType = meshType.Value;
+                    if (extrude.HasValue)
+                        importerSettings.spriteExtrude = extrude.Value;
                     importer.SetTextureSettings(importerSettings);
+                }
 
                 importer.SaveAndReimport();
             };
