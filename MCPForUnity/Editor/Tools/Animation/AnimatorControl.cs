@@ -24,6 +24,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new { success = false, message = "'stateName' is required" };
 
             int layer = @params["layer"]?.ReadScalar<int?>() ?? -1;
+            if (layer < -1 || (layer >= 0 && layer >= animator.layerCount))
+                return new { success = false, message = $"Layer index {layer} is out of range. Use -1 or a valid Animator layer index." };
 
             Undo.RecordObject(animator, "Play Animation State");
             animator.Play(stateName, layer);
@@ -47,6 +49,8 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             float duration = @params["duration"]?.ReadScalar<float?>() ?? 0.25f;
             int layer = @params["layer"]?.ReadScalar<int?>() ?? -1;
+            if (layer < -1 || (layer >= 0 && layer >= animator.layerCount))
+                return new { success = false, message = $"Layer index {layer} is out of range. Use -1 or a valid Animator layer index." };
 
             Undo.RecordObject(animator, "Crossfade Animation State");
             animator.CrossFadeInFixedTime(stateName, duration, layer);

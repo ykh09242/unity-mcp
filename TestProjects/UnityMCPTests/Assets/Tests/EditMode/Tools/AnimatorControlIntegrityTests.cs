@@ -241,6 +241,42 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(controller.parameters.Single(p => p.name == "Enabled").defaultBool);
         }
 
+        [Test]
+        [Combinatorial]
+        public void OutOfRangePlaybackLayerPreservesAnimatorAndController(
+            [Values("animator_play", "animator_crossfade")] string action,
+            [Values("negative", "upper", "numeric_string")] string kind
+        )
+        {
+            int layer = kind == "negative" ? -2 : animator.layerCount;
+            var request = new JObject
+            {
+                ["action"] = action,
+                ["target"] = ownedObject.GetInstanceIDCompat(),
+                ["search_method"] = "by_id",
+                ["state_name"] = "Base Layer.Idle",
+                ["layer"] = kind == "numeric_string" ? (JToken)new JValue(layer.ToString()) : new JValue(layer),
+            };
+            var before = Snapshot();
+            string animatorBefore = EditorJsonUtility.ToJson(animator);
+            int animatorDirty = EditorUtility.GetDirtyCount(animator);
+            int controllerDirty = EditorUtility.GetDirtyCount(controller);
+            string path = AssetDatabase.GetAssetPath(controller);
+            string guid = AssetDatabase.AssetPathToGUID(path);
+
+            JObject response = Call(request);
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("out of range", response.Value<string>("message"));
+            Assert.IsTrue(JToken.DeepEquals(before, Snapshot()));
+            Assert.AreEqual(animatorBefore, EditorJsonUtility.ToJson(animator));
+            Assert.AreEqual(animatorDirty, EditorUtility.GetDirtyCount(animator));
+            Assert.AreEqual(controllerDirty, EditorUtility.GetDirtyCount(controller));
+            Assert.IsTrue(animator.runtimeAnimatorController == controller);
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+            Assert.IsFalse(animator.enabled);
+        }
+
         [TestCase("duration", false)]
         [TestCase("duration", true)]
         [TestCase("layer", false)]
