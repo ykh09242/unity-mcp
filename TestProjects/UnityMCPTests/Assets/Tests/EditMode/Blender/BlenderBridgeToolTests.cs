@@ -217,6 +217,76 @@ namespace MCPForUnityTests.Editor.Blender
         }
 
         [Test]
+        public void TemporaryExport_DownstreamFailureRemovesOnlyOwnedExport()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "blender-export-" + Guid.NewGuid().ToString("N"));
+            string path = Path.Combine(root, "owned.fbx");
+            string sibling = Path.Combine(root, "keep.fbx");
+            try
+            {
+                Directory.CreateDirectory(root);
+                File.WriteAllText(path, "owned");
+                File.WriteAllText(sibling, "preserve");
+                var error = Assert.Throws<InvalidOperationException>(() =>
+                {
+                    using var export = new BlenderBridgeTool.TemporaryBlenderExport(path);
+                    throw new InvalidOperationException("primary import failure");
+                });
+                Assert.AreEqual("primary import failure", error.Message);
+                Assert.IsFalse(File.Exists(path));
+                Assert.AreEqual("preserve", File.ReadAllText(sibling));
+                Assert.IsTrue(Directory.Exists(root));
+            }
+            finally
+            {
+                File.Delete(path);
+                File.Delete(sibling);
+                if (Directory.Exists(root))
+                    Directory.Delete(root);
+            }
+        }
+
+        [Test]
+        public void TemporaryExport_SuccessPreservesReturnedFile()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "blender-export-" + Guid.NewGuid().ToString("N") + ".fbx");
+            try
+            {
+                File.WriteAllText(path, "export bytes");
+                var response = new SuccessResponse("Imported", new { export_path = path });
+                using (var export = new BlenderBridgeTool.TemporaryBlenderExport(path))
+                    Assert.AreSame(response, export.Preserve(response));
+                Assert.AreEqual("export bytes", File.ReadAllText(path));
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void TemporaryExport_CleanupFailurePreservesPrimaryErrorAndDirectory()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "blender-export-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                // Deleting a directory as a file fails deterministically on supported platforms.
+                Directory.CreateDirectory(path);
+                var error = Assert.Throws<InvalidOperationException>(() =>
+                {
+                    using var export = new BlenderBridgeTool.TemporaryBlenderExport(path);
+                    throw new InvalidOperationException("primary import failure");
+                });
+                Assert.AreEqual("primary import failure", error.Message);
+                Assert.IsTrue(Directory.Exists(path));
+            }
+            finally
+            {
+                Directory.Delete(path);
+            }
+        }
+
+        [Test]
         public void StageExportForImport_ProducesAssetsContainedCopy()
         {
             string source = Path.Combine(Path.GetTempPath(), "blender-stage-" + Guid.NewGuid().ToString("N") + ".fbx");

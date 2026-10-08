@@ -273,7 +273,11 @@ namespace MCPForUnity.Editor.Tools.Blender
             Directory.CreateDirectory(exportDir);
             string exportPath = Path.Combine(exportDir, $"{name}_{UniqueSuffix()}.{fmt}").Replace('\\', '/');
 
+            if (File.Exists(exportPath) || Directory.Exists(exportPath))
+                throw new IOException("The Blender export path already exists.");
+
             string stdout = await ExportFromBlenderAsync(BlenderBridgePrefs.Endpoint, exportPath, names, selectionOnly, applyModifiers, fmt, timeout);
+            using var export = new TemporaryBlenderExport(exportPath);
 
             if (!File.Exists(exportPath))
                 return new ErrorResponse($"Blender did not produce {exportPath}. Blender output: {Truncate(stdout, 800)}");
@@ -320,7 +324,7 @@ namespace MCPForUnity.Editor.Tools.Blender
             };
 
             if (!place || string.IsNullOrEmpty(assetPath))
-                return new SuccessResponse($"Imported {assetPath} (not placed).", data);
+                return export.Preserve(new SuccessResponse($"Imported {assetPath} (not placed).", data));
 
             if (fmt == "fbx" && autoAnimate)
                 ConfigureFbxClipLooping(assetPath);
@@ -331,7 +335,7 @@ namespace MCPForUnity.Editor.Tools.Blender
             if (prefab == null)
             {
                 data["note"] = "Asset has no GameObject root to instantiate.";
-                return new SuccessResponse($"Imported {assetPath} but could not instantiate it.", data);
+                return export.Preserve(new SuccessResponse($"Imported {assetPath} but could not instantiate it.", data));
             }
 
             GameObject go = PrefabUtility.InstantiatePrefab(prefab) as GameObject ?? UnityEngine.Object.Instantiate(prefab);
@@ -372,7 +376,7 @@ namespace MCPForUnity.Editor.Tools.Blender
             if (ensureBloom && HasEmissiveMaterial(go))
                 data["bloom"] = await SetupBloomAsync();
 
-            return new SuccessResponse($"Imported {assetPath} and placed '{go.name}' in the scene.", data);
+            return export.Preserve(new SuccessResponse($"Imported {assetPath} and placed '{go.name}' in the scene.", data));
         }
 
         /// <summary>
@@ -1044,6 +1048,35 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         }
 
         // ------------------------------------------------------------------ helpers
+
+        /// <summary>Owns only an acknowledged bridge export until a successful response exposes its path.</summary>
+        internal sealed class TemporaryBlenderExport : IDisposable
+        {
+            private readonly string path;
+            private bool preserved;
+
+            internal TemporaryBlenderExport(string path) => this.path = path;
+
+            internal object Preserve(object response)
+            {
+                preserved = true;
+                return response;
+            }
+
+            public void Dispose()
+            {
+                if (preserved)
+                    return;
+                try
+                {
+                    File.Delete(path);
+                }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    McpLog.Warn($"Could not remove failed Blender export ({ex.GetType().Name}).");
+                }
+            }
+        }
 
         internal static string StageExportForImport(string exportPath)
         {
