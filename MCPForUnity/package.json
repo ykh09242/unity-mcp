@@ -1,7 +1,7 @@
 {
   "name": "com.ykh09242.unity-mcp",
   "version": "1.2.1",
-  "mcpServerSource": "https://github.com/ykh09242/unity-mcp/archive/2a8dd0159c8b5f60c36e3cce8d1d268b141458a1.zip#subdirectory=Server",
+  "mcpServerSource": "https://github.com/ykh09242/unity-mcp/archive/20f904ea7b3d8a0830d311df483d23f95a9e1a76.zip#subdirectory=Server",
   "displayName": "Unity MCP (ykh09242)",
   "description": "Unity Editor automation via the Model Context Protocol (MCP), maintained by ykh09242. Git-distributed fork of CoplayDev/unity-mcp with a commit-pinned Python server.",
   "unity": "2021.3",
