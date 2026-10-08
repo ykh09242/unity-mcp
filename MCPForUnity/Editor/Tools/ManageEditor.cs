@@ -283,26 +283,20 @@ namespace MCPForUnity.Editor.Tools
                 if (layersProp == null || !layersProp.isArray)
                     return new ErrorResponse("Could not find 'layers' property in TagManager.");
 
-                // Check if layer name already exists (case-insensitive check recommended)
+                // Check all names before assigning the first available user slot.
+                int firstEmptyUserLayer = -1;
                 for (int i = 0; i < TotalLayerCount; i++)
                 {
                     SerializedProperty layerSP = layersProp.GetArrayElementAtIndex(i);
-                    if (layerSP != null && layerName.Equals(layerSP.stringValue, StringComparison.OrdinalIgnoreCase))
+                    if (layerSP == null)
+                        continue;
+                    string currentName = layerSP.stringValue;
+                    if (layerName.Equals(currentName, StringComparison.OrdinalIgnoreCase))
                     {
                         return new ErrorResponse($"Layer '{layerName}' already exists at index {i}.");
                     }
-                }
-
-                // Find the first empty user layer slot (indices 8 to 31)
-                int firstEmptyUserLayer = -1;
-                for (int i = FirstUserLayerIndex; i < TotalLayerCount; i++)
-                {
-                    SerializedProperty layerSP = layersProp.GetArrayElementAtIndex(i);
-                    if (layerSP != null && string.IsNullOrEmpty(layerSP.stringValue))
-                    {
+                    if (firstEmptyUserLayer == -1 && i >= FirstUserLayerIndex && string.IsNullOrEmpty(currentName))
                         firstEmptyUserLayer = i;
-                        break;
-                    }
                 }
 
                 if (firstEmptyUserLayer == -1)
