@@ -258,7 +258,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (bodyTypeName != null)
             {
                 var bodyType = CameraHelpers.ResolveComponentType(bodyTypeName);
-                if (bodyType == null || !IsConcreteCinemachineType(bodyType, "CinemachineComponentBase"))
+                if (bodyType == null || !IsConcreteCinemachineType(bodyType, "CinemachineComponentBase", "Body"))
                     return new ErrorResponse($"Could not resolve body component type '{bodyTypeName}'.");
                 propertyError = PrepareComponentPropertiesForTarget(
                     bodyType,
@@ -320,7 +320,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (aimTypeName != null)
             {
                 var aimType = CameraHelpers.ResolveComponentType(aimTypeName);
-                if (aimType == null || !IsConcreteCinemachineType(aimType, "CinemachineComponentBase"))
+                if (aimType == null || !IsConcreteCinemachineType(aimType, "CinemachineComponentBase", "Aim"))
                     return new ErrorResponse($"Could not resolve aim component type '{aimTypeName}'.");
                 propertyError = PrepareComponentPropertiesForTarget(aimType, go.GetComponent(aimType), props, new[] { "aimType", "aim_type" }, out setters, go);
                 if (propertyError != null)
@@ -499,10 +499,26 @@ namespace MCPForUnity.Editor.Tools.Cameras
             return comp;
         }
 
-        private static bool IsConcreteCinemachineType(Type type, string baseTypeName)
+        private static bool IsConcreteCinemachineType(Type type, string baseTypeName, string stageName = null)
         {
-            var baseType = CameraHelpers.CinemachineCameraType?.Assembly.GetType("Unity.Cinemachine." + baseTypeName);
-            return baseType != null && baseType.IsAssignableFrom(type) && !type.IsAbstract && !type.ContainsGenericParameters;
+            var assembly = CameraHelpers.CinemachineCameraType?.Assembly;
+            var baseType = assembly?.GetType("Unity.Cinemachine." + baseTypeName);
+            if (baseType == null || !baseType.IsAssignableFrom(type) || type.IsAbstract || type.ContainsGenericParameters)
+                return false;
+            if (stageName == null)
+                return true;
+
+            // Read declared stages without creating a component or invoking its native-backed Stage getter.
+            var pipelineAttributeType = assembly.GetType("Unity.Cinemachine.CameraPipelineAttribute");
+            foreach (var attribute in type.GetCustomAttributesData())
+            {
+                if (attribute.AttributeType != pipelineAttributeType || attribute.ConstructorArguments.Count != 1)
+                    continue;
+                var stage = attribute.ConstructorArguments[0];
+                return string.Equals(Enum.GetName(stage.ArgumentType, stage.Value), stageName, StringComparison.OrdinalIgnoreCase);
+            }
+            // Custom components may omit this metadata; retain their existing compatibility.
+            return true;
         }
 
         private static ErrorResponse PrepareComponentProperties(Type type, JObject props, string[] skipKeys, out List<Action<Component>> setters)

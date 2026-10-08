@@ -295,6 +295,76 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(componentDirty, EditorUtility.GetDirtyCount(existing));
         }
 
+        [TestCase("set_body", "Body", "bodyType", "CinemachineHardLookAt", false)]
+        [TestCase("set_body", "Body", "bodyType", "CinemachineBasicMultiChannelPerlin", false)]
+        [TestCase("set_aim", "Aim", "aimType", "CinemachineFollow", false)]
+        [TestCase("set_aim", "Aim", "aimType", "CinemachineBasicMultiChannelPerlin", false)]
+        [TestCase("set_body", "Body", "body_type", "CinemachineHardLookAt", false)]
+        [TestCase("set_aim", "Aim", "aim_type", "CinemachineFollow", false)]
+        [TestCase("set_body", "Body", "bodyType", "CinemachineHardLookAt", true)]
+        [TestCase("set_aim", "Aim", "aimType", "CinemachineFollow", true)]
+        public void PipelineReplacementRejectsAnotherDeclaredStageWithoutMutation(
+            string action,
+            string stage,
+            string typeKey,
+            string typeName,
+            bool alreadyPresent
+        )
+        {
+            var existingType = CameraHelpers.ResolveComponentType(stage == "Body" ? "CinemachineFollow" : "CinemachineRotationComposer");
+            var wrongType = CameraHelpers.ResolveComponentType(typeName);
+            Assert.IsNotNull(existingType);
+            Assert.IsNotNull(wrongType);
+            var existing = target.AddComponent(existingType);
+            if (alreadyPresent)
+                target.AddComponent(wrongType);
+            Assert.AreSame(existing, CameraHelpers.GetPipelineComponent(camera, stage));
+            var components = target.GetComponents<Component>();
+            int objectDirty = EditorUtility.GetDirtyCount(target);
+            int componentDirty = EditorUtility.GetDirtyCount(existing);
+
+            var response = Send(action, new JObject { [typeKey] = wrongType.FullName });
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains(typeName, response.ToString());
+            Assert.AreSame(existing, CameraHelpers.GetPipelineComponent(camera, stage));
+            CollectionAssert.AreEqual(components, target.GetComponents<Component>());
+            Assert.AreEqual(objectDirty, EditorUtility.GetDirtyCount(target));
+            Assert.AreEqual(componentDirty, EditorUtility.GetDirtyCount(existing));
+        }
+
+        [TestCase("set_body", "Body", "bodyType", "body_type", "CinemachineFollow", "CinemachineHardLookAt", false)]
+        [TestCase("set_body", "Body", "bodyType", "body_type", "CinemachineFollow", "CinemachineHardLookAt", true)]
+        [TestCase("set_aim", "Aim", "aimType", "aim_type", "CinemachineRotationComposer", "CinemachineFollow", false)]
+        [TestCase("set_aim", "Aim", "aimType", "aim_type", "CinemachineRotationComposer", "CinemachineFollow", true)]
+        public void PrimaryPipelineTypeKeepsPrecedenceOverAlias(
+            string action,
+            string stage,
+            string typeKey,
+            string aliasKey,
+            string typeName,
+            string wrongTypeName,
+            bool explicitNull
+        )
+        {
+            var existing = (Behaviour)target.AddComponent(CameraHelpers.ResolveComponentType(typeName));
+            existing.enabled = true;
+            var components = target.GetComponents<Component>();
+            var properties = new JObject
+            {
+                [typeKey] = explicitNull ? JValue.CreateNull() : new JValue(typeName),
+                [aliasKey] = wrongTypeName,
+                ["enabled"] = false,
+            };
+
+            var response = Send(action, properties);
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreSame(existing, CameraHelpers.GetPipelineComponent(camera, stage));
+            CollectionAssert.AreEqual(components, target.GetComponents<Component>());
+            Assert.IsFalse(existing.enabled);
+        }
+
         [TestCase("set_body", "Body", "bodyType", "CinemachineFollow", "CinemachineThirdPersonFollow")]
         [TestCase("set_aim", "Aim", "aimType", "CinemachineRotationComposer", "CinemachineHardLookAt")]
         public void InvalidLaterPipelinePropertyPreservesExistingStage(string action, string stage, string typeKey, string oldTypeName, string newTypeName)
