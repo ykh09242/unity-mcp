@@ -188,6 +188,89 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(_path));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CreatePartialPatchesKeepValidNeighborsAndOverwriteIdentity(bool overwrite)
+        {
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+            _asset.floatValue = 99;
+            AssetDatabase.SaveAssets();
+            string name = overwrite ? "Existing" : "Created";
+            JObject response = JObject.FromObject(
+                ManageScriptableObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["typeName"] = typeof(ScriptableObjectContractDefinition).FullName,
+                        ["folderPath"] = _root,
+                        ["assetName"] = name,
+                        ["overwrite"] = overwrite,
+                        ["patches"] = new JArray(
+                            new JObject { ["path"] = "intValue", ["value"] = 42 },
+                            new JObject { ["path"] = "missing", ["value"] = 0 },
+                            new JObject
+                            {
+                                ["path"] = "items",
+                                ["op"] = "array_resize",
+                                ["value"] = "3",
+                            }
+                        ),
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            JToken results = response["data"]["patchResults"];
+            Assert.IsTrue(results[0].Value<bool>("ok"));
+            Assert.IsFalse(results[1].Value<bool>("ok"));
+            Assert.IsTrue(results[2].Value<bool>("ok"));
+            var created = AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(_root + "/" + name + ".asset");
+            Assert.IsNotNull(created);
+            Assert.AreEqual(42, created.intValue);
+            Assert.AreEqual(7f, created.floatValue);
+            Assert.AreEqual(3, created.items.Length);
+            Assert.AreEqual(response["data"].Value<string>("guid"), AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(created)));
+            if (overwrite)
+            {
+                Assert.AreSame(_asset, created);
+                Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(_path));
+            }
+            else
+            {
+                Assert.AreNotSame(_asset, created);
+                Assert.AreEqual(99, _asset.intValue);
+                Assert.AreEqual(99f, _asset.floatValue);
+            }
+            Undo.ClearUndo(created);
+        }
+
+        [TestCase("omitted")]
+        [TestCase("null")]
+        [TestCase("invalidproperty")]
+        public void CreateWithoutAppliedPatchesStillResetsDefaultsAndPreservesGuid(string shape)
+        {
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+            var request = new JObject
+            {
+                ["action"] = "create",
+                ["typeName"] = typeof(ScriptableObjectContractDefinition).FullName,
+                ["folderPath"] = _root,
+                ["assetName"] = "Existing",
+                ["overwrite"] = true,
+            };
+            if (shape == "null")
+                request["patches"] = JValue.CreateNull();
+            else if (shape == "invalidproperty")
+                request["patches"] = new JArray(new JObject { ["path"] = "missing", ["value"] = 0 });
+            JObject response = JObject.FromObject(ManageScriptableObject.HandleCommand(request));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreSame(_asset, AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(_path));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(_path));
+            Assert.AreEqual(7, _asset.intValue);
+            CollectionAssert.AreEqual(new[] { 7, 8 }, _asset.items);
+            if (shape == "invalidproperty")
+                Assert.IsFalse(response["data"]["patchResults"][0].Value<bool>("ok"));
+        }
+
         [TestCase("missing")]
         [TestCase("wrong")]
         [TestCase("abstract")]

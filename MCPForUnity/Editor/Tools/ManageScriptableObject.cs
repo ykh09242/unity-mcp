@@ -290,7 +290,7 @@ namespace MCPForUnity.Editor.Tools
             if (patchesToken is JArray patches && patches.Count > 0)
             {
                 AssetPathUtility.GetFullAssetPath(finalPath);
-                var patchApply = ApplyPatches(instance, patches);
+                var patchApply = ApplyPatchesCore(instance, patches, saveAssets: false);
                 patchResults = patchApply.results;
                 warnings.AddRange(patchApply.warnings);
             }
@@ -1122,7 +1122,10 @@ namespace MCPForUnity.Editor.Tools
             return results;
         }
 
-        private static (List<object> results, List<string> warnings) ApplyPatches(UnityEngine.Object target, JArray patches)
+        private static (List<object> results, List<string> warnings) ApplyPatches(UnityEngine.Object target, JArray patches) =>
+            ApplyPatchesCore(target, patches, saveAssets: true);
+
+        private static (List<object> results, List<string> warnings) ApplyPatchesCore(UnityEngine.Object target, JArray patches, bool saveAssets)
         {
             var warnings = new List<string>();
             var results = new List<object>(patches.Count);
@@ -1186,7 +1189,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(target));
                 EditorUtility.SetDirty(target);
-                AssetDatabase.SaveAssets();
+                if (saveAssets)
+                    AssetDatabase.SaveAssets();
             }
 
             return (results, warnings);
