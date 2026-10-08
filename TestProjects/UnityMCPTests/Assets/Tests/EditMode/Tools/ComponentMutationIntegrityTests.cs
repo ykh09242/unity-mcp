@@ -172,6 +172,128 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(ownedScene.isDirty);
         }
 
+        [Test]
+        [Combinatorial]
+        public void RemoveProtectsSelectedTransformBeforeMutation(
+            [Values(false, true)] bool rect,
+            [Values(false, true)] bool broadType,
+            [Values("omitted", "null", "zero", "string", "snake", "camel_null")] string indexKind
+        )
+        {
+            var protectedTarget = rect
+                ? new GameObject("ProtectedComponent_" + Guid.NewGuid().ToString("N"), typeof(RectTransform))
+                : new GameObject("ProtectedComponent_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var transform = protectedTarget.transform;
+                var ordinary = protectedTarget.AddComponent<BoxCollider>();
+                ordinary.isTrigger = true;
+                Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"));
+                int dirty = EditorUtility.GetDirtyCount(transform);
+                Component[] before = protectedTarget.GetComponents<Component>();
+                JObject request = Request("remove");
+                request["target"] = protectedTarget.GetInstanceIDCompat();
+                request["componentType"] = broadType ? typeof(Component).FullName : transform.GetType().FullName;
+                if (indexKind == "null" || indexKind == "camel_null")
+                    request["componentIndex"] = JValue.CreateNull();
+                if (indexKind == "zero")
+                    request["componentIndex"] = 0;
+                if (indexKind == "string")
+                    request["componentIndex"] = "0";
+                if (indexKind == "snake")
+                    request["component_index"] = 0;
+                if (indexKind == "camel_null")
+                    request["component_index"] = "bad";
+
+                JObject response = Call(request);
+
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("Cannot remove Transform", response.Value<string>("error"));
+                CollectionAssert.AreEqual(before, protectedTarget.GetComponents<Component>());
+                Assert.IsTrue(transform == protectedTarget.transform, "The protected native Transform must remain selected.");
+                Assert.IsTrue(ordinary.isTrigger);
+                Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(transform));
+                Unchanged();
+            }
+            finally
+            {
+                foreach (Component component in protectedTarget.GetComponents<Component>())
+                    Undo.ClearUndo(component);
+                Undo.ClearUndo(protectedTarget);
+                UnityEngine.Object.DestroyImmediate(protectedTarget);
+            }
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void BroadComponentIndexStillRemovesOnlyOrdinarySelection(bool rect, bool stringIndex)
+        {
+            var protectedTarget = rect
+                ? new GameObject("SelectedComponent_" + Guid.NewGuid().ToString("N"), typeof(RectTransform))
+                : new GameObject("SelectedComponent_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var transform = protectedTarget.transform;
+                protectedTarget.AddComponent<BoxCollider>();
+                Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"));
+                JObject request = Request("remove");
+                request["target"] = protectedTarget.GetInstanceIDCompat();
+                request["component_type"] = typeof(Component).FullName;
+                request.Remove("componentType");
+                request["component_index"] = stringIndex ? (JToken)new JValue("1") : new JValue(1);
+
+                Success(Call(request));
+
+                CollectionAssert.AreEqual(new Component[] { transform }, protectedTarget.GetComponents<Component>());
+                Assert.IsTrue(transform == protectedTarget.transform, "The protected native Transform must remain selected.");
+                Assert.IsTrue(ownedScene.isDirty);
+            }
+            finally
+            {
+                foreach (Component component in protectedTarget.GetComponents<Component>())
+                    Undo.ClearUndo(component);
+                Undo.ClearUndo(protectedTarget);
+                UnityEngine.Object.DestroyImmediate(protectedTarget);
+            }
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void DirectRemoveHelperProtectsSelectedTransform(bool rect, bool broadType)
+        {
+            var protectedTarget = rect
+                ? new GameObject("DirectProtected_" + Guid.NewGuid().ToString("N"), typeof(RectTransform))
+                : new GameObject("DirectProtected_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var transform = protectedTarget.transform;
+                Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"));
+                int dirty = EditorUtility.GetDirtyCount(transform);
+                Component[] before = protectedTarget.GetComponents<Component>();
+                Type type = broadType ? typeof(Component) : transform.GetType();
+
+                bool removed = MCPForUnity.Editor.Helpers.ComponentOps.RemoveComponent(protectedTarget, type, out string error);
+
+                Assert.IsFalse(removed);
+                StringAssert.Contains("Cannot remove Transform", error);
+                CollectionAssert.AreEqual(before, protectedTarget.GetComponents<Component>());
+                Assert.IsTrue(transform == protectedTarget.transform, "The protected native Transform must remain selected.");
+                Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(transform));
+                Unchanged();
+            }
+            finally
+            {
+                foreach (Component component in protectedTarget.GetComponents<Component>())
+                    Undo.ClearUndo(component);
+                Undo.ClearUndo(protectedTarget);
+                UnityEngine.Object.DestroyImmediate(protectedTarget);
+            }
+        }
+
         [TestCase("set_property", "string")]
         [TestCase("set_property", "boolean")]
         [TestCase("set_property", "array")]

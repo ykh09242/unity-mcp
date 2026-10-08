@@ -127,6 +127,12 @@ namespace MCPForUnity.Editor.Helpers
                 return false;
             }
 
+            if (component is Transform)
+            {
+                error = "Cannot remove Transform or RectTransform components.";
+                return false;
+            }
+
             try
             {
                 Undo.DestroyObjectImmediate(component);
