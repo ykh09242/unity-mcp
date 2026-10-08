@@ -120,6 +120,79 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(Directory.Exists(Path.Combine(Application.dataPath, Path.GetFileName(assetRoot), "Rejected")));
         }
 
+        [TestCase("[]")]
+        [TestCase("[1]")]
+        [TestCase("true")]
+        [TestCase("false")]
+        [TestCase("0")]
+        [TestCase("''")]
+        [TestCase("'{}'")]
+        public void CreateNonObjectSettingsLeavesNoAssetOrNestedFolder(string json)
+        {
+            string path = assetRoot + "/Rejected/Panel.asset";
+            var response = JObject.FromObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create_panel_settings",
+                        ["path"] = path,
+                        ["settings"] = JToken.Parse(json),
+                        ["scale_mode"] = "ScaleWithScreenSize",
+                    }
+                )
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("'settings' must be a JSON object", response.Value<string>("error"));
+            Assert.IsNull(AssetDatabase.LoadAssetAtPath<PanelSettings>(path));
+            Assert.IsFalse(File.Exists(AssetPathUtility.GetFullAssetPath(path)));
+            Assert.IsFalse(Directory.Exists(AssetPathUtility.GetFullAssetPath(assetRoot + "/Rejected")));
+            Assert.IsFalse(File.Exists(AssetPathUtility.GetFullAssetPath(assetRoot + "/Rejected") + ".meta"));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CreateNullOrOmittedSettingsKeepsLegacyConfiguration(bool explicitNull)
+        {
+            string path = assetRoot + "/Panel.asset";
+            var request = new JObject
+            {
+                ["action"] = "create_panel_settings",
+                ["path"] = path,
+                ["scaleMode"] = "ScaleWithScreenSize",
+                ["referenceResolution"] = new JObject { ["width"] = 64, ["height"] = 32 },
+            };
+            if (explicitNull)
+                request["settings"] = JValue.CreateNull();
+            var response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            PanelSettings panel = AssetDatabase.LoadAssetAtPath<PanelSettings>(path);
+            Assert.IsNotNull(panel);
+            Assert.AreEqual(PanelScaleMode.ScaleWithScreenSize, panel.scaleMode);
+            Assert.AreEqual(new Vector2Int(64, 32), panel.referenceResolution);
+            CollectionAssert.AreEqual(new[] { "scaleMode", "referenceResolution" }, response["data"]["applied"].ToObject<string[]>());
+        }
+
+        [TestCase("{}")]
+        [TestCase("{unknown_key:1}")]
+        public void CreateEmptyOrUnknownSettingsKeepsObjectPrecedenceOverLegacy(string json)
+        {
+            string path = assetRoot + "/Panel.asset";
+            var response = JObject.FromObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create_panel_settings",
+                        ["path"] = path,
+                        ["settings"] = JObject.Parse(json),
+                        ["reference_resolution"] = new JObject { ["height"] = "invalid legacy value" },
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<PanelSettings>(path));
+            Assert.IsEmpty(response["data"]["applied"].ToObject<string[]>());
+        }
+
         [Test]
         public void CreateMalformedLegacyResolutionLeavesNoAssetOrNestedFolder()
         {

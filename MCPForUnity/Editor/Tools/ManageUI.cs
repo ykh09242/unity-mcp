@@ -423,6 +423,8 @@ namespace MCPForUnity.Editor.Tools
             var changes = new List<string>();
             Action<PanelSettings> configure = null;
             JToken settingsToken = p.GetRaw("settings");
+            if (settingsToken != null && settingsToken.Type != JTokenType.Null && settingsToken is not JObject)
+                return new ErrorResponse("'settings' must be a JSON object.");
             if (settingsToken is JObject settingsObj)
             {
                 configure = PreparePanelSettingsProperties(settingsObj, changes);
@@ -450,9 +452,6 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse("Failed to create PanelSettings asset.");
             }
-
-            EditorUtility.SetDirty(ps);
-            AssetDatabase.SaveAssets();
 
             var response = new SuccessResponse($"Created PanelSettings at {path}", new { path, applied = changes });
             folders.Complete();
