@@ -417,7 +417,7 @@ def modify(
         params["componentProperties"] = component_properties
     if delete_child:
         params["deleteChild"] = list(delete_child)
-    if create_child:
+    if create_child is not None:
         try:
             parsed = json.loads(create_child)
         except json.JSONDecodeError as e:

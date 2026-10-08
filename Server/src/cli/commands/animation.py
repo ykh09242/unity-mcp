@@ -719,7 +719,7 @@ def controller_add_transition(
         "duration": duration,
         "layerIndex": layer_index,
     }
-    if conditions:
+    if conditions is not None:
         params["conditions"] = parse_json_list_or_exit(conditions, "conditions")
 
     result = run_command("manage_animation", _normalize_params(params), config)

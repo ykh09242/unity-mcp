@@ -292,7 +292,7 @@ def set_body(target, search_method, body_type, props):
     properties: dict[str, Any] = {}
     if body_type:
         properties["bodyType"] = body_type
-    if props:
+    if props is not None:
         properties.update(parse_json_dict_or_exit(props))
 
     params = _normalize_cam_params(
@@ -324,7 +324,7 @@ def set_aim(target, search_method, aim_type, props):
     properties: dict[str, Any] = {}
     if aim_type:
         properties["aimType"] = aim_type
-    if props:
+    if props is not None:
         properties.update(parse_json_dict_or_exit(props))
 
     params = _normalize_cam_params(
@@ -392,7 +392,7 @@ def add_extension(target, extension_type, search_method, props):
     """
     config = get_config()
     properties: dict[str, Any] = {"extensionType": extension_type}
-    if props:
+    if props is not None:
         properties.update(parse_json_dict_or_exit(props))
 
     params = _normalize_cam_params(

@@ -51,7 +51,7 @@ def add(target: str, component_type: str, search_method: Optional[str], properti
 
     if search_method:
         params["searchMethod"] = search_method
-    if properties:
+    if properties is not None:
         params["properties"] = parse_json_dict_or_exit(properties, "properties")
 
     result = run_command("manage_components", params, config)

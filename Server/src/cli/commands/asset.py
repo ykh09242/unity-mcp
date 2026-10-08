@@ -104,7 +104,7 @@ def create(path: str, asset_type: str, properties: Optional[str]):
         "assetType": asset_type,
     }
 
-    if properties:
+    if properties is not None:
         params["properties"] = parse_json_dict_or_exit(properties, "properties")
 
     result = run_command("manage_asset", params, config)

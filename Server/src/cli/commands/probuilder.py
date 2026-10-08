@@ -331,7 +331,7 @@ def subdivide(target: str, faces: Optional[str], search_method: Optional[str]):
         "action": "subdivide",
         "target": target,
     }
-    if faces:
+    if faces is not None:
         request["faceIndices"] = parse_json_list_or_exit(faces, "faces")
     if search_method:
         request["searchMethod"] = search_method
@@ -383,7 +383,7 @@ def select_faces(
         request["direction"] = direction
     if tolerance != 0.7:
         request["tolerance"] = tolerance
-    if grow_from:
+    if grow_from is not None:
         request["growFrom"] = parse_json_list_or_exit(grow_from, "grow-from")
     if grow_angle != -1:
         request["growAngle"] = grow_angle

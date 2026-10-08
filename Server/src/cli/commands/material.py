@@ -63,7 +63,7 @@ def create(path: str, shader: str, properties: Optional[str]):
         "shader": shader,
     }
 
-    if properties:
+    if properties is not None:
         params["properties"] = parse_json_dict_or_exit(properties, "properties")
 
     result = run_command("manage_material", params, config)

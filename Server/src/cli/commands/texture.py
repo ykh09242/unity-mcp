@@ -399,7 +399,7 @@ def create(
         "height": height,
     }
 
-    if color:
+    if color is not None:
         try:
             params["fillColor"] = _normalize_color(color, "color")
         except ValueError as e:
@@ -412,14 +412,14 @@ def create(
     if pattern:
         params["pattern"] = pattern
 
-    if palette:
+    if palette is not None:
         try:
             params["palette"] = _normalize_palette(palette, "palette")
         except ValueError as e:
             print_error(str(e))
             sys.exit(1)
 
-    if import_settings:
+    if import_settings is not None:
         try:
             params["importSettings"] = _normalize_import_settings(import_settings)
         except ValueError as e:
@@ -483,7 +483,7 @@ def sprite(
                 click.echo(f"⚠️ Warning: {warning}")
 
     sprite_settings: dict[str, Any] = {"pixelsPerUnit": ppu}
-    if pivot:
+    if pivot is not None:
         sprite_settings["pivot"] = try_parse_json(pivot, "pivot")
     else:
         sprite_settings["pivot"] = [0.5, 0.5]
@@ -496,7 +496,7 @@ def sprite(
         "spriteSettings": sprite_settings,
     }
 
-    if color:
+    if color is not None:
         try:
             params["fillColor"] = _normalize_color(color, "color")
         except ValueError as e:
