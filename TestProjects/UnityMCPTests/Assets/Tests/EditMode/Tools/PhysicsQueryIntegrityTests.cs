@@ -211,6 +211,68 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(Call(parameters).Value<bool>("success"));
         }
 
+        [TestCase("99")]
+        [TestCase("-1")]
+        [TestCase("2147483647")]
+        [TestCase("'99'")]
+        [TestCase("'-1'")]
+        public void Undefined3DTriggerValuesAreRejected(string trigger)
+        {
+            foreach (var parameters in Queries3D())
+            {
+                parameters["query_trigger_interaction"] = JToken.Parse(trigger);
+                JObject response = Call(parameters);
+                Assert.IsFalse(response.Value<bool>("success"), parameters.ToString());
+                Assert.That(response.Value<string>("error"), Does.Contain("query_trigger_interaction"));
+            }
+        }
+
+        [TestCase("0")]
+        [TestCase("1")]
+        [TestCase("2")]
+        [TestCase("'0'")]
+        [TestCase("'1'")]
+        [TestCase("'2'")]
+        [TestCase("'UseGlobal'")]
+        [TestCase("'ignore'")]
+        [TestCase("'COLLIDE'")]
+        [TestCase("''")]
+        [TestCase("null")]
+        [TestCase(null)]
+        public void DefinedAndDefault3DTriggerFormsRemainCompatible(string trigger)
+        {
+            foreach (var parameters in Queries3D())
+            {
+                if (trigger != null)
+                    parameters["query_trigger_interaction"] = JToken.Parse(trigger);
+                JObject response = Call(parameters);
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                if (parameters.Value<string>("action") == "raycast_all")
+                    Assert.AreEqual(0, response["data"].Value<int>("hit_count"));
+                else
+                    Assert.IsFalse(response["data"].Value<bool>("hit"));
+            }
+        }
+
+        private IEnumerable<JObject> Queries3D()
+        {
+            foreach (string action in new[] { "raycast", "raycast_all", "linecast", "shapecast" })
+            {
+                foreach (string shape in action == "shapecast" ? new[] { "sphere", "box", "capsule" } : new[] { "sphere" })
+                {
+                    JObject parameters = Query(action, shape);
+                    parameters["dimension"] = "3d";
+                    parameters["layer_mask"] = 0;
+                    parameters["origin"] = new JArray(origin.x, origin.y, 0);
+                    parameters["direction"] = new JArray(1, 0, 0);
+                    parameters["start"] = new JArray(origin.x, origin.y, 0);
+                    parameters["end"] = new JArray(origin.x + 10, origin.y, 0);
+                    parameters["size"] = shape == "box" ? (JToken)new JArray(0.2f, 0.2f, 0.2f) : (JToken)0.1f;
+                    yield return parameters;
+                }
+            }
+        }
+
         private JObject Query(string action, string shape = null)
         {
             JToken size =

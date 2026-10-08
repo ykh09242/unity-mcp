@@ -49,7 +49,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             string qti = p.Get("query_trigger_interaction");
             if (!string.IsNullOrEmpty(qti))
             {
-                if (!System.Enum.TryParse(qti, true, out triggerInteraction))
+                if (!System.Enum.TryParse(qti, true, out triggerInteraction) || !System.Enum.IsDefined(typeof(QueryTriggerInteraction), triggerInteraction))
                     return new ErrorResponse($"Invalid query_trigger_interaction: '{qti}'. Valid: UseGlobal, Ignore, Collide.");
             }
 
@@ -373,7 +373,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             string qti = p.Get("query_trigger_interaction");
             if (!string.IsNullOrEmpty(qti))
             {
-                if (!System.Enum.TryParse(qti, true, out triggerInteraction))
+                if (!System.Enum.TryParse(qti, true, out triggerInteraction) || !System.Enum.IsDefined(typeof(QueryTriggerInteraction), triggerInteraction))
                     return new ErrorResponse($"Invalid query_trigger_interaction: '{qti}'. Valid: UseGlobal, Ignore, Collide.");
             }
 
@@ -620,7 +620,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             string qti = p.Get("query_trigger_interaction");
             if (!string.IsNullOrEmpty(qti))
             {
-                if (!System.Enum.TryParse(qti, true, out triggerInteraction))
+                if (!System.Enum.TryParse(qti, true, out triggerInteraction) || !System.Enum.IsDefined(typeof(QueryTriggerInteraction), triggerInteraction))
                     return new ErrorResponse($"Invalid query_trigger_interaction: '{qti}'. Valid: UseGlobal, Ignore, Collide.");
             }
 
@@ -743,7 +743,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             string qti = p.Get("query_trigger_interaction");
             if (!string.IsNullOrEmpty(qti))
             {
-                if (!System.Enum.TryParse(qti, true, out triggerInteraction))
+                if (!System.Enum.TryParse(qti, true, out triggerInteraction) || !System.Enum.IsDefined(typeof(QueryTriggerInteraction), triggerInteraction))
                     return new ErrorResponse($"Invalid query_trigger_interaction: '{qti}'. Valid: UseGlobal, Ignore, Collide.");
             }
 
