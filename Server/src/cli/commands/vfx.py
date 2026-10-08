@@ -1,7 +1,6 @@
 """VFX CLI commands for managing Unity visual effects."""
 
 import sys
-import json
 import click
 from typing import Optional, Tuple, Any
 
@@ -23,19 +22,19 @@ def _normalize_vfx_params(params: dict[str, Any]) -> dict[str, Any]:
             continue
         properties[key] = params.pop(key)
 
-    if properties:
-        existing = params.get("properties")
-        if isinstance(existing, str):
-            try:
-                parsed = json.loads(existing)
-            except json.JSONDecodeError:
-                parsed = None
-            if isinstance(parsed, dict):
-                existing = parsed
-        if isinstance(existing, dict):
-            params["properties"] = {**properties, **existing}
-        elif existing is None:
-            params["properties"] = properties
+    existing = params.get("properties")
+    if isinstance(existing, str):
+        existing = parse_json_dict_or_exit(existing, "properties")
+    if existing is not None and not isinstance(existing, dict):
+        print_error(
+            f"Invalid JSON for properties: expected an object, got {type(existing).__name__}"
+        )
+        sys.exit(1)
+
+    if isinstance(existing, dict):
+        params["properties"] = {**properties, **existing}
+    elif properties:
+        params["properties"] = properties
 
     return {k: v for k, v in params.items() if v is not None}
 
