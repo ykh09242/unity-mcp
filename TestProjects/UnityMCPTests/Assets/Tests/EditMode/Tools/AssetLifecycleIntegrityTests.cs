@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
@@ -11,6 +12,11 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using Object = UnityEngine.Object;
+#if UNITY_6000_0_OR_NEWER
+using PhysicsMaterialType = UnityEngine.PhysicsMaterial;
+#else
+using PhysicsMaterialType = UnityEngine.PhysicMaterial;
+#endif
 
 namespace MCPForUnityTests.EditMode.Tools
 {
@@ -175,6 +181,137 @@ namespace MCPForUnityTests.EditMode.Tools
             var asset = AssetDatabase.LoadMainAssetAtPath(path);
             Assert.AreEqual(0f, (float)asset.GetType().GetProperty("dynamicFriction").GetValue(asset));
             Assert.AreEqual(.25f, (float)asset.GetType().GetProperty("staticFriction").GetValue(asset));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("dynamicFriction")]
+        [TestCase("staticFriction")]
+        [TestCase("bounciness")]
+        public void MalformedPhysicsCoefficientDoesNotPrepareDirectoryOrAsset(string field)
+        {
+            foreach (string json in new[] { "[]", "{}", "false", "\"0.2\"", "1e100", "-1e100" })
+                AssertPhysicsCreateRejected(new JObject { ["dynamicFriction"] = .2f, [field] = JToken.Parse(json) });
+            foreach (double number in new[] { double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+                AssertPhysicsCreateRejected(new JObject { ["dynamicFriction"] = .2f, [field] = number });
+        }
+
+        [TestCase("frictionCombine")]
+        [TestCase("bounceCombine")]
+        public void MalformedPhysicsCombineDoesNotPrepareDirectoryOrAsset(string field)
+        {
+            foreach (string json in new[] { "[]", "{}", "false", "123", "\"NotACombineMode\"", "\"\"" })
+                AssertPhysicsCreateRejected(new JObject { ["dynamicFriction"] = .2f, [field] = JToken.Parse(json) });
+        }
+
+        [TestCase("staticFriction", "1e100")]
+        [TestCase("bounciness", "1e100")]
+        [TestCase("frictionCombine", "{}")]
+        [TestCase("bounceCombine", "\"NotACombineMode\"")]
+        public void PhysicsPropertiesValidateBeforeAnySetter(string field, string json)
+        {
+            var material = new PhysicsMaterialType();
+            try
+            {
+                float dynamicFriction = material.dynamicFriction;
+                float staticFriction = material.staticFriction;
+                float bounciness = material.bounciness;
+                var frictionCombine = material.frictionCombine;
+                var bounceCombine = material.bounceCombine;
+                var apply = typeof(ManageAsset).GetMethod("ApplyPhysicsMaterialProperties", BindingFlags.NonPublic | BindingFlags.Static);
+                var properties = new JObject { ["dynamicFriction"] = .2f, [field] = JToken.Parse(json) };
+
+                var error = Assert.Throws<TargetInvocationException>(() => apply.Invoke(null, new object[] { material, properties }));
+
+                Assert.IsInstanceOf<ArgumentException>(error.InnerException);
+                Assert.AreEqual(dynamicFriction, material.dynamicFriction);
+                Assert.AreEqual(staticFriction, material.staticFriction);
+                Assert.AreEqual(bounciness, material.bounciness);
+                Assert.AreEqual(frictionCombine, material.frictionCombine);
+                Assert.AreEqual(bounceCombine, material.bounceCombine);
+                LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                Object.DestroyImmediate(material);
+            }
+        }
+
+        [TestCase("ave", "Average")]
+        [TestCase("Ave", "Average")]
+        [TestCase("average", "Average")]
+        [TestCase("Average", "Average")]
+        [TestCase("mul", "Multiply")]
+        [TestCase("Mul", "Multiply")]
+        [TestCase("mult", "Multiply")]
+        [TestCase("Mult", "Multiply")]
+        [TestCase("multiply", "Multiply")]
+        [TestCase("Multiply", "Multiply")]
+        [TestCase("min", "Minimum")]
+        [TestCase("Min", "Minimum")]
+        [TestCase("minimum", "Minimum")]
+        [TestCase("Minimum", "Minimum")]
+        [TestCase("max", "Maximum")]
+        [TestCase("Max", "Maximum")]
+        [TestCase("maximum", "Maximum")]
+        [TestCase("Maximum", "Maximum")]
+        public void PhysicsCombineAliasesRemainSupported(string alias, string expected)
+        {
+            string path = _root + "/One.physicMaterial";
+            AssertPersistentResponse(Send("create", path, "PhysicsMaterial", new JObject { ["frictionCombine"] = alias, ["bounceCombine"] = alias }), path);
+            var asset = (PhysicsMaterialType)AssetDatabase.LoadMainAssetAtPath(path);
+            Assert.AreEqual(expected, asset.frictionCombine.ToString());
+            Assert.AreEqual(expected, asset.bounceCombine.ToString());
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
+        public void PhysicsNullPropertiesAndUnrelatedKeysPreserveDefaults()
+        {
+            var defaults = new PhysicsMaterialType();
+            try
+            {
+                var properties = new JObject
+                {
+                    ["dynamicFriction"] = JValue.CreateNull(),
+                    ["staticFriction"] = JValue.CreateNull(),
+                    ["bounciness"] = JValue.CreateNull(),
+                    ["frictionCombine"] = JValue.CreateNull(),
+                    ["bounceCombine"] = JValue.CreateNull(),
+                    ["unrelated"] = new JObject(),
+                };
+                string path = _root + "/One.physicMaterial";
+                AssertPersistentResponse(Send("create", path, "PhysicsMaterial", properties), path);
+                var asset = (PhysicsMaterialType)AssetDatabase.LoadMainAssetAtPath(path);
+                Assert.AreEqual(defaults.dynamicFriction, asset.dynamicFriction);
+                Assert.AreEqual(defaults.staticFriction, asset.staticFriction);
+                Assert.AreEqual(defaults.bounciness, asset.bounciness);
+                Assert.AreEqual(defaults.frictionCombine, asset.frictionCombine);
+                Assert.AreEqual(defaults.bounceCombine, asset.bounceCombine);
+                LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                Object.DestroyImmediate(defaults);
+            }
+        }
+
+        private void AssertPhysicsCreateRejected(JObject properties)
+        {
+            string parent = _root + "/Unprepared";
+            string path = parent + "/One.physicMaterial";
+            var entries = Directory.GetFileSystemEntries(Path.Combine(Application.dataPath, _root.Substring("Assets/".Length))).Length;
+
+            var response = Send("create", path, "PhysicsMaterial", properties);
+
+            Assert.IsFalse((bool)response["success"], response.ToString());
+            Assert.IsFalse(Directory.Exists(Absolute(parent)));
+            Assert.IsFalse(File.Exists(Absolute(parent) + ".meta"));
+            Assert.IsFalse(File.Exists(Absolute(path)));
+            Assert.IsFalse(File.Exists(Absolute(path) + ".meta"));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(parent, AssetPathToGUIDOptions.OnlyExistingAssets));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets));
+            Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(path));
+            Assert.AreEqual(entries, Directory.GetFileSystemEntries(Path.Combine(Application.dataPath, _root.Substring("Assets/".Length))).Length);
             LogAssert.NoUnexpectedReceived();
         }
 

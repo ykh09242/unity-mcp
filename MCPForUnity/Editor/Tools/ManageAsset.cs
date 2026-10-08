@@ -319,6 +319,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (lowerAssetType == "material")
                     MaterialOps.ValidateReferences(properties, UnityJsonSerializer.Instance);
+                else
+                    ValidatePhysicsMaterialProperties(properties);
                 using var folders = new AssetFolderScope();
                 folders.EnsureParentDirectory(fullPath);
 
@@ -962,6 +964,7 @@ namespace MCPForUnity.Editor.Tools
         {
             if (pmat == null || properties == null)
                 return false;
+            ValidatePhysicsMaterialProperties(properties);
             bool modified = false;
 
             // Example: Set dynamic friction
@@ -988,42 +991,51 @@ namespace MCPForUnity.Editor.Tools
                 modified = true;
             }
 
-            List<String> averageList = new List<String> { "ave", "Ave", "average", "Average" };
-            List<String> multiplyList = new List<String> { "mul", "Mul", "mult", "Mult", "multiply", "Multiply" };
-            List<String> minimumList = new List<String> { "min", "Min", "minimum", "Minimum" };
-            List<String> maximumList = new List<String> { "max", "Max", "maximum", "Maximum" };
-
-            // Example: Set friction combine
-            if (properties["frictionCombine"]?.Type == JTokenType.String)
+            var frictionCombine = ReadPhysicsMaterialCombine(properties, "frictionCombine");
+            if (frictionCombine.HasValue)
             {
-                string frictionCombine = properties["frictionCombine"].ToString();
-                if (averageList.Contains(frictionCombine))
-                    pmat.frictionCombine = PhysicsMaterialCombine.Average;
-                else if (multiplyList.Contains(frictionCombine))
-                    pmat.frictionCombine = PhysicsMaterialCombine.Multiply;
-                else if (minimumList.Contains(frictionCombine))
-                    pmat.frictionCombine = PhysicsMaterialCombine.Minimum;
-                else if (maximumList.Contains(frictionCombine))
-                    pmat.frictionCombine = PhysicsMaterialCombine.Maximum;
+                pmat.frictionCombine = frictionCombine.Value;
                 modified = true;
             }
 
-            // Example: Set bounce combine
-            if (properties["bounceCombine"]?.Type == JTokenType.String)
+            var bounceCombine = ReadPhysicsMaterialCombine(properties, "bounceCombine");
+            if (bounceCombine.HasValue)
             {
-                string bounceCombine = properties["bounceCombine"].ToString();
-                if (averageList.Contains(bounceCombine))
-                    pmat.bounceCombine = PhysicsMaterialCombine.Average;
-                else if (multiplyList.Contains(bounceCombine))
-                    pmat.bounceCombine = PhysicsMaterialCombine.Multiply;
-                else if (minimumList.Contains(bounceCombine))
-                    pmat.bounceCombine = PhysicsMaterialCombine.Minimum;
-                else if (maximumList.Contains(bounceCombine))
-                    pmat.bounceCombine = PhysicsMaterialCombine.Maximum;
+                pmat.bounceCombine = bounceCombine.Value;
                 modified = true;
             }
 
             return modified;
+        }
+
+        private static void ValidatePhysicsMaterialProperties(JObject properties)
+        {
+            if (properties == null)
+                return;
+            foreach (string field in new[] { "dynamicFriction", "staticFriction", "bounciness" })
+            {
+                if (!ParamCoercion.ValidateNumericField(properties, field, out string error))
+                    throw new ArgumentException($"Physics material property '{field}' {error}.", field);
+            }
+            _ = ReadPhysicsMaterialCombine(properties, "frictionCombine");
+            _ = ReadPhysicsMaterialCombine(properties, "bounceCombine");
+        }
+
+        private static PhysicsMaterialCombine? ReadPhysicsMaterialCombine(JObject properties, string field)
+        {
+            var value = properties[field];
+            if (value == null || value.Type == JTokenType.Null)
+                return null;
+            if (value.Type != JTokenType.String)
+                throw new ArgumentException($"Physics material property '{field}' must be a combine mode string.", field);
+            return value.Value<string>() switch
+            {
+                "ave" or "Ave" or "average" or "Average" => PhysicsMaterialCombine.Average,
+                "mul" or "Mul" or "mult" or "Mult" or "multiply" or "Multiply" => PhysicsMaterialCombine.Multiply,
+                "min" or "Min" or "minimum" or "Minimum" => PhysicsMaterialCombine.Minimum,
+                "max" or "Max" or "maximum" or "Maximum" => PhysicsMaterialCombine.Maximum,
+                _ => throw new ArgumentException($"Unknown physics material combine mode for '{field}': '{value.Value<string>()}'.", field),
+            };
         }
 
         /// <summary>
