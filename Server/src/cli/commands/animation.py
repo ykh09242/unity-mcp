@@ -1,6 +1,6 @@
 """Animation CLI commands - control Animator and manage AnimationClips."""
 
-import json
+import sys
 import click
 from typing import Optional, Any
 
@@ -22,18 +22,19 @@ def _normalize_params(params: dict[str, Any]) -> dict[str, Any]:
             continue
         properties[key] = params.pop(key)
 
+    existing = params.get("properties")
+    if isinstance(existing, str):
+        existing = parse_json_dict_or_exit(existing, "properties")
+    if existing is not None and not isinstance(existing, dict):
+        print_error(
+            f"Invalid JSON for properties: expected an object, got {type(existing).__name__}"
+        )
+        sys.exit(1)
+
     if properties:
-        existing = params.get("properties")
-        if isinstance(existing, str):
-            try:
-                parsed = json.loads(existing)
-            except ValueError:
-                parsed = None
-            if isinstance(parsed, dict):
-                existing = parsed
         if isinstance(existing, dict):
             params["properties"] = {**properties, **existing}
-        elif existing is None:
+        else:
             params["properties"] = properties
 
     return {k: v for k, v in params.items() if v is not None}

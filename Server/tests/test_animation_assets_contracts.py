@@ -101,9 +101,10 @@ def test_animation_assets_cli_values_merging_and_results(tmp_path):
             print("MERGE_WIRE",json.dumps({"existing":existing,"wire":requests[-1]["params"]},sort_keys=True))
         raw = {"success":False,"error":"'properties' must be a JSON object or a JSON string containing an object."}
         for existing in ("bad", "[]", "null", "true", "", "   ", [], [1], True, 12):
+            before = len(requests)
             result = runner.invoke(cli,["--format","json","animation","raw","controller_add_state","--params",json.dumps({"controllerPath":controller,"stateName":"Flat","properties":existing})])
-            check(result.exit_code == 1 and json.loads(result.stdout) == raw,"malformed native diagnostic "+repr(existing))
-            check(requests[-1]["params"] == {"action":"controller_add_state","controllerPath":controller,"properties":existing},"invalid container must remain invalid "+repr(existing))
+            check(result.exit_code == 1 and "properties" in result.output,"malformed properties local diagnostic "+repr(existing))
+            check(len(requests) == before,"invalid container rejected before dispatch "+repr(existing))
         raw = {"success":True,"message":"Done"}
         standalone = json.dumps(nested)
         runner.invoke(cli,["--format","json","animation","raw","controller_add_state","--params",json.dumps({"controllerPath":controller,"properties":standalone})])
