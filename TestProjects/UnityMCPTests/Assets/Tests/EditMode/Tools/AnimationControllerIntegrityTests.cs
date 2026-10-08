@@ -119,6 +119,61 @@ namespace MCPForUnityTests.EditMode.Tools
             );
         }
 
+        [TestCase("From", "object")]
+        [TestCase("From", "string")]
+        [TestCase("From", "integer")]
+        [TestCase("From", "boolean")]
+        [TestCase("AnyState", "object")]
+        [TestCase("AnyState", "string")]
+        [TestCase("AnyState", "integer")]
+        [TestCase("AnyState", "boolean")]
+        public void InvalidConditionsContainerDoesNotCreateTransitionSubasset(string from, string shape)
+        {
+            JToken conditions = shape switch
+            {
+                "object" => new JObject(),
+                "string" => new JValue("invalid"),
+                "integer" => new JValue(1),
+                "boolean" => new JValue(true),
+                _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+            };
+            RejectWithoutMutation(
+                "add_transition",
+                new JObject
+                {
+                    ["from_state"] = from,
+                    ["to_state"] = "To",
+                    ["conditions"] = conditions,
+                },
+                false
+            );
+        }
+
+        [TestCase("From", "omitted")]
+        [TestCase("From", "null")]
+        [TestCase("From", "empty")]
+        [TestCase("AnyState", "omitted")]
+        [TestCase("AnyState", "null")]
+        [TestCase("AnyState", "empty")]
+        public void OptionalConditionsContainersKeepUnconditionalTransitionDefaults(string from, string shape)
+        {
+            var properties = new JObject { ["from_state"] = from, ["to_state"] = "To" };
+            if (shape == "null")
+                properties["conditions"] = JValue.CreateNull();
+            else if (shape == "empty")
+                properties["conditions"] = new JArray();
+            JObject response = Send("add_transition", properties);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(0, response["data"].Value<int>("conditionCount"));
+            var machine = _controller.layers[0].stateMachine;
+            var transition =
+                from == "AnyState" ? machine.anyStateTransitions.Single() : machine.states.Single(s => s.state.name == from).state.transitions.Single();
+            Assert.IsEmpty(transition.conditions);
+            Assert.IsTrue(transition.hasExitTime);
+            Assert.AreEqual(0.25f, transition.duration);
+            Assert.AreEqual(0.75f, transition.exitTime);
+        }
+
         [TestCase("From")]
         [TestCase("AnyState")]
         public void InvalidLaterConditionDoesNotCreatePartialTransition(string from)

@@ -186,6 +186,8 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             // Prepare all conditions before creating a transition subasset.
             JToken conditionsToken = @params["conditions"];
+            if (conditionsToken != null && conditionsToken.Type != JTokenType.Null && conditionsToken is not JArray)
+                return new { success = false, message = "'conditions' must be an array." };
             var conditions = new List<AnimatorCondition>();
             if (conditionsToken is JArray conditionsArray)
             {
