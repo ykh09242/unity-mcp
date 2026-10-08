@@ -34,6 +34,7 @@ from models.response_limits import (
     response_owner,
 )
 from transport.plugin_registry import PluginRegistry
+from transport.tool_list_notifier import ToolListNotifier
 from transport.charge_ledger import ChargeLedger
 from transport.json_decoder import decode_json
 from transport.editor_state_store import EditorStateStore
@@ -203,6 +204,7 @@ class PluginHub(WebSocketEndpoint):
     REGISTRATION_TIMEOUT = 10.0
     _admitted: ClassVar[dict[int, tuple[WebSocket, str | None]]] = {}
     _shutdown_requested: ClassVar[bool] = False
+    _catalog_notifications: ClassVar[ToolListNotifier] = ToolListNotifier()
     # Independent of routing/pending maps: disconnect must not release a result
     # still owned by the command coroutine during cancellation-sensitive cleanup.
     _retained_results: ClassVar[ChargeLedger] = ChargeLedger()
@@ -441,6 +443,7 @@ class PluginHub(WebSocketEndpoint):
         loop: asyncio.AbstractEventLoop | None = None,
         mcp: FastMCP | None = None,
     ) -> None:
+        cls._catalog_notifications.reset()
         previous_registry = cls._registry
         cls._registry = registry
         if previous_registry is not None and previous_registry is not registry:
@@ -495,6 +498,7 @@ class PluginHub(WebSocketEndpoint):
     @classmethod
     async def shutdown(cls) -> None:
         """Release the plugin resources owned by the current server lifespan."""
+        await cls._catalog_notifications.close()
         lock = cls._lock
         if lock is None:
             return
@@ -1500,7 +1504,7 @@ class PluginHub(WebSocketEndpoint):
 
     @classmethod
     async def _notify_mcp_tool_list_changed(cls) -> None:
-        """Send ``tools/list_changed`` to every connected MCP client session.
+        """Queue ``tools/list_changed`` for each connected MCP client.
 
         After server-level tool visibility is updated (e.g. when Unity reports
         its registered tools), existing MCP clients (especially stdio-based
@@ -1509,21 +1513,7 @@ class PluginHub(WebSocketEndpoint):
         transforms but do **not** push notifications to already-connected
         sessions — we do that here.
         """
-        sessions = list(_active_mcp_sessions)
-        if not sessions:
-            return
-        for session in sessions:
-            try:
-                await session.send_tool_list_changed()
-            except Exception:
-                logger.debug(
-                    "Failed to notify MCP session of tool list change",
-                    exc_info=True,
-                )
-        logger.info(
-            "Sent tools/list_changed notification to %d MCP session(s)",
-            len(sessions),
-        )
+        cls._catalog_notifications.publish(_active_mcp_sessions)
 
     async def _handle_editor_state(self, websocket: WebSocket, data: dict[str, Any]) -> None:
         cls = type(self)
