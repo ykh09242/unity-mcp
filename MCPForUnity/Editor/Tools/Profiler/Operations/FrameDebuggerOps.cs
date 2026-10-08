@@ -141,6 +141,15 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
             var events = new List<object>();
             int end = (int)Math.Min((long)cursor + pageSize, totalEvents);
+            int eventDataParameterCount = -1;
+            if (cursor < end && GetEventDataMethod != null)
+            {
+                try
+                {
+                    eventDataParameterCount = GetEventDataMethod.GetParameters().Length;
+                }
+                catch { /* skip unavailable event data for this page */ }
+            }
 
             for (int i = cursor; i < end; i++)
             {
@@ -166,14 +175,13 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 }
 
                 // Get detailed event data
-                if (GetEventDataMethod != null)
+                if (eventDataParameterCount >= 0)
                 {
                     try
                     {
-                        var paramInfos = GetEventDataMethod.GetParameters();
                         object eventData;
 
-                        if (paramInfos.Length == 2 && EventDataType != null)
+                        if (eventDataParameterCount == 2 && EventDataType != null)
                         {
                             // Unity 6: bool GetFrameEventData(int, FrameDebuggerEventData)
                             eventData = Activator.CreateInstance(EventDataType);
