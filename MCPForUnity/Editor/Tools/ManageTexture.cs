@@ -341,6 +341,7 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse("patternSize must be greater than 0.");
                 }
                 var applyContents = !hasImage ? PrepareTextureContents(@params, width, height, patternSize) : null;
+                using var folders = new AssetFolderScope();
 
                 if (hasImage)
                 {
@@ -350,6 +351,7 @@ namespace MCPForUnity.Editor.Tools
 
                     byte[] imageBytes = ReadBoundedImage(resolvedImagePath);
                     ReadImageDimensions(imageBytes, out int imageWidth, out int imageHeight);
+                    folders.EnsureParentDirectory(fullPath);
                     texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
                     if (!texture.LoadImage(imageBytes))
                     {
@@ -368,6 +370,7 @@ namespace MCPForUnity.Editor.Tools
                 }
                 else
                 {
+                    folders.EnsureParentDirectory(fullPath);
                     texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
                     applyContents(texture);
                 }
@@ -380,8 +383,6 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                using var folders = new AssetFolderScope();
-                folders.EnsureParentDirectory(fullPath);
                 File.WriteAllBytes(GetAbsolutePath(fullPath), imageData);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
@@ -631,6 +632,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 var spriteSettingsToken = @params["spriteSettings"];
                 var applySettings = spriteSettingsToken != null ? PrepareSpriteSettings(spriteSettingsToken) : null;
+                using var folders = new AssetFolderScope();
+                folders.EnsureParentDirectory(fullPath);
                 texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
 
                 if (gradientType == "radial")
@@ -649,8 +652,6 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                using var folders = new AssetFolderScope();
-                folders.EnsureParentDirectory(fullPath);
                 File.WriteAllBytes(GetAbsolutePath(fullPath), imageData);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
@@ -720,6 +721,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 var spriteSettingsToken = @params["spriteSettings"];
                 var applySettings = spriteSettingsToken != null ? PrepareSpriteSettings(spriteSettingsToken) : null;
+                using var folders = new AssetFolderScope();
+                folders.EnsureParentDirectory(fullPath);
                 texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
                 ApplyPerlinNoise(texture, palette, scale, octaves);
 
@@ -730,8 +733,6 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                using var folders = new AssetFolderScope();
-                folders.EnsureParentDirectory(fullPath);
                 File.WriteAllBytes(GetAbsolutePath(fullPath), imageData);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);

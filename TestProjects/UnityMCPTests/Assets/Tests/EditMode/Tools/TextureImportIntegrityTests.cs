@@ -339,6 +339,70 @@ namespace MCPForUnityTests.EditMode.Tools
             LogAssert.NoUnexpectedReceived();
         }
 
+        [TestCase("create")]
+        [TestCase("create_sprite")]
+        [TestCase("apply_pattern")]
+        [TestCase("apply_gradient")]
+        [TestCase("apply_noise")]
+        public void OccupiedOutputParentRejectsWithoutChangingExistingFiles(string action)
+        {
+            string parent = _root + "/Occupied.txt";
+            File.WriteAllText(Absolute(parent), "Preserve existing parent file.");
+            byte[] image = File.ReadAllBytes(Absolute(_path));
+            var response = Send(
+                action,
+                new JObject
+                {
+                    ["width"] = 2,
+                    ["height"] = 2,
+                    ["pattern"] = "CHECKERBOARD",
+                },
+                parent + "/New.png"
+            );
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("occupied by a file", response.Value<string>("error"));
+            Assert.AreEqual("Preserve existing parent file.", File.ReadAllText(Absolute(parent)));
+            CollectionAssert.AreEqual(image, File.ReadAllBytes(Absolute(_path)));
+            Assert.IsFalse(File.Exists(Absolute(parent + "/New.png")));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("create")]
+        [TestCase("create_sprite")]
+        [TestCase("apply_pattern")]
+        [TestCase("apply_gradient")]
+        [TestCase("apply_noise")]
+        public void InvalidGenerationPaletteRejectsBeforePreparingOutputFolders(string action)
+        {
+            string parent = _root + "/InvalidPalette";
+            var response = Send(action, JObject.Parse("{width:2,height:2,pattern:'checkerboard',palette:[[1,2,3],['bad',2,3]]}"), parent + "/New.png");
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("Invalid parameter", response.Value<string>("error"));
+            Assert.IsFalse(Directory.Exists(Absolute(parent)));
+            Assert.IsFalse(File.Exists(Absolute(parent + ".meta")));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(parent, AssetPathToGUIDOptions.OnlyExistingAssets));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("create")]
+        [TestCase("create_sprite")]
+        public void MalformedImageHeaderRejectsBeforePreparingOutputFolders(string action)
+        {
+            string source = _root + "/Malformed.png";
+            string parent = _root + "/MalformedImageOutput";
+            File.WriteAllBytes(Absolute(source), new byte[] { 1, 2, 3, 4 });
+            var response = Send(action, new JObject { ["imagePath"] = source }, parent + "/New.png");
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("PNG or JPEG", response.Value<string>("error"));
+            Assert.IsFalse(Directory.Exists(Absolute(parent)));
+            Assert.IsFalse(File.Exists(Absolute(parent + ".meta")));
+            CollectionAssert.AreEqual(new byte[] { 1, 2, 3, 4 }, File.ReadAllBytes(Absolute(source)));
+            LogAssert.NoUnexpectedReceived();
+        }
+
         [TestCase("import_settings", "spritePivot")]
         [TestCase("as_sprite", "pivot")]
         public void PartialPivotStillKeepsExistingPivot(string container, string property)
