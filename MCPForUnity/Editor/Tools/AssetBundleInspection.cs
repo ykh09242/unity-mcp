@@ -59,11 +59,17 @@ namespace MCPForUnity.Editor.Tools
                     entries = AssetDatabase.GetAssetBundleDependencies(bundle, recursive);
                 }
             }
-            if (entries.Length > MaxEntries || entries.Any(entry => entry == null || entry.Length > 2048))
+            if (action != "list_asset_bundles" && (entries.Length > MaxEntries || entries.Any(entry => entry == null || entry.Length > 2048)))
                 return new ErrorResponse($"Bundle assignment inspection exceeds its {MaxEntries}-entry or 2048-character entry budget.");
-            Array.Sort(entries, StringComparer.Ordinal);
             long start = PaginationBounds.StartIndex(page, size);
-            string[] results = start >= entries.Length ? Array.Empty<string>() : entries.Skip((int)start).Take(size).ToArray();
+            string[] results;
+            if (start >= entries.Length)
+                results = Array.Empty<string>();
+            else
+            {
+                Array.Sort(entries, StringComparer.Ordinal);
+                results = entries.Skip((int)start).Take(size).ToArray();
+            }
             if (Encoding.UTF8.GetByteCount(Newtonsoft.Json.JsonConvert.SerializeObject(results)) > 512 * 1024)
                 return new ErrorResponse("Result byte budget exceeded (512 KiB); request a smaller pageSize.");
             return new SuccessResponse(
