@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Reflection;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
@@ -11,6 +12,57 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ReadConsoleTests
     {
+        [TestCase("", "plain")]
+        [TestCase("", "PLAIN")]
+        [TestCase("", "DETAILED")]
+        [TestCase("en-US", "plain")]
+        [TestCase("en-US", "PLAIN")]
+        [TestCase("en-US", "DETAILED")]
+        [TestCase("tr-TR", "plain")]
+        [TestCase("tr-TR", "PLAIN")]
+        [TestCase("tr-TR", "DETAILED")]
+        [TestCase("az-Latn-AZ", "plain")]
+        [TestCase("az-Latn-AZ", "PLAIN")]
+        [TestCase("az-Latn-AZ", "DETAILED")]
+        public void Get_SeverityAndFormatRemainIndependentOfCurrentCulture(string culture, string format)
+        {
+            CultureInfo original = CultureInfo.CurrentCulture;
+            try
+            {
+                CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
+                string marker = "console-culture-" + Guid.NewGuid().ToString("N");
+                Debug.LogWarning(marker);
+                var request = new JObject
+                {
+                    ["action"] = "GET",
+                    ["types"] = new JArray("WARNING"),
+                    ["format"] = format,
+                    ["filterText"] = marker,
+                };
+                bool plain = string.Equals(format, "plain", StringComparison.OrdinalIgnoreCase);
+                if (!plain)
+                    request["fields"] = new JArray("type", "message");
+
+                var result = ToJObject(ReadConsole.HandleCommand(request));
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                var entries = result["data"] as JArray;
+                Assert.IsNotNull(entries);
+                Assert.AreEqual(1, entries.Count, result.ToString());
+                Assert.AreEqual(plain ? JTokenType.String : JTokenType.Object, entries[0].Type);
+                if (plain)
+                    Assert.AreEqual(marker, entries[0].Value<string>());
+                else
+                {
+                    Assert.AreEqual("Warning", entries[0].Value<string>("type"));
+                    Assert.AreEqual(marker, entries[0].Value<string>("message"));
+                }
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = original;
+            }
+        }
+
         [TestCase("MCP-FOR-UNITY: [IO] internal", true)]
         [TestCase("<b><color=#2EA3FF>Unity MCP (ykh09242)</color></b>: internal", true)]
         [TestCase("Unity MCP (ykh09242): internal", true)]

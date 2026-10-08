@@ -168,12 +168,12 @@ namespace MCPForUnity.Editor.Tools
                 else if (action == "get")
                 {
                     // Extract parameters for 'get'
-                    var types = (p.GetRaw("types") as JArray)?.Select(t => t.ToString().ToLower()).ToList() ?? new List<string> { "error", "warning" };
+                    var types = (p.GetRaw("types") as JArray)?.Select(t => t.ToString().ToLowerInvariant()).ToList() ?? new List<string> { "error", "warning" };
                     int? count = p.GetInt("count");
                     int? pageSize = p.GetInt("pageSize");
                     int? cursor = p.GetInt("cursor");
                     string filterText = p.Get("filterText");
-                    string format = p.Get("format", "plain").ToLower();
+                    string format = p.Get("format", "plain").ToLowerInvariant();
                     bool includeStacktrace = p.GetBool("includeStacktrace", false);
                     JToken includeMcpLogsToken = p.GetRaw("includeMcpLogs");
                     if (includeMcpLogsToken != null && includeMcpLogsToken.Type != JTokenType.Null && includeMcpLogsToken.Type != JTokenType.Boolean)
