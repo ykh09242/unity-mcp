@@ -152,17 +152,23 @@ class ExternalChangesScanner:
         entries = 0
 
         pending = list(roots)
+        # Local package roots can also be descendants of the standard scan roots.
+        # Keep successful directory visits local to this bounded scan.
+        visited: set[Path] = set()
         skipped = {"library", "temp", "logs", "obj", ".git", "node_modules"}
         while pending:
             if self._scan_stopped() or entries >= self._max_entries:
                 return newest
             root = pending.pop()
+            if root in visited:
+                continue
             entries += 1
             try:
                 root_stat = root.stat(follow_symlinks=False)
                 if S_ISLNK(root_stat.st_mode) or getattr(root_stat, "st_file_attributes", 0) & 1024:
                     continue
                 with os.scandir(root) as children:
+                    visited.add(root)
                     for entry in children:
                         if self._scan_stopped() or entries >= self._max_entries:
                             return newest
