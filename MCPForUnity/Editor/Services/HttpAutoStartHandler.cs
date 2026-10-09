@@ -28,6 +28,7 @@ namespace MCPForUnity.Editor.Services
         // Plain static, so every domain reload grants a fresh budget.
         private const int MaxServiceNotReadyRetries = 300;
         private static int _serviceNotReadyRetries;
+        private static int _connectGeneration;
 
         internal enum TickDecision
         {
@@ -73,7 +74,12 @@ namespace MCPForUnity.Editor.Services
         /// Drops a reload-interrupted auto-start connect. Called when the user takes manual
         /// control of the bridge lifecycle, so no later domain load revives the connect.
         /// </summary>
-        internal static void CancelPendingReconnect() => SessionState.EraseBool(ConnectPendingKey);
+        internal static void CancelPendingReconnect()
+        {
+            _connectGeneration++;
+            SessionState.EraseBool(ConnectPendingKey);
+            EditorApplication.update -= WaitForEditorReady;
+        }
 
         private static void WaitForEditorReady()
         {
@@ -209,6 +215,7 @@ namespace MCPForUnity.Editor.Services
 
         private static async Task AutoStartAsync()
         {
+            int generation = _connectGeneration;
             SessionState.SetBool(ConnectPendingKey, true);
             try
             {
@@ -227,6 +234,8 @@ namespace MCPForUnity.Editor.Services
                     // Check if server is already reachable (e.g. user started it externally).
                     if (!MCPServiceLocator.Server.IsLocalHttpServerReachable())
                     {
+                        if (!IsConnectContextCurrent(generation))
+                            return;
                         bool serverStarted = MCPServiceLocator.Server.StartLocalHttpServer(quiet: true);
                         if (!serverStarted)
                         {
@@ -236,12 +245,12 @@ namespace MCPForUnity.Editor.Services
                     }
 
                     // Wait for the server to become reachable, then connect.
-                    await WaitForServerAndConnectAsync();
+                    await WaitForServerAndConnectAsync(generation);
                 }
                 else
                 {
                     // For HTTP Remote: server is external, just connect the bridge.
-                    await ConnectBridgeAsync();
+                    await ConnectBridgeAsync(generation);
                 }
             }
             catch (Exception ex)
@@ -252,7 +261,8 @@ namespace MCPForUnity.Editor.Services
             {
                 // Reached on every terminal outcome. A domain reload that kills the task
                 // mid-flight skips this, leaving the key set for the reconnect path.
-                SessionState.EraseBool(ConnectPendingKey);
+                if (generation == _connectGeneration)
+                    SessionState.EraseBool(ConnectPendingKey);
             }
         }
 
@@ -262,15 +272,16 @@ namespace MCPForUnity.Editor.Services
         /// </summary>
         private static async Task ReconnectAsync()
         {
+            int generation = _connectGeneration;
             try
             {
                 if (HttpEndpointUtility.IsRemoteScope())
                 {
-                    await ConnectBridgeAsync();
+                    await ConnectBridgeAsync(generation);
                     return;
                 }
 
-                await WaitForServerAndConnectAsync();
+                await WaitForServerAndConnectAsync(generation);
             }
             catch (Exception ex)
             {
@@ -278,7 +289,8 @@ namespace MCPForUnity.Editor.Services
             }
             finally
             {
-                SessionState.EraseBool(ConnectPendingKey);
+                if (generation == _connectGeneration)
+                    SessionState.EraseBool(ConnectPendingKey);
             }
         }
 
@@ -289,7 +301,7 @@ namespace MCPForUnity.Editor.Services
         /// without the port coming up. Without a launch handle (post-reload reconnect, or a
         /// server started externally) there is nothing to watch die, so poll to the hard cap.
         /// </summary>
-        private static async Task WaitForServerAndConnectAsync()
+        private static async Task WaitForServerAndConnectAsync(int generation)
         {
             var server = MCPServiceLocator.Server;
             string url = HttpEndpointUtility.GetLocalBaseUrl();
@@ -299,18 +311,20 @@ namespace MCPForUnity.Editor.Services
 
             while (true)
             {
-                // Abort if user changed settings while we were waiting.
-                if (!EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false))
-                    return;
-                if (!EditorConfigurationCache.Instance.UseHttpTransport)
+                // Abort if manual control or changed settings superseded this waiter.
+                if (!IsLocalConnectContextCurrent(generation, url))
                     return;
                 if (MCPServiceLocator.TransportManager.IsRunning(TransportMode.Http))
                     return;
 
                 if (server.IsLocalHttpServerReachable())
                 {
+                    if (!IsLocalConnectContextCurrent(generation, url))
+                        return;
                     McpLog.Info($"Server ready on {url}");
                     bool started = await MCPServiceLocator.Bridge.StartAsync();
+                    if (!IsLocalConnectContextCurrent(generation, url))
+                        return;
                     if (started)
                     {
                         McpLog.Info("Session connected");
@@ -319,13 +333,20 @@ namespace MCPForUnity.Editor.Services
                     }
                 }
 
+                if (!IsLocalConnectContextCurrent(generation, url))
+                    return;
                 double elapsed = EditorApplication.timeSinceStartup - startTime;
                 bool launchProcessDied = server.HasManagedServerLaunchHandle && !server.IsManagedServerLaunchProcessAlive() && elapsed > 1.0;
 
                 if (launchProcessDied || elapsed > hardCap.TotalSeconds)
                 {
                     // Last-resort connect attempt in case reachability detection missed a live server.
-                    if (await MCPServiceLocator.Bridge.StartAsync())
+                    if (!IsLocalConnectContextCurrent(generation, url))
+                        return;
+                    bool started = await MCPServiceLocator.Bridge.StartAsync();
+                    if (!IsLocalConnectContextCurrent(generation, url))
+                        return;
+                    if (started)
                     {
                         McpLog.Info("Session connected");
                         MCPForUnityEditorWindow.RequestHealthVerification();
@@ -347,14 +368,29 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
+        private static bool IsConnectContextCurrent(int generation) =>
+            generation == _connectGeneration
+            && SessionState.GetBool(ConnectPendingKey, false)
+            && EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false)
+            && EditorConfigurationCache.Instance.UseHttpTransport;
+
+        private static bool IsLocalConnectContextCurrent(int generation, string url) =>
+            IsConnectContextCurrent(generation)
+            && !HttpEndpointUtility.IsRemoteScope()
+            && string.Equals(url, HttpEndpointUtility.GetLocalBaseUrl(), StringComparison.Ordinal);
+
         /// <summary>
         /// Connects the bridge directly (for remote HTTP where the server is already running).
         /// </summary>
-        private static async Task ConnectBridgeAsync()
+        private static async Task ConnectBridgeAsync(int generation)
         {
             string url = HttpEndpointUtility.GetRemoteBaseUrl();
             McpLog.Info($"Connecting to {url}…");
+            if (!IsConnectContextCurrent(generation))
+                return;
             bool started = await MCPServiceLocator.Bridge.StartAsync();
+            if (!IsConnectContextCurrent(generation))
+                return;
             if (started)
             {
                 McpLog.Info("Connected");
