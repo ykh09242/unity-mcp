@@ -369,10 +369,11 @@ namespace MCPForUnity.Editor.Tools
                     {
                         return new ErrorResponse($"No material in slot {slot}");
                     }
-                    if (AssetDatabase.Contains(mat))
+                    bool assetPathValidated = AssetDatabase.Contains(mat);
+                    if (assetPathValidated)
                         AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(mat));
                     Undo.RecordObject(mat, "Set Material Color");
-                    SetColorProperties(mat, color);
+                    SetColorProperties(mat, color, assetPathValidated);
                     EditorUtility.SetDirty(mat);
                     return new SuccessResponse("Set shared material color");
                 }
@@ -407,9 +408,9 @@ namespace MCPForUnity.Editor.Tools
             return new ErrorResponse($"Unknown mode: {mode}");
         }
 
-        private static void SetColorProperties(Material mat, Color color)
+        private static void SetColorProperties(Material mat, Color color, bool assetPathValidated = false)
         {
-            if (AssetDatabase.Contains(mat))
+            if (!assetPathValidated && AssetDatabase.Contains(mat))
                 AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(mat));
             bool wrote = false;
             if (mat.HasProperty("_BaseColor"))
