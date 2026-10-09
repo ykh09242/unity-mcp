@@ -97,6 +97,7 @@ class SharedRead(Generic[T]):
                 flight.release()
             flight = _ReadFlight(factory)
             self._flight = flight
+            flight.task.add_done_callback(self._finish_fetch)
         flight.references += 1
         try:
             completed = await asyncio.shield(flight.task)
@@ -122,6 +123,18 @@ class SharedRead(Generic[T]):
                     copy_owner.release()
         finally:
             flight.release()
+
+    def _finish_fetch(self, task: asyncio.Task[_CompletedRead[T]]) -> None:
+        failed = task.cancelled() or task.exception() is not None
+        if (
+            failed
+            and self.callers == 0
+            and self._flight is not None
+            and self._flight.task is task
+            and self.expiry_task is not None
+        ):
+            # Reuse the owned expiry cleanup when an idle in-flight read fails later.
+            self.expiry_task.cancel()
 
     async def close(self) -> None:
         """Cancel and drain an orphaned fetch when its final caller leaves."""
@@ -201,7 +214,19 @@ class SharedToolReads(Generic[T]):
         finally:
             read.callers -= 1
             if read.callers == 0:
-                if key is not None and entries.get(key) is read and self._retention_s > 0:
+                flight = read._flight
+                failed = (
+                    flight is not None
+                    and flight.task.done()
+                    and (flight.task.cancelled() or flight.task.exception() is not None)
+                )
+                # Failed flights cannot be reused; their tracebacks may retain rejected data.
+                if (
+                    not failed
+                    and key is not None
+                    and entries.get(key) is read
+                    and self._retention_s > 0
+                ):
                     read.expiry_task = asyncio.create_task(self._expire(entries, key, read))
                 else:
                     if key is not None and entries.get(key) is read:
