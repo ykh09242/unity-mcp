@@ -7,6 +7,7 @@ from pydantic import Field, ValidationError
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 from models.editor_readiness import PlayReadinessJob
+from models.response_lifetime import ResponsePollLifetime
 
 from services.registry import mcp_for_unity_tool
 from core.telemetry import is_telemetry_enabled, record_tool_usage
@@ -113,83 +114,99 @@ async def manage_editor(
             params.update(
                 wait_until=wait_until, timeout_seconds=timeout_seconds, job_id=readiness_id
             )
-            response = None
-            with anyio.move_on_after(timeout_seconds) as scope:
-                try:
-                    response = await send_with_unity_instance(
-                        async_send_command_with_retry,
-                        unity_instance,
-                        "manage_editor",
-                        params,
-                        retry_on_reload=False,
-                    )
-                except OSError as error:
-                    response = {"success": False, "error": str(error), "hint": "retry"}
-                while True:
-                    if isinstance(response, dict):
-                        data = response.get("data")
-                        if response.get("success") is True and isinstance(data, dict):
-                            try:
-                                job = PlayReadinessJob.model_validate(data)
-                            except ValidationError:
-                                return {
-                                    "success": False,
-                                    "error": "invalid_play_readiness_response",
-                                    "data": data,
-                                }
-                            if job.job_id != readiness_id:
-                                return {
-                                    "success": False,
-                                    "error": "play_readiness_job_mismatch",
-                                    "data": data,
-                                }
-                            match job.status:
-                                case "succeeded":
-                                    return response
-                                case "failed" | "cancelled" | "timed_out":
-                                    return {
-                                        **response,
-                                        "success": False,
-                                        "error": job.error or job.status,
-                                    }
-                                case "running":
-                                    pass
-                                case unreachable:
-                                    assert_never(unreachable)
-                        elif response.get("hint") != "retry" and not any(
-                            marker
-                            in str(response.get("error") or response.get("message") or "").lower()
-                            for marker in (
-                                "connection",
-                                "disconnect",
-                                "reload",
-                                "timeout",
-                                "timed out",
+            response = data = job = None
+            try:
+                # The local deadline delivers the last response; external cancellation releases it.
+                async with ResponsePollLifetime() as responses:
+                    with anyio.move_on_after(timeout_seconds) as scope:
+                        try:
+                            response = await responses.fetch(
+                                send_with_unity_instance(
+                                    async_send_command_with_retry,
+                                    unity_instance,
+                                    "manage_editor",
+                                    params,
+                                    retry_on_reload=False,
+                                ),
+                                timeout=None,
                             )
-                        ):
-                            return response
-                    await anyio.sleep(0.1)
-                    try:
-                        response = await send_with_unity_instance(
-                            async_send_command_with_retry,
-                            unity_instance,
-                            "manage_editor",
-                            {"action": "get_play_mode_job", "job_id": readiness_id},
-                        )
-                    except OSError as error:
-                        response = {"success": False, "error": str(error), "hint": "retry"}
-            if scope.cancel_called:
-                return {
-                    "success": False,
-                    "error": "play_readiness_timeout",
-                    "data": {
-                        "job_id": readiness_id,
-                        "status": "wait_timed_out",
-                        "wait_until": wait_until,
-                        "timeout_seconds": timeout_seconds,
-                        "last_response": response,
-                    },
-                }
+                        except OSError as error:
+                            responses.discard()
+                            response = {"success": False, "error": str(error), "hint": "retry"}
+                        while True:
+                            if isinstance(response, dict):
+                                data = response.get("data")
+                                if response.get("success") is True and isinstance(data, dict):
+                                    try:
+                                        job = PlayReadinessJob.model_validate(data)
+                                    except ValidationError:
+                                        return {
+                                            "success": False,
+                                            "error": "invalid_play_readiness_response",
+                                            "data": data,
+                                        }
+                                    if job.job_id != readiness_id:
+                                        return {
+                                            "success": False,
+                                            "error": "play_readiness_job_mismatch",
+                                            "data": data,
+                                        }
+                                    match job.status:
+                                        case "succeeded":
+                                            return response
+                                        case "failed" | "cancelled" | "timed_out":
+                                            return {
+                                                **response,
+                                                "success": False,
+                                                "error": job.error or job.status,
+                                            }
+                                        case "running":
+                                            pass
+                                        case unreachable:
+                                            assert_never(unreachable)
+                                elif response.get("hint") != "retry" and not any(
+                                    marker
+                                    in str(
+                                        response.get("error") or response.get("message") or ""
+                                    ).lower()
+                                    for marker in (
+                                        "connection",
+                                        "disconnect",
+                                        "reload",
+                                        "timeout",
+                                        "timed out",
+                                    )
+                                ):
+                                    return response
+                            data = job = None
+                            await anyio.sleep(0.1)
+                            try:
+                                response = await responses.fetch(
+                                    send_with_unity_instance(
+                                        async_send_command_with_retry,
+                                        unity_instance,
+                                        "manage_editor",
+                                        {"action": "get_play_mode_job", "job_id": readiness_id},
+                                    ),
+                                    timeout=None,
+                                )
+                            except OSError as error:
+                                responses.discard()
+                                response = {"success": False, "error": str(error), "hint": "retry"}
+                    if scope.cancel_called:
+                        return {
+                            "success": False,
+                            "error": "play_readiness_timeout",
+                            "data": {
+                                "job_id": readiness_id,
+                                "status": "wait_timed_out",
+                                "wait_until": wait_until,
+                                "timeout_seconds": timeout_seconds,
+                                "last_response": response,
+                            },
+                        }
+            finally:
+                response = data = job = None
 
         # Send command using centralized retry helper with instance routing
         response = await send_with_unity_instance(

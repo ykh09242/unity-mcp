@@ -29,7 +29,7 @@ class ResponsePollLifetime:
         self._current.release()
         self._current = ResponseOwner()
 
-    async def fetch(self, operation: Awaitable[T], timeout: float) -> T:
+    async def fetch(self, operation: Awaitable[T], timeout: float | None) -> T:
         incoming = ResponseOwner()
         token = response_owner.set(incoming)
         try:
