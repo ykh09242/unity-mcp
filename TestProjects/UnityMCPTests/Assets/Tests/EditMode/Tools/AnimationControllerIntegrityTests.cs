@@ -85,6 +85,102 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(before, Snapshot(), "Rejected input changed controller state, subassets, GUID or file bytes.");
         }
 
+        [Test]
+        [Combinatorial]
+        public void NonStringNamesRejectWithoutCreatingControllerSubassets(
+            [Values("state_name", "parameter_name", "from_state", "to_state", "parameter", "mode")] string field,
+            [Values("1", "false", "[]", "{}")] string raw
+        )
+        {
+            JToken token = JToken.Parse(raw);
+            string action =
+                field == "state_name" ? "add_state"
+                : field == "parameter_name" ? "add_parameter"
+                : "add_transition";
+            var properties = new JObject { ["from_state"] = "From", ["to_state"] = "To" };
+            if (field == "from_state" || field == "to_state")
+            {
+                _controller.layers[0].stateMachine.AddState(token.ToString());
+                AssetDatabase.SaveAssets();
+            }
+            if (field == "parameter" || field == "mode")
+            {
+                var condition = new JObject { ["parameter"] = "P", ["mode"] = "greater" };
+                condition[field] = token;
+                properties["conditions"] = new JArray(condition);
+            }
+            else
+                properties[field] = token;
+            RejectWithoutMutation(action, properties, false);
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("parameter", "false")]
+        [TestCase("parameter", "{}")]
+        [TestCase("mode", "false")]
+        [TestCase("mode", "{}")]
+        public void NonStringLaterConditionRejectsBeforeCreatingTransition(string field, string raw)
+        {
+            var later = new JObject { ["parameter"] = "Later", ["mode"] = "greater" };
+            later[field] = JToken.Parse(raw);
+            RejectWithoutMutation(
+                "add_transition",
+                new JObject
+                {
+                    ["from_state"] = "From",
+                    ["to_state"] = "To",
+                    ["conditions"] = new JArray(new JObject { ["parameter"] = "First" }, later),
+                },
+                false
+            );
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
+        public void StringFalseModeAndUnusedMalformedConditionSettingsRetainTheirMeaning()
+        {
+            JObject response = Send(
+                "add_transition",
+                new JObject
+                {
+                    ["from_state"] = "From",
+                    ["to_state"] = "To",
+                    ["conditions"] = new JArray(
+                        new JObject { ["parameter"] = "P", ["mode"] = "false" },
+                        new JObject
+                        {
+                            ["parameter"] = JValue.CreateNull(),
+                            ["mode"] = false,
+                            ["threshold"] = "bad",
+                        }
+                    ),
+                }
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var conditions = _controller.layers[0].stateMachine.states.Single(s => s.state.name == "From").state.transitions.Single().conditions;
+            Assert.AreEqual(1, conditions.Length);
+            Assert.AreEqual(AnimatorConditionMode.IfNot, conditions[0].mode);
+            Assert.AreEqual("P", conditions[0].parameter);
+        }
+
+        [Test]
+        [Combinatorial]
+        public void NonStringControllerPathRejectsBeforeMissingRequiredEditName(
+            [Values("add_state", "add_parameter")] string action,
+            [Values("0", "false", "[]", "{}")] string raw
+        )
+        {
+            // Omit the edit name so even the baseline cannot mutate a coincident global asset.
+            string before = Snapshot();
+            JObject response = JObject.FromObject(
+                ManageAnimation.HandleCommand(new JObject { ["action"] = "controller_" + action, ["controller_path"] = JToken.Parse(raw) })
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("'controllerPath' must be a string", response.Value<string>("error"));
+            Assert.AreEqual(before, Snapshot());
+            LogAssert.NoUnexpectedReceived();
+        }
+
         [TestCase("speed")]
         [TestCase("is_default")]
         public void InvalidLateStateValueDoesNotCreateStateOrSubasset(string property)

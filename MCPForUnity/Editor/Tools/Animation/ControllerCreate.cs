@@ -13,6 +13,7 @@ namespace MCPForUnity.Editor.Tools.Animation
     {
         public static object Create(JObject @params)
         {
+            ValidateText(@params["controllerPath"], "controllerPath");
             string controllerPath = @params["controllerPath"]?.ToString();
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required (e.g. 'Assets/Animations/Player.controller')" };
@@ -75,6 +76,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (controller == null)
                 return ControllerNotFoundError(@params);
 
+            ValidateText(@params["stateName"], "stateName");
             string stateName = @params["stateName"]?.ToString();
             if (string.IsNullOrEmpty(stateName))
                 return new { success = false, message = "'stateName' is required" };
@@ -94,6 +96,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             // Optionally assign a clip
             AnimationClip clip = null;
+            ValidateText(@params["clipPath"], "clipPath");
             string clipPath = @params["clipPath"]?.ToString();
             if (!string.IsNullOrEmpty(clipPath))
             {
@@ -144,6 +147,9 @@ namespace MCPForUnity.Editor.Tools.Animation
             string toStateName = @params["toState"]?.ToString();
             if (string.IsNullOrEmpty(fromStateName) || string.IsNullOrEmpty(toStateName))
                 return new { success = false, message = "'fromState' and 'toState' are required" };
+
+            ValidateText(@params["fromState"], "fromState");
+            ValidateText(@params["toState"], "toState");
 
             int layerIndex = @params["layerIndex"]?.ReadScalar<int?>() ?? 0;
             if (layerIndex < 0 || layerIndex >= controller.layers.Length)
@@ -200,6 +206,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     if (string.IsNullOrEmpty(paramName))
                         continue;
 
+                    ValidateText(condObj["parameter"], "parameter");
+                    ValidateText(condObj["mode"], "mode");
                     string modeStr = condObj["mode"]?.ToString()?.ToLowerInvariant() ?? "greater";
                     float threshold = condObj["threshold"]?.ReadScalar<float?>() ?? 0f;
 
@@ -286,6 +294,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (controller == null)
                 return ControllerNotFoundError(@params);
 
+            ValidateText(@params["parameterName"], "parameterName");
             string paramName = @params["parameterName"]?.ToString();
             if (string.IsNullOrEmpty(paramName))
                 return new { success = false, message = "'parameterName' is required" };
@@ -516,6 +525,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
         private static AnimatorController LoadController(JObject @params, bool writable = true)
         {
+            ValidateText(@params["controllerPath"], "controllerPath");
             string controllerPath = @params["controllerPath"]?.ToString();
             if (string.IsNullOrEmpty(controllerPath))
                 return null;
@@ -527,6 +537,13 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return null;
 
             return AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
+        }
+
+        private static void ValidateText(JToken token, string name)
+        {
+            // Command deserialization can represent an ISO JSON string as a Date token.
+            if (token != null && token.Type != JTokenType.Null && token.Type != JTokenType.String && token.Type != JTokenType.Date)
+                throw new ArgumentException($"'{name}' must be a string.");
         }
 
         private static object ControllerNotFoundError(JObject @params)
