@@ -145,7 +145,9 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         req.Model = AssetGenModelCatalog.ResolveModel("model", provider, req.Model);
                         req.CatalogEntry = await FalModelCatalog.VerifyForGeneration(req.Model, "model", req.Mode, ct, apiKey);
                     }
-                    return await adapter.SubmitAsync(req, apiKey, transport, ct);
+                    string providerJobId = await adapter.SubmitAsync(req, apiKey, transport, ct);
+                    req = null; // Submission is the final consumer; polling/import share this closure.
+                    return providerJobId;
                 },
                 PollFn = (pid, ct) => adapter.PollAsync(pid, apiKey, transport, ct),
                 ImportFn = ImportOverrideForTests ?? ModelImportPipeline.ImportInto,
@@ -191,7 +193,9 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         req.Model = AssetGenModelCatalog.ResolveModel("image", provider, req.Model);
                         req.CatalogEntry = await OpenRouterModelCatalog.VerifyForGeneration(req.Model, req.Mode, ct);
                     }
-                    return await adapter.SubmitAsync(req, apiKey, transport, ct);
+                    string providerJobId = await adapter.SubmitAsync(req, apiKey, transport, ct);
+                    req = null; // Submission is the final consumer; polling/import share this closure.
+                    return providerJobId;
                 },
                 PollFn = (pid, ct) => adapter.PollAsync(pid, apiKey, transport, ct),
                 ImportFn = ImportOverrideForTests ?? ((j, path) => ImageImportPipeline.ImportInto(j, path, asSprite, transparent, isColor: true)),
@@ -230,7 +234,9 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         req.Model = AssetGenModelCatalog.ResolveModel("audio", provider, req.Model);
                         req.CatalogEntry = await FalModelCatalog.VerifyForGeneration(req.Model, "audio", "text", ct, apiKey);
                     }
-                    return await adapter.SubmitAsync(req, apiKey, transport, ct);
+                    string providerJobId = await adapter.SubmitAsync(req, apiKey, transport, ct);
+                    req = null; // Submission is the final consumer; polling/import share this closure.
+                    return providerJobId;
                 },
                 PollFn = (pid, ct) => adapter.PollAsync(pid, apiKey, transport, ct),
                 ImportFn = ImportOverrideForTests ?? AudioImportPipeline.ImportInto,
