@@ -352,6 +352,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             // Check if effect exists before removing
             bool found = false;
+            UnityEngine.Object componentToRemove = null;
             var components = GetProperty(profile, "components") as System.Collections.IList;
             if (components != null)
             {
@@ -360,6 +361,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     if (comp != null && comp.GetType() == effectType)
                     {
                         found = true;
+                        componentToRemove = comp as UnityEngine.Object;
                         break;
                     }
                 }
@@ -371,7 +373,25 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (removeMethod == null)
                 return new ErrorResponse("Could not find VolumeProfile.Remove method.");
 
+            var profileOwner = profile as UnityEngine.Object;
+            bool ownsComponent =
+                profileOwner != null
+                && componentToRemove != null
+                && AssetDatabase.Contains(profileOwner)
+                && AssetDatabase.Contains(componentToRemove)
+                && AssetDatabase.IsSubAsset(componentToRemove)
+                && string.Equals(AssetDatabase.GetAssetPath(profileOwner), AssetDatabase.GetAssetPath(componentToRemove), StringComparison.Ordinal);
+            if (ownsComponent)
+                Undo.RegisterCompleteObjectUndo(profileOwner, "Remove Volume Effect");
+
             removeMethod.Invoke(profile, new object[] { effectType });
+
+            if (
+                ownsComponent
+                && GetProperty(profile, "components") is System.Collections.IList remainingComponents
+                && !remainingComponents.Cast<object>().Any(component => ReferenceEquals(component, componentToRemove))
+            )
+                Undo.DestroyObjectImmediate(componentToRemove);
 
             if (profile is UnityEngine.Object profileObj)
                 EditorUtility.SetDirty(profileObj);
