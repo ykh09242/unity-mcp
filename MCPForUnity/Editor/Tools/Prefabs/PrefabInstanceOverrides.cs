@@ -213,7 +213,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     continue;
                 using var serialized = new SerializedObject(instance);
                 using var prefab = new SerializedObject(source);
-                SerializedProperty property = serialized.GetIterator();
+                using var property = serialized.GetIterator();
                 bool enter = true;
                 while (property.Next(enter))
                 {
@@ -238,7 +238,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     };
                     Add(entry);
                     entry.Data["currentValue"] = Value(property);
-                    entry.Data["prefabValue"] = Value(prefab.FindProperty(property.propertyPath));
+                    using var prefabProperty = prefab.FindProperty(property.propertyPath);
+                    entry.Data["prefabValue"] = Value(prefabProperty);
                     entry.Data["propertyType"] = property.propertyType.ToString();
                     entry.Data["applySupported"] = IsSelectiveProperty(property);
                 }
@@ -339,7 +340,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             if (entry.Kind == "property")
             {
                 using var serialized = new SerializedObject(entry.Instance);
-                var property = serialized.FindProperty(entry.PropertyPath);
+                using var property = serialized.FindProperty(entry.PropertyPath);
                 if (property == null || !property.prefabOverride)
                     throw new ArgumentException("Property override no longer exists; list overrides again.");
                 if (!IsSelectiveProperty(property))
@@ -392,7 +393,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         if (obj == null)
                             throw new ArgumentException("Added objects with missing scripts cannot be applied.");
                         using var serialized = new SerializedObject(obj);
-                        var property = serialized.GetIterator();
+                        using var property = serialized.GetIterator();
                         int scanned = 0;
                         while (property.Next(true))
                         {
@@ -422,7 +423,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 case "property":
                     using (var serialized = new SerializedObject(entry.Instance))
                     {
-                        var property = serialized.FindProperty(entry.PropertyPath);
+                        using var property = serialized.FindProperty(entry.PropertyPath);
                         if (apply)
                             PrefabUtility.ApplyPropertyOverride(property, path, mode);
                         else
