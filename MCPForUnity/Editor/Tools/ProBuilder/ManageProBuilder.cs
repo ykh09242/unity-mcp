@@ -2489,7 +2489,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 {
                     var vcShader =
                         Shader.Find("ProBuilder/Standard Vertex Color") ?? Shader.Find("ProBuilder/Diffuse Vertex Color") ?? Shader.Find("Sprites/Default");
-                    if (vcShader != null)
+                    // Standard Vertex Color also matches "Standard"; reuse it on later color edits.
+                    if (vcShader != null && renderer.sharedMaterial.shader != vcShader)
                     {
                         var vcMat = new Material(vcShader);
                         renderer.sharedMaterial = vcMat;

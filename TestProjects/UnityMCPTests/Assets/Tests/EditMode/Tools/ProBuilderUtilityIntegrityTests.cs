@@ -300,6 +300,57 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(ownedScene.isDirty);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SetFaceColor_ReusesCompatibleMaterialAcrossRepeatedRequests(bool alreadyCompatible)
+        {
+            var vertexShader = Shader.Find("ProBuilder/Standard Vertex Color");
+            var standardShader = Shader.Find("Standard");
+            if (vertexShader == null || standardShader == null)
+                Assert.Ignore("Standard and ProBuilder Standard Vertex Color shaders are required.");
+            var renderer = mesh.GetComponent<Renderer>();
+            Assert.IsNotNull(renderer);
+            var borrowed = renderer.sharedMaterial;
+            var owned = new HashSet<Material>();
+            try
+            {
+                var initial = new Material(alreadyCompatible ? vertexShader : standardShader);
+                owned.Add(initial);
+                renderer.sharedMaterial = initial;
+                Material selected = null;
+                for (int i = 0; i < 20; i++)
+                {
+                    var result = Send("set_face_color", new JObject { ["color"] = new JArray(i / 20.0, .4, .7, 1) });
+                    var current = renderer.sharedMaterial;
+                    if (current != null && current != borrowed && !AssetDatabase.Contains(current))
+                        owned.Add(current);
+                    Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                    Assert.AreSame(vertexShader, current.shader);
+                    if (i == 0)
+                    {
+                        selected = current;
+                        selected.renderQueue = 3199;
+                    }
+                    Assert.AreSame(selected, current, "Later color edits must reuse the compatible material.");
+                    Assert.AreEqual(3199, current.renderQueue, "Color edits preserve existing material settings.");
+                }
+                Assert.AreEqual(alreadyCompatible ? 1 : 2, owned.Count, "Only the initial material and a necessary first shader conversion are allocated.");
+                if (alreadyCompatible)
+                    Assert.AreSame(initial, selected);
+                var colors = ((IEnumerable<Color>)meshType.GetProperty("colors").GetValue(mesh)).ToArray();
+                Assert.IsNotEmpty(colors);
+                foreach (var color in colors)
+                    Assert.AreEqual(new Color(.95f, .4f, .7f, 1), color, "Repeated requests still update vertex colors.");
+            }
+            finally
+            {
+                renderer.sharedMaterial = borrowed;
+                foreach (var material in owned)
+                    if (material != null && !AssetDatabase.Contains(material))
+                        UnityEngine.Object.DestroyImmediate(material);
+            }
+        }
+
         [TestCase("skipMaterialSwap")]
         [TestCase("skip_material_swap")]
         public void SetFaceColor_InvalidSkipSwapPreservesColorsAndMaterial(string field)
