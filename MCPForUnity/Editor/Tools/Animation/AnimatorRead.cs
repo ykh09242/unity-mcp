@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
@@ -112,7 +113,11 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (animator == null)
                 return AnimatorResolver.NotResolvedError(go, animatorCandidates);
 
-            string paramName = @params["parameterName"]?.ToString();
+            JToken nameToken = @params["parameterName"];
+            // Command deserialization can turn a JSON ISO string into a Date token.
+            if (nameToken != null && nameToken.Type != JTokenType.String && nameToken.Type != JTokenType.Date && nameToken.Type != JTokenType.Null)
+                throw new ArgumentException("'parameterName' must be a string.");
+            string paramName = nameToken?.ToString();
             if (string.IsNullOrEmpty(paramName))
                 return new { success = false, message = "'parameterName' is required" };
 

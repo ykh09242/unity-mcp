@@ -2,8 +2,10 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Tools.Animation;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -111,6 +113,102 @@ namespace MCPForUnityTests.EditMode.Tools
                 ["controllerGuid"] = AssetDatabase.AssetPathToGUID(_path),
                 ["bytes"] = Convert.ToBase64String(File.ReadAllBytes(Path.Combine(Application.dataPath, _path.Substring("Assets/".Length)))),
             }.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        private Command ReadRequest(JToken name, bool encoded)
+        {
+            var properties = new JObject { ["parameter_name"] = name };
+            var request = new JObject
+            {
+                ["action"] = "animator_get_parameter",
+                ["target"] = _object.GetInstanceIDCompat().ToString(CultureInfo.InvariantCulture),
+                ["search_method"] = "by_id",
+                ["properties"] = encoded ? (JToken)new JValue(properties.ToString(Formatting.None)) : properties,
+            };
+            return JsonConvert.DeserializeObject<Command>(JsonConvert.SerializeObject(new Command { type = "manage_animation", @params = request }));
+        }
+
+        private void AddNamedParameter(string name)
+        {
+            _controller.parameters = _controller
+                .parameters.Concat(
+                    new[]
+                    {
+                        new AnimatorControllerParameter
+                        {
+                            name = name,
+                            type = AnimatorControllerParameterType.Float,
+                            defaultFloat = 42f,
+                        },
+                    }
+                )
+                .ToArray();
+            AssetDatabase.SaveAssets();
+        }
+
+        [TestCase("1", false)]
+        [TestCase("true", false)]
+        [TestCase("[]", false)]
+        [TestCase("{}", false)]
+        [TestCase("1", true)]
+        [TestCase("true", true)]
+        [TestCase("[]", true)]
+        [TestCase("{}", true)]
+        public void RawNameCannotReadAParameterWithItsStringifiedName(string raw, bool encoded)
+        {
+            JToken token = JToken.Parse(raw);
+            AddNamedParameter(token.ToString());
+            if (encoded)
+                AssignOverride();
+            string before = Snapshot();
+            Command command = ReadRequest(token, encoded);
+
+            JObject result = JObject.FromObject(ManageAnimation.HandleCommand(command.@params));
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("'parameterName' must be a string", result.Value<string>("error"));
+            Assert.AreEqual(before, Snapshot());
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("1")]
+        [TestCase("True")]
+        [TestCase("[]")]
+        [TestCase("{}")]
+        public void LiteralStringNamesStillReadTheirExactParameter(string name)
+        {
+            AddNamedParameter(name);
+            string before = Snapshot();
+
+            JObject result = Send("get_parameter", name);
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(name, result["data"].Value<string>("name"));
+            Assert.AreEqual(42f, result["data"].Value<float>("value"));
+            Assert.AreEqual(before, Snapshot());
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CommandDateStringRetainsItsExistingNameRepresentation(bool useOverride)
+        {
+            Command command = ReadRequest(new JValue("2026-10-09T12:00:00Z"), false);
+            JToken name = command.@params["properties"]["parameter_name"];
+            Assert.AreEqual(JTokenType.Date, name.Type);
+            string legacyName = name.ToString();
+            AddNamedParameter(legacyName);
+            if (useOverride)
+                AssignOverride();
+            string before = Snapshot();
+
+            JObject result = JObject.FromObject(ManageAnimation.HandleCommand(command.@params));
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(legacyName, result["data"].Value<string>("name"));
+            Assert.AreEqual(42f, result["data"].Value<float>("value"));
+            Assert.AreEqual(before, Snapshot());
+            LogAssert.NoUnexpectedReceived();
         }
 
         [TestCase("Float", false)]
