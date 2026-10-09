@@ -2203,6 +2203,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             var facesList = (System.Collections.IList)allFaces;
             var selectedSet = new HashSet<int>();
             var selectedIndices = new List<int>();
+            Dictionary<object, int> faceLookup = null;
+            int indexedFaceCount = 0;
 
             // Selection by direction
             var directionStr = props["direction"]?.ToString();
@@ -2268,7 +2270,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     {
                         foreach (var face in resultFaces)
                         {
-                            int idx = IndexOfFace(facesList, face);
+                            int idx = IndexOfFace(facesList, face, ref faceLookup, ref indexedFaceCount);
                             if (idx >= 0 && selectedSet.Add(idx))
                                 selectedIndices.Add(idx);
                         }
@@ -2295,7 +2297,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     {
                         foreach (var face in resultFaces)
                         {
-                            int idx = IndexOfFace(facesList, face);
+                            int idx = IndexOfFace(facesList, face, ref faceLookup, ref indexedFaceCount);
                             if (idx >= 0 && selectedSet.Add(idx))
                                 selectedIndices.Add(idx);
                         }
@@ -2327,7 +2329,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     {
                         foreach (var face in resultFaces)
                         {
-                            int idx = IndexOfFace(facesList, face);
+                            int idx = IndexOfFace(facesList, face, ref faceLookup, ref indexedFaceCount);
                             if (idx >= 0 && selectedSet.Add(idx))
                                 selectedIndices.Add(idx);
                         }
@@ -2348,14 +2350,40 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             );
         }
 
-        private static int IndexOfFace(System.Collections.IList facesList, object face)
+        private static int IndexOfFace(System.Collections.IList facesList, object face, ref Dictionary<object, int> lookup, ref int indexedFaceCount)
         {
-            for (int i = 0; i < facesList.Count; i++)
+            if (face == null)
             {
-                if (ReferenceEquals(facesList[i], face))
-                    return i;
+                for (int i = 0; i < facesList.Count; i++)
+                    if (facesList[i] == null)
+                        return i;
+                return -1;
+            }
+
+            lookup ??= new Dictionary<object, int>(FaceReferenceComparer.Instance);
+            if (lookup.TryGetValue(face, out int existingIndex))
+                return existingIndex;
+
+            // Index only as far as needed, preserving the first occurrence of each reference.
+            while (indexedFaceCount < facesList.Count)
+            {
+                int index = indexedFaceCount++;
+                var candidate = facesList[index];
+                if (candidate != null && !lookup.ContainsKey(candidate))
+                    lookup.Add(candidate, index);
+                if (ReferenceEquals(candidate, face))
+                    return index;
             }
             return -1;
+        }
+
+        private sealed class FaceReferenceComparer : IEqualityComparer<object>
+        {
+            internal static readonly FaceReferenceComparer Instance = new FaceReferenceComparer();
+
+            public new bool Equals(object left, object right) => ReferenceEquals(left, right);
+
+            public int GetHashCode(object value) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value);
         }
 
         // =====================================================================
