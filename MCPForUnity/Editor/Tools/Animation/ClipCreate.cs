@@ -60,7 +60,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 if (loop)
                 {
                     using var so = new SerializedObject(clip);
-                    var wrapProp = so.FindProperty("m_WrapMode");
+                    using var wrapProp = so.FindProperty("m_WrapMode");
                     if (wrapProp != null)
                     {
                         wrapProp.intValue = (int)WrapMode.Loop;
@@ -429,7 +429,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             if (!clip.legacy)
             {
-                var legacyProp = so.FindProperty("m_Legacy");
+                using var legacyProp = so.FindProperty("m_Legacy");
                 if (legacyProp != null)
                 {
                     legacyProp.boolValue = true;
@@ -440,7 +440,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             var settings = AnimationUtility.GetAnimationClipSettings(clip);
             if (settings.loopTime)
             {
-                var wrapProp = so.FindProperty("m_WrapMode");
+                using var wrapProp = so.FindProperty("m_WrapMode");
                 if (wrapProp != null && wrapProp.intValue != (int)WrapMode.Loop)
                 {
                     wrapProp.intValue = (int)WrapMode.Loop;
