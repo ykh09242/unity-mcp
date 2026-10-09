@@ -18,7 +18,11 @@ namespace MCPForUnity.Editor.Tools
     {
         private static Dictionary<string, Type[]> _assemblyTypeCache;
         private static readonly object CacheLock = new();
+        private const int MaxExtensionReceiverCacheEntries = 256;
         private static readonly ConcurrentDictionary<Type, string[]> ExtensionMethodCache = new();
+        private static readonly Dictionary<Type, MethodInfo[]> ExtensionMethodMetadataCache = new();
+        private static Dictionary<string, Type[]> _extensionCacheGeneration;
+        private static bool _hasDynamicExtensionProviders;
 
         private static readonly string[] NamespacePrefixes =
         {
@@ -71,8 +75,11 @@ namespace MCPForUnity.Editor.Tools
             lock (CacheLock)
             {
                 _assemblyTypeCache = null;
+                _extensionCacheGeneration = null;
+                _hasDynamicExtensionProviders = false;
+                ExtensionMethodCache.Clear();
+                ExtensionMethodMetadataCache.Clear();
             }
-            ExtensionMethodCache.Clear();
         }
 
         private static Dictionary<string, Type[]> GetAssemblyTypeCache()
@@ -769,19 +776,58 @@ namespace MCPForUnity.Editor.Tools
 
         // --- Extension Method Discovery ---
 
+        private static bool PrepareExtensionCache(Dictionary<string, Type[]> assemblyTypes)
+        {
+            lock (CacheLock)
+            {
+                if (!ReferenceEquals(_extensionCacheGeneration, assemblyTypes))
+                {
+                    ExtensionMethodCache.Clear();
+                    ExtensionMethodMetadataCache.Clear();
+                    _extensionCacheGeneration = assemblyTypes;
+                    _hasDynamicExtensionProviders = assemblyTypes.Any(kvp => IsExtensionAssembly(kvp.Key) && kvp.Value.Any(type => type.Assembly.IsDynamic));
+                }
+                return !_hasDynamicExtensionProviders;
+            }
+        }
+
+        private static bool IsExtensionAssembly(string fullName)
+        {
+            string name = fullName.Split(',')[0];
+            return name.StartsWith("UnityEngine") || name.StartsWith("UnityEditor") || name.StartsWith("Unity.");
+        }
+
+        private static MethodInfo[] GetExtensionMethodMetadata(Type provider, Dictionary<string, Type[]> generation)
+        {
+            lock (CacheLock)
+            {
+                bool canCache = !provider.Assembly.IsDynamic && ReferenceEquals(_extensionCacheGeneration, generation);
+                if (canCache && ExtensionMethodMetadataCache.TryGetValue(provider, out var cached))
+                    return cached;
+
+                var methods = provider
+                    .GetMethods(BindingFlags.Public | BindingFlags.Static)
+                    .Where(method => method.IsDefined(typeof(ExtensionAttribute), false))
+                    .ToArray();
+                // Dynamic providers can acquire metadata without another assembly-load event.
+                if (canCache)
+                    ExtensionMethodMetadataCache[provider] = methods;
+                return methods;
+            }
+        }
+
         private static string[] FindExtensionMethods(Type targetType)
         {
-            if (ExtensionMethodCache.TryGetValue(targetType, out var cached))
+            var cache = GetAssemblyTypeCache();
+            bool canCache = PrepareExtensionCache(cache);
+            if (canCache && ExtensionMethodCache.TryGetValue(targetType, out var cached))
                 return cached;
 
             var extensionNames = new HashSet<string>();
-            var cache = GetAssemblyTypeCache();
 
             foreach (var kvp in cache)
             {
-                // Extract assembly name from the FullName key (e.g., "UnityEngine, Version=...")
-                string asmName = kvp.Key.Split(',')[0];
-                if (!asmName.StartsWith("UnityEngine") && !asmName.StartsWith("UnityEditor") && !asmName.StartsWith("Unity."))
+                if (!IsExtensionAssembly(kvp.Key))
                     continue;
 
                 foreach (var t in kvp.Value)
@@ -791,11 +837,8 @@ namespace MCPForUnity.Editor.Tools
                     if (!t.IsDefined(typeof(ExtensionAttribute), false))
                         continue;
 
-                    foreach (var method in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                    foreach (var method in GetExtensionMethodMetadata(t, cache))
                     {
-                        if (!method.IsDefined(typeof(ExtensionAttribute), false))
-                            continue;
-
                         var firstParam = method.GetParameters().FirstOrDefault();
                         if (firstParam == null)
                             continue;
@@ -816,7 +859,15 @@ namespace MCPForUnity.Editor.Tools
 
             var result = extensionNames.Count > 0 ? extensionNames.OrderBy(n => n).ToArray() : Array.Empty<string>();
 
-            ExtensionMethodCache.TryAdd(targetType, result);
+            lock (CacheLock)
+            {
+                if (canCache && ReferenceEquals(_extensionCacheGeneration, cache))
+                {
+                    if (ExtensionMethodCache.Count >= MaxExtensionReceiverCacheEntries)
+                        ExtensionMethodCache.Clear();
+                    ExtensionMethodCache.TryAdd(targetType, result);
+                }
+            }
             return result;
         }
 
@@ -824,11 +875,11 @@ namespace MCPForUnity.Editor.Tools
         {
             var results = new List<MethodInfo>();
             var cache = GetAssemblyTypeCache();
+            PrepareExtensionCache(cache);
 
             foreach (var kvp in cache)
             {
-                string asmName = kvp.Key.Split(',')[0];
-                if (!asmName.StartsWith("UnityEngine") && !asmName.StartsWith("UnityEditor") && !asmName.StartsWith("Unity."))
+                if (!IsExtensionAssembly(kvp.Key))
                     continue;
 
                 foreach (var t in kvp.Value)
@@ -838,13 +889,10 @@ namespace MCPForUnity.Editor.Tools
                     if (!t.IsDefined(typeof(ExtensionAttribute), false))
                         continue;
 
-                    foreach (var method in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                    foreach (var method in GetExtensionMethodMetadata(t, cache))
                     {
                         if (method.Name != methodName)
                             continue;
-                        if (!method.IsDefined(typeof(ExtensionAttribute), false))
-                            continue;
-
                         var firstParam = method.GetParameters().FirstOrDefault();
                         if (firstParam == null)
                             continue;
