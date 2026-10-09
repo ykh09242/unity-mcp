@@ -178,14 +178,14 @@ namespace MCPForUnity.Editor.Tools.Cameras
             Undo.RecordObject(brain, "Set Camera Blend");
 
             using var so = new SerializedObject(brain);
-            var defaultBlendProp = so.FindProperty("DefaultBlend") ?? so.FindProperty("m_DefaultBlend");
+            using var defaultBlendProp = so.FindProperty("DefaultBlend") ?? so.FindProperty("m_DefaultBlend");
             if (defaultBlendProp == null)
                 return new ErrorResponse("Could not find DefaultBlend property on CinemachineBrain.");
 
             string style = ParamCoercion.CoerceString(props["style"], null);
             if (style != null)
             {
-                var styleProp = defaultBlendProp.FindPropertyRelative("Style") ?? defaultBlendProp.FindPropertyRelative("m_Style");
+                using var styleProp = defaultBlendProp.FindPropertyRelative("Style") ?? defaultBlendProp.FindPropertyRelative("m_Style");
                 if (styleProp != null && styleProp.propertyType == SerializedPropertyType.Enum)
                 {
                     // Try to parse the style enum
@@ -199,7 +199,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             float duration = ParamCoercion.CoerceFloat(props["duration"], -1f);
             if (duration >= 0)
             {
-                var timeProp = defaultBlendProp.FindPropertyRelative("Time") ?? defaultBlendProp.FindPropertyRelative("m_Time");
+                using var timeProp = defaultBlendProp.FindPropertyRelative("Time") ?? defaultBlendProp.FindPropertyRelative("m_Time");
                 if (timeProp != null)
                     timeProp.floatValue = duration;
             }
