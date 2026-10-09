@@ -539,6 +539,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
         private static int ParseEdgeVertex(JToken token)
         {
+            if (token == null || token.Type == JTokenType.Null)
+                throw new ArgumentException("Edge vertices a and b must be non-null integers.");
             return token.ReadScalar<int>();
         }
 
@@ -2046,8 +2048,21 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse("AppendElements type not found.");
 
             var pointToken = props["point"] ?? props["position"];
-            if (pointToken == null)
+            if (pointToken == null || pointToken.Type == JTokenType.Null)
                 return new ErrorResponse("point parameter is required ([x,y,z] in local space).");
+
+            // Insert requires every coordinate; optional vector parsing otherwise defaults null scalars to zero.
+            if (
+                pointToken is JArray pointArray
+                    && pointArray.Count >= 3
+                    && (pointArray[0].Type == JTokenType.Null || pointArray[1].Type == JTokenType.Null || pointArray[2].Type == JTokenType.Null)
+                || pointToken is JObject pointObject
+                    && pointObject.ContainsKey("x")
+                    && pointObject.ContainsKey("y")
+                    && pointObject.ContainsKey("z")
+                    && (pointObject["x"].Type == JTokenType.Null || pointObject["y"].Type == JTokenType.Null || pointObject["z"].Type == JTokenType.Null)
+            )
+                return new ErrorResponse("point must specify non-null x, y and z coordinates.");
 
             var point = ParseVector3(pointToken);
 
@@ -2074,7 +2089,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             else
             {
                 var faceIndexToken = props["faceIndex"] ?? props["face_index"];
-                if (faceIndexToken == null)
+                if (faceIndexToken == null || faceIndexToken.Type == JTokenType.Null)
                     return new ErrorResponse("Either edge ({a,b}) or faceIndex parameter is required.");
 
                 int faceIndex = faceIndexToken.ReadScalar<int>();

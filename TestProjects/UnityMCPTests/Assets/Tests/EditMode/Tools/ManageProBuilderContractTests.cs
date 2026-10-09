@@ -83,6 +83,7 @@ namespace MCPForUnityTests.Editor.Tools
             ProBuilderContractAppend.Calls = ProBuilderContractVertexEditing.Calls = 0;
             ProBuilderContractAppend.PolygonCalls = ProBuilderContractVertexEditing.WeldCalls = 0;
             ProBuilderContractAppend.BridgeCalls = 0;
+            ProBuilderContractAppend.LastPoint = default;
             ProBuilderContractDelete.Calls = ProBuilderContractVertexEditing.SplitCalls = 0;
             ProBuilderContractDelete.Last = null;
             ProBuilderContractImporter.Calls = ProBuilderContractCombine.Calls = 0;
@@ -173,6 +174,9 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("{\"a\":-1,\"b\":1}")]
         [TestCase("{\"a\":0,\"b\":2}")]
         [TestCase("{\"a\":2,\"b\":0}")]
+        [TestCase("{\"a\":null,\"b\":1}")]
+        [TestCase("{\"a\":0,\"b\":null}")]
+        [TestCase("{\"a\":null,\"b\":null}")]
         [TestCase("{}")]
         [TestCase("{\"a\":0}")]
         public void InvalidInsertEdgeStopsBeforeNativeEditAndUndo(string edge)
@@ -183,6 +187,48 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.That(ProBuilderContractAppend.Calls, Is.Zero);
             Assert.That(mesh.Refreshes, Is.Zero);
             Assert.That(ownedScene.isDirty, Is.False);
+        }
+
+        [TestCase("{\"edge\":{\"a\":0,\"b\":1},\"point\":null}")]
+        [TestCase("{\"edge\":{\"a\":0,\"b\":1},\"position\":null}")]
+        [TestCase("{\"edge\":{\"a\":0,\"b\":1},\"point\":null,\"position\":[1,2,3]}")]
+        [TestCase("{\"edge\":{\"a\":0,\"b\":1},\"point\":[null,0,0]}")]
+        [TestCase("{\"edge\":{\"a\":0,\"b\":1},\"point\":[0,null,0]}")]
+        [TestCase("{\"edge\":{\"a\":0,\"b\":1},\"point\":[0,0,null]}")]
+        [TestCase("{\"faceIndex\":0,\"point\":{\"x\":null,\"y\":0,\"z\":0}}")]
+        [TestCase("{\"faceIndex\":0,\"point\":{\"x\":0,\"y\":null,\"z\":0}}")]
+        [TestCase("{\"faceIndex\":0,\"point\":{\"x\":0,\"y\":0,\"z\":null}}")]
+        [TestCase("{\"faceIndex\":null,\"point\":[0,0,0]}")]
+        [TestCase("{\"face_index\":null,\"point\":[0,0,0]}")]
+        [TestCase("{\"faceIndex\":null,\"face_index\":1,\"point\":[0,0,0]}")]
+        [TestCase("{\"faceIndex\":0,\"point\":[\"NaN\",0,0]}")]
+        [TestCase("{\"faceIndex\":0,\"point\":[\"Infinity\",0,0]}")]
+        [TestCase("{\"faceIndex\":0,\"point\":[true,0,0]}")]
+        public void InvalidRequiredInsertValuesStopBeforeEditAndUndo(string properties)
+        {
+            SaveOwnedScene();
+            var original = mesh.positions[0];
+            var response = Dispatch("insert_vertex", properties);
+            Assert.That(response.Value<bool>("success"), Is.False, response.ToString());
+            Assert.That(ProBuilderContractAppend.Calls, Is.Zero);
+            Assert.That(mesh.ToMeshes, Is.Zero);
+            Assert.That(mesh.Refreshes, Is.Zero);
+            Assert.That(mesh.positions[0], Is.EqualTo(original));
+            Assert.That(ownedScene.isDirty, Is.False);
+        }
+
+        [TestCase("{\"edge\":{\"a\":\"0\",\"b\":1},\"point\":[0,0,0]}", 0, 0, 0)]
+        [TestCase("{\"face_index\":\"0\",\"position\":[1,2,3,null]}", 1, 2, 3)]
+        [TestCase("{\"faceIndex\":1,\"point\":{\"x\":\"1\",\"y\":2,\"z\":3}}", 1, 2, 3)]
+        [TestCase("{\"faceIndex\":0,\"face_index\":false,\"point\":[1,2,3],\"position\":false}", 1, 2, 3)]
+        public void ValidInsertValuesRetainCoordinatesAndAliasPrecedence(string properties, float x, float y, float z)
+        {
+            var response = Dispatch("insert_vertex", properties);
+            Assert.That(response.Value<bool>("success"), Is.True, response.ToString());
+            Assert.That(ProBuilderContractAppend.Calls, Is.EqualTo(1));
+            Assert.That(ProBuilderContractAppend.LastPoint, Is.EqualTo(new Vector3(x, y, z)));
+            Assert.That(mesh.ToMeshes, Is.EqualTo(1));
+            Assert.That(mesh.Refreshes, Is.EqualTo(1));
         }
 
         [TestCase("[]")]
@@ -239,6 +285,8 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("{\"a\":-1,\"b\":0}", "{\"a\":0,\"b\":1}")]
         [TestCase("{\"a\":0,\"b\":1}", "{\"a\":0,\"b\":2}")]
         [TestCase("{}", "{\"a\":0,\"b\":1}")]
+        [TestCase("{\"a\":null,\"b\":1}", "{\"a\":0,\"b\":1}")]
+        [TestCase("{\"a\":0,\"b\":1}", "{\"a\":0,\"b\":null}")]
         public void InvalidBridgeEdgesStopBeforeNativeEditAndUndo(string edgeA, string edgeB)
         {
             SaveOwnedScene();
@@ -455,6 +503,8 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.That(target.transform.position, Is.EqualTo(new Vector3(10, 0, 0)));
         }
 
+        [TestCase("[{\"a\":null,\"b\":1}]")]
+        [TestCase("[{\"a\":0,\"b\":null}]")]
         [TestCase("[{}]")]
         [TestCase("[{\"a\":1}]")]
         [TestCase("[{\"a\":0,\"b\":0.5}]")]
@@ -708,6 +758,7 @@ namespace MCPForUnityTests.Editor.Tools
     public static class ProBuilderContractAppend
     {
         public static int Calls;
+        public static Vector3 LastPoint;
         public static int PolygonCalls;
         public static bool LastUnordered;
         public static int BridgeCalls;
@@ -715,8 +766,15 @@ namespace MCPForUnityTests.Editor.Tools
         public static void InsertVertexOnEdge(ProBuilderContractMesh mesh, ProBuilderContractEdge edge, Vector3 point)
         {
             Calls++;
+            LastPoint = point;
             if (edge.a < 0 || edge.b < 0 || edge.a >= mesh.vertexCount || edge.b >= mesh.vertexCount)
                 throw new ArgumentOutOfRangeException(nameof(edge));
+        }
+
+        public static void InsertVertexInFace(ProBuilderContractMesh mesh, ProBuilderContractFace face, Vector3 point)
+        {
+            Calls++;
+            LastPoint = point;
         }
 
         public static ProBuilderContractFace CreatePolygon(ProBuilderContractMesh mesh, IList<int> indices, bool unordered)
