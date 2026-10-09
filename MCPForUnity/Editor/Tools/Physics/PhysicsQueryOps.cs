@@ -67,19 +67,23 @@ namespace MCPForUnity.Editor.Tools.Physics
                 };
             }
 
+            var collider = hitInfo.collider;
+            var hitGameObject = collider.gameObject;
+            var hitGameObjectName = hitGameObject.name;
+
             return new
             {
                 success = true,
-                message = $"Raycast hit '{hitInfo.collider.gameObject.name}'.",
+                message = $"Raycast hit '{hitGameObjectName}'.",
                 data = new
                 {
                     hit = true,
                     point = new[] { hitInfo.point.x, hitInfo.point.y, hitInfo.point.z },
                     normal = new[] { hitInfo.normal.x, hitInfo.normal.y, hitInfo.normal.z },
                     distance = hitInfo.distance,
-                    gameObject = hitInfo.collider.gameObject.name,
-                    instanceID = hitInfo.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = hitInfo.collider.GetType().Name,
+                    gameObject = hitGameObjectName,
+                    instanceID = hitGameObject.GetInstanceIDCompat(),
+                    collider_type = collider.GetType().Name,
                 },
             };
         }
@@ -103,7 +107,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                 ? Physics2D.defaultPhysicsScene.Raycast(origin, direction, maxDistance, triggerFilter.Value)
                 : Physics2D.Raycast(origin, direction, maxDistance, layerMask);
 
-            if (hit.collider == null)
+            var collider = hit.collider;
+            if (collider == null)
             {
                 return new
                 {
@@ -113,19 +118,22 @@ namespace MCPForUnity.Editor.Tools.Physics
                 };
             }
 
+            var hitGameObject = collider.gameObject;
+            var hitGameObjectName = hitGameObject.name;
+
             return new
             {
                 success = true,
-                message = $"2D Raycast hit '{hit.collider.gameObject.name}'.",
+                message = $"2D Raycast hit '{hitGameObjectName}'.",
                 data = new
                 {
                     hit = true,
                     point = new[] { hit.point.x, hit.point.y },
                     normal = new[] { hit.normal.x, hit.normal.y },
                     distance = hit.distance,
-                    gameObject = hit.collider.gameObject.name,
-                    instanceID = hit.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = hit.collider.GetType().Name,
+                    gameObject = hitGameObjectName,
+                    instanceID = hitGameObject.GetInstanceIDCompat(),
+                    collider_type = collider.GetType().Name,
                 },
             };
         }
@@ -289,11 +297,12 @@ namespace MCPForUnity.Editor.Tools.Physics
             var colliders = new List<object>();
             foreach (var col in results)
             {
+                var go = col.gameObject;
                 colliders.Add(
                     new
                     {
-                        gameObject = col.gameObject.name,
-                        instanceID = col.gameObject.GetInstanceIDCompat(),
+                        gameObject = go.name,
+                        instanceID = go.GetInstanceIDCompat(),
                         collider_type = col.GetType().Name,
                     }
                 );
@@ -312,11 +321,12 @@ namespace MCPForUnity.Editor.Tools.Physics
             var colliders = new List<object>();
             foreach (var col in results)
             {
+                var go = col.gameObject;
                 colliders.Add(
                     new
                     {
-                        gameObject = col.gameObject.name,
-                        instanceID = col.gameObject.GetInstanceIDCompat(),
+                        gameObject = go.name,
+                        instanceID = go.GetInstanceIDCompat(),
                         collider_type = col.GetType().Name,
                     }
                 );
@@ -468,19 +478,23 @@ namespace MCPForUnity.Editor.Tools.Physics
                 };
             }
 
+            var collider = hitInfo.collider;
+            var hitGameObject = collider.gameObject;
+            var hitGameObjectName = hitGameObject.name;
+
             return new
             {
                 success = true,
-                message = $"Shapecast hit '{hitInfo.collider.gameObject.name}'.",
+                message = $"Shapecast hit '{hitGameObjectName}'.",
                 data = new
                 {
                     hit = true,
                     point = new[] { hitInfo.point.x, hitInfo.point.y, hitInfo.point.z },
                     normal = new[] { hitInfo.normal.x, hitInfo.normal.y, hitInfo.normal.z },
                     distance = hitInfo.distance,
-                    gameObject = hitInfo.collider.gameObject.name,
-                    instanceID = hitInfo.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = hitInfo.collider.GetType().Name,
+                    gameObject = hitGameObjectName,
+                    instanceID = hitGameObject.GetInstanceIDCompat(),
+                    collider_type = collider.GetType().Name,
                 },
             };
         }
@@ -553,7 +567,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                     return new ErrorResponse($"Unknown 2D shape: '{shape}'. Valid: circle, box, capsule.");
             }
 
-            if (hit.collider == null)
+            var collider = hit.collider;
+            if (collider == null)
             {
                 return new
                 {
@@ -563,19 +578,22 @@ namespace MCPForUnity.Editor.Tools.Physics
                 };
             }
 
+            var hitGameObject = collider.gameObject;
+            var hitGameObjectName = hitGameObject.name;
+
             return new
             {
                 success = true,
-                message = $"2D Shapecast hit '{hit.collider.gameObject.name}'.",
+                message = $"2D Shapecast hit '{hitGameObjectName}'.",
                 data = new
                 {
                     hit = true,
                     point = new[] { hit.point.x, hit.point.y },
                     normal = new[] { hit.normal.x, hit.normal.y },
                     distance = hit.distance,
-                    gameObject = hit.collider.gameObject.name,
-                    instanceID = hit.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = hit.collider.GetType().Name,
+                    gameObject = hitGameObjectName,
+                    instanceID = hitGameObject.GetInstanceIDCompat(),
+                    collider_type = collider.GetType().Name,
                 },
             };
         }
@@ -632,15 +650,17 @@ namespace MCPForUnity.Editor.Tools.Physics
             var hitsArray = new List<object>();
             foreach (var h in hits)
             {
+                var collider = h.collider;
+                var hitGameObject = collider.gameObject;
                 hitsArray.Add(
                     new
                     {
                         point = new[] { h.point.x, h.point.y, h.point.z },
                         normal = new[] { h.normal.x, h.normal.y, h.normal.z },
                         distance = h.distance,
-                        gameObject = h.collider.gameObject.name,
-                        instanceID = h.collider.gameObject.GetInstanceIDCompat(),
-                        collider_type = h.collider.GetType().Name,
+                        gameObject = hitGameObject.name,
+                        instanceID = hitGameObject.GetInstanceIDCompat(),
+                        collider_type = collider.GetType().Name,
                     }
                 );
             }
@@ -684,15 +704,17 @@ namespace MCPForUnity.Editor.Tools.Physics
             var hitsArray = new List<object>();
             foreach (var h in hits)
             {
+                var collider = h.collider;
+                var hitGameObject = collider.gameObject;
                 hitsArray.Add(
                     new
                     {
                         point = new[] { h.point.x, h.point.y },
                         normal = new[] { h.normal.x, h.normal.y },
                         distance = h.distance,
-                        gameObject = h.collider.gameObject.name,
-                        instanceID = h.collider.gameObject.GetInstanceIDCompat(),
-                        collider_type = h.collider.GetType().Name,
+                        gameObject = hitGameObject.name,
+                        instanceID = hitGameObject.GetInstanceIDCompat(),
+                        collider_type = collider.GetType().Name,
                     }
                 );
             }
@@ -761,19 +783,23 @@ namespace MCPForUnity.Editor.Tools.Physics
                 };
             }
 
+            var collider = hitInfo.collider;
+            var hitGameObject = collider.gameObject;
+            var hitGameObjectName = hitGameObject.name;
+
             return new
             {
                 success = true,
-                message = $"Linecast hit '{hitInfo.collider.gameObject.name}'.",
+                message = $"Linecast hit '{hitGameObjectName}'.",
                 data = new
                 {
                     hit = true,
                     point = new[] { hitInfo.point.x, hitInfo.point.y, hitInfo.point.z },
                     normal = new[] { hitInfo.normal.x, hitInfo.normal.y, hitInfo.normal.z },
                     distance = hitInfo.distance,
-                    gameObject = hitInfo.collider.gameObject.name,
-                    instanceID = hitInfo.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = hitInfo.collider.GetType().Name,
+                    gameObject = hitGameObjectName,
+                    instanceID = hitGameObject.GetInstanceIDCompat(),
+                    collider_type = collider.GetType().Name,
                 },
             };
         }
@@ -797,7 +823,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                 ? Physics2D.defaultPhysicsScene.Linecast(start, end, triggerFilter.Value)
                 : Physics2D.Linecast(start, end, layerMask);
 
-            if (hit.collider == null)
+            var collider = hit.collider;
+            if (collider == null)
             {
                 return new
                 {
@@ -807,19 +834,22 @@ namespace MCPForUnity.Editor.Tools.Physics
                 };
             }
 
+            var hitGameObject = collider.gameObject;
+            var hitGameObjectName = hitGameObject.name;
+
             return new
             {
                 success = true,
-                message = $"2D Linecast hit '{hit.collider.gameObject.name}'.",
+                message = $"2D Linecast hit '{hitGameObjectName}'.",
                 data = new
                 {
                     hit = true,
                     point = new[] { hit.point.x, hit.point.y },
                     normal = new[] { hit.normal.x, hit.normal.y },
                     distance = hit.distance,
-                    gameObject = hit.collider.gameObject.name,
-                    instanceID = hit.collider.gameObject.GetInstanceIDCompat(),
-                    collider_type = hit.collider.GetType().Name,
+                    gameObject = hitGameObjectName,
+                    instanceID = hitGameObject.GetInstanceIDCompat(),
+                    collider_type = collider.GetType().Name,
                 },
             };
         }
