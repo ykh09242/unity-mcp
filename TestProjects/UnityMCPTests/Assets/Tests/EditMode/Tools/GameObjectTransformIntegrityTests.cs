@@ -370,11 +370,12 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void MalformedVector_KeepsExistingIgnoreBehavior()
+        public void MalformedVector_RejectsBeforeMutation()
         {
+            var before = Snapshot();
             var response = Send("modify", new JObject { ["position"] = new JArray(1, "bad", 3) });
-            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
-            Assert.AreEqual(Vector3.zero, target.transform.localPosition);
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(JToken.DeepEquals(before, Snapshot()));
         }
     }
 }
