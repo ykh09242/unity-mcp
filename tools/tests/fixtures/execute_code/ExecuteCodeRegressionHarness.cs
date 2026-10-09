@@ -51,6 +51,12 @@ internal static class ExecuteCodeRegressionHarness
         // Other cases deliberately start with both compiler assemblies already present.
         Assembly.Load("Microsoft.CodeAnalysis");
         Assembly.Load("Microsoft.CodeAnalysis.CSharp");
+#if UNITY_7000_0_OR_NEWER
+        Check("Unity7 simulated tracked path refreshes warmed references", Unity7LateReference);
+        Check("Unity7 simulated fallback preserves distinct snippet results and reuse", Unity7FallbackResults);
+        Check("Unity7 simulated snippets reuse modules and compile distinct source", Unity7SnippetCache);
+        Check("Unity7 simulated dynamic and pathless loads preserve caches", Unity7ExcludedLoads);
+#endif
         foreach (var backend in new[] { "codedom", "roslyn" })
         {
             Check(backend + ": basic return", () => Require(Result(Execute("return 42;", backend)).Value<int>() == 42, "Wrong result"));
@@ -278,6 +284,105 @@ internal static class ExecuteCodeRegressionHarness
             : 1;
     }
 
+#if UNITY_7000_0_OR_NEWER
+    private static void Unity7LateReference()
+    {
+        string type = "TrackedLateType" + Guid.NewGuid().ToString("N");
+        string path = Path.Combine(work, type + ".dll");
+        using (var provider = new CSharpCodeProvider())
+        {
+            var compiled = provider.CompileAssemblyFromSource(
+                new CompilerParameters { GenerateExecutable = false, OutputAssembly = path },
+                "public static class " + type + " { public static int Value = 73; }"
+            );
+            var errors = compiled
+                .Errors.Cast<CompilerError>()
+                .Where(error =>
+                    !error.IsWarning && !(string.IsNullOrEmpty(error.ErrorNumber) && string.IsNullOrWhiteSpace(error.ErrorText?.Replace("\uFEFF", "")))
+                )
+                .ToArray();
+            Require(errors.Length == 0 && File.Exists(path), string.Join(";", errors.Select(error => error.ToString())));
+        }
+        var inner = Assembly.LoadFrom(path);
+        UnityEngine.Assemblies.CurrentAssemblies.Hidden.Add(inner);
+        var wrapped = new SimulatedUnity7Assembly(inner, path);
+        Require(
+            wrapped.Location == "" && MCPForUnity.Runtime.Helpers.UnityAssembliesCompat.GetAssemblyPath(wrapped) == path,
+            "Fixture path contract incorrect"
+        );
+        const string warm = "return Assembly.GetExecutingAssembly().ManifestModule.ModuleVersionId.ToString();";
+        Result(Execute(warm, "roslyn"));
+        string settled = Result(Execute(warm, "roslyn")).Value<string>();
+        Require(Result(Execute(warm, "roslyn")).Value<string>() == settled, "Warm cache did not settle");
+        var paths = AssemblyPaths();
+        Require(!paths.Contains(path), "Hidden assembly entered warm references");
+        UnityEngine.Assemblies.CurrentAssemblies.Published.Add(wrapped);
+        NotifyAssemblyLoaded(wrapped);
+        Require(AssemblyPaths().Contains(path), "Tracked Unity path missing after late load notification");
+        Require(Result(Execute("return " + type + ".Value;", "roslyn")).Value<int>() == 73, "Late reference did not compile/execute");
+    }
+
+    private static void Unity7FallbackResults()
+    {
+        const string firstSource = "return new { value = 21, module = Assembly.GetExecutingAssembly().ManifestModule.ModuleVersionId.ToString() };";
+        const string secondSource = "return new { value = 22, module = Assembly.GetExecutingAssembly().ManifestModule.ModuleVersionId.ToString() };";
+        var first = Result(Execute(firstSource, "roslyn"));
+        var second = Result(Execute(secondSource, "roslyn"));
+        Require(first["value"].Value<int>() == 21 && second["value"].Value<int>() == 22, "Distinct snippets returned " + first + " and " + second);
+        Require(first["module"].Value<string>() != second["module"].Value<string>(), "Distinct snippets reused one module");
+        int loads = UnityEngine.Assemblies.CurrentAssemblies.ByteLoads;
+        var repeated = Result(Execute(firstSource, "roslyn"));
+        Require(
+            repeated["value"].Value<int>() == 21 && repeated["module"].Value<string>() == first["module"].Value<string>(),
+            "Repeated snippet lost its original result/module"
+        );
+        Require(UnityEngine.Assemblies.CurrentAssemblies.ByteLoads == loads, "Repeated snippet called byte loader again");
+    }
+
+    private static void Unity7SnippetCache()
+    {
+        const string source = "return Assembly.GetExecutingAssembly().ManifestModule.ModuleVersionId.ToString();";
+        Result(Execute(source, "roslyn"));
+        string first = Result(Execute(source, "roslyn")).Value<string>();
+        int before = UnityEngine.Assemblies.CurrentAssemblies.ByteLoads;
+        Require(Result(Execute(source, "roslyn")).Value<string>() == first, "Identical snippet changed module");
+        Require(UnityEngine.Assemblies.CurrentAssemblies.ByteLoads == before, "Identical snippet loaded another assembly");
+        string distinct = Result(Execute(source + " // distinct source", "roslyn")).Value<string>();
+        Require(distinct != first && UnityEngine.Assemblies.CurrentAssemblies.ByteLoads == before + 1, "Distinct source did not compile independently");
+        Require(Result(Execute(source, "roslyn")).Value<string>() == first, "Snippet load invalidated prior compiled cache");
+    }
+
+    private static void Unity7ExcludedLoads()
+    {
+        Result(Execute("return 5;", "roslyn"));
+        var paths = AssemblyPaths();
+        int generation = AssemblyGeneration();
+        var inner = Assembly.GetExecutingAssembly();
+        var pathless = new SimulatedUnity7Assembly(inner, "");
+        string dynamicPath = Path.Combine(work, "SimulatedDynamic.dll");
+        File.Copy(inner.Location, dynamicPath, true);
+        var dynamic = new SimulatedUnity7Assembly(inner, dynamicPath, true);
+        UnityEngine.Assemblies.CurrentAssemblies.Published.Add(pathless);
+        UnityEngine.Assemblies.CurrentAssemblies.Published.Add(dynamic);
+        NotifyAssemblyLoaded(pathless);
+        NotifyAssemblyLoaded(dynamic);
+        Require(AssemblyGeneration() == generation && ReferenceEquals(AssemblyPaths(), paths), "Excluded load invalidated cache");
+        typeof(ExecuteCode).GetMethod("OnDomainReload", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+        Require(!AssemblyPaths().Contains(dynamicPath), "Dynamic assembly path admitted as reference");
+    }
+
+    private static string[] AssemblyPaths() =>
+        (string[])typeof(ExecuteCode).GetMethod("GetAssemblyPaths", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+
+    private static int AssemblyGeneration() =>
+        (int)typeof(ExecuteCode).GetField("_assemblyGeneration", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+
+    private static void NotifyAssemblyLoaded(Assembly assembly) =>
+        typeof(ExecuteCode)
+            .GetMethod("OnAssemblyLoaded", BindingFlags.Static | BindingFlags.NonPublic)
+            .Invoke(null, new object[] { null, new AssemblyLoadEventArgs(assembly) });
+#endif
+
     private static void ColdAuto()
     {
         Require(!AppDomain.CurrentDomain.GetAssemblies().Any(a => a.GetName().Name == "Microsoft.CodeAnalysis"), "Roslyn already loaded before cold test");
@@ -451,6 +556,77 @@ namespace MCPForUnityTests.Editor
     public static class TestUtilities
     {
         public static JObject ToJObject(object value) => JObject.FromObject(value);
+    }
+}
+#endif
+
+#if UNITY_7000_0_OR_NEWER
+// Managed simulation of the Unity 7 API surface, not Unity's native implementation.
+internal sealed class SimulatedUnity7Assembly : Assembly
+{
+    private readonly Assembly inner;
+    private readonly bool dynamic;
+
+    public SimulatedUnity7Assembly(Assembly inner, string trackedPath, bool dynamic = false)
+    {
+        this.inner = inner;
+        TrackedPath = trackedPath;
+        this.dynamic = dynamic;
+    }
+
+    public string TrackedPath { get; }
+    public override string Location => "";
+    public override bool IsDynamic => dynamic;
+    public override string FullName => inner.FullName;
+
+    public override AssemblyName GetName() => inner.GetName();
+
+    public override AssemblyName GetName(bool copiedName) => inner.GetName(copiedName);
+
+    public override AssemblyName[] GetReferencedAssemblies() => inner.GetReferencedAssemblies();
+
+    public override Type GetType(string name, bool throwOnError, bool ignoreCase) => inner.GetType(name, throwOnError, ignoreCase);
+}
+
+namespace UnityEngine.Assemblies
+{
+    public static class CurrentAssemblies
+    {
+        internal static readonly System.Collections.Generic.HashSet<Assembly> Hidden = new System.Collections.Generic.HashSet<Assembly>();
+        internal static readonly System.Collections.Generic.List<Assembly> Published = new System.Collections.Generic.List<Assembly>();
+        internal static int ByteLoads;
+
+        public static System.Collections.Generic.IReadOnlyList<Assembly> GetLoadedAssemblies() =>
+            AppDomain.CurrentDomain.GetAssemblies().Where(assembly => !Hidden.Contains(assembly)).Concat(Published).ToArray();
+
+        public static Assembly LoadFromBytes(byte[] bytes)
+        {
+            ByteLoads++;
+            // Unity 7 a7's active-context and fallback loaders return an already
+            // loaded assembly with the same simple name. Read metadata without loading
+            // these bytes first so the simulation preserves that observable behavior.
+            string metadataPath = Path.Combine(Path.GetTempPath(), "unity7-byte-metadata-" + Guid.NewGuid().ToString("N") + ".dll");
+            string name;
+            try
+            {
+                File.WriteAllBytes(metadataPath, bytes);
+                name = AssemblyName.GetAssemblyName(metadataPath).Name;
+            }
+            finally
+            {
+                File.Delete(metadataPath);
+            }
+            var existing = GetLoadedAssemblies().FirstOrDefault(assembly => assembly.GetName().Name == name);
+            return existing ?? Assembly.Load(bytes);
+        }
+    }
+}
+
+namespace UnityEngine
+{
+    public static class AssemblyExtension
+    {
+        public static string GetLoadedAssemblyPath(Assembly assembly) => assembly is SimulatedUnity7Assembly tracked ? tracked.TrackedPath : assembly.Location;
     }
 }
 #endif

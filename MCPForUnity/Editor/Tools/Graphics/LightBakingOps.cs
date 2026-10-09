@@ -142,8 +142,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 return new ErrorResponse(RealtimeGIUnavailable);
 #endif
 #if UNITY_7000_0_OR_NEWER
-            if (!TryReadSerializedLightmapper(settings, out var lightmapper))
-                return new ErrorResponse(LightmapperUnavailable);
+            if (!TryReadEffectiveLightmapper(out var lightmapper))
+                return new ErrorResponse("The project uses an unsupported light baker.");
 #else
             var lightmapper = settings.lightmapper;
 #endif
@@ -226,7 +226,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 if (!Lightmapping.TryGetLightingSettings(out var current))
                     current = Lightmapping.lightingSettingsDefaults;
-                if (!TryReadSerializedLightmapper(current, out _))
+                if (GraphicsSettings.GetGraphicsSettings() == null || !TryReadSerializedLightmapper(current, out _))
                     return new ErrorResponse(LightmapperUnavailable);
             }
 #endif
@@ -480,9 +480,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
 #endif
 
         private const string LightmapperUnavailable =
-            "lightmapper is unavailable: LightingSettings does not expose the integer or enum m_BakeBackend property.";
+            "lightmapper is unavailable: GraphicsSettings or the integer/enum LightingSettings.m_BakeBackend property could not be accessed.";
 
-        // Keep the scene backend values used by Unity's Lighting Inspector; the project-wide LightBaker enum is different.
+        // Serialized scene backend access; Unity 7 also requires the project-wide LightBaker to select the effective baker.
         internal static bool TryReadSerializedLightmapper(LightingSettings settings, out LightingSettings.Lightmapper value)
         {
             value = default;
@@ -508,6 +508,84 @@ namespace MCPForUnity.Editor.Tools.Graphics
             serializedSettings.ApplyModifiedPropertiesWithoutUndo();
             return true;
         }
+
+#if UNITY_7000_0_OR_NEWER
+        private static bool TryReadEffectiveLightmapper(out LightingSettings.Lightmapper value)
+        {
+            switch (UnityEditor.Rendering.EditorGraphicsSettings.defaultLightBaker)
+            {
+                case UnityEditor.Rendering.LightBaker.ProgressiveLightBaker:
+                    value = LightingSettings.Lightmapper.ProgressiveGPU;
+                    return true;
+                case UnityEditor.Rendering.LightBaker.UnityComputeLightBaker:
+                    value = LightingSettings.Lightmapper.UnityComputeGPU;
+                    return true;
+                default:
+                    value = default;
+                    return false;
+            }
+        }
+
+        private static bool TryParseLightBaker(JToken value, out LightingSettings.Lightmapper lightmapper, out UnityEditor.Rendering.LightBaker baker)
+        {
+            baker = default;
+            // Keep numeric inputs in the existing scene enum: 1 must never silently select Compute.
+            if (string.Equals(value.ToString(), "ProgressiveLightBaker", StringComparison.OrdinalIgnoreCase))
+                lightmapper = LightingSettings.Lightmapper.ProgressiveGPU;
+            else if (string.Equals(value.ToString(), "UnityComputeLightBaker", StringComparison.OrdinalIgnoreCase))
+                lightmapper = LightingSettings.Lightmapper.UnityComputeGPU;
+            else if (!TryParseEnum(value, out lightmapper))
+                return false;
+
+            switch (lightmapper)
+            {
+                case LightingSettings.Lightmapper.ProgressiveGPU:
+                    baker = UnityEditor.Rendering.LightBaker.ProgressiveLightBaker;
+                    return true;
+                case LightingSettings.Lightmapper.UnityComputeGPU:
+                    baker = UnityEditor.Rendering.LightBaker.UnityComputeLightBaker;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool TrySetLightBaker(LightingSettings settings, LightingSettings.Lightmapper lightmapper, UnityEditor.Rendering.LightBaker baker)
+        {
+            var graphicsSettings = GraphicsSettings.GetGraphicsSettings();
+            if (settings == null || graphicsSettings == null)
+                return false;
+            using var serializedSettings = new SerializedObject(settings);
+            var property = serializedSettings.FindProperty("m_BakeBackend");
+            if (property == null || (property.propertyType != SerializedPropertyType.Integer && property.propertyType != SerializedPropertyType.Enum))
+                return false;
+
+            var previousBaker = UnityEditor.Rendering.EditorGraphicsSettings.defaultLightBaker;
+            int previousBackend = property.intValue;
+            Undo.RecordObject(graphicsSettings, "Modify Light Baker");
+            try
+            {
+                // Unity 7 selects the active baker project-wide and synchronizes this scene field in its Inspector.
+                UnityEditor.Rendering.EditorGraphicsSettings.defaultLightBaker = baker;
+                property.intValue = (int)lightmapper;
+                serializedSettings.ApplyModifiedPropertiesWithoutUndo();
+                EditorUtility.SetDirty(graphicsSettings);
+                return true;
+            }
+            catch
+            {
+                // Roll back only this setting; earlier successful keys keep the best-effort contract.
+                if (UnityEditor.Rendering.EditorGraphicsSettings.defaultLightBaker != previousBaker)
+                    UnityEditor.Rendering.EditorGraphicsSettings.defaultLightBaker = previousBaker;
+                if (property.intValue != previousBackend)
+                {
+                    property.intValue = previousBackend;
+                    serializedSettings.ApplyModifiedPropertiesWithoutUndo();
+                }
+                throw;
+            }
+        }
+#endif
 
         // --- Helper: Ensure a LightingSettings asset exists ---
         private static LightingSettings EnsureLightingSettings()
@@ -605,20 +683,25 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     return true;
 
                 case "lightmapper":
+                    if (value == null || (value.Type != JTokenType.String && value.Type != JTokenType.Integer))
+                        return false;
+#if UNITY_7000_0_OR_NEWER
+                    if (!TryParseLightBaker(value, out var lm, out var baker))
+                        return false;
+                    apply = settings => TrySetLightBaker(settings, lm, baker);
+                    return true;
+#else
                     if (TryParseEnum<LightingSettings.Lightmapper>(value, out var lm) && Enum.IsDefined(typeof(LightingSettings.Lightmapper), lm))
                     {
-#if UNITY_7000_0_OR_NEWER
-                        apply = settings => TrySetSerializedLightmapper(settings, lm);
-#else
                         apply = settings =>
                         {
                             settings.lightmapper = lm;
                             return true;
                         };
-#endif
                         return true;
                     }
                     return false;
+#endif
 
                 case "lightmapresolution":
                 case "lightmap_resolution":

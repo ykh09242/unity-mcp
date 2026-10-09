@@ -72,12 +72,12 @@ namespace MCPForUnity.Editor.Tools
             // no reference path and must not invalidate their own compiled cache entry.
             try
             {
-                if (!args.LoadedAssembly.IsDynamic && !string.IsNullOrEmpty(args.LoadedAssembly.Location))
+                if (!args.LoadedAssembly.IsDynamic && !string.IsNullOrEmpty(UnityAssembliesCompat.GetAssemblyPath(args.LoadedAssembly)))
                     Interlocked.Increment(ref _assemblyGeneration);
             }
             catch (NotSupportedException)
             {
-                // Dynamic assemblies may not expose a Location.
+                // Dynamic assemblies may not expose an assembly path.
             }
         }
 
@@ -456,7 +456,7 @@ namespace MCPForUnity.Editor.Tools
                             return null;
                         }
 
-                        return Assembly.Load(File.ReadAllBytes(outputAssemblyPath));
+                        return UnityAssembliesCompat.LoadFromBytes(File.ReadAllBytes(outputAssemblyPath));
                     }
                     finally
                     {
@@ -644,7 +644,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     if (assembly.IsDynamic)
                         continue;
-                    var location = assembly.Location;
+                    var location = UnityAssembliesCompat.GetAssemblyPath(assembly);
                     if (string.IsNullOrEmpty(location))
                         continue;
                     if (!File.Exists(location))
@@ -653,7 +653,7 @@ namespace MCPForUnity.Editor.Tools
                 }
                 catch (NotSupportedException)
                 {
-                    // Some assemblies don't support Location property
+                    // Some assemblies don't expose an assembly path.
                 }
             }
 
@@ -905,7 +905,15 @@ namespace MCPForUnity.Editor.Tools
                 treeArray.SetValue(syntaxTree, 0);
 
                 // Create compilation
-                var compilation = _createCompilation.Invoke(null, new object[] { "MCPDynamic", treeArray, refs, _compilationOptions });
+#if UNITY_7000_0_OR_NEWER
+                // Unity 7's byte loader can reuse an already loaded assembly
+                // by simple name. Distinct compilations need distinct identities; repeated
+                // snippets still reuse their assembly through the compiled source cache.
+                string assemblyName = "MCPDynamic_" + Guid.NewGuid().ToString("N");
+#else
+                const string assemblyName = "MCPDynamic";
+#endif
+                var compilation = _createCompilation.Invoke(null, new object[] { assemblyName, treeArray, refs, _compilationOptions });
 
                 // Emit to memory
                 using (var ms = new MemoryStream())
@@ -960,7 +968,7 @@ namespace MCPForUnity.Editor.Tools
                     }
 
                     ms.Seek(0, SeekOrigin.Begin);
-                    return Assembly.Load(ms.ToArray());
+                    return UnityAssembliesCompat.LoadFromBytes(ms.ToArray());
                 }
             }
             catch (Exception e)

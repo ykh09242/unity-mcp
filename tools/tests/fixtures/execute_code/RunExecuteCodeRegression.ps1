@@ -5,6 +5,7 @@ param(
     [string]$SourcePath,
     [string]$CaseFilter = '',
     [switch]$CompileEditModeTests,
+    [switch]$SimulateUnity7Assemblies,
     [string]$DotnetPath = 'dotnet'
 )
 $ErrorActionPreference = 'Stop'
@@ -52,6 +53,10 @@ try {
     }
     $arguments = @((Join-Path $SdkPath 'Roslyn/bincore/csc.dll'), '/nologo', '/noconfig', '/nostdlib+', '/target:exe', '/langversion:latest',
         ('/out:' + (Join-Path $work 'ExecuteCodeRegression.exe')))
+    if ($SimulateUnity7Assemblies) {
+        $arguments += '/define:UNITY_7000_0_OR_NEWER'
+        Write-Output 'SIMULATION: Unity 7 assembly APIs are managed fixture seams; no native Editor execution'
+    }
     $arguments += $references | ForEach-Object { '/reference:' + $_ }
     $arguments += @($source, (Join-Path $PSScriptRoot 'ExecuteCodeRegressionHarness.cs'),
         (Join-Path $root 'MCPForUnity/Editor/Helpers/Response.cs'),

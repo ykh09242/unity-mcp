@@ -301,6 +301,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreSame(_ownedSettings, Lightmapping.lightingSettings);
         }
 
+#if !UNITY_7000_0_OR_NEWER
         [TestCase("\"ProgressiveCPU\"", 1)]
         [TestCase("\"progressivegpu\"", 2)]
         [TestCase("1", 1)]
@@ -322,9 +323,13 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(((LightingSettings.Lightmapper)expected).ToString(), read["data"].Value<string>("lightmapper"));
             Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(_ownedSettings));
         }
+#endif
 
         [TestCase("\"invalid\"")]
         [TestCase("999")]
+        [TestCase("2.0")]
+        [TestCase("{}")]
+        [TestCase("[]")]
         [TestCase("true")]
         [TestCase("null")]
         public void InvalidOnlyLightmapper_DoesNotMutateAssignedSettings(string json)
@@ -391,6 +396,113 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(original, ReadLightmapper(_ownedSettings));
             Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(_ownedSettings));
         }
+
+#if UNITY_7000_0_OR_NEWER
+        [TestCase("\"ProgressiveGPU\"", 2)]
+        [TestCase("\"progressivegpu\"", 2)]
+        [TestCase("2", 2)]
+        [TestCase("\"ProgressiveLightBaker\"", 2)]
+        [TestCase("\"UnityComputeGPU\"", 3)]
+        [TestCase("3", 3)]
+        [TestCase("\"UnityComputeLightBaker\"", 3)]
+        public void Unity7LightmapperWrite_SelectsEffectiveBakerAndPreservesUndo(string json, int expected)
+        {
+            WithProjectLightBakerRestored(graphicsSettings =>
+            {
+                AssignOwnedSettings(true);
+                int previous = expected == 2 ? 3 : 2;
+                var previousBaker =
+                    previous == 2 ? UnityEditor.Rendering.LightBaker.ProgressiveLightBaker : UnityEditor.Rendering.LightBaker.UnityComputeLightBaker;
+                UnityEditor.Rendering.EditorGraphicsSettings.defaultLightBaker = previousBaker;
+                Assert.IsTrue(LightBakingOps.TrySetSerializedLightmapper(_ownedSettings, (LightingSettings.Lightmapper)previous));
+                Undo.IncrementCurrentGroup();
+                var response = SetLightingSettings(new JObject { ["lightmapper"] = JToken.Parse(json) });
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(expected, ReadLightmapper(_ownedSettings));
+                Assert.AreEqual(
+                    expected == 2 ? UnityEditor.Rendering.LightBaker.ProgressiveLightBaker : UnityEditor.Rendering.LightBaker.UnityComputeLightBaker,
+                    UnityEditor.Rendering.EditorGraphicsSettings.defaultLightBaker
+                );
+                Assert.AreSame(_ownedSettings, Lightmapping.lightingSettings);
+                CollectionAssert.AreEqual(new[] { "lightmapper" }, response["data"]["changed"].ToObject<string[]>());
+                Assert.IsEmpty(response["data"]["failed"]);
+                Assert.IsTrue(EditorUtility.IsDirty(graphicsSettings));
+                var read = JObject.FromObject(LightBakingOps.GetSettings(new JObject()));
+                Assert.AreEqual(((LightingSettings.Lightmapper)expected).ToString(), read["data"].Value<string>("lightmapper"));
+                Undo.FlushUndoRecordObjects();
+                Undo.PerformUndo();
+                Assert.AreEqual(previous, ReadLightmapper(_ownedSettings));
+                Assert.AreEqual(previousBaker, UnityEditor.Rendering.EditorGraphicsSettings.defaultLightBaker);
+                Undo.IncrementCurrentGroup();
+            });
+        }
+
+        [TestCase("0")]
+        [TestCase("1")]
+        [TestCase("\"Enlighten\"")]
+        [TestCase("\"ProgressiveCPU\"")]
+        public void Unity7UnsupportedLightmapper_DoesNotAllocateOrChangeProject(string json)
+        {
+            WithProjectLightBakerRestored(graphicsSettings =>
+            {
+                var original = UnityEditor.Rendering.EditorGraphicsSettings.defaultLightBaker;
+                int dirtyCount = EditorUtility.GetDirtyCount(graphicsSettings);
+                int count = UnityEngine.Resources.FindObjectsOfTypeAll<LightingSettings>().Length;
+                var response = SetLightingSettings(new JObject { ["lightmapper"] = JToken.Parse(json) });
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.IsFalse(Lightmapping.TryGetLightingSettings(out _));
+                Assert.AreEqual(count, UnityEngine.Resources.FindObjectsOfTypeAll<LightingSettings>().Length);
+                Assert.AreEqual(original, UnityEditor.Rendering.EditorGraphicsSettings.defaultLightBaker);
+                Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(graphicsSettings));
+                LogAssert.NoUnexpectedReceived();
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Unity7LightmapperRead_ReportsProjectBakerWithoutChangingScene(bool compute)
+        {
+            WithProjectLightBakerRestored(graphicsSettings =>
+            {
+                AssignOwnedSettings(true);
+                UnityEditor.Rendering.EditorGraphicsSettings.defaultLightBaker = compute
+                    ? UnityEditor.Rendering.LightBaker.UnityComputeLightBaker
+                    : UnityEditor.Rendering.LightBaker.ProgressiveLightBaker;
+                int staleBackend = compute ? 2 : 3;
+                Assert.IsTrue(LightBakingOps.TrySetSerializedLightmapper(_ownedSettings, (LightingSettings.Lightmapper)staleBackend));
+                int sceneDirty = EditorUtility.GetDirtyCount(_ownedSettings);
+                int projectDirty = EditorUtility.GetDirtyCount(graphicsSettings);
+                var response = JObject.FromObject(LightBakingOps.GetSettings(new JObject()));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(compute ? "UnityComputeGPU" : "ProgressiveGPU", response["data"].Value<string>("lightmapper"));
+                Assert.AreEqual(staleBackend, ReadLightmapper(_ownedSettings));
+                Assert.AreEqual(sceneDirty, EditorUtility.GetDirtyCount(_ownedSettings));
+                Assert.AreEqual(projectDirty, EditorUtility.GetDirtyCount(graphicsSettings));
+            });
+        }
+
+        private static void WithProjectLightBakerRestored(System.Action<Object> action)
+        {
+            var target = GraphicsSettings.GetGraphicsSettings();
+            Assert.IsNotNull(target);
+            var original = UnityEditor.Rendering.EditorGraphicsSettings.defaultLightBaker;
+            bool wasDirty = EditorUtility.IsDirty(target);
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            try
+            {
+                action(target);
+            }
+            finally
+            {
+                Undo.RevertAllDownToGroup(group);
+                UnityEditor.Rendering.EditorGraphicsSettings.defaultLightBaker = original;
+                if (!wasDirty)
+                    EditorUtility.ClearDirty(target);
+                Undo.IncrementCurrentGroup();
+            }
+        }
+#endif
 
         private static int ReadLightmapper(LightingSettings settings)
         {
