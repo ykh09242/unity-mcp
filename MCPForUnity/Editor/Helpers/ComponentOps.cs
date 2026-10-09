@@ -967,7 +967,7 @@ namespace MCPForUnity.Editor.Helpers
             error = null;
             using var so = new SerializedObject(component);
 
-            SerializedProperty prop = FindTopLevelProperty(so, propertyName, normalizedName, out error);
+            using var prop = FindTopLevelProperty(so, propertyName, normalizedName, out error);
             if (prop == null)
             {
                 error ??= $"SerializedProperty '{propertyName}' not found on component '{component.GetType().Name}'.";
@@ -984,7 +984,7 @@ namespace MCPForUnity.Editor.Helpers
             {
                 string propertyPath = prop.propertyPath;
                 so.Update();
-                var verifyProp = so.FindProperty(propertyPath);
+                using var verifyProp = so.FindProperty(propertyPath);
                 if (verifyProp != null && verifyProp.propertyType == SerializedPropertyType.ObjectReference && verifyProp.objectReferenceValue == null)
                 {
                     error =
@@ -1016,7 +1016,7 @@ namespace MCPForUnity.Editor.Helpers
 
                     for (int i = 0; i < jArray.Count; i++)
                     {
-                        var element = prop.GetArrayElementAtIndex(i);
+                        using var element = prop.GetArrayElementAtIndex(i);
                         if (!SetSerializedPropertyRecursive(element, jArray[i], out error, depth + 1))
                             return false;
                     }
@@ -1028,7 +1028,7 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     foreach (var kvp in jObj)
                     {
-                        var child = FindPropertyRelativeFuzzy(prop, kvp.Key);
+                        using var child = FindPropertyRelativeFuzzy(prop, kvp.Key);
                         if (child == null)
                         {
                             error = $"Sub-property '{kvp.Key}' not found under '{prop.propertyPath}'.";
@@ -1537,7 +1537,7 @@ namespace MCPForUnity.Editor.Helpers
             string rawKey = StripSerializedFieldPrefix(propertyName);
             string normalizedKey = StripSerializedFieldPrefix(normalizedName);
             string match = null;
-            var iter = so.GetIterator();
+            using var iter = so.GetIterator();
             bool enterChildren = true;
             while (iter.Next(enterChildren))
             {
@@ -1580,8 +1580,8 @@ namespace MCPForUnity.Editor.Helpers
 
             string normalizedKey = key.Replace("_", "").ToLowerInvariant();
 
-            var end = parent.GetEndProperty();
-            var iter = parent.Copy();
+            using var end = parent.GetEndProperty();
+            using var iter = parent.Copy();
             if (!iter.Next(true))
                 return null;
 
