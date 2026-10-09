@@ -198,7 +198,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     return providerJobId;
                 },
                 PollFn = (pid, ct) => adapter.PollAsync(pid, apiKey, transport, ct),
-                ImportFn = ImportOverrideForTests ?? ((j, path) => ImageImportPipeline.ImportInto(j, path, asSprite, transparent, isColor: true)),
+                ImportFn = ImportOverrideForTests ?? CreateImageImporter(asSprite, transparent),
                 Transport = transport,
                 OutputFolder = req.OutputFolder,
                 Ext = "png",
@@ -208,6 +208,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
             Register(job, runner);
             return job;
         }
+
+        // Import keeps only its options, not the provider closure and its completed result.
+        private static Func<AssetGenJob, string, AssetGenJob> CreateImageImporter(bool asSprite, bool transparent) =>
+            (job, path) => ImageImportPipeline.ImportInto(job, path, asSprite, transparent, isColor: true);
 
         public static AssetGenJob StartAudioGeneration(AudioGenRequest req)
         {
@@ -461,6 +465,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         }
                         r.ProviderJobId = r.SubmitTask.Result;
                         r.SubmitTask = null;
+                        r.SubmitFn = null;
                         if (string.IsNullOrEmpty(r.ProviderJobId))
                         {
                             Fail(r, "Provider returned no job id.");
@@ -491,6 +496,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         Persist(r.Job);
                         if (pr.State == ProviderPollState.Succeeded)
                         {
+                            r.PollFn = null;
                             r.OverrideExt = pr.ResultExt;
                             if (pr.InlineData != null && pr.InlineData.Length > 0)
                             {
