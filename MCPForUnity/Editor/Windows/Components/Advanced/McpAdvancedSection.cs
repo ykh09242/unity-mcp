@@ -236,7 +236,7 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
 
             clearGitUrlButton.clicked += () =>
             {
-                gitUrlOverride.value = string.Empty;
+                gitUrlOverride.SetValueWithoutNotify(string.Empty);
                 EditorPrefs.DeleteKey(EditorPrefKeys.GitUrlOverride);
                 OnGitUrlChanged?.Invoke();
                 OnHttpServerCommandUpdateRequested?.Invoke();
