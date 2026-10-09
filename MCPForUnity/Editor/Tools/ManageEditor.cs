@@ -279,7 +279,7 @@ namespace MCPForUnity.Editor.Tools
                 if (tagManager == null)
                     return new ErrorResponse("Could not access TagManager asset.");
 
-                SerializedProperty layersProp = tagManager.FindProperty("layers");
+                using var layersProp = tagManager.FindProperty("layers");
                 if (layersProp == null || !layersProp.isArray)
                     return new ErrorResponse("Could not find 'layers' property in TagManager.");
 
@@ -287,7 +287,7 @@ namespace MCPForUnity.Editor.Tools
                 int firstEmptyUserLayer = -1;
                 for (int i = 0; i < TotalLayerCount; i++)
                 {
-                    SerializedProperty layerSP = layersProp.GetArrayElementAtIndex(i);
+                    using var layerSP = layersProp.GetArrayElementAtIndex(i);
                     if (layerSP == null)
                         continue;
                     string currentName = layerSP.stringValue;
@@ -305,7 +305,7 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 // Assign the name to the found slot
-                SerializedProperty targetLayerSP = layersProp.GetArrayElementAtIndex(firstEmptyUserLayer);
+                using var targetLayerSP = layersProp.GetArrayElementAtIndex(firstEmptyUserLayer);
                 targetLayerSP.stringValue = layerName;
                 // Apply the changes to the TagManager asset
                 tagManager.ApplyModifiedProperties();
@@ -331,7 +331,7 @@ namespace MCPForUnity.Editor.Tools
                 if (tagManager == null)
                     return new ErrorResponse("Could not access TagManager asset.");
 
-                SerializedProperty layersProp = tagManager.FindProperty("layers");
+                using var layersProp = tagManager.FindProperty("layers");
                 if (layersProp == null || !layersProp.isArray)
                     return new ErrorResponse("Could not find 'layers' property in TagManager.");
 
@@ -339,7 +339,7 @@ namespace MCPForUnity.Editor.Tools
                 int layerIndexToRemove = -1;
                 for (int i = FirstUserLayerIndex; i < TotalLayerCount; i++) // Start from user layers
                 {
-                    SerializedProperty layerSP = layersProp.GetArrayElementAtIndex(i);
+                    using var layerSP = layersProp.GetArrayElementAtIndex(i);
                     // Case-insensitive comparison is safer
                     if (layerSP != null && layerName.Equals(layerSP.stringValue, StringComparison.OrdinalIgnoreCase))
                     {
@@ -354,7 +354,7 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 // Clear the name for that index
-                SerializedProperty targetLayerSP = layersProp.GetArrayElementAtIndex(layerIndexToRemove);
+                using var targetLayerSP = layersProp.GetArrayElementAtIndex(layerIndexToRemove);
                 targetLayerSP.stringValue = string.Empty; // Set to empty string to remove
                 // Apply the changes
                 tagManager.ApplyModifiedProperties();
