@@ -273,13 +273,18 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     string name = i == 0 ? fieldName : alias;
                     var field =
                         type.GetField(name, BindingFlags.Public | BindingFlags.Instance) ?? type.GetField(name, BindingFlags.NonPublic | BindingFlags.Instance);
-                    var prop =
-                        type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)
-                        ?? type.GetProperty(name, BindingFlags.NonPublic | BindingFlags.Instance);
-                    object val =
-                        field != null ? field.GetValue(obj)
-                        : prop != null ? prop.GetValue(obj)
-                        : null;
+                    object val;
+                    if (field != null)
+                    {
+                        val = field.GetValue(obj);
+                    }
+                    else
+                    {
+                        var prop =
+                            type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)
+                            ?? type.GetProperty(name, BindingFlags.NonPublic | BindingFlags.Instance);
+                        val = prop?.GetValue(obj);
+                    }
                     if (val != null)
                         return val;
                 }
