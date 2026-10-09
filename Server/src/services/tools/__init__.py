@@ -63,8 +63,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         # ParamNormalizerMiddleware before FastMCP validation
         wrapped = log_execution(tool_name, "Tool")(func)
         wrapped = telemetry_tool(tool_name)(wrapped)
-        wrapped = mcp.tool(name=tool_name, description=description, **kwargs)(wrapped)
-        tool_info["func"] = wrapped
+        # Keep the global declaration unchanged: each server owns its decorators.
+        mcp.tool(name=tool_name, description=description, **kwargs)(wrapped)
         logger.debug(f"Registered tool: {tool_name} - {description}")
 
     logger.info(f"Registered {len(tools)} MCP tools")
