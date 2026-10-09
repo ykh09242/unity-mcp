@@ -1108,10 +1108,10 @@ namespace MCPForUnity.Editor.Tools
                         Texture2D fullTex = null;
                         try
                         {
-                            fullTex = new Texture2D(captureW, captureH, TextureFormat.RGBA32, false);
-                            fullTex.LoadImage(capturePng);
                             if (captureW > targetMax || captureH > targetMax)
                             {
+                                fullTex = new Texture2D(captureW, captureH, TextureFormat.RGBA32, false);
+                                fullTex.LoadImage(capturePng);
                                 downscaled = ScreenshotUtility.DownscaleTexture(fullTex, targetMax);
                                 playData["imageBase64"] = Convert.ToBase64String(downscaled.EncodeToPNG());
                                 playData["imageWidth"] = downscaled.width;
