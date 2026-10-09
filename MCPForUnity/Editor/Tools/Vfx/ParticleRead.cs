@@ -59,22 +59,23 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     };
 
                 case ParticleSystemCurveMode.TwoCurves:
+                    var maxKeys = curve
+                        .curveMax.keys.Select(k => new
+                        {
+                            time = k.time,
+                            value = k.value,
+                            inTangent = k.inTangent,
+                            outTangent = k.outTangent,
+                        })
+                        .ToArray();
                     return new
                     {
                         mode = "curve",
                         multiplier = curve.curveMultiplier,
-                        keys = curve
-                            .curveMax.keys.Select(k => new
-                            {
-                                time = k.time,
-                                value = k.value,
-                                inTangent = k.inTangent,
-                                outTangent = k.outTangent,
-                            })
-                            .ToArray(),
+                        keys = maxKeys,
                         originalMode = "two_curves",
                         curveMin = SerializeAnimationCurve(curve.curveMin),
-                        curveMax = SerializeAnimationCurve(curve.curveMax),
+                        curveMax = new { keys = maxKeys },
                     };
 
                 default:
