@@ -150,12 +150,22 @@ public static class Program
                 Equal("", action.gitUrlOverride.value);
             }
         );
+        currentGroup = "browse";
+        Run("browse changed valid path persists/notifies once", () => Browse("new-server", "old-server"));
+        Run("browse same path preserves explicit notification", () => Browse("new-server", "new-server"));
+        Run("browse cancelled empty picker preserves state", () => Browse("", "old-server"));
+        Run("browse cancelled null picker preserves state", () => Browse(null, "old-server"));
+        Run("browse parent auto-corrects once and persists corrected path", () => Browse("checkout", "old-server", normalize: true));
+        Run("browse resolver failure propagates before mutation", () => Browse("new-server", "old-server", failure: "resolve"));
+        Run("browse persistence failure preserves exception/update ordering", () => Browse("new-server", "old-server", failure: "persist"));
+        Run("browse subscriber failure stops subsequent notifications", () => Browse("new-server", "old-server", failure: "subscriber"));
         currentGroup = "process";
         Run("real BCL wrapper disposal closes handle while child remains alive", () => RealProcess(args[0]));
         int expectedCases =
             selectedGroup == "process" ? 5
             : selectedGroup == "clear" ? 8
-            : 13;
+            : selectedGroup == "browse" ? 8
+            : 21;
         if (passed + failed != expectedCases)
         {
             failed++;
@@ -187,6 +197,91 @@ public static class Program
             Equal("", action.gitUrlOverride.value);
             Equal(null, EditorPrefs.Stored);
         }
+    }
+
+    private static void Browse(string picked, string initial, bool normalize = false, string failure = null)
+    {
+        Trace.Steps.Clear();
+        File.Queries = 0;
+        File.Handler = path =>
+        {
+            if (failure == "resolve")
+                throw new InvalidOperationException("resolve");
+            return !normalize || path == Path.Combine("checkout", "Server", "pyproject.toml");
+        };
+        EditorUtility.Picked = picked;
+        EditorPrefs.Stored = initial;
+        EditorPrefs.Sets = 0;
+        EditorPrefs.ThrowOnSet = failure == "persist";
+        var action = new AdvancedAction();
+        action.gitUrlOverride.SetValueWithoutNotify(initial);
+        action.Register();
+        string expected = normalize ? Path.Combine("checkout", "Server") : picked;
+        int git = 0,
+            http = 0;
+        action.OnGitUrlChanged += () =>
+        {
+            git++;
+            Trace.Steps.Add("git");
+            Equal(expected, EditorPrefs.Stored);
+            Equal(expected, action.gitUrlOverride.value);
+            if (failure == "subscriber")
+                throw new InvalidOperationException("subscriber");
+        };
+        action.OnHttpServerCommandUpdateRequested += () =>
+        {
+            http++;
+            Trace.Steps.Add("http");
+        };
+        string error = null;
+        try
+        {
+            action.Browse();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            File.Handler = null;
+            EditorPrefs.ThrowOnSet = false;
+        }
+        Console.WriteLine(
+            $"BROWSE picked={picked ?? "<null>"} initial={initial} queries={File.Queries} sets={EditorPrefs.Sets} git={git} http={http} trace={string.Join(",", Trace.Steps)}"
+        );
+        Equal(failure, error);
+        if (string.IsNullOrEmpty(picked))
+        {
+            Equal(initial, EditorPrefs.Stored);
+            Equal(initial, action.gitUrlOverride.value);
+            Equal(0, File.Queries);
+            Equal(0, EditorPrefs.Sets);
+            Equal(0, git);
+            Equal(0, http);
+            Equal("", string.Join(",", Trace.Steps));
+            return;
+        }
+        Equal(normalize ? 2 : 1, File.Queries);
+        if (failure == "resolve")
+        {
+            Equal(initial, EditorPrefs.Stored);
+            Equal(initial, action.gitUrlOverride.value);
+            Equal(0, EditorPrefs.Sets);
+            Equal("query", string.Join(",", Trace.Steps));
+            return;
+        }
+        Equal(1, EditorPrefs.Sets);
+        Equal(expected, action.gitUrlOverride.value);
+        Equal(failure == "persist" ? initial : expected, EditorPrefs.Stored);
+        Equal(failure == "persist" ? 0 : 1, git);
+        Equal(failure == null ? 1 : 0, http);
+        string prefix = normalize ? "query,query,info" : "query";
+        string suffix =
+            failure == "persist" ? ",persist"
+            : failure == "subscriber" ? ",persist,git"
+            : ",persist,git,http,info";
+        Equal(prefix + suffix, string.Join(",", Trace.Steps));
     }
 
     private static void RealProcess(string output)

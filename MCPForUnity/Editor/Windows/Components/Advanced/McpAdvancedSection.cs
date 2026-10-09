@@ -462,7 +462,7 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             if (!string.IsNullOrEmpty(picked))
             {
                 picked = ResolveServerPath(picked);
-                gitUrlOverride.value = picked;
+                gitUrlOverride.SetValueWithoutNotify(picked);
                 EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, picked);
                 OnGitUrlChanged?.Invoke();
                 OnHttpServerCommandUpdateRequested?.Invoke();

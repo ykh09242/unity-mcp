@@ -31,12 +31,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", help="Read-only Git ref, e.g. 43ee728d")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--group", choices=("all", "process", "clear"), default="all")
+    parser.add_argument("--group", choices=("all", "process", "clear", "browse"), default="all")
     args = parser.parse_args()
     output = args.output.resolve()
-    allowed = ROOT / ".tmp/CS-20261009-memory-query-resources"
-    if not output.is_relative_to(allowed):
-        parser.error(f"--output must be inside {allowed}")
+    allowed = (
+        ROOT / ".tmp/CS-20261009-memory-query-resources",
+        ROOT / ".tmp/CS-20261009-memory-query-remaining",
+    )
+    if not any(output.is_relative_to(path) for path in allowed):
+        parser.error("--output must be inside an authorized window-action audit .tmp directory")
     output.mkdir(parents=True, exist_ok=True)
     sources = {}
     for name, path in FILES.items():
@@ -50,6 +53,8 @@ def main():
     method = block(sources["client"], "private void OnOpenFileClicked()")
     value = block(sources["advanced"], "gitUrlOverride.RegisterValueChangedCallback(evt =>") + ");"
     clear = block(sources["advanced"], "clearGitUrlButton.clicked += () =>") + ";"
+    browse = block(sources["advanced"], "private void OnBrowseGitUrlClicked()")
+    resolve = block(sources["advanced"], "private static string ResolveServerPath(string path)")
     print(
         json.dumps(
             {
@@ -64,6 +69,7 @@ def main():
         flush=True,
     )
     scaffold = Template("""using System;
+using System.IO;
 namespace WindowActions;
 public class ClientAction
 {
@@ -77,14 +83,16 @@ public class AdvancedAction
     public Button clearGitUrlButton = new();
     public event Action OnGitUrlChanged;
     public event Action OnHttpServerCommandUpdateRequested;
-    private string ResolveServerPath(string value) => value;
+    public void Browse() => OnBrowseGitUrlClicked();
+$browse
+$resolve
     public void Register()
     {
 $value
 $clear
     }
 }
-""").substitute(method=method, value=value, clear=clear)
+""").substitute(method=method, value=value, clear=clear, browse=browse, resolve=resolve)
     (output / "SelectedSource.cs").write_text(scaffold, encoding="utf-8")
     here = Path(__file__).parent
     for name in ("Program.cs", "Boundary.cs"):

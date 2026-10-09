@@ -48,6 +48,8 @@ public static class EditorPrefs
 {
     public static string Stored;
     public static int Deletes;
+    public static int Sets;
+    public static bool ThrowOnSet;
 
     public static void DeleteKey(string key)
     {
@@ -55,19 +57,37 @@ public static class EditorPrefs
         Deletes++;
     }
 
-    public static void SetString(string key, string value) => Stored = value;
+    public static void SetString(string key, string value)
+    {
+        Sets++;
+        Trace.Steps.Add("persist");
+        if (ThrowOnSet)
+            throw new InvalidOperationException("persist");
+        Stored = value;
+    }
 }
 
 public static class File
 {
     public static bool Present = true;
 
-    public static bool Exists(string path) => Present;
+    public static Func<string, bool> Handler;
+    public static int Queries;
+
+    public static bool Exists(string path)
+    {
+        Queries++;
+        Trace.Steps.Add("query");
+        return Handler != null ? Handler(path) : Present;
+    }
 }
 
 public static class EditorUtility
 {
     public static int Dialogs;
+    public static string Picked;
+
+    public static string OpenFolderPanel(string title, string path, string defaultName) => Picked;
 
     public static void DisplayDialog(string title, string message, string ok) => Dialogs++;
 }
@@ -75,6 +95,8 @@ public static class EditorUtility
 public static class McpLog
 {
     public static int Errors;
+
+    public static void Info(string message) => Trace.Steps.Add("info");
 
     public static void Error(string message) => Errors++;
 }
@@ -121,4 +143,9 @@ public sealed class Process : IDisposable
         File.Present = true;
         EditorUtility.Dialogs = McpLog.Errors = 0;
     }
+}
+
+public static class Trace
+{
+    public static readonly List<string> Steps = new();
 }
