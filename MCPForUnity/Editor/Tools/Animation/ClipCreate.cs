@@ -424,7 +424,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
         private static void SetupLegacyClip(AnimationClip clip)
         {
-            var so = new SerializedObject(clip);
+            using var so = new SerializedObject(clip);
             bool changed = false;
 
             if (!clip.legacy)
