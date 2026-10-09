@@ -1036,8 +1036,10 @@ class UnityConnectionPool:
             return self._connections[target.id]
 
     def disconnect_all(self):
-        """Disconnect all active connections"""
-        with self._pool_lock:
+        """Disconnect all active connections and release this pool's discovery generation."""
+        # Discovery publishes under scan -> pool locks. Teardown uses the same
+        # order so a scan already in progress cannot repopulate closed metadata.
+        with self._scan_lock, self._pool_lock:
             for instance_id, conn in self._connections.items():
                 try:
                     logger.info(f"Disconnecting from Unity instance: {instance_id}")
@@ -1045,6 +1047,10 @@ class UnityConnectionPool:
                 except Exception:
                     logger.exception(f"Error disconnecting from {instance_id}")
             self._connections.clear()
+            # Replace metadata rather than mutating an existing resource reader's snapshot.
+            self._known_instances = {}
+            self._target_refreshes.clear()
+            self._last_full_scan = None
 
 
 # Global Unity connection pool
