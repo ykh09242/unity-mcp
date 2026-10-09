@@ -224,6 +224,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             var feature = featuresList[targetIndex] as ScriptableObject;
             string featureName = feature?.name ?? "Unknown";
+            var rendererOwner = rendererData as UnityEngine.Object;
+            bool ownsFeature = false;
 
             // Remove from the list via SerializedObject
             using (var so = new SerializedObject(rendererData as UnityEngine.Object))
@@ -233,6 +235,13 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     return new ErrorResponse("m_RendererFeatures array not found.");
 
                 Undo.RecordObject(rendererData as UnityEngine.Object, "Remove Renderer Feature");
+                ownsFeature =
+                    rendererOwner != null
+                    && feature != null
+                    && EditorUtility.IsPersistent(rendererOwner)
+                    && EditorUtility.IsPersistent(feature)
+                    && AssetDatabase.IsSubAsset(feature)
+                    && string.Equals(AssetDatabase.GetAssetPath(rendererOwner), AssetDatabase.GetAssetPath(feature), StringComparison.Ordinal);
                 RemoveSerializedFeatureSlot(rendererFeaturesPropSo, targetIndex);
                 so.ApplyModifiedProperties();
 
@@ -247,7 +256,20 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             // Remove the sub-asset
             if (feature != null)
+            {
                 AssetDatabase.RemoveObjectFromAsset(feature);
+                if (
+                    ownsFeature
+                    && !EditorUtility.IsPersistent(feature)
+                    && featuresProp.GetValue(rendererData) is System.Collections.IList remainingFeatures
+                    && !remainingFeatures.Cast<object>().Any(remaining => ReferenceEquals(remaining, feature))
+                )
+                {
+                    var disposableFeature = feature as IDisposable;
+                    Undo.DestroyObjectImmediate(feature);
+                    disposableFeature?.Dispose();
+                }
+            }
 
             EditorUtility.SetDirty(rendererData as UnityEngine.Object);
             AssetDatabase.SaveAssets();
