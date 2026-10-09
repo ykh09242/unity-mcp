@@ -460,7 +460,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (settings == null)
                 return false;
             using var serializedSettings = new SerializedObject(settings);
-            var property = serializedSettings.FindProperty("m_EnableRealtimeLightmaps");
+            using var property = serializedSettings.FindProperty("m_EnableRealtimeLightmaps");
             if (property == null || property.propertyType != SerializedPropertyType.Boolean)
                 return false;
             value = property.boolValue;
@@ -470,7 +470,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
         private static bool TrySetRealtimeGI(LightingSettings settings, JToken value)
         {
             using var serializedSettings = new SerializedObject(settings);
-            var property = serializedSettings.FindProperty("m_EnableRealtimeLightmaps");
+            using var property = serializedSettings.FindProperty("m_EnableRealtimeLightmaps");
             if (property == null || property.propertyType != SerializedPropertyType.Boolean)
                 return false;
             property.boolValue = ParamCoercion.CoerceBool(value, property.boolValue);
@@ -489,7 +489,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (settings == null)
                 return false;
             using var serializedSettings = new SerializedObject(settings);
-            var property = serializedSettings.FindProperty("m_BakeBackend");
+            using var property = serializedSettings.FindProperty("m_BakeBackend");
             if (property == null || (property.propertyType != SerializedPropertyType.Integer && property.propertyType != SerializedPropertyType.Enum))
                 return false;
             value = (LightingSettings.Lightmapper)property.intValue;
@@ -501,7 +501,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (settings == null || !Enum.IsDefined(typeof(LightingSettings.Lightmapper), value))
                 return false;
             using var serializedSettings = new SerializedObject(settings);
-            var property = serializedSettings.FindProperty("m_BakeBackend");
+            using var property = serializedSettings.FindProperty("m_BakeBackend");
             if (property == null || (property.propertyType != SerializedPropertyType.Integer && property.propertyType != SerializedPropertyType.Enum))
                 return false;
             property.intValue = (int)value;
@@ -556,7 +556,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (settings == null || graphicsSettings == null)
                 return false;
             using var serializedSettings = new SerializedObject(settings);
-            var property = serializedSettings.FindProperty("m_BakeBackend");
+            using var property = serializedSettings.FindProperty("m_BakeBackend");
             if (property == null || (property.propertyType != SerializedPropertyType.Integer && property.propertyType != SerializedPropertyType.Enum))
                 return false;
 
