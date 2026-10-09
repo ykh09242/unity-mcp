@@ -2443,11 +2443,14 @@ namespace MCPForUnity.Editor.Tools
             if (includeTransform && go.transform != null)
             {
                 var t = go.transform;
+                var position = t.localPosition;
+                var rotation = t.localRotation.eulerAngles;
+                var scale = t.localScale;
                 d["transform"] = new
                 {
-                    position = new[] { t.localPosition.x, t.localPosition.y, t.localPosition.z },
-                    rotation = new[] { t.localRotation.eulerAngles.x, t.localRotation.eulerAngles.y, t.localRotation.eulerAngles.z },
-                    scale = new[] { t.localScale.x, t.localScale.y, t.localScale.z },
+                    position = new[] { position.x, position.y, position.z },
+                    rotation = new[] { rotation.x, rotation.y, rotation.z },
+                    scale = new[] { scale.x, scale.y, scale.z },
                 };
             }
 
