@@ -396,3 +396,73 @@ async def test_stdio_resource_ttl_generation_and_authoritative_bypass(monkeypatc
         await asyncio.gather(*callers, return_exceptions=True)
         for key in tuple(reads._loops.get(loop, {})):
             await reads.invalidate(key)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("completion", ["complete", "cancel", "timeout", "replacement"])
+async def test_job_polling_releases_superseded_copies_and_keeps_final_delivery(
+    monkeypatch, budget, completion
+):
+    jobs = importlib.import_module("services.tools.run_tests")
+    monkeypatch.setattr(jobs.config, "transport_mode", "stdio")
+    monkeypatch.setattr(jobs.config, "http_remote_hosted", False)
+    monkeypatch.setattr(
+        jobs, "get_unity_instance_from_context", AsyncMock(return_value="Owned@synthetic")
+    )
+    monkeypatch.setattr(
+        jobs,
+        "get_authenticated_stdio_generation",
+        AsyncMock(
+            side_effect=lambda _: (
+                "authenticated-replacement"
+                if completion == "replacement" and polls > 0
+                else "authenticated-one"
+            )
+        ),
+    )
+    monkeypatch.setattr(jobs, "_update_job_nudge", AsyncMock())
+    monkeypatch.setattr(jobs, "_job_status_reads", SharedToolReads(freshness_s=0))
+    budget.max_entries = 3
+    entered = asyncio.Event()
+    polls = 0
+    original_sleep = asyncio.sleep
+
+    async def next_poll(delay):
+        await original_sleep(0)
+
+    async def send(*args):
+        nonlocal polls
+        polls += 1
+        if completion in ("cancel", "timeout") and polls == 2:
+            entered.set()
+            await asyncio.Event().wait()
+        return {
+            "success": True,
+            "data": {"job_id": "job", "status": "succeeded" if polls == 5 else "running"},
+        }
+
+    monkeypatch.setattr(asyncio, "sleep", next_poll)
+    monkeypatch.setattr(jobs.unity_transport, "send_with_unity_instance", send)
+    owner = ResponseOwner()
+    token = response_owner.set(owner)
+    caller = asyncio.create_task(jobs.get_test_job(context(), "job", wait_timeout=1))
+    try:
+        if completion == "cancel":
+            await asyncio.wait_for(entered.wait(), 1)
+            caller.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+            assert owner.entries == []
+            assert budget.retained_bytes == 0
+        else:
+            reply = await caller
+            assert reply.success
+            assert reply.data.status == ("running" if completion == "timeout" else "succeeded")
+            assert polls == (2 if completion == "timeout" else 5)
+            assert len(owner.entries) == 1
+            assert budget.retained_bytes > 0
+    finally:
+        caller.cancel()
+        await asyncio.gather(caller, return_exceptions=True)
+        response_owner.reset(token)
+        owner.release()
