@@ -1,6 +1,7 @@
 """Coalesce legacy tool refreshes without blocking the Unity socket reader."""
 
 import asyncio
+from contextvars import Context, copy_context
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -35,15 +36,19 @@ class ToolListNotifier:
         self._tasks: set[asyncio.Task[None]] = set()
         self._closed_connections: WeakSet[Connection] = WeakSet()
         self._closed = False
+        # Connection-scoped notifications must not inherit the triggering request.
+        self._context: Context | None = copy_context()
 
     def reset(self) -> None:
         """Start a new hub lifespan and cancel work from an earlier configuration."""
         self._stop()
+        self._context = copy_context()
         self._closed = False
 
     def publish(self, connections: Iterable[Connection]) -> None:
         """Queue catalog invalidation after its new contents have been published."""
-        if self._closed:
+        context = self._context
+        if self._closed or context is None:
             return
         for connection in connections:
             if connection in self._closed_connections:
@@ -55,10 +60,14 @@ class ToolListNotifier:
                 connection.exit_stack.push_async_callback(self._close_delivery, delivery)
             delivery.dirty = True
             if delivery.task is None:
-                task = asyncio.create_task(self._deliver(delivery), name="mcp-tool-list-changed")
+                task = asyncio.create_task(
+                    self._deliver(delivery),
+                    name="mcp-tool-list-changed",
+                    context=context.copy(),
+                )
                 delivery.task = task
                 self._tasks.add(task)
-                task.add_done_callback(self._tasks.discard)
+                task.add_done_callback(self._tasks.discard, context=context.copy())
 
     async def _deliver(self, delivery: _Delivery) -> None:
         try:
@@ -92,6 +101,7 @@ class ToolListNotifier:
 
     def _stop(self) -> None:
         self._closed = True
+        self._context = None
         for delivery in self._deliveries.values():
             delivery.closed = True
             delivery.dirty = False
