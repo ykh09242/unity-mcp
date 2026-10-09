@@ -166,7 +166,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             // Lens is a struct field — use SerializedProperty for reliable setting
             using var so = new SerializedObject(cmCamera);
-            var lensProp = so.FindProperty("Lens") ?? so.FindProperty("m_Lens");
+            using var lensProp = so.FindProperty("Lens") ?? so.FindProperty("m_Lens");
             if (lensProp == null)
                 return new ErrorResponse("Could not find Lens property on CinemachineCamera.");
 
@@ -213,11 +213,11 @@ namespace MCPForUnity.Editor.Tools.Cameras
         {
             // PrioritySettings is a struct with Enabled + m_Value — use SerializedProperty.
             using var so = new SerializedObject(cmCamera);
-            var priorityProp = so.FindProperty("Priority");
+            using var priorityProp = so.FindProperty("Priority");
             if (priorityProp != null)
             {
-                var enabledProp = priorityProp.FindPropertyRelative("Enabled");
-                var valueProp = priorityProp.FindPropertyRelative("m_Value");
+                using var enabledProp = priorityProp.FindPropertyRelative("Enabled");
+                using var valueProp = priorityProp.FindPropertyRelative("m_Value");
                 if (
                     enabledProp == null
                     || enabledProp.propertyType != SerializedPropertyType.Boolean
@@ -475,7 +475,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
         {
             if (value == null || value.Type == JTokenType.Null)
                 return;
-            var sub = parent.FindPropertyRelative(subPropName) ?? parent.FindPropertyRelative("m_" + subPropName);
+            using var sub = parent.FindPropertyRelative(subPropName) ?? parent.FindPropertyRelative("m_" + subPropName);
             if (sub != null && sub.propertyType == SerializedPropertyType.Float)
                 sub.floatValue = ParamCoercion.CoerceFloat(value, sub.floatValue);
         }

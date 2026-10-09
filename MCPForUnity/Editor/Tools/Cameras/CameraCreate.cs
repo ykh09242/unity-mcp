@@ -115,11 +115,11 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 // PrioritySettings is a struct with Enabled + m_Value — use SerializedProperty
                 using (var so = new SerializedObject(cmCamera))
                 {
-                    var priorityProp = so.FindProperty("Priority");
+                    using var priorityProp = so.FindProperty("Priority");
                     if (priorityProp != null)
                     {
-                        var enabledProp = priorityProp.FindPropertyRelative("Enabled");
-                        var valueProp = priorityProp.FindPropertyRelative("m_Value");
+                        using var enabledProp = priorityProp.FindPropertyRelative("Enabled");
+                        using var valueProp = priorityProp.FindPropertyRelative("m_Value");
                         if (enabledProp == null || valueProp == null)
                             return new ErrorResponse("Could not find supported Priority fields on CinemachineCamera.");
                         enabledProp.boolValue = true;
@@ -134,7 +134,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
                     if (props["fieldOfView"] != null || props["nearClipPlane"] != null || props["farClipPlane"] != null)
                     {
-                        var lensProp = so.FindProperty("Lens") ?? so.FindProperty("m_Lens");
+                        using var lensProp = so.FindProperty("Lens") ?? so.FindProperty("m_Lens");
                         if (lensProp == null)
                             return new ErrorResponse("Could not find Lens property on CinemachineCamera.");
                         foreach (
@@ -148,7 +148,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         {
                             if (props[input] == null)
                                 continue;
-                            var lensField = lensProp.FindPropertyRelative(field);
+                            using var lensField = lensProp.FindPropertyRelative(field);
                             if (lensField == null)
                                 return new ErrorResponse($"Could not find Lens.{field} property on CinemachineCamera.");
                             lensField.floatValue = value ?? lensField.floatValue;
@@ -246,12 +246,12 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 if (blendStyle != null || blendDuration >= 0)
                 {
                     using var so = new SerializedObject(brain);
-                    var defaultBlendProp = so.FindProperty("DefaultBlend") ?? so.FindProperty("m_DefaultBlend");
+                    using var defaultBlendProp = so.FindProperty("DefaultBlend") ?? so.FindProperty("m_DefaultBlend");
                     if (defaultBlendProp != null)
                     {
                         if (blendStyle != null)
                         {
-                            var styleProp = defaultBlendProp.FindPropertyRelative("Style") ?? defaultBlendProp.FindPropertyRelative("m_Style");
+                            using var styleProp = defaultBlendProp.FindPropertyRelative("Style") ?? defaultBlendProp.FindPropertyRelative("m_Style");
                             if (styleProp != null)
                             {
                                 int idx = Array.FindIndex(styleProp.enumNames, n => n.Equals(blendStyle, StringComparison.OrdinalIgnoreCase));
@@ -261,7 +261,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         }
                         if (blendDuration >= 0)
                         {
-                            var timeProp = defaultBlendProp.FindPropertyRelative("Time") ?? defaultBlendProp.FindPropertyRelative("m_Time");
+                            using var timeProp = defaultBlendProp.FindPropertyRelative("Time") ?? defaultBlendProp.FindPropertyRelative("m_Time");
                             if (timeProp != null)
                                 timeProp.floatValue = blendDuration;
                         }
