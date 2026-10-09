@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -736,7 +737,13 @@ namespace MCPForUnity.Editor.Tools
 
         private static string GetManifestPath()
         {
-            return Path.Combine(Application.dataPath, "..", "Packages", "manifest.json");
+            return GetContainedManifestPath(Application.dataPath);
+        }
+
+        private static string GetContainedManifestPath(string dataPath)
+        {
+            string projectRoot = Path.GetFullPath(Path.Combine(dataPath, ".."));
+            return SafePathUtility.ResolveWithinRoot(projectRoot, Path.Combine("Packages", "manifest.json"));
         }
 
         private static string TruncateDescription(string description, int maxLength = 200)

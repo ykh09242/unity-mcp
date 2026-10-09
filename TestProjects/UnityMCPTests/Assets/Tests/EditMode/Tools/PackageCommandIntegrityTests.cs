@@ -189,6 +189,28 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(expected, result.Value<string>("error"));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void FixedManifestPathStaysInOwnedProjectWithoutCreatingMissingFolders(bool existingManifest)
+        {
+            string assets = Path.Combine(root, "Assets");
+            Directory.CreateDirectory(assets);
+            ownedDirectories.Add(assets);
+            string packages = Path.Combine(root, "Packages");
+            string path = Path.Combine(packages, "manifest.json");
+            if (existingManifest)
+            {
+                Directory.CreateDirectory(packages);
+                ownedDirectories.Add(packages);
+                WriteOwned("Packages/manifest.json", "{\"untouched\":false}");
+            }
+            Assert.AreEqual(path, Method("GetContainedManifestPath").Invoke(null, new object[] { assets }));
+            Assert.AreEqual(existingManifest, Directory.Exists(packages));
+            Assert.AreEqual(existingManifest, File.Exists(path));
+            if (existingManifest)
+                Assert.AreEqual("{\"untouched\":false}", File.ReadAllText(path));
+        }
+
         private static JObject CommandParams(JObject input) =>
             JsonConvert.DeserializeObject<Command>(new JObject { ["type"] = "manage_packages", ["params"] = input }.ToString(Formatting.None)).@params;
 
