@@ -128,8 +128,9 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                         else
                         {
                             string prefix = $"data:{mime};base64,";
+                            int maxSourceBytes = (MaxInlinePayloadBytes - prefix.Length) / 4 * 3;
                             long size = new FileInfo(fullPath).Length;
-                            long encoded = 4L * ((size + 2) / 3) + prefix.Length;
+                            decimal encoded = 4m * (size / 3 + (size % 3 == 0 ? 0 : 1)) + prefix.Length;
                             if (encoded > MaxInlinePayloadBytes)
                             {
                                 imageOmittedReason =
@@ -139,7 +140,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                             }
                             else
                             {
-                                imageBase64 = prefix + Convert.ToBase64String(File.ReadAllBytes(fullPath));
+                                imageBase64 = prefix + ReadInlineImageBase64(fullPath, maxSourceBytes);
                             }
                         }
                     }
@@ -168,6 +169,31 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 image_base64 = imageBase64,
                 image_omitted_reason = imageOmittedReason,
             };
+        }
+
+        private static string ReadInlineImageBase64(string fullPath, int maxBytes)
+        {
+            using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            long length = stream.Length;
+            if (length > maxBytes)
+                throw new IOException("The image exceeds the inline byte limit.");
+            using var output = new MemoryStream((int)length);
+            byte[] buffer = new byte[(int)Math.Min(64 * 1024, Math.Max(1, length))];
+            while (true)
+            {
+                // Read one extra byte to detect growth without accepting an oversized payload.
+                int count = (int)Math.Min(buffer.Length, maxBytes - output.Length + 1);
+                int read = stream.Read(buffer, 0, count);
+                if (read == 0)
+                    return Convert.ToBase64String(output.GetBuffer(), 0, (int)output.Length);
+                long required = output.Length + read;
+                if (required > maxBytes)
+                    throw new IOException("The image exceeds the inline byte limit.");
+                // Keep MemoryStream growth within the inline source-byte budget.
+                if (required > output.Capacity)
+                    output.Capacity = (int)Math.Min(maxBytes, Math.Max(required, Math.Max(256L, output.Capacity * 2L)));
+                output.Write(buffer, 0, read);
+            }
         }
 
         /// <summary>Every importer field slice_sheet writes, so a refusal can put all of them back.</summary>
