@@ -16,9 +16,15 @@ namespace MCPForUnity.Editor.Services
 
         public List<ResourceMetadata> DiscoverAllResources()
         {
+            EnsureResourcesDiscovered();
+            return _cachedResources.Values.ToList();
+        }
+
+        private void EnsureResourcesDiscovered()
+        {
             if (_cachedResources != null)
             {
-                return _cachedResources.Values.ToList();
+                return;
             }
 
             _cachedResources = new Dictionary<string, ResourceMetadata>();
@@ -57,7 +63,6 @@ namespace MCPForUnity.Editor.Services
             }
 
             McpLog.Info($"Discovered {_cachedResources.Count} MCP resources via reflection", false);
-            return _cachedResources.Values.ToList();
         }
 
         public ResourceMetadata GetResourceMetadata(string resourceName)
@@ -67,17 +72,15 @@ namespace MCPForUnity.Editor.Services
                 return null;
             }
 
-            if (_cachedResources == null)
-            {
-                DiscoverAllResources();
-            }
+            EnsureResourcesDiscovered();
 
             return _cachedResources.TryGetValue(resourceName, out var metadata) ? metadata : null;
         }
 
         public List<ResourceMetadata> GetEnabledResources()
         {
-            return DiscoverAllResources().Where(r => IsResourceEnabled(r.Name)).ToList();
+            EnsureResourcesDiscovered();
+            return _cachedResources.Values.Where(r => IsResourceEnabled(r.Name)).ToList();
         }
 
         public bool IsResourceEnabled(string resourceName)

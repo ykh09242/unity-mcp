@@ -15,9 +15,15 @@ namespace MCPForUnity.Editor.Services
 
         public List<ToolMetadata> DiscoverAllTools()
         {
+            EnsureToolsDiscovered();
+            return _cachedTools.Values.ToList();
+        }
+
+        private void EnsureToolsDiscovered()
+        {
             if (_cachedTools != null)
             {
-                return _cachedTools.Values.ToList();
+                return;
             }
 
             _cachedTools = new Dictionary<string, ToolMetadata>();
@@ -67,7 +73,6 @@ namespace MCPForUnity.Editor.Services
             }
 
             McpLog.Info($"Discovered {_cachedTools.Count} MCP tools via reflection", false);
-            return _cachedTools.Values.ToList();
         }
 
         /// <summary>
@@ -83,17 +88,15 @@ namespace MCPForUnity.Editor.Services
 
         public ToolMetadata GetToolMetadata(string toolName)
         {
-            if (_cachedTools == null)
-            {
-                DiscoverAllTools();
-            }
+            EnsureToolsDiscovered();
 
             return _cachedTools.TryGetValue(toolName, out var metadata) ? metadata : null;
         }
 
         public List<ToolMetadata> GetEnabledTools()
         {
-            return DiscoverAllTools().Where(tool => IsToolEnabled(tool.Name)).ToList();
+            EnsureToolsDiscovered();
+            return _cachedTools.Values.Where(tool => IsToolEnabled(tool.Name)).ToList();
         }
 
         public bool IsToolEnabled(string toolName)
