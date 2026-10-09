@@ -2379,8 +2379,11 @@ namespace MCPForUnity.Editor.Tools
                     var trs = root.GetComponentsInChildren<Transform>(includeInactive: true);
                     foreach (var t in trs)
                     {
-                        if (t != null && t.gameObject != null && t.gameObject.name == s)
-                            return t.gameObject;
+                        if (t == null)
+                            continue;
+                        var candidate = t.gameObject;
+                        if (candidate != null && candidate.name == s)
+                            return candidate;
                     }
                 }
             }
