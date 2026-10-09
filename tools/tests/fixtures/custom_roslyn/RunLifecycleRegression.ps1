@@ -4,6 +4,8 @@ param(
     [Parameter(Mandatory = $true)][string]$SdkPath,
     [Parameter(Mandatory = $true)][string]$WorkPath,
     [string]$SourcePath,
+    [string]$ToolSourcePath,
+    [string]$NewtonsoftPath,
     [string]$UnityDefines = 'UNITY_2022_3_OR_NEWER',
     [switch]$WarningsAsErrors,
     [string]$DotnetPath = 'dotnet'
@@ -11,12 +13,18 @@ param(
 $ErrorActionPreference = 'Stop'
 if (!$SourcePath) { $SourcePath = Join-Path $PSScriptRoot '../../../../CustomTools/RoslynRuntimeCompilation/RoslynRuntimeCompiler.cs' }
 $source = (Resolve-Path -LiteralPath $SourcePath).Path
+if (!$ToolSourcePath) { $ToolSourcePath = Join-Path $PSScriptRoot '../../../../CustomTools/RoslynRuntimeCompilation/ManageRuntimeCompilation.cs' }
+$toolSource = (Resolve-Path -LiteralPath $ToolSourcePath).Path
+if (!$NewtonsoftPath) { $NewtonsoftPath = Join-Path $SdkPath 'TestHostNetFramework/Newtonsoft.Json.dll' }
+$newtonsoft = (Resolve-Path -LiteralPath $NewtonsoftPath).Path
 $roslyn = Join-Path $UnityData 'MonoBleedingEdge/lib/mono/4.5'
 $framework = Join-Path $UnityData 'MonoBleedingEdge/lib/mono/4.8-api'
 $compiler = Join-Path $SdkPath 'Roslyn/bincore/csc.dll'
 New-Item -ItemType Directory -Force -Path $WorkPath | Out-Null
 $references = @('mscorlib.dll', 'System.dll', 'System.Core.dll') | ForEach-Object { Join-Path $framework $_ }
 $references += Join-Path $framework 'Facades/netstandard.dll'
+$references += $newtonsoft
+Copy-Item -LiteralPath $newtonsoft -Destination $WorkPath
 $dependencies = @('Microsoft.CodeAnalysis.dll', 'Microsoft.CodeAnalysis.CSharp.dll', 'System.Collections.Immutable.dll',
     'System.Reflection.Metadata.dll', 'System.Memory.dll', 'System.Numerics.Vectors.dll', 'System.Runtime.CompilerServices.Unsafe.dll', 'System.Threading.Tasks.Extensions.dll')
 $configuration = [xml]'<configuration><runtime><assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1" /></runtime></configuration>'
@@ -45,8 +53,11 @@ $arguments = @($compiler, '/nologo', '/noconfig', '/nostdlib+', '/target:exe', (
 if ($WarningsAsErrors) { $arguments += '/warnaserror+' }
 $arguments += $references | ForEach-Object { '/reference:' + $_ }
 $shim = (Resolve-Path (Join-Path $PSScriptRoot '../../../../MCPForUnity/Runtime/Helpers/UnityFindObjectsCompat.cs')).Path
-$arguments += @($source, $shim, (Join-Path $PSScriptRoot 'LifecycleRegressionHarness.cs'))
+$scalar = (Resolve-Path (Join-Path $PSScriptRoot '../../../../MCPForUnity/Runtime/Serialization/JsonScalarConversion.cs')).Path
+$coercion = (Resolve-Path (Join-Path $PSScriptRoot '../../../../MCPForUnity/Editor/Helpers/ParamCoercion.cs')).Path
+$arguments += @($source, $toolSource, $shim, $scalar, $coercion, (Join-Path $PSScriptRoot 'LifecycleRegressionHarness.cs'))
 Write-Output ('SOURCE_SHA256: ' + (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash)
+Write-Output ('TOOL_SOURCE_SHA256: ' + (Get-FileHash -LiteralPath $toolSource -Algorithm SHA256).Hash)
 Write-Output ('HARNESS_SHA256: ' + (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'LifecycleRegressionHarness.cs') -Algorithm SHA256).Hash)
 Write-Output ('SHIM_SHA256: ' + (Get-FileHash -LiteralPath $shim -Algorithm SHA256).Hash)
 Write-Output ('UNITY_DEFINES: ' + $UnityDefines)

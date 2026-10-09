@@ -491,20 +491,8 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static RoslynRuntimeCompiler GetOrCreateRoslynCompiler()
         {
-            var existing = UnityFindObjectsCompat.FindFirst<RoslynRuntimeCompiler>();
-            if (existing != null)
-            {
-                return existing;
-            }
-
-            var go = new GameObject("MCPRoslynCompiler");
-            var compiler = go.AddComponent<RoslynRuntimeCompiler>();
-            compiler.enableHistory = true; // Enable history tracking for MCP operations
-            if (!Application.isPlaying)
-            {
-                go.hideFlags = HideFlags.HideAndDontSave;
-            }
-            return compiler;
+            // Hidden helpers are excluded from scene searches; retain the shared instance.
+            return RoslynMCPHelper.GetOrCreateCompiler();
         }
     }
 }

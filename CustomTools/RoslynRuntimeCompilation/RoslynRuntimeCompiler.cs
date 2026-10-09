@@ -696,7 +696,7 @@ public static class RoslynMCPHelper
     /// <summary>
     /// Get or create the runtime compiler instance
     /// </summary>
-    private static RoslynRuntimeCompiler GetOrCreateCompiler()
+    internal static RoslynRuntimeCompiler GetOrCreateCompiler()
     {
         if (_compiler == null || _compiler.gameObject == null)
         {

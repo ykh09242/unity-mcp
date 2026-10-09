@@ -3,6 +3,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -56,6 +59,82 @@ internal static class LifecycleRegressionHarness
                 );
             }
         );
+        Check(
+            "runtime tool reuses one hidden compiler across history reads",
+            () =>
+            {
+                for (int i = 0; i < 20; i++)
+                    Require(ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "get_history" }) is SuccessResponse, "History failed");
+                int live = GameObject.All.Count(go => !go.Destroyed && go.name == "MCPRoslynCompiler");
+                Console.WriteLine("OBSERVED_HISTORY: hosts=" + live + " lookups=" + Object.FindCalls);
+                Require(live == 1, "History reads retained " + live + " hidden compilers");
+                Require(Object.FindCalls == 1, "History reads repeated scene lookup " + Object.FindCalls + " times");
+            }
+        );
+        Check(
+            "runtime tool shares cached compiler with static MCP helper",
+            () =>
+            {
+                var shared = typeof(RoslynMCPHelper).GetMethod("GetOrCreateCompiler", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+                Require(ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "get_history" }) is SuccessResponse, "History failed");
+                Require(GameObject.All.Count(go => !go.Destroyed) == 1, "Tool created a second hidden compiler");
+                Require(Object.FindCalls == 1, "Tool repeated a lookup despite existing helper");
+                Require(ReferenceEquals(shared, GameObject.All.Single().Components.Single()), "Tool replaced shared helper");
+            }
+        );
+        Check(
+            "runtime tool reacquires after cached compiler is destroyed",
+            () =>
+            {
+                ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "get_history" });
+                var oldHost = GameObject.All.Single();
+                Object.DestroyImmediate(oldHost);
+                for (int i = 0; i < 3; i++)
+                    Require(ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "clear_history" }) is SuccessResponse, "Clear failed");
+                Require(GameObject.All.Count(go => !go.Destroyed) == 1, "Destroyed cache did not recover to one live helper");
+                Require(Object.FindCalls == 2, "Replacement repeated scene lookup");
+            }
+        );
+        Check(
+            "runtime tool keeps adopted compiler settings and ordered active selection",
+            () =>
+            {
+                var inactive = UserHelper(false);
+                inactive.LookupOrder = 5;
+                var chosen = UserHelper();
+                chosen.LookupOrder = 10;
+                chosen.enableHistory = false;
+                var later = UserHelper();
+                later.LookupOrder = 20;
+                for (int i = 0; i < 3; i++)
+                    Require(ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "get_history" }) is SuccessResponse, "History failed");
+                var cached = typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+                Require(ReferenceEquals(cached, chosen) && !chosen.enableHistory, "Adoption changed helper identity or history preference");
+                Require(Object.FindCalls == 1 && Object.DestroyedObjects.Count == 0, "Adoption repeated lookup or destroyed user objects");
+            }
+        );
+        foreach (bool success in new[] { false, true })
+            Check(
+                "runtime tool repeated " + (success ? "successful" : "failed") + " execution reuses helper",
+                () =>
+                {
+                    for (int i = 0; i < 3; i++)
+                    {
+                        var result = ManageRuntimeCompilation.HandleCommand(
+                            new JObject
+                            {
+                                ["action"] = "execute_with_roslyn",
+                                ["code"] = success ? StaticSource : "public class Broken {",
+                                ["class_name"] = "StaticProgram",
+                            }
+                        );
+                        Require(success ? result is SuccessResponse : result is ErrorResponse, "Unexpected execution result");
+                    }
+                    Require(GameObject.All.Count(go => !go.Destroyed) == 1, "Repeated execution leaked compiler hosts");
+                    Require(Object.FindCalls == 1, "Repeated execution searched scene again");
+                    Require(RuntimeProbe.Calls == (success ? 3 : 0), "Execution contract changed");
+                }
+            );
         foreach (bool active in new[] { true, false })
             Check(
                 "adopted " + (active ? "active" : "inactive") + " helper preserves user object and children",
@@ -590,6 +669,9 @@ internal static class LifecycleRegressionHarness
     {
         checks++;
         GameObject.All.Clear();
+        Object.FindCalls = 0;
+        Application.isPlaying = false;
+        typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
         Object.DestroyedObjects.Clear();
         GUI.ButtonCalls = 0;
         GUI.NextButton = null;
@@ -651,6 +733,7 @@ namespace UnityEngine
         public bool Destroyed;
         public long LookupOrder;
         public static Type LastFindType;
+        public static int FindCalls;
         public static bool LastFindInactive;
         public static readonly List<Object> DestroyedObjects = new List<Object>();
 
@@ -674,7 +757,7 @@ namespace UnityEngine
         public static T FindFirstObjectByType<T>(FindObjectsInactive inactive = FindObjectsInactive.Exclude)
             where T : Object =>
             GameObject
-                .All.Where(go => !go.Destroyed && (go.Active || inactive == FindObjectsInactive.Include))
+                .All.Where(go => !go.Destroyed && go.hideFlags != HideFlags.HideAndDontSave && (go.Active || inactive == FindObjectsInactive.Include))
                 .SelectMany(go => go.Components)
                 .OfType<T>()
                 .FirstOrDefault(value => !value.Destroyed);
@@ -688,6 +771,7 @@ namespace UnityEngine
 
         private static Object SelectFirst(Type type, FindObjectsInactive inactive)
         {
+            FindCalls++;
             LastFindType = type;
             LastFindInactive = inactive == FindObjectsInactive.Include;
             return FindObjectsByType(type, inactive).OrderBy(value => value.LookupOrder).FirstOrDefault();
@@ -717,7 +801,7 @@ namespace UnityEngine
 
         public static Object[] FindObjectsByType(Type type, FindObjectsInactive inactive) =>
             GameObject
-                .All.Where(go => !go.Destroyed && (go.Active || inactive == FindObjectsInactive.Include))
+                .All.Where(go => !go.Destroyed && go.hideFlags != HideFlags.HideAndDontSave && (go.Active || inactive == FindObjectsInactive.Include))
                 .SelectMany(go => go.Components)
                 .Where(value => !value.Destroyed && type.IsInstanceOfType(value))
                 .ToArray();
@@ -813,6 +897,8 @@ namespace UnityEngine
     public sealed class Transform : Component
     {
         public readonly List<Transform> Children = new List<Transform>();
+
+        public Transform Find(string name) => Children.FirstOrDefault(child => !child.gameObject.Destroyed && child.gameObject.name == name);
     }
 
     public enum FindObjectsInactive
@@ -1028,5 +1114,26 @@ namespace UnityEditor
         public static void EndScrollView() { }
 
         public static void HelpBox(string text, MessageType type) { }
+    }
+}
+
+// Tool registration and response envelopes are inert seams; command logic is production source.
+namespace MCPForUnity.Editor.Helpers
+{
+    public sealed class McpForUnityToolAttribute : Attribute
+    {
+        public McpForUnityToolAttribute(string name) { }
+
+        public string Description { get; set; }
+    }
+
+    public sealed class SuccessResponse
+    {
+        public SuccessResponse(string message, object data = null) { }
+    }
+
+    public sealed class ErrorResponse
+    {
+        public ErrorResponse(string message, object data = null) { }
     }
 }
