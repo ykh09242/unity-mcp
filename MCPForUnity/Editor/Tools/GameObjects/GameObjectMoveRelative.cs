@@ -1,4 +1,5 @@
 #nullable disable
+using System;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -31,7 +32,15 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             string direction = @params["direction"]?.ToString()?.ToLowerInvariant();
             float distance = @params["distance"]?.ReadScalar<float?>() ?? 1f;
-            Vector3? customOffset = VectorParsing.ParseVector3(@params["offset"]);
+            Vector3? customOffset;
+            try
+            {
+                customOffset = ManageGameObjectCommon.ReadOptionalVector3(@params, "offset");
+            }
+            catch (ArgumentException e)
+            {
+                return new ErrorResponse(e.Message);
+            }
             bool useWorldSpace = @params["world_space"]?.ReadScalar<bool?>() ?? true;
 
             Vector3 newPosition;
@@ -49,8 +58,10 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
             else if (!string.IsNullOrEmpty(direction))
             {
-                Vector3 directionVector = GetDirectionVector(direction, referenceGo.transform, useWorldSpace);
-                newPosition = referenceGo.transform.position + directionVector * distance;
+                Vector3? directionVector = GetDirectionVector(direction, referenceGo.transform, useWorldSpace);
+                if (!directionVector.HasValue)
+                    return new ErrorResponse($"Unknown direction '{direction}'. Use left, right, up, down, forward/front or back/backward/behind.");
+                newPosition = referenceGo.transform.position + directionVector.Value * distance;
             }
             else
             {
@@ -77,7 +88,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             );
         }
 
-        private static Vector3 GetDirectionVector(string direction, Transform referenceTransform, bool useWorldSpace)
+        private static Vector3? GetDirectionVector(string direction, Transform referenceTransform, bool useWorldSpace)
         {
             if (useWorldSpace)
             {
@@ -99,8 +110,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     case "behind":
                         return Vector3.back;
                     default:
-                        McpLog.Warn($"[ManageGameObject.MoveRelative] Unknown direction '{direction}', defaulting to forward.");
-                        return Vector3.forward;
+                        return null;
                 }
             }
 
@@ -122,8 +132,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 case "behind":
                     return -referenceTransform.forward;
                 default:
-                    McpLog.Warn($"[ManageGameObject.MoveRelative] Unknown direction '{direction}', defaulting to forward.");
-                    return referenceTransform.forward;
+                    return null;
             }
         }
     }

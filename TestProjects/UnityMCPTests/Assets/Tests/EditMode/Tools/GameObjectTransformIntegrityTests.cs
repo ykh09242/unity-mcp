@@ -369,6 +369,138 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(target.activeSelf);
         }
 
+        [TestCase("false")]
+        [TestCase("0")]
+        [TestCase("[1,2]")]
+        [TestCase("{}")]
+        [TestCase("{\"x\":1,\"y\":2}")]
+        public void MoveMalformedOffsetDoesNotFallBackToDirection(string json)
+        {
+            var before = Snapshot();
+            var response = Send(
+                "move_relative",
+                new JObject
+                {
+                    ["reference_object"] = reference.GetInstanceIDCompat(),
+                    ["direction"] = "right",
+                    ["offset"] = JToken.Parse(json),
+                }
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("offset", response.Value<string>("error"));
+            Assert.IsTrue(JToken.DeepEquals(before, Snapshot()));
+        }
+
+        [TestCase("\"diagonal\"", true)]
+        [TestCase("\"diagonal\"", false)]
+        [TestCase("false", true)]
+        [TestCase("0", false)]
+        [TestCase("[]", true)]
+        [TestCase("{}", false)]
+        public void MoveUnknownConsumedDirectionRejectsBeforeTransformAndDirtyChanges(string direction, bool world)
+        {
+            var before = Snapshot();
+            var response = Send(
+                "move_relative",
+                new JObject
+                {
+                    ["reference_object"] = reference.GetInstanceIDCompat(),
+                    ["direction"] = JToken.Parse(direction),
+                    ["world_space"] = world,
+                }
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("Unknown direction", response.Value<string>("error"));
+            Assert.IsTrue(JToken.DeepEquals(before, Snapshot()));
+        }
+
+        [TestCase("\"diagonal\"")]
+        [TestCase("false")]
+        [TestCase("0")]
+        [TestCase("[]")]
+        [TestCase("{}")]
+        public void MoveCustomOffsetContinuesToIgnoreDirection(string direction)
+        {
+            var response = Send(
+                "move_relative",
+                new JObject
+                {
+                    ["reference_object"] = reference.GetInstanceIDCompat(),
+                    ["direction"] = JToken.Parse(direction),
+                    ["offset"] = new JArray(0, 0, 0),
+                }
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(reference.transform.position, target.transform.position);
+        }
+
+        [TestCase("[1,2]")]
+        [TestCase("{}")]
+        [TestCase("{\"x\":1,\"y\":2}")]
+        [TestCase("false")]
+        [TestCase("0.5")]
+        public void LookAtMalformedReferenceDoesNotSelectCoercedSceneName(string json)
+        {
+            var token = JToken.Parse(json);
+            var colliding = Owned(token.ToString(), targetScene);
+            colliding.name = token.ToString();
+            colliding.transform.position = new Vector3(5, 6, 7);
+            ClearOwnedSceneDirtiness(targetScene);
+            var before = Snapshot();
+            var response = Send("look_at", new JObject { ["look_at_target"] = token });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(JToken.DeepEquals(before, Snapshot()));
+        }
+
+        [Test]
+        public void LookAtJsonLookingStringStillSelectsSceneName()
+        {
+            var named = Owned("JsonName", targetScene);
+            named.name = "[1,2]";
+            named.transform.position = new Vector3(5, 6, 7);
+            var response = Send("look_at", new JObject { ["look_at_target"] = named.name });
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(new float[] { 5, 6, 7 }, response["data"]["lookAtPosition"].ToObject<float[]>());
+        }
+
+        [TestCase("ko-KR")]
+        [TestCase("en-US")]
+        public void LookAtParsedDateReferenceRetainsLegacyStringLookup(string culture)
+        {
+            var previous = CultureInfo.CurrentCulture;
+            var previousUi = CultureInfo.CurrentUICulture;
+            try
+            {
+                CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
+                CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(culture);
+                var command = Newtonsoft.Json.JsonConvert.DeserializeObject<MCPForUnity.Editor.Models.Command>(
+                    new JObject
+                    {
+                        ["type"] = "manage_gameobject",
+                        ["params"] = new JObject
+                        {
+                            ["action"] = "look_at",
+                            ["target"] = target.GetInstanceIDCompat(),
+                            ["searchMethod"] = "by_id",
+                            ["look_at_target"] = "2026-10-09T11:12:13Z",
+                        },
+                    }.ToString()
+                );
+                Assert.AreEqual(JTokenType.Date, command.@params["look_at_target"].Type);
+                var named = Owned("ParsedDate", targetScene);
+                named.name = command.@params["look_at_target"].ToString();
+                named.transform.position = new Vector3(5, 6, 7);
+                var response = JObject.FromObject(ManageGameObject.HandleCommand(command.@params));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                CollectionAssert.AreEqual(new float[] { 5, 6, 7 }, response["data"]["lookAtPosition"].ToObject<float[]>());
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = previous;
+                CultureInfo.CurrentUICulture = previousUi;
+            }
+        }
+
         [Test]
         public void MalformedVector_RejectsBeforeMutation()
         {

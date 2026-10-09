@@ -1079,6 +1079,86 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreSame(secondInstance, Selection.activeGameObject);
         }
 
+        [TestCase("position", "false")]
+        [TestCase("position", "[1,2]")]
+        [TestCase("position", "{\"x\":1,\"y\":2}")]
+        [TestCase("offset", "false")]
+        [TestCase("offset", "[1,2]")]
+        [TestCase("offset", "{}")]
+        [TestCase("new_name", "false")]
+        [TestCase("new_name", "0")]
+        [TestCase("new_name", "[]")]
+        [TestCase("new_name", "{}")]
+        public void DuplicateMalformedInputRejectsBeforeCloneSelectionAndSceneChange(string field, string json)
+        {
+            var source = Owned("Source");
+            source.transform.position = new Vector3(1, 2, 3);
+            var originalIds = Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray();
+            var originalPosition = source.transform.position;
+            var active = Selection.activeObject;
+            int dirtyCount = EditorUtility.GetDirtyCount(source);
+            bool dirtyScene = ownedScene.isDirty;
+            var request = Duplicate(source);
+            request[field] = JToken.Parse(json);
+            if (field == "offset")
+                request["position"] = new JArray(5, 6, 7);
+            var response = Call(request);
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(originalIds, Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray());
+            Assert.AreEqual(originalPosition, source.transform.position);
+            Assert.IsTrue(active == Selection.activeObject);
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(source));
+            Assert.AreEqual(dirtyScene, ownedScene.isDirty);
+        }
+
+        [TestCase("[0,0,0]", "[1,2,3]", 0, 0, 0)]
+        [TestCase("null", "[\"1\",2,3,null]", 2, 4, 6)]
+        [TestCase("null", "null", 1, 2, 3)]
+        [TestCase("{\"x\":null,\"y\":2,\"z\":3}", "null", 0, 2, 3)]
+        public void DuplicateOptionalVectorsRetainDefaultsCoordinatesAndPositionPrecedence(string position, string offset, float x, float y, float z)
+        {
+            var source = Owned("Source");
+            source.transform.position = new Vector3(1, 2, 3);
+            var request = Duplicate(source);
+            request["position"] = JToken.Parse(position);
+            request["offset"] = JToken.Parse(offset);
+            request["new_name"] = JValue.CreateNull();
+            var response = Call(request);
+            Succeeded(response);
+            var clone = ResponseObject(response, duplicate: true);
+            Assert.AreEqual(source.name + "_Copy", clone.name);
+            Assert.AreEqual(new Vector3(x, y, z), clone.transform.position);
+        }
+
+        [TestCase("ko-KR", "2026-10-09T11:12:13Z")]
+        [TestCase("en-US", "2026-10-09T11:12:13+09:00")]
+        public void DuplicateParsedDateNameRetainsLegacyStringConversion(string culture, string name)
+        {
+            var previous = System.Globalization.CultureInfo.CurrentCulture;
+            var previousUi = System.Globalization.CultureInfo.CurrentUICulture;
+            try
+            {
+                System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo(culture);
+                System.Globalization.CultureInfo.CurrentUICulture = System.Globalization.CultureInfo.GetCultureInfo(culture);
+                var source = Owned("Source");
+                var request = Duplicate(source);
+                request["new_name"] = name;
+                var command = Newtonsoft.Json.JsonConvert.DeserializeObject<MCPForUnity.Editor.Models.Command>(
+                    new JObject { ["type"] = "manage_gameobject", ["params"] = request }.ToString()
+                );
+                Assert.AreEqual(JTokenType.Date, command.@params["new_name"].Type);
+                string expected = command.@params["new_name"].ToString();
+                var response = Call(command.@params);
+                Succeeded(response);
+                Assert.AreEqual(expected, ResponseObject(response, duplicate: true).name);
+            }
+            finally
+            {
+                System.Globalization.CultureInfo.CurrentCulture = previous;
+                System.Globalization.CultureInfo.CurrentUICulture = previousUi;
+            }
+        }
+
         [TestCase("missing")]
         [TestCase("null")]
         [TestCase("empty")]

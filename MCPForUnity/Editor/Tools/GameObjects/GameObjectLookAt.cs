@@ -36,6 +36,14 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             Vector3? lookAtPos = VectorParsing.ParseVector3(lookAtToken);
             if (!lookAtPos.HasValue)
             {
+                // ISO string references may be Date tokens after default Command JSON parsing.
+                if (
+                    lookAtToken.Type != JTokenType.Null
+                    && lookAtToken.Type != JTokenType.String
+                    && lookAtToken.Type != JTokenType.Integer
+                    && lookAtToken.Type != JTokenType.Date
+                )
+                    return new ErrorResponse("'look_at_target' must be a position [x,y,z] or a GameObject name/path/ID.");
                 // Preserve an explicit selector match, then resolve an independent GO reference.
                 GameObject lookAtGo =
                     ManageGameObjectCommon.FindObjectInternal(lookAtToken, searchMethod)

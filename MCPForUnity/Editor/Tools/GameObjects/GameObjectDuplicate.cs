@@ -1,4 +1,5 @@
 #nullable disable
+using System;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -18,9 +19,22 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 return new ErrorResponse($"Target GameObject ('{targetToken}') not found using method '{searchMethod ?? "default"}'.");
             }
 
-            string newName = @params["new_name"]?.ToString();
-            Vector3? position = VectorParsing.ParseVector3(@params["position"]);
-            Vector3? offset = VectorParsing.ParseVector3(@params["offset"]);
+            JToken nameToken = @params["new_name"];
+            // Default Command JSON parsing represents ISO string names as Date tokens.
+            if (nameToken != null && nameToken.Type != JTokenType.Null && nameToken.Type != JTokenType.String && nameToken.Type != JTokenType.Date)
+                return new ErrorResponse("'new_name' must be a string.");
+            string newName = nameToken?.ToString();
+            Vector3? position;
+            Vector3? offset;
+            try
+            {
+                position = ManageGameObjectCommon.ReadOptionalVector3(@params, "position");
+                offset = ManageGameObjectCommon.ReadOptionalVector3(@params, "offset");
+            }
+            catch (ArgumentException e)
+            {
+                return new ErrorResponse(e.Message);
+            }
             JToken parentToken = @params["parent"];
             GameObject newParent = null;
             if (
