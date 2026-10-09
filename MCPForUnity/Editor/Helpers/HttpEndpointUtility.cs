@@ -182,8 +182,7 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static string GetRemoteMcpRpcUrl()
         {
-            ValidateRemoteConfigurationUrl();
-            string remoteBase = GetRemoteBaseUrl();
+            string remoteBase = ValidateRemoteConfigurationUrl();
             return string.IsNullOrEmpty(remoteBase) ? string.Empty : AppendPathSegment(remoteBase, "mcp");
         }
 
@@ -379,12 +378,14 @@ namespace MCPForUnity.Editor.Helpers
             return IsRemoteUrlAllowed(GetRemoteBaseUrl(), out error);
         }
 
-        private static void ValidateRemoteConfigurationUrl()
+        private static string ValidateRemoteConfigurationUrl()
         {
-            if (!IsCurrentRemoteUrlAllowed(out string error))
+            string remoteBase = GetRemoteBaseUrl();
+            if (!IsRemoteUrlAllowed(remoteBase, out string error))
                 throw new InvalidOperationException(error);
-            if (new Uri(GetRemoteBaseUrl()).Scheme == Uri.UriSchemeHttp)
+            if (new Uri(remoteBase).Scheme == Uri.UriSchemeHttp)
                 McpLog.Warn("Insecure remote HTTP is enabled: client credentials will be sent without TLS.");
+            return remoteBase;
         }
 
         /// <summary>
