@@ -235,7 +235,10 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     // The global tag API doesn't honor the current prefab-stage context.
                     var allObjects = GetAllSceneObjects(includeInactive);
-                    taggedObjects = allObjects.Where(go => go.CompareTag(tag)).ToArray();
+                    var matching = allObjects.Where(go => go.CompareTag(tag));
+                    if (maxResults > 0)
+                        matching = matching.Take(maxResults);
+                    taggedObjects = matching.ToArray();
                 }
                 else
                 {
