@@ -174,6 +174,8 @@ namespace MCPForUnity.Editor.Services.Transport
                     {
                         if (queuedCallback?.List != null)
                             MainThreadCallbacks.Remove(queuedCallback);
+                        // A posted context callback cannot be removed; release its captured work now.
+                        Interlocked.Exchange(ref func, null);
                         tcs.TrySetCanceled(cancellationToken);
                     }
                     registration.Dispose();
@@ -190,12 +192,14 @@ namespace MCPForUnity.Editor.Services.Transport
             {
                 try
                 {
-                    if (tcs.Task.IsCompleted)
+                    // Claim once so cancellation and a late editor callback cannot retain or rerun work.
+                    var callback = Interlocked.Exchange(ref func, null);
+                    if (callback == null || tcs.Task.IsCompleted)
                     {
                         return;
                     }
 
-                    var result = func();
+                    var result = callback();
                     tcs.TrySetResult(result);
                 }
                 catch (Exception ex)
