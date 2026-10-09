@@ -175,12 +175,12 @@ namespace MCPForUnity.Editor.Tools
 
             if (isUxml)
             {
-                string xmlError = ValidateUxmlContent(contents, validationWarnings);
+                string xmlError = ReadUxmlContent(contents, validationWarnings, out var document);
                 if (xmlError != null)
                 {
                     return new ErrorResponse($"UXML validation failed — file was NOT written. {xmlError}");
                 }
-                contents = EnsureEditorExtensionMode(contents);
+                contents = AddEditorExtensionMode(contents, document);
             }
 
             using var folders = new AssetFolderScope();
@@ -274,12 +274,12 @@ namespace MCPForUnity.Editor.Tools
 
             if (isUxml)
             {
-                string xmlError = ValidateUxmlContent(contents, validationWarnings);
+                string xmlError = ReadUxmlContent(contents, validationWarnings, out var document);
                 if (xmlError != null)
                 {
                     return new ErrorResponse($"UXML validation failed — file was NOT updated. {xmlError}");
                 }
-                contents = EnsureEditorExtensionMode(contents);
+                contents = AddEditorExtensionMode(contents, document);
             }
 
             File.WriteAllText(fullPath, contents, Utf8NoBom);
@@ -1447,8 +1447,11 @@ namespace MCPForUnity.Editor.Tools
 
             string content = File.ReadAllText(fullPath, Encoding.UTF8);
 
-            // Check if stylesheet is already linked
-            if (content.Contains($"src=\"{stylesheetPath}\"") || content.Contains($"src=\"project://database/{stylesheetPath}\""))
+            string xmlError = ReadUxmlContent(content, new List<string>(), out var document, stylesheetPath);
+            if (xmlError != null)
+                return new ErrorResponse($"UXML validation failed — file was NOT updated. {xmlError}");
+
+            if (document.StylesheetLinked)
             {
                 return new SuccessResponse(
                     $"Stylesheet already linked in '{uxmlPath}'.",
@@ -1466,7 +1469,7 @@ namespace MCPForUnity.Editor.Tools
             if (insertIdx < 0)
                 return new ErrorResponse("Could not find insertion point. Ensure UXML has a root <ui:UXML> or <UXML> element.");
 
-            string styleTag = $"\n    <ui:Style src=\"project://database/{stylesheetPath}\" />";
+            string styleTag = CreateStylesheetTag(stylesheetPath, document.StyleTagName);
             content = content.Insert(insertIdx, styleTag);
 
             File.WriteAllText(fullPath, content, Utf8NoBom);
@@ -2003,36 +2006,65 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static int FindUxmlBodyStart(string content)
         {
+            int end = FindUxmlRootTagEnd(content);
+            return end < 0 || content[end - 1] == '/' ? -1 : end + 1;
+        }
+
+        private static int FindUxmlRootTagEnd(string content)
+        {
             int searchFrom = 0;
             while (true)
             {
-                int idx = content.IndexOf("<ui:UXML", searchFrom, StringComparison.OrdinalIgnoreCase);
-                if (idx < 0)
-                    idx = content.IndexOf("<UXML", searchFrom, StringComparison.OrdinalIgnoreCase);
-                if (idx < 0)
+                int start = content.IndexOf('<', searchFrom);
+                if (start < 0)
                     return -1;
-
-                // Skip matches inside XML comments (<!-- ... -->)
-                int commentStart = content.LastIndexOf("<!--", idx, StringComparison.Ordinal);
-                if (commentStart >= 0)
+                if (content.IndexOf("<!--", start, StringComparison.Ordinal) == start)
                 {
-                    int commentEnd = content.IndexOf("-->", commentStart + 4, StringComparison.Ordinal);
-                    if (commentEnd >= 0 && commentEnd + 3 > idx)
-                    {
-                        searchFrom = commentEnd + 3;
-                        continue;
-                    }
+                    int end = content.IndexOf("-->", start + 4, StringComparison.Ordinal);
+                    if (end < 0)
+                        return -1;
+                    searchFrom = end + 3;
+                    continue;
+                }
+                if (content.IndexOf("<?", start, StringComparison.Ordinal) == start)
+                {
+                    int end = content.IndexOf("?>", start + 2, StringComparison.Ordinal);
+                    if (end < 0)
+                        return -1;
+                    searchFrom = end + 2;
+                    continue;
                 }
 
-                int closeTag = content.IndexOf('>', idx);
-                if (closeTag < 0)
-                    return -1;
-                // Self-closing tag cannot have children
-                if (closeTag > 0 && content[closeTag - 1] == '/')
+                int nameEnd = start + 1;
+                while (nameEnd < content.Length && !char.IsWhiteSpace(content[nameEnd]) && content[nameEnd] != '/' && content[nameEnd] != '>')
+                    nameEnd++;
+                string name = content.Substring(start + 1, nameEnd - start - 1);
+                if (!name.Equals("ui:UXML", StringComparison.OrdinalIgnoreCase) && !name.Equals("UXML", StringComparison.OrdinalIgnoreCase))
                     return -1;
 
-                return closeTag + 1;
+                char quote = '\0';
+                for (int i = nameEnd; i < content.Length; i++)
+                {
+                    char current = content[i];
+                    if (quote != '\0')
+                    {
+                        if (current == quote)
+                            quote = '\0';
+                    }
+                    else if (current == '\'' || current == '"')
+                        quote = current;
+                    else if (current == '>')
+                        return i;
+                }
+                return -1;
             }
+        }
+
+        private static string CreateStylesheetTag(string stylesheetPath, string tagName)
+        {
+            var attribute = new XmlDocument().CreateAttribute("src");
+            attribute.Value = "project://database/" + stylesheetPath;
+            return $"\n    <{tagName} {attribute.OuterXml} />";
         }
 
         // ---- Helpers ----
@@ -2106,27 +2138,37 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static string EnsureEditorExtensionMode(string contents)
         {
-            if (contents.Contains("editor-extension-mode"))
+            return ReadUxmlContent(contents, new List<string>(), out var document) == null ? AddEditorExtensionMode(contents, document) : contents;
+        }
+
+        private static string AddEditorExtensionMode(string contents, UxmlContentInfo document)
+        {
+            if (document.HasEditorExtensionMode || (document.RootName != "ui:UXML" && document.RootName != "UXML"))
                 return contents;
 
-            int idx = contents.IndexOf("<ui:UXML", StringComparison.Ordinal);
-            if (idx < 0)
-                idx = contents.IndexOf("<UXML", StringComparison.Ordinal);
-            if (idx < 0)
+            int end = FindUxmlRootTagEnd(contents);
+            if (end < 0)
                 return contents;
-
-            int closeTag = contents.IndexOf('>', idx);
-            if (closeTag < 0)
-                return contents;
-
-            bool selfClosing = contents[closeTag - 1] == '/';
-            int insertPos = selfClosing ? closeTag - 1 : closeTag;
-
+            int insertPos = contents[end - 1] == '/' ? end - 1 : end;
             return contents.Substring(0, insertPos) + " editor-extension-mode=\"False\"" + contents.Substring(insertPos);
+        }
+
+        private sealed class UxmlContentInfo
+        {
+            public string RootName;
+            public bool HasEditorExtensionMode;
+            public bool StylesheetLinked;
+            public string StyleTagName;
         }
 
         private static string ValidateUxmlContent(string contents, List<string> warnings)
         {
+            return ReadUxmlContent(contents, warnings, out _);
+        }
+
+        private static string ReadUxmlContent(string contents, List<string> warnings, out UxmlContentInfo document, string stylesheetPath = null)
+        {
+            document = null;
             if (string.IsNullOrWhiteSpace(contents))
                 return "UXML content is empty.";
 
@@ -2145,8 +2187,31 @@ namespace MCPForUnity.Editor.Tools
                 {
                     while (reader.Read())
                     {
-                        if (reader.NodeType == XmlNodeType.Element && rootLocalName == null)
+                        if (reader.NodeType != XmlNodeType.Element)
+                            continue;
+                        if (rootLocalName == null)
+                        {
                             rootLocalName = reader.LocalName;
+                            document = new UxmlContentInfo
+                            {
+                                RootName = reader.Name,
+                                HasEditorExtensionMode = reader.GetAttribute("editor-extension-mode") != null,
+                                // XmlParserContext supplies lenient prefixes, but newly inserted
+                                // tags must not depend on a binding absent from the actual document.
+                                StyleTagName = reader.GetAttribute("xmlns:ui") == "UnityEngine.UIElements" ? "ui:Style" : "Style",
+                            };
+                        }
+                        if (
+                            stylesheetPath != null
+                            && reader.Depth == 1
+                            && reader.LocalName == "Style"
+                            && (reader.NamespaceURI.Length == 0 || reader.NamespaceURI == "UnityEngine.UIElements")
+                        )
+                        {
+                            string source = reader.GetAttribute("src");
+                            if (source == stylesheetPath || source == "project://database/" + stylesheetPath)
+                                document.StylesheetLinked = true;
+                        }
                     }
                 }
             }

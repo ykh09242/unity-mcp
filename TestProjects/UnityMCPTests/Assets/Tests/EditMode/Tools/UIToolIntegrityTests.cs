@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Xml;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
@@ -106,6 +107,80 @@ namespace MCPForUnityTests.Editor.Tools
             request["contents"] = ".foo{}";
             request["encoded_contents"] = new JObject();
             Assert.AreEqual(".foo{}", DecodeUIText(request));
+        }
+
+        [TestCase("<ui:UXML xmlns:ui='UnityEngine.UIElements' name=\"a>b\"></ui:UXML>")]
+        [TestCase("<ui:UXML xmlns:ui='UnityEngine.UIElements' name='a>b'></ui:UXML>")]
+        [TestCase("<!-- <ui:UXML> --><ui:UXML xmlns:ui='UnityEngine.UIElements'/>")]
+        [TestCase("<!-- editor-extension-mode --><ui:UXML xmlns:ui='UnityEngine.UIElements'/>")]
+        [TestCase("<?probe <ui:UXML> ?><ui:UXML xmlns:ui='UnityEngine.UIElements'/>")]
+        [TestCase("<ui:UXML xmlns:ui='UnityEngine.UIElements'><ui:Label editor-extension-mode='True'/></ui:UXML>")]
+        [TestCase("<?xml version='1.0'?>\r\n<UXML name='a>b'/>")]
+        public void UxmlModeInsertionTargetsActualRootAndKeepsXmlWellFormed(string contents)
+        {
+            var ensure = typeof(ManageUI).GetMethod("EnsureEditorExtensionMode", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(ensure);
+            string result = (string)ensure.Invoke(null, new object[] { contents });
+            var document = new XmlDocument { XmlResolver = null };
+            Assert.DoesNotThrow(() => document.LoadXml(result));
+            Assert.AreEqual("False", document.DocumentElement.GetAttribute("editor-extension-mode"));
+            if (document.DocumentElement.HasAttribute("name"))
+                Assert.AreEqual("a>b", document.DocumentElement.GetAttribute("name"));
+        }
+
+        [Test]
+        public void ExistingRootModeRetainsOriginalText()
+        {
+            var ensure = typeof(ManageUI).GetMethod("EnsureEditorExtensionMode", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(ensure);
+            foreach (string mode in new[] { "True", "" })
+            {
+                string contents = "<UXML editor-extension-mode='" + mode + "'/>";
+                Assert.AreEqual(contents, ensure.Invoke(null, new object[] { contents }));
+            }
+        }
+
+        private static object ParseUxmlInfo(string contents, string stylesheet)
+        {
+            var parse = typeof(ManageUI).GetMethod("ReadUxmlContent", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(parse);
+            object[] args = { contents, new List<string>(), null, stylesheet };
+            Assert.IsNull(parse.Invoke(null, args));
+            Assert.IsNotNull(args[2]);
+            return args[2];
+        }
+
+        [TestCase("<UXML><Style src=\"project://database/Assets/A&amp;B.uss\"/></UXML>", true)]
+        [TestCase("<UXML><Style src='project://database/Assets/A&amp;B.uss'/></UXML>", true)]
+        [TestCase("<UXML xmlns='UnityEngine.UIElements'><Style src='Assets/A&amp;B.uss'/></UXML>", true)]
+        [TestCase("<!-- src=\"project://database/Assets/A&amp;B.uss\" --><UXML/>", false)]
+        [TestCase("<UXML><Group><Style src='project://database/Assets/A&amp;B.uss'/></Group></UXML>", false)]
+        [TestCase("<UXML xmlns:other='urn:other'><other:Style src='project://database/Assets/A&amp;B.uss'/></UXML>", false)]
+        [TestCase("<UXML><Label src='project://database/Assets/A&amp;B.uss'/></UXML>", false)]
+        public void StylesheetRecognitionUsesActualDirectStyleElements(string contents, bool expected)
+        {
+            object info = ParseUxmlInfo(contents, "Assets/A&B.uss");
+            Assert.AreEqual(expected, info.GetType().GetField("StylesheetLinked").GetValue(info));
+        }
+
+        [TestCase("<UXML xmlns='UnityEngine.UIElements'></UXML>", "Style")]
+        [TestCase("<ui:UXML xmlns:ui='UnityEngine.UIElements'></ui:UXML>", "ui:Style")]
+        public void StyleInsertionPreservesRealNamespaceBindings(string contents, string expectedTag)
+        {
+            object info = ParseUxmlInfo(contents, "Assets/A&B.uss");
+            string tagName = (string)info.GetType().GetField("StyleTagName").GetValue(info);
+            Assert.AreEqual(expectedTag, tagName);
+            var create = typeof(ManageUI).GetMethod("CreateStylesheetTag", BindingFlags.Static | BindingFlags.NonPublic);
+            var find = typeof(ManageUI).GetMethod("FindUxmlBodyStart", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(create);
+            Assert.IsNotNull(find);
+            string tag = (string)create.Invoke(null, new object[] { "Assets/A&B.uss", tagName });
+            int index = (int)find.Invoke(null, new object[] { contents });
+            Assert.Greater(index, 0);
+            var document = new XmlDocument { XmlResolver = null };
+            Assert.DoesNotThrow(() => document.LoadXml(contents.Insert(index, tag)));
+            var style = (XmlElement)document.DocumentElement.FirstChild;
+            Assert.AreEqual("project://database/Assets/A&B.uss", style.GetAttribute("src"));
         }
 
         private static Action<PanelSettings> PreparePanelProperties(JObject settings, List<string> changes)
