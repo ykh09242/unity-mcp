@@ -38,14 +38,18 @@ namespace MCPForUnity.Editor.Services
 
         // Keep reference to avoid GC and set HideFlags to avoid serialization issues
         private static TestRunnerApi _api;
+        private static IErrorCallbacks _callbacks;
 
         static TestRunnerNoThrottle()
         {
+            AssemblyReloadEvents.beforeAssemblyReload += ReleaseApi;
+            EditorApplication.quitting += ReleaseApi;
             try
             {
                 _api = ScriptableObject.CreateInstance<TestRunnerApi>();
                 _api.hideFlags = HideFlags.HideAndDontSave;
-                _api.RegisterCallbacks(new TestCallbacks());
+                _callbacks = new TestCallbacks();
+                _api.RegisterCallbacks(_callbacks);
 
                 // Check if recovering from domain reload during an active test run
                 if (IsTestRunActive())
@@ -56,7 +60,33 @@ namespace MCPForUnity.Editor.Services
             }
             catch (Exception e)
             {
+                ReleaseApi();
                 McpLog.Warn($"[TestRunnerNoThrottle] Failed to register callbacks: {e}");
+            }
+        }
+
+        private static void ReleaseApi()
+        {
+            var api = _api;
+            var callbacks = _callbacks;
+            _api = null;
+            _callbacks = null;
+            if (api == null)
+                return;
+            try
+            {
+                if (callbacks != null)
+                    api.UnregisterCallbacks(callbacks);
+            }
+            catch (Exception e)
+            {
+                McpLog.Warn($"[TestRunnerNoThrottle] Failed to unregister callbacks: {e.Message}");
+            }
+            finally
+            {
+                // HideAndDontSave objects require explicit destruction before the managed owner reloads.
+                // Keep SessionState intact so an active run can reapply and later restore its preferences.
+                ScriptableObject.DestroyImmediate(api);
             }
         }
 
