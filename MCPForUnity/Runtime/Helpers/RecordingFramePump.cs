@@ -14,12 +14,21 @@ namespace MCPForUnity.Runtime.Helpers
         {
             if (!Application.isPlaying)
                 throw new InvalidOperationException("Game View recording requires Play Mode.");
-            var go = new GameObject("__MCP_RecordingFramePump__") { hideFlags = HideFlags.HideAndDontSave };
-            DontDestroyOnLoad(go);
-            var pump = go.AddComponent<RecordingFramePump>();
-            pump._onFrame = onFrame;
-            pump._onDestroyed = onDestroyed;
-            return pump;
+            var go = new GameObject("__MCP_RecordingFramePump__");
+            try
+            {
+                go.hideFlags = HideFlags.HideAndDontSave;
+                DontDestroyOnLoad(go);
+                var pump = go.AddComponent<RecordingFramePump>();
+                pump._onFrame = onFrame;
+                pump._onDestroyed = onDestroyed;
+                return pump;
+            }
+            catch
+            {
+                DestroyImmediate(go);
+                throw;
+            }
         }
 
         private IEnumerator Start()
