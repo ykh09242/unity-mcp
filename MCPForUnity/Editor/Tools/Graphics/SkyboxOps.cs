@@ -41,11 +41,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (skyMat != null)
             {
                 var props = new List<object>();
-                int count = skyMat.shader.GetPropertyCount();
+                var shader = skyMat.shader;
+                int count = shader.GetPropertyCount();
                 for (int i = 0; i < count; i++)
                 {
-                    string propName = skyMat.shader.GetPropertyName(i);
-                    var propType = skyMat.shader.GetPropertyType(i);
+                    string propName = shader.GetPropertyName(i);
+                    var propType = shader.GetPropertyType(i);
                     object val = ReadMaterialProperty(skyMat, propName, propType);
                     props.Add(
                         new
@@ -59,12 +60,13 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 matInfo = new
                 {
                     name = skyMat.name,
-                    shader = skyMat.shader.name,
+                    shader = shader.name,
                     path = AssetDatabase.GetAssetPath(skyMat),
                     properties = props,
                 };
             }
 
+            var customReflection = CustomReflectionTexture;
             return new
             {
                 success = true,
@@ -96,7 +98,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         bounces = RenderSettings.reflectionBounces,
                         mode = RenderSettings.defaultReflectionMode.ToString(),
                         resolution = RenderSettings.defaultReflectionResolution,
-                        customCubemap = CustomReflectionTexture != null ? AssetDatabase.GetAssetPath(CustomReflectionTexture) : null,
+                        customCubemap = customReflection != null ? AssetDatabase.GetAssetPath(customReflection) : null,
                     },
                     sun = sun != null ? (object)new { name = sun.gameObject.name, instanceID = sun.gameObject.GetInstanceIDCompat() } : null,
                     subtractiveShadowColor = ColorToArray(RenderSettings.subtractiveShadowColor),
@@ -342,6 +344,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             MarkSceneDirty();
 
+            var customReflection = CustomReflectionTexture;
             return new
             {
                 success = true,
@@ -352,7 +355,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     bounces = RenderSettings.reflectionBounces,
                     mode = RenderSettings.defaultReflectionMode.ToString(),
                     resolution = RenderSettings.defaultReflectionResolution,
-                    customCubemap = CustomReflectionTexture != null ? AssetDatabase.GetAssetPath(CustomReflectionTexture) : null,
+                    customCubemap = customReflection != null ? AssetDatabase.GetAssetPath(customReflection) : null,
                 },
             };
         }
