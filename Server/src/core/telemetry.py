@@ -444,6 +444,8 @@ class TelemetryCollector:
             finally:
                 with contextlib.suppress(Exception):
                     self._queue.task_done()
+                # Do not keep the completed record while the next queue read is idle.
+                del rec
 
     def shutdown(self):
         """Shutdown the telemetry collector and worker thread."""
