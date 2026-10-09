@@ -276,9 +276,9 @@ namespace MCPForUnity.Editor.Tools
         {
             // Unity 6 stores this target in the profile; its CLR getter is internal.
             using var serializedProfile = new SerializedObject(profile);
-            var targetProperty = serializedProfile.FindProperty("m_BuildTarget");
+            using var targetProperty = serializedProfile.FindProperty("m_BuildTarget");
             target = targetProperty != null ? (BuildTarget)targetProperty.intValue : BuildTarget.NoTarget;
-            var subtargetProperty = serializedProfile.FindProperty("m_Subtarget");
+            using var subtargetProperty = serializedProfile.FindProperty("m_Subtarget");
             subtarget = subtargetProperty != null ? (StandaloneBuildSubtarget)subtargetProperty.intValue : StandaloneBuildSubtarget.Player;
             if (targetProperty == null || !Enum.IsDefined(typeof(BuildTarget), target) || BuildPipeline.GetBuildTargetGroup(target) == BuildTargetGroup.Unknown)
             {
