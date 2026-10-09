@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -85,6 +87,110 @@ namespace MCPForUnityTests.EditMode.Tools
                 }
             }
         }
+
+        [TestCase("false")]
+        [TestCase("true")]
+        [TestCase("0")]
+        [TestCase("1.5")]
+        [TestCase("{}")]
+        [TestCase("[]")]
+        [TestCase("[1]")]
+        public void AddRegistryRejectsRawNameBeforeUrlValidation(string json)
+        {
+            // Invalid URL guarantees the baseline also stops before real project IO or Client.Resolve.
+            JObject input = CommandParams(
+                new JObject
+                {
+                    ["action"] = "add_registry",
+                    ["name"] = JToken.Parse(json),
+                    ["url"] = "invalid",
+                }
+            );
+            JObject result = JObject.FromObject(ManagePackages.HandleCommand(input));
+            Assert.IsFalse(result.Value<bool>("success"));
+            Assert.AreEqual("'name' must be a string.", result.Value<string>("error"));
+        }
+
+        [TestCase("name", "false")]
+        [TestCase("name", "0")]
+        [TestCase("name", "{}")]
+        [TestCase("name", "[]")]
+        [TestCase("url", "false")]
+        [TestCase("url", "0")]
+        [TestCase("url", "{}")]
+        [TestCase("url", "[]")]
+        public void RegistryRemovalValidatorRejectsCoercedSelectorsWithoutProjectIO(string key, string json)
+        {
+            var parameters = new ToolParams(CommandParams(new JObject { [key] = JToken.Parse(json) }));
+            var exception = Assert.Throws<TargetInvocationException>(() => Method("CheckRegistryStringToken").Invoke(null, new object[] { parameters, key }));
+            Assert.IsInstanceOf<ArgumentException>(exception.InnerException);
+            Assert.AreEqual($"'{key}' must be a string.", exception.InnerException.Message);
+        }
+
+        [TestCase("null")]
+        [TestCase("\"\"")]
+        [TestCase("\" \"")]
+        [TestCase("\"False\"")]
+        [TestCase("\"0\"")]
+        [TestCase("\"{}\"")]
+        public void RegistryStringValidatorPreservesNullAndStringSelectors(string json)
+        {
+            foreach (string key in new[] { "name", "url" })
+            {
+                var parameters = new ToolParams(new JObject { [key] = JToken.Parse(json) });
+                string before = parameters.Get(key);
+                Assert.DoesNotThrow(() => Method("CheckRegistryStringToken").Invoke(null, new object[] { parameters, key }));
+                Assert.AreEqual(before, parameters.Get(key));
+                Assert.DoesNotThrow(() => Method("CheckRegistryStringToken").Invoke(null, new object[] { new ToolParams(new JObject()), key }));
+            }
+        }
+
+        [TestCase("ko-KR", "2026-10-09T12:34:56Z", JTokenType.Date)]
+        [TestCase("en-US", "2026-10-09T12:34:56Z", JTokenType.Date)]
+        [TestCase("de-DE", "2026-10-09T12:34:56+09:00", JTokenType.Date)]
+        [TestCase("fr-FR", "2026-10-09T12:34:56+09:00", JTokenType.Date)]
+        [TestCase("en-US", "2026-10-09", JTokenType.String)]
+        [TestCase("en-US", "2026-10-09T12:34:56Z-label", JTokenType.String)]
+        public void ActualCommandDateStringsRetainRegistrySelectorConversion(string culture, string wireValue, JTokenType expectedType)
+        {
+            CultureInfo original = CultureInfo.CurrentCulture,
+                originalUi = CultureInfo.CurrentUICulture;
+            try
+            {
+                CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
+                CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(culture);
+                JObject input = CommandParams(new JObject { ["name"] = wireValue, ["url"] = wireValue });
+                Assert.AreEqual(expectedType, input["name"].Type);
+                foreach (string key in new[] { "name", "url" })
+                {
+                    var parameters = new ToolParams(input);
+                    string legacy = parameters.Get(key);
+                    Assert.DoesNotThrow(() => Method("CheckRegistryStringToken").Invoke(null, new object[] { parameters, key }));
+                    Assert.AreEqual(legacy, parameters.Get(key));
+                }
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = original;
+                CultureInfo.CurrentUICulture = originalUi;
+            }
+        }
+
+        [TestCase("{\"action\":\"add_registry\",\"name\":null,\"url\":false}", "'name' parameter is required for add_registry.")]
+        [TestCase(
+            "{\"action\":\"add_registry\",\"name\":\"Fixture\",\"url\":false}",
+            "'url' must be an absolute HTTP or HTTPS registry URL with a valid host and port."
+        )]
+        [TestCase("{\"action\":\"remove_registry\",\"name\":null,\"url\":null}", "Either 'name' or 'url' parameter is required for remove_registry.")]
+        public void RegistryEmptyAndInvalidUrlErrorsStillStopBeforeProjectIO(string json, string expected)
+        {
+            JObject result = JObject.FromObject(ManagePackages.HandleCommand(JObject.Parse(json)));
+            Assert.IsFalse(result.Value<bool>("success"));
+            Assert.AreEqual(expected, result.Value<string>("error"));
+        }
+
+        private static JObject CommandParams(JObject input) =>
+            JsonConvert.DeserializeObject<Command>(new JObject { ["type"] = "manage_packages", ["params"] = input }.ToString(Formatting.None)).@params;
 
         [TestCase("\"broken\"")]
         [TestCase("{}")]

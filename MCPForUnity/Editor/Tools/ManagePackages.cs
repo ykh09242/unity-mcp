@@ -450,6 +450,7 @@ namespace MCPForUnity.Editor.Tools
         // === add_registry ===
         private static object AddRegistry(ToolParams p)
         {
+            CheckRegistryStringToken(p, "name");
             var nameResult = p.GetRequired("name", "'name' parameter is required for add_registry.");
             if (!nameResult.IsSuccess)
                 return new ErrorResponse(nameResult.ErrorMessage);
@@ -520,6 +521,8 @@ namespace MCPForUnity.Editor.Tools
         // === remove_registry ===
         private static object RemoveRegistry(ToolParams p)
         {
+            CheckRegistryStringToken(p, "name");
+            CheckRegistryStringToken(p, "url");
             string name = p.Get("name");
             string url = p.Get("url");
 
@@ -721,6 +724,14 @@ namespace MCPForUnity.Editor.Tools
             }
 
             PackageJobManager.CompleteJob(jobId, true, version: version, name: name);
+        }
+
+        private static void CheckRegistryStringToken(ToolParams p, string key)
+        {
+            JToken token = p.GetRaw(key);
+            // The default Command JSON parser represents ISO string names/selectors as Date tokens.
+            if (token != null && token.Type != JTokenType.Null && token.Type != JTokenType.String && token.Type != JTokenType.Date)
+                throw new ArgumentException($"'{key}' must be a string.");
         }
 
         private static string GetManifestPath()
