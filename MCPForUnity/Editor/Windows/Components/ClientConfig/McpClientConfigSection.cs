@@ -615,7 +615,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                     return;
                 }
 
-                Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+                using var openedFile = Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
             }
             catch (Exception ex)
             {
