@@ -160,6 +160,7 @@ namespace MCPForUnity.Editor.Services
         private TaskCompletionSource<TestRunResult> _runCompletionSource;
         private string _trackedJobId;
         private bool _disposed;
+        private bool _apiReleased;
         private bool _runRetired;
         private static TestRunnerService _activeRunOwner;
         private static readonly HashSet<PendingRunAdmission> PendingRunAdmissions = new();
@@ -233,6 +234,8 @@ namespace MCPForUnity.Editor.Services
                 _runRetired = true;
                 _activeRunOwner = this;
             }
+            AssemblyReloadEvents.beforeAssemblyReload += ReleaseApi;
+            EditorApplication.quitting += ReleaseApi;
         }
 
         internal void ResumeJobAfterReload(string jobId, string mode)
@@ -457,6 +460,24 @@ namespace MCPForUnity.Editor.Services
                     RetireJob(_trackedJobId, "Unity test service disposed before the run completed.");
                 _activeRunOwner = null;
             }
+            ReleaseApi();
+
+            // WaitAsync removes canceled waiters asynchronously. Disposing a held semaphore
+            // here can orphan them; no WaitHandle is used, so it can be collected after they unwind.
+            if (_operationLock.CurrentCount > 0)
+                _operationLock.Dispose();
+            _lifetimeCancellation.Dispose();
+        }
+
+        private void ReleaseApi()
+        {
+            AssemblyReloadEvents.beforeAssemblyReload -= ReleaseApi;
+            EditorApplication.quitting -= ReleaseApi;
+            if (_apiReleased)
+                return;
+            _apiReleased = true;
+
+            // Reload must release the hidden API without retiring the persisted test run.
             try
             {
                 _testRunnerApi?.UnregisterCallbacks(this);
@@ -470,12 +491,6 @@ namespace MCPForUnity.Editor.Services
             {
                 ScriptableObject.DestroyImmediate(_testRunnerApi);
             }
-
-            // WaitAsync removes canceled waiters asynchronously. Disposing a held semaphore
-            // here can orphan them; no WaitHandle is used, so it can be collected after they unwind.
-            if (_operationLock.CurrentCount > 0)
-                _operationLock.Dispose();
-            _lifetimeCancellation.Dispose();
         }
 
         #region TestRunnerApi callbacks

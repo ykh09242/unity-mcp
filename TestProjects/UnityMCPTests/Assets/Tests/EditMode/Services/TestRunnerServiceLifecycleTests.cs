@@ -102,6 +102,52 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void ApiRelease_DestroysOwnedApiAndIsIdempotentBeforeDispose()
+        {
+            var release = typeof(TestRunnerService).GetMethod("ReleaseApi", BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.IsNotNull(release);
+            release.Invoke(_service, null);
+            Assert.IsTrue(_api == null, "The owned HideAndDontSave API must be explicitly destroyed.");
+            Assert.IsFalse((bool)typeof(TestRunnerService).GetField("_disposed", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service));
+            Assert.DoesNotThrow(() => release.Invoke(_service, null));
+            Assert.DoesNotThrow(() => _service.Dispose());
+        }
+
+        [Test]
+        public async Task ApiRelease_PreservesActivePlayModeCallerAndSettingsUntilTerminalCallback()
+        {
+            EditorSettings.enterPlayModeOptionsEnabled = false;
+            EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.None;
+            SetSchedule(_ => "active-play-mode");
+            var run = _service.RunTestsAsync(TestMode.PlayMode);
+            Assert.IsFalse(run.IsCompleted);
+            Assert.IsTrue(PlayModeOptionsGuard.IsPending);
+            bool optionsEnabled = EditorSettings.enterPlayModeOptionsEnabled;
+            var options = EditorSettings.enterPlayModeOptions;
+            int idle = EditorPrefs.GetInt("ApplicationIdleTime", 4);
+            int interaction = EditorPrefs.GetInt("InteractionMode", 0);
+            var lifetime = (CancellationTokenSource)
+                typeof(TestRunnerService).GetField("_lifetimeCancellation", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+
+            typeof(TestRunnerService).GetMethod("ReleaseApi", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(_service, null);
+
+            Assert.IsTrue(_api == null);
+            Assert.IsFalse(run.IsCompleted);
+            Assert.IsFalse(lifetime.IsCancellationRequested);
+            Assert.IsFalse(TestRunnerService.HasRetiredRun);
+            Assert.IsTrue(TestRunStatus.IsRunning);
+            Assert.IsTrue(PlayModeOptionsGuard.IsPending);
+            Assert.AreEqual(optionsEnabled, EditorSettings.enterPlayModeOptionsEnabled);
+            Assert.AreEqual(options, EditorSettings.enterPlayModeOptions);
+            Assert.AreEqual(idle, EditorPrefs.GetInt("ApplicationIdleTime", 4));
+            Assert.AreEqual(interaction, EditorPrefs.GetInt("InteractionMode", 0));
+
+            _service.RunFinished(null);
+            await run;
+            Assert.IsFalse(PlayModeOptionsGuard.IsPending);
+        }
+
+        [Test]
         public void ExecuteFailure_DoesNotLeaveServiceBusyAndAllowsRetry()
         {
             int calls = 0;
