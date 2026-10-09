@@ -26,10 +26,12 @@ namespace MCPForUnity.Editor.Tools
         {
             EditorApplication.quitting += CleanupRenderTextures;
             AssemblyReloadEvents.beforeAssemblyReload += CleanupRenderTextures;
+            EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
         }
 
         private static void CleanupRenderTextures()
         {
+            CleanupPendingCapture();
             foreach (var kvp in s_panelRTs)
             {
                 if (kvp.Value == null)
@@ -45,10 +47,12 @@ namespace MCPForUnity.Editor.Tools
             }
             s_panelRTs.Clear();
             s_panelBindings.Clear();
-            if (s_pendingCaptureTex != null)
-                UnityEngine.Object.DestroyImmediate(s_pendingCaptureTex);
-            s_pendingCaptureTex = null;
-            s_pendingCaptureDone = s_pendingCaptureStarted = false;
+        }
+
+        private static void OnPlayModeStateChanged(PlayModeStateChange state)
+        {
+            if (state == PlayModeStateChange.ExitingPlayMode || state == PlayModeStateChange.EnteredEditMode || state == PlayModeStateChange.ExitingEditMode)
+                CleanupPendingCapture();
         }
 
         public static object HandleCommand(JObject @params)
@@ -939,6 +943,40 @@ namespace MCPForUnity.Editor.Tools
         private static Texture2D s_pendingCaptureTex;
         private static bool s_pendingCaptureDone;
         private static bool s_pendingCaptureStarted;
+        private static int s_pendingCaptureGeneration;
+
+        private static void CleanupPendingCapture()
+        {
+            // Invalidate callbacks before releasing the result, including callbacks during play-mode teardown.
+            unchecked
+            {
+                s_pendingCaptureGeneration++;
+            }
+            if (s_pendingCaptureTex != null)
+                UnityEngine.Object.DestroyImmediate(s_pendingCaptureTex);
+            s_pendingCaptureTex = null;
+            s_pendingCaptureDone = s_pendingCaptureStarted = false;
+        }
+
+        private static int BeginPendingCapture()
+        {
+            CleanupPendingCapture();
+            s_pendingCaptureStarted = true;
+            return s_pendingCaptureGeneration;
+        }
+
+        private static void CompletePendingCapture(int generation, Texture2D texture)
+        {
+            if (generation != s_pendingCaptureGeneration || !s_pendingCaptureStarted)
+            {
+                if (texture != null)
+                    UnityEngine.Object.DestroyImmediate(texture);
+                return;
+            }
+            s_pendingCaptureTex = texture;
+            s_pendingCaptureDone = true;
+            s_pendingCaptureStarted = false;
+        }
 
         private static object RenderUI(JObject @params)
         {
@@ -1109,24 +1147,14 @@ namespace MCPForUnity.Editor.Tools
                     );
                 }
 
-                s_pendingCaptureDone = false;
-                s_pendingCaptureTex = null;
-                s_pendingCaptureStarted = true;
+                int captureGeneration = BeginPendingCapture();
                 try
                 {
-                    ScreenshotCapturer.Begin(
-                        1,
-                        tex =>
-                        {
-                            s_pendingCaptureTex = tex;
-                            s_pendingCaptureDone = true;
-                            s_pendingCaptureStarted = false;
-                        }
-                    );
+                    ScreenshotCapturer.Begin(1, tex => CompletePendingCapture(captureGeneration, tex));
                 }
                 catch
                 {
-                    s_pendingCaptureStarted = false;
+                    CleanupPendingCapture();
                     throw;
                 }
 
