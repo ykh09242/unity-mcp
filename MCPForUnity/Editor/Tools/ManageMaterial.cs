@@ -315,8 +315,10 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Slot {slot} out of bounds (count: {sharedMaterials.Length})");
 
             if (slot == 0 && mode != "create_unique")
+            {
                 RendererHelpers.EnsureMaterial(renderer);
-            sharedMaterials = renderer.sharedMaterials;
+                sharedMaterials = renderer.sharedMaterials;
+            }
 
             if (mode == "property_block")
             {
