@@ -14,25 +14,25 @@ namespace MCPForUnityTests.Editor.Blender
         public void FailedResampleReleasesItsUnreturnedDestination()
         {
             var source = new Texture2D(8, 8, TextureFormat.RGBA32, false);
-            HashSet<int> before = null;
+            HashSet<Texture2D> before = null;
             try
             {
                 source.Apply(false, true);
                 Assert.IsFalse(source.isReadable);
-                before = TextureIds();
+                before = SnapshotTextures();
                 for (int i = 0; i < 3; i++)
                 {
                     var error = Assert.Throws<TargetInvocationException>(() => Scale(source, 4));
                     Assert.IsInstanceOf<UnityException>(error.InnerException);
                 }
-                CollectionAssert.AreEquivalent(before, TextureIds());
+                CollectionAssert.AreEquivalent(before, SnapshotTextures());
                 Assert.IsTrue(source != null, "Source ownership stays with the caller.");
             }
             finally
             {
                 // Also clean failed-baseline destinations so a red test cannot pollute later tests.
                 if (before != null)
-                    foreach (var texture in UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Where(texture => !before.Contains(texture.GetInstanceID())))
+                    foreach (var texture in UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Where(texture => !before.Contains(texture)))
                         Object.DestroyImmediate(texture);
                 Object.DestroyImmediate(source);
             }
@@ -79,7 +79,6 @@ namespace MCPForUnityTests.Editor.Blender
                     .GetMethod("ScaleToHeight", BindingFlags.Static | BindingFlags.NonPublic)
                     .Invoke(null, new object[] { source, height });
 
-        private static HashSet<int> TextureIds() =>
-            new HashSet<int>(UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(texture => texture.GetInstanceID()));
+        private static HashSet<Texture2D> SnapshotTextures() => new HashSet<Texture2D>(UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>());
     }
 }
