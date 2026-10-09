@@ -1,9 +1,11 @@
 """Budgets for caller-controlled patterns used by script search and editing."""
 
+import asyncio
 from itertools import islice
 import re
-from threading import Event
+from threading import BoundedSemaphore, Event
 from time import monotonic
+from typing import Callable, TypeVar
 
 import regex
 
@@ -13,6 +15,9 @@ MAX_MATCHES = 10_000
 TIMEOUT_SECONDS = 0.1
 TOTAL_TIMEOUT_SECONDS = 1.0
 MAX_WORK_CHARS = 16_000_000
+
+_REGEX_WORKERS = BoundedSemaphore(2)
+_RegexResult = TypeVar("_RegexResult")
 
 
 class WorkBudget:
@@ -118,3 +123,42 @@ def substitute(
     result = "".join(pieces)
     budget.check()
     return result
+
+
+async def run_work(
+    budget: WorkBudget,
+    work: Callable[[], _RegexResult],
+    *,
+    workers: BoundedSemaphore | None = None,
+) -> _RegexResult:
+    """Keep queued/running script regex work bounded until the worker exits."""
+    budget.check()
+    workers = _REGEX_WORKERS if workers is None else workers
+    if not workers.acquire(blocking=False):
+        raise ValueError("Script regex workers are busy; retry later")
+
+    def run() -> _RegexResult:
+        try:
+            budget.check()
+            return work()
+        finally:
+            workers.release()
+
+    # Submit before awaiting so even a queued cancelled request eventually
+    # releases admission in the worker.
+    try:
+        future = asyncio.get_running_loop().run_in_executor(None, run)
+    except BaseException:
+        workers.release()
+        raise
+    try:
+        # Waiting must not cancel the admitted worker. Unlike shield on Python
+        # 3.14, wait leaves late exception reporting to our cancellation observer.
+        await asyncio.wait({future})
+        return future.result()
+    except asyncio.CancelledError:
+        budget.cancelled.set()
+        future.add_done_callback(
+            lambda finished: finished.exception() if not finished.cancelled() else None
+        )
+        raise

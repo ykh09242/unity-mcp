@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import hashlib
 import logging
@@ -6,7 +5,6 @@ import re
 from bisect import bisect_right
 from functools import partial
 from pathlib import PurePosixPath, PureWindowsPath
-from threading import BoundedSemaphore
 from typing import Annotated, Any, Callable, TypeVar, Union
 
 from fastmcp import Context
@@ -34,40 +32,14 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 logger = logging.getLogger("mcp-for-unity-server")
 
 
-_REGEX_WORKERS = BoundedSemaphore(2)
+_REGEX_WORKERS = bounded_regex._REGEX_WORKERS
 _RegexResult = TypeVar("_RegexResult")
 
 
 async def _run_regex_work(
     budget: bounded_regex.WorkBudget, work: Callable[[], _RegexResult]
 ) -> _RegexResult:
-    """Keep queued/running script regex work bounded until the worker exits."""
-    budget.check()
-    if not _REGEX_WORKERS.acquire(blocking=False):
-        raise ValueError("Script regex workers are busy; retry later")
-
-    def run() -> _RegexResult:
-        try:
-            budget.check()
-            return work()
-        finally:
-            _REGEX_WORKERS.release()
-
-    # Preserve this module's asyncio backend. Submit before awaiting so even a
-    # queued cancelled request eventually releases admission in the worker.
-    try:
-        future = asyncio.get_running_loop().run_in_executor(None, run)
-    except BaseException:
-        _REGEX_WORKERS.release()
-        raise
-    try:
-        return await asyncio.shield(future)
-    except asyncio.CancelledError:
-        budget.cancelled.set()
-        future.add_done_callback(
-            lambda finished: finished.exception() if not finished.cancelled() else None
-        )
-        raise
+    return await bounded_regex.run_work(budget, work, workers=_REGEX_WORKERS)
 
 
 def _iter_csharp_tokens(text: str):

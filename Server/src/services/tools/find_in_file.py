@@ -1,5 +1,6 @@
-import asyncio
 import base64
+from contextvars import copy_context
+from functools import partial
 import logging
 import os
 import re
@@ -153,7 +154,18 @@ async def find_in_file(
 
     # 2. Perform regex search
     try:
-        found = await asyncio.to_thread(bounded_regex.find_matches, pattern, contents, flags)
+        budget = bounded_regex.WorkBudget()
+        found = await bounded_regex.run_work(
+            budget,
+            partial(
+                copy_context().run,
+                bounded_regex.find_matches,
+                pattern,
+                contents,
+                flags,
+                budget=budget,
+            ),
+        )
     except (ValueError, TimeoutError, bounded_regex.regex.error) as e:
         return {"success": False, "message": f"Regex search rejected: {e}"}
 
