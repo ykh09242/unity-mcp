@@ -53,8 +53,10 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (go == null)
                 return new ErrorResponse($"GameObject not found: '{targetToken}'.");
 
-            bool has3D = go.GetComponent<Rigidbody>() != null;
-            bool has2D = go.GetComponent<Rigidbody2D>() != null;
+            var rb = go.GetComponent<Rigidbody>();
+            var rb2d = go.GetComponent<Rigidbody2D>();
+            bool has3D = rb != null;
+            bool has2D = rb2d != null;
 
             if (!has3D && !has2D)
                 return new ErrorResponse($"No Rigidbody or Rigidbody2D found on '{go.name}'.");
@@ -70,14 +72,13 @@ namespace MCPForUnity.Editor.Tools.Physics
                 is2D = has2D && !has3D;
 
             if (is2D)
-                return GetRigidbody2D(go);
+                return GetRigidbody2D(go, rb2d);
 
-            return GetRigidbody3D(go);
+            return GetRigidbody3D(go, rb);
         }
 
-        private static object GetRigidbody3D(GameObject go)
+        private static object GetRigidbody3D(GameObject go, Rigidbody rb)
         {
-            var rb = go.GetComponent<Rigidbody>();
             if (rb == null)
                 return new ErrorResponse($"No Rigidbody found on '{go.name}'.");
 
@@ -96,19 +97,19 @@ namespace MCPForUnity.Editor.Tools.Physics
 #endif
                 ["useGravity"] = rb.useGravity,
                 ["isKinematic"] = rb.isKinematic,
-                ["position"] = new[] { rb.position.x, rb.position.y, rb.position.z },
-                ["rotation"] = new[] { rb.rotation.x, rb.rotation.y, rb.rotation.z, rb.rotation.w },
+                ["position"] = ToArray(rb.position),
+                ["rotation"] = ToArray(rb.rotation),
 #if UNITY_6000_0_OR_NEWER
-                ["velocity"] = new[] { rb.linearVelocity.x, rb.linearVelocity.y, rb.linearVelocity.z },
+                ["velocity"] = ToArray(rb.linearVelocity),
 #else
-                ["velocity"] = new[] { rb.velocity.x, rb.velocity.y, rb.velocity.z },
+                ["velocity"] = ToArray(rb.velocity),
 #endif
-                ["angularVelocity"] = new[] { rb.angularVelocity.x, rb.angularVelocity.y, rb.angularVelocity.z },
+                ["angularVelocity"] = ToArray(rb.angularVelocity),
                 ["interpolation"] = rb.interpolation.ToString(),
                 ["collisionDetectionMode"] = rb.collisionDetectionMode.ToString(),
                 ["constraints"] = rb.constraints.ToString(),
                 ["isSleeping"] = rb.IsSleeping(),
-                ["centerOfMass"] = new[] { rb.centerOfMass.x, rb.centerOfMass.y, rb.centerOfMass.z },
+                ["centerOfMass"] = ToArray(rb.centerOfMass),
                 ["maxAngularVelocity"] = rb.maxAngularVelocity,
 #if UNITY_6000_0_OR_NEWER
                 ["maxLinearVelocity"] = rb.maxLinearVelocity,
@@ -123,9 +124,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             };
         }
 
-        private static object GetRigidbody2D(GameObject go)
+        private static object GetRigidbody2D(GameObject go, Rigidbody2D rb2d)
         {
-            var rb2d = go.GetComponent<Rigidbody2D>();
             if (rb2d == null)
                 return new ErrorResponse($"No Rigidbody2D found on '{go.name}'.");
 
@@ -145,19 +145,19 @@ namespace MCPForUnity.Editor.Tools.Physics
 #endif
                 ["bodyType"] = rb2d.bodyType.ToString(),
                 ["simulated"] = rb2d.simulated,
-                ["position"] = new[] { rb2d.position.x, rb2d.position.y },
+                ["position"] = ToArray(rb2d.position),
                 ["rotation"] = rb2d.rotation,
 #if UNITY_6000_0_OR_NEWER
-                ["velocity"] = new[] { rb2d.linearVelocity.x, rb2d.linearVelocity.y },
+                ["velocity"] = ToArray(rb2d.linearVelocity),
 #else
-                ["velocity"] = new[] { rb2d.velocity.x, rb2d.velocity.y },
+                ["velocity"] = ToArray(rb2d.velocity),
 #endif
                 ["angularVelocity"] = rb2d.angularVelocity,
                 ["collisionDetectionMode"] = rb2d.collisionDetectionMode.ToString(),
                 ["constraints"] = rb2d.constraints.ToString(),
                 ["isSleeping"] = rb2d.IsSleeping(),
                 ["isAwake"] = rb2d.IsAwake(),
-                ["centerOfMass"] = new[] { rb2d.centerOfMass.x, rb2d.centerOfMass.y },
+                ["centerOfMass"] = ToArray(rb2d.centerOfMass),
             };
 
             return new
@@ -167,6 +167,12 @@ namespace MCPForUnity.Editor.Tools.Physics
                 data,
             };
         }
+
+        private static float[] ToArray(Vector2 value) => new[] { value.x, value.y };
+
+        private static float[] ToArray(Vector3 value) => new[] { value.x, value.y, value.z };
+
+        private static float[] ToArray(Quaternion value) => new[] { value.x, value.y, value.z, value.w };
 
         public static object ConfigureRigidbody(JObject @params)
         {
