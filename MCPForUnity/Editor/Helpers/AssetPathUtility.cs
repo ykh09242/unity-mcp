@@ -355,9 +355,7 @@ namespace MCPForUnity.Editor.Helpers
         /// <returns>The --python requirement and --from package source arguments</returns>
         public static string GetBetaServerFromArgs(bool quoteFromPath = false)
         {
-            string gitUrlOverride = EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, "");
-            string packageSource = GetMcpServerPackageSource();
-            return GetBetaServerFromArgs(gitUrlOverride, packageSource, quoteFromPath);
+            return FormatServerFromArgs(GetMcpServerPackageSource(), quoteFromPath);
         }
 
         /// <summary>
@@ -369,7 +367,11 @@ namespace MCPForUnity.Editor.Helpers
         /// <param name="quoteFromPath">Whether to quote the --from path</param>
         public static string GetBetaServerFromArgs(string gitUrlOverride, string packageSource, bool quoteFromPath = false)
         {
-            string source = GetEffectiveServerSource(gitUrlOverride, packageSource);
+            return FormatServerFromArgs(GetEffectiveServerSource(gitUrlOverride, packageSource), quoteFromPath);
+        }
+
+        private static string FormatServerFromArgs(string source, bool quoteFromPath)
+        {
             string fromValue = quoteFromPath ? $"\"{source}\"" : source;
             return $"--python \">=3.11\" --from {fromValue}";
         }
@@ -383,9 +385,7 @@ namespace MCPForUnity.Editor.Helpers
         /// <returns>List of arguments to add to uvx command</returns>
         public static System.Collections.Generic.IList<string> GetBetaServerFromArgsList()
         {
-            string gitUrlOverride = EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, "");
-            string packageSource = GetMcpServerPackageSource();
-            return GetBetaServerFromArgsList(gitUrlOverride, packageSource);
+            return FormatServerFromArgsList(GetMcpServerPackageSource());
         }
 
         /// <summary>
@@ -396,7 +396,12 @@ namespace MCPForUnity.Editor.Helpers
         /// <param name="packageSource">Pre-captured value from GetMcpServerPackageSource()</param>
         public static System.Collections.Generic.IList<string> GetBetaServerFromArgsList(string gitUrlOverride, string packageSource)
         {
-            return new System.Collections.Generic.List<string> { "--python", ">=3.11", "--from", GetEffectiveServerSource(gitUrlOverride, packageSource) };
+            return FormatServerFromArgsList(GetEffectiveServerSource(gitUrlOverride, packageSource));
+        }
+
+        private static System.Collections.Generic.IList<string> FormatServerFromArgsList(string source)
+        {
+            return new System.Collections.Generic.List<string> { "--python", ">=3.11", "--from", source };
         }
 
         private static string GetEffectiveServerSource(string sourceOverride, string packageSource)
