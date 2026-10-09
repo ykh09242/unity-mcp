@@ -779,6 +779,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return new ErrorResponse($"Invalid prefab path '{prefabPath}'. Path traversal sequences are not allowed.");
             }
 
+            string stringError = ValidateModificationStringTokens(@params);
+            if (stringError != null)
+                return new ErrorResponse(stringError);
+
             // Load prefab contents in isolated context (no UI)
             GameObject prefabContents = PrefabUtility.LoadPrefabContents(sanitizedPath);
             if (prefabContents == null)
@@ -1180,6 +1184,53 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             return (modified, null);
+        }
+
+        private static string ValidatePrefabStringToken(JToken token, string field)
+        {
+            // The default Command JSON parser represents ISO string names/selectors as Date tokens.
+            return token != null && token.Type != JTokenType.Null && token.Type != JTokenType.String && token.Type != JTokenType.Date
+                ? $"'{field}' must be a string."
+                : null;
+        }
+
+        private static string ValidateModificationStringTokens(JObject parameters)
+        {
+            foreach (string field in new[] { "target", "name", "parent" })
+            {
+                string error = ValidatePrefabStringToken(parameters[field], field);
+                if (error != null)
+                    return error;
+            }
+            JToken create = parameters["createChild"] ?? parameters["create_child"];
+            if (create != null)
+            {
+                foreach (JToken entry in create is JArray array ? (IEnumerable<JToken>)array : new[] { create })
+                {
+                    if (entry is not JObject child)
+                        continue;
+                    foreach (string field in new[] { "name", "parent" })
+                    {
+                        string error = ValidatePrefabStringToken(child[field], "create_child." + field);
+                        if (error != null)
+                            return error;
+                    }
+                }
+            }
+            JToken delete = parameters["deleteChild"] ?? parameters["delete_child"];
+            if (delete != null)
+            {
+                foreach (JToken entry in delete is JArray array ? (IEnumerable<JToken>)array : new[] { delete })
+                {
+                    if (entry is JObject child)
+                    {
+                        string error = ValidatePrefabStringToken(child["name"], "delete_child.name");
+                        if (error != null)
+                            return error;
+                    }
+                }
+            }
+            return null;
         }
 
         private static string ValidateModificationParameterShapes(JObject parameters, bool child = false)

@@ -1,10 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Text.RegularExpressions;
+using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Tools.Prefabs;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -16,6 +20,7 @@ using Object = UnityEngine.Object;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    [Parallelizable(ParallelScope.None)]
     public class PrefabLifecycleIntegrityTests
     {
         private readonly List<GameObject> ownedObjects = new List<GameObject>();
@@ -165,6 +170,146 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(path.StartsWith("Assets/", StringComparison.Ordinal));
             return File.ReadAllBytes(System.IO.Path.Combine(Application.dataPath, path.Substring("Assets/".Length)));
         }
+
+        [TestCase("target", "false")]
+        [TestCase("target", "0")]
+        [TestCase("target", "{}")]
+        [TestCase("name", "false")]
+        [TestCase("name", "0")]
+        [TestCase("name", "[]")]
+        [TestCase("parent", "false")]
+        [TestCase("parent", "1.5")]
+        public void ModifyRawInternalStringsRejectBeforeLoadingAnAsset(string field, string json)
+        {
+            // The owned missing destination also prevents baseline from saving a real prefab.
+            string path = PathFor("MissingAdmissionProbe");
+            Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(path));
+            JObject request = ParseCommand(new JObject { ["prefabPath"] = path, [field] = JToken.Parse(json) });
+            JObject result = Send("modify_contents", request);
+            Failure(result);
+            Assert.AreEqual($"'{field}' must be a string.", result.Value<string>("error"));
+            Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(path));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("createChild", "name", "false")]
+        [TestCase("create_child", "name", "0")]
+        [TestCase("createChild", "parent", "false")]
+        [TestCase("create_child", "parent", "{}")]
+        [TestCase("deleteChild", "name", "false")]
+        [TestCase("delete_child", "name", "[]")]
+        public void NestedRawInternalStringsRejectBeforeLoadingAnAsset(string key, string field, string json)
+        {
+            string path = PathFor("MissingNestedAdmissionProbe");
+            JObject request = ParseCommand(
+                new JObject
+                {
+                    ["prefabPath"] = path,
+                    [key] = new JObject { ["name"] = "Child", [field] = JToken.Parse(json) },
+                }
+            );
+            JObject result = Send("modify_contents", request);
+            Failure(result);
+            string operation = key.StartsWith("create", StringComparison.Ordinal) ? "create_child" : "delete_child";
+            Assert.AreEqual($"'{operation}.{field}' must be a string.", result.Value<string>("error"));
+            Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(path));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("createChild", "create_child")]
+        [TestCase("deleteChild", "delete_child")]
+        public void InternalStringPreflightUsesOnlySelectedNestedAlias(string primary, string fallback)
+        {
+            var input = new JObject
+            {
+                [primary] = new JObject { ["name"] = "Child" },
+                [fallback] = new JObject { ["name"] = false },
+            };
+            Assert.IsNull(StringPreflight(input));
+            input[primary] = JValue.CreateNull();
+            Assert.IsNull(StringPreflight(input), "Explicit null masks fallback; existing operation shape errors remain responsible for null.");
+            input.Remove(primary);
+            Assert.IsNotNull(StringPreflight(input));
+        }
+
+        [TestCase("createChild")]
+        [TestCase("delete_child")]
+        public void InternalStringPreflightRejectsLaterRawArrayNameWithoutChangingInput(string key)
+        {
+            var input = new JObject { [key] = new JArray(new JObject { ["name"] = "First" }, new JObject { ["name"] = false }) };
+            string before = input.ToString(Formatting.None);
+            Assert.IsNotNull(StringPreflight(input));
+            Assert.AreEqual(before, input.ToString(Formatting.None));
+        }
+
+        [TestCase("ko-KR", "2026-10-09T12:34:56Z", JTokenType.Date)]
+        [TestCase("en-US", "2026-10-09T12:34:56Z", JTokenType.Date)]
+        [TestCase("de-DE", "2026-10-09T12:34:56+09:00", JTokenType.Date)]
+        [TestCase("en-US", "2026-10-09", JTokenType.String)]
+        public void ActualCommandDateStringsRetainInternalNameConversion(string culture, string wireName, JTokenType expected)
+        {
+            CultureInfo original = CultureInfo.CurrentCulture,
+                originalUi = CultureInfo.CurrentUICulture;
+            try
+            {
+                CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
+                CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(culture);
+                JObject input = ParseCommand(
+                    new JObject
+                    {
+                        ["name"] = wireName,
+                        ["createChild"] = new JObject { ["name"] = wireName },
+                    }
+                );
+                Assert.AreEqual(expected, input["name"].Type);
+                string before = input["name"].ToString();
+                Assert.IsNull(StringPreflight(input));
+                Assert.AreEqual(before, input["name"].ToString());
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = original;
+                CultureInfo.CurrentUICulture = originalUi;
+            }
+        }
+
+        [TestCase("null")]
+        [TestCase("\"\"")]
+        [TestCase("\" \"")]
+        [TestCase("\"False\"")]
+        [TestCase("\"0\"")]
+        public void InternalStringPreflightPreservesNullEmptyWhitespaceAndNumericStrings(string json)
+        {
+            var input = new JObject
+            {
+                ["target"] = JToken.Parse(json),
+                ["name"] = JToken.Parse(json),
+                ["parent"] = JToken.Parse(json),
+            };
+            string before = input.ToString(Formatting.None);
+            Assert.IsNull(StringPreflight(input));
+            Assert.AreEqual(before, input.ToString(Formatting.None));
+            Assert.IsNull(StringPreflight(new JObject()));
+        }
+
+        [Test]
+        public void MissingPrefabPathRetainsPriorityOverRawName()
+        {
+            JObject result = Send("modify_contents", new JObject { ["name"] = false });
+            Failure(result);
+            Assert.AreEqual("'prefabPath' parameter is required for modify_contents.", result.Value<string>("error"));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        private static string StringPreflight(JObject input)
+        {
+            MethodInfo method = typeof(ManagePrefabs).GetMethod("ValidateModificationStringTokens", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(method);
+            return (string)method.Invoke(null, new object[] { input });
+        }
+
+        private static JObject ParseCommand(JObject input) =>
+            JsonConvert.DeserializeObject<Command>(new JObject { ["type"] = "manage_prefabs", ["params"] = input }.ToString(Formatting.None)).@params;
 
         [TestCase(false)]
         [TestCase(true)]
