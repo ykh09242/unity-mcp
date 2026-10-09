@@ -239,6 +239,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                 return;
 
             string dir = BlenderBridgePrefs.ResolveAddonsDir();
+            string installedAddonPath = string.IsNullOrEmpty(dir) ? null : dir + "/" + BlenderBridgePrefs.AddonFileName;
             bool configured = BlenderBridgePrefs.IsForkConfigured;
             string notInstalled = configured ? "BlenderMCP addon: not installed (Sync Addon)" : "BlenderMCP addon: not installed";
             string text;
@@ -248,7 +249,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                 text = $"Addons folder: not found · {notInstalled}";
             else if (!Directory.Exists(dir))
                 text = $"Addons folder: {dir} (not created yet) · {notInstalled}";
-            else if (!File.Exists(BlenderBridgePrefs.InstalledAddonPath))
+            else if (!File.Exists(installedAddonPath))
                 text = $"Addons folder: {dir} · {notInstalled}";
             else
             {
@@ -258,7 +259,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                 {
                     try
                     {
-                        if (BlenderBridgeTool.FileMd5(BlenderBridgePrefs.ForkAddonPath) == BlenderBridgeTool.FileMd5(BlenderBridgePrefs.InstalledAddonPath))
+                        if (BlenderBridgeTool.FileMd5(BlenderBridgePrefs.ForkAddonPath) == BlenderBridgeTool.FileMd5(installedAddonPath))
                             text += " · in sync with checkout ✓";
                         else
                         {
