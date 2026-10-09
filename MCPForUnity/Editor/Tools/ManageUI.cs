@@ -1204,8 +1204,7 @@ namespace MCPForUnity.Editor.Tools
                         ps = AssetDatabase.LoadAssetAtPath<PanelSettings>(AssetPathUtility.GetAssetPathFromGuid(guids[0], allowPackages: true));
                     if (ps == null)
                     {
-                        ps = CreateDefaultPanelSettings("Assets/UI/DefaultPanelSettings.asset", renderAssetFolders);
-                        tempPs = ps;
+                        ps = CreateDefaultPanelSettings("Assets/UI/DefaultPanelSettings.asset", renderAssetFolders, created => tempPs = created);
                     }
 
                     ui.Configure(vta, ps, 0);
