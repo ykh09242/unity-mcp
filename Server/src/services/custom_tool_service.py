@@ -506,8 +506,10 @@ class CustomToolService:
                 replaced.append(tool.name)
             self._register_tool(project_id, tool)
             registered.append(tool.name)
-            if not self._project_scoped_tools:
-                self.register_global_tools([tool])
+
+        if tools and not self._project_scoped_tools:
+            # Built-in declarations are stable during this synchronous batch.
+            self.register_global_tools(tools)
 
         if project_hash:
             self._hash_to_project[project_hash.lower()] = project_id
