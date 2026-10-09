@@ -59,13 +59,7 @@ namespace MCPForUnity.Editor.Security
                 };
                 foreach (string a in args)
                     psi.ArgumentList.Add(a);
-                using (var p = Process.Start(psi))
-                {
-                    string outp = p.StandardOutput.ReadToEnd();
-                    string err = p.StandardError.ReadToEnd();
-                    p.WaitForExit(5000);
-                    return (p.ExitCode, outp, err);
-                }
+                return KeyStoreProcess.Run(psi);
             }
             catch (Exception e)
             {

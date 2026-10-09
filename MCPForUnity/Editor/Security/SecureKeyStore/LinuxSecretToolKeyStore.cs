@@ -18,11 +18,7 @@ namespace MCPForUnity.Editor.Security
             {
                 var psi = NewPsi();
                 psi.ArgumentList.Add("--version");
-                using (var p = Process.Start(psi))
-                {
-                    p.WaitForExit(2000);
-                    return p.ExitCode == 0;
-                }
+                return KeyStoreProcess.Run(psi, timeoutMs: 2000).code == 0;
             }
             catch
             {
@@ -45,15 +41,11 @@ namespace MCPForUnity.Editor.Security
                 psi.ArgumentList.Add(Service);
                 psi.ArgumentList.Add("account");
                 psi.ArgumentList.Add(providerId);
-                using (var p = Process.Start(psi))
-                {
-                    string outp = p.StandardOutput.ReadToEnd();
-                    p.WaitForExit(5000);
-                    if (p.ExitCode != 0)
-                        return false;
-                    apiKey = (outp ?? string.Empty).TrimEnd('\n', '\r');
-                    return !string.IsNullOrEmpty(apiKey);
-                }
+                var result = KeyStoreProcess.Run(psi);
+                if (result.code != 0)
+                    return false;
+                apiKey = (result.stdout ?? string.Empty).TrimEnd('\n', '\r');
+                return !string.IsNullOrEmpty(apiKey);
             }
             catch
             {
@@ -79,12 +71,7 @@ namespace MCPForUnity.Editor.Security
                 psi.ArgumentList.Add(Service);
                 psi.ArgumentList.Add("account");
                 psi.ArgumentList.Add(providerId);
-                using (var p = Process.Start(psi))
-                {
-                    p.StandardInput.Write(apiKey);
-                    p.StandardInput.Close();
-                    p.WaitForExit(5000);
-                }
+                KeyStoreProcess.Run(psi, apiKey);
             }
             catch { /* best effort */ }
         }
@@ -101,8 +88,7 @@ namespace MCPForUnity.Editor.Security
                 psi.ArgumentList.Add(Service);
                 psi.ArgumentList.Add("account");
                 psi.ArgumentList.Add(providerId);
-                using (var p = Process.Start(psi))
-                    p.WaitForExit(5000);
+                KeyStoreProcess.Run(psi);
             }
             catch { /* best effort */ }
         }
