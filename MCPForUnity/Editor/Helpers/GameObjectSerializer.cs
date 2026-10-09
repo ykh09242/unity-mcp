@@ -485,6 +485,18 @@ namespace MCPForUnity.Editor.Helpers
 
             // --- Use cached metadata ---
             var serializablePropertiesOutput = new Dictionary<string, object>();
+            Material[] sharedMaterials = null;
+            bool sharedMaterialsRead = false;
+
+            Material[] ReadSharedMaterials(Renderer renderer)
+            {
+                if (!sharedMaterialsRead)
+                {
+                    sharedMaterials = renderer.sharedMaterials;
+                    sharedMaterialsRead = true;
+                }
+                return sharedMaterials;
+            }
 
             // --- Add Logging Before Property Loop ---
             // McpLog.Info($"[GetComponentData] Starting property loop for {componentType.Name}...");
@@ -574,14 +586,18 @@ namespace MCPForUnity.Editor.Helpers
 
                     // Read shared references in every mode to avoid instantiating materials or meshes.
                     object value;
-                    if (propName == "material" || propName == "materials" || propName == "mesh")
+                    if (propName == "sharedMaterials" && propInfo.DeclaringType == typeof(Renderer) && c is Renderer sharedRenderer)
+                    {
+                        value = ReadSharedMaterials(sharedRenderer);
+                    }
+                    else if (propName == "material" || propName == "materials" || propName == "mesh")
                     {
                         if ((propName == "material" || propName == "materials") && c is Renderer renderer)
                         {
                             if (propName == "material")
                                 value = renderer.sharedMaterial;
                             else // materials
-                                value = renderer.sharedMaterials;
+                                value = propInfo.DeclaringType == typeof(Renderer) ? ReadSharedMaterials(renderer) : renderer.sharedMaterials;
                         }
                         else if (propName == "mesh" && c is MeshFilter meshFilter)
                         {
