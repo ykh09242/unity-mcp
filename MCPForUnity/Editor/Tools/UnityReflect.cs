@@ -590,6 +590,12 @@ namespace MCPForUnity.Editor.Tools
             if (type.IsByRef)
                 return FormatTypeName(type.GetElementType());
 
+            if (type.IsGenericParameter)
+                return type.Name;
+
+            if (type.IsNested && type.DeclaringType != null)
+                return FormatNestedTypeName(type, type.GetGenericArguments());
+
             if (type.IsGenericType)
             {
                 string baseName = type.Name;
@@ -602,11 +608,26 @@ namespace MCPForUnity.Editor.Tools
                 return $"{baseName}<{argsStr}>";
             }
 
-            // For nested types, use dot notation
-            if (type.IsNested && type.DeclaringType != null)
-                return FormatTypeName(type.DeclaringType) + "." + type.Name;
-
             return type.Name;
+        }
+
+        private static string FormatNestedTypeName(Type type, Type[] arguments)
+        {
+            var declaringType = type.DeclaringType;
+            int parentArgumentCount = declaringType?.GetGenericArguments().Length ?? 0;
+            int ownArgumentCount = type.GetGenericArguments().Length - parentArgumentCount;
+            string name = type.Name;
+            if (ownArgumentCount > 0)
+            {
+                int backtickIndex = name.IndexOf('`');
+                if (backtickIndex > 0)
+                    name = name.Substring(0, backtickIndex);
+                name += "<" + string.Join(", ", arguments.Skip(parentArgumentCount).Take(ownArgumentCount).Select(FormatTypeName)) + ">";
+            }
+
+            // DeclaringType can be open even for a closed nested type. The leaf's
+            // flattened arguments retain the concrete arguments for every level.
+            return declaringType == null ? name : FormatNestedTypeName(declaringType, arguments) + "." + name;
         }
 
         // --- Method Formatting ---

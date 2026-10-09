@@ -50,6 +50,18 @@ namespace MCPForUnityTests.EditMode.Tools
                 typeof(ReflectionMetadataDerived),
                 typeof(ReflectionMetadataObjectComparer),
                 typeof(ReflectionMetadataExtensions),
+                typeof(ReflectionMetadataNestedFixture),
+                typeof(ReflectionMetadataPlainMethodOwner),
+                typeof(ReflectionMetadataGenericMethodOwner<int, string>),
+                typeof(ReflectionMetadataOuter<int>.Plain),
+                typeof(ReflectionMetadataOuter<int>.Inner<string>),
+                typeof(ReflectionMetadataOuter<int>.Inner<string>.Leaf<bool>),
+                typeof(ReflectionMetadataOuter<int>.Inner<string>.Flat),
+                typeof(ReflectionMetadataPlainOuter.Generic<int>),
+                typeof(ReflectionMetadataPlainOuter.Plain),
+                typeof(List<>),
+                typeof(ReflectionMetadataOuter<>),
+                typeof(ReflectionMetadataOuter<>.Inner<>),
             };
             assemblyField.SetValue(
                 null,
@@ -147,6 +159,92 @@ namespace MCPForUnityTests.EditMode.Tools
             var typeResult = Invoke("get_type", type);
             Assert.IsTrue(typeResult.Value<bool>("success"));
             Assert.AreEqual(expected, ((JArray)typeResult["data"]["extension_methods"]).Values<string>().Contains(method));
+        }
+
+        [TestCase(typeof(ReflectionMetadataOuter<int>.Plain), "ReflectionMetadataOuter<int>.Plain")]
+        [TestCase(typeof(ReflectionMetadataOuter<int>.Inner<string>), "ReflectionMetadataOuter<int>.Inner<string>")]
+        [TestCase(typeof(ReflectionMetadataOuter<int>.Inner<string>.Leaf<bool>), "ReflectionMetadataOuter<int>.Inner<string>.Leaf<bool>")]
+        [TestCase(typeof(ReflectionMetadataOuter<int>.Inner<string>.Flat), "ReflectionMetadataOuter<int>.Inner<string>.Flat")]
+        [TestCase(typeof(ReflectionMetadataPlainOuter.Generic<int>), "ReflectionMetadataPlainOuter.Generic<int>")]
+        [TestCase(typeof(ReflectionMetadataPlainOuter.Plain), "ReflectionMetadataPlainOuter.Plain")]
+        public void NestedTypeNamesRetainDeclaringTypesAndTheirOwnArguments(Type type, string expected)
+        {
+            var typeResult = Invoke("get_type", type);
+            Assert.IsTrue(typeResult.Value<bool>("success"));
+            Assert.AreEqual(expected, typeResult["data"].Value<string>("name"));
+            var memberResult = Member(type, "Value");
+            Assert.IsTrue(memberResult.Value<bool>("success"));
+            Assert.AreEqual(expected, memberResult["data"].Value<string>("type_name"));
+            Assert.AreEqual("int", memberResult["data"].Value<string>("property_type"));
+        }
+
+        [TestCase("Value", "property_type", "ReflectionMetadataOuter<int>.Inner<string>")]
+        [TestCase("Plain", "return_type", "ReflectionMetadataOuter<int>.Plain")]
+        [TestCase("Multi", "return_type", "ReflectionMetadataOuter<int>.Inner<string>.Leaf<bool>[,]")]
+        [TestCase("Generic", "return_type", "Dictionary<string, ReflectionMetadataOuter<int>.Inner<string>[]>")]
+        [TestCase("Field", "field_type", "ReflectionMetadataOuter<int>.Inner<string>.Flat")]
+        [TestCase("Changed", "event_handler_type", "Action<ReflectionMetadataOuter<int>.Inner<string>>")]
+        public void MemberTypesRetainNestedGenericIdentity(string member, string field, string expected)
+        {
+            var result = Member(typeof(ReflectionMetadataNestedFixture), member);
+            Assert.IsTrue(result.Value<bool>("success"));
+            var detail = result["data"]["overloads"]?[0] ?? result["data"];
+            Assert.AreEqual(expected, detail.Value<string>(field));
+        }
+
+        [Test]
+        public void NestedByRefParameterRetainsDeclaringArguments()
+        {
+            var result = Member(typeof(ReflectionMetadataNestedFixture), "Multi");
+            Assert.IsTrue(result.Value<bool>("success"));
+            var detail = result["data"]["overloads"][0];
+            Assert.AreEqual("ref ReflectionMetadataOuter<int>.Inner<string>", detail["parameters"][0].Value<string>("type"));
+            StringAssert.Contains("ref ReflectionMetadataOuter<int>.Inner<string> item", detail.Value<string>("signature"));
+        }
+
+        [TestCase(typeof(ReflectionMetadataPlainMethodOwner))]
+        [TestCase(typeof(ReflectionMetadataGenericMethodOwner<int, string>))]
+        public void GenericMethodParametersRetainTheirOwnNames(Type type)
+        {
+            var result = Member(type, "Echo");
+            Assert.IsTrue(result.Value<bool>("success"));
+            var detail = result["data"]["overloads"][0];
+            Assert.AreEqual("T", detail.Value<string>("return_type"));
+            Assert.AreEqual("T", detail["parameters"][0].Value<string>("type"));
+            Assert.AreEqual("T Echo<T>(T value)", detail.Value<string>("signature"));
+            CollectionAssert.AreEqual(new[] { "T" }, detail["generic_arguments"].Values<string>().ToArray());
+        }
+
+        [TestCase(typeof(ReflectionMetadataPlainMethodOwner))]
+        [TestCase(typeof(ReflectionMetadataGenericMethodOwner<int, string>))]
+        public void PartiallyOpenNestedSignaturesRetainMethodParameterNames(Type type)
+        {
+            var result = Member(type, "Nested");
+            Assert.IsTrue(result.Value<bool>("success"));
+            var detail = result["data"]["overloads"][0];
+            Assert.AreEqual("ReflectionMetadataOuter<int>.Inner<T>[]", detail.Value<string>("return_type"));
+            Assert.AreEqual("ref ReflectionMetadataOuter<int>.Inner<T>", detail["parameters"][0].Value<string>("type"));
+            Assert.AreEqual(
+                "ReflectionMetadataOuter<int>.Inner<T>[] Nested<T>(ref ReflectionMetadataOuter<int>.Inner<T> value)",
+                detail.Value<string>("signature")
+            );
+        }
+
+        [TestCase(typeof(List<>))]
+        [TestCase(typeof(ReflectionMetadataOuter<>))]
+        [TestCase(typeof(ReflectionMetadataOuter<>.Inner<>))]
+        public void OpenGenericDefinitionsRetainMinimalSafeResponses(Type type)
+        {
+            var typeResult = Invoke("get_type", type);
+            Assert.IsTrue(typeResult.Value<bool>("success"));
+            Assert.IsTrue(typeResult["data"].Value<bool>("is_generic_type_definition"));
+            Assert.AreEqual(type.Name, typeResult["data"].Value<string>("name"));
+            Assert.IsNull(typeResult["data"]["members"]);
+            var memberResult = Member(type, "Value");
+            Assert.IsTrue(memberResult.Value<bool>("success"));
+            Assert.IsTrue(memberResult["data"].Value<bool>("is_generic_type_definition"));
+            Assert.IsFalse(memberResult["data"].Value<bool>("found"));
+            Assert.AreEqual(type.FullName, memberResult["data"].Value<string>("type_name"));
         }
 
         [Test]
@@ -303,6 +401,77 @@ namespace MCPForUnityTests.EditMode.Tools
         public int[] Vector() => throw new InvalidOperationException("Metadata only; do not invoke.");
 
         public void Consume(int[,,] cube) => throw new InvalidOperationException("Metadata only; do not invoke.");
+    }
+
+    public class ReflectionMetadataOuter<T>
+    {
+        public class Plain
+        {
+            public int Value => throw new InvalidOperationException("Metadata only; do not invoke.");
+        }
+
+        public class Inner<U>
+        {
+            public int Value => throw new InvalidOperationException("Metadata only; do not invoke.");
+
+            public class Leaf<V>
+            {
+                public int Value => throw new InvalidOperationException("Metadata only; do not invoke.");
+            }
+
+            public class Flat
+            {
+                public int Value => throw new InvalidOperationException("Metadata only; do not invoke.");
+            }
+        }
+    }
+
+    public class ReflectionMetadataPlainOuter
+    {
+        public class Generic<T>
+        {
+            public int Value => throw new InvalidOperationException("Metadata only; do not invoke.");
+        }
+
+        public class Plain
+        {
+            public int Value => throw new InvalidOperationException("Metadata only; do not invoke.");
+        }
+    }
+
+    public class ReflectionMetadataNestedFixture
+    {
+        public ReflectionMetadataOuter<int>.Inner<string> Value => throw new InvalidOperationException("Metadata only; do not invoke.");
+        public ReflectionMetadataOuter<int>.Inner<string>.Flat Field;
+        public event Action<ReflectionMetadataOuter<int>.Inner<string>> Changed
+        {
+            add { }
+            remove { }
+        }
+
+        public ReflectionMetadataOuter<int>.Plain Plain() => throw new InvalidOperationException("Metadata only; do not invoke.");
+
+        public ReflectionMetadataOuter<int>.Inner<string>.Leaf<bool>[,] Multi(ref ReflectionMetadataOuter<int>.Inner<string> item) =>
+            throw new InvalidOperationException("Metadata only; do not invoke.");
+
+        public Dictionary<string, ReflectionMetadataOuter<int>.Inner<string>[]> Generic() =>
+            throw new InvalidOperationException("Metadata only; do not invoke.");
+    }
+
+    public class ReflectionMetadataPlainMethodOwner
+    {
+        public T Echo<T>(T value) => throw new InvalidOperationException("Metadata only; do not invoke.");
+
+        public ReflectionMetadataOuter<int>.Inner<T>[] Nested<T>(ref ReflectionMetadataOuter<int>.Inner<T> value) =>
+            throw new InvalidOperationException("Metadata only; do not invoke.");
+    }
+
+    public class ReflectionMetadataGenericMethodOwner<A, B>
+    {
+        public T Echo<T>(T value) => throw new InvalidOperationException("Metadata only; do not invoke.");
+
+        public ReflectionMetadataOuter<int>.Inner<T>[] Nested<T>(ref ReflectionMetadataOuter<int>.Inner<T> value) =>
+            throw new InvalidOperationException("Metadata only; do not invoke.");
     }
 
     public class ReflectionMetadataBase<T> { }
