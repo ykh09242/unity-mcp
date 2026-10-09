@@ -526,9 +526,10 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>
         /// Returns true if the server URL is a local path (file:// or absolute path).
         /// </summary>
-        public static bool IsLocalServerPath()
+        public static bool IsLocalServerPath() => IsLocalServerSource(GetMcpServerPackageSource());
+
+        private static bool IsLocalServerSource(string fromUrl)
         {
-            string fromUrl = GetMcpServerPackageSource();
             if (string.IsNullOrEmpty(fromUrl))
                 return false;
 
@@ -553,10 +554,10 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static string GetLocalServerPath()
         {
-            if (!IsLocalServerPath())
+            string fromUrl = GetMcpServerPackageSource();
+            if (!IsLocalServerSource(fromUrl))
                 return null;
 
-            string fromUrl = GetMcpServerPackageSource();
             if (fromUrl.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
             {
                 // Strip file:// prefix
