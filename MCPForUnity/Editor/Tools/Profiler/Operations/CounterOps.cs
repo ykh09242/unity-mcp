@@ -57,13 +57,14 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     var recorder = recorders[i];
                     string name = counterNames[i];
                     long value = 0;
-                    if (recorder.Valid && recorder.Count > 0)
+                    bool valid = recorder.Valid;
+                    if (valid && recorder.Count > 0)
                         value = recorder.GetSample(0).Value;
-                    else if (recorder.Valid)
+                    else if (valid)
                         value = recorder.CurrentValue;
                     data[name] = value;
-                    data[name + "_valid"] = recorder.Valid;
-                    data[name + "_unit"] = recorder.Valid ? recorder.UnitType.ToString() : "Unknown";
+                    data[name + "_valid"] = valid;
+                    data[name + "_unit"] = valid ? recorder.UnitType.ToString() : "Unknown";
                 }
             }
             finally
@@ -83,9 +84,10 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
             var allHandles = new List<ProfilerRecorderHandle>();
             ProfilerRecorderHandle.GetAvailable(allHandles);
+            string requestedCategoryName = null;
             return allHandles
                 .Select(h => ProfilerRecorderHandle.GetDescription(h))
-                .Where(d => string.Equals(d.Category.Name, category.Name, StringComparison.OrdinalIgnoreCase))
+                .Where(d => string.Equals(d.Category.Name, requestedCategoryName ??= category.Name, StringComparison.OrdinalIgnoreCase))
                 .Select(d => d.Name)
                 .OrderBy(n => n)
                 .ToList();
