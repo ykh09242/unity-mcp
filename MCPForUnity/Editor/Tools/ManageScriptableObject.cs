@@ -555,7 +555,7 @@ namespace MCPForUnity.Editor.Tools
                     return size;
                 // Appended elements have unspecified content. Budget subsequent writes as if
                 // their nested arrays were empty, rather than crediting guessed copied sizes.
-                var resolved = Resolve(path);
+                using var resolved = Resolve(path);
                 return resolved == null || resolved.propertyPath != path ? 0
                     : resolved.isArray ? resolved.arraySize
                     : 0;
@@ -576,7 +576,7 @@ namespace MCPForUnity.Editor.Tools
             public void Resize(string path, int size)
             {
                 Inspect();
-                var property = Resolve(path);
+                using var property = Resolve(path);
                 if (property != null && (!property.isArray || property.propertyType == SerializedPropertyType.String))
                     return;
                 int oldSize = Size(path);
@@ -591,7 +591,7 @@ namespace MCPForUnity.Editor.Tools
                         // Unity leaves appended content unspecified. Use the most expensive
                         // retained prototype, not an assumption that only the last is copied.
                         int retained = Math.Min(oldSize, property?.arraySize ?? 0);
-                        var sample = retained == 0 ? null : property.GetArrayElementAtIndex(0);
+                        using var sample = retained == 0 ? null : property.GetArrayElementAtIndex(0);
                         bool compound =
                             sample == null
                             || sample.isArray
@@ -626,7 +626,8 @@ namespace MCPForUnity.Editor.Tools
                         if (!_copies.TryGetValue(path, out var copies))
                             _copies[path] = copies = new();
                         string source = path + $".Array.data[{oldSize - 1}]";
-                        source = Resolve(source)?.propertyPath ?? source;
+                        using var sourceProperty = Resolve(source);
+                        source = sourceProperty?.propertyPath ?? source;
                         copies.Add((oldSize, size, source));
                     }
                 }
@@ -658,7 +659,7 @@ namespace MCPForUnity.Editor.Tools
                 Inspect();
                 if (depth > 20)
                     throw new InvalidOperationException("Array nesting exceeds 20 levels.");
-                var property = Resolve(path);
+                using var property = Resolve(path);
                 string shape = Shape(path);
                 if (property == null)
                 {
@@ -703,7 +704,7 @@ namespace MCPForUnity.Editor.Tools
                     _arrayPeaks[shape] = size;
                     if (size == 0)
                         return cost;
-                    var sample = property.arraySize == 0 ? null : property.GetArrayElementAtIndex(0);
+                    using var sample = property.arraySize == 0 ? null : property.GetArrayElementAtIndex(0);
                     if (
                         sample != null
                         && !sample.isArray
@@ -826,7 +827,7 @@ namespace MCPForUnity.Editor.Tools
                     Resize(path.Substring(0, path.Length - ".Array.size".Length), size);
                     return;
                 }
-                var property = Resolve(path);
+                using var property = Resolve(path);
                 if (property?.propertyType == SerializedPropertyType.String || (property == null && TypeAt(path) == typeof(string)))
                 {
                     _strings[path] = Math.Max(
@@ -968,7 +969,7 @@ namespace MCPForUnity.Editor.Tools
                         arrayPath = arrayPath.Substring(0, arrayPath.Length - ".Array.size".Length);
                     }
 
-                    var arrayProp = so.FindProperty(arrayPath);
+                    using var arrayProp = so.FindProperty(arrayPath);
                     if (arrayProp == null)
                     {
                         results.Add(
@@ -1014,7 +1015,7 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 // For set operations, check if the property exists (or can be auto-grown)
-                var prop = so.FindProperty(normalizedPath);
+                using var prop = so.FindProperty(normalizedPath);
 
                 // Check if it's an auto-growable array element path
                 bool isAutoGrowable = false;
@@ -1024,7 +1025,7 @@ namespace MCPForUnity.Editor.Tools
                     if (match.Success)
                     {
                         string arrayPath = match.Groups[1].Value;
-                        var arrayProp = so.FindProperty(arrayPath);
+                        using var arrayProp = so.FindProperty(arrayPath);
                         if (arrayProp != null && arrayProp.isArray)
                         {
                             isAutoGrowable = true;
@@ -1032,7 +1033,7 @@ namespace MCPForUnity.Editor.Tools
                             int targetIndex = int.Parse(match.Groups[2].Value);
                             if (arrayProp.arraySize > 0)
                             {
-                                var sampleElement = arrayProp.GetArrayElementAtIndex(0);
+                                using var sampleElement = arrayProp.GetArrayElementAtIndex(0);
                                 results.Add(
                                     new
                                     {
@@ -1311,7 +1312,7 @@ namespace MCPForUnity.Editor.Tools
                 string arrayPath = path.Substring(0, match.Index);
                 if (!int.TryParse(match.Groups[1].Value, out int targetIndex) || targetIndex == int.MaxValue)
                     return false;
-                var arrayProp = so.FindProperty(arrayPath);
+                using var arrayProp = so.FindProperty(arrayPath);
                 if (arrayProp == null || !arrayProp.isArray)
                     return false;
                 if (arrayProp.arraySize <= targetIndex)
@@ -1364,32 +1365,85 @@ namespace MCPForUnity.Editor.Tools
             // (or can return different property types), so we keep a "best-effort" fallback:
             // - Prefer acting on the requested path if it resolves.
             // - If the requested path doesn't resolve, try to resolve the *array property* and set arraySize directly.
-            SerializedProperty prop = so.FindProperty(propertyPath);
+            using SerializedProperty prop = so.FindProperty(propertyPath);
             SerializedProperty arrayProp = null;
-            if (propertyPath.EndsWith(".Array.size", StringComparison.Ordinal))
+            try
             {
-                // Caller explicitly targeted the synthetic leaf. Resolve the parent array property as a fallback
-                // (Unity sometimes fails to resolve the synthetic leaf in certain serialization contexts).
-                var arrayPath = propertyPath.Substring(0, propertyPath.Length - ".Array.size".Length);
-                arrayProp = so.FindProperty(arrayPath);
-            }
-            else
-            {
-                // Caller targeted either the array property itself (e.g., "items") or some other property.
-                // If it's already an array, we can resize it directly. Otherwise, we attempt to resolve
-                // a synthetic ".Array.size" leaf as a convenience, which some clients may pass.
-                arrayProp = prop != null && prop.isArray ? prop : so.FindProperty(propertyPath + ".Array.size");
-            }
-
-            if (prop == null)
-            {
-                // If we failed to find the direct property but we *can* find the array property, use that.
-                if (arrayProp != null && arrayProp.isArray)
+                if (propertyPath.EndsWith(".Array.size", StringComparison.Ordinal))
                 {
-                    if (arrayProp.arraySize != newSize)
+                    // Caller explicitly targeted the synthetic leaf. Resolve the parent array property as a fallback
+                    // (Unity sometimes fails to resolve the synthetic leaf in certain serialization contexts).
+                    var arrayPath = propertyPath.Substring(0, propertyPath.Length - ".Array.size".Length);
+                    arrayProp = so.FindProperty(arrayPath);
+                }
+                else
+                {
+                    // Caller targeted either the array property itself (e.g., "items") or some other property.
+                    // If it's already an array, we can resize it directly. Otherwise, we attempt to resolve
+                    // a synthetic ".Array.size" leaf as a convenience, which some clients may pass.
+                    arrayProp = prop != null && prop.isArray ? prop : so.FindProperty(propertyPath + ".Array.size");
+                }
+
+                if (prop == null)
+                {
+                    // If we failed to find the direct property but we *can* find the array property, use that.
+                    if (arrayProp != null && arrayProp.isArray)
                     {
-                        CheckArraySizeChange(arrayProp.arraySize, newSize);
-                        arrayProp.arraySize = newSize;
+                        if (arrayProp.arraySize != newSize)
+                        {
+                            CheckArraySizeChange(arrayProp.arraySize, newSize);
+                            arrayProp.arraySize = newSize;
+                            changed = true;
+                        }
+                        return new
+                        {
+                            propertyPath,
+                            op = "array_resize",
+                            ok = true,
+                            resolvedPropertyType = "Array",
+                            message = $"Set array size to {newSize}.",
+                        };
+                    }
+
+                    return new
+                    {
+                        propertyPath,
+                        op = "array_resize",
+                        ok = false,
+                        message = $"Property not found: {propertyPath}",
+                    };
+                }
+
+                // Unity may represent ".Array.size" as either Integer or ArraySize depending on version.
+                if (
+                    (prop.propertyType == SerializedPropertyType.Integer || prop.propertyType == SerializedPropertyType.ArraySize)
+                    && propertyPath.EndsWith(".Array.size", StringComparison.Ordinal)
+                )
+                {
+                    // We successfully resolved the synthetic leaf; write the size through its intValue.
+                    if (prop.intValue != newSize)
+                    {
+                        CheckArraySizeChange(prop.intValue, newSize);
+                        prop.intValue = newSize;
+                        changed = true;
+                    }
+                    return new
+                    {
+                        propertyPath,
+                        op = "array_resize",
+                        ok = true,
+                        resolvedPropertyType = prop.propertyType.ToString(),
+                        message = $"Set array size to {newSize}.",
+                    };
+                }
+
+                if (prop.isArray)
+                {
+                    // We resolved the array property itself; write through arraySize.
+                    if (prop.arraySize != newSize)
+                    {
+                        CheckArraySizeChange(prop.arraySize, newSize);
+                        prop.arraySize = newSize;
                         changed = true;
                     }
                     return new
@@ -1407,60 +1461,15 @@ namespace MCPForUnity.Editor.Tools
                     propertyPath,
                     op = "array_resize",
                     ok = false,
-                    message = $"Property not found: {propertyPath}",
-                };
-            }
-
-            // Unity may represent ".Array.size" as either Integer or ArraySize depending on version.
-            if (
-                (prop.propertyType == SerializedPropertyType.Integer || prop.propertyType == SerializedPropertyType.ArraySize)
-                && propertyPath.EndsWith(".Array.size", StringComparison.Ordinal)
-            )
-            {
-                // We successfully resolved the synthetic leaf; write the size through its intValue.
-                if (prop.intValue != newSize)
-                {
-                    CheckArraySizeChange(prop.intValue, newSize);
-                    prop.intValue = newSize;
-                    changed = true;
-                }
-                return new
-                {
-                    propertyPath,
-                    op = "array_resize",
-                    ok = true,
                     resolvedPropertyType = prop.propertyType.ToString(),
-                    message = $"Set array size to {newSize}.",
+                    message = $"Property is not an array or array-size field: {propertyPath}",
                 };
             }
-
-            if (prop.isArray)
+            finally
             {
-                // We resolved the array property itself; write through arraySize.
-                if (prop.arraySize != newSize)
-                {
-                    CheckArraySizeChange(prop.arraySize, newSize);
-                    prop.arraySize = newSize;
-                    changed = true;
-                }
-                return new
-                {
-                    propertyPath,
-                    op = "array_resize",
-                    ok = true,
-                    resolvedPropertyType = "Array",
-                    message = $"Set array size to {newSize}.",
-                };
+                if (!ReferenceEquals(arrayProp, prop))
+                    arrayProp?.Dispose();
             }
-
-            return new
-            {
-                propertyPath,
-                op = "array_resize",
-                ok = false,
-                resolvedPropertyType = prop.propertyType.ToString(),
-                message = $"Property is not an array or array-size field: {propertyPath}",
-            };
         }
 
         private static object ApplySet(SerializedObject so, string propertyPath, JObject patchObj, out bool changed)
@@ -1483,7 +1492,7 @@ namespace MCPForUnity.Editor.Tools
             if (!EnsureArrayCapacity(so, propertyPath, out _))
             {
                 // Could not resolve the array path - try to find the property anyway for a better error message
-                var checkProp = so.FindProperty(propertyPath);
+                using var checkProp = so.FindProperty(propertyPath);
                 if (checkProp == null)
                 {
                     // Try to provide helpful context about what went wrong
@@ -1491,7 +1500,7 @@ namespace MCPForUnity.Editor.Tools
                     if (arrayMatch.Success)
                     {
                         string arrayPath = arrayMatch.Groups[1].Value;
-                        var arrayProp = so.FindProperty(arrayPath);
+                        using var arrayProp = so.FindProperty(arrayPath);
                         if (arrayProp == null)
                         {
                             return new
@@ -1523,7 +1532,7 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
 
-            var prop = so.FindProperty(propertyPath);
+            using var prop = so.FindProperty(propertyPath);
             if (prop == null)
             {
                 return new
@@ -1631,10 +1640,14 @@ namespace MCPForUnity.Editor.Tools
             string rootPath = path.Split('.')[0];
             using var checkpoint = new SerializedObject(so.targetObjects);
             // Copy pending ancestors too, so newly grown elements exist in the checkpoint.
-            checkpoint.CopyFromSerializedProperty(so.FindProperty(rootPath));
+            using (var rootProperty = so.FindProperty(rootPath))
+                checkpoint.CopyFromSerializedProperty(rootProperty);
             bool ok = TrySetValueRecursiveCore(prop, valueToken, out message, depth);
             if (!ok)
-                so.CopyFromSerializedProperty(checkpoint.FindProperty(path));
+            {
+                using var checkpointProperty = checkpoint.FindProperty(path);
+                so.CopyFromSerializedProperty(checkpointProperty);
+            }
             return ok;
         }
 
@@ -1675,7 +1688,7 @@ namespace MCPForUnity.Editor.Tools
 
                     for (int i = 0; i < jArray.Count; i++)
                     {
-                        var elementProp = prop.GetArrayElementAtIndex(i);
+                        using var elementProp = prop.GetArrayElementAtIndex(i);
                         if (elementProp == null)
                         {
                             errors.Add($"Could not get element at index {i}");
@@ -1712,7 +1725,7 @@ namespace MCPForUnity.Editor.Tools
                     foreach (var kvp in jObj)
                     {
                         string childPath = prop.propertyPath + "." + kvp.Key;
-                        var childProp = so.FindProperty(childPath);
+                        using var childProp = so.FindProperty(childPath);
 
                         if (childProp == null)
                         {
