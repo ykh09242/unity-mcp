@@ -1095,7 +1095,7 @@ namespace MCPForUnity.Runtime.Helpers
         /// <summary>Spawns a hidden GameObject, attaches a capturer, returns immediately.</summary>
         public static ScreenshotCapturer Begin(int superSize, Action<Texture2D> onComplete, float timeoutSeconds = DefaultTimeoutSeconds)
         {
-            return Begin(superSize, (tex, _) => onComplete?.Invoke(tex), timeoutSeconds);
+            return Begin(superSize, onComplete == null ? (Action<Texture2D, bool>)null : (tex, _) => onComplete(tex), timeoutSeconds);
         }
 
         /// <summary>Spawns a hidden GameObject, attaches a capturer, returns immediately.</summary>
@@ -1193,9 +1193,19 @@ namespace MCPForUnity.Runtime.Helpers
             }
             _finished = true;
             DisarmTimeout();
+            var onComplete = _onComplete;
+            _onComplete = null;
             try
             {
-                _onComplete?.Invoke(tex, timedOut);
+                if (onComplete != null)
+                    onComplete(tex, timedOut);
+                else if (tex != null)
+                {
+                    if (Application.isPlaying)
+                        Destroy(tex);
+                    else
+                        DestroyImmediate(tex);
+                }
             }
             finally
             {
