@@ -263,6 +263,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return (false, "'target' parameter is required for create_from_gameobject.", null, null, false, false, false);
             }
 
+            string pathError = ValidatePrefabStringToken(@params["prefabPath"], "prefabPath");
+            if (pathError != null)
+                return (false, pathError, targetName, null, false, false, false);
+
             string requestedPath = @params["prefabPath"]?.ToString();
             if (string.IsNullOrWhiteSpace(requestedPath))
             {

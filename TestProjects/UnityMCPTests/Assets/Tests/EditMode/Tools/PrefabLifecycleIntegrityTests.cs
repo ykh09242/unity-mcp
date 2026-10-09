@@ -171,6 +171,57 @@ namespace MCPForUnityTests.Editor.Tools
             return File.ReadAllBytes(System.IO.Path.Combine(Application.dataPath, path.Substring("Assets/".Length)));
         }
 
+        [TestCase("false")]
+        [TestCase("true")]
+        [TestCase("0")]
+        [TestCase("1.5")]
+        [TestCase("{}")]
+        [TestCase("[]")]
+        public void CreateRawPrefabPathRejectsBeforeSceneLookup(string json)
+        {
+            // A unique absent source keeps the baseline from reaching allocation or asset saving.
+            string target = "MissingPrefabAdmissionSource_" + Guid.NewGuid().ToString("N");
+            JObject request = ParseCommand(new JObject { ["target"] = target, ["prefabPath"] = JToken.Parse(json) });
+            JObject result = Send("create_from_gameobject", request);
+            Failure(result);
+            Assert.AreEqual("'prefabPath' must be a string.", result.Value<string>("error"));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CreatePathPreflightPreservesSceneIdsAndDefaultFlags(bool stringId)
+        {
+            JToken target = stringId ? (JToken)new JValue("-123") : new JValue(-123);
+            JObject request = ParseCommand(new JObject { ["target"] = target, ["prefabPath"] = PathFor("PreflightOnly") });
+            MethodInfo method = typeof(ManagePrefabs).GetMethod("ValidateCreatePrefabParams", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(method);
+            var result = ((bool valid, string error, string target, string path, bool inactive, bool overwrite, bool unlink))
+                method.Invoke(null, new object[] { request });
+            Assert.IsTrue(result.valid, result.error);
+            Assert.AreEqual("-123", result.target);
+            Assert.AreEqual(PathFor("PreflightOnly"), result.path);
+            Assert.IsFalse(result.inactive || result.overwrite || result.unlink);
+            Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(result.path));
+        }
+
+        [Test]
+        public void CreateMissingTargetRetainsPriorityOverRawPath()
+        {
+            JObject result = Send(
+                "create_from_gameobject",
+                new JObject
+                {
+                    ["target"] = JValue.CreateNull(),
+                    ["name"] = "Ignored",
+                    ["prefabPath"] = false,
+                }
+            );
+            Failure(result);
+            Assert.AreEqual("'target' parameter is required for create_from_gameobject.", result.Value<string>("error"));
+            LogAssert.NoUnexpectedReceived();
+        }
+
         [TestCase("target", "false")]
         [TestCase("target", "0")]
         [TestCase("target", "{}")]
