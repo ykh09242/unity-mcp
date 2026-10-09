@@ -865,13 +865,22 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 return src;
             int width = Mathf.Max(1, Mathf.RoundToInt(src.width * (float)height / src.height));
             var dst = new Texture2D(width, height, TextureFormat.RGBA32, false);
-            var pixels = new Color[width * height];
-            for (int y = 0; y < height; y++)
-            for (int x = 0; x < width; x++)
-                pixels[y * width + x] = src.GetPixelBilinear((x + 0.5f) / width, (y + 0.5f) / height);
-            dst.SetPixels(pixels);
-            dst.Apply();
-            return dst;
+            try
+            {
+                var pixels = new Color[width * height];
+                for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                    pixels[y * width + x] = src.GetPixelBilinear((x + 0.5f) / width, (y + 0.5f) / height);
+                dst.SetPixels(pixels);
+                dst.Apply();
+                return dst;
+            }
+            catch
+            {
+                // The caller only owns a destination after this method returns successfully.
+                UnityEngine.Object.DestroyImmediate(dst);
+                throw;
+            }
         }
 
         // ----------------------------------------------------------- check_updates
