@@ -64,6 +64,8 @@ class RequestBodyLimitMiddleware:
                 size = len(message.get("body", b""))
                 if size > self.max_body_size - total_size:
                     rejected = True
+                    # The rejected chunk is not needed during error delivery or its traceback.
+                    del message
                     if not response_started:
                         await JSONResponse(
                             {"error": "HTTP request body exceeds the size limit"}, status_code=413
