@@ -1538,6 +1538,7 @@ class PluginHub(WebSocketEndpoint):
             return
         completed = None
         command_id = None
+        close_invalid = False
         try:
             async with lock:
                 cls._expire_large_results()
@@ -1589,12 +1590,17 @@ class PluginHub(WebSocketEndpoint):
                         response_limit_error(exc.reason)
                     )
                 return
-            await websocket.close(code=4400, reason="Invalid large result transfer")
+            close_invalid = True
         except (ValueError, RecursionError):
-            await websocket.close(code=4400, reason="Invalid large result transfer")
+            close_invalid = True
         finally:
             if command_id is not None:
                 assembler.discard(generation, command_id)
+            if close_invalid:
+                completed = text = message = payload = start = data = None
+        if close_invalid:
+            # Closing can suspend. Release rejected payloads and decoder tracebacks first.
+            await websocket.close(code=4400, reason="Invalid large result transfer")
 
     async def _handle_command_result(
         self, websocket: WebSocket, payload: CommandResultMessage
