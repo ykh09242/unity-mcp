@@ -183,6 +183,26 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual("project://database/Assets/A&B.uss", style.GetAttribute("src"));
         }
 
+        [TestCase("QQ==")]
+        [TestCase("/w==")]
+        [TestCase("7aCA")]
+        [TestCase("7ZWc6riA8J+YgA==")]
+        public void ReadUITextPreservesUtf8ReplacementAndEncodedResponse(string sourceBase64)
+        {
+            string path = assetRoot + "/Unimported.uss";
+            byte[] source = Convert.FromBase64String(sourceBase64);
+            File.WriteAllBytes(AssetPathUtility.GetFullAssetPath(path), source);
+            string expected = System.Text.Encoding.UTF8.GetString(source);
+            byte[] encoded = System.Text.Encoding.UTF8.GetBytes(expected);
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(new JObject { ["action"] = "read", ["path"] = path }));
+            Assert.IsTrue(response.Value<bool>("success"));
+            var data = (JObject)response["data"];
+            Assert.AreEqual(expected, data.Value<string>("contents"));
+            Assert.AreEqual(Convert.ToBase64String(encoded), data.Value<string>("encodedContents"));
+            Assert.AreEqual(encoded.Length, data.Value<int>("lengthBytes"));
+            Assert.IsTrue(data.Value<bool>("contentsEncoded"));
+        }
+
         private static Action<PanelSettings> PreparePanelProperties(JObject settings, List<string> changes)
         {
             var prepare = typeof(ManageUI).GetMethod("PreparePanelSettingsProperties", BindingFlags.Static | BindingFlags.NonPublic);

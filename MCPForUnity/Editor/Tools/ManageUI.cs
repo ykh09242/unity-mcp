@@ -225,7 +225,8 @@ namespace MCPForUnity.Editor.Tools
             }
 
             string contents = File.ReadAllText(fullPath, Encoding.UTF8);
-            string encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(contents));
+            byte[] utf8Bytes = Encoding.UTF8.GetBytes(contents);
+            string encoded = Convert.ToBase64String(utf8Bytes);
 
             return new SuccessResponse(
                 $"Read {Path.GetExtension(path).TrimStart('.')} file at {path}",
@@ -235,7 +236,7 @@ namespace MCPForUnity.Editor.Tools
                     contents,
                     encodedContents = encoded,
                     contentsEncoded = true,
-                    lengthBytes = Encoding.UTF8.GetByteCount(contents),
+                    lengthBytes = utf8Bytes.Length,
                 }
             );
         }
