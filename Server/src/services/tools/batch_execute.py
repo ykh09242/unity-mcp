@@ -10,7 +10,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from core.config import config
-from models.response_limits import response_limit_error
+from models.response_limits import ResponseOwner, response_limit_error, response_owner
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
@@ -34,8 +34,8 @@ _LIMIT_CACHE_TTL_SECONDS = 5.0
 _LIMIT_CACHE_MAX_ENTRIES = 128
 _cached_max_commands: dict[tuple[str, str | None, str, str | None], tuple[int, float]] = {}
 _limit_cache_generation = 0
-# Transport responses remain untyped until the settings boundary below.
-_limit_reads: SharedToolReads[Any] = SharedToolReads(freshness_s=_LIMIT_CACHE_TTL_SECONDS)
+# Share only the validated setting; unrelated editor snapshots are request-local.
+_limit_reads: SharedToolReads[int | None] = SharedToolReads(freshness_s=_LIMIT_CACHE_TTL_SECONDS)
 
 
 async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str | None) -> int:
@@ -66,50 +66,55 @@ async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str 
     generation = _limit_cache_generation
     read_key = (generation, cache_key) if cache_key is not None else None
 
-    async def fetch_editor_settings() -> Any:
+    async def fetch_editor_settings() -> int | None:
         # The enriched resource also scans external assets and reads project_info;
-        # batch validation only needs the editor's settings snapshot.
-        value = await send_with_unity_instance(
-            async_send_command_with_retry,
-            unity_instance,
-            "get_editor_state",
-            {},
-        )
-        return value.model_dump() if hasattr(value, "model_dump") else value
+        # batch validation only needs one scalar from the editor's settings.
+        raw_owner = ResponseOwner()
+        token = response_owner.set(raw_owner)
+        try:
+            value = await send_with_unity_instance(
+                async_send_command_with_retry,
+                unity_instance,
+                "get_editor_state",
+                {},
+            )
+            value = value.model_dump() if hasattr(value, "model_dump") else value
+            data = (
+                value.data
+                if hasattr(value, "data")
+                else (value.get("data") if isinstance(value, dict) else None)
+            )
+            if isinstance(data, dict):
+                settings = data.get("settings")
+                if isinstance(settings, dict):
+                    limit = settings.get("batch_execute_max_commands")
+                    if type(limit) is int and 1 <= limit <= ABSOLUTE_MAX_COMMANDS_PER_BATCH:
+                        return limit
+            return None
+        finally:
+            response_owner.reset(token)
+            raw_owner.release()
 
     try:
         async with _limit_reads.session(read_key) as shared_read:
-            state_resp = await shared_read.fetch(fetch_editor_settings)
-        data = (
-            state_resp.data
-            if hasattr(state_resp, "data")
-            else (state_resp.get("data") if isinstance(state_resp, dict) else None)
-        )
-        if isinstance(data, dict):
-            settings = data.get("settings")
-            if isinstance(settings, dict):
-                limit = settings.get("batch_execute_max_commands")
-                if type(limit) is int and 1 <= limit <= ABSOLUTE_MAX_COMMANDS_PER_BATCH:
-                    identity_current = (
-                        config.transport_mode.lower() == "http"
-                        or cache_key is not None
-                        and cache_key[3] == await get_authenticated_stdio_generation(unity_instance)
-                    )
-                    if (
-                        cache_key is not None
-                        and generation == _limit_cache_generation
-                        and identity_current
-                    ):
-                        if (
-                            cache_key not in _cached_max_commands
-                            and len(_cached_max_commands) >= _LIMIT_CACHE_MAX_ENTRIES
-                        ):
-                            _cached_max_commands.pop(next(iter(_cached_max_commands)))
-                        _cached_max_commands[cache_key] = (
-                            limit,
-                            time.monotonic() + _LIMIT_CACHE_TTL_SECONDS,
-                        )
-                    return limit
+            limit = await shared_read.fetch(fetch_editor_settings)
+        if limit is not None:
+            identity_current = (
+                config.transport_mode.lower() == "http"
+                or cache_key is not None
+                and cache_key[3] == await get_authenticated_stdio_generation(unity_instance)
+            )
+            if cache_key is not None and generation == _limit_cache_generation and identity_current:
+                if (
+                    cache_key not in _cached_max_commands
+                    and len(_cached_max_commands) >= _LIMIT_CACHE_MAX_ENTRIES
+                ):
+                    _cached_max_commands.pop(next(iter(_cached_max_commands)))
+                _cached_max_commands[cache_key] = (
+                    limit,
+                    time.monotonic() + _LIMIT_CACHE_TTL_SECONDS,
+                )
+            return limit
     except SharedReadCapacityError:
         raise
     except Exception as exc:
