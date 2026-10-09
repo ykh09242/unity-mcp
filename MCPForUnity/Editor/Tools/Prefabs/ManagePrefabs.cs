@@ -1560,7 +1560,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         private static List<object> BuildHierarchyItems(Transform root, string mainPrefabPath)
         {
             var items = new List<object>();
-            BuildHierarchyItemsRecursive(root, root, mainPrefabPath, "", items);
+            var mainRootAssetPath = new Lazy<string>(() => AssetDatabase.GetAssetPath(root.gameObject));
+            BuildHierarchyItemsRecursive(root, root, mainPrefabPath, "", items, 0, null, mainRootAssetPath);
             return items;
         }
 
@@ -1572,12 +1573,18 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// <param name="mainPrefabPath">Asset path of the main prefab.</param>
         /// <param name="parentPath">Parent path for building full hierarchy path.</param>
         /// <param name="items">List to accumulate hierarchy items.</param>
+        /// <param name="ancestorNestingDepth">Nested prefab roots already visited above this node, excluding the main root.</param>
+        /// <param name="nearestNestedParentPath">Source path of the nearest nested ancestor, including a null source path.</param>
+        /// <param name="mainRootAssetPath">Request-local lookup of the actual main root asset path, used only for first-level nested roots.</param>
         private static void BuildHierarchyItemsRecursive(
             Transform transform,
             Transform mainPrefabRoot,
             string mainPrefabPath,
             string parentPath,
-            List<object> items
+            List<object> items,
+            int ancestorNestingDepth,
+            string nearestNestedParentPath,
+            Lazy<string> mainRootAssetPath
         )
         {
             if (transform == null)
@@ -1593,8 +1600,12 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             // Prefab information
             bool isNestedPrefab = PrefabUtility.IsAnyPrefabInstanceRoot(transform.gameObject);
             bool isPrefabRoot = transform == mainPrefabRoot;
-            int nestingDepth = isPrefabRoot ? 0 : PrefabUtilityHelper.GetPrefabNestingDepth(transform.gameObject, mainPrefabRoot);
-            string parentPrefabPath = isNestedPrefab && !isPrefabRoot ? PrefabUtilityHelper.GetParentPrefabPath(transform.gameObject, mainPrefabRoot) : null;
+            // This read-only traversal already visited every ancestor; carry their prefab metadata forward.
+            int nestingDepth =
+                isPrefabRoot ? 0
+                : isNestedPrefab ? ancestorNestingDepth + 1
+                : -1;
+            string parentPrefabPath = isNestedPrefab && !isPrefabRoot ? (ancestorNestingDepth > 0 ? nearestNestedParentPath : mainRootAssetPath.Value) : null;
             string nestedPrefabPath = isNestedPrefab ? PrefabUtilityHelper.GetNestedPrefabPath(transform.gameObject) : null;
 
             var item = new
@@ -1620,7 +1631,16 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             // Recursively process children
             foreach (Transform child in transform)
             {
-                BuildHierarchyItemsRecursive(child, mainPrefabRoot, mainPrefabPath, path, items);
+                BuildHierarchyItemsRecursive(
+                    child,
+                    mainPrefabRoot,
+                    mainPrefabPath,
+                    path,
+                    items,
+                    nestingDepth >= 0 ? nestingDepth : ancestorNestingDepth,
+                    isNestedPrefab && !isPrefabRoot ? nestedPrefabPath : nearestNestedParentPath,
+                    mainRootAssetPath
+                );
             }
         }
 
