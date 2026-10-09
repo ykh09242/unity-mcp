@@ -23,6 +23,7 @@ namespace MCPForUnity.Editor.Tools
         private const int HistoryLimit = 8;
         private static readonly List<JObject> History = new List<JObject>();
         private static RecordingJob _active;
+        private static string _rememberedJobId;
         private static SceneView _sceneView;
         private static RecordingFramePump _pump;
         private static RenderTexture _scaledRenderTexture;
@@ -352,13 +353,14 @@ namespace MCPForUnity.Editor.Tools
 
         private static void Remember(RecordingJob job)
         {
-            if (job.IsActive)
+            if (job.IsActive || _rememberedJobId == job.Id)
                 return;
             History.RemoveAll(entry => entry.Value<string>("job_id") == job.Id);
             History.Add(job.Snapshot(EditorApplication.timeSinceStartup));
             if (History.Count > HistoryLimit)
                 History.RemoveAt(0);
             SessionState.SetString(HistoryKey, new JArray(History).ToString(Formatting.None));
+            _rememberedJobId = job.Id;
         }
     }
 }
