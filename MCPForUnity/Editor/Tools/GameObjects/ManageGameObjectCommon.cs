@@ -188,6 +188,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                                 if (GameObjectLookup.MatchesPath(go, searchTerm))
                                 {
                                     results.Add(go);
+                                    if (!findAll)
+                                        break;
                                 }
                             }
                         }
@@ -269,7 +271,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     }
 
                     var allObjectsName = GetAllSceneObjects(true);
-                    results.AddRange(allObjectsName.Where(go => go.name == searchTerm));
+                    AddMatches(results, allObjectsName.Where(go => go.name == searchTerm), findAll);
                     break;
 
                 default:
