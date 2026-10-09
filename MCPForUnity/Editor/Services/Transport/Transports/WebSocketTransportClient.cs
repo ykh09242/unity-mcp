@@ -765,7 +765,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     return null;
                 }
 
-                return Encoding.UTF8.GetString(ms.ToArray());
+                return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
             }
             finally
             {
