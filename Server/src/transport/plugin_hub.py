@@ -2105,9 +2105,11 @@ class PluginHub(WebSocketEndpoint):
             and not params
             and editor_state_read_mode == "ordinary"
         )
-        identity = await cls._read_identity(
-            session_id, authoritative=command_type == "get_editor_state" and not share_state
-        )
+        identity = None
+        if command_type == "get_editor_state" or command_type in cls._FAST_FAIL_COMMANDS:
+            identity = await cls._read_identity(
+                session_id, authoritative=command_type == "get_editor_state" and not share_state
+            )
 
         # During domain reload / immediate reconnect windows, the plugin may be connected but not yet
         # ready to process execute commands on the Unity main thread (which can be further delayed when
