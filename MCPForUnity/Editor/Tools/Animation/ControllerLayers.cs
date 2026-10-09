@@ -14,6 +14,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required" };
 
+            ValidateStringToken(@params["controllerPath"], "controllerPath");
             controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
             if (controllerPath == null)
                 return new { success = false, message = "Invalid asset path" };
@@ -27,7 +28,12 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new { success = false, message = "'layerName' is required" };
 
             float weight = @params["weight"]?.ReadScalar<float?>() ?? 1f;
+            ValidateStringToken(@params["layerName"], "layerName");
+            ValidateStringToken(@params["blendingMode"], "blendingMode");
             string blendingModeStr = @params["blendingMode"]?.ToString()?.ToLowerInvariant() ?? "override";
+
+            if (!string.IsNullOrEmpty(blendingModeStr) && blendingModeStr != "override" && blendingModeStr != "additive")
+                return new { success = false, message = "'blendingMode' must be Override or Additive" };
 
             AnimatorLayerBlendingMode blendingMode = blendingModeStr == "additive" ? AnimatorLayerBlendingMode.Additive : AnimatorLayerBlendingMode.Override;
 
@@ -66,6 +72,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required" };
 
+            ValidateStringToken(@params["controllerPath"], "controllerPath");
             controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
             if (controllerPath == null)
                 return new { success = false, message = "Invalid asset path" };
@@ -93,6 +100,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             }
             else
             {
+                ValidateStringToken(@params["layerName"], "layerName");
                 layerIndex = -1;
                 for (int i = 0; i < layers.Length; i++)
                 {
@@ -136,6 +144,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required" };
 
+            ValidateStringToken(@params["controllerPath"], "controllerPath");
             controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
             if (controllerPath == null)
                 return new { success = false, message = "Invalid asset path" };
@@ -162,6 +171,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             }
             else
             {
+                ValidateStringToken(@params["layerName"], "layerName");
                 layerIndex = -1;
                 for (int i = 0; i < layers.Length; i++)
                 {
@@ -198,6 +208,13 @@ namespace MCPForUnity.Editor.Tools.Animation
                     weight,
                 },
             };
+        }
+
+        private static void ValidateStringToken(JToken token, string name)
+        {
+            // The default Command JSON parser turns ISO string values into Date tokens.
+            if (token != null && token.Type != JTokenType.Null && token.Type != JTokenType.String && token.Type != JTokenType.Date)
+                throw new ArgumentException($"'{name}' must be a string.");
         }
     }
 }

@@ -450,7 +450,6 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [TestCase("Additive", AnimatorLayerBlendingMode.Additive)]
-        [TestCase("unknown", AnimatorLayerBlendingMode.Override)]
         [TestCase("", AnimatorLayerBlendingMode.Override)]
         public void LayerModeCompatibilityAndZeroWeightRemainUnchanged(string mode, AnimatorLayerBlendingMode expected)
         {
@@ -467,6 +466,25 @@ namespace MCPForUnityTests.EditMode.Tools
             var layer = _controller.layers.Last();
             Assert.AreEqual(expected, layer.blendingMode);
             Assert.AreEqual(0f, layer.defaultWeight);
+        }
+
+        [Test]
+        public void UnknownLayerModeRejectsWithoutControllerMutations()
+        {
+            string before = Snapshot();
+            JObject response = Send(
+                "add_layer",
+                new JObject
+                {
+                    ["layer_name"] = "Extra",
+                    ["blending_mode"] = "unknown",
+                    ["weight"] = 0,
+                }
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("'blendingMode' must be Override or Additive", response.Value<string>("message"));
+            Assert.AreEqual(before, Snapshot(), "Rejected mode changed controller state, subassets, GUID or file bytes.");
+            LogAssert.NoUnexpectedReceived();
         }
 
         [Test]
