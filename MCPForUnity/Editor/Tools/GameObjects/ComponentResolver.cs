@@ -54,13 +54,19 @@ namespace MCPForUnity.Editor.Tools
                 return new List<string>();
 
             var cacheKey = $"{userInput.ToLowerInvariant()}:{string.Join(",", availableProperties)}";
-            if (PropertySuggestionCache.TryGetValue(cacheKey, out var cached))
-                return cached;
+            bool cacheable = cacheKey.Length <= MaxSuggestionCacheKeyCharacters;
+            if (cacheable && PropertySuggestionCache.TryGetValue(cacheKey, out var cached))
+                return new List<string>(cached);
 
             try
             {
                 var suggestions = GetRuleBasedSuggestions(userInput, availableProperties);
-                PropertySuggestionCache[cacheKey] = suggestions;
+                if (cacheable)
+                {
+                    if (PropertySuggestionCache.Count >= MaxSuggestionCacheEntries)
+                        PropertySuggestionCache.Clear();
+                    PropertySuggestionCache[cacheKey] = new List<string>(suggestions);
+                }
                 return suggestions;
             }
             catch (Exception ex)
@@ -71,6 +77,8 @@ namespace MCPForUnity.Editor.Tools
         }
 
         private static readonly Dictionary<string, List<string>> PropertySuggestionCache = new();
+        private const int MaxSuggestionCacheEntries = 256;
+        private const int MaxSuggestionCacheKeyCharacters = 4096;
 
         /// <summary>
         /// Rule-based suggestions that mimic AI behavior for property matching.
