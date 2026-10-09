@@ -82,10 +82,11 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new { success = false, message = "'stateName' is required" };
 
             int layerIndex = @params["layerIndex"]?.ReadScalar<int?>() ?? 0;
-            if (layerIndex < 0 || layerIndex >= controller.layers.Length)
-                return new { success = false, message = $"Layer index {layerIndex} out of range (controller has {controller.layers.Length} layers)" };
+            var controllerLayers = controller.layers;
+            if (layerIndex < 0 || layerIndex >= controllerLayers.Length)
+                return new { success = false, message = $"Layer index {layerIndex} out of range (controller has {controllerLayers.Length} layers)" };
 
-            var rootStateMachine = controller.layers[layerIndex].stateMachine;
+            var rootStateMachine = controllerLayers[layerIndex].stateMachine;
 
             // Check for duplicate state name
             foreach (var existingState in rootStateMachine.states)
@@ -152,10 +153,11 @@ namespace MCPForUnity.Editor.Tools.Animation
             ValidateText(@params["toState"], "toState");
 
             int layerIndex = @params["layerIndex"]?.ReadScalar<int?>() ?? 0;
-            if (layerIndex < 0 || layerIndex >= controller.layers.Length)
+            var controllerLayers = layerIndex < 0 ? null : controller.layers;
+            if (layerIndex < 0 || layerIndex >= controllerLayers.Length)
                 return new { success = false, message = $"Layer index {layerIndex} out of range" };
 
-            var rootStateMachine = controller.layers[layerIndex].stateMachine;
+            var rootStateMachine = controllerLayers[layerIndex].stateMachine;
 
             // Check for AnyState as source
             bool isAnyState =
