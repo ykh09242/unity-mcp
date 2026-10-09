@@ -722,39 +722,43 @@ def resolve_project_id_for_unity_instance(unity_instance: str | None) -> str | N
         return None
 
     # stdio transport: resolve via discovered instances with name+path
-    try:
-        pool = get_unity_connection_pool()
-        instances = pool.discover_all_instances()
-        target = None
-        if "@" in unity_instance:
-            name_part, _, hash_hint = unity_instance.rpartition("@")
-            target = next(
-                (
-                    inst
-                    for inst in instances
-                    if inst.name == name_part and inst.hash.startswith(hash_hint)
-                ),
-                None,
-            )
-        else:
-            target = next(
-                (
-                    inst
-                    for inst in instances
-                    if inst.id == unity_instance or inst.hash.startswith(unity_instance)
-                ),
-                None,
-            )
+    # HTTP routes use the plugin registry; local status files cannot identify that transport.
+    if config.transport_mode.lower() != "http":
+        try:
+            pool = get_unity_connection_pool()
+            instances = pool.discover_all_instances()
+            target = None
+            if "@" in unity_instance:
+                name_part, _, hash_hint = unity_instance.rpartition("@")
+                target = next(
+                    (
+                        inst
+                        for inst in instances
+                        if inst.name == name_part and inst.hash.startswith(hash_hint)
+                    ),
+                    None,
+                )
+            else:
+                target = next(
+                    (
+                        inst
+                        for inst in instances
+                        if inst.id == unity_instance or inst.hash.startswith(unity_instance)
+                    ),
+                    None,
+                )
 
-        if target:
-            # Return the project_hash from Unity (not a computed SHA256 hash).
-            # This matches the hash Unity uses when registering tools via WebSocket.
-            if target.hash:
-                return target.hash
-            logger.warning(f"Unity instance {target.id} has empty hash; cannot resolve project ID")
-            return None
-    except Exception:
-        logger.debug(f"Failed to resolve project id via connection pool for {unity_instance}")
+            if target:
+                # Return the project_hash from Unity (not a computed SHA256 hash).
+                # This matches the hash Unity uses when registering tools via WebSocket.
+                if target.hash:
+                    return target.hash
+                logger.warning(
+                    f"Unity instance {target.id} has empty hash; cannot resolve project ID"
+                )
+                return None
+        except Exception:
+            logger.debug(f"Failed to resolve project id via connection pool for {unity_instance}")
 
     # HTTP/WebSocket transport: resolve via PluginHub using project_hash
     try:
