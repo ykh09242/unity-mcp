@@ -26,6 +26,15 @@ namespace MCPForUnity.Editor.Helpers
         {
             if (go == null)
                 return null;
+            var transform = go.transform;
+            var position = transform.position;
+            var localPosition = transform.localPosition;
+            var rotation = transform.rotation.eulerAngles;
+            var localRotation = transform.localRotation.eulerAngles;
+            var scale = transform.localScale;
+            var forward = transform.forward;
+            var up = transform.up;
+            var right = transform.right;
             return new
             {
                 name = go.name,
@@ -42,54 +51,54 @@ namespace MCPForUnity.Editor.Helpers
                     // The default serializer can struggle with properties like Vector3.normalized.
                     position = new
                     {
-                        x = go.transform.position.x,
-                        y = go.transform.position.y,
-                        z = go.transform.position.z,
+                        x = position.x,
+                        y = position.y,
+                        z = position.z,
                     },
                     localPosition = new
                     {
-                        x = go.transform.localPosition.x,
-                        y = go.transform.localPosition.y,
-                        z = go.transform.localPosition.z,
+                        x = localPosition.x,
+                        y = localPosition.y,
+                        z = localPosition.z,
                     },
                     rotation = new
                     {
-                        x = go.transform.rotation.eulerAngles.x,
-                        y = go.transform.rotation.eulerAngles.y,
-                        z = go.transform.rotation.eulerAngles.z,
+                        x = rotation.x,
+                        y = rotation.y,
+                        z = rotation.z,
                     },
                     localRotation = new
                     {
-                        x = go.transform.localRotation.eulerAngles.x,
-                        y = go.transform.localRotation.eulerAngles.y,
-                        z = go.transform.localRotation.eulerAngles.z,
+                        x = localRotation.x,
+                        y = localRotation.y,
+                        z = localRotation.z,
                     },
                     scale = new
                     {
-                        x = go.transform.localScale.x,
-                        y = go.transform.localScale.y,
-                        z = go.transform.localScale.z,
+                        x = scale.x,
+                        y = scale.y,
+                        z = scale.z,
                     },
                     forward = new
                     {
-                        x = go.transform.forward.x,
-                        y = go.transform.forward.y,
-                        z = go.transform.forward.z,
+                        x = forward.x,
+                        y = forward.y,
+                        z = forward.z,
                     },
                     up = new
                     {
-                        x = go.transform.up.x,
-                        y = go.transform.up.y,
-                        z = go.transform.up.z,
+                        x = up.x,
+                        y = up.y,
+                        z = up.z,
                     },
                     right = new
                     {
-                        x = go.transform.right.x,
-                        y = go.transform.right.y,
-                        z = go.transform.right.z,
+                        x = right.x,
+                        y = right.y,
+                        z = right.z,
                     },
                 },
-                parentInstanceID = go.transform.parent?.gameObject.GetInstanceIDCompat() ?? 0, // 0 if no parent
+                parentInstanceID = transform.parent?.gameObject.GetInstanceIDCompat() ?? 0, // 0 if no parent
                 // Optionally include components, but can be large
                 // components = go.GetComponents<Component>().Select(c => GetComponentData(c)).ToList()
                 // Or just component names:
