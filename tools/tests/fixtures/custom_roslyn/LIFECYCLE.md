@@ -40,6 +40,9 @@ Invalid empty/whitespace GUI code/type attempts must invalidate previous runnabl
 state, and the simplified public overload must return its existing validation
 error for null source. Input validation keeps its existing no-history policy;
 failed compilation or execution still uses the shared history path.
+Repeated generated-target attachment failures (invalid input, syntax, missing entry,
+and thrown execution) release only the owned target in both play-mode branches.
+Caller-owned targets and successfully attached generated targets remain intact.
 
 This is managed partial runtime evidence. Object destroyed-null behavior,
 serialization restoration, lookup ordering and destruction timing are modeled.

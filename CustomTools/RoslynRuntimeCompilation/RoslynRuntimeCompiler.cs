@@ -728,9 +728,12 @@ public static class RoslynMCPHelper
     /// <returns>True if successful</returns>
     public static bool CompileAndAttach(string sourceCode, string className, string targetGameObjectName, out string result)
     {
+        GameObject ownedTarget = null;
+        RoslynRuntimeCompiler compiler = null;
+        bool success = false;
         try
         {
-            var compiler = GetOrCreateCompiler();
+            compiler = GetOrCreateCompiler();
 
             // Find or create target GameObject
             GameObject target = null;
@@ -746,12 +749,12 @@ public static class RoslynMCPHelper
             else
             {
                 // Create a new GameObject for the script
-                target = new GameObject($"Generated_{className}");
+                target = ownedTarget = new GameObject($"Generated_{className}");
                 UnityEngine.Debug.Log($"[MCP] Created new GameObject: {target.name}");
             }
 
             // Compile and execute
-            bool success = compiler.CompileAndExecute(sourceCode, className, target, out string error);
+            success = compiler.CompileAndExecute(sourceCode, className, target, out string error);
 
             if (success)
             {
@@ -771,6 +774,18 @@ public static class RoslynMCPHelper
             result = $"Exception: {ex.Message}";
             UnityEngine.Debug.LogError($"[MCP] {result}\n{ex.StackTrace}");
             return false;
+        }
+        finally
+        {
+            if (!success && ownedTarget != null)
+            {
+                if (compiler != null && compiler.targetGameObject == ownedTarget)
+                    compiler.targetGameObject = null;
+                if (Application.isPlaying)
+                    UnityEngine.Object.Destroy(ownedTarget);
+                else
+                    UnityEngine.Object.DestroyImmediate(ownedTarget);
+            }
         }
     }
 

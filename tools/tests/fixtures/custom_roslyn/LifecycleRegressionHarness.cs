@@ -489,6 +489,80 @@ internal static class LifecycleRegressionHarness
                 );
             }
         );
+        foreach (bool playing in new[] { false, true })
+        {
+            foreach (var failure in new[] { "invalid-input", "syntax", "entry", "execution" })
+                Check(
+                    "failed generated attachment releases owned target: " + failure + ", playing=" + playing,
+                    () =>
+                    {
+                        bool previousPlaying = Application.isPlaying;
+                        Application.isPlaying = playing;
+                        try
+                        {
+                            var compiler = UserHelper();
+                            typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
+                            string source =
+                                failure == "invalid-input" ? null
+                                : failure == "syntax" ? "public class Broken {"
+                                : failure == "entry" ? "public class Other {}"
+                                : "public class Broken { public static void Run() { throw new System.InvalidOperationException(); } }";
+                            for (int attempt = 0; attempt < 3; attempt++)
+                                Require(!RoslynMCPHelper.CompileAndAttach(source, "Broken", null, out _), "Failure reported success");
+                            Require(GameObject.All.Count(go => !go.Destroyed) == 1, "Failed attempts accumulated generated GameObjects");
+                            Require(!compiler.gameObject.Destroyed, "Failure destroyed the existing compiler helper");
+                            Require(compiler.targetGameObject == null, "Compiler retains failed generated target");
+                        }
+                        finally
+                        {
+                            Application.isPlaying = previousPlaying;
+                        }
+                    }
+                );
+            Check(
+                "failed attachment preserves user target, playing=" + playing,
+                () =>
+                {
+                    bool previousPlaying = Application.isPlaying;
+                    Application.isPlaying = playing;
+                    try
+                    {
+                        UserHelper();
+                        typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
+                        var target = new GameObject("UserAttachmentTarget");
+                        Require(!RoslynMCPHelper.CompileAndAttach("public class Broken {", "Broken", target.name, out _), "Failure reported success");
+                        Require(!target.Destroyed && Object.DestroyedObjects.Count == 0, "Failure destroyed a caller-owned target");
+                    }
+                    finally
+                    {
+                        Application.isPlaying = previousPlaying;
+                    }
+                }
+            );
+            Check(
+                "successful generated attachment retains result, playing=" + playing,
+                () =>
+                {
+                    bool previousPlaying = Application.isPlaying;
+                    Application.isPlaying = playing;
+                    try
+                    {
+                        UserHelper();
+                        typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
+                        Require(RoslynMCPHelper.CompileAndAttach(ComponentSource, "GeneratedComponent", null, out string result), result);
+                        var target = GameObject.Find("Generated_GeneratedComponent");
+                        Require(
+                            target != null && target.Components.Count == 1 && Object.DestroyedObjects.Count == 0,
+                            "Successful generated target was released"
+                        );
+                    }
+                    finally
+                    {
+                        Application.isPlaying = previousPlaying;
+                    }
+                }
+            );
+        }
         Console.WriteLine("RESULT: " + (checks - failures) + "/" + checks + " passed; failures=" + failures);
         return failures == 0 ? 0 : 1;
     }
