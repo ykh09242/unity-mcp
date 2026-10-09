@@ -86,6 +86,7 @@ namespace MCPForUnity.Editor.Services.Blender
         {
             using var buffer = new MemoryStream();
             var chunk = new byte[65536];
+            var boundary = new ResponseBoundary();
             var elapsed = elapsedClock ?? Stopwatch.StartNew();
 
             while (true)
@@ -119,13 +120,103 @@ namespace MCPForUnity.Editor.Services.Blender
                     throw new InvalidDataException($"Blender response exceeds the {MaxResponseBytes}-byte limit.");
                 buffer.Write(chunk, 0, n);
 
-                if (TryParseResponse(buffer.GetBuffer(), (int)buffer.Length, out JObject parsed))
+                if (boundary.Append(chunk, n) && TryParseResponse(buffer.GetBuffer(), (int)buffer.Length, out JObject parsed))
                     return Unwrap(parsed, type);
             }
 
             if (TryParseResponse(buffer.GetBuffer(), (int)buffer.Length, out JObject final))
                 return Unwrap(final, type);
             throw new IOException($"Blender closed the connection before a complete response to '{type}' arrived.");
+        }
+
+        // Scan each byte once, keeping only framing state across reads. JSON validation
+        // remains with Json.NET, including its quoted/unquoted names, comments and constructors.
+        private sealed class ResponseBoundary
+        {
+            private int depth;
+            private byte quote;
+            private bool escaped;
+            private bool seenObject;
+            private bool invalid;
+            private bool slash;
+            private int comment; // 1: line, 2: block
+            private bool star;
+
+            internal bool Append(byte[] bytes, int count)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    byte value = bytes[i];
+                    if (comment == 1)
+                    {
+                        if (value == '\r' || value == '\n')
+                            comment = 0;
+                        continue;
+                    }
+                    if (comment == 2)
+                    {
+                        if (star && value == '/')
+                        {
+                            comment = 0;
+                            star = false;
+                        }
+                        else
+                            star = value == '*';
+                        continue;
+                    }
+                    if (quote != 0)
+                    {
+                        if (escaped)
+                            escaped = false;
+                        else if (value == '\\')
+                            escaped = true;
+                        else if (value == quote)
+                            quote = 0;
+                        continue;
+                    }
+                    if (slash)
+                    {
+                        slash = false;
+                        if (value == '/' || value == '*')
+                        {
+                            comment = value == '/' ? 1 : 2;
+                            continue;
+                        }
+                        invalid = true;
+                    }
+                    if (value == '/')
+                    {
+                        slash = true;
+                        continue;
+                    }
+                    // Non-ASCII bytes may encode Json.NET whitespace; final parsing validates them.
+                    if (value <= 0x20 || value >= 0x80)
+                        continue;
+                    if (!seenObject)
+                    {
+                        if (value == '{')
+                        {
+                            seenObject = true;
+                            depth = 1;
+                        }
+                        else
+                            invalid = true;
+                        continue;
+                    }
+                    if (depth == 0)
+                    {
+                        invalid = true;
+                        continue;
+                    }
+                    if (value == '"' || value == '\'')
+                        quote = value;
+                    else if (value == '{' || value == '[' || value == '(')
+                        depth++;
+                    else if (value == '}' || value == ']' || value == ')')
+                        depth--;
+                }
+                return seenObject && depth == 0 && quote == 0 && comment != 2 && !slash && !invalid;
+            }
         }
 
         /// <summary>Runs <see cref="Send"/> on the thread pool so the editor stays responsive.</summary>

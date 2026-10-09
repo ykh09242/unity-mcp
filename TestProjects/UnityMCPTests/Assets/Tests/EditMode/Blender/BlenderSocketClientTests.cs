@@ -107,10 +107,54 @@ namespace MCPForUnityTests.Editor.Blender
             );
         }
 
+        [TestCase(1)]
+        [TestCase(7)]
+        public void ReadResponse_FragmentedJsonPreservesEscapesNestingAndUtf8(int chunkSize)
+        {
+            var expected = new JObject
+            {
+                ["text"] = "한글 🌊 braces }{ [] quotes \" and slash \\",
+                ["nested"] = new JArray(new JObject { ["escaped"] = "\\\"}" }, true, null),
+            };
+            byte[] payload = Bytes(new JObject { ["status"] = "success", ["result"] = expected }.ToString());
+            using var stream = new TestStream(payload, maxChunk: chunkSize, failOnEnd: true);
+            Assert.IsTrue(JToken.DeepEquals(expected, BlenderSocketClient.ReadResponse(stream, "get_scene_info", 10)));
+        }
+
+        [TestCase("/* } prefix */ {status:'success',result:{text:'} /* \\\' end'}} /* } tail */")]
+        [TestCase("// } prefix\n{status:'success',result:new Date(0)} // } tail\n")]
+        [TestCase("\u00a0\u2003\u2028\f\v{status:'success',result:1}\u00a0\u2003\u2028\f\v")]
+        public void ReadResponse_PreservesJsonNetExtensionsAcrossFragments(string json)
+        {
+            var expected = BlenderSocketClient.Unwrap(JObject.Parse(json), "get_scene_info");
+            using var stream = new TestStream(Bytes(json), maxChunk: 1, failOnEnd: true);
+            Assert.IsTrue(JToken.DeepEquals(expected, BlenderSocketClient.ReadResponse(stream, "get_scene_info", 10)));
+        }
+
+        [Test]
+        public void ReadResponse_LargeFragmentedStringDoesNotReparseEveryPrefix()
+        {
+            var counter = typeof(GC).GetMethod("GetAllocatedBytesForCurrentThread", Type.EmptyTypes);
+            if (counter == null)
+                Assert.Ignore("This runtime cannot measure per-thread allocations.");
+            var allocated = (Func<long>)Delegate.CreateDelegate(typeof(Func<long>), counter);
+            byte[] payload = Bytes(new JObject { ["status"] = "success", ["result"] = new string('x', 256 * 1024) }.ToString());
+            using (var warmup = new TestStream(Bytes("{\"status\":\"success\",\"result\":1}")))
+                BlenderSocketClient.ReadResponse(warmup, "get_scene_info", 10);
+            using var stream = new TestStream(payload, maxChunk: 512, failOnEnd: true);
+            long before = allocated();
+            var result = BlenderSocketClient.ReadResponse(stream, "get_scene_info", 30);
+            long bytesAllocated = allocated() - before;
+            Assert.AreEqual(256 * 1024, ((string)result).Length);
+            Assert.Less(bytesAllocated, payload.Length * 32L, "Incomplete prefixes must not be repeatedly decoded and parsed.");
+        }
+
         private sealed class TestStream : MemoryStream
         {
             private readonly bool split;
             private int reads;
+            private readonly int maxChunk;
+            private readonly bool failOnEnd;
             public int FirstTimeout { get; private set; }
             public int LastTimeout { get; private set; }
             public override int ReadTimeout
@@ -124,10 +168,12 @@ namespace MCPForUnityTests.Editor.Blender
                 }
             }
 
-            public TestStream(byte[] bytes, bool split = false)
+            public TestStream(byte[] bytes, bool split = false, int maxChunk = int.MaxValue, bool failOnEnd = false)
                 : base(bytes)
             {
                 this.split = split;
+                this.maxChunk = maxChunk;
+                this.failOnEnd = failOnEnd;
             }
 
             public override int Read(byte[] buffer, int offset, int count)
@@ -137,7 +183,9 @@ namespace MCPForUnityTests.Editor.Blender
                     Thread.Sleep(30);
                     count = 1;
                 }
-                return base.Read(buffer, offset, count);
+                if (failOnEnd && Position >= Length)
+                    throw new IOException("A complete response must be returned before another read.");
+                return base.Read(buffer, offset, Math.Min(count, maxChunk));
             }
         }
     }
