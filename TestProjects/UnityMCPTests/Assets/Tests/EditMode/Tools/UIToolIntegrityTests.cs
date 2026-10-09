@@ -57,6 +57,57 @@ namespace MCPForUnityTests.Editor.Tools
             ownsRoot = false;
         }
 
+        private static string DecodeUIText(JObject parameters)
+        {
+            var decode = typeof(ManageUI).GetMethod("GetDecodedContents", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(decode);
+            return (string)decode.Invoke(null, new object[] { new ToolParams(parameters) });
+        }
+
+        [TestCase(false, "true")]
+        [TestCase(false, "1")]
+        [TestCase(false, "[1]")]
+        [TestCase(false, "{x:1}")]
+        [TestCase(true, "true")]
+        [TestCase(true, "1234")]
+        [TestCase(true, "[1]")]
+        [TestCase(true, "{x:1}")]
+        public void ConsumedUITextRejectsNonStringTokensBeforeFileWork(bool encoded, string json)
+        {
+            var request = new JObject { ["contentsEncoded"] = encoded, [encoded ? "encodedContents" : "contents"] = JToken.Parse(json) };
+            var error = Assert.Throws<TargetInvocationException>(() => DecodeUIText(request));
+            Assert.IsInstanceOf<ArgumentException>(error.InnerException);
+            StringAssert.Contains("must be a string", error.InnerException.Message);
+        }
+
+        [TestCase("null")]
+        [TestCase("''")]
+        [TestCase("'text'")]
+        [TestCase("'2026-10-09T12:00:00Z'")]
+        public void UITextRetainsStringDateAndNullConversion(string json)
+        {
+            var request = JObject.Parse("{contents:" + json + "}");
+            Assert.AreEqual(new ToolParams(request).Get("contents"), DecodeUIText(request));
+        }
+
+        [Test]
+        public void EncodedUITextPreservesSelectedAliasAndIgnoresUnusedContents()
+        {
+            var request = new JObject
+            {
+                ["contents_encoded"] = false,
+                ["contentsEncoded"] = true,
+                ["encoded_contents"] = "Lg==",
+                ["contents"] = new JObject(),
+            };
+            Assert.AreEqual(".", DecodeUIText(request));
+            request["contents_encoded"] = false;
+            request["contentsEncoded"] = false;
+            request["contents"] = ".foo{}";
+            request["encoded_contents"] = new JObject();
+            Assert.AreEqual(".foo{}", DecodeUIText(request));
+        }
+
         private static Action<PanelSettings> PreparePanelProperties(JObject settings, List<string> changes)
         {
             var prepare = typeof(ManageUI).GetMethod("PreparePanelSettingsProperties", BindingFlags.Static | BindingFlags.NonPublic);

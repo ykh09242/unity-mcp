@@ -2059,12 +2059,22 @@ namespace MCPForUnity.Editor.Tools
             return $"#{ColorUtility.ToHtmlStringRGBA(c)}";
         }
 
+        private static void ValidateTextParameter(ToolParams p, string key)
+        {
+            var token = p.GetRaw(key);
+            // Transport parsing can expose an original JSON string as Date.
+            // Keep legacy string conversion and explicit-null behavior for those values.
+            if (token != null && token.Type != JTokenType.String && token.Type != JTokenType.Date && token.Type != JTokenType.Null)
+                throw new ArgumentException($"Parameter '{key}' must be a string.");
+        }
+
         private static string GetDecodedContents(ToolParams p)
         {
             bool isEncoded = p.GetBool("contents_encoded") || p.GetBool("contentsEncoded");
 
             if (isEncoded)
             {
+                ValidateTextParameter(p, "encoded_contents");
                 string encoded = p.Get("encoded_contents") ?? p.Get("encodedContents");
                 if (encoded != null)
                 {
@@ -2079,6 +2089,7 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
 
+            ValidateTextParameter(p, "contents");
             return p.Get("contents");
         }
 
