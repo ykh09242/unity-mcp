@@ -549,6 +549,7 @@ async def apply_text_edits(
             # Optional: flip sentinel via menu if explicitly requested
             try:
                 import asyncio
+                from contextvars import Context as TaskContext
                 import json
                 import glob
                 import os
@@ -583,9 +584,11 @@ async def apply_text_edits(
                     except Exception:
                         pass
 
-                task = asyncio.create_task(_flip_async())
+                # The selected legacy command outlives this request and needs no
+                # request Context, released response owner, or delivery identity.
+                task = asyncio.create_task(_flip_async(), context=TaskContext())
                 _background_tasks.add(task)
-                task.add_done_callback(_background_tasks.discard)
+                task.add_done_callback(_background_tasks.discard, context=TaskContext())
             except Exception:
                 pass
             return resp
