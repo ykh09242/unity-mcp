@@ -104,29 +104,6 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             int degenerateCount = 0;
             var indexesProp = ManageProBuilder._faceType.GetProperty("indexes");
 
-            if (indexesProp != null && positions != null)
-            {
-                foreach (var face in facesList)
-                {
-                    var indexes = indexesProp.GetValue(face) as System.Collections.IList;
-                    if (indexes == null)
-                        continue;
-
-                    // Check triangles in groups of 3
-                    for (int i = 0; i + 2 < indexes.Count; i += 3)
-                    {
-                        var p0 = (Vector3)positions[(int)indexes[i]];
-                        var p1 = (Vector3)positions[(int)indexes[i + 1]];
-                        var p2 = (Vector3)positions[(int)indexes[i + 2]];
-
-                        var area = Vector3.Cross(p1 - p0, p2 - p0).magnitude * 0.5f;
-                        if (area < 1e-6f)
-                            degenerateCount++;
-                    }
-                }
-            }
-
-            // Check for unused vertices
             var usedVertices = new HashSet<int>();
             if (indexesProp != null)
             {
@@ -135,6 +112,22 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     var indexes = indexesProp.GetValue(face) as System.Collections.IList;
                     if (indexes == null)
                         continue;
+
+                    if (positions != null)
+                    {
+                        // Check triangles in groups of 3.
+                        for (int i = 0; i + 2 < indexes.Count; i += 3)
+                        {
+                            var p0 = (Vector3)positions[(int)indexes[i]];
+                            var p1 = (Vector3)positions[(int)indexes[i + 1]];
+                            var p2 = (Vector3)positions[(int)indexes[i + 2]];
+
+                            var area = Vector3.Cross(p1 - p0, p2 - p0).magnitude * 0.5f;
+                            if (area < 1e-6f)
+                                degenerateCount++;
+                        }
+                    }
+
                     foreach (int idx in indexes)
                         usedVertices.Add(idx);
                 }
