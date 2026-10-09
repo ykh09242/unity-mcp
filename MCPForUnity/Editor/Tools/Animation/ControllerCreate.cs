@@ -166,7 +166,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 || string.Equals(fromStateName, "Any State", StringComparison.OrdinalIgnoreCase);
 
             AnimatorState toState = null;
-            foreach (var cs in rootStateMachine.states)
+            var states = rootStateMachine.states;
+            foreach (var cs in states)
             {
                 if (cs.state.name == toStateName)
                     toState = cs.state;
@@ -178,7 +179,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             AnimatorState fromState = null;
             if (!isAnyState)
             {
-                foreach (var cs in rootStateMachine.states)
+                foreach (var cs in states)
                 {
                     if (cs.state.name == fromStateName)
                         fromState = cs.state;
