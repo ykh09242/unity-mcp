@@ -811,11 +811,14 @@ namespace MCPForUnity.Editor.Tools
             return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
         }
 
-        private static bool IsActiveForCanvas(RectTransform rect, Dictionary<string, Type> componentTypes)
+        private static bool IsActiveForCanvas(RectTransform rect, Dictionary<string, Type> componentTypes) => IsActiveForCanvas(rect, componentTypes, out _);
+
+        private static bool IsActiveForCanvas(RectTransform rect, Dictionary<string, Type> componentTypes, out Component graphic)
         {
+            graphic = null;
             if (!rect.gameObject.activeInHierarchy || FindActiveCanvas(rect) == null)
                 return false;
-            var graphic = ComponentNamed(rect.gameObject, "UnityEngine.UI.Graphic", componentTypes);
+            graphic = ComponentNamed(rect.gameObject, "UnityEngine.UI.Graphic", componentTypes);
             return graphic == null || Enabled(graphic);
         }
 
@@ -834,7 +837,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static bool IsVisible(RectTransform rect, Dictionary<string, Type> componentTypes)
         {
-            if (!IsActiveForCanvas(rect, componentTypes))
+            if (!IsActiveForCanvas(rect, componentTypes, out var graphic))
                 return false;
             for (Transform t = rect; t != null; t = t.parent)
             {
@@ -852,7 +855,6 @@ namespace MCPForUnity.Editor.Tools
                     break;
             }
 
-            var graphic = ComponentNamed(rect.gameObject, "UnityEngine.UI.Graphic", componentTypes);
             if (graphic == null)
                 return true;
             if (!Enabled(graphic) || !(Read(graphic, "color", Color.white).a > 0.001f))
