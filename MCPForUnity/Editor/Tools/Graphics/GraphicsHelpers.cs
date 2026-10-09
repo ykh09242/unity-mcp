@@ -149,7 +149,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 SerializedPropertyType.Integer => prop.type == "long" ? prop.longValue : (object)prop.intValue,
                 SerializedPropertyType.Float => prop.floatValue,
                 SerializedPropertyType.String => prop.stringValue,
-                SerializedPropertyType.Enum => prop.enumValueIndex < prop.enumNames.Length ? prop.enumNames[prop.enumValueIndex] : (object)prop.enumValueIndex,
+                SerializedPropertyType.Enum => ReadSerializedEnumValue(prop),
                 SerializedPropertyType.ObjectReference => prop.objectReferenceValue != null
                     ? (object)new { name = prop.objectReferenceValue.name, path = AssetDatabase.GetAssetPath(prop.objectReferenceValue) }
                     : null,
@@ -159,6 +159,13 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 SerializedPropertyType.LayerMask => prop.intValue,
                 _ => prop.propertyType.ToString(),
             };
+        }
+
+        private static object ReadSerializedEnumValue(SerializedProperty prop)
+        {
+            int index = prop.enumValueIndex;
+            var names = prop.enumNames;
+            return index < names.Length ? names[prop.enumValueIndex] : (object)prop.enumValueIndex;
         }
 
         internal static bool SetSerializedValue(SerializedProperty prop, JToken value)
@@ -185,9 +192,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     case SerializedPropertyType.Enum:
                         if (value.Type == JTokenType.String)
                         {
-                            for (int i = 0; i < prop.enumNames.Length; i++)
+                            var names = prop.enumNames;
+                            for (int i = 0; i < names.Length; i++)
                             {
-                                if (string.Equals(prop.enumNames[i], value.ToString(), StringComparison.OrdinalIgnoreCase))
+                                if (string.Equals(names[i], value.ToString(), StringComparison.OrdinalIgnoreCase))
                                 {
                                     prop.enumValueIndex = i;
                                     return true;
