@@ -177,6 +177,7 @@ class ApiKeyService:
                 )
                 self._inflight[digest] = flight
                 flight.task.add_done_callback(lambda task: self._finish_flight(digest, flight))
+            source_budget = self._sources[source_id] if source_id is not None else None
             flight.waiters += 1
             self._validation_waiters += 1
 
@@ -189,8 +190,8 @@ class ApiKeyService:
             # are synchronous and never yield to another validator.
             flight.waiters -= 1
             self._validation_waiters -= 1
-            if source_id is not None:
-                self._sources[source_id].waiters -= 1
+            if source_budget is not None:
+                source_budget.waiters -= 1
             if flight.waiters == 0:
                 if flight.task.done():
                     self._finish_flight(digest, flight)
@@ -304,6 +305,10 @@ class ApiKeyService:
             finally:
                 async with self._cache_lock:
                     self._inflight.clear()
+                    self._cache.clear()
+                    self._sources.clear()
+                    if ApiKeyService._instance is self:
+                        ApiKeyService._instance = None
 
     @staticmethod
     def _fingerprint(api_key: str) -> str:

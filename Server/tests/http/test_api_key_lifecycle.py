@@ -1,5 +1,6 @@
 """Server shutdown closes its exact validator despite other cleanup failures."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -35,7 +36,8 @@ async def test_lifespan_closes_captured_validator_after_other_cleanup(
     monkeypatch.setattr(httpx, "AsyncClient", factory)
     service = ApiKeyService("https://owned.invalid/validate")
     monkeypatch.setattr(ApiKeyService, "_instance", service)
-    assert (await service.validate("original-owned")).valid
+    assert (await service.validate("original-owned", source_id="fixture-peer")).valid
+    assert service._cache and service._sources
     shutdown = AsyncMock(side_effect=RuntimeError("hub cleanup") if failure == "hub" else None)
     disconnect = Mock(side_effect=RuntimeError("pool cleanup") if failure == "pool" else None)
     monkeypatch.setattr(main.PluginHub, "shutdown", shutdown)
@@ -56,6 +58,9 @@ async def test_lifespan_closes_captured_validator_after_other_cleanup(
         else:
             assert failure is None
         assert clients[0].is_closed
+        assert service._cache == {} and service._sources == {}
+        if not replacement:
+            assert not ApiKeyService.is_initialized()
         assert not (await service.validate("after-shutdown")).valid
         shutdown.assert_awaited_once()
         disconnect.assert_called_once()
@@ -69,3 +74,25 @@ async def test_lifespan_closes_captured_validator_after_other_cleanup(
         await service.aclose()
         if other is not None:
             await other.aclose()
+
+
+@pytest.mark.asyncio
+async def test_close_releases_source_state_while_admitted_waiter_unwinds(monkeypatch):
+    monkeypatch.setattr(ApiKeyService, "_instance", None)
+    service = ApiKeyService("https://owned.invalid/validate")
+    entered = asyncio.Event()
+
+    async def blocked_validation(api_key):
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(service, "_validate_external", blocked_validation)
+    validation = asyncio.create_task(service.validate("fixture-key", source_id="fixture-peer"))
+    await entered.wait()
+    await service.aclose()
+    result = await asyncio.gather(validation, return_exceptions=True)
+    assert isinstance(result[0], asyncio.CancelledError)
+    assert service._validation_waiters == 0
+    assert service._inflight == {}
+    assert service._cache == {} and service._sources == {}
+    assert not ApiKeyService.is_initialized()
