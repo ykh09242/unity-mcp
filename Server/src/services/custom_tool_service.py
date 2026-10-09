@@ -8,6 +8,7 @@ import time
 from hashlib import sha256
 from threading import Lock
 from collections import OrderedDict
+from contextlib import nullcontext
 from typing import Annotated, Optional
 
 from fastmcp import Context, FastMCP
@@ -22,6 +23,7 @@ from models.models import (
     ToolParameterModel,
     parse_tool_parameter_default,
 )
+from models.response_lifetime import ResponsePollLifetime
 from core.logging_decorator import log_execution
 from core.telemetry_decorator import telemetry_tool
 from transport.unity_transport import send_with_unity_instance
@@ -241,31 +243,32 @@ class CustomToolService:
         try:
             timeout = self._bounded_poll_seconds(definition.max_poll_seconds)
             deadline = time.monotonic() + timeout
-            try:
-                response = await asyncio.wait_for(
-                    send_with_unity_instance(
-                        async_send_command_with_retry,
-                        unity_instance,
+            async with ResponsePollLifetime() as responses:
+                try:
+                    result = await self._poll_until_complete(
                         tool_name,
+                        unity_instance,
                         params,
+                        await responses.fetch(
+                            send_with_unity_instance(
+                                async_send_command_with_retry,
+                                unity_instance,
+                                tool_name,
+                                params,
+                                user_id=user_id,
+                            ),
+                            timeout=timeout,
+                        ),
+                        definition.poll_action or "status",
                         user_id=user_id,
-                    ),
-                    timeout=timeout,
-                )
-            except asyncio.TimeoutError:
-                return self._poll_timeout(tool_name, None)
-            result = await self._poll_until_complete(
-                tool_name,
-                unity_instance,
-                params,
-                response,
-                definition.poll_action or "status",
-                user_id=user_id,
-                max_poll_seconds=timeout,
-                deadline=deadline,
-            )
-            logger.info("Custom tool completed (success=%s, polled=True)", result.success)
-            return result
+                        max_poll_seconds=timeout,
+                        deadline=deadline,
+                        responses=responses,
+                    )
+                except asyncio.TimeoutError:
+                    return self._poll_timeout(tool_name, None)
+                logger.info("Custom tool completed (success=%s, polled=True)", result.success)
+                return result
         finally:
             self._release_polling(session_key)
 
@@ -368,69 +371,87 @@ class CustomToolService:
         user_id: str | None = None,
         max_poll_seconds: int = 0,
         deadline: float | None = None,
+        responses: ResponsePollLifetime | None = None,
     ) -> MCPResponse:
-        poll_params = dict(initial_params)
-        poll_params["action"] = poll_action or "status"
-        if poll_params.get("job_id") is None and isinstance(initial_response, dict):
-            data = initial_response.get("data")
-            job_id = data.get("job_id") if isinstance(data, dict) else None
-            if isinstance(job_id, str) and job_id.strip():
-                poll_params["job_id"] = job_id
+        async with (
+            nullcontext(responses) if responses is not None else ResponsePollLifetime() as responses
+        ):
+            poll_params = dict(initial_params)
+            poll_params["action"] = poll_action or "status"
+            if poll_params.get("job_id") is None and isinstance(initial_response, dict):
+                data = initial_response.get("data")
+                job_id = data.get("job_id") if isinstance(data, dict) else None
+                if isinstance(job_id, str) and job_id.strip():
+                    poll_params["job_id"] = job_id
 
-        timeout = self._bounded_poll_seconds(max_poll_seconds)
-        deadline = (
-            min(deadline, time.monotonic() + timeout)
-            if deadline is not None
-            else time.monotonic() + timeout
-        )
-        response = initial_response
-        poll_response = False
-
-        while True:
-            if time.monotonic() >= deadline:
-                break
-            status, poll_interval = self._interpret_status(response, poll_response=poll_response)
-
-            if status in ("complete", "error", "final"):
-                return self._normalize_response(response)
-
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-
-            await asyncio.sleep(min(poll_interval, remaining))
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
+            timeout = self._bounded_poll_seconds(max_poll_seconds)
+            deadline = (
+                min(deadline, time.monotonic() + timeout)
+                if deadline is not None
+                else time.monotonic() + timeout
+            )
+            response = initial_response
+            initial_response = data = None
+            poll_response = False
 
             try:
-                response = await asyncio.wait_for(
-                    send_with_unity_instance(
-                        async_send_command_with_retry,
-                        unity_instance,
-                        tool_name,
-                        poll_params,
-                        user_id=user_id,
-                    ),
-                    timeout=remaining,
-                )
-                poll_response = True
-                if time.monotonic() >= deadline:
-                    break
-            except asyncio.TimeoutError:
-                if time.monotonic() >= deadline:
-                    break
-                response = {"_mcp_status": "pending", "_mcp_poll_interval": poll_interval}
-            except Exception as exc:  # pragma: no cover - network/domain reload variability
-                logger.debug("Custom tool polling failed; retrying (%s)", type(exc).__name__)
-                # Back off modestly but stay responsive.
-                response = {
-                    "_mcp_status": "pending",
-                    "_mcp_poll_interval": min(max(poll_interval * 2, _DEFAULT_POLL_INTERVAL), 5.0),
-                    "message": f"Retrying after transient error: {exc}",
-                }
+                while True:
+                    if time.monotonic() >= deadline:
+                        break
+                    status, poll_interval = self._interpret_status(
+                        response, poll_response=poll_response
+                    )
 
-        return self._poll_timeout(tool_name, response)
+                    if status in ("complete", "error", "final"):
+                        return self._normalize_response(response)
+
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+
+                    await asyncio.sleep(min(poll_interval, remaining))
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+
+                    try:
+                        response = await responses.fetch(
+                            send_with_unity_instance(
+                                async_send_command_with_retry,
+                                unity_instance,
+                                tool_name,
+                                poll_params,
+                                user_id=user_id,
+                            ),
+                            timeout=remaining,
+                        )
+                        poll_response = True
+                        if time.monotonic() >= deadline:
+                            break
+                    except asyncio.TimeoutError:
+                        if time.monotonic() >= deadline:
+                            break
+                        responses.discard()
+                        response = {"_mcp_status": "pending", "_mcp_poll_interval": poll_interval}
+                    except Exception as exc:  # pragma: no cover - network/domain reload variability
+                        logger.debug(
+                            "Custom tool polling failed; retrying (%s)", type(exc).__name__
+                        )
+                        # The previous observation is replaced by this local diagnostic.
+                        responses.discard()
+                        # Back off modestly but stay responsive.
+                        response = {
+                            "_mcp_status": "pending",
+                            "_mcp_poll_interval": min(
+                                max(poll_interval * 2, _DEFAULT_POLL_INTERVAL), 5.0
+                            ),
+                            "message": f"Retrying after transient error: {exc}",
+                        }
+
+                return self._poll_timeout(tool_name, response)
+            finally:
+                # Cancelled tasks may retain their traceback after this frame exits.
+                response = None
 
     def _interpret_status(self, response, *, poll_response: bool = False) -> tuple[str, float]:
         if response is None:

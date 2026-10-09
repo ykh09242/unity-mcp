@@ -19,7 +19,8 @@ from pydantic import BaseModel, ConfigDict
 
 from core.config import config
 from models import MCPResponse
-from models.response_limits import ResponseOwner, response_limit_error, response_owner
+from models.response_lifetime import ResponsePollLifetime
+from models.response_limits import response_limit_error
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
@@ -43,40 +44,6 @@ _poll_observation_order = count()
 # Unity job responses are parsed at the public tool boundary below. Preserve
 # transport errors and the original observation order while sharing raw reads.
 _job_status_reads: SharedToolReads[tuple[Any, int]] = SharedToolReads(freshness_s=2.0)
-
-
-class _JobPollResponseLifetime:
-    """Replace intermediate poll reservations; deliver only the last observed copy."""
-
-    def __init__(self) -> None:
-        self._consumer = response_owner.get()
-        self._current = ResponseOwner()
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, traceback) -> None:
-        if exc_type is None and self._consumer is not None:
-            self._consumer.adopt(self._current)
-        else:
-            self._current.release()
-
-    async def fetch(self, read, factory, timeout: float):
-        incoming = ResponseOwner()
-        token = response_owner.set(incoming)
-        try:
-            result = await asyncio.wait_for(read.fetch(factory), timeout=timeout)
-        except BaseException:
-            incoming.release()
-            raise
-        else:
-            # A failed/expired next fetch must preserve the last valid response
-            # for timeout delivery. Replace its owner only after receiving a copy.
-            self._current.release()
-            self._current = incoming
-            return result
-        finally:
-            response_owner.reset(token)
 
 
 @dataclass
@@ -578,7 +545,7 @@ async def get_test_job(
             and (isinstance(http_session, str) and bool(http_session))
             else None
         )
-        async with _JobPollResponseLifetime() as responses, AsyncExitStack() as leases:
+        async with ResponsePollLifetime() as responses, AsyncExitStack() as leases:
             shared_read = await leases.enter_async_context(_job_status_reads.session(poll_key))
             while True:
                 remaining = deadline - asyncio.get_event_loop().time()
@@ -614,7 +581,7 @@ async def get_test_job(
                                 _job_status_reads.session(poll_key)
                             )
                     response, observation_order = await responses.fetch(
-                        shared_read, _fetch_status, remaining
+                        shared_read.fetch(_fetch_status), remaining
                     )
                 except SharedReadCapacityError:
                     return MCPResponse(**response_limit_error("result_capacity"))
