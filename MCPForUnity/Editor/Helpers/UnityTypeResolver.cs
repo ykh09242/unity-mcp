@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using MCPForUnity.Runtime.Helpers;
 using UnityEngine;
 #if UNITY_EDITOR
@@ -20,6 +21,29 @@ namespace MCPForUnity.Editor.Helpers
     {
         private static readonly Dictionary<string, Type> CacheByFqn = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, Type> CacheByName = new(StringComparer.Ordinal);
+        private static readonly Dictionary<(string name, Type constraint), Type> CacheByConstraint = new();
+        private const int MaxConstrainedCacheEntries = 256;
+        private static int assemblyGeneration;
+        private static int cachedAssemblyGeneration = -1;
+        private static System.Reflection.Assembly[] dynamicAssemblies = Array.Empty<System.Reflection.Assembly>();
+
+        static UnityTypeResolver()
+        {
+            // AssemblyLoad may run on a worker thread; invalidate lazily on the next lookup.
+            AppDomain.CurrentDomain.AssemblyLoad += (_, _) => Interlocked.Increment(ref assemblyGeneration);
+        }
+
+        private static void RefreshCacheGeneration()
+        {
+            int generation = Volatile.Read(ref assemblyGeneration);
+            if (generation == cachedAssemblyGeneration)
+                return;
+            CacheByFqn.Clear();
+            CacheByName.Clear();
+            CacheByConstraint.Clear();
+            dynamicAssemblies = UnityAssembliesCompat.GetLoadedAssemblies().Where(assembly => assembly.IsDynamic).ToArray();
+            cachedAssemblyGeneration = generation;
+        }
 
         /// <summary>
         /// Resolves a type by name, with optional base type constraint.
@@ -41,11 +65,20 @@ namespace MCPForUnity.Editor.Helpers
                 return false;
             }
 
+            RefreshCacheGeneration();
+
             // Check caches
             // A global type's FullName is also its short name, so it can still be ambiguous.
             if (CacheByFqn.TryGetValue(typeName, out type) && typeName != type.Name && PassesConstraint(type, requiredBaseType))
                 return true;
-            if (requiredBaseType == null && !typeName.Contains(".") && CacheByName.TryGetValue(typeName, out type))
+            if (requiredBaseType == null && !typeName.Contains(".") && CacheByName.TryGetValue(typeName, out type) && !HasDynamicNameMatch(typeName, null))
+                return true;
+
+            if (
+                requiredBaseType != null
+                && CacheByConstraint.TryGetValue((typeName, requiredBaseType), out type)
+                && !HasDynamicNameMatch(typeName, requiredBaseType)
+            )
                 return true;
 
             // Try direct Type.GetType
@@ -131,6 +164,17 @@ namespace MCPForUnity.Editor.Helpers
 
         // --- Private Helpers ---
 
+        private static bool HasDynamicNameMatch(string query, Type requiredBaseType)
+        {
+            // A loaded dynamic assembly can define a colliding name without raising AssemblyLoad.
+            // Revalidate only that mutable metadata; the immutable assembly scans stay cached.
+            foreach (var assembly in dynamicAssemblies)
+            foreach (var candidate in SafeGetTypes(assembly))
+                if (NamesMatch(candidate, query) && PassesConstraint(candidate, requiredBaseType))
+                    return true;
+            return false;
+        }
+
         private static bool PassesConstraint(Type type, Type requiredBaseType)
         {
             if (type == null)
@@ -149,9 +193,18 @@ namespace MCPForUnity.Editor.Helpers
                 return;
             if (t.FullName != null)
                 CacheByFqn[t.FullName] = t;
+            // Dynamic assemblies can acquire new types without another AssemblyLoad event.
             // Qualified and constrained lookups do not establish short-name uniqueness.
-            if (requiredBaseType == null && query == t.Name)
+            if (query != t.Name || t.Assembly.IsDynamic)
+                return;
+            if (requiredBaseType == null)
                 CacheByName[query] = t;
+            else
+            {
+                if (CacheByConstraint.Count >= MaxConstrainedCacheEntries)
+                    CacheByConstraint.Clear();
+                CacheByConstraint[(query, requiredBaseType)] = t;
+            }
         }
 
         private static List<Type> FindCandidates(string query, Type requiredBaseType)
