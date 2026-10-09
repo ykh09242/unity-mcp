@@ -2024,7 +2024,7 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                var curve = new AnimationCurve();
+                AnimationCurve curve = null;
                 foreach (var keyToken in keysArray)
                 {
                     if (keyToken is not JObject keyObj)
@@ -2055,10 +2055,11 @@ namespace MCPForUnity.Editor.Tools
                         keyframe.outWeight = keyObj["outWeight"].ReadScalar<float>();
                     }
 
+                    curve ??= new AnimationCurve();
                     curve.AddKey(keyframe);
                 }
 
-                prop.animationCurveValue = curve;
+                prop.animationCurveValue = curve ?? new AnimationCurve();
                 message = $"Set AnimationCurve with {keysArray.Count} keyframes.";
                 return true;
             }
