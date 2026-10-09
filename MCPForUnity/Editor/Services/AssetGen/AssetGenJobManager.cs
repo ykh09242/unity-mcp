@@ -454,6 +454,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                             break;
                         }
                         r.ProviderJobId = r.SubmitTask.Result;
+                        r.SubmitTask = null;
                         if (string.IsNullOrEmpty(r.ProviderJobId))
                         {
                             Fail(r, "Provider returned no job id.");
@@ -479,6 +480,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                             break;
                         }
                         ProviderPollResult pr = r.PollTask.Result;
+                        r.PollTask = null;
                         r.Job.Progress = Mathf.Clamp01(pr.Progress);
                         Persist(r.Job);
                         if (pr.State == ProviderPollState.Succeeded)
@@ -535,6 +537,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                             break;
                         }
                         HttpResult res = r.DownloadTask.Result;
+                        r.DownloadTask = null;
                         if (res == null || !res.IsSuccess || res.Body == null || res.Body.Length == 0)
                         {
                             Fail(r, $"Download failed (HTTP {res?.Status}).");
