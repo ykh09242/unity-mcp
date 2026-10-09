@@ -342,6 +342,12 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(ownedScene.isDirty);
         }
 
+        [TestCase("set_pivot", "{\"position\":null}")]
+        [TestCase("set_pivot", "{\"position\":true}")]
+        [TestCase("set_pivot", "{\"position\":[0,1]}")]
+        [TestCase("set_pivot", "{\"position\":[1,\"bad\",3]}")]
+        [TestCase("set_pivot", "{\"position\":{\"x\":1,\"y\":2}}")]
+        [TestCase("set_pivot", "{\"position\":null,\"worldPosition\":[1,2,3]}")]
         [TestCase("move_vertices", "{\"vertexIndices\":[0,999],\"offset\":[1,2,3]}")]
         [TestCase("insert_vertex", "{\"point\":[0,0,0]}")]
         [TestCase("insert_vertex", "{\"point\":[0,0,0],\"faceIndex\":999}")]
@@ -411,6 +417,48 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.That(mesh.transform.position.sqrMagnitude, Is.LessThan(.000001f));
             Assert.That(Quaternion.Angle(Quaternion.identity, mesh.transform.rotation), Is.LessThan(.001f));
             Assert.AreEqual(Vector3.one, mesh.transform.localScale);
+        }
+
+        private sealed class MissingSmoothingApi { }
+
+        [TestCase("[0]")]
+        [TestCase("[]")]
+        [TestCase(null)]
+        public void MissingSmoothingMethodRejectsWithoutChangingMeshOrScene(string indices)
+        {
+            SetResolutionField("_smoothingType", typeof(MissingSmoothingApi));
+            SaveOwnedScene();
+            Vector3[] before = WorldVertices();
+            int dirty = EditorUtility.GetDirtyCount(mesh);
+            var properties = new JObject { ["angleThreshold"] = 0 };
+            if (indices != null)
+                properties["faceIndices"] = JToken.Parse(indices);
+
+            JObject result = Send("auto_smooth", properties);
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("ApplySmoothingGroups method not found", result.Value<string>("error"));
+            CollectionAssert.AreEqual(before, WorldVertices());
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(mesh));
+            Assert.IsFalse(ownedScene.isDirty);
+        }
+
+        [Test]
+        public void SetPivotRejectsEmptyPositionsWithoutMovingTransform()
+        {
+            meshType.GetProperty("positions").SetValue(mesh, new List<Vector3>());
+            SaveOwnedScene();
+            Vector3 before = mesh.transform.position;
+            int dirty = EditorUtility.GetDirtyCount(mesh);
+
+            JObject result = Send("set_pivot", new JObject { ["position"] = new JArray(4, 5, 6) });
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("Could not read vertex positions", result.Value<string>("error"));
+            Assert.AreEqual(before, mesh.transform.position);
+            Assert.IsEmpty((IEnumerable)meshType.GetProperty("positions").GetValue(mesh));
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(mesh));
+            Assert.IsFalse(ownedScene.isDirty);
         }
 
         [TestCase("[1]", 1)]

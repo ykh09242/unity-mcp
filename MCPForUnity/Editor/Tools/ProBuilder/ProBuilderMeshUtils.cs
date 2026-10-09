@@ -177,15 +177,15 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse("position must be a valid vector ([x,y,z] or {x,y,z}) in world space.");
             var worldPosition = parsedPosition.Value;
 
-            Undo.RecordObject(pbMesh, "Set Pivot");
-            Undo.RecordObject(pbMesh.transform, "Set Pivot");
-
             // SetPivot moves the transform without moving the geometry visually.
             // We need to offset vertex positions by the inverse of the transform change.
             var positionsProp = ManageProBuilder._proBuilderMeshType.GetProperty("positions");
             var positions = positionsProp?.GetValue(pbMesh) as System.Collections.IList;
             if (positions == null || positions.Count == 0)
                 return new ErrorResponse("Could not read vertex positions.");
+
+            Undo.RecordObject(pbMesh, "Set Pivot");
+            Undo.RecordObject(pbMesh.transform, "Set Pivot");
 
             // Calculate delta in local space
             var worldDelta = worldPosition - pbMesh.transform.position;

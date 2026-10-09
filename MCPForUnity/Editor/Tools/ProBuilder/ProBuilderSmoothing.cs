@@ -46,8 +46,6 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (ManageProBuilder._smoothingType == null)
                 return new ErrorResponse("Smoothing type not found in ProBuilder assembly.");
 
-            var allFaces = ManageProBuilder.GetFacesArray(pbMesh);
-
             // Check for faceIndices to limit scope
             var faceIndicesToken = props["faceIndices"] ?? props["face_indices"];
             object facesToSmooth;
@@ -57,23 +55,16 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             }
             else
             {
-                facesToSmooth = allFaces;
+                facesToSmooth = ManageProBuilder.GetFacesArray(pbMesh);
             }
-
-            Undo.RecordObject(pbMesh, "Auto Smooth");
 
             // Smoothing.ApplySmoothingGroups(ProBuilderMesh mesh, IEnumerable<Face> faces, float angle)
             var applyMethod = ManageProBuilder._smoothingType.GetMethod("ApplySmoothingGroups", BindingFlags.Static | BindingFlags.Public);
-
-            if (applyMethod != null)
-            {
-                applyMethod.Invoke(null, new object[] { pbMesh, facesToSmooth, angleThreshold });
-            }
-            else
-            {
-                // Fallback: manually set smoothing groups based on angle
+            if (applyMethod == null)
                 return new ErrorResponse("Smoothing.ApplySmoothingGroups method not found.");
-            }
+
+            Undo.RecordObject(pbMesh, "Auto Smooth");
+            applyMethod.Invoke(null, new object[] { pbMesh, facesToSmooth, angleThreshold });
 
             ManageProBuilder.RefreshMesh(pbMesh);
 
