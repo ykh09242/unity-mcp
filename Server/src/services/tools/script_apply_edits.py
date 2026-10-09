@@ -563,12 +563,18 @@ class _TextEditError(ValueError):
 
 
 async def _text_edit_spans(
-    contents: str, edits: list[dict[str, Any]], *, mixed: bool = False
+    contents: str,
+    edits: list[dict[str, Any]],
+    *,
+    mixed: bool = False,
+    line_metadata: tuple[list[str], list[int]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build literal edits against the original buffer for write and preview."""
+    """Build literal edits using optional metadata from the same original buffer."""
     budget = bounded_regex.WorkBudget()
     budget.consume(len(contents))
-    lines, offsets = _script_lines_and_starts(contents)
+    lines, offsets = (
+        line_metadata if line_metadata is not None else _script_lines_and_starts(contents)
+    )
 
     def line_col(index: int) -> tuple[int, int]:
         line = bisect_right(offsets, index) - 1
@@ -1521,8 +1527,10 @@ async def script_apply_edits(
         return {"success": False, "message": "No contents returned from Unity read."}
 
     lsp_edits = [e for e in edits if isinstance(e.get("range"), dict)]
+    line_metadata = None
     if lsp_edits:
-        source_lines, _ = _script_lines_and_starts(contents)
+        line_metadata = _script_lines_and_starts(contents)
+        source_lines, _ = line_metadata
         try:
             for edit in lsp_edits:
                 rng = edit.pop("range")
@@ -1540,7 +1548,9 @@ async def script_apply_edits(
     text_edits = [edit for edit in edits if edit.get("op", "") in TEXT]
     struct_edits = [edit for edit in edits if edit.get("op", "") in STRUCT]
     try:
-        at_edits = await _text_edit_spans(contents, text_edits, mixed=mixed)
+        at_edits = await _text_edit_spans(
+            contents, text_edits, mixed=mixed, line_metadata=line_metadata
+        )
     except _TextEditError as exc:
         return _with_norm(_err(exc.code, str(exc)), normalized_for_echo, routing=routing)
     except Exception as exc:
