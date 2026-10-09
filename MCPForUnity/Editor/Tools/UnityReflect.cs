@@ -456,10 +456,11 @@ namespace MCPForUnity.Editor.Tools
 
                 foreach (var t in kvp.Value)
                 {
-                    if (t.Name == null)
+                    string name = t.Name;
+                    if (name == null)
                         continue;
 
-                    string nameLower = t.Name.ToLowerInvariant();
+                    string nameLower = name.ToLowerInvariant();
                     string fullNameLower = t.FullName?.ToLowerInvariant() ?? nameLower;
 
                     if (nameLower == queryLower || fullNameLower == queryLower)
