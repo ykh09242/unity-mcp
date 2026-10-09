@@ -63,8 +63,6 @@ namespace MCPForUnity.Editor.Helpers
                 return null;
             }
 
-            ValidateResolvedAsset(foundGo);
-
             // Get the target object/component from the found GameObject
             if (targetType == typeof(GameObject))
             {
