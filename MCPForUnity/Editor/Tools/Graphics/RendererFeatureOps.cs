@@ -110,7 +110,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             using (var preflight = new SerializedObject(rendererData as UnityEngine.Object))
             {
-                var rendererFeaturesProp = preflight.FindProperty("m_RendererFeatures");
+                using var rendererFeaturesProp = preflight.FindProperty("m_RendererFeatures");
                 if (rendererFeaturesProp == null || !rendererFeaturesProp.isArray)
                     return new ErrorResponse("m_RendererFeatures array not found.");
             }
@@ -145,24 +145,24 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
                 // Read a fresh serialized stream after attaching the sub-asset.
                 using var so = new SerializedObject(rendererData as UnityEngine.Object);
-                var rendererFeaturesProp = so.FindProperty("m_RendererFeatures");
+                using var rendererFeaturesProp = so.FindProperty("m_RendererFeatures");
                 if (rendererFeaturesProp == null || !rendererFeaturesProp.isArray)
                     return new ErrorResponse("m_RendererFeatures array not found.");
 
                 // Also update the map (m_RendererFeatureMap) if it exists
                 // Map stores persistent local file IDs, not transient instance IDs
-                var mapProp = so.FindProperty("m_RendererFeatureMap");
+                using var mapProp = so.FindProperty("m_RendererFeatureMap");
                 long localId = 0;
                 if (mapProp != null && !AssetDatabase.TryGetGUIDAndLocalFileIdentifier(feature, out _, out localId))
                     return new ErrorResponse("Could not obtain the renderer feature's persistent local file ID.");
 
                 rendererFeaturesProp.arraySize++;
-                var element = rendererFeaturesProp.GetArrayElementAtIndex(rendererFeaturesProp.arraySize - 1);
+                using var element = rendererFeaturesProp.GetArrayElementAtIndex(rendererFeaturesProp.arraySize - 1);
                 element.objectReferenceValue = feature;
                 if (mapProp != null)
                 {
                     mapProp.arraySize++;
-                    var mapElement = mapProp.GetArrayElementAtIndex(mapProp.arraySize - 1);
+                    using var mapElement = mapProp.GetArrayElementAtIndex(mapProp.arraySize - 1);
                     mapElement.longValue = localId;
                 }
                 so.ApplyModifiedProperties();
@@ -228,7 +228,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             // Remove from the list via SerializedObject
             using (var so = new SerializedObject(rendererData as UnityEngine.Object))
             {
-                var rendererFeaturesPropSo = so.FindProperty("m_RendererFeatures");
+                using var rendererFeaturesPropSo = so.FindProperty("m_RendererFeatures");
                 if (rendererFeaturesPropSo == null || !rendererFeaturesPropSo.isArray)
                     return new ErrorResponse("m_RendererFeatures array not found.");
 
@@ -237,7 +237,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 so.ApplyModifiedProperties();
 
                 // Clean up the map
-                var mapProp = so.FindProperty("m_RendererFeatureMap");
+                using var mapProp = so.FindProperty("m_RendererFeatureMap");
                 if (mapProp != null && targetIndex < mapProp.arraySize)
                 {
                     mapProp.DeleteArrayElementAtIndex(targetIndex);
@@ -371,28 +371,40 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             using (var so = new SerializedObject(rendererData as UnityEngine.Object))
             {
-                var rendererFeaturesPropSo = so.FindProperty("m_RendererFeatures");
+                using var rendererFeaturesPropSo = so.FindProperty("m_RendererFeatures");
                 if (rendererFeaturesPropSo == null)
                     return new ErrorResponse("m_RendererFeatures property not found.");
 
                 // Read current features
                 var current = new UnityEngine.Object[featuresList.Count];
                 for (int i = 0; i < featuresList.Count; i++)
-                    current[i] = rendererFeaturesPropSo.GetArrayElementAtIndex(i).objectReferenceValue;
+                {
+                    using var element = rendererFeaturesPropSo.GetArrayElementAtIndex(i);
+                    current[i] = element.objectReferenceValue;
+                }
 
                 // Apply new order
                 for (int i = 0; i < newOrder.Count; i++)
-                    rendererFeaturesPropSo.GetArrayElementAtIndex(i).objectReferenceValue = current[newOrder[i]];
+                {
+                    using var element = rendererFeaturesPropSo.GetArrayElementAtIndex(i);
+                    element.objectReferenceValue = current[newOrder[i]];
+                }
 
                 // Also reorder the feature map to keep it in sync
-                var mapProp = so.FindProperty("m_RendererFeatureMap");
+                using var mapProp = so.FindProperty("m_RendererFeatureMap");
                 if (mapProp != null && mapProp.arraySize == featuresList.Count)
                 {
                     var currentMap = new long[featuresList.Count];
                     for (int i = 0; i < featuresList.Count; i++)
-                        currentMap[i] = mapProp.GetArrayElementAtIndex(i).longValue;
+                    {
+                        using var element = mapProp.GetArrayElementAtIndex(i);
+                        currentMap[i] = element.longValue;
+                    }
                     for (int i = 0; i < newOrder.Count; i++)
-                        mapProp.GetArrayElementAtIndex(i).longValue = currentMap[newOrder[i]];
+                    {
+                        using var element = mapProp.GetArrayElementAtIndex(i);
+                        element.longValue = currentMap[newOrder[i]];
+                    }
                 }
 
                 so.ApplyModifiedProperties();
@@ -443,11 +455,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 // Use SerializedObject to get specific renderer
                 using (var so = new SerializedObject(pipelineAsset))
                 {
-                    var renderersProp = so.FindProperty("m_RendererDataList");
+                    using var renderersProp = so.FindProperty("m_RendererDataList");
                     if (renderersProp == null || rendererIndex >= renderersProp.arraySize)
                         return null;
 
-                    var element = renderersProp.GetArrayElementAtIndex(rendererIndex);
+                    using var element = renderersProp.GetArrayElementAtIndex(rendererIndex);
                     return element.objectReferenceValue;
                 }
             }
@@ -455,13 +467,13 @@ namespace MCPForUnity.Editor.Tools.Graphics
             // Default: get the active renderer (index from m_DefaultRendererIndex)
             using (var so = new SerializedObject(pipelineAsset))
             {
-                var defaultIndex = so.FindProperty("m_DefaultRendererIndex");
+                using var defaultIndex = so.FindProperty("m_DefaultRendererIndex");
                 int idx = defaultIndex != null ? defaultIndex.intValue : 0;
 
-                var renderersProp = so.FindProperty("m_RendererDataList");
+                using var renderersProp = so.FindProperty("m_RendererDataList");
                 if (renderersProp != null && idx < renderersProp.arraySize)
                 {
-                    var element = renderersProp.GetArrayElementAtIndex(idx);
+                    using var element = renderersProp.GetArrayElementAtIndex(idx);
                     return element.objectReferenceValue;
                 }
             }
@@ -533,7 +545,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var props = new Dictionary<string, object>();
             using (var so = new SerializedObject(feature))
             {
-                var iterator = so.GetIterator();
+                using var iterator = so.GetIterator();
                 if (iterator.NextVisible(true)) // Enter children
                 {
                     do
@@ -558,7 +570,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 foreach (var prop in propertiesToken.Properties())
                 {
-                    var sProp = so.FindProperty(prop.Name);
+                    using var sProp = so.FindProperty(prop.Name);
                     if (sProp != null)
                     {
                         if (GraphicsHelpers.SetSerializedValue(sProp, prop.Value))
@@ -570,8 +582,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     {
                         // Try nested: "settings.fieldName"
                         string nested = $"settings.{prop.Name}";
-                        sProp = so.FindProperty(nested);
-                        if (sProp != null && GraphicsHelpers.SetSerializedValue(sProp, prop.Value))
+                        using var nestedProp = so.FindProperty(nested);
+                        if (nestedProp != null && GraphicsHelpers.SetSerializedValue(nestedProp, prop.Value))
                             changed.Add(prop.Name);
                         else
                             failed.Add(prop.Name);
@@ -592,7 +604,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             using (var so = new SerializedObject(feature))
             {
                 // FullScreenPassRendererFeature uses "m_PassMaterial" or "passMaterial"
-                var matProp = so.FindProperty("m_PassMaterial") ?? so.FindProperty("passMaterial");
+                using var matProp = so.FindProperty("m_PassMaterial") ?? so.FindProperty("passMaterial");
                 if (matProp != null && matProp.propertyType == SerializedPropertyType.ObjectReference)
                 {
                     matProp.objectReferenceValue = mat;

@@ -161,7 +161,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 foreach (var path in serializedPaths)
                 {
-                    var prop = so.FindProperty(path);
+                    using var prop = so.FindProperty(path);
                     if (prop != null)
                         serializedSettings[path] = GraphicsHelpers.ReadSerializedValue(prop);
                 }
@@ -231,9 +231,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
                     // Try SerializedObject fallback (for m_ prefixed properties)
                     string serializedPath = propName.StartsWith("m_") ? propName : $"m_{char.ToUpper(propName[0])}{propName.Substring(1)}";
-                    var sProp = so.FindProperty(serializedPath);
-                    if (sProp == null && !propName.StartsWith("m_"))
-                        sProp = so.FindProperty(propName);
+                    using var sProp = so.FindProperty(serializedPath) ?? (!propName.StartsWith("m_") ? so.FindProperty(propName) : null);
 
                     if (sProp != null)
                     {
