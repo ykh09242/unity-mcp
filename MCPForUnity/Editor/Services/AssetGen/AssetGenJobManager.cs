@@ -58,6 +58,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
     {
         private const string JobKeyPrefix = "MCPForUnity.AssetGen.Job.";
         private const string JobIndexKey = "MCPForUnity.AssetGen.JobIndex";
+        internal const int MaxTerminalJobs = 100;
 
         // Test seams (overridable; defaults are the production implementations).
         internal static IHttpTransport TransportOverrideForTests;
@@ -68,16 +69,29 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         private static readonly Dictionary<string, AssetGenJob> Jobs = new();
         private static readonly Dictionary<string, Runner> Runners = new();
+
+        // Keep the 100 most recently finished jobs, plus every active job.
+        // Evicted IDs become unknown; generated assets/files are never removed here.
+        private static readonly LinkedList<string> JobOrder = new();
+        private static readonly Dictionary<string, LinkedListNode<string>> JobOrderNodes = new();
+        private static readonly HashSet<string> TerminalJobIds = new();
+        private static bool _jobIndexDirty;
         private static readonly List<string> _tickIds = new();
         private static bool _ticking;
 
         static AssetGenJobManager()
+        {
+            RestoreJobs();
+        }
+
+        internal static void RestoreJobs()
         {
             try
             {
                 string index = SessionState.GetString(JobIndexKey, string.Empty);
                 if (string.IsNullOrEmpty(index))
                     return;
+                var interrupted = new List<AssetGenJob>();
                 foreach (string id in index.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
                 {
                     string json = SessionState.GetString(JobKeyPrefix + id, string.Empty);
@@ -87,13 +101,20 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     if (job == null)
                         continue;
                     if (!IsTerminal(job.State))
-                    {
-                        job.State = AssetGenJobState.Failed;
-                        job.Error = "Interrupted by an editor reload; please retry.";
-                        Persist(job);
-                    }
+                        interrupted.Add(job);
                     Jobs[id] = job;
+                    TrackJob(job);
                 }
+                // Interrupted runs finish at reload time, after previously terminal jobs.
+                // Otherwise an old active run could be evicted before its failure is queryable.
+                foreach (var job in interrupted)
+                {
+                    job.State = AssetGenJobState.Failed;
+                    job.Error = "Interrupted by an editor reload; please retry.";
+                    SessionState.SetString(JobKeyPrefix + job.JobId, JsonConvert.SerializeObject(job));
+                    TrackJob(job);
+                }
+                WriteJobIndex();
             }
             catch { /* recovery is best-effort */ }
         }
@@ -264,11 +285,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
         /// <summary>Most-recent-first snapshot of known jobs (for the GUI readout). Never contains keys.</summary>
         public static IReadOnlyList<AssetGenJob> RecentJobs(int max = 20)
         {
-            var all = new List<AssetGenJob>(Jobs.Values);
-            int start = Math.Max(0, all.Count - max);
-            var slice = all.GetRange(start, all.Count - start);
-            slice.Reverse();
-            return slice;
+            var recent = new List<AssetGenJob>();
+            for (var node = JobOrder.Last; node != null && recent.Count < max; node = node.Previous)
+                if (Jobs.TryGetValue(node.Value, out var job))
+                    recent.Add(job);
+            return recent;
         }
 
         public static bool Cancel(string jobId)
@@ -709,15 +730,58 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         private static void Persist(AssetGenJob job)
         {
+            TrackJob(job);
             try
             {
                 SessionState.SetString(JobKeyPrefix + job.JobId, JsonConvert.SerializeObject(job));
-                string index = SessionState.GetString(JobIndexKey, string.Empty);
-                var ids = new HashSet<string>(index.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries));
-                if (ids.Add(job.JobId))
-                    SessionState.SetString(JobIndexKey, string.Join(",", ids));
+                WriteJobIndex();
             }
             catch { /* persistence is best-effort */ }
+        }
+
+        private static void TrackJob(AssetGenJob job)
+        {
+            if (!JobOrderNodes.ContainsKey(job.JobId))
+            {
+                JobOrderNodes[job.JobId] = JobOrder.AddLast(job.JobId);
+                _jobIndexDirty = true;
+            }
+            if (!IsTerminal(job.State) || !TerminalJobIds.Add(job.JobId))
+                return;
+            // A long-running older job must remain queryable when it finally completes.
+            var completedNode = JobOrderNodes[job.JobId];
+            JobOrder.Remove(completedNode);
+            JobOrder.AddLast(completedNode);
+            _jobIndexDirty = true;
+            if (TerminalJobIds.Count <= MaxTerminalJobs)
+                return;
+
+            for (var node = JobOrder.First; node != null && TerminalJobIds.Count > MaxTerminalJobs; )
+            {
+                var next = node.Next;
+                string id = node.Value;
+                if (TerminalJobIds.Remove(id))
+                {
+                    Jobs.Remove(id);
+                    JobOrderNodes.Remove(id);
+                    JobOrder.Remove(node);
+                    _jobIndexDirty = true;
+                    try
+                    {
+                        SessionState.EraseString(JobKeyPrefix + id);
+                    }
+                    catch { /* persistence is best-effort */ }
+                }
+                node = next;
+            }
+        }
+
+        private static void WriteJobIndex()
+        {
+            if (!_jobIndexDirty)
+                return;
+            SessionState.SetString(JobIndexKey, string.Join(",", JobOrder));
+            _jobIndexDirty = false;
         }
 
         private static bool Faulted(Task t, out string error)
@@ -758,6 +822,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 SessionState.EraseString(JobKeyPrefix + id);
             SessionState.EraseString(JobIndexKey);
             Jobs.Clear();
+            JobOrder.Clear();
+            JobOrderNodes.Clear();
+            TerminalJobIds.Clear();
+            _jobIndexDirty = false;
             TransportOverrideForTests = null;
             ImportOverrideForTests = null;
             PollIntervalSeconds = 3.0;

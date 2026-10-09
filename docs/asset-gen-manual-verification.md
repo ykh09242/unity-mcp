@@ -4,6 +4,11 @@ The `asset_gen` tools call real third-party APIs and write real files into a lic
 Unity Editor, so they **cannot be covered headlessly**. Run this checklist by hand with
 genuine provider keys and an interactive Editor before shipping.
 
+Job status metadata retains the 100 most recently finished jobs (done, failed, or
+canceled), plus every active job. This history survives an unrelated domain reload;
+older finished job IDs become unknown. Eviction removes only status metadata and
+never deletes generated assets or output files.
+
 ## Prerequisites
 
 - [ ] A licensed Unity Editor with the package installed and the bridge connected.
