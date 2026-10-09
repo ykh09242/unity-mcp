@@ -44,6 +44,10 @@ namespace MCPForUnity.Editor.Helpers
             public MethodInfo getCount;
             public MethodInfo addSize;
             public MethodInfo selectSize;
+            private readonly PropertyInfo widthProperty;
+            private readonly PropertyInfo heightProperty;
+            private readonly PropertyInfo sizeKindProperty;
+            private readonly PropertyInfo baseTextProperty;
 
             public Api(int? viewId = null)
             {
@@ -72,8 +76,10 @@ namespace MCPForUnity.Editor.Helpers
                 addSize = Require(groupClass.GetMethod("AddCustomSize", Members), "AddCustomSize");
                 if (Count > 1024)
                     throw new InvalidOperationException("Game View preset count exceeds the supported limit of 1024.");
-                foreach (string property in new[] { "width", "height", "sizeType", "baseText" })
-                    Require(sizeType.GetProperty(property, Members), property);
+                widthProperty = Require(sizeType.GetProperty("width", Members), "width");
+                heightProperty = Require(sizeType.GetProperty("height", Members), "height");
+                sizeKindProperty = Require(sizeType.GetProperty("sizeType", Members), "sizeType");
+                baseTextProperty = Require(sizeType.GetProperty("baseText", Members), "baseText");
                 Require(sizeType.GetConstructor(new[] { kindType, typeof(int), typeof(int), typeof(string) }), "GameViewSize constructor");
             }
 
@@ -85,10 +91,10 @@ namespace MCPForUnity.Editor.Helpers
                     group = groupName,
                     index = index,
                     view_instance_id = window.GetInstanceIDCompat(),
-                    width = (int)sizeType.GetProperty("width", Members).GetValue(size),
-                    height = (int)sizeType.GetProperty("height", Members).GetValue(size),
-                    size_type = sizeType.GetProperty("sizeType", Members).GetValue(size).ToString(),
-                    label = (string)sizeType.GetProperty("baseText", Members).GetValue(size),
+                    width = (int)widthProperty.GetValue(size),
+                    height = (int)heightProperty.GetValue(size),
+                    size_type = sizeKindProperty.GetValue(size).ToString(),
+                    label = (string)baseTextProperty.GetValue(size),
                 };
             }
 
