@@ -25,13 +25,38 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static T FindComponent<T>(JObject @params)
             where T : Component
         {
-            GameObject go = FindTargetGameObject(@params);
+            return FindComponentCore<T>(@params, out _, out _, out _);
+        }
+
+        public static T FindComponent<T>(JObject @params, out string error)
+            where T : Component
+        {
+            var component = FindComponentCore<T>(@params, out var go, out var idx, out var count);
+            error = null;
+            if (component == null)
+            {
+                string typeName = typeof(T).Name;
+                error =
+                    go != null && idx.HasValue && (idx.Value < 0 || idx.Value >= count)
+                        ? $"component_index {idx.Value} out of range. Found {count} {typeName} component(s) on '{go.name}'."
+                        : $"{typeName} not found";
+            }
+            return component;
+        }
+
+        private static T FindComponentCore<T>(JObject @params, out GameObject go, out int? idx, out int count)
+            where T : Component
+        {
+            idx = null;
+            count = 0;
+            go = FindTargetGameObject(@params);
             if (go == null)
                 return null;
-            int? idx = ParamCoercion.CoerceIntNullable(@params["componentIndex"] ?? @params["component_index"]);
+            idx = ParamCoercion.CoerceIntNullable(@params["componentIndex"] ?? @params["component_index"]);
             if (idx.HasValue)
             {
                 var all = go.GetComponents<T>();
+                count = all.Length;
                 return (idx.Value >= 0 && idx.Value < all.Length) ? all[idx.Value] : null;
             }
             return go.GetComponent<T>();

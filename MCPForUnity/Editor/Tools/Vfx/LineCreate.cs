@@ -10,9 +10,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
     {
         public static object CreateLine(JObject @params)
         {
-            LineRenderer lr = LineRead.FindLineRenderer(@params);
+            LineRenderer lr = LineRead.FindLineRenderer(@params, out var componentError);
             if (lr == null)
-                return new { success = false, message = LineRead.FindLineRendererError(@params) };
+                return new { success = false, message = componentError };
 
             Vector3 start = ManageVfxCommon.ParseVector3(@params["start"]);
             Vector3 end = ManageVfxCommon.ParseVector3(@params["end"]);
@@ -34,9 +34,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object CreateCircle(JObject @params)
         {
-            LineRenderer lr = LineRead.FindLineRenderer(@params);
+            LineRenderer lr = LineRead.FindLineRenderer(@params, out var componentError);
             if (lr == null)
-                return new { success = false, message = LineRead.FindLineRendererError(@params) };
+                return new { success = false, message = componentError };
 
             Vector3 center = ManageVfxCommon.ParseVector3(@params["center"]);
             float radius = @params["radius"]?.ReadScalar<float?>() ?? 1f;
@@ -84,9 +84,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object CreateArc(JObject @params)
         {
-            LineRenderer lr = LineRead.FindLineRenderer(@params);
+            LineRenderer lr = LineRead.FindLineRenderer(@params, out var componentError);
             if (lr == null)
-                return new { success = false, message = LineRead.FindLineRendererError(@params) };
+                return new { success = false, message = componentError };
 
             Vector3 center = ManageVfxCommon.ParseVector3(@params["center"]);
             float radius = @params["radius"]?.ReadScalar<float?>() ?? 1f;
@@ -137,9 +137,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object CreateBezier(JObject @params)
         {
-            LineRenderer lr = LineRead.FindLineRenderer(@params);
+            LineRenderer lr = LineRead.FindLineRenderer(@params, out var componentError);
             if (lr == null)
-                return new { success = false, message = LineRead.FindLineRendererError(@params) };
+                return new { success = false, message = componentError };
 
             Vector3 start = ManageVfxCommon.ParseVector3(@params["start"]);
             Vector3 end = ManageVfxCommon.ParseVector3(@params["end"]);

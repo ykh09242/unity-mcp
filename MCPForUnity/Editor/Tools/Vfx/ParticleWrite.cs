@@ -17,9 +17,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetMain(JObject @params)
         {
-            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
+            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params, out var componentError);
             if (ps == null)
-                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+                return new { success = false, message = componentError };
 
             var main = ps.main;
             var changes = new List<string>();
@@ -140,9 +140,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetEmission(JObject @params)
         {
-            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
+            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params, out var componentError);
             if (ps == null)
-                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+                return new { success = false, message = componentError };
 
             var emission = ps.emission;
             var changes = new List<string>();
@@ -177,9 +177,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetShape(JObject @params)
         {
-            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
+            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params, out var componentError);
             if (ps == null)
-                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+                return new { success = false, message = componentError };
 
             var shape = ps.shape;
             var changes = new List<string>();
@@ -250,9 +250,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetColorOverLifetime(JObject @params)
         {
-            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
+            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params, out var componentError);
             if (ps == null)
-                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+                return new { success = false, message = componentError };
 
             var col = ps.colorOverLifetime;
             var changes = new List<string>();
@@ -281,9 +281,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetSizeOverLifetime(JObject @params)
         {
-            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
+            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params, out var componentError);
             if (ps == null)
-                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+                return new { success = false, message = componentError };
 
             var sol = ps.sizeOverLifetime;
             var changes = new List<string>();
@@ -343,9 +343,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetVelocityOverLifetime(JObject @params)
         {
-            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
+            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params, out var componentError);
             if (ps == null)
-                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+                return new { success = false, message = componentError };
 
             var vol = ps.velocityOverLifetime;
             var changes = new List<string>();
@@ -398,9 +398,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetNoise(JObject @params)
         {
-            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
+            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params, out var componentError);
             if (ps == null)
-                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+                return new { success = false, message = componentError };
 
             var noise = ps.noise;
             var changes = new List<string>();
@@ -459,9 +459,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetRenderer(JObject @params)
         {
-            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
+            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params, out var componentError);
             if (ps == null)
-                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+                return new { success = false, message = componentError };
 
             var renderer = ParticleCommon.FindParticleSystemRenderer(ps);
             if (renderer == null)

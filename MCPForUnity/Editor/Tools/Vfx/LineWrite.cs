@@ -11,9 +11,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
     {
         public static object SetPositions(JObject @params)
         {
-            LineRenderer lr = LineRead.FindLineRenderer(@params);
+            LineRenderer lr = LineRead.FindLineRenderer(@params, out var componentError);
             if (lr == null)
-                return new { success = false, message = LineRead.FindLineRendererError(@params) };
+                return new { success = false, message = componentError };
 
             if (!TryParsePositions(@params["positions"], out var positions, out var error))
                 return new { success = false, message = error };
@@ -30,9 +30,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object AddPosition(JObject @params)
         {
-            LineRenderer lr = LineRead.FindLineRenderer(@params);
+            LineRenderer lr = LineRead.FindLineRenderer(@params, out var componentError);
             if (lr == null)
-                return new { success = false, message = LineRead.FindLineRendererError(@params) };
+                return new { success = false, message = componentError };
 
             if (!TryParsePosition(@params["position"], allowDefault: true, out var pos))
                 return new { success = false, message = "Invalid position: expected [x, y, z] or {x, y, z}" };
@@ -55,9 +55,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetPosition(JObject @params)
         {
-            LineRenderer lr = LineRead.FindLineRenderer(@params);
+            LineRenderer lr = LineRead.FindLineRenderer(@params, out var componentError);
             if (lr == null)
-                return new { success = false, message = LineRead.FindLineRendererError(@params) };
+                return new { success = false, message = componentError };
 
             int index = @params["index"]?.ReadScalar<int?>() ?? -1;
             if (index < 0 || index >= lr.positionCount)
@@ -83,9 +83,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetWidth(JObject @params)
         {
-            LineRenderer lr = LineRead.FindLineRenderer(@params);
+            LineRenderer lr = LineRead.FindLineRenderer(@params, out var componentError);
             if (lr == null)
-                return new { success = false, message = LineRead.FindLineRendererError(@params) };
+                return new { success = false, message = componentError };
 
             var changes = new List<string>();
             var updates = new List<Action>();
@@ -122,9 +122,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetColor(JObject @params)
         {
-            LineRenderer lr = LineRead.FindLineRenderer(@params);
+            LineRenderer lr = LineRead.FindLineRenderer(@params, out var componentError);
             if (lr == null)
-                return new { success = false, message = LineRead.FindLineRendererError(@params) };
+                return new { success = false, message = componentError };
 
             var changes = new List<string>();
             var apply = RendererHelpers.PrepareColorProperties(
@@ -153,9 +153,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetProperties(JObject @params)
         {
-            LineRenderer lr = LineRead.FindLineRenderer(@params);
+            LineRenderer lr = LineRead.FindLineRenderer(@params, out var componentError);
             if (lr == null)
-                return new { success = false, message = LineRead.FindLineRendererError(@params) };
+                return new { success = false, message = componentError };
 
             Vector3[] positions = null;
             int? positionCount = null;
@@ -263,9 +263,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object Clear(JObject @params)
         {
-            LineRenderer lr = LineRead.FindLineRenderer(@params);
+            LineRenderer lr = LineRead.FindLineRenderer(@params, out var componentError);
             if (lr == null)
-                return new { success = false, message = LineRead.FindLineRendererError(@params) };
+                return new { success = false, message = componentError };
 
             int count = lr.positionCount;
             Undo.RecordObject(lr, "Clear Line");

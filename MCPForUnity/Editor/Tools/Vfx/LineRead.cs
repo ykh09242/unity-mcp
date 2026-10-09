@@ -8,13 +8,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
     {
         public static LineRenderer FindLineRenderer(JObject @params) => ManageVfxCommon.FindComponent<LineRenderer>(@params);
 
+        public static LineRenderer FindLineRenderer(JObject @params, out string error) => ManageVfxCommon.FindComponent<LineRenderer>(@params, out error);
+
         public static string FindLineRendererError(JObject @params) => ManageVfxCommon.FindComponentError<LineRenderer>(@params);
 
         public static object GetInfo(JObject @params)
         {
-            LineRenderer lr = FindLineRenderer(@params);
+            LineRenderer lr = FindLineRenderer(@params, out var componentError);
             if (lr == null)
-                return new { success = false, message = FindLineRendererError(@params) };
+                return new { success = false, message = componentError };
 
             var positions = new Vector3[lr.positionCount];
             lr.GetPositions(positions);

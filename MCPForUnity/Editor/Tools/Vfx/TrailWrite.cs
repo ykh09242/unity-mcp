@@ -11,9 +11,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
     {
         public static object SetTime(JObject @params)
         {
-            TrailRenderer tr = TrailRead.FindTrailRenderer(@params);
+            TrailRenderer tr = TrailRead.FindTrailRenderer(@params, out var componentError);
             if (tr == null)
-                return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
+                return new { success = false, message = componentError };
 
             float time = @params["time"]?.ReadScalar<float?>() ?? 5f;
             RequireFinite(time, "time");
@@ -34,9 +34,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetWidth(JObject @params)
         {
-            TrailRenderer tr = TrailRead.FindTrailRenderer(@params);
+            TrailRenderer tr = TrailRead.FindTrailRenderer(@params, out var componentError);
             if (tr == null)
-                return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
+                return new { success = false, message = componentError };
 
             var changes = new List<string>();
             var apply = new List<Action>();
@@ -73,9 +73,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetColor(JObject @params)
         {
-            TrailRenderer tr = TrailRead.FindTrailRenderer(@params);
+            TrailRenderer tr = TrailRead.FindTrailRenderer(@params, out var componentError);
             if (tr == null)
-                return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
+                return new { success = false, message = componentError };
 
             var changes = new List<string>();
             var apply = RendererHelpers.PrepareColorProperties(
@@ -104,9 +104,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object SetProperties(JObject @params)
         {
-            TrailRenderer tr = TrailRead.FindTrailRenderer(@params);
+            TrailRenderer tr = TrailRead.FindTrailRenderer(@params, out var componentError);
             if (tr == null)
-                return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
+                return new { success = false, message = componentError };
 
             var changes = new List<string>();
             var apply = new List<Action>();

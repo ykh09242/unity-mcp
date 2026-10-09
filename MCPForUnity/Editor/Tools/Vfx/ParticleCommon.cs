@@ -8,6 +8,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
     {
         public static ParticleSystem FindParticleSystem(JObject @params) => ManageVfxCommon.FindComponent<ParticleSystem>(@params);
 
+        public static ParticleSystem FindParticleSystem(JObject @params, out string error) => ManageVfxCommon.FindComponent<ParticleSystem>(@params, out error);
+
         public static string FindParticleSystemError(JObject @params) => ManageVfxCommon.FindComponentError<ParticleSystem>(@params);
 
         public static ParticleSystemRenderer FindParticleSystemRenderer(ParticleSystem ps) => ps != null ? ps.GetComponent<ParticleSystemRenderer>() : null;

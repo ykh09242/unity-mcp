@@ -105,9 +105,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object EnableModule(JObject @params)
         {
-            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
+            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params, out var componentError);
             if (ps == null)
-                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+                return new { success = false, message = componentError };
 
             string moduleName = @params["module"]?.ToString()?.ToLowerInvariant();
             bool enabled = @params["enabled"]?.ReadScalar<bool?>() ?? true;
@@ -167,9 +167,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object Control(JObject @params, string action)
         {
-            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
+            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params, out var componentError);
             if (ps == null)
-                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+                return new { success = false, message = componentError };
 
             bool withChildren = @params["withChildren"]?.ReadScalar<bool?>() ?? true;
 
@@ -220,9 +220,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object AddBurst(JObject @params)
         {
-            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
+            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params, out var componentError);
             if (ps == null)
-                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+                return new { success = false, message = componentError };
 
             float time = @params["time"]?.ReadScalar<float?>() ?? 0f;
             int minCountRaw = @params["minCount"]?.ReadScalar<int?>() ?? @params["count"]?.ReadScalar<int?>() ?? 30;
@@ -266,9 +266,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object ClearBursts(JObject @params)
         {
-            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
+            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params, out var componentError);
             if (ps == null)
-                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+                return new { success = false, message = componentError };
 
             Undo.RecordObject(ps, "Clear Bursts");
             var emission = ps.emission;

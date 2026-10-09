@@ -85,10 +85,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static object GetInfo(JObject @params)
         {
-            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params);
+            ParticleSystem ps = ParticleCommon.FindParticleSystem(@params, out var componentError);
             if (ps == null)
             {
-                return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
+                return new { success = false, message = componentError };
             }
 
             var main = ps.main;

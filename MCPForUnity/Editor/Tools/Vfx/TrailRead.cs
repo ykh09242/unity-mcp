@@ -7,13 +7,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
     {
         public static TrailRenderer FindTrailRenderer(JObject @params) => ManageVfxCommon.FindComponent<TrailRenderer>(@params);
 
+        public static TrailRenderer FindTrailRenderer(JObject @params, out string error) => ManageVfxCommon.FindComponent<TrailRenderer>(@params, out error);
+
         public static string FindTrailRendererError(JObject @params) => ManageVfxCommon.FindComponentError<TrailRenderer>(@params);
 
         public static object GetInfo(JObject @params)
         {
-            TrailRenderer tr = FindTrailRenderer(@params);
+            TrailRenderer tr = FindTrailRenderer(@params, out var componentError);
             if (tr == null)
-                return new { success = false, message = FindTrailRendererError(@params) };
+                return new { success = false, message = componentError };
 
             return new
             {
