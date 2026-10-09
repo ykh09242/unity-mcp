@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from models import MCPResponse
+from models.response_lifetime import ResponsePollLifetime
 
 
 def _in_pytest() -> bool:
@@ -55,11 +56,37 @@ async def preflight(
     if _in_pytest():
         return None
 
+    async with ResponsePollLifetime() as observations:
+        result = await _preflight(
+            ctx,
+            observations,
+            requires_no_tests=requires_no_tests,
+            wait_for_no_compile=wait_for_no_compile,
+            refresh_if_dirty=refresh_if_dirty,
+            max_wait_s=max_wait_s,
+        )
+        # Only an unresponsive diagnostic is derived from the last observation.
+        # Keep its ownership through delivery; internal snapshots and local busy
+        # replies can be discarded without touching sibling or refresh responses.
+        if result is None or result.error != "editor_unresponsive":
+            observations.discard()
+        return result
+
+
+async def _preflight(
+    ctx,
+    observations: ResponsePollLifetime,
+    *,
+    requires_no_tests: bool,
+    wait_for_no_compile: bool,
+    refresh_if_dirty: bool,
+    max_wait_s: float,
+) -> MCPResponse | None:
     # Load canonical editor state (server enriches advice + staleness).
     try:
         from services.resources.editor_state import get_editor_state_authoritative
 
-        state_resp = await get_editor_state_authoritative(ctx)
+        state_resp = await observations.fetch(get_editor_state_authoritative(ctx), timeout=None)
         state = state_resp.model_dump() if hasattr(state_resp, "model_dump") else state_resp
     except Exception:
         # If we cannot determine readiness, fall back to proceeding (tools already contain retry logic).
@@ -99,6 +126,9 @@ async def preflight(
                     refreshed.model_dump() if hasattr(refreshed, "model_dump") else refreshed
                 )
                 if isinstance(refresh_result, dict) and refresh_result.get("success") is False:
+                    # This diagnostic belongs to refresh, not the editor snapshot,
+                    # even if it uses the same editor_unresponsive error code.
+                    observations.discard()
                     return MCPResponse(**refresh_result)
                 if (
                     not isinstance(refresh_result, dict)
@@ -144,7 +174,9 @@ async def preflight(
             try:
                 from services.resources.editor_state import get_editor_state_authoritative
 
-                state_resp = await get_editor_state_authoritative(ctx)
+                state_resp = await observations.fetch(
+                    get_editor_state_authoritative(ctx), timeout=None
+                )
                 state = state_resp.model_dump() if hasattr(state_resp, "model_dump") else state_resp
                 data = state.get("data") if isinstance(state, dict) else None
                 if not isinstance(data, dict):
