@@ -81,13 +81,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             if (clipsToken == null || clipsToken.Count == 0)
             {
-                int totalFrames = GetSliceCount(path);
                 clipsToken = new JArray(
                     new JObject
                     {
                         ["name"] = animName,
                         ["start_frame"] = 0,
-                        ["end_frame"] = totalFrames - 1,
                         ["fps"] = 12,
                     }
                 );
@@ -230,11 +228,5 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 message = diagnostics.FirstError,
                 diagnostics = diagnostics.Build(),
             };
-
-        private static int GetSliceCount(string path)
-        {
-            int count = AssetDatabase.LoadAllAssetsAtPath(path).OfType<UnityEngine.Sprite>().Count();
-            return count > 0 ? count : 1;
-        }
     }
 }
