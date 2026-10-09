@@ -165,6 +165,7 @@ namespace MCPForUnity.Editor.Services
                 {
                     Jobs.Clear();
                     long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    PackageInfo[] recoveryPackages = null;
 
                     foreach (var pj in state.jobs)
                     {
@@ -188,7 +189,7 @@ namespace MCPForUnity.Editor.Services
                         // Domain reload recovery for running jobs
                         if (job.Status == PackageJobStatus.Running)
                         {
-                            TryRecoverJob(job, now);
+                            TryRecoverJobWithSnapshot(job, now, ref recoveryPackages);
                         }
 
                         Jobs[pj.job_id] = job;
@@ -203,10 +204,16 @@ namespace MCPForUnity.Editor.Services
 
         internal static void TryRecoverJob(PackageJob job, long nowMs)
         {
+            PackageInfo[] recoveryPackages = null;
+            TryRecoverJobWithSnapshot(job, nowMs, ref recoveryPackages);
+        }
+
+        private static void TryRecoverJobWithSnapshot(PackageJob job, long nowMs, ref PackageInfo[] recoveryPackages)
+        {
             try
             {
                 string packageName = ExtractPackageName(job.Package);
-                var allPackages = PackageInfo.GetAllRegisteredPackages();
+                var allPackages = recoveryPackages ??= PackageInfo.GetAllRegisteredPackages();
                 var info = FindPackageInfo(allPackages, packageName, job.Package);
 
                 if (job.Operation == "add" || job.Operation == "embed")
