@@ -1110,6 +1110,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private Task SendCommandResultAsync(string id, object result, CancellationToken token)
         {
+            token.ThrowIfCancellationRequested();
             var responseJson = new LargeResultWriter.PreparedJson(
                 JsonConvert.SerializeObject(
                     new
