@@ -434,7 +434,11 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
         /// </summary>
         internal static List<object> CollectUniqueEdges(Component pbMesh)
         {
-            var allFaces = (System.Collections.IList)GetFacesArray(pbMesh);
+            return CollectUniqueEdgesFromFaces(pbMesh, (System.Collections.IList)GetFacesArray(pbMesh));
+        }
+
+        private static List<object> CollectUniqueEdgesFromFaces(Component pbMesh, System.Collections.IList allFaces)
+        {
             var uniqueEdges = new List<object>();
             var edgeSet = new HashSet<(int, int)>();
             var edgesProp = _faceType.GetProperty("edges");
@@ -2625,10 +2629,11 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 ["materials"] = materials,
             };
 
+            System.Collections.IList positionsListFaces = null;
             if (include == "faces" || include == "all")
             {
                 var positionsPropFaces = _proBuilderMeshType.GetProperty("positions");
-                var positionsListFaces = positionsPropFaces?.GetValue(pbMesh) as System.Collections.IList;
+                positionsListFaces = positionsPropFaces?.GetValue(pbMesh) as System.Collections.IList;
                 var indexesPropFaces = _faceType.GetProperty("indexes");
                 var smGroupProp = _faceType.GetProperty("smoothingGroup");
                 var manualUVProp = _faceType.GetProperty("manualUV");
@@ -2639,8 +2644,22 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     var face = facesList[i];
                     var smGroup = smGroupProp?.GetValue(face);
                     var manualUV = manualUVProp?.GetValue(face);
-                    var normal = ComputeFaceNormal(pbMesh, face, positionsListFaces, indexesPropFaces);
-                    var center = ComputeFaceCenter(pbMesh, face, positionsListFaces, indexesPropFaces);
+                    Vector3 normal;
+                    Vector3 center;
+                    if (positionsListFaces != null && indexesPropFaces != null)
+                    {
+                        var indexes = indexesPropFaces.GetValue(face) as System.Collections.IList;
+                        normal = ComputeFaceNormalFromSnapshot(pbMesh, positionsListFaces, indexes);
+                        center =
+                            indexes != null
+                                ? ComputeFaceCenterFromSnapshot(pbMesh, positionsListFaces, indexes)
+                                : ComputeFaceCenter(pbMesh, face, positionsListFaces, indexesPropFaces);
+                    }
+                    else
+                    {
+                        normal = ComputeFaceNormal(pbMesh, face, positionsListFaces, indexesPropFaces);
+                        center = ComputeFaceCenter(pbMesh, face, positionsListFaces, indexesPropFaces);
+                    }
                     var direction = ClassifyDirection(normal);
 
                     faceDetails.Add(
@@ -2661,11 +2680,15 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             if (include == "edges" || include == "all")
             {
-                var uniqueEdges = CollectUniqueEdges(pbMesh);
+                var uniqueEdges = CollectUniqueEdgesFromFaces(pbMesh, facesList);
 
                 // Get vertex positions for enriched edge data
-                var positionsProp = _proBuilderMeshType.GetProperty("positions");
-                var positions = positionsProp?.GetValue(pbMesh) as IList<Vector3>;
+                var positions = positionsListFaces as IList<Vector3>;
+                if (positions == null)
+                {
+                    var positionsProp = _proBuilderMeshType.GetProperty("positions");
+                    positions = positionsProp?.GetValue(pbMesh) as IList<Vector3>;
+                }
 
                 var edgeDetails = new List<object>();
                 for (int i = 0; i < uniqueEdges.Count && i < 200; i++)
@@ -2717,6 +2740,11 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 indexesProp = _faceType.GetProperty("indexes");
             var indexes = indexesProp?.GetValue(face) as System.Collections.IList;
 
+            return ComputeFaceNormalFromSnapshot(pbMesh, positions, indexes);
+        }
+
+        private static Vector3 ComputeFaceNormalFromSnapshot(Component pbMesh, System.Collections.IList positions, System.Collections.IList indexes)
+        {
             if (positions == null || indexes == null || indexes.Count < 3)
                 return Vector3.up;
 
@@ -2739,6 +2767,11 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 indexesProp = _faceType.GetProperty("indexes");
             var indexes = indexesProp?.GetValue(face) as System.Collections.IList;
 
+            return ComputeFaceCenterFromSnapshot(pbMesh, positions, indexes);
+        }
+
+        private static Vector3 ComputeFaceCenterFromSnapshot(Component pbMesh, System.Collections.IList positions, System.Collections.IList indexes)
+        {
             if (positions == null || indexes == null || indexes.Count == 0)
                 return pbMesh.transform.position;
 
