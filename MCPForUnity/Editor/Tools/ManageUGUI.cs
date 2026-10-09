@@ -451,8 +451,8 @@ namespace MCPForUnity.Editor.Tools
                 )
                 {
                     // TMP skips its authored base update when the requested size equals the computed size.
-                    var serialized = new SerializedObject(component);
-                    var authoredSize =
+                    using var serialized = new SerializedObject(component);
+                    using var authoredSize =
                         serialized.FindProperty("m_fontSizeBase")
                         ?? throw new ArgumentException("TMP authored font size is unavailable in this Unity version.");
                     if (authoredSize.floatValue != (float)value.Value)
