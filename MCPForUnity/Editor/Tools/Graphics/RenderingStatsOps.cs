@@ -72,13 +72,17 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var allHandles = new List<ProfilerRecorderHandle>();
             ProfilerRecorderHandle.GetAvailable(allHandles);
             var counters = allHandles
-                .Select(h => ProfilerRecorderHandle.GetDescription(h))
-                .Where(d => string.Equals(d.Category.Name, resolvedCategoryName, StringComparison.OrdinalIgnoreCase))
-                .Select(d => new
+                .Select(h =>
                 {
-                    name = d.Name,
-                    category = d.Category.Name,
-                    unit = d.UnitType.ToString(),
+                    var description = ProfilerRecorderHandle.GetDescription(h);
+                    return (description, categoryName: description.Category.Name);
+                })
+                .Where(item => string.Equals(item.categoryName, resolvedCategoryName, StringComparison.OrdinalIgnoreCase))
+                .Select(item => new
+                {
+                    name = item.description.Name,
+                    category = item.categoryName,
+                    unit = item.description.UnitType.ToString(),
                 })
                 .OrderBy(c => c.name)
                 .ToList();
