@@ -17,6 +17,7 @@ namespace MCPForUnity.Editor.Services
         private readonly Func<JObject, CancellationToken, Task> _send;
         private readonly CancellationTokenSource _lifetime;
         private IDisposable _subscription;
+        private CancellationTokenRegistration _connectionCancellation;
         private JObject _pending;
         private bool _sending;
         private bool _disposed;
@@ -34,14 +35,29 @@ namespace MCPForUnity.Editor.Services
             var publisher = new EditorStatePublisher(send, connectionToken);
             try
             {
-                var subscription = EditorStateCache.Subscribe(publisher.Observe);
+                // The dispatcher can cancel while Start is executing and discard its result.
+                // Give the connection ownership before publishing the static observation.
+                var registration = connectionToken.Register(publisher.Dispose);
+                bool keepRegistration;
                 lock (publisher._gate)
                 {
-                    if (publisher._disposed)
-                        subscription.Dispose();
-                    else
+                    keepRegistration = !publisher._disposed;
+                    if (keepRegistration)
+                        publisher._connectionCancellation = registration;
+                }
+                if (!keepRegistration)
+                    registration.Dispose();
+
+                var subscription = EditorStateCache.Subscribe(publisher.Observe);
+                bool keepSubscription;
+                lock (publisher._gate)
+                {
+                    keepSubscription = !publisher._disposed;
+                    if (keepSubscription)
                         publisher._subscription = subscription;
                 }
+                if (!keepSubscription)
+                    subscription.Dispose();
                 return publisher;
             }
             catch
@@ -122,6 +138,7 @@ namespace MCPForUnity.Editor.Services
         public void Dispose()
         {
             IDisposable subscription;
+            CancellationTokenRegistration registration;
             lock (_gate)
             {
                 if (_disposed)
@@ -130,11 +147,21 @@ namespace MCPForUnity.Editor.Services
                 _pending = null;
                 subscription = _subscription;
                 _subscription = null;
+                registration = _connectionCancellation;
+                _connectionCancellation = default;
                 _lifetime.Cancel();
                 if (!_sending)
                     _lifetime.Dispose();
             }
-            subscription?.Dispose();
+            try
+            {
+                subscription?.Dispose();
+            }
+            finally
+            {
+                // Dispose may wait for cancellation's callback, which also takes _gate.
+                registration.Dispose();
+            }
         }
     }
 }
