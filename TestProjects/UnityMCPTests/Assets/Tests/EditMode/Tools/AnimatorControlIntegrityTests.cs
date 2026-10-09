@@ -1,8 +1,10 @@
 using System;
 using System.Linq;
 using System.Text.RegularExpressions;
+using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Tools.Animation;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -133,6 +135,92 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(controller));
             Assert.AreSame(controller, AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(controller)));
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(controller)));
+        }
+
+        [TestCase("1", false)]
+        [TestCase("true", false)]
+        [TestCase("false", false)]
+        [TestCase("1.5", false)]
+        [TestCase("[]", false)]
+        [TestCase("{}", false)]
+        [TestCase("1", true)]
+        public void RawParameterNamesRejectCoercionAndPreserveDefaults(string rawName, bool trigger)
+        {
+            JToken token = JToken.Parse(rawName);
+            if (token is JValue)
+            {
+                controller.parameters = controller
+                    .parameters.Concat(
+                        new[]
+                        {
+                            new AnimatorControllerParameter
+                            {
+                                name = token.ToString(),
+                                type = trigger ? AnimatorControllerParameterType.Trigger : AnimatorControllerParameterType.Float,
+                                defaultFloat = 42,
+                            },
+                        }
+                    )
+                    .ToArray();
+                AssetDatabase.SaveAssets();
+            }
+            var request = Request("Unrelated");
+            request["parameter_name"] = token;
+            request["value"] = trigger ? (JToken)new JObject { ["ignored"] = true } : new JValue(1.25f);
+            var before = Snapshot();
+            int dirtyCount = EditorUtility.GetDirtyCount(controller);
+
+            JObject result = Call(request);
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("'parameterName' must be a string", result.Value<string>("error"));
+            Assert.IsTrue(JToken.DeepEquals(before, Snapshot()));
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(controller));
+        }
+
+        [TestCase("animator_play", "1")]
+        [TestCase("animator_crossfade", "true")]
+        [TestCase("animator_play", "[]")]
+        [TestCase("animator_crossfade", "{}")]
+        public void RawStateNamesRejectBeforeChangingOwnedAnimator(string action, string rawName)
+        {
+            var request = new JObject
+            {
+                ["action"] = action,
+                ["target"] = ownedObject.GetInstanceIDCompat(),
+                ["search_method"] = "by_id",
+                ["state_name"] = JToken.Parse(rawName),
+            };
+            string before = EditorJsonUtility.ToJson(animator);
+            int dirtyCount = EditorUtility.GetDirtyCount(animator);
+
+            JObject result = Call(request);
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("'stateName' must be a string", result.Value<string>("error"));
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(animator));
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(animator));
+        }
+
+        [TestCase("parameter_name")]
+        [TestCase("parameterName")]
+        public void CommandDateNameRetainsLegacyMissingParameterDiagnostic(string key)
+        {
+            var request = Request("Unused");
+            request.Remove("parameter_name");
+            request[key] = "2026-10-09T12:00:00Z";
+            var command = JsonConvert.DeserializeObject<Command>(JsonConvert.SerializeObject(new Command { type = "manage_animation", @params = request }));
+            Assert.AreEqual(JTokenType.Date, command.@params[key].Type);
+            string legacyName = command.@params[key].ToString();
+            var before = Snapshot();
+            int dirtyCount = EditorUtility.GetDirtyCount(controller);
+
+            JObject result = Call(command.@params);
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("Parameter '" + legacyName + "' not found", result.Value<string>("message"));
+            Assert.IsTrue(JToken.DeepEquals(before, Snapshot()));
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(controller));
         }
 
         [TestCase("Speed", "int")]

@@ -9,6 +9,15 @@ namespace MCPForUnity.Editor.Tools.Animation
 {
     internal static class AnimatorControl
     {
+        private static string ReadName(JObject parameters, string key)
+        {
+            JToken token = parameters[key];
+            // Command deserialization can turn a JSON ISO string into a Date token.
+            if (token != null && token.Type != JTokenType.String && token.Type != JTokenType.Date && token.Type != JTokenType.Null)
+                throw new ArgumentException($"'{key}' must be a string.");
+            return token?.ToString();
+        }
+
         public static object Play(JObject @params)
         {
             var go = ObjectResolver.ResolveGameObject(@params["target"], @params["searchMethod"]?.ToString());
@@ -19,7 +28,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (animator == null)
                 return AnimatorResolver.NotResolvedError(go, animatorCandidates);
 
-            string stateName = @params["stateName"]?.ToString();
+            string stateName = ReadName(@params, "stateName");
             if (string.IsNullOrEmpty(stateName))
                 return new { success = false, message = "'stateName' is required" };
 
@@ -43,7 +52,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (animator == null)
                 return AnimatorResolver.NotResolvedError(go, animatorCandidates);
 
-            string stateName = @params["stateName"]?.ToString();
+            string stateName = ReadName(@params, "stateName");
             if (string.IsNullOrEmpty(stateName))
                 return new { success = false, message = "'stateName' is required" };
 
@@ -68,7 +77,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (animator == null)
                 return AnimatorResolver.NotResolvedError(go, animatorCandidates);
 
-            string paramName = @params["parameterName"]?.ToString();
+            string paramName = ReadName(@params, "parameterName");
             if (string.IsNullOrEmpty(paramName))
                 return new { success = false, message = "'parameterName' is required" };
 
