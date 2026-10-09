@@ -17,6 +17,7 @@ namespace MCPForUnity.Editor.Services.Server
     public class PidFileManager : IPidFileManager
     {
         private readonly string _projectRoot;
+        private readonly string _projectIdentityHash;
 
         public PidFileManager()
             : this(GetProjectRootPath()) { }
@@ -24,13 +25,11 @@ namespace MCPForUnity.Editor.Services.Server
         internal PidFileManager(string projectRoot)
         {
             _projectRoot = Path.GetFullPath(projectRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string identity = Application.platform == RuntimePlatform.WindowsEditor ? _projectRoot.ToUpperInvariant() : _projectRoot;
+            _projectIdentityHash = ComputeShortHash(identity);
         }
 
-        internal string PreferenceKey(string key)
-        {
-            string identity = Application.platform == RuntimePlatform.WindowsEditor ? _projectRoot.ToUpperInvariant() : _projectRoot;
-            return key + ".Project." + ComputeShortHash(identity);
-        }
+        internal string PreferenceKey(string key) => key + ".Project." + _projectIdentityHash;
 
         internal static string ProjectPreferenceKey(string key) => new PidFileManager().PreferenceKey(key);
 
