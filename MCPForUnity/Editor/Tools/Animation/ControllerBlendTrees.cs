@@ -15,6 +15,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required" };
 
+            ValidateStringToken(@params["controllerPath"], "controllerPath");
             controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
             if (controllerPath == null)
                 return new { success = false, message = "Invalid asset path" };
@@ -32,6 +33,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new { success = false, message = "'blendParameter' is required" };
 
             int layerIndex = @params["layerIndex"]?.ReadScalar<int?>() ?? 0;
+            ValidateStringToken(@params["stateName"], "stateName");
+            ValidateStringToken(@params["blendParameter"], "blendParameter");
 
             var layers = controller.layers;
             if (layerIndex < 0 || layerIndex >= layers.Length)
@@ -83,6 +86,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required" };
 
+            ValidateStringToken(@params["controllerPath"], "controllerPath");
             controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
             if (controllerPath == null)
                 return new { success = false, message = "Invalid asset path" };
@@ -115,6 +119,9 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (!requestedBlendType.HasValue)
                 return new { success = false, message = "'blendType' must be SimpleDirectional2D, FreeformDirectional2D, or FreeformCartesian2D" };
             BlendTreeType blendType = requestedBlendType.Value;
+            ValidateStringToken(@params["stateName"], "stateName");
+            ValidateStringToken(@params["blendParameterX"], "blendParameterX");
+            ValidateStringToken(@params["blendParameterY"], "blendParameterY");
 
             var layers = controller.layers;
             if (layerIndex < 0 || layerIndex >= layers.Length)
@@ -168,6 +175,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required" };
 
+            ValidateStringToken(@params["controllerPath"], "controllerPath");
             controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
             if (controllerPath == null)
                 return new { success = false, message = "Invalid asset path" };
@@ -184,6 +192,8 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(clipPath))
                 return new { success = false, message = "'clipPath' is required" };
 
+            ValidateStringToken(@params["stateName"], "stateName");
+            ValidateStringToken(@params["clipPath"], "clipPath");
             clipPath = AssetPathUtility.GetAssetReferencePath(clipPath, allowPackages: true);
             var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
             if (clip == null)
@@ -297,6 +307,13 @@ namespace MCPForUnity.Editor.Tools.Animation
             {
                 return false;
             }
+        }
+
+        private static void ValidateStringToken(JToken token, string name)
+        {
+            // The default Command JSON parser turns ISO string values into Date tokens.
+            if (token != null && token.Type != JTokenType.Null && token.Type != JTokenType.String && token.Type != JTokenType.Date)
+                throw new ArgumentException($"'{name}' must be a string.");
         }
     }
 }
