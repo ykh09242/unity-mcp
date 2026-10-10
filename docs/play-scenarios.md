@@ -300,6 +300,64 @@ Use the stored definition and environment information to reproduce a failure. Co
 hashes and environments before treating timing differences as a regression. No automatic retries
 replace the original result, and evidence export errors must not be reported as a successful CI run.
 
+## Compare saved query counts offline
+
+Use `compare-queries` to turn two saved runs into an explicit query-count budget check for CI.
+It reads both input files once and never connects to Unity, starts a Player, replays a scenario,
+changes the reports, or follows their embedded artifact paths. Select an individual Editor report
+from `Library/MCPForUnity/PlayScenarioRuns`, or a standalone Player `run.json`.
+
+```sh
+unity-mcp --format json play-scenario compare-queries baseline.json candidate.json \
+  --max-target-searches-increase 0 \
+  --max-hierarchy-visits-increase 25
+```
+
+Both limits are required non-negative integer counts (at most 9,223,372,036,854,775,807).
+The example permits no additional target searches and at most 25 additional hierarchy visits.
+Each decision uses `candidate - baseline <= limit`, including equality and negative deltas;
+zero is a real count, while a missing/null counter is invalid. No percentages or elapsed-time
+thresholds are inferred.
+
+| Exit | Result |
+| --- | --- |
+| 0 | `within_budget`: both reports are complete and compatible, and neither increase exceeds its limit. |
+| 1 | `budget_exceeded`: comparable evidence exceeds at least one supplied limit. |
+| 2 | `not_comparable`: invalid/unsupported input, incomplete or failed evidence, or incompatible reports. |
+
+JSON results have `schema_version: 1`, a `status`, baseline/candidate identity and reproduction
+labels, and `queries.target_searches` / `queries.hierarchy_visits`. Each counter contains
+`baseline`, `candidate`, signed `delta`, `max_increase` and `within_budget`. A `not_comparable`
+result contains a bounded `error` and no query decision. Argument syntax errors retain the
+CLI's existing stderr diagnostic and exit 2. Text and table output show both budgets and values.
+
+Reports must have the same normalized scenario definition, recorded definition hash, exact Unity
+version, execution environment and repeat count. Editor-to-Editor and Player-to-Player comparisons
+are supported. Package version and caller-provided source revision may differ; both are displayed.
+The stored hash and source label establish recorded compatibility, not authenticity of execution.
+
+Admission requires a finished successful run, released runner resources, an explicit version-1
+iteration ledger, and every planned setup/main/cleanup step completed in order for every repetition.
+Run, cleanup, export and unexpected-log failures are rejected, including contradictory success
+labels. Enabled resource assertions must be complete, successful and within their declared budgets.
+A successful report cannot exceed its own enabled native query budget. Player reports additionally
+require explicit Player schema 1 or 2, completed finalization, zero exit code and no progress error.
+Legacy reports without a ledger, active/partially finalized reports, suite/session summaries,
+MCP response envelopes and unknown report versions cannot establish a passing comparison.
+
+Inputs must be regular UTF-8 JSON files no larger than 2 MiB and no deeper than 32 levels. Duplicate
+keys, non-finite numbers, links/reparse paths, directories, UNC/device namespaces and protected
+data paths are rejected. Namespace checks precede filesystem access; ancestors are checked
+from the root before their descendants. Every passed step must record at least one evaluation;
+enabled resource measurements must enclose all executed steps in their iteration, including cleanup.
+Counters must be non-negative signed 64-bit integers; booleans, floats and numeric strings are
+not accepted. URLs, stdin and report directories are not input formats for this command.
+
+Query counts can change with polling, scene state or machine load. Collect equivalent runs and
+choose tolerances from repeated evidence before adopting a required CI gate. A lower count does
+not prove faster execution; a budget violation alone does not establish its cause. This command
+adds no native runner, baseline retention policy or automatic CI job.
+
 ## Save and run scenario suites
 
 Add up to 16 unique tags to a scenario, for example `"tags": ["smoke", "resource-lifetime"]`.
