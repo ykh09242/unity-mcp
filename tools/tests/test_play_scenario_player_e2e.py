@@ -413,7 +413,7 @@ def test_real_session_per_arm_completion_shape(
     write_json(
         session / "session.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "session_id": session_id,
             "process_scope": "batch",
             "children_started": 3,

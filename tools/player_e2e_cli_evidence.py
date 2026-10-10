@@ -8,10 +8,10 @@ from player_e2e_artifacts import contained, digest, read_json, unique_object
 from player_e2e_reports import check_report, check_progress, require
 
 
-def check_child(directory: Path, bundle: dict) -> dict:
+def check_child(directory: Path, bundle: dict, *, cleanup_failure: bool = False) -> dict:
     """CLI success must be backed by its native child exit and report, not stdout."""
     process = read_json(directory / "process.json", 65536)
-    report = check_report(directory, bundle, process)
+    report = check_report(directory, bundle, process, cleanup_failure=cleanup_failure)
     snapshots = process.get("progress_observations", [])
     final = read_json(directory / "progress.json", 16384)
     # The launcher retains compact counters after its identity checks. Recheck the
@@ -60,7 +60,7 @@ def check_cli(directory: Path, bundle: dict, process: dict, expected: str) -> No
     summary = read_json(child_root / "session.json", 65536)
     require(child_root.name == summary.get("session_id"), "Session directory/identity mismatch")
     require(
-        summary.get("schema_version") == 1 and summary.get("process_scope") == "batch",
+        summary.get("schema_version") == 2 and summary.get("process_scope") == "batch",
         "Session summary schema/scope mismatch",
     )
     jsonl = child_root / "outcomes.jsonl"

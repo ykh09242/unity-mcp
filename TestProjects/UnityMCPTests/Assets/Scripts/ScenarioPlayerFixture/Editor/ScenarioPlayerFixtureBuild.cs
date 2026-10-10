@@ -168,6 +168,13 @@ namespace MCPForUnityTests.PlayScenarios.Player
                                 ["name"] = "isolate",
                                 ["action"] = "reset_state",
                                 ["reset_ids"] = new JArray("fixture-state"),
+                            },
+                            new JObject
+                            {
+                                ["name"] = "setup-ready",
+                                ["action"] = "wait_state",
+                                ["state_id"] = "fixture-setup",
+                                ["state_equals"] = true,
                             }
                         ),
                         ["steps"] = new JArray(
@@ -207,6 +214,13 @@ namespace MCPForUnityTests.PlayScenarios.Player
                                 ["name"] = "restore-menu",
                                 ["action"] = "load_scene",
                                 ["scene"] = menu,
+                            },
+                            new JObject
+                            {
+                                ["name"] = "cleanup-ready",
+                                ["action"] = "wait_state",
+                                ["state_id"] = "fixture-cleanup",
+                                ["state_equals"] = true,
                             }
                         ),
                     }

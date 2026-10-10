@@ -26,7 +26,15 @@
     "hang": "owned-timeout",
     "state-wrong": "timed_out",
     "state-missing": "timed_out",
-    "state-destroyed": "failed"
+    "state-destroyed": "failed",
+    "iteration-setup-stop": "iteration-session",
+    "iteration-setup-continue": "iteration-session",
+    "iteration-main-stop": "iteration-session",
+    "iteration-main-continue": "iteration-session",
+    "iteration-cleanup-stop": "iteration-session",
+    "iteration-cleanup-continue": "iteration-session",
+    "iteration-timeout": "iteration-run",
+    "iteration-cancel": "iteration-run"
   },
   "failure_codes": {
     "state-wrong": "condition_unmet",

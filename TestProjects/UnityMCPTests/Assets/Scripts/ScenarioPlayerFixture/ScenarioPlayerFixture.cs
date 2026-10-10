@@ -13,6 +13,7 @@ namespace MCPForUnityTests.PlayScenarios.Player
         public bool IsMenu;
         public string GameScene;
         private static ScenarioPlayerFixtureState state;
+        internal static int Iteration => state == null ? 0 : state.ResetCount;
         internal static string Mode
         {
             get

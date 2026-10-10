@@ -62,7 +62,9 @@ def check_progress(observations: list, request: dict, pid: int) -> None:
     require(alive, "Initial snapshot is not actual main-loop liveness")
 
 
-def check_report(directory: Path, bundle: dict, process: dict) -> dict:
+def check_report(
+    directory: Path, bundle: dict, process: dict, *, cleanup_failure: bool = False
+) -> dict:
     """Require identity, terminal state, cleanup and actual native exit agreement."""
     request = read_json(directory / "request.json", 16384)
     report = read_json(directory / "run.json")
@@ -119,7 +121,14 @@ def check_report(directory: Path, bundle: dict, process: dict) -> dict:
     steps = report.get("steps", [])
     cleanup = [step for step in steps if step.get("stage") == "cleanup"]
     require(
-        cleanup and all(step.get("status") == "passed" for step in cleanup),
+        cleanup
+        and (
+            cleanup_failure
+            or (
+                any(step.get("status") == "passed" for step in cleanup)
+                and all(step.get("status") in ("passed", "skipped") for step in cleanup)
+            )
+        ),
         "Native cleanup body did not pass",
     )
     if report["status"] == "succeeded":

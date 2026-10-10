@@ -7,6 +7,7 @@ import re
 
 from player_e2e_artifacts import contained, digest, inventory, read_json, verify_bundle
 from player_e2e_cli_evidence import check_cli
+from player_e2e_iterations import check_iteration_case
 from player_e2e_reports import require, check_report, check_progress, check_preflight
 
 MANIFEST = Path(__file__).with_name("unity-player-e2e.json")
@@ -37,6 +38,9 @@ def check_case(root: Path, case: str, bundle: dict, receipt: dict) -> None:
     require(hashes == observed_hashes, "Receipt does not cover every underlying artifact")
     for relative, expected_hash in hashes.items():
         require(digest(contained(directory, relative)) == expected_hash, "Artifact hash mismatch")
+    if case.startswith("iteration-"):
+        check_iteration_case(directory, bundle, process, case)
+        return
     if expected.startswith("cli-") or expected.startswith("session-"):
         check_cli(directory, bundle, process, expected)
         return

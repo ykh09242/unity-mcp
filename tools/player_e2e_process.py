@@ -22,6 +22,7 @@ class Invocation:
     directory: Path
     timeout: float = 75
     cancel_on_progress: bool = False
+    cancel_iteration: int | None = None
     deadline_after_progress: float | None = None
     environment: dict[str, str] | None = None
 
@@ -49,6 +50,7 @@ def execute(invocation: Invocation) -> dict:
     request = (
         read_json(directory / "request.json", 16384)
         if (invocation.cancel_on_progress or invocation.deadline_after_progress is not None)
+        and (directory / "request.json").exists()
         else None
     )
     started = int(time.time() * 1000)
@@ -95,6 +97,15 @@ def execute(invocation: Invocation) -> dict:
     try:
         while process.poll() is None:
             progress_path = directory / "progress.json"
+            native_pid = process.pid
+            if invocation.cancel_iteration is not None:
+                candidates = list(directory.glob("cli-output/*/progress.json"))
+                if len(candidates) > 1:
+                    raise ValueError("Cancellation requires one owned CLI child")
+                if candidates:
+                    progress_path = candidates[0]
+                    request = read_json(progress_path.with_name("request.json"), 16384)
+                    native_pid = None
             if progress_path.exists():
                 try:
                     from cli.utils.play_scenario_player_progress import read_progress_bytes
@@ -114,7 +125,9 @@ def execute(invocation: Invocation) -> dict:
                         and progress["main_loop_sequence"] > 0
                         and type(progress.get("heartbeat_unix_ms")) is int
                         and progress["heartbeat_unix_ms"] > 0
-                        and progress.get("process_id") == process.pid
+                        and type(progress.get("process_id")) is int
+                        and progress["process_id"] > 0
+                        and (native_pid is None or progress["process_id"] == native_pid)
                         and all(
                             progress.get(key) == request.get(key)
                             for key in (
@@ -135,8 +148,18 @@ def execute(invocation: Invocation) -> dict:
                             deadline, time.monotonic() + invocation.deadline_after_progress
                         )
                         live_deadline_armed = True
-                    if matching_live and invocation.cancel_on_progress and not cancelled:
-                        (directory / "cancel").write_text("cancel\n", encoding="utf-8")
+                    iteration_matches = invocation.cancel_iteration is None or (
+                        progress.get("iteration") == invocation.cancel_iteration
+                        and progress.get("stage") == "main"
+                        and progress.get("step_index") == 2
+                    )
+                    if (
+                        matching_live
+                        and iteration_matches
+                        and invocation.cancel_on_progress
+                        and not cancelled
+                    ):
+                        progress_path.with_name("cancel").write_text("cancel\n", encoding="utf-8")
                         cancelled = True
                         deadline = min(deadline, time.monotonic() + 20)
                 except FileNotFoundError:

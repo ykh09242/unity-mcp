@@ -12,6 +12,7 @@ from uuid import uuid4
 from check_play_scenario_player_evidence import check, check_case
 from player_e2e_artifacts import digest, inventory, read_json, verify_bundle, write_json
 from player_e2e_process import Invocation, execute
+from player_e2e_iterations import iteration_command
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Server/src"))
@@ -202,12 +203,21 @@ def run_case(args: argparse.Namespace, case: str, bundle: dict, builds: tuple[Pa
         timeout = 150
         if case != "cli-session":
             environment["MCP_SCENARIO_FIXTURE_MODE"] = "error"
+    cancel_iteration = None
+    if case.startswith("iteration-"):
+        command, fixture_mode, cancel_iteration = iteration_command(
+            case, builds[0], directory, args.source_revision
+        )
+        environment["MCP_SCENARIO_FIXTURE_MODE"] = fixture_mode
+        # The actual CLI creates its own attributed native request.
+        (directory / "request.json").unlink()
     execute(
         Invocation(
             command,
             directory,
             timeout=timeout,
-            cancel_on_progress=case == "cancel",
+            cancel_on_progress=case == "cancel" or cancel_iteration is not None,
+            cancel_iteration=cancel_iteration,
             deadline_after_progress=3 if case == "hang" else None,
             environment=environment,
         )
