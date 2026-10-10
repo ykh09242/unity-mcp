@@ -879,6 +879,34 @@ namespace MCPForUnity.Editor.Tools
         private const int MaxCachedPanels = 8;
         private const long MaxCachedPanelPixels = 64L * 1024 * 1024;
 
+        private static void PruneUICache()
+        {
+            List<int> stalePanels = null;
+            foreach (var entry in s_panelRTs)
+            {
+                if (entry.Value == null || (s_panelBindings.TryGetValue(entry.Key, out var binding) && binding.panel == null))
+                    (stalePanels ??= new List<int>()).Add(entry.Key);
+            }
+            if (stalePanels == null)
+                return;
+
+            foreach (int panelId in stalePanels)
+            {
+                if (!s_panelRTs.TryGetValue(panelId, out var ownedTarget))
+                    continue;
+                bool hasBinding = s_panelBindings.TryGetValue(panelId, out var binding);
+                if (ownedTarget != null && (!hasBinding || binding.panel != null))
+                    continue;
+                if (ReferenceEquals(ownedTarget, null))
+                {
+                    s_panelRTs.Remove(panelId);
+                    s_panelBindings.Remove(panelId);
+                }
+                else
+                    FinishPanelRender(panelId, binding.panel, ownedTarget, false, true);
+            }
+        }
+
         private static void ValidateUICacheBudget(int panelId, int width, int height)
         {
             long pixels = (long)width * height;
@@ -1217,6 +1245,7 @@ namespace MCPForUnity.Editor.Tools
                 renderPanel = panelSettings;
                 int psId = panelSettings.GetInstanceIDCompat();
                 renderPanelId = psId;
+                PruneUICache();
                 ValidateUICacheBudget(psId, width, height);
                 bool rememberBinding = !s_panelRTs.TryGetValue(psId, out var ownedTarget) || panelSettings.targetTexture != ownedTarget;
                 var previousTarget = rememberBinding ? panelSettings.targetTexture : s_panelBindings[psId].previousTarget;

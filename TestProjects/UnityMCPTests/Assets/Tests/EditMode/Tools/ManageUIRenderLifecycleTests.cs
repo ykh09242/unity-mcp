@@ -54,6 +54,76 @@ namespace MCPForUnityTests.Editor.Tools
             return (id, panel, owned, prior);
         }
 
+        private static void PruneCache() => typeof(ManageUI).GetMethod("PruneUICache", PrivateStatic).Invoke(null, null);
+
+        [Test]
+        public void DestroyedBorrowedPanelPrunesOnlyItsOwnedTarget()
+        {
+            var item = Seed();
+            UnityEngine.Object.DestroyImmediate(item.panel);
+            PruneCache();
+            Assert.IsFalse(Cache.ContainsKey(item.id));
+            Assert.IsFalse(Bindings.ContainsKey(item.id));
+            Assert.IsTrue(item.owned == null);
+            Assert.IsTrue(item.prior != null);
+            PruneCache();
+            Assert.IsTrue(item.prior != null);
+        }
+
+        [Test]
+        public void DestroyedOwnedTargetPrunesSlotAndPreservesExternalBinding()
+        {
+            var item = Seed();
+            var external = new RenderTexture(8, 8, 0);
+            objects.Add(external);
+            item.panel.targetTexture = external;
+            UnityEngine.Object.DestroyImmediate(item.owned);
+            PruneCache();
+            Assert.IsFalse(Cache.ContainsKey(item.id));
+            Assert.IsFalse(Bindings.ContainsKey(item.id));
+            Assert.AreSame(external, item.panel.targetTexture);
+            Assert.IsTrue(item.panel != null && item.prior != null && external != null);
+        }
+
+        [Test]
+        public void EightLivePanelCachesRemainAndStillRejectNinthPanel()
+        {
+            var items = new List<(int id, PanelSettings panel, RenderTexture owned, RenderTexture prior)>();
+            for (int i = 0; i < 8; i++)
+                items.Add(Seed());
+            var next = ScriptableObject.CreateInstance<PanelSettings>();
+            objects.Add(next);
+            PruneCache();
+            var exception = Assert.Throws<TargetInvocationException>(() =>
+                typeof(ManageUI).GetMethod("ValidateUICacheBudget", PrivateStatic).Invoke(null, new object[] { next.GetInstanceIDCompat(), 16, 16 })
+            );
+            StringAssert.Contains("at most 8 panels", exception.InnerException.Message);
+            foreach (var item in items)
+            {
+                Assert.AreSame(item.owned, Cache[item.id]);
+                Assert.AreSame(item.owned, item.panel.targetTexture);
+                Assert.IsTrue(item.panel != null && item.owned != null && item.prior != null);
+            }
+        }
+
+        [Test]
+        public void ReplacementLiveBindingIsPreservedAfterOldPanelDestruction()
+        {
+            var item = Seed();
+            UnityEngine.Object.DestroyImmediate(item.panel);
+            var replacement = ScriptableObject.CreateInstance<PanelSettings>();
+            var replacementPrior = new RenderTexture(4, 4, 0);
+            objects.Add(replacement);
+            objects.Add(replacementPrior);
+            replacement.targetTexture = item.owned;
+            Bindings[item.id] = (replacement, replacementPrior);
+            PruneCache();
+            Assert.AreSame(item.owned, Cache[item.id]);
+            Assert.AreSame(replacement, Bindings[item.id].panel);
+            Assert.AreSame(item.owned, replacement.targetTexture);
+            Assert.IsTrue(item.owned != null && item.prior != null && replacementPrior != null);
+        }
+
         [Test]
         public void FailedCaptureRestoresBindingAndKeepsBorrowedPanelCache()
         {
