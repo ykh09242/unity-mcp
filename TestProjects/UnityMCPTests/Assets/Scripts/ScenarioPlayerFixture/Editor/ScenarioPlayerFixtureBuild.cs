@@ -187,6 +187,14 @@ namespace MCPForUnityTests.PlayScenarios.Player
                             },
                             new JObject
                             {
+                                ["name"] = "ready",
+                                ["action"] = "wait_state",
+                                ["state_id"] = "fixture-ready",
+                                ["state_equals"] = true,
+                                ["timeout_seconds"] = 3,
+                            },
+                            new JObject
+                            {
                                 ["name"] = "player",
                                 ["action"] = "wait_object",
                                 ["target_id"] = "fixture-player",
@@ -213,7 +221,11 @@ namespace MCPForUnityTests.PlayScenarios.Player
                         throw new InvalidOperationException("The synthetic pristine batch startup was not established.");
                     Debug.Log("PLAYER_FIXTURE_PRISTINE_BUILD_STARTUP_ESTABLISHED");
                 }
-                PlayScenarioPlayerBuildResult result = PlayScenarioPlayerBuild.Build(definition.Name, args[outputIndex + 1]);
+                int revisionIndex = Array.IndexOf(args, "--mcp-scenario-source-revision");
+                if (revisionIndex >= 0 && revisionIndex + 1 >= args.Length)
+                    throw new ArgumentException("--mcp-scenario-source-revision requires a label.");
+                string revision = revisionIndex >= 0 ? args[revisionIndex + 1] : null;
+                PlayScenarioPlayerBuildResult result = PlayScenarioPlayerBuild.Build(definition.Name, args[outputIndex + 1], revision);
                 Debug.Log("PLAYER_FIXTURE_BUILD_COMPLETED:" + result.BundlePath);
             }
             finally

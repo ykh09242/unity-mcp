@@ -13,13 +13,13 @@ namespace MCPForUnityTests.PlayScenarios.Player
         public bool IsMenu;
         public string GameScene;
         private static ScenarioPlayerFixtureState state;
-        private static string Mode
+        internal static string Mode
         {
             get
             {
                 string[] args = Environment.GetCommandLineArgs();
                 int index = Array.IndexOf(args, "--mcp-fixture-mode");
-                return index >= 0 && index + 1 < args.Length ? args[index + 1] : "success";
+                return index >= 0 && index + 1 < args.Length ? args[index + 1] : Environment.GetEnvironmentVariable("MCP_SCENARIO_FIXTURE_MODE") ?? "success";
             }
         }
 
@@ -70,7 +70,9 @@ namespace MCPForUnityTests.PlayScenarios.Player
             {
                 if (Mode == "error")
                     Debug.LogError("Player fixture deliberate unexpected error.");
-                if (Mode == "timeout" || Mode == "cancel")
+                if (Mode != "state-missing")
+                    new GameObject("Fixture Ready Probe").AddComponent<ScenarioPlayerFixtureProbe>();
+                if (Mode == "timeout" || Mode == "cancel" || Mode == "crash" || Mode == "hang")
                     return;
                 var player = new GameObject("Player", typeof(PlayScenarioTarget));
                 player.GetComponent<PlayScenarioTarget>().TargetId = "fixture-player";

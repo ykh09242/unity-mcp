@@ -22,8 +22,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     /// <summary>Explicit Windows x64 Mono scenario builds; never changes global scripting defines.</summary>
     public static class PlayScenarioPlayerBuild
     {
-        public static PlayScenarioPlayerBuildResult Build(string savedName, string outputDirectory)
+        public static PlayScenarioPlayerBuildResult Build(string savedName, string outputDirectory, string buildSourceRevision = null)
         {
+            PlayScenarioReproduction.ValidateSourceRevision(buildSourceRevision);
             if (
                 PlayScenarioService.IsBusy
                 || EditorApplication.isPlayingOrWillChangePlaymode
@@ -70,7 +71,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (AssetDatabase.LoadAssetAtPath<SceneAsset>(path) == null)
                     throw new ArgumentException("Scenario scene asset is unavailable: " + path);
             string package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(PlayScenarioPlayerBuild).Assembly)?.version ?? "unknown";
-            JObject manifest = PlayScenarioPlayerBundle.Create(definition, Application.unityVersion, package);
+            JObject manifest = PlayScenarioPlayerBundle.Create(definition, Application.unityVersion, package, buildSourceRevision: buildSourceRevision);
             string manifestJson = manifest.ToString(Formatting.None);
             PlayScenarioPlayerBundle.Parse(manifestJson);
             string temporaryAssets = "Assets/__MCPScenarioBuild_" + Guid.NewGuid().ToString("N");
@@ -108,6 +109,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 );
                 if (report.summary.result != BuildResult.Succeeded || !File.Exists(executable))
                     throw new InvalidOperationException("Player scenario build failed: " + report.summary.result);
+                PlayScenarioPlayerPayload.Attach(manifest, output);
+                manifestJson = manifest.ToString(Formatting.None);
+                PlayScenarioPlayerBundle.Parse(manifestJson);
                 string bundlePath = Path.Combine(output, PlayScenarioPlayerBundle.ManifestName);
                 PlayScenarioPlayerFiles.WriteNew(bundlePath, manifestJson, PlayScenarioPlayerBundle.Limit);
                 return new PlayScenarioPlayerBuildResult
@@ -133,7 +137,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             string[] args = Environment.GetCommandLineArgs();
             string name = Argument(args, "--mcp-scenario-name");
             string output = Argument(args, "--mcp-scenario-output");
-            PlayScenarioPlayerBuildResult result = Build(name, output);
+            int revisionIndex = Array.IndexOf(args, "--mcp-scenario-source-revision");
+            string revision = revisionIndex < 0 ? null : Argument(args, "--mcp-scenario-source-revision");
+            PlayScenarioPlayerBuildResult result = Build(name, output, revision);
             Debug.Log("Built scenario Player bundle: " + result.BundlePath);
         }
 

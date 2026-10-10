@@ -1,6 +1,8 @@
 #if MCP_FOR_UNITY_PLAY_SCENARIOS && !UNITY_EDITOR
 using System;
 using System.IO;
+using System.Diagnostics;
+using Debug = UnityEngine.Debug;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -21,6 +23,10 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private bool subscribed;
         private bool finished;
         private int processedUnexpectedLogs;
+        private PlayScenarioPlayerProgress progress;
+        private readonly Stopwatch elapsed = new Stopwatch();
+        private long mainLoopSequence;
+        private string progressError;
         private static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
@@ -34,6 +40,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private void Start()
         {
             Application.runInBackground = true;
+            elapsed.Start();
             try
             {
                 string[] arguments = Environment.GetCommandLineArgs();
@@ -52,6 +59,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     File.Exists(Path.Combine(directory, "run.json"))
                     || File.Exists(Path.Combine(directory, "run.json.tmp"))
                     || File.Exists(Path.Combine(directory, "cancel"))
+                    || File.Exists(Path.Combine(directory, "progress.json"))
+                    || File.Exists(Path.Combine(directory, "progress.json.tmp"))
                 )
                     throw new IOException("Player run directory contains stale output or cancellation evidence.");
                 request = PlayScenarioPlayerRequest.Parse(PlayScenarioPlayerFiles.Read(requestPath, 4096));
@@ -71,8 +80,22 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 run.Reproduction.UnityVersion = Application.unityVersion;
                 run.Reproduction.PackageVersion = bundle.PackageVersion;
                 run.Reproduction.SourceRevision = request.SourceRevision;
-                if (request.ScenarioName != bundle.Definition.Name || request.DefinitionHash != bundle.DefinitionHash)
-                    throw new ArgumentException("Player request does not match the frozen scenario bundle.");
+                request.ValidateBundle(bundle);
+                if (request.SchemaVersion == 2 && PlayScenarioPlayerFiles.IsWithin(Path.GetDirectoryName(Application.dataPath), directory))
+                    throw new ArgumentException("Version-2 Player requests and reports must be outside the immutable build root.");
+                int processId;
+                using (Process process = Process.GetCurrentProcess())
+                    processId = process.Id;
+                progress = new PlayScenarioPlayerProgress(directory, request, bundle, processId);
+                try
+                {
+                    progress.PublishInitial(run);
+                }
+                catch (Exception error)
+                {
+                    RecordProgressError(error);
+                    throw;
+                }
                 PlayScenarioPlayerCapabilities.Validate(bundle.Definition, PlayScenarioPlayerInput.Backend != null);
                 foreach (string path in bundle.ScenePaths)
                 {
@@ -109,6 +132,19 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     engine.Cancel(Now);
                 engine.Tick(Now, true);
                 Drain();
+                mainLoopSequence++;
+                try
+                {
+                    if (progress.PublishMainLoop(run, mainLoopSequence, Now, elapsed.ElapsedMilliseconds))
+                        Debug.Log("PLAYER_MAIN_LOOP_HEARTBEAT:" + mainLoopSequence);
+                }
+                catch (Exception error)
+                {
+                    RecordProgressError(error);
+                    engine.Interrupt(progressError, Now);
+                    Complete(2);
+                    return;
+                }
                 if (!engine.Running)
                     Complete(PlayScenarioPlayerLogDrain.ExitCode(run));
             }
@@ -116,6 +152,21 @@ namespace MCPForUnity.Runtime.PlayScenarios
             {
                 engine.Interrupt("Player runner failed: " + error.GetType().Name + ": " + error.Message, Now);
                 Complete(1);
+            }
+        }
+
+        private void RecordProgressError(Exception error)
+        {
+            progressError = PlayScenarioEngine.Bounded("Player progress publication failed: " + error.GetType().Name + ": " + error.Message, 2048);
+            if (run == null)
+                return;
+            run.ReportError = run.ReportError ?? progressError;
+            if (engine == null || !engine.Running)
+            {
+                run.Status = "failed";
+                run.Error = run.Error ?? progressError;
+                run.Failure = run.Failure ?? new PlayScenarioFailure { Code = "player_progress_failed", Message = progressError };
+                run.FinishedUnixMs = Now;
             }
         }
 
@@ -146,9 +197,13 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 run.Error = message;
                 run.FinishedUnixMs = Now;
                 run.RunnerResourcesReleased = true;
-                run.Failure = error is PlayScenarioException scenario
-                    ? scenario.Failure
-                    : new PlayScenarioFailure { Code = "player_preflight_failed", Message = message };
+                run.Failure =
+                    run.Failure
+                    ?? (
+                        error is PlayScenarioException scenario
+                            ? scenario.Failure
+                            : new PlayScenarioFailure { Code = "player_preflight_failed", Message = message }
+                    );
                 foreach (PlayScenarioStepResult step in run.Steps)
                 {
                     step.Status = "skipped";
@@ -193,6 +248,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
                         new JsonSerializerSettings { NullValueHandling = NullValueHandling.Include, TypeNameHandling = TypeNameHandling.None }
                     )
                 );
+                request.AddReproduction(report, bundle);
+                report["progress_error"] = progressError;
                 report["finalization_state"] = "completed";
                 report["exit_code"] = exitCode;
                 report["timeout_seconds"] = request.TimeoutSeconds;

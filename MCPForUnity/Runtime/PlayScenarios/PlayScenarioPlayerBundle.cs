@@ -14,22 +14,36 @@ namespace MCPForUnity.Runtime.PlayScenarios
     /// <summary>The versioned, frozen definition shipped only by explicit scenario builds.</summary>
     public sealed class PlayScenarioPlayerBundle
     {
-        public const int Limit = 128 * 1024;
+        public const int Limit = 1024 * 1024;
         public const string ResourceName = "MCPPlayScenarioBundle";
         public const string ManifestName = "scenario-bundle.json";
         public const string ExecutableName = "MCPScenarioPlayer.exe";
+        public int SchemaVersion { get; private set; }
+        public string BuildId { get; private set; }
+        public string BuildSourceRevision { get; private set; }
         public PlayScenarioDefinition Definition { get; private set; }
         public string DefinitionHash { get; private set; }
         public string[] ScenePaths { get; private set; }
         public string UnityVersion { get; private set; }
         public string PackageVersion { get; private set; }
 
-        public static JObject Create(PlayScenarioDefinition definition, string unityVersion, string packageVersion)
+        public static JObject Create(
+            PlayScenarioDefinition definition,
+            string unityVersion,
+            string packageVersion,
+            string buildId = null,
+            string buildSourceRevision = null
+        )
         {
             definition = PlayScenarioDefinition.Parse(JObject.FromObject(definition));
+            buildId = buildId ?? Guid.NewGuid().ToString("N");
+            ValidateHex(buildId, 32, "build_id");
+            PlayScenarioReproduction.ValidateSourceRevision(buildSourceRevision);
             return new JObject
             {
-                ["schema_version"] = 1,
+                ["schema_version"] = 2,
+                ["build_id"] = buildId,
+                ["build_source_revision"] = buildSourceRevision,
                 ["scenario_name"] = definition.Name,
                 ["definition_hash"] = PlayScenarioReproduction.Hash(definition),
                 ["definition_json"] = DefinitionJson(definition),
@@ -44,8 +58,9 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public static PlayScenarioPlayerBundle Parse(string json)
         {
             JObject value = Read(json, Limit);
-            Fields(
-                value,
+            int schema = Schema(value);
+            string[] fields =
+            {
                 "schema_version",
                 "scenario_name",
                 "definition_hash",
@@ -54,10 +69,25 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 "scene_paths",
                 "definition",
                 "unity_version",
-                "package_version"
+                "package_version",
+            };
+            Fields(
+                value,
+                schema == 1
+                    ? fields
+                    : fields.Concat(new[] { "build_id", "build_source_revision", "payload_inventory", "payload_inventory_json", "payload_hash" }).ToArray()
             );
-            if (value["schema_version"]?.Type != JTokenType.Integer || (int)value["schema_version"] != 1 || Text(value, "executable", 64) != ExecutableName)
-                throw new ArgumentException("Unsupported Player bundle schema or executable.");
+            if (Text(value, "executable", 64) != ExecutableName)
+                throw new ArgumentException("Unsupported Player executable.");
+            string buildId = null,
+                buildRevision = null;
+            if (schema == 2)
+            {
+                buildId = Text(value, "build_id", 32);
+                ValidateHex(buildId, 32, "build_id");
+                buildRevision = OptionalRevision(value, "build_source_revision", true);
+                PlayScenarioPlayerPayload.ValidateManifest(value);
+            }
             if (!(value["definition"] is JObject definitionJson))
                 throw new ArgumentException("Bundle definition must be an object.");
             PlayScenarioDefinition definition = PlayScenarioDefinition.Parse(definitionJson);
@@ -77,6 +107,9 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 throw new ArgumentException("Player bundle scene inventory does not match its definition.");
             return new PlayScenarioPlayerBundle
             {
+                SchemaVersion = schema,
+                BuildId = buildId,
+                BuildSourceRevision = buildRevision,
                 Definition = definition,
                 DefinitionHash = hash,
                 ScenePaths = scenes,
@@ -85,7 +118,41 @@ namespace MCPForUnity.Runtime.PlayScenarios
             };
         }
 
-        public static string DefinitionJson(PlayScenarioDefinition definition) => Sort(JObject.FromObject(definition)).ToString(Formatting.None);
+        public static string DefinitionJson(PlayScenarioDefinition definition) => CanonicalJson(JObject.FromObject(definition));
+
+        public static string CanonicalJson(JToken value) => Sort(value).ToString(Formatting.None);
+
+        internal static int Schema(JObject value)
+        {
+            if (
+                value["schema_version"]?.Type != JTokenType.Integer
+                || !int.TryParse(value["schema_version"].ToString(), out int schema)
+                || (schema != 1 && schema != 2)
+            )
+                throw new ArgumentException("Unsupported Player schema.");
+            return schema;
+        }
+
+        internal static void ValidateHex(string value, int length, string field)
+        {
+            if (value == null || value.Length != length || !Regex.IsMatch(value, @"\A[0-9a-f]+\z"))
+                throw new ArgumentException("Invalid Player " + field + ".");
+        }
+
+        internal static string OptionalRevision(JObject value, string field, bool required = false)
+        {
+            if (value.Property(field) == null)
+            {
+                if (required)
+                    throw new ArgumentException("Player " + field + " must be present, even when null.");
+                return null;
+            }
+            if (value[field].Type == JTokenType.Null)
+                return null;
+            string revision = Text(value, field, 128);
+            PlayScenarioReproduction.ValidateSourceRevision(revision);
+            return revision;
+        }
 
         private static JToken Sort(JToken token)
         {
@@ -140,6 +207,10 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
     public sealed class PlayScenarioPlayerRequest
     {
+        public int SchemaVersion { get; private set; }
+        public string BuildId { get; private set; }
+        public string BuildSourceRevision { get; private set; }
+        public string PayloadHash { get; private set; }
         public string JobId { get; private set; }
         public string ScenarioName { get; private set; }
         public string DefinitionHash { get; private set; }
@@ -150,18 +221,23 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public static PlayScenarioPlayerRequest Parse(string json)
         {
             JObject value = PlayScenarioPlayerBundle.Read(json, 4096);
+            int schema = PlayScenarioPlayerBundle.Schema(value);
+            string[] fields = { "schema_version", "job_id", "scenario_name", "definition_hash", "repeat_count", "timeout_seconds", "source_revision" };
             PlayScenarioPlayerBundle.Fields(
                 value,
-                "schema_version",
-                "job_id",
-                "scenario_name",
-                "definition_hash",
-                "repeat_count",
-                "timeout_seconds",
-                "source_revision"
+                schema == 1 ? fields : fields.Concat(new[] { "build_id", "build_source_revision", "payload_hash" }).ToArray()
             );
-            if (value["schema_version"]?.Type != JTokenType.Integer || (int)value["schema_version"] != 1)
-                throw new ArgumentException("Unsupported Player request schema.");
+            string buildId = null,
+                buildRevision = null,
+                payloadHash = null;
+            if (schema == 2)
+            {
+                buildId = PlayScenarioPlayerBundle.Text(value, "build_id", 32);
+                payloadHash = PlayScenarioPlayerBundle.Text(value, "payload_hash", 64);
+                PlayScenarioPlayerBundle.ValidateHex(buildId, 32, "build_id");
+                PlayScenarioPlayerBundle.ValidateHex(payloadHash, 64, "payload_hash");
+                buildRevision = PlayScenarioPlayerBundle.OptionalRevision(value, "build_source_revision", true);
+            }
             string job = PlayScenarioPlayerBundle.Text(value, "job_id", 32);
             string hash = PlayScenarioPlayerBundle.Text(value, "definition_hash", 64);
             string name = PlayScenarioPlayerBundle.Text(value, "scenario_name", 64);
@@ -176,6 +252,10 @@ namespace MCPForUnity.Runtime.PlayScenarios
             }
             return new PlayScenarioPlayerRequest
             {
+                SchemaVersion = schema,
+                BuildId = buildId,
+                BuildSourceRevision = buildRevision,
+                PayloadHash = payloadHash,
                 JobId = job,
                 ScenarioName = name,
                 DefinitionHash = hash,
@@ -183,6 +263,34 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 TimeoutSeconds = Integer(value, "timeout_seconds", 1, 1800),
                 SourceRevision = revision,
             };
+        }
+
+        public void ValidateBundle(PlayScenarioPlayerBundle bundle)
+        {
+            if (
+                SchemaVersion != bundle.SchemaVersion
+                || ScenarioName != bundle.Definition.Name
+                || DefinitionHash != bundle.DefinitionHash
+                || (SchemaVersion == 2 && (BuildId != bundle.BuildId || BuildSourceRevision != bundle.BuildSourceRevision))
+            )
+                throw new ArgumentException("Player request does not match the frozen scenario and build identity.");
+        }
+
+        public void AddReproduction(JObject report, PlayScenarioPlayerBundle bundle)
+        {
+            if (!(report["reproduction"] is JObject reproduction))
+            {
+                reproduction = new JObject();
+                report["reproduction"] = reproduction;
+            }
+            string buildId = SchemaVersion == 2 ? bundle?.BuildId ?? BuildId : null;
+            string buildRevision = SchemaVersion == 2 ? (bundle != null ? bundle.BuildSourceRevision : BuildSourceRevision) : null;
+            string payloadHash = SchemaVersion == 2 ? PayloadHash : null;
+            reproduction["build_id"] = buildId == null ? JValue.CreateNull() : new JValue(buildId);
+            reproduction["build_source_revision"] = buildRevision == null ? JValue.CreateNull() : new JValue(buildRevision);
+            reproduction["payload_hash"] = payloadHash == null ? JValue.CreateNull() : new JValue(payloadHash);
+            reproduction["payload_verification"] = SchemaVersion == 2 ? "launcher_admission" : "unverified_legacy";
+            report["player_schema_version"] = SchemaVersion;
         }
 
         private static int Integer(JObject value, string name, int min, int max)

@@ -32,6 +32,44 @@ namespace MCPForUnity.Runtime.PlayScenarios
             }
         }
 
+        public static bool IsWithin(string root, string path)
+        {
+            root = CheckedAbsolute(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            path = CheckedAbsolute(path);
+            return string.Equals(root, path, StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>Replaces only a previously created diagnostic file, without a delete/rename gap.</summary>
+        public static void ReplaceExisting(string path, string json, int limit)
+        {
+            path = CheckedAbsolute(path);
+            byte[] bytes = Utf8.GetBytes(json);
+            if (bytes.Length == 0 || bytes.Length > limit)
+                throw new IOException("Player output exceeds its bounded size.");
+            string temporary = CheckedAbsolute(path + ".tmp");
+            if (!File.Exists(path) || File.Exists(temporary))
+                throw new IOException("Player diagnostic ownership is unavailable or stale.");
+            bool created = false;
+            try
+            {
+                using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    created = true;
+                    stream.Write(bytes, 0, bytes.Length);
+                    stream.Flush(true);
+                }
+                CheckedAbsolute(path);
+                File.Replace(temporary, path, null);
+            }
+            catch
+            {
+                if (created && File.Exists(temporary))
+                    File.Delete(temporary);
+                throw;
+            }
+        }
+
         public static void WriteNew(string path, string json, int limit)
         {
             path = CheckedAbsolute(path);
