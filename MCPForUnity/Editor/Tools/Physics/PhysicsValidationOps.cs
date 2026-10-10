@@ -132,11 +132,14 @@ namespace MCPForUnity.Editor.Tools.Physics
         {
             bool check3D = dimension == "3d" || dimension == "both";
             bool check2D = dimension == "2d" || dimension == "both";
+            Rigidbody rb = null;
+            Collider[] colliders3D = null;
+            Collider2D[] colliders2D = null;
 
             // Check 1: MeshCollider without Convex on non-kinematic Rigidbody
             if (check3D)
             {
-                var rb = go.GetComponent<Rigidbody>();
+                rb = go.GetComponent<Rigidbody>();
                 if (rb != null && !rb.isKinematic)
                 {
                     foreach (var mc in go.GetComponents<MeshCollider>())
@@ -153,8 +156,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             // Check 2: Collider without Rigidbody on non-static object
             if (check3D)
             {
-                var colliders3D = go.GetComponents<Collider>();
-                if (colliders3D.Length > 0 && go.GetComponent<Rigidbody>() == null && !go.isStatic)
+                colliders3D = go.GetComponents<Collider>();
+                if (colliders3D.Length > 0 && rb == null && !go.isStatic)
                 {
                     bool hasAnimator = go.GetComponent<Animator>() != null || HasAnimatorInParent(go);
                     if (hasAnimator)
@@ -171,7 +174,7 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             if (check2D)
             {
-                var colliders2D = go.GetComponents<Collider2D>();
+                colliders2D = go.GetComponents<Collider2D>();
                 if (colliders2D.Length > 0 && go.GetComponent<Rigidbody2D>() == null && !go.isStatic)
                 {
                     bool hasAnimator = go.GetComponent<Animator>() != null || HasAnimatorInParent(go);
@@ -205,7 +208,6 @@ namespace MCPForUnity.Editor.Tools.Physics
             // Check 4: Fast object with Discrete collision detection
             if (check3D)
             {
-                var rb = go.GetComponent<Rigidbody>();
                 if (rb != null && rb.collisionDetectionMode == CollisionDetectionMode.Discrete)
                 {
                     string nameLower = go.name.ToLowerInvariant();
@@ -222,7 +224,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             // Check 5: Missing physics material
             if (check3D)
             {
-                foreach (var col in go.GetComponents<Collider>())
+                foreach (var col in colliders3D)
                 {
                     if (col.sharedMaterial == null)
                     {
@@ -234,7 +236,7 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             if (check2D)
             {
-                foreach (var col in go.GetComponents<Collider2D>())
+                foreach (var col in colliders2D)
                 {
                     if (col.sharedMaterial == null)
                     {
@@ -247,7 +249,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             // Check 7: 2D/3D physics mixing
             if (dimension == "both")
             {
-                bool has3D = go.GetComponent<Rigidbody>() != null || go.GetComponent<Collider>() != null;
+                bool has3D = rb != null || go.GetComponent<Collider>() != null;
                 bool has2D = go.GetComponent<Rigidbody2D>() != null || go.GetComponent<Collider2D>() != null;
 
                 if (has3D && has2D)
@@ -257,14 +259,14 @@ namespace MCPForUnity.Editor.Tools.Physics
                         var components3D = new List<string>();
                         var components2D = new List<string>();
 
-                        if (go.GetComponent<Rigidbody>() != null)
+                        if (rb != null)
                             components3D.Add("Rigidbody");
-                        foreach (var c in go.GetComponents<Collider>())
+                        foreach (var c in colliders3D)
                             components3D.Add(c.GetType().Name);
 
                         if (go.GetComponent<Rigidbody2D>() != null)
                             components2D.Add("Rigidbody2D");
-                        foreach (var c in go.GetComponents<Collider2D>())
+                        foreach (var c in colliders2D)
                             components2D.Add(c.GetType().Name);
 
                         return $"'{go.name}' has both 3D ({string.Join(", ", components3D)}) and 2D ({string.Join(", ", components2D)}) physics components.";
