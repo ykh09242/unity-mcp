@@ -83,13 +83,16 @@ namespace MCPForUnity.Editor.Resources.Scene
                 childrenIds.Add(child.gameObject.GetInstanceIDCompat());
             }
 
+            int layer = go.layer;
+            var parent = transform.parent;
+
             return new
             {
                 instanceID = go.GetInstanceIDCompat(),
                 name = go.name,
                 tag = go.tag,
-                layer = go.layer,
-                layerName = LayerMask.LayerToName(go.layer),
+                layer = layer,
+                layerName = LayerMask.LayerToName(layer),
                 active = go.activeSelf,
                 activeInHierarchy = go.activeInHierarchy,
                 isStatic = go.isStatic,
@@ -102,7 +105,7 @@ namespace MCPForUnity.Editor.Resources.Scene
                     scale = SerializeVector3(transform.localScale),
                     lossyScale = SerializeVector3(transform.lossyScale),
                 },
-                parent = transform.parent != null ? transform.parent.gameObject.GetInstanceIDCompat() : (int?)null,
+                parent = parent != null ? parent.gameObject.GetInstanceIDCompat() : (int?)null,
                 children = childrenIds,
                 componentTypes = componentTypes,
                 path = GameObjectLookup.GetGameObjectPath(go),
