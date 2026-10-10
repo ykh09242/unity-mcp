@@ -75,8 +75,8 @@ def execute(invocation: Invocation) -> dict:
     def drain() -> None:
         retained = 0
         try:
-            with (directory / "process.log").open("xb") as log:
-                while chunk := process.stdout.read(8192):
+            with process.stdout as output, (directory / "process.log").open("xb") as log:
+                while chunk := output.read(8192):
                     log.write(chunk[: max(0, LOG_LIMIT - retained)])
                     retained += len(chunk)
                     if retained > LOG_LIMIT and not overflow:

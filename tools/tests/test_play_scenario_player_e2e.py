@@ -577,3 +577,32 @@ def test_hang_requires_actual_fixture_live_update_witness(tmp_path, witness):
     else:
         with pytest.raises(ValueError, match="actual main-loop hang"):
             checker.check_case(tmp_path, "hang", {}, receipt)
+
+
+@pytest.mark.parametrize("outcome", ["normal", "timeout", "interrupt"])
+def test_owned_stdout_pipe_is_closed_after_actual_process(tmp_path, monkeypatch, outcome):
+    import player_e2e_process as processes
+
+    children = []
+    actual_popen = processes.subprocess.Popen
+
+    def capture_child(*args, **kwargs):
+        child = actual_popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(processes.subprocess, "Popen", capture_child)
+    script = "print('completed')" if outcome == "normal" else "import time;time.sleep(10)"
+    invocation = Invocation([sys.executable, "-c", script], tmp_path, timeout=0.2)
+    if outcome == "interrupt":
+
+        def interrupt(_seconds):
+            raise KeyboardInterrupt()
+
+        monkeypatch.setattr(processes.time, "sleep", interrupt)
+        with pytest.raises(KeyboardInterrupt):
+            execute(invocation)
+    else:
+        execute(invocation)
+    assert children[0].poll() is not None
+    assert children[0].stdout.closed
