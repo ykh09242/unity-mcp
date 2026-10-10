@@ -21,6 +21,17 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private string draftJson;
 
         [SerializeField]
+        private string cleanDraftJson;
+
+        [SerializeField]
+        private List<string> undoDrafts = new List<string>();
+
+        [SerializeField]
+        private List<string> redoDrafts = new List<string>();
+
+        private const int DraftHistoryLimit = 50;
+
+        [SerializeField]
         private string savedName;
 
         [SerializeField]
@@ -40,6 +51,11 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private ScrollView scenarioList;
         private ScrollView stepList;
         private ScrollView runResults;
+        private VisualElement optionsContainer;
+        private ScrollView setupList;
+        private ScrollView cleanupList;
+        private PlayScenarioHistoryEditor history;
+        private Label preflightResult;
         private TextField nameField;
         private TextField copyNameField;
         private IntegerField pollField;
@@ -50,11 +66,14 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private Button deleteButton;
         private Button runButton;
         private Button cancelButton;
+        private Button undoButton;
+        private Button redoButton;
         private bool polling;
         private double nextStatusRefresh;
         internal Func<string, int, int, string, object> StartRun;
         internal Func<string, object> ReadStatus;
         internal Func<string, object> CancelRun;
+        internal Func<PlayScenarioDefinition, JObject> CheckPreflight;
         internal Func<string, string, string, string, string, int> ShowDialog;
         internal bool IsPolling => polling;
         internal string CurrentJobId => jobId;
@@ -82,6 +101,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             StartRun = null;
             ReadStatus = null;
             CancelRun = null;
+            CheckPreflight = null;
             ShowDialog = null;
         }
 
@@ -147,13 +167,17 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             pollField = new IntegerField("Poll interval (ms)") { name = "pollInterval" };
             pollField.RegisterValueChangedCallback(evt => Edit(() => draft.PollIntervalMs = evt.newValue));
             panel.Add(pollField);
-            panel.Add(Note("Name: lowercase slug. Poll: 100–2000 ms. First step must load_scene. Each wait is bounded to 1–120 seconds."));
+            panel.Add(Note("Name: lowercase slug. Poll: 100–2000 ms. First executed setup/main step must load_scene. Each wait is bounded to 1–120 seconds."));
             var toolbar = Row();
             saveButton = ActionButton("Save", "saveScenario", () => TrySave());
             toolbar.Add(saveButton);
             deleteButton = ActionButton("Delete", "deleteScenario", DeleteScenario);
             toolbar.Add(deleteButton);
             toolbar.Add(ActionButton("Add Step", "addStep", AddStep));
+            undoButton = ActionButton("Undo", "undoDraft", () => RestoreHistory(undoDrafts, redoDrafts));
+            redoButton = ActionButton("Redo", "redoDraft", () => RestoreHistory(redoDrafts, undoDrafts));
+            toolbar.Add(undoButton);
+            toolbar.Add(redoButton);
             panel.Add(toolbar);
             var copyRow = Row();
             copyNameField = new TextField("Copy name") { name = "copyScenarioName" };
@@ -166,9 +190,22 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             validation = new Label { name = "scenarioValidation" };
             validation.AddToClassList("scenario-validation");
             panel.Add(validation);
+            var preflight = ActionButton("Validate current scene", "preflightScenario", Preflight);
+            preflight.tooltip = "Read-only scene asset and current target checks. Future scene/runtime checks are deferred.";
+            panel.Add(preflight);
+            preflightResult = new Label { name = "preflightResult" };
+            preflightResult.AddToClassList("scenario-note");
+            panel.Add(preflightResult);
+            var authoring = new ScrollView { name = "scenarioAuthoring" };
+            authoring.AddToClassList("scenario-scroll");
+            optionsContainer = new VisualElement();
+            authoring.Add(optionsContainer);
+            setupList = BuildStage(authoring, "Setup", "setup");
             stepList = new ScrollView { name = "scenarioSteps" };
-            stepList.AddToClassList("scenario-scroll");
-            panel.Add(stepList);
+            authoring.Add(new Label("Main steps"));
+            authoring.Add(stepList);
+            cleanupList = BuildStage(authoring, "Cleanup", "cleanup");
+            panel.Add(authoring);
             columns.Add(panel);
         }
 
@@ -181,7 +218,11 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             var timeout = new IntegerField("Run timeout (s)") { name = "runTimeout", value = runTimeoutSeconds };
             timeout.RegisterValueChangedCallback(evt => runTimeoutSeconds = evt.newValue);
             panel.Add(timeout);
-            panel.Add(Note("Repeat: 1–10. Total timeout: 1–1800 s. Each repeat reloads the first scene; static state and DontDestroyOnLoad objects persist."));
+            panel.Add(
+                Note(
+                    "Repeat: 1–10. Total timeout: 1–1800 s. Each repeat executes setup → main → cleanup. Static state and DontDestroyOnLoad objects persist unless your stages reset them."
+                )
+            );
             var toolbar = Row();
             runButton = ActionButton("Save & Run", "runScenario", RunScenario);
             runButton.tooltip = "Saves the validated definition, then starts Play Mode. The backend run continues if this window is closed.";
@@ -189,11 +230,73 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             toolbar.Add(runButton);
             toolbar.Add(cancelButton);
             panel.Add(toolbar);
-            panel.Add(Note("Closing this window does not cancel a run. Use Cancel Run to stop it. Finishing or cancelling leaves Play Mode unchanged."));
+            panel.Add(
+                Note(
+                    "Closing this window does not cancel a run. Use Cancel Run to stop it. Cleanup runs after completion, failure, timeout or cancellation when possible. Finishing leaves Play Mode unchanged."
+                )
+            );
             runResults = new ScrollView { name = "runResults" };
             runResults.AddToClassList("scenario-scroll");
             panel.Add(runResults);
+            history = new PlayScenarioHistoryEditor(panel, Store, () => draft.Name, SetMessage);
             columns.Add(panel);
+        }
+
+        private ScrollView BuildStage(VisualElement parent, string title, string stage)
+        {
+            var section = new Foldout { text = title + " steps", name = stage + "Steps" };
+            var list = new ScrollView();
+            section.Add(
+                ActionButton(
+                    "Add " + title + " Step",
+                    "add" + title + "Step",
+                    () =>
+                    {
+                        var steps = stage == "setup" ? draft.SetupSteps : draft.CleanupSteps;
+                        if (steps.Count >= 16)
+                        {
+                            SetMessage("Each setup/cleanup stage supports at most 16 steps.", true);
+                            return;
+                        }
+                        Edit(() =>
+                            steps.Add(
+                                new PlayScenarioStep
+                                {
+                                    Name = title + " step",
+                                    Action = "wait_object",
+                                    Target = "",
+                                }
+                            )
+                        );
+                        RenderSteps();
+                    }
+                )
+            );
+            section.Add(list);
+            parent.Add(section);
+            return list;
+        }
+
+        private void Preflight()
+        {
+            try
+            {
+                var definition = PlayScenarioDefinition.Parse(Json(draft));
+                JObject response = CheckPreflight != null ? CheckPreflight(definition) : UnityPlayScenarioHost.Preflight(definition);
+                var checks = response["data"]?["checks"] as JArray;
+                if (response["success"]?.Value<bool>() != true || checks == null)
+                    throw new InvalidOperationException("Unexpected preflight response.");
+                preflightResult.text = string.Join(
+                    "\n",
+                    checks.Select(check => $"{check["stage"]}.{check["index"].Value<int>() + 1} {check["name"]}: {check["status"]} — {check["detail"]}")
+                );
+                preflightResult.EnableInClassList("scenario-error", response["data"]?["valid"]?.Value<bool>() != true);
+            }
+            catch (Exception exception)
+            {
+                preflightResult.text = exception.Message;
+                preflightResult.AddToClassList("scenario-error");
+            }
         }
 
         private static VisualElement Panel(string className, string title)
@@ -243,7 +346,13 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             }
             if (draft == null || draft.Steps == null)
                 draft = Template();
+            draft.SetupSteps = draft.SetupSteps ?? new List<PlayScenarioStep>();
+            draft.CleanupSteps = draft.CleanupSteps ?? new List<PlayScenarioStep>();
             PersistDraft();
+            if (!dirty && string.IsNullOrEmpty(cleanDraftJson))
+                cleanDraftJson = draftJson;
+            undoDrafts = undoDrafts ?? new List<string>();
+            redoDrafts = redoDrafts ?? new List<string>();
         }
 
         private static PlayScenarioDefinition Template() =>
@@ -285,11 +394,45 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
 
         private void Edit(Action change)
         {
+            string previous = draftJson;
             change();
+            if (preflightResult != null)
+                preflightResult.text = "";
             PersistDraft();
-            dirty = true;
-            hasUnsavedChanges = true;
+            if (previous == draftJson)
+                return;
+            PushHistory(undoDrafts, previous);
+            redoDrafts.Clear();
+            dirty = draftJson != cleanDraftJson;
+            hasUnsavedChanges = dirty;
             UpdateValidation();
+        }
+
+        private static void PushHistory(List<string> history, string snapshot)
+        {
+            history.Add(snapshot);
+            if (history.Count > DraftHistoryLimit)
+                history.RemoveAt(0);
+        }
+
+        private void RestoreHistory(List<string> source, List<string> destination)
+        {
+            if (source.Count == 0)
+                return;
+            PushHistory(destination, draftJson);
+            draftJson = source[source.Count - 1];
+            source.RemoveAt(source.Count - 1);
+            draft = null;
+            dirty = draftJson != cleanDraftJson;
+            RestoreDraft();
+            RenderDraft();
+        }
+
+        private void ResetHistory()
+        {
+            undoDrafts.Clear();
+            redoDrafts.Clear();
+            cleanDraftJson = dirty ? null : draftJson;
         }
 
         private void RenderDraft()
@@ -303,11 +446,18 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             copyNameField.SetValueWithoutNotify("");
             deleteButton.SetEnabled(!string.IsNullOrEmpty(savedName));
             hasUnsavedChanges = dirty;
+            PlayScenarioOptionsEditor.Render(optionsContainer, draft, Edit);
+            preflightResult.text = "";
             RenderSteps();
             UpdateValidation();
         }
 
-        private void RenderSteps() => PlayScenarioStepEditor.Render(stepList, draft, Edit, SetMessage);
+        private void RenderSteps()
+        {
+            PlayScenarioStepEditor.Render(stepList, draft, Edit, SetMessage);
+            PlayScenarioStepEditor.Render(setupList, draft.SetupSteps, "setup", Edit, SetMessage, 16);
+            PlayScenarioStepEditor.Render(cleanupList, draft.CleanupSteps, "cleanup", Edit, SetMessage, 16);
+        }
 
         private bool ValidateDraft(out PlayScenarioDefinition validated)
         {
@@ -332,6 +482,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             if (validation == null)
                 return;
             bool valid = ValidateDraft(out _);
+            undoButton.SetEnabled(undoDrafts.Count > 0);
+            redoButton.SetEnabled(redoDrafts.Count > 0);
             saveButton.SetEnabled(valid);
             runButton.SetEnabled(valid && report?.Status != "running");
             bool copyValid = valid;
@@ -391,6 +543,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             draft = Template();
             dirty = true;
             PersistDraft();
+            ResetHistory();
             RenderDraft();
             RefreshSavedList();
             SetMessage("Choose both scene assets and replace the template target paths.", false);
@@ -406,6 +559,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 savedName = name;
                 dirty = false;
                 PersistDraft();
+                ResetHistory();
                 RenderDraft();
                 RefreshSavedList();
                 SetMessage("Loaded " + name + ".", false);
@@ -436,10 +590,14 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             if (string.IsNullOrEmpty(savedName) && Store.List().Contains(validated.Name))
                 throw new InvalidOperationException("This name already exists. Open that scenario to edit it, or choose a new name.");
             Store.Save(validated);
+            bool firstSave = string.IsNullOrEmpty(savedName);
             draft = validated;
             savedName = validated.Name;
             dirty = false;
             PersistDraft();
+            cleanDraftJson = draftJson;
+            if (firstSave)
+                ResetHistory();
             base.SaveChanges();
             RenderDraft();
             RefreshSavedList();
@@ -461,6 +619,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             }
             dirty = false;
             PersistDraft();
+            ResetHistory();
             base.DiscardChanges();
             if (nameField != null)
                 RenderDraft();
@@ -480,6 +639,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 savedName = copy.Name;
                 dirty = false;
                 PersistDraft();
+                ResetHistory();
                 base.SaveChanges();
                 RenderDraft();
                 RefreshSavedList();
@@ -513,6 +673,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 draft = Template();
                 dirty = false;
                 PersistDraft();
+                ResetHistory();
                 hasUnsavedChanges = false;
                 RenderDraft();
                 RefreshSavedList();
@@ -598,13 +759,18 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 SetMessage(response is ErrorResponse error ? error.Error : "Unexpected scenario response.", true);
                 return false;
             }
+            bool wasRunning = report?.Status == "running";
             JObject data = success.Data as JObject ?? Json(success.Data);
             report = data.ToObject<PlayScenarioRun>(JsonSerializer.Create());
             if (report == null)
                 throw new InvalidOperationException("Scenario response contained no report.");
+            string previousReportId = jobId;
+            bool completed = report.Status != "running";
             jobId = report.JobId;
             SessionState.SetString(SessionJobKey, jobId ?? "");
             RenderReport();
+            if (completed && (wasRunning || previousReportId != jobId))
+                history.Refresh();
             if (report.Status == "running")
                 StartPolling();
             else
@@ -675,10 +841,41 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 runResults.Add(Note("Report save error: " + report.ReportError));
             foreach (var step in report.Steps)
             {
-                var text = Note($"{step.Iteration}.{step.StepIndex + 1} {step.Name} — {step.Status}\n{step.Detail}");
+                var text = Note($"{step.Stage ?? "main"}.{step.Iteration}.{step.StepIndex + 1} {step.Name} — {step.Status}\n{step.Detail}");
                 text.AddToClassList("scenario-result-row");
                 runResults.Add(text);
             }
+            if (!string.IsNullOrEmpty(report.MetricsSummary))
+                runResults.Add(Note(report.MetricsSummary));
+            foreach (string warning in report.MetricWarnings)
+                runResults.Add(Note("Diagnostic warning: " + warning));
+            foreach (var sample in report.Metrics)
+                runResults.Add(
+                    Note(
+                        $"Iteration {sample.Iteration} metrics: managed {sample.ManagedBytes?.ToString() ?? "unavailable"}, allocated {sample.AllocatedBytes?.ToString() ?? "unavailable"}, objects {sample.ObjectCount?.ToString() ?? "unavailable"}; subscriptions {sample.RunnerSubscriptionCount?.ToString() ?? "unavailable"}, handles {sample.RunnerHandleCount?.ToString() ?? "unavailable"}"
+                            + (sample.IgnoredForTrend ? " (warmup)" : "")
+                            + (string.IsNullOrEmpty(sample.Error) ? "" : " — " + sample.Error)
+                    )
+                );
+            if (report.FailureDiagnostics != null)
+                runResults.Add(
+                    Note(
+                        "Failure observation: "
+                            + report.FailureDiagnostics.Observation
+                            + "\n"
+                            + report.FailureDiagnostics.TargetDetail
+                            + "\nScreenshot: "
+                            + (
+                                report.FailureDiagnostics.ScreenshotPath
+                                ?? report.FailureDiagnostics.ScreenshotError
+                                ?? (
+                                    report.Status == "running" && report.Scenario?.Diagnostics?.ScreenshotOnFailure == true
+                                        ? "Pending capture."
+                                        : "Not requested"
+                                )
+                            )
+                    )
+                );
             var logs = new Foldout { text = "Captured logs (" + report.Logs.Count + ")", value = true };
             foreach (var log in report.Logs)
             {

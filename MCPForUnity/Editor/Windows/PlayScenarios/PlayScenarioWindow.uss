@@ -113,3 +113,8 @@
     margin-top: 8px;
     flex-shrink: 0;
 }
+
+.scenario-history-comparison {
+    max-height: 220px;
+    min-height: 0;
+}

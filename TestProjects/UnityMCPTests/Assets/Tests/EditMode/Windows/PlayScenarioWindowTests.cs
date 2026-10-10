@@ -223,7 +223,7 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.IsTrue(Field<Button>("saveScenario").enabledSelf);
             Click("moveStepDown0");
             Assert.IsFalse(Field<Button>("saveScenario").enabledSelf);
-            StringAssert.Contains("first step", Field<Label>("scenarioValidation").text.ToLowerInvariant());
+            StringAssert.Contains("must load_scene", Field<Label>("scenarioValidation").text.ToLowerInvariant());
         }
 
         [Test]
@@ -280,6 +280,10 @@ namespace MCPForUnityTests.Editor.Windows
                 Assert.AreEqual("ScenarioWindowOwnedRoot/Marker", window.Draft.Steps[3].Target);
                 UnityEngine.Object.DestroyImmediate(parent);
                 Assert.AreEqual("ScenarioWindowOwnedRoot/Marker", Field<TextField>("stepTarget3").value);
+                Click("undoDraft");
+                Assert.AreEqual("Player", window.Draft.Steps[3].Target);
+                Click("redoDraft");
+                Assert.AreEqual("ScenarioWindowOwnedRoot/Marker", window.Draft.Steps[3].Target);
             }
             finally
             {
@@ -344,6 +348,64 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.AreEqual(1, reads, "terminal report remains cached while idle");
             Click("refreshScenarios");
             Assert.IsNotNull(Field<Button>("savedScenario_added-outside-window"));
+        }
+
+        [Test]
+        public void FinalizingSnapshotKeepsPollingUntilScreenshotAndSavedHistoryAreAvailable()
+        {
+            OpenSaved();
+            Field<Toggle>("screenshotOnFailure").value = true;
+            Func<string, bool, object> snapshot = (id, finished) =>
+            {
+                var run = new PlayScenarioRun
+                {
+                    JobId = id,
+                    Scenario = store.Get("saved-flow"),
+                    Status = finished ? "failed" : "running",
+                    Phase = finished ? "finished" : "finalizing",
+                    RepeatCount = 1,
+                    StartedUnixMs = 1000,
+                    FinishedUnixMs = finished ? 2000 : (long?)null,
+                    Error = "Synthetic failure",
+                    FailureDiagnostics = new PlayScenarioFailureDiagnostics
+                    {
+                        CapturedUnixMs = 1900,
+                        Observation = "Synthetic failure observation",
+                        ScreenshotPath = finished ? "Library/MCPForUnity/PlayScenarioRuns/" + id + ".png" : null,
+                    },
+                };
+                if (finished)
+                    store.SaveReport(run);
+                var data = JObject.FromObject(run, JsonSerializer.Create());
+                data["pending_status"] = finished ? null : new JValue("failed");
+                return new SuccessResponse(finished ? "Report finalized" : "Finalizing report", data);
+            };
+            window.StartRun = (_, __, ___, id) => snapshot(id, false);
+            int reads = 0;
+            window.ReadStatus = id => snapshot(id, ++reads > 1);
+            Click("runScenario");
+            Assert.IsTrue(window.IsPolling);
+            StringAssert.Contains("finalizing", Field<Label>("runStatus").text);
+            Assert.IsTrue(Field<ScrollView>("runResults").Query<Label>().ToList().Any(label => label.text.Contains("Screenshot: Pending capture.")));
+            Assert.IsFalse(Field<Button>("runScenario").enabledSelf);
+            Assert.IsNull(Field<PopupField<string>>("baselineReport"));
+            ForceStatusTick();
+            Assert.AreEqual(1, reads);
+            Assert.IsTrue(window.IsPolling);
+            Assert.AreEqual(0, store.ListReports("saved-flow").Count);
+            Assert.IsNull(Field<PopupField<string>>("baselineReport"));
+            ForceStatusTick();
+            Assert.AreEqual(2, reads);
+            Assert.IsFalse(window.IsPolling);
+            StringAssert.Contains("failed", Field<Label>("runStatus").text);
+            string screenshot = "Library/MCPForUnity/PlayScenarioRuns/" + window.CurrentJobId + ".png";
+            Assert.IsTrue(Field<ScrollView>("runResults").Query<Label>().ToList().Any(label => label.text.Contains("Screenshot: " + screenshot)));
+            Assert.AreEqual(screenshot, store.GetReport(window.CurrentJobId).FailureDiagnostics.ScreenshotPath);
+            Assert.AreEqual(1, Field<PopupField<string>>("baselineReport").choices.Count);
+            StringAssert.Contains(window.CurrentJobId, Field<PopupField<string>>("baselineReport").value);
+            Assert.IsTrue(Field<Button>("runScenario").enabledSelf);
+            ForceStatusTick();
+            Assert.AreEqual(2, reads, "Only the finalized snapshot stops polling.");
         }
 
         [UnityTest]
@@ -431,6 +493,256 @@ namespace MCPForUnityTests.Editor.Windows
             Click("runScenario");
             Assert.AreEqual(0, starts);
             StringAssert.Contains("Repeat count", Field<Label>("scenarioMessage").text);
+        }
+
+        [Test]
+        public void DraftUndoRedoRestoresInvalidEditsAfterEnableAndSavedCheckpoint()
+        {
+            OpenSaved();
+            Assert.IsFalse(Field<Button>("undoDraft").enabledSelf);
+            Field<TextField>("stepName1").value = "Unsaved Start";
+            Field<IntegerField>("pollInterval").value = 99;
+            typeof(PlayScenarioWindow).GetMethod("OnEnable", PrivateInstance).Invoke(window, null);
+            window.CreateGUI();
+            Click("undoDraft");
+            Assert.AreEqual(250, window.Draft.PollIntervalMs);
+            Assert.AreEqual("Unsaved Start", window.Draft.Steps[1].Name);
+            Assert.IsTrue(window.hasUnsavedChanges);
+            Click("undoDraft");
+            Assert.AreEqual("Start", window.Draft.Steps[1].Name);
+            Assert.IsFalse(window.hasUnsavedChanges);
+            Click("redoDraft");
+            Click("saveScenario");
+            Click("undoDraft");
+            Assert.IsTrue(window.hasUnsavedChanges);
+            Assert.AreEqual("Unsaved Start", store.Get("saved-flow").Steps[1].Name);
+            Click("redoDraft");
+            Assert.IsFalse(window.hasUnsavedChanges);
+            Click("redoDraft");
+            Assert.AreEqual(99, window.Draft.PollIntervalMs);
+            Assert.IsFalse(Field<Button>("saveScenario").enabledSelf);
+        }
+
+        [Test]
+        public void DraftHistoryIsBoundedAndNewEditsInvalidateRedoAndNavigationClearsIt()
+        {
+            OpenSaved();
+            for (int index = 0; index < 60; index++)
+                Field<TextField>("stepName1").value = "Edit " + index;
+            for (int index = 0; index < 50; index++)
+                Click("undoDraft");
+            Assert.AreEqual("Edit 9", window.Draft.Steps[1].Name);
+            Assert.IsFalse(Field<Button>("undoDraft").enabledSelf);
+            Click("redoDraft");
+            Field<TextField>("stepName1").value = "Branch edit";
+            Assert.IsFalse(Field<Button>("redoDraft").enabledSelf);
+            window.ShowDialog = (_, __, ___, ____, _____) => 2;
+            Click("newScenario");
+            Assert.IsFalse(Field<Button>("undoDraft").enabledSelf);
+            Assert.IsFalse(Field<Button>("redoDraft").enabledSelf);
+            Assert.IsTrue(window.hasUnsavedChanges);
+        }
+
+        [Test]
+        public void DuplicateStepCreatesIndependentCopyAndSupportsUndoRedoAndLimit()
+        {
+            OpenSaved();
+            Click("duplicateStep1");
+            Assert.AreEqual(5, window.Draft.Steps.Count);
+            Assert.AreEqual("Canvas/StartButton", window.Draft.Steps[2].Target);
+            Assert.AreNotSame(window.Draft.Steps[1], window.Draft.Steps[2]);
+            Field<TextField>("stepTarget2").value = "Canvas/OtherButton";
+            Assert.AreEqual("Canvas/StartButton", window.Draft.Steps[1].Target);
+            Click("undoDraft");
+            Click("undoDraft");
+            Assert.AreEqual(4, window.Draft.Steps.Count);
+            Click("redoDraft");
+            Assert.AreEqual(5, window.Draft.Steps.Count);
+            for (int index = 5; index < 32; index++)
+                Click("duplicateStep1");
+            Assert.IsFalse(Field<Button>("duplicateStep1").enabledSelf);
+        }
+
+        [Test]
+        public void StructuredConditionsPoliciesAndStagesSurviveUndoAndSave()
+        {
+            OpenSaved();
+            Field<IntegerField>("completionStableMs").value = 500;
+            Field<PopupField<string>>("logPolicyMode").value = "log_only";
+            Click("addAllowedMessage");
+            Field<TextField>("allowedMessage0").value = "Expected synthetic error";
+            Field<Toggle>("metricsEnabled").value = true;
+            Field<IntegerField>("metricsWarmup").value = 0;
+            Field<Toggle>("screenshotOnFailure").value = true;
+            Field<Toggle>("stepCount3Enabled").value = true;
+            Field<IntegerField>("stepCount3").value = 1;
+            Field<PopupField<string>>("stepActive3").value = "Inactive";
+            Field<TextField>("stepComponent3").value = "UnityEngine.Transform";
+            Field<Toggle>("stepPropertyEnabled3").value = true;
+            Field<TextField>("stepPropertyPath3").value = "m_LocalPosition.x";
+            Field<PopupField<string>>("stepPropertyType3").value = "Number";
+            Field<TextField>("stepPropertyValue3").value = "3.5";
+            Field<Toggle>("stepStable3Enabled").value = true;
+            Field<IntegerField>("stepStable3").value = 300;
+            Click("addSetupStep");
+            Field<PopupField<string>>("stepActionsetup0").value = "load_scene";
+            Field<TextField>("stepScenesetup0").value = "Assets/ScenarioMenu.unity";
+            Click("addCleanupStep");
+            Field<TextField>("stepTargetcleanup0").value = "Player";
+            Click("saveScenario");
+            var saved = store.Get("saved-flow");
+            Assert.AreEqual(1, saved.SetupSteps.Count);
+            Assert.AreEqual(1, saved.CleanupSteps.Count);
+            Assert.AreEqual(500, saved.CompletionStableMs);
+            Assert.AreEqual("log_only", saved.LogPolicy.Mode);
+            CollectionAssert.AreEqual(new[] { "Expected synthetic error" }, saved.LogPolicy.AllowedMessages);
+            Assert.IsTrue(saved.Metrics.Enabled);
+            Assert.IsTrue(saved.Diagnostics.ScreenshotOnFailure);
+            Assert.AreEqual(false, saved.Steps[3].Active);
+            Assert.AreEqual(3.5d, saved.Steps[3].Property.Equals.Value<double>());
+            Click("duplicateStepcleanup0");
+            Click("undoDraft");
+            Assert.AreEqual(1, window.Draft.CleanupSteps.Count);
+            Assert.IsFalse(window.hasUnsavedChanges);
+            Field<PopupField<string>>("stepAction3").value = "click_ui";
+            Assert.IsNull(window.Draft.Steps[3].Count);
+            Assert.IsNull(window.Draft.Steps[3].Component);
+            Assert.IsNull(window.Draft.Steps[3].Property);
+            Assert.IsNull(window.Draft.Steps[3].StableForMs);
+            Click("undoDraft");
+            Assert.AreEqual("wait_object", window.Draft.Steps[3].Action);
+            Assert.AreEqual(3.5d, window.Draft.Steps[3].Property.Equals.Value<double>());
+            Click("duplicateStepsetup0");
+            Field<TextField>("stepNamesetup1").value = "Second setup";
+            Click("moveStepUpsetup1");
+            Assert.AreEqual("Second setup", window.Draft.SetupSteps[0].Name);
+            Click("undoDraft");
+            Assert.AreEqual("Second setup", window.Draft.SetupSteps[1].Name);
+            Assert.AreEqual(1, window.Draft.CleanupSteps.Count);
+            Click("redoDraft");
+            Assert.AreEqual("Second setup", window.Draft.SetupSteps[0].Name);
+            Assert.AreEqual("wait_object", window.Draft.Steps[3].Action);
+        }
+
+        [Test]
+        public void OptionalCountAndActiveControlsPreserveZeroAndInactiveSemantics()
+        {
+            OpenSaved();
+            Field<Toggle>("stepCount3Enabled").value = true;
+            Assert.AreEqual(0, window.Draft.Steps[3].Count);
+            Assert.IsNull(window.Draft.Steps[3].Active);
+            Assert.IsTrue(Field<Button>("saveScenario").enabledSelf);
+            Field<PopupField<string>>("stepActive3").value = "Inactive";
+            Assert.AreEqual(false, window.Draft.Steps[3].Active);
+            Assert.IsFalse(Field<Button>("saveScenario").enabledSelf);
+            Field<IntegerField>("stepCount3").value = 1;
+            Assert.IsTrue(Field<Button>("saveScenario").enabledSelf);
+            Field<Toggle>("stepCount3Enabled").value = false;
+            Assert.IsNull(window.Draft.Steps[3].Count);
+            Assert.AreEqual(false, window.Draft.Steps[3].Active);
+            Assert.IsTrue(Field<Button>("saveScenario").enabledSelf);
+            Field<PopupField<string>>("stepActive3").value = "Default (active)";
+            Assert.IsNull(window.Draft.Steps[3].Active);
+            Assert.IsFalse(window.hasUnsavedChanges);
+        }
+
+        [Test]
+        public void PreflightIsExplicitReadOnlyAndClearsStaleChecksOnEdit()
+        {
+            OpenSaved();
+            int checks = 0;
+            window.CheckPreflight = definition =>
+            {
+                checks++;
+                Assert.AreEqual("saved-flow", definition.Name);
+                return new JObject
+                {
+                    ["success"] = true,
+                    ["data"] = new JObject
+                    {
+                        ["valid"] = false,
+                        ["checks"] = new JArray(
+                            new JObject
+                            {
+                                ["stage"] = "main",
+                                ["index"] = 1,
+                                ["name"] = "Start",
+                                ["status"] = "failed",
+                                ["detail"] = "Target is ambiguous.",
+                            }
+                        ),
+                    },
+                };
+            };
+            Assert.AreEqual(0, checks);
+            Click("preflightScenario");
+            Assert.AreEqual(1, checks);
+            StringAssert.Contains("Target is ambiguous", Field<Label>("preflightResult").text);
+            Assert.IsFalse(window.hasUnsavedChanges);
+            Assert.AreEqual("Start", store.Get("saved-flow").Steps[1].Name);
+            Field<TextField>("stepName1").value = "Edited";
+            Assert.AreEqual("", Field<Label>("preflightResult").text);
+            Assert.AreEqual(1, checks);
+        }
+
+        [Test]
+        public void ReportHistoryRefreshAndComparisonReadStoredTerminalDataWithoutStatusPolling()
+        {
+            OpenSaved();
+            int reads = 0;
+            window.ReadStatus = _ =>
+            {
+                reads++;
+                return new ErrorResponse("Unexpected status read");
+            };
+            foreach (int index in new[] { 0, 1 })
+            {
+                store.SaveReport(
+                    new PlayScenarioRun
+                    {
+                        JobId = new string(index == 0 ? 'a' : 'b', 32),
+                        Scenario = Definition(),
+                        RepeatCount = 1,
+                        Status = index == 0 ? "failed" : "succeeded",
+                        Phase = "finished",
+                        StartedUnixMs = 1000 + index,
+                        FinishedUnixMs = 2000 + index,
+                        Steps = new System.Collections.Generic.List<PlayScenarioStepResult>
+                        {
+                            new PlayScenarioStepResult
+                            {
+                                Stage = "main",
+                                Iteration = 1,
+                                StepIndex = 0,
+                                Name = "Menu",
+                                Action = "load_scene",
+                                Status = index == 0 ? "failed" : "passed",
+                                StartedUnixMs = 1000,
+                                FinishedUnixMs = 1100 + index * 100,
+                                PollCount = index + 1,
+                            },
+                        },
+                        MetricsSummary = "Synthetic samples",
+                        MetricWarnings = new System.Collections.Generic.List<string> { "Synthetic warning " + index },
+                    }
+                );
+            }
+            Assert.IsNull(Field<PopupField<string>>("baselineReport"));
+            Click("refreshReports");
+            Assert.AreEqual(2, Field<PopupField<string>>("baselineReport").choices.Count);
+            Click("compareReports");
+            string text = string.Join("\n", Field<ScrollView>("reportComparison").Query<Label>().ToList().Select(label => label.text));
+            StringAssert.Contains("failed", text);
+            StringAssert.Contains("passed", text);
+            StringAssert.Contains("100 ms", text);
+            StringAssert.Contains("200 ms", text);
+            StringAssert.Contains("polls", text);
+            StringAssert.Contains("Synthetic warning", text);
+            Assert.AreEqual(0, reads);
+            Assert.IsFalse(window.IsPolling);
+            Assert.IsFalse(window.hasUnsavedChanges);
+            window.CreateGUI();
+            Assert.IsNull(Field<PopupField<string>>("baselineReport"), "GUI reconstruction does not scan report history.");
         }
 
         [Test]
