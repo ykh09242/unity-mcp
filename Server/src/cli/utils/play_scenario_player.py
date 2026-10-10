@@ -37,6 +37,7 @@ from cli.utils.play_scenario_player_payload import (
     verify_player_payload,
 )
 from cli.utils.play_scenario_player_progress import ProgressIdentity, ProgressObserver
+from cli.utils.play_scenario_iterations import validate_iteration_results
 
 MANIFEST_LIMIT: Final = PAYLOAD_MANIFEST_LIMIT
 REPORT_LIMIT: Final = 2097152
@@ -202,6 +203,14 @@ class PlayerFinalReport(BaseModel):
     report_error: str | None = None
     started_unix_ms: Annotated[int, Field(strict=True, ge=0)]
     finished_unix_ms: Annotated[int, Field(strict=True, ge=0)]
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_iteration_contract(cls, value: JsonValue) -> JsonValue:
+        """Admit legacy reports or a complete terminal native repetition ledger."""
+        if isinstance(value, dict) and type(value.get("repeat_count")) is int:
+            validate_iteration_results(value, value["repeat_count"], terminal=True)
+        return value
 
     @model_validator(mode="after")
     def require_release_proof(self) -> "PlayerFinalReport":

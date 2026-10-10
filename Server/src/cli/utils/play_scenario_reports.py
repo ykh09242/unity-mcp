@@ -7,6 +7,7 @@ from typing import Annotated, Final
 from xml.etree import ElementTree
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from cli.utils.play_scenario_iterations import iteration_counts
 
 LOG_LIMIT: Final = 16384
 
@@ -16,6 +17,10 @@ class ReportEvidence(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="ignore")
     job_id: str = ""
+    status: str | None = None
+    repeat_count: Annotated[int, Field(strict=True, ge=1, le=10)] | None = None
+    iteration_results_version: Annotated[int, Field(strict=True, ge=1, le=1)] | None = None
+    iteration_results: list[dict[str, JsonValue]] | None = Field(default=None, max_length=10)
     started_unix_ms: int | None = None
     finished_unix_ms: int | None = None
     error: str | None = None
@@ -240,6 +245,11 @@ def junit_xml(raw: dict[str, JsonValue]) -> bytes:
             **evidence.metadata,
             **evidence.reproduction,
         }
+        if evidence.repeat_count is not None:
+            counted = iteration_counts(
+                evidence.model_dump(mode="json", exclude_unset=True), evidence.repeat_count
+            )
+            properties.update({f"iteration.{key}": value for key, value in counted.items()})
         if evidence.report_path:
             properties["report_path"] = evidence.report_path
         if evidence.failure_diagnostics:

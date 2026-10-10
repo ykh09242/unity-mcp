@@ -18,6 +18,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private PlayScenarioFailure _observationFailure;
         private bool _released;
         private bool _failureCaptured;
+        private int? _completingIteration;
         public PlayScenarioRun State { get; }
         public int Revision { get; private set; }
         public bool Running => State.Status == "running";
@@ -48,12 +49,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 JobId = jobId,
                 Scenario = scenario,
                 RepeatCount = repeatCount,
+                IterationResultsVersion = 1,
+                IterationResults = new List<PlayScenarioIterationResult>(repeatCount),
                 StartedUnixMs = now,
                 DeadlineUnixMs = now + timeoutSeconds * 1000L,
                 Reproduction = new PlayScenarioReproduction { DefinitionHash = PlayScenarioReproduction.Hash(scenario) },
             };
             for (int iteration = 1; iteration <= repeatCount; iteration++)
             {
+                run.IterationResults.Add(new PlayScenarioIterationResult { Iteration = iteration });
                 AddSteps(run, scenario.SetupSteps, "setup", iteration);
                 AddSteps(run, scenario.Steps, "main", iteration);
                 AddSteps(run, scenario.CleanupSteps, "cleanup", iteration);
@@ -77,7 +81,19 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 );
         }
 
-        public PlayScenarioStep CurrentStep => State.Cursor >= 0 && State.Cursor < State.Steps.Count ? DefinitionStep(State.Steps[State.Cursor]) : null;
+        public PlayScenarioStep CurrentStep
+        {
+            get
+            {
+                PlayScenarioStepResult result = State.Cursor >= 0 && State.Cursor < State.Steps.Count ? State.Steps[State.Cursor] : null;
+                if (
+                    _completingIteration.HasValue
+                    || (State.IterationResults?.Any(entry => entry.Status == "running") == true && (result == null || result.Iteration != ActiveIteration))
+                )
+                    result = State.Steps.LastOrDefault(entry => entry.Iteration == ActiveIteration);
+                return result == null ? null : DefinitionStep(result);
+            }
+        }
 
         private PlayScenarioStep DefinitionStep(PlayScenarioStepResult result)
         {
@@ -157,6 +173,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
             if (!ready || now < State.NextPollUnixMs)
                 return;
+            BeginIteration(result.Iteration, now);
             if (!BeginResourceIteration(result.Iteration, now))
                 return;
             bool firstPoll = result.Status == "pending";
@@ -292,6 +309,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 CaptureFailure(now);
                 State.Status = "failed";
                 State.FinishedUnixMs = now;
+                PlayScenarioIterationResult iteration = State.IterationResults?.LastOrDefault(result => result.Status == "passed");
+                if (iteration != null)
+                    FinishIteration(iteration.Iteration, "failed", now);
                 Revision++;
             }
         }
@@ -304,7 +324,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             State.PendingStatus = State.PendingStatus ?? "failed";
             State.PendingError = State.PendingError ?? Bounded(reason, 4096);
             CaptureFailure(now);
-            if (State.Scenario.CleanupSteps.Count > 0 && State.Steps.Any(result => result.StartedUnixMs.HasValue))
+            if (
+                IterationStarted(ActiveIteration)
+                && State.Steps.Any(result =>
+                    result.Iteration == ActiveIteration && result.Stage == "cleanup" && (result.Status == "pending" || result.Status == "running")
+                )
+            )
             {
                 AddCleanupFailure(Failure("interrupted", "Cleanup unavailable after interruption; effects were not replayed."));
                 AppendCleanupError("Cleanup unavailable after interruption; effects were not replayed.");
@@ -326,9 +351,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 ClearStateProbe();
             CaptureFailure(now);
             Revision++;
+            if (_completingIteration.HasValue)
+                return;
             if (State.Phase == "cleaning")
                 return;
-            bool began = State.Steps.Any(result => result.StartedUnixMs.HasValue);
+            int iteration = ActiveIteration;
+            bool began = IterationStarted(iteration);
             if (!began || State.Scenario.CleanupSteps.Count == 0)
             {
                 if (began)
@@ -336,10 +364,6 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Finish(status, error, now);
                 return;
             }
-            int iteration = State.Cursor < State.Steps.Count ? State.Steps[State.Cursor].Iteration : State.Steps[State.Steps.Count - 1].Iteration;
-            // During settling the cursor may already point at the next iteration.
-            if (State.Phase == "settling" && State.Cursor > 0)
-                iteration = State.Steps[State.Cursor - 1].Iteration;
             foreach (PlayScenarioStepResult result in State.Steps.Where(result => result.Iteration == iteration && result.Stage != "cleanup"))
             {
                 if (result.Status == "running")
@@ -410,23 +434,74 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private void CompleteIteration(int iteration, long now)
         {
-            State.CleanupDeadlineUnixMs = null;
-            VerifyResources(now);
-            if (State.PendingStatus != null)
+            // The cursor can already point at the next repetition while resource/metric
+            // callbacks still belong to the iteration whose cleanup just completed.
+            _completingIteration = iteration;
+            try
             {
-                Finish(State.PendingStatus, State.PendingError, now);
-                return;
+                State.CleanupDeadlineUnixMs = null;
+                VerifyResources(now);
+                if (State.PendingStatus != null)
+                {
+                    Finish(State.PendingStatus, State.PendingError, now);
+                    return;
+                }
+                CaptureMetrics(iteration, now);
+                if (!Running)
+                    return;
+                if (State.PendingStatus != null)
+                {
+                    Finish(State.PendingStatus, State.PendingError, now);
+                    return;
+                }
+                FinishIteration(iteration, "passed", now);
+                if (iteration == State.RepeatCount)
+                {
+                    Finish("succeeded", null, now);
+                    return;
+                }
+                State.Phase = "executing";
+                State.NextPollUnixMs = now;
+                Revision++;
             }
-            CaptureMetrics(iteration, now);
-            if (!Running)
-                return;
-            if (iteration == State.RepeatCount)
+            finally
             {
-                Finish("succeeded", null, now);
-                return;
+                _completingIteration = null;
             }
-            State.Phase = "executing";
-            State.NextPollUnixMs = now;
+        }
+
+        private int ActiveIteration =>
+            _completingIteration
+            ?? State.IterationResults?.FirstOrDefault(result => result.Status == "running")?.Iteration
+            ?? (
+                State.Phase == "settling" && State.Cursor > 0 ? State.Steps[State.Cursor - 1].Iteration
+                : State.Cursor < State.Steps.Count ? State.Steps[State.Cursor].Iteration
+                : State.Steps.Last().Iteration
+            );
+
+        private bool IterationStarted(int iteration) =>
+            State.IterationResults?.Any(result => result.Iteration == iteration && result.StartedUnixMs.HasValue)
+            ?? State.Steps.Any(result => result.Iteration == iteration && result.StartedUnixMs.HasValue);
+
+        private void BeginIteration(int iteration, long now)
+        {
+            PlayScenarioIterationResult result = State.IterationResults?.FirstOrDefault(entry => entry.Iteration == iteration);
+            if (result == null || result.Status != "pending")
+                return;
+            // A ready iteration starts with resource initialization, immediately before
+            // its first evaluation. Unready ticks and cancellation do not start it.
+            result.Status = "running";
+            result.StartedUnixMs = now;
+            Revision++;
+        }
+
+        private void FinishIteration(int iteration, string status, long now)
+        {
+            PlayScenarioIterationResult result = State.IterationResults?.FirstOrDefault(entry => entry.Iteration == iteration);
+            if (result == null || !result.StartedUnixMs.HasValue)
+                return;
+            result.Status = status;
+            result.FinishedUnixMs = now;
             Revision++;
         }
 
@@ -435,8 +510,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private PlayScenarioFailure Attribute(PlayScenarioFailure failure)
         {
             PlayScenarioStepResult result = State.Cursor < State.Steps.Count ? State.Steps[State.Cursor] : State.Steps.LastOrDefault();
-            if (State.Phase == "settling" && State.Cursor > 0)
+            if (_completingIteration.HasValue)
+                result = State.Steps.LastOrDefault(entry => entry.Iteration == _completingIteration.Value);
+            else if (State.Phase == "settling" && State.Cursor > 0)
                 result = State.Steps[State.Cursor - 1];
+            else if (result != null && result.Iteration != ActiveIteration)
+                result = State.Steps.LastOrDefault(entry => entry.Iteration == ActiveIteration);
             bool resourceFailure = failure.Code == "resource_assertion_failed" || failure.Code == "resource_measurement_failed";
             PlayScenarioStep step = result == null || resourceFailure ? null : DefinitionStep(result);
             bool fallbackCondition = failure.Code == "step_timeout" || failure.Code == "action_exception";
@@ -711,6 +790,19 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             State.Error = Bounded(error, 4096);
             State.FinishedUnixMs = now;
             Timeline(now, "run_finished", status + (error == null ? "" : ": " + error), null);
+            if (State.IterationResults != null)
+            {
+                foreach (PlayScenarioIterationResult iteration in State.IterationResults)
+                {
+                    if (iteration.Status == "running")
+                        FinishIteration(iteration.Iteration, status == "succeeded" ? "passed" : status, now);
+                    else if (iteration.Status == "pending")
+                    {
+                        iteration.Status = "skipped";
+                        iteration.FinishedUnixMs = now;
+                    }
+                }
+            }
             foreach (PlayScenarioStepResult result in State.Steps.Where(result => result.Status == "running" || result.Status == "pending"))
             {
                 result.Status = result.Status == "running" ? status : "skipped";

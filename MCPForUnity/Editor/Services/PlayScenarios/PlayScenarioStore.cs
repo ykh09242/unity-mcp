@@ -24,6 +24,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             [typeof(PlayScenarioRun)] = Describe(typeof(PlayScenarioRun)),
             [typeof(PlayScenarioStepResult)] = Describe(typeof(PlayScenarioStepResult)),
+            [typeof(PlayScenarioIterationResult)] = Describe(typeof(PlayScenarioIterationResult)),
             [typeof(PlayScenarioLog)] = Describe(typeof(PlayScenarioLog)),
             [typeof(PlayScenarioMetricsSnapshot)] = Describe(typeof(PlayScenarioMetricsSnapshot)),
             [typeof(PlayScenarioFailureDiagnostics)] = Describe(typeof(PlayScenarioFailureDiagnostics)),
@@ -309,6 +310,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             ValidateTimeline(value, repeats);
             State((string)value["status"], "running", "succeeded", "failed", "timed_out", "cancelled");
             State((string)value["phase"], "starting", "executing", "settling", "cleaning", "finished");
+            ValidateIterationResults(value, repeats);
             if (value["pending_status"].Type != JTokenType.Null)
                 State((string)value["pending_status"], "failed", "timed_out", "cancelled");
             Bound(value, "error", 4096);
@@ -406,6 +408,53 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 string screenshot = (string)diagnostics["screenshot_path"];
                 if (screenshot != null && screenshot != Reports + "/" + (string)value["job_id"] + ".png")
                     throw new ArgumentException("Failure screenshot path does not belong to its report.");
+            }
+        }
+
+        private static void ValidateIterationResults(JObject value, int repeats)
+        {
+            // Missing both fields identifies a legacy report, whose iteration history
+            // cannot be reconstructed safely from step rows.
+            if (value.Property("iteration_results_version") == null && value.Property("iteration_results") == null)
+                return;
+            if (value["iteration_results_version"].Type != JTokenType.Integer || (int)value["iteration_results_version"] != 1)
+                throw new ArgumentException("Unsupported iteration_results_version.");
+            var results = (JArray)value["iteration_results"];
+            if (results.Count != repeats)
+                throw new ArgumentException("Iteration results must contain one ordered row per repetition.");
+            bool terminal = (string)value["status"] != "running";
+            long? previousFinished = null;
+            for (int index = 0; index < results.Count; index++)
+            {
+                var result = (JObject)results[index];
+                if ((int)result["iteration"] != index + 1)
+                    throw new ArgumentException("Iteration results require ordered unique iteration numbers.");
+                string status = (string)result["status"];
+                State(status, "pending", "running", "passed", "failed", "timed_out", "cancelled", "skipped");
+                long? started = (long?)result["started_unix_ms"];
+                long? finished = (long?)result["finished_unix_ms"];
+                bool attempted = status != "pending" && status != "skipped";
+                if (
+                    attempted != started.HasValue
+                    || (status == "pending" && finished.HasValue)
+                    || (status == "running" && finished.HasValue)
+                    || (attempted && status != "running" && !finished.HasValue)
+                    || (terminal && (status == "pending" || status == "running"))
+                    || ((string)value["status"] == "succeeded" && status != "passed")
+                )
+                    throw new ArgumentException("Iteration result status and timestamps are inconsistent.");
+                long reportStarted = (long)value["started_unix_ms"];
+                long? reportFinished = (long?)value["finished_unix_ms"];
+                if (
+                    (started.HasValue && (started.Value < reportStarted || (previousFinished.HasValue && started.Value < previousFinished.Value)))
+                    || (
+                        finished.HasValue && (finished.Value < (started ?? reportStarted) || (reportFinished.HasValue && finished.Value > reportFinished.Value))
+                    )
+                    || (started.HasValue && reportFinished.HasValue && started.Value > reportFinished.Value)
+                )
+                    throw new ArgumentException("Iteration result timestamps are outside their execution boundaries.");
+                if (attempted)
+                    previousFinished = finished;
             }
         }
 
@@ -581,11 +630,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             Dictionary<string, Type> fields = ReportFields[type];
             PlayScenarioDefinition.Fields(value, fields.Keys.ToArray());
             JObject defaults = null;
+            bool legacyIterations =
+                type == typeof(PlayScenarioRun) && value.Property("iteration_results_version") == null && value.Property("iteration_results") == null;
             foreach (var pair in fields)
             {
                 JToken token = value[pair.Key];
                 if (token == null)
                 {
+                    if (legacyIterations && (pair.Key == "iteration_results_version" || pair.Key == "iteration_results"))
+                        continue;
                     if (!LegacyOptional(type, pair.Key))
                         throw new ArgumentException("Missing report field: " + pair.Key);
                     defaults = defaults ?? ToJson(Activator.CreateInstance(type));
@@ -617,7 +670,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         : itemType == typeof(PlayScenarioRetainedResource) ? 32
                         : itemType == typeof(PlayScenarioStepResult) ? 640
                         : itemType == typeof(PlayScenarioLog) ? 50
-                        : itemType == typeof(PlayScenarioResourceCheck) || itemType == typeof(PlayScenarioMetricsSnapshot) ? 10
+                        : itemType == typeof(PlayScenarioResourceCheck)
+                        || itemType == typeof(PlayScenarioMetricsSnapshot)
+                        || itemType == typeof(PlayScenarioIterationResult)
+                            ? 10
                         : 16;
                     if (array.Count > maximum)
                         throw new ArgumentException("Report array exceeds its bound: " + pair.Key);

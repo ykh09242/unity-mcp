@@ -24,6 +24,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("repeat_count")]
         public int RepeatCount;
 
+        [JsonProperty("iteration_results_version", NullValueHandling = NullValueHandling.Ignore)]
+        public int? IterationResultsVersion;
+
+        [JsonProperty("iteration_results", NullValueHandling = NullValueHandling.Ignore)]
+        public List<PlayScenarioIterationResult> IterationResults;
+
         [JsonProperty("started_unix_ms")]
         public long StartedUnixMs;
 
@@ -119,6 +125,21 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         [JsonProperty("runner_resources_released")]
         public bool? RunnerResourcesReleased;
+    }
+
+    public sealed class PlayScenarioIterationResult
+    {
+        [JsonProperty("iteration")]
+        public int Iteration;
+
+        [JsonProperty("status")]
+        public string Status = "pending";
+
+        [JsonProperty("started_unix_ms")]
+        public long? StartedUnixMs;
+
+        [JsonProperty("finished_unix_ms")]
+        public long? FinishedUnixMs;
     }
 
     public sealed class PlayScenarioStepResult

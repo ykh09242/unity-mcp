@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using MCPForUnity.Editor.Services.PlayScenarios;
+using MCPForUnity.Runtime;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -9,13 +10,15 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
 {
     public class PlayScenarioEngineTests
     {
-        private sealed class Host : IPlayScenarioHost, IPlayScenarioMetricsHost
+        private sealed class Host : IPlayScenarioHost, IPlayScenarioMetricsHost, IPlayScenarioResourceHost
         {
             public int Calls;
             public int Loads;
             public int Clicks;
             public int Releases;
             public int MetricCalls;
+            public int ResourceCalls;
+            public Func<PlayScenarioRegisteredResources> SampleResources;
             public Func<int, long, PlayScenarioMetricsSnapshot> Sample;
             public Func<PlayScenarioStep, bool, PlayScenarioObservation> EvaluateStep;
 
@@ -30,6 +33,12 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             }
 
             public void Release() => Releases++;
+
+            public PlayScenarioRegisteredResources CaptureResources()
+            {
+                ResourceCalls++;
+                return SampleResources?.Invoke() ?? new PlayScenarioRegisteredResources();
+            }
 
             public PlayScenarioMetricsSnapshot CaptureMetrics(int iteration, long now)
             {
@@ -575,6 +584,375 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.AreEqual(4, host.Calls);
             Assert.IsTrue(engine.State.Steps.Where(step => step.Iteration > 1).All(step => step.Status == "skipped"));
             Assert.AreEqual(1, host.Releases);
+        }
+
+        private static long CompleteLedgerRun(PlayScenarioEngine engine, long now = 1000)
+        {
+            for (; engine.Running && now < 20000; now += 250)
+                engine.Tick(now, true);
+            Assert.IsFalse(engine.Running);
+            return now - 250;
+        }
+
+        private static void AssertLedger(PlayScenarioRun run, params string[] statuses)
+        {
+            Assert.AreEqual(1, run.IterationResultsVersion);
+            Assert.AreEqual(run.RepeatCount, run.IterationResults.Count);
+            CollectionAssert.AreEqual(Enumerable.Range(1, run.RepeatCount), run.IterationResults.Select(result => result.Iteration));
+            CollectionAssert.AreEqual(statuses, run.IterationResults.Select(result => result.Status));
+            foreach (PlayScenarioIterationResult result in run.IterationResults)
+            {
+                Assert.AreEqual(result.Status != "pending" && result.Status != "skipped", result.StartedUnixMs.HasValue);
+                Assert.AreEqual(result.Status != "pending" && result.Status != "running", result.FinishedUnixMs.HasValue);
+                if (result.StartedUnixMs.HasValue && result.FinishedUnixMs.HasValue)
+                    Assert.GreaterOrEqual(result.FinishedUnixMs.Value, result.StartedUnixMs.Value);
+            }
+        }
+
+        [Test]
+        public void LedgerWaitsForCleanupResourceAndMetricBoundariesBeforePassing()
+        {
+            var definition = LifecycleDefinition();
+            definition.Resources = new PlayScenarioResourceOptions { Enabled = true };
+            definition.Metrics.Enabled = true;
+            var host = new Host();
+            var engine = LifecycleEngine(host, definition, repeat: 2);
+            var boundaries = new System.Collections.Generic.List<bool>();
+            host.Sample = (iteration, _) =>
+            {
+                boundaries.Add(
+                    engine.State.IterationResults[iteration - 1].Status == "running"
+                        && !engine.State.IterationResults[iteration - 1].FinishedUnixMs.HasValue
+                        && engine.State.ResourceChecks.Last().Iteration == iteration
+                );
+                return new PlayScenarioMetricsSnapshot();
+            };
+            engine.Tick(1000, false);
+            AssertLedger(engine.State, "pending", "pending");
+            engine.Tick(1250, true);
+            AssertLedger(engine.State, "running", "pending");
+            Assert.AreEqual(1250, engine.State.IterationResults[0].StartedUnixMs);
+            long finished = CompleteLedgerRun(engine, 1500);
+            AssertLedger(engine.State, "passed", "passed");
+            Assert.AreEqual(finished, engine.State.IterationResults[1].FinishedUnixMs);
+            Assert.Less(engine.State.IterationResults[0].FinishedUnixMs.Value, engine.State.IterationResults[1].StartedUnixMs.Value);
+            Assert.AreEqual(4, host.ResourceCalls);
+            Assert.AreEqual(2, host.MetricCalls);
+            CollectionAssert.AreEqual(new[] { true, true }, boundaries);
+        }
+
+        [TestCase("Reset")]
+        [TestCase("Main")]
+        [TestCase("Cleanup one")]
+        public void LaterIterationFailurePreservesEarlierPassAndSkipsFutureIterations(string failingStep)
+        {
+            var host = new Host();
+            var engine = LifecycleEngine(host, repeat: 3);
+            host.EvaluateStep = (step, _) =>
+            {
+                if (step.Name == failingStep && engine.State.Steps[engine.State.Cursor].Iteration == 2)
+                    throw new InvalidOperationException("second iteration failed");
+                return new PlayScenarioObservation(true, "ready");
+            };
+            long finished = CompleteLedgerRun(engine);
+            AssertLedger(engine.State, "passed", "failed", "skipped");
+            Assert.AreEqual(2, engine.State.Failure.Iteration);
+            Assert.AreEqual(finished, engine.State.IterationResults[1].FinishedUnixMs);
+            Assert.IsTrue(engine.State.Steps.Any(step => step.Iteration == 2 && step.Name == "Cleanup two" && step.Status == "passed"));
+            Assert.IsTrue(engine.State.Steps.Where(step => step.Iteration == 3).All(step => step.Status == "skipped"));
+            Assert.AreEqual(1, host.Releases);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CancellationOrTimeoutBeforeExecutionSkipsEveryIteration(bool timeout)
+        {
+            var host = new Host();
+            var engine = LifecycleEngine(host, repeat: 3, timeout: 1);
+            engine.Tick(1000, false);
+            if (timeout)
+                engine.Tick(2000, false);
+            else
+                engine.Cancel(1100);
+            AssertLedger(engine.State, "skipped", "skipped", "skipped");
+            Assert.AreEqual(timeout ? "timed_out" : "cancelled", engine.State.Status);
+            Assert.AreEqual(0, host.Calls);
+            Assert.AreEqual(0, host.ResourceCalls);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void StopBetweenIterationsDoesNotExecuteUntouchedCleanup(bool timeout)
+        {
+            var host = new Host();
+            var engine = LifecycleEngine(host, repeat: 3, timeout: 2);
+            for (long now = 1000; engine.Running && now < 20000 && engine.State.IterationResults[0].Status != "passed"; now += 250)
+                engine.Tick(now, true);
+            AssertLedger(engine.State, "passed", "pending", "pending");
+            int calls = host.Calls;
+            if (timeout)
+                engine.Tick(3000, false);
+            else
+                engine.Cancel(2250);
+            AssertLedger(engine.State, "passed", "skipped", "skipped");
+            Assert.AreEqual(calls, host.Calls);
+            Assert.IsNull(engine.State.CleanupError);
+            Assert.AreEqual(timeout ? "timed_out" : "cancelled", engine.State.Status);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void LaterIterationCancellationOrTimeoutRemainsRunningUntilCleanupCompletes(bool timeout)
+        {
+            var host = new Host();
+            var engine = LifecycleEngine(host, repeat: 3);
+            long now = 1000;
+            for (; engine.Running && now < 20000 && engine.State.IterationResults[1].Status != "running"; now += 250)
+                engine.Tick(now, true);
+            AssertLedger(engine.State, "passed", "running", "pending");
+            host.EvaluateStep = (step, _) => new PlayScenarioObservation(step.Name != "Main", "waiting");
+            engine.Tick(now, true);
+            if (timeout)
+                engine.State.DeadlineUnixMs = now + 250;
+            else
+                engine.Cancel(now + 250);
+            if (timeout)
+                engine.Tick(now + 250, false);
+            AssertLedger(engine.State, "passed", "running", "pending");
+            CompleteLedgerRun(engine, now + 500);
+            AssertLedger(engine.State, "passed", timeout ? "timed_out" : "cancelled", "skipped");
+            Assert.AreEqual(2, engine.State.Failure.Iteration);
+            Assert.AreEqual("passed", engine.State.Steps.Last(step => step.Iteration == 2 && step.Stage == "cleanup").Status);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ResourceFailureIsAttributedToItsAttemptedIteration(bool baseline)
+        {
+            var definition = LifecycleDefinition();
+            definition.Resources = new PlayScenarioResourceOptions { Enabled = true };
+            var host = new Host();
+            host.SampleResources = () =>
+            {
+                if (host.ResourceCalls == (baseline ? 3 : 4))
+                    throw new InvalidOperationException("resource sample failed");
+                return new PlayScenarioRegisteredResources();
+            };
+            var engine = LifecycleEngine(host, definition, repeat: 3);
+            CompleteLedgerRun(engine);
+            AssertLedger(engine.State, "passed", "failed", "skipped");
+            Assert.AreEqual(2, engine.State.Failure.Iteration);
+            Assert.AreEqual("resource_measurement_failed", engine.State.Failure.Code);
+            Assert.AreEqual(2, engine.State.ResourceChecks.Last().Iteration);
+            if (baseline)
+                Assert.IsNull(engine.State.Steps.First(step => step.Iteration == 2).StartedUnixMs);
+        }
+
+        [Test]
+        public void DiagnosticMetricFailureDoesNotChangePassedIteration()
+        {
+            var definition = LifecycleDefinition();
+            definition.Metrics.Enabled = true;
+            var host = new Host
+            {
+                Sample = (iteration, _) => iteration == 2 ? throw new InvalidOperationException("metric unavailable") : new PlayScenarioMetricsSnapshot(),
+            };
+            var engine = LifecycleEngine(host, definition, repeat: 3);
+            CompleteLedgerRun(engine);
+            AssertLedger(engine.State, "passed", "passed", "passed");
+            Assert.That(engine.State.Metrics[1].Error, Does.Contain("metric unavailable"));
+            Assert.AreEqual("succeeded", engine.State.Status);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ReentrantMetricStopBelongsToCompletingIterationAndDoesNotRunNextCleanup(bool cancel)
+        {
+            var definition = LifecycleDefinition();
+            definition.Metrics.Enabled = true;
+            var host = new Host();
+            var engine = LifecycleEngine(host, definition, repeat: 3);
+            bool remainedActiveDuringSample = false;
+            host.Sample = (iteration, now) =>
+            {
+                if (iteration == 2)
+                {
+                    if (cancel)
+                        engine.Cancel(now);
+                    else
+                        engine.RequestFailure("metric callback failure", now);
+                    remainedActiveDuringSample = engine.Running && engine.State.IterationResults[1].Status == "running" && host.Releases == 0;
+                }
+                return new PlayScenarioMetricsSnapshot();
+            };
+            CompleteLedgerRun(engine);
+            AssertLedger(engine.State, "passed", cancel ? "cancelled" : "failed", "skipped");
+            Assert.AreEqual(2, engine.State.Failure.Iteration);
+            Assert.AreEqual(8, host.Calls);
+            Assert.IsTrue(remainedActiveDuringSample);
+            Assert.AreEqual(1, host.Releases);
+        }
+
+        [Test]
+        public void RestoredLedgerInterruptsCurrentIterationWithoutReplayingEffects()
+        {
+            var host = new Host();
+            var engine = LifecycleEngine(host, repeat: 3);
+            long now = 1000;
+            for (; engine.Running && now < 20000 && engine.State.IterationResults[1].Status != "running"; now += 250)
+                engine.Tick(now, true);
+            AssertLedger(engine.State, "passed", "running", "pending");
+            PlayScenarioRun restored = JsonConvert.DeserializeObject<PlayScenarioRun>(JsonConvert.SerializeObject(engine.State));
+            engine.Release();
+            var restoredHost = new Host();
+            var resumed = new PlayScenarioEngine(restored, restoredHost);
+            resumed.Interrupt("domain reload", now);
+            AssertLedger(restored, "passed", "failed", "skipped");
+            Assert.AreEqual(2, restored.Failure.Iteration);
+            Assert.AreEqual(0, restoredHost.Calls);
+            Assert.That(restored.CleanupError, Does.Contain("Cleanup unavailable"));
+            Assert.AreEqual(engine.State.IterationResults[1].StartedUnixMs, restored.IterationResults[1].StartedUnixMs);
+        }
+
+        [Test]
+        public void LateUnexpectedErrorCorrectsLastPassedIterationOnly()
+        {
+            var host = new Host();
+            var engine = LifecycleEngine(host, repeat: 3);
+            long finished = CompleteLedgerRun(engine);
+            long firstFinished = engine.State.IterationResults[0].FinishedUnixMs.Value;
+            engine.ObserveUnexpectedError("late final log", finished + 250);
+            AssertLedger(engine.State, "passed", "passed", "failed");
+            Assert.AreEqual(firstFinished, engine.State.IterationResults[0].FinishedUnixMs);
+            Assert.AreEqual(finished + 250, engine.State.IterationResults[2].FinishedUnixMs);
+            Assert.AreEqual(3, engine.State.Failure.Iteration);
+            Assert.AreEqual(1, host.Releases);
+        }
+
+        [Test]
+        public void LegacySavedRunRemainsReadableWithoutInventingIterationHistory()
+        {
+            JObject report = JObject.FromObject(PlayScenarioEngine.Create(LifecycleDefinition(), new string('f', 32), 2, 30, 1000));
+            report.Remove("iteration_results_version");
+            report.Remove("iteration_results");
+            PlayScenarioRun legacy = report.ToObject<PlayScenarioRun>();
+            Assert.IsNull(legacy.IterationResultsVersion);
+            Assert.IsNull(legacy.IterationResults);
+            var engine = new PlayScenarioEngine(legacy, new Host());
+            engine.EnteredPlayMode();
+            CompleteLedgerRun(engine);
+            Assert.AreEqual("succeeded", legacy.Status);
+            Assert.IsNull(JObject.FromObject(legacy)["iteration_results"]);
+        }
+
+        [Test]
+        public void RetainedResourceFailureDoesNotTurnPassedStepsIntoAPassedIteration()
+        {
+            var definition = LifecycleDefinition();
+            definition.Resources = new PlayScenarioResourceOptions { Enabled = true };
+            var host = new Host();
+            host.SampleResources = () => new PlayScenarioRegisteredResources { HandleIds = host.ResourceCalls == 4 ? new long[] { 42 } : Array.Empty<long>() };
+            var engine = LifecycleEngine(host, definition, repeat: 3);
+            CompleteLedgerRun(engine);
+            AssertLedger(engine.State, "passed", "failed", "skipped");
+            Assert.IsTrue(engine.State.Steps.Where(step => step.Iteration == 2).All(step => step.Status == "passed"));
+            Assert.AreEqual("resource_assertion_failed", engine.State.Failure.Code);
+            Assert.AreEqual(2, engine.State.Failure.Iteration);
+            Assert.AreEqual(1, engine.State.ResourceChecks[1].NewHandles);
+        }
+
+        [Test]
+        public void LaterCleanupTimeoutPreservesPrimaryCancellationAndFinalizesItsIteration()
+        {
+            var definition = LifecycleDefinition();
+            definition.CleanupTimeoutSeconds = 1;
+            var host = new Host();
+            var engine = LifecycleEngine(host, definition, repeat: 3);
+            long now = 1000;
+            for (; engine.Running && now < 20000 && engine.State.IterationResults[1].Status != "running"; now += 250)
+                engine.Tick(now, true);
+            AssertLedger(engine.State, "passed", "running", "pending");
+            engine.Cancel(now);
+            host.EvaluateStep = (_, __) => new PlayScenarioObservation(false, "cleanup waiting");
+            engine.Tick(now + 250, true);
+            AssertLedger(engine.State, "passed", "running", "pending");
+            engine.Tick(now + 1250, false);
+            AssertLedger(engine.State, "passed", "cancelled", "skipped");
+            Assert.AreEqual("cancelled", engine.State.Failure.Code);
+            Assert.That(engine.State.CleanupError, Does.Contain("Cleanup exceeded"));
+            Assert.AreEqual("timed_out", engine.State.Steps.First(step => step.Iteration == 2 && step.Stage == "cleanup").Status);
+            Assert.AreEqual(now + 1250, engine.State.IterationResults[1].FinishedUnixMs);
+        }
+
+        [Test]
+        public void LaterFinalCleanupErrorFailsItsIterationBeforeNextIterationStarts()
+        {
+            var host = new Host();
+            PlayScenarioEngine engine = null;
+            bool pendingError = false;
+            long now = 1000;
+            host.EvaluateStep = (step, _) =>
+            {
+                if (step.Name == "Cleanup two" && engine.State.Steps[engine.State.Cursor].Iteration == 2)
+                    pendingError = true;
+                return new PlayScenarioObservation(true, "ready");
+            };
+            engine = LifecycleEngine(
+                host,
+                repeat: 3,
+                onEvaluationCompleted: () =>
+                {
+                    if (pendingError)
+                    {
+                        pendingError = false;
+                        engine.ObserveUnexpectedError("second final cleanup log", now);
+                    }
+                }
+            );
+            for (; engine.Running && now < 20000; now += 250)
+                engine.Tick(now, true);
+            AssertLedger(engine.State, "passed", "failed", "skipped");
+            Assert.AreEqual(2, engine.State.Failure.Iteration);
+            Assert.AreEqual(8, host.Calls);
+            Assert.AreEqual("passed", engine.State.Steps.Last(step => step.Iteration == 2).Status);
+            Assert.That(engine.State.CleanupError, Does.Contain("second final cleanup log"));
+        }
+
+        [TestCase(2)]
+        [TestCase(3)]
+        public void CheckpointAtMetricBoundaryKeepsCompletedCleanupAndCorrectIterationAttribution(int checkpointIteration)
+        {
+            var definition = LifecycleDefinition();
+            definition.Metrics.Enabled = true;
+            var host = new Host();
+            var engine = LifecycleEngine(host, definition, repeat: 3);
+            PlayScenarioRun checkpoint = null;
+            long checkpointAt = 0;
+            host.Sample = (iteration, now) =>
+            {
+                if (iteration == checkpointIteration)
+                {
+                    checkpoint = JsonConvert.DeserializeObject<PlayScenarioRun>(JsonConvert.SerializeObject(engine.State));
+                    checkpointAt = now;
+                }
+                return new PlayScenarioMetricsSnapshot();
+            };
+            CompleteLedgerRun(engine);
+            AssertLedger(checkpoint, "passed", checkpointIteration == 2 ? "running" : "passed", checkpointIteration == 2 ? "pending" : "running");
+            if (checkpointIteration == 2)
+                Assert.AreEqual(3, checkpoint.Steps[checkpoint.Cursor].Iteration);
+            else
+                Assert.AreEqual(checkpoint.Steps.Count, checkpoint.Cursor);
+            var restoredHost = new Host();
+            PlayScenarioStep capturedStep = null;
+            var restored = new PlayScenarioEngine(checkpoint, restoredHost, (_, step, __) => capturedStep = step);
+            restored.Interrupt("boundary reload", checkpointAt + 250);
+            AssertLedger(checkpoint, "passed", checkpointIteration == 2 ? "failed" : "passed", checkpointIteration == 2 ? "skipped" : "failed");
+            Assert.AreEqual(checkpointIteration, checkpoint.Failure.Iteration);
+            Assert.AreEqual("cleanup", checkpoint.Failure.Stage);
+            Assert.AreEqual("Cleanup two", capturedStep.Name);
+            Assert.IsNull(checkpoint.CleanupError);
+            Assert.AreEqual(0, restoredHost.Calls);
         }
     }
 }

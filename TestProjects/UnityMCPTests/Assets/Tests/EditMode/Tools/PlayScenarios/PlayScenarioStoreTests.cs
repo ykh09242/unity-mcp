@@ -348,5 +348,180 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
             run.MetricWarnings = Enumerable.Repeat("warning", 17).ToList();
             Assert.Throws<ArgumentException>(() => store.SaveReport(run));
         }
+
+        private static PlayScenarioRun LedgerRun(string jobId)
+        {
+            PlayScenarioRun run = Run(jobId);
+            run.IterationResultsVersion = 1;
+            run.IterationResults = new System.Collections.Generic.List<PlayScenarioIterationResult>
+            {
+                new PlayScenarioIterationResult
+                {
+                    Iteration = 1,
+                    Status = "passed",
+                    StartedUnixMs = 100,
+                    FinishedUnixMs = 500,
+                },
+            };
+            return run;
+        }
+
+        [Test]
+        public void LegacyReportWithoutEitherLedgerFieldSavesLoadsAndListsWithoutInventedRows()
+        {
+            PlayScenarioRun run = Run(new string('1', 32));
+            store.SaveReport(run);
+            JObject saved = JObject.Parse(File.ReadAllText(Path.Combine(Reports, run.JobId + ".json")));
+            Assert.IsNull(saved.Property("iteration_results_version"));
+            Assert.IsNull(saved.Property("iteration_results"));
+            PlayScenarioRun restored = store.GetReport(run.JobId);
+            Assert.IsNull(restored.IterationResultsVersion);
+            Assert.IsNull(restored.IterationResults);
+            Assert.AreEqual(run.JobId, store.ListReports().Single().JobId);
+            store.SaveReport(restored);
+            Assert.IsNull(JObject.Parse(File.ReadAllText(Path.Combine(Reports, run.JobId + ".json"))).Property("iteration_results"));
+        }
+
+        [Test]
+        public void VersionOneLedgerRoundTripsAndKeepsDetachedScalarRows()
+        {
+            PlayScenarioRun run = LedgerRun(new string('2', 32));
+            store.SaveReport(run);
+            PlayScenarioRun restored = store.GetReport(run.JobId);
+            Assert.AreEqual(1, restored.IterationResultsVersion);
+            Assert.AreEqual("passed", restored.IterationResults.Single().Status);
+            Assert.AreEqual(100, restored.IterationResults[0].StartedUnixMs);
+            Assert.AreEqual(500, restored.IterationResults[0].FinishedUnixMs);
+            restored.IterationResults[0].Status = "failed";
+            Assert.AreEqual("passed", store.GetReport(run.JobId).IterationResults[0].Status);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void LiveLedgerAllowsPendingAndRunningCheckpoints(bool started)
+        {
+            PlayScenarioRun run = PlayScenarioEngine.Create(Definition(), new string('3', 32), 2, 30, 1000);
+            if (started)
+            {
+                run.IterationResults[0].Status = "running";
+                run.IterationResults[0].StartedUnixMs = 1250;
+            }
+            store.SaveReport(run);
+            PlayScenarioRun restored = store.GetReport(run.JobId);
+            CollectionAssert.AreEqual(new[] { started ? "running" : "pending", "pending" }, restored.IterationResults.Select(result => result.Status));
+            Assert.IsEmpty(store.ListReports());
+        }
+
+        [Test]
+        public void FailedLedgerAcceptsActualAttemptThenUntouchedSkippedRows()
+        {
+            PlayScenarioRun run = LedgerRun(new string('4', 32));
+            run.RepeatCount = 3;
+            run.Status = "failed";
+            run.IterationResults.Add(
+                new PlayScenarioIterationResult
+                {
+                    Iteration = 2,
+                    Status = "failed",
+                    StartedUnixMs = 500,
+                    FinishedUnixMs = 500,
+                }
+            );
+            run.IterationResults.Add(new PlayScenarioIterationResult { Iteration = 3, Status = "skipped" });
+            store.SaveReport(run);
+            CollectionAssert.AreEqual(new[] { "passed", "failed", "skipped" }, store.GetReport(run.JobId).IterationResults.Select(result => result.Status));
+        }
+
+        [TestCase("missing_version")]
+        [TestCase("missing_results")]
+        [TestCase("null_version")]
+        [TestCase("null_results")]
+        [TestCase("wrong_version")]
+        [TestCase("string_version")]
+        [TestCase("oversized_results")]
+        [TestCase("wrong_count")]
+        [TestCase("wrong_iteration")]
+        [TestCase("unknown_status")]
+        [TestCase("string_timestamp")]
+        [TestCase("unknown_row_field")]
+        [TestCase("missing_row_field")]
+        [TestCase("passed_without_start")]
+        [TestCase("finish_before_start")]
+        [TestCase("finish_after_report")]
+        [TestCase("terminal_pending")]
+        [TestCase("succeeded_failed")]
+        public void StoredLedgerRejectsPartialMalformedOrInconsistentResults(string mutation)
+        {
+            PlayScenarioRun run = LedgerRun(new string('5', 32));
+            store.SaveReport(run);
+            JObject value = JObject.FromObject(run);
+            var results = (JArray)value["iteration_results"];
+            var row = (JObject)results[0];
+            switch (mutation)
+            {
+                case "missing_version":
+                    value.Remove("iteration_results_version");
+                    break;
+                case "missing_results":
+                    value.Remove("iteration_results");
+                    break;
+                case "null_version":
+                    value["iteration_results_version"] = null;
+                    break;
+                case "null_results":
+                    value["iteration_results"] = null;
+                    break;
+                case "wrong_version":
+                    value["iteration_results_version"] = 2;
+                    break;
+                case "string_version":
+                    value["iteration_results_version"] = "1";
+                    break;
+                case "oversized_results":
+                    for (int index = 0; index < 10; index++)
+                        results.Add(row.DeepClone());
+                    break;
+                case "wrong_count":
+                    results.Clear();
+                    break;
+                case "wrong_iteration":
+                    row["iteration"] = 2;
+                    break;
+                case "unknown_status":
+                    row["status"] = "succeeded";
+                    break;
+                case "string_timestamp":
+                    row["started_unix_ms"] = "100";
+                    break;
+                case "unknown_row_field":
+                    row["unexpected"] = true;
+                    break;
+                case "missing_row_field":
+                    row.Remove("finished_unix_ms");
+                    break;
+                case "passed_without_start":
+                    row["started_unix_ms"] = null;
+                    break;
+                case "finish_before_start":
+                    row["finished_unix_ms"] = 99;
+                    break;
+                case "finish_after_report":
+                    row["finished_unix_ms"] = 501;
+                    break;
+                case "terminal_pending":
+                    row["status"] = "pending";
+                    row["started_unix_ms"] = null;
+                    row["finished_unix_ms"] = null;
+                    break;
+                case "succeeded_failed":
+                    row["status"] = "failed";
+                    break;
+                default:
+                    Assert.Fail("Unknown mutation.");
+                    break;
+            }
+            File.WriteAllText(Path.Combine(Reports, run.JobId + ".json"), value.ToString());
+            Assert.Throws<ArgumentException>(() => store.GetReport(run.JobId));
+        }
     }
 }
