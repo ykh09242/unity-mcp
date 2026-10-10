@@ -1,22 +1,19 @@
 {
-  "name": "MCPForUnity.Input.UGUI.Editor",
-  "rootNamespace": "",
+  "name": "MCPForUnity.ScenarioPlayerFixture.Editor",
   "references": [
-    "MCPForUnity.Editor",
+    "MCPForUnity.ScenarioPlayerFixture",
     "MCPForUnity.Runtime",
-    "UnityEngine.UI",
-    "MCPForUnity.Input.UGUI.Runtime"
+    "MCPForUnity.Editor",
+    "UnityEngine.UI"
   ],
   "includePlatforms": [
     "Editor"
   ],
-  "excludePlatforms": [],
-  "allowUnsafeCode": false,
+  "autoReferenced": true,
   "overrideReferences": true,
   "precompiledReferences": [
     "Newtonsoft.Json.dll"
   ],
-  "autoReferenced": true,
   "defineConstraints": [
     "MCP_INPUT_UGUI"
   ],

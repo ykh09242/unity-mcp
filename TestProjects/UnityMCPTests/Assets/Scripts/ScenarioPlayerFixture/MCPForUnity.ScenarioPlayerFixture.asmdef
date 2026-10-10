@@ -1,0 +1,19 @@
+{
+  "name": "MCPForUnity.ScenarioPlayerFixture",
+  "references": [
+    "MCPForUnity.Runtime",
+    "UnityEngine.UI"
+  ],
+  "autoReferenced": true,
+  "defineConstraints": [
+    "MCP_INPUT_UGUI"
+  ],
+  "versionDefines": [
+    {
+      "name": "com.unity.ugui",
+      "expression": "1.0.0",
+      "define": "MCP_INPUT_UGUI"
+    }
+  ],
+  "noEngineReferences": false
+}

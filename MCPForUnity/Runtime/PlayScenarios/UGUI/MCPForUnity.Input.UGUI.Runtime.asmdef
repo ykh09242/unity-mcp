@@ -1,21 +1,15 @@
 {
-  "name": "MCPForUnity.Input.UGUI.Editor",
+  "name": "MCPForUnity.Input.UGUI.Runtime",
   "rootNamespace": "",
   "references": [
-    "MCPForUnity.Editor",
     "MCPForUnity.Runtime",
-    "UnityEngine.UI",
-    "MCPForUnity.Input.UGUI.Runtime"
+    "UnityEngine.UI"
   ],
-  "includePlatforms": [
-    "Editor"
-  ],
+  "includePlatforms": [],
   "excludePlatforms": [],
   "allowUnsafeCode": false,
-  "overrideReferences": true,
-  "precompiledReferences": [
-    "Newtonsoft.Json.dll"
-  ],
+  "overrideReferences": false,
+  "precompiledReferences": [],
   "autoReferenced": true,
   "defineConstraints": [
     "MCP_INPUT_UGUI"

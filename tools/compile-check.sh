@@ -29,6 +29,7 @@
 #   TEST_FRAMEWORK_SOURCE  extracted pinned UPM package   (optional; compiles its TestRunner APIs)
 #   EDITOR_COROUTINES_SOURCE extracted pinned UPM package (required; compiles its Editor assembly)
 #   TEST_PROJECT   isolated test project                 (optional; compiles fixture and EditMode tests)
+#   COMPILE_INPUT_UGUI  compile optional uGUI assemblies  (default 0; set 1 to enable)
 #   PLATFORMS      editor platforms to compile           (default "win osx linux")
 #   OUT            scratch dir                           (default /tmp/mcp-compile-check)
 #
@@ -74,6 +75,19 @@ if [ -n "$TEST_PROJECT" ]; then
     source_dir="$TEST_PROJECT/${entry%/*}"
     [ -n "$(find "$source_dir" -name '*.cs' -type f -print -quit)" ] || die "test assembly sources not found: $source_dir"
   done
+fi
+COMPILE_INPUT_UGUI=${COMPILE_INPUT_UGUI:-0}
+case "$COMPILE_INPUT_UGUI" in 0|1) ;; *) die "COMPILE_INPUT_UGUI must be 0 or 1" ;; esac
+if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
+  for entry in \
+    MCPForUnity/Runtime/PlayScenarios/UGUI/MCPForUnity.Input.UGUI.Runtime.asmdef \
+    MCPForUnity/Editor/Tools/Input/UGUI/MCPForUnity.Input.UGUI.Editor.asmdef; do
+    [ -f "$REPO/$entry" ] || die "optional uGUI assembly definition not found: $entry"
+  done
+  if [ -n "$TEST_PROJECT" ]; then
+    entry=Assets/Tests/EditMode/Tools/Input/UGUI/MCPForUnity.Input.UGUI.Tests.asmdef
+    [ -f "$TEST_PROJECT/$entry" ] || die "optional uGUI test assembly definition not found: $entry"
+  fi
 fi
 PLATFORMS=${PLATFORMS:-"win osx linux"}
 OUT=${OUT:-/tmp/mcp-compile-check}
@@ -207,6 +221,22 @@ resolve_ref() {
   esac
 }
 
+# Enumerate only sources owned by one asmdef. Nested asmdefs compile separately,
+# including disabled optional assemblies; never merge their types into a parent.
+assembly_sources() {
+  local srcdir="$1" definition
+  local prune=()
+  while IFS= read -r -d '' definition; do
+    [ "${#prune[@]}" -eq 0 ] || prune+=(-o)
+    prune+=(-path "${definition%/*}")
+  done < <(find "$srcdir" -mindepth 2 -name '*.asmdef' -type f -print0)
+  if [ "${#prune[@]}" -gt 0 ]; then
+    find "$srcdir" \( "${prune[@]}" \) -prune -o -name '*.cs' -type f -print | sort
+  else
+    find "$srcdir" -name '*.cs' -type f -print | sort
+  fi
+}
+
 # ------------------------------------------------------------------ compile ----
 # Output assembly names must be exactly MCPForUnity.Runtime / MCPForUnity.Editor:
 # MCPForUnity/Runtime/AssemblyInfo.cs grants InternalsVisibleTo by assembly NAME, so a
@@ -220,9 +250,9 @@ compile() {
   # Initial Unity 7 uses CoreCLR with the .NET Standard 2.1 scripting API surface,
   # including Editor assemblies. The bundled .NET 10 SDK does not widen that surface.
   case "$ver_major.$ver_minor:$name" in
-    7000.0:*|*:MCPForUnity.Runtime|*:TestAsmdef) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
+    7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:TestAsmdef) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
   esac
-  [ -d "$srcdir" ] && [ -n "$(find "$srcdir" -name '*.cs' -type f -print -quit)" ] || {
+  [ -d "$srcdir" ] && [ -n "$(assembly_sources "$srcdir")" ] || {
     echo "::error::assembly sources not found: $srcdir" >&2; return 1;
   }
   for required in "$bcl" "$manifest"; do
@@ -248,9 +278,10 @@ compile() {
     echo "-out:\"$dir/$name.dll\""
     case "$name" in UnityEngine.TestRunner|UnityEditor.TestRunner) echo "-define:UNITY_TESTS_FRAMEWORK" ;; esac
     case "$name" in
-      MCPForUnity.Runtime|MCPForUnity.Editor|MCPForUnity.CustomTools.Roslyn*|TestAsmdef|MCPForUnityTests.EditMode)
+      MCPForUnity.Runtime|MCPForUnity.Editor|MCPForUnity.Input.UGUI.*|MCPForUnity.CustomTools.Roslyn*|TestAsmdef|MCPForUnityTests.EditMode)
         echo "-warnaserror+" ;;
     esac
+    case "$name" in MCPForUnity.Input.UGUI.*) echo "-define:MCP_INPUT_UGUI" ;; esac
     case "$name" in MCPForUnity.CustomTools.RoslynOn) echo "-define:USE_ROSLYN" ;; esac
     case "$name" in
       UnityEngine.UI|UnityEditor.UI)
@@ -294,7 +325,7 @@ compile() {
       if [ -f "$r" ]; then echo "-r:\"$r\""
       else echo "::error::required assembly reference not found: $r" >&2; missing=$((missing+1)); fi
     done
-    find "$srcdir" -name '*.cs' -type f | sort | while read -r f; do echo "\"$f\""; done
+    assembly_sources "$srcdir" | while read -r f; do echo "\"$f\""; done
   } > "$rsp"
 
   if [ "$missing" -ne 0 ]; then
@@ -302,7 +333,7 @@ compile() {
     return 1
   fi
 
-  local nsrc; nsrc=$(find "$srcdir" -name '*.cs' -type f | wc -l)
+  local nsrc; nsrc=$(assembly_sources "$srcdir" | wc -l)
   echo "--- $name [$platform] : $nsrc sources, $(grep -c '^-r:' "$rsp") refs ---"
   "$DOTNET" "$CSC" "@$rsp" 2>&1 | grep -vE '^(Microsoft \(R\)|Copyright)' | sed '/^$/d'
   local rc=${PIPESTATUS[0]}
@@ -348,11 +379,22 @@ for platform in $PLATFORMS; do
   fi
   compile MCPForUnity.Runtime "$REPO/MCPForUnity/Runtime" "$platform" \
     "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }
+  if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
+    compile MCPForUnity.Input.UGUI.Runtime "$REPO/MCPForUnity/Runtime/PlayScenarios/UGUI" "$platform" \
+      "$REFS_PROFILE/Runtime.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
+      || { failed=1; continue; }
+  fi
   compile Unity.EditorCoroutines.Editor "$EDITOR_COROUTINES_SOURCE/Editor" "$platform" \
     "$REFS_PROFILE/Editor.txt" || { failed=1; continue; }
   compile MCPForUnity.Editor "$REPO/MCPForUnity/Editor" "$platform" \
     "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
     "$OUT/$platform/Unity.EditorCoroutines.Editor.dll" || { failed=1; continue; }
+  if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
+    compile MCPForUnity.Input.UGUI.Editor "$REPO/MCPForUnity/Editor/Tools/Input/UGUI" "$platform" \
+      "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
+      "$OUT/$platform/MCPForUnity.Editor.dll" "$OUT/$platform/MCPForUnity.Input.UGUI.Runtime.dll" \
+      || { failed=1; continue; }
+  fi
   # Use Unity's coherent Mono/.NET Framework Roslyn group in both modes: the
   # compiler helper still references CodeAnalysis under UNITY_EDITOR when off.
   roslyn_refs=()
@@ -372,7 +414,13 @@ for platform in $PLATFORMS; do
     compile MCPForUnityTests.EditMode "$TEST_PROJECT/Assets/Tests/EditMode" "$platform" \
       "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
       "$OUT/$platform/MCPForUnity.Editor.dll" "$OUT/$platform/TestAsmdef.dll" \
-      "$OUT/$platform/Unity.EditorCoroutines.Editor.dll" || failed=1
+      "$OUT/$platform/Unity.EditorCoroutines.Editor.dll" || { failed=1; continue; }
+    if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
+      compile MCPForUnity.Input.UGUI.Tests "$TEST_PROJECT/Assets/Tests/EditMode/Tools/Input/UGUI" "$platform" \
+        "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
+        "$OUT/$platform/MCPForUnity.Editor.dll" "$OUT/$platform/MCPForUnity.Input.UGUI.Editor.dll" \
+        || failed=1
+    fi
   fi
 done
 

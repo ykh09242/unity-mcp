@@ -15,17 +15,6 @@ namespace MCPForUnity.Editor.Tools.Input
         void ReleaseAll();
     }
 
-    public interface IUguiInputSimulationBackend
-    {
-        object Click(GameObject target);
-    }
-
-    /// <summary>Scenario clicks may wait before dispatch, never after an event has been sent.</summary>
-    public interface IUguiScenarioClickBackend
-    {
-        bool TryClick(GameObject target, out object result, out string detail);
-    }
-
     /// <summary>Optional assemblies register strongly typed adapters without adding package dependencies.</summary>
     [InitializeOnLoad]
     [McpForUnityTool(

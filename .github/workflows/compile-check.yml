@@ -158,6 +158,7 @@ jobs:
             -e UNITY_VERSION="$UNITY_VERSION" \
             -e UNITY_DATA="/repo/$UNITY_DATA" \
             -e REPO=/repo \
+            -e COMPILE_INPUT_UGUI=1 \
             -e EXTRA_REFS="/repo/$EXTRA_REFS" \
             -e TEST_FRAMEWORK_SOURCE="/repo/$TEST_FRAMEWORK_SOURCE" \
             -e EDITOR_COROUTINES_SOURCE="/repo/$EDITOR_COROUTINES_SOURCE" \
@@ -184,6 +185,7 @@ jobs:
               echo "MCP runtime, Editor and EditMode test assemblies compiled against Unity"
               echo "\`${{ matrix.unity.version }}\` (${{ matrix.unity.channel }}) reference assemblies for **win, osx and linux**."
               echo "CustomTools Roslyn examples also compiled with USE_ROSLYN **off and on**, with warnings treated as errors."
+              echo "Optional uGUI Runtime, Editor and test assemblies compiled separately with MCP_INPUT_UGUI enabled."
               echo "The pinned Editor Coroutines package's actual Editor assembly was compiled and referenced."
               echo
               echo "No Unity license was used, so this runs on fork PRs too."

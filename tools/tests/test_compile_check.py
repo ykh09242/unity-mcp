@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 
@@ -59,6 +60,7 @@ class CompileHarness:
         test_project: Path | None = None,
         framework: Path | None = None,
         coroutines: Path | None = None,
+        ugui: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         env = dict(
             os.environ,
@@ -70,6 +72,7 @@ class CompileHarness:
             TEST_PROJECT=test_project.as_posix() if test_project else "",
             EDITOR_COROUTINES_SOURCE=(coroutines or self.coroutines).as_posix(),
             PLATFORMS=platforms,
+            COMPILE_INPUT_UGUI="1" if ugui else "0",
             OUT=self.output.as_posix(),
             FAKE_COMPILER_CALLS=self.calls.as_posix(),
         )
@@ -1223,3 +1226,194 @@ def test_workflow_triggers_optional_sources_and_compile_contract_tests() -> None
     ):
         assert f"- {path}" in workflow
     assert "USE_ROSLYN" in workflow and "off" in workflow and "on" in workflow
+
+
+UGUI_ASSEMBLIES = (
+    "MCPForUnity.Input.UGUI.Runtime",
+    "MCPForUnity.Input.UGUI.Editor",
+    "MCPForUnity.Input.UGUI.Tests",
+)
+
+
+@pytest.fixture
+def ugui_sources(harness: CompileHarness, staged_tests: tuple[Path, Path]) -> tuple[Path, Path]:
+    project, framework = staged_tests
+    for root, relative, assembly in (
+        (harness.repo, "MCPForUnity/Runtime/PlayScenarios/UGUI", UGUI_ASSEMBLIES[0]),
+        (harness.repo, "MCPForUnity/Editor/Tools/Input/UGUI", UGUI_ASSEMBLIES[1]),
+        (project, "Assets/Tests/EditMode/Tools/Input/UGUI", UGUI_ASSEMBLIES[2]),
+    ):
+        directory = root / relative
+        directory.mkdir(parents=True)
+        (directory / "Fixture.cs").write_text("class OptionalUiFixture {}", encoding="utf-8")
+        original = (
+            ROOT / relative / f"{assembly}.asmdef"
+            if root == harness.repo
+            else ROOT / "TestProjects/UnityMCPTests" / relative / f"{assembly}.asmdef"
+        )
+        shutil.copy2(original, directory / f"{assembly}.asmdef")
+    for root, relative in (
+        (harness.repo, "MCPForUnity/Runtime/OtherOptional"),
+        (harness.repo, "MCPForUnity/Editor/Tools/Input/InputSystem"),
+        (project, "Assets/Tests/EditMode/OtherOptional"),
+    ):
+        directory = root / relative
+        directory.mkdir(parents=True)
+        (directory / "Other.asmdef").write_text('{"name":"Other.Optional"}', encoding="utf-8")
+        (directory / "Excluded.cs").write_text(
+            "#error Not owned by the parent assembly", encoding="utf-8"
+        )
+    cache = harness.data / "Resources/PackageManager/ProjectTemplates/libcache/ui/ScriptAssemblies"
+    cache.mkdir(parents=True)
+    for assembly in ("UnityEngine.UI", "UnityEditor.UI"):
+        (cache / f"{assembly}.dll").touch()
+    for manifest in (harness.repo / "tools/compile-refs").rglob("*.txt"):
+        if manifest.parent.name == "BCL":
+            continue
+        prefix = "COMPILED" if manifest.parent.name == "7000.0" else "LIBCACHE"
+        with manifest.open("a", encoding="utf-8") as stream:
+            stream.write(f"{prefix}/UnityEngine.UI.dll\n")
+    return project, framework
+
+
+@pytest.mark.parametrize(
+    "version", ["2021.3.45f2", "2022.3.62f1", "6000.0.69f1", "6000.6.4f1", "7000.0.0a7"]
+)
+def test_enabled_ugui_compiles_separate_assemblies_in_dependency_order(
+    harness: CompileHarness, ugui_sources: tuple[Path, Path], version: str
+) -> None:
+    # Given nested uGUI asmdefs, real asmdef dependencies, and the selected Unity profile.
+    project, framework = ugui_sources
+    # When optional uGUI compilation is explicitly selected.
+    result = harness.run(version, test_project=project, framework=framework, ugui=True)
+    # Then the runtime adapter, Editor wrapper, and optional tests are distinct consumers.
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
+    ordered = (
+        "MCPForUnity.Runtime",
+        UGUI_ASSEMBLIES[0],
+        "MCPForUnity.Editor",
+        UGUI_ASSEMBLIES[1],
+        "MCPForUnityTests.EditMode",
+        UGUI_ASSEMBLIES[2],
+    )
+    assert [calls.index(name) for name in ordered] == sorted(calls.index(name) for name in ordered)
+    responses = {
+        name: (harness.output / "linux" / f"{name}.rsp").read_text(encoding="utf-8")
+        for name in ordered
+    }
+    for parent in ("MCPForUnity.Runtime", "MCPForUnity.Editor", "MCPForUnityTests.EditMode"):
+        assert "/UGUI/Fixture.cs" not in responses[parent]
+        assert "/Excluded.cs" not in responses[parent]
+        assert "-define:MCP_INPUT_UGUI" not in responses[parent]
+    for assembly in UGUI_ASSEMBLIES:
+        response = responses[assembly]
+        assert "/UGUI/Fixture.cs" in response
+        assert "-define:MCP_INPUT_UGUI" in response.splitlines()
+        assert "-warnaserror+" in response.splitlines()
+        assert '/UnityEngine.UI.dll"' in response
+    for assembly, dependencies in (
+        (UGUI_ASSEMBLIES[0], ("MCPForUnity.Runtime",)),
+        (UGUI_ASSEMBLIES[1], ("MCPForUnity.Runtime", "MCPForUnity.Editor", UGUI_ASSEMBLIES[0])),
+        (UGUI_ASSEMBLIES[2], ("MCPForUnity.Runtime", "MCPForUnity.Editor", UGUI_ASSEMBLIES[1])),
+    ):
+        for dependency in dependencies:
+            assert f'/linux/{dependency}.dll"' in responses[assembly]
+    assert '/UnityEngine.TestRunner.dll"' in responses[UGUI_ASSEMBLIES[2]]
+    assert '/UnityEditor.TestRunner.dll"' in responses[UGUI_ASSEMBLIES[2]]
+    assert set(OPTIONAL_ASSEMBLIES) <= set(calls)
+
+
+def test_disabled_ugui_keeps_nested_sources_out_of_parent_assemblies(
+    harness: CompileHarness, ugui_sources: tuple[Path, Path]
+) -> None:
+    # Given optional nested assemblies installed in both package and test trees.
+    project, framework = ugui_sources
+    # When the existing default compilation path runs.
+    result = harness.run("6000.0.69f1", test_project=project, framework=framework)
+    # Then optional types stay excluded and every existing owned assembly still compiles.
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = {Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()}
+    assert set(OWNED_ASSEMBLIES) <= calls
+    assert not calls.intersection(UGUI_ASSEMBLIES)
+    for assembly in ("MCPForUnity.Runtime", "MCPForUnity.Editor", "MCPForUnityTests.EditMode"):
+        response = (harness.output / "linux" / f"{assembly}.rsp").read_text(encoding="utf-8")
+        assert "/UGUI/Fixture.cs" not in response
+        assert "/Excluded.cs" not in response
+        assert "-define:MCP_INPUT_UGUI" not in response
+
+
+@pytest.mark.parametrize("missing", UGUI_ASSEMBLIES)
+def test_enabled_ugui_missing_asmdef_fails_before_compiler(
+    harness: CompileHarness, ugui_sources: tuple[Path, Path], missing: str
+) -> None:
+    # Given an explicitly selected optional assembly with missing assembly metadata.
+    project, framework = ugui_sources
+    roots = (harness.repo / "MCPForUnity", project / "Assets")
+    definition = next(path for root in roots for path in root.rglob(f"{missing}.asmdef"))
+    definition.unlink()
+    # When the harness validates optional compilation prerequisites.
+    result = harness.run("6000.0.69f1", test_project=project, framework=framework, ugui=True)
+    # Then it fails honestly before any compile pass can create partial evidence.
+    assert result.returncode == 2
+    assert missing in result.stderr
+    assert not harness.calls.exists()
+
+
+def test_missing_ugui_runtime_output_blocks_all_downstream_consumers(
+    harness: CompileHarness, ugui_sources: tuple[Path, Path]
+) -> None:
+    # Given a compiler that fails to produce the selected optional runtime output.
+    project, framework = ugui_sources
+    compiler = harness.data / "NetCoreRuntime/dotnet"
+    compiler.write_text(
+        compiler.read_text(encoding="utf-8").replace(
+            'touch "$output"',
+            f'case "$output" in *{UGUI_ASSEMBLIES[0]}.dll) ;; *) touch "$output" ;; esac',
+        ),
+        encoding="utf-8",
+    )
+    # When the dependency graph reaches the optional runtime pass.
+    result = harness.run("6000.0.69f1", test_project=project, framework=framework, ugui=True)
+    # Then neither Editor nor optional test consumers receive a nonexistent runtime.
+    assert result.returncode == 1
+    calls = {Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()}
+    assert UGUI_ASSEMBLIES[0] in calls
+    assert "MCPForUnity.Editor" not in calls
+    assert UGUI_ASSEMBLIES[1] not in calls
+    assert UGUI_ASSEMBLIES[2] not in calls
+
+
+@pytest.mark.parametrize("version", ["2021.3.45f2", "6000.0.69f1", "7000.0.0a7"])
+def test_optional_ugui_uses_runtime_bcl_and_respects_editor_profile(
+    harness: CompileHarness, ugui_sources: tuple[Path, Path], version: str
+) -> None:
+    # Given distinguishable Runtime and Editor BCL manifests.
+    project, framework = ugui_sources
+    for name in ("Runtime", "Editor"):
+        reference = harness.data / "Managed" / f"{name}Bcl.dll"
+        reference.touch()
+        manifest = harness.repo / "tools/compile-refs/BCL" / f"{name}.txt"
+        manifest.write_text(f"DATA/Managed/{name}Bcl.dll\n", encoding="utf-8")
+    # When the selected optional assemblies compile against a version-specific profile.
+    result = harness.run(version, test_project=project, framework=framework, ugui=True)
+    # Then Runtime always uses the portable API surface, including on older Editors.
+    assert result.returncode == 0, result.stdout + result.stderr
+    for assembly in UGUI_ASSEMBLIES:
+        response = (harness.output / "linux" / f"{assembly}.rsp").read_text(encoding="utf-8")
+        runtime_surface = assembly == UGUI_ASSEMBLIES[0] or version.startswith("7000.")
+        assert ('/RuntimeBcl.dll"' in response) == runtime_surface
+        assert ('/EditorBcl.dll"' in response) != runtime_surface
+
+
+def test_license_free_ci_enables_separate_ugui_compile_passes() -> None:
+    # Given the CI step that invokes the license-free compiler in Docker.
+    workflow = (ROOT / ".github/workflows/compile-check.yml").read_text(encoding="utf-8")
+    step = workflow.split("      - name: Compile\n", 1)[1].split("\n      - name:", 1)[0]
+    # When its real shell argument list is parsed without executing the container.
+    arguments = shlex.split(step.split("        run: |\n", 1)[1])
+    # Then the optional compile flag belongs to Docker's environment for this script.
+    selected = arguments.index("COMPILE_INPUT_UGUI=1")
+    assert arguments[selected - 1] == "-e"
+    assert arguments[-1] == "/repo/tools/compile-check.sh"
+    assert arguments.index("docker") < selected < arguments.index("$UNITY_IMAGE")

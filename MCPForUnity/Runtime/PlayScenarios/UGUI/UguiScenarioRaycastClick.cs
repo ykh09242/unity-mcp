@@ -1,7 +1,7 @@
 #if MCP_INPUT_UGUI
 using System;
 using System.Collections.Generic;
-using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.PlayScenarios;
 using MCPForUnity.Runtime.Helpers;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -9,7 +9,7 @@ using UnityEngine.UI;
 
 namespace MCPForUnity.Editor.Tools.Input
 {
-    public sealed partial class UguiInputSimulationBackend
+    public sealed partial class UguiScenarioDispatch
     {
         public bool TryRaycastClick(GameObject target, out object result, out string detail)
         {
@@ -147,7 +147,7 @@ namespace MCPForUnity.Editor.Tools.Input
                 data.pointerCurrentRaycast = releaseHit;
                 if (!ExecuteEvents.Execute(handler, data, ExecuteEvents.pointerClickHandler))
                     throw new InvalidOperationException("No active click handler accepted the raycast pointer event.");
-                return new SuccessResponse(
+                return new PlayScenarioClickResult(
                     "Dispatched raycast-verified uGUI pointer click.",
                     new
                     {
@@ -155,7 +155,7 @@ namespace MCPForUnity.Editor.Tools.Input
                         click_mode = "raycast",
                         raycast_verified = true,
                         direct_event_dispatch = true,
-                        note = "EventSystem raycast and synchronous pointer dispatch; no OS input or Player-build verification.",
+                        note = "EventSystem raycast and synchronous pointer dispatch; no OS input injection.",
                     }
                 );
             }
