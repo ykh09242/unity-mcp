@@ -58,17 +58,21 @@ class AliasModel(BaseModel):
     "message",
     [
         JSONRPCResponse(jsonrpc="2.0", id=7, result={"n": 10**100}),
-        JSONRPCResponse(jsonrpc="2.0", id="7", result={"text": '한글😀\r\n\t\\"'}),
+        JSONRPCResponse(jsonrpc="2.0", id="7", result={"text": '\ud55c\uae00😀\r\n\t\\"'}),
         JSONRPCResponse(
-            jsonrpc="2.0", id="owned", result={"alias": AliasModel(value="한", extra="😀")}
+            jsonrpc="2.0", id="owned", result={"alias": AliasModel(value="\ud55c", extra="😀")}
         ),
         JSONRPCResponse(
             jsonrpc="2.0", id="owned", result={"a": None, "f": float("nan"), "p": float("inf")}
         ),
         JSONRPCError(
-            jsonrpc="2.0", id=None, error=ErrorData(code=-32603, message="한글", data={"a": None})
+            jsonrpc="2.0",
+            id=None,
+            error=ErrorData(code=-32603, message="\ud55c\uae00", data={"a": None}),
         ),
-        JSONRPCNotification(jsonrpc="2.0", method="notifications/message", params={"data": "한글"}),
+        JSONRPCNotification(
+            jsonrpc="2.0", method="notifications/message", params={"data": "\ud55c\uae00"}
+        ),
         JSONRPCRequest(jsonrpc="2.0", id="owned", method="tools/list"),
     ],
 )
@@ -142,7 +146,7 @@ async def test_binary_partial_write_is_completed_before_flush():
             return super().write(data[:3])
 
     stdin = IdleInput()
-    message = JSONRPCResponse(jsonrpc="2.0", id="owned", result={"value": "한글😀"})
+    message = JSONRPCResponse(jsonrpc="2.0", id="owned", result={"value": "\ud55c\uae00😀"})
     with Partial() as output:
         async with retained_stdio_server(stdin=stdin, binary_stdout=output) as (read, write):
             async with read, write:
@@ -311,7 +315,7 @@ async def test_binary_writer_retains_until_flush_and_uses_one_worker():
     # Given an explicit binary destination whose flush is delayed.
     stdin = IdleInput()
     output = BinaryOutput(asyncio.get_running_loop())
-    message = JSONRPCResponse(jsonrpc="2.0", id=7, result={"data": "한글😀\n" * 1000})
+    message = JSONRPCResponse(jsonrpc="2.0", id=7, result={"data": "\ud55c\uae00😀\n" * 1000})
     owner = ResponseOwner()
     try:
         async with retained_stdio_server(stdin=stdin, binary_stdout=output) as (read, write):

@@ -36,10 +36,10 @@ test('search Cheerio can consume the encoding API through CommonJS', () => {
 // Cross the decoder's sniffing window before the text that needs decoding.
 const encodingPadding = '<!--' + 'x'.repeat(1024) + '-->';
 const encodingFixtures = [
-  ['UTF-8', Buffer.from(`<meta charset="utf-8">${encodingPadding}<p>검색 café 🎮</p>`), '검색 café 🎮'],
+  ['UTF-8', Buffer.from(`<meta charset="utf-8">${encodingPadding}<p>\uac80\uc0c9 café 🎮</p>`), '\uac80\uc0c9 café 🎮'],
   ['UTF-8 BOM', Buffer.concat([
-    Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(`${encodingPadding}<p>검색 café 🎮</p>`),
-  ]), '검색 café 🎮'],
+    Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(`${encodingPadding}<p>\uac80\uc0c9 café 🎮</p>`),
+  ]), '\uac80\uc0c9 café 🎮'],
   ['Windows-1252', Buffer.concat([
     Buffer.from(`<meta charset="windows-1252">${encodingPadding}<p>caf`),
     Buffer.from([0xe9, 0x20, 0x80]), Buffer.from('</p>'),

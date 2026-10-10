@@ -80,7 +80,9 @@ def test_valid_reply_avoids_stdlib_decode_through_actual_helper(
     reply_connection, monkeypatch, command
 ):
     # Given a valid framed reply and the existing configured digit limit.
-    result = {"message": "pong"} if command == "ping" else {"name": "Owned 한글 😀", "id": 123}
+    result = (
+        {"message": "pong"} if command == "ping" else {"name": "Owned \ud55c\uae00 😀", "id": 123}
+    )
     conn, sock = reply_connection(json.dumps({"status": "success", "result": result}).encode())
     stdlib_decode = Mock(wraps=json.loads)
     monkeypatch.setattr(uc.json, "loads", stdlib_decode)
@@ -103,7 +105,7 @@ def test_valid_reply_avoids_stdlib_decode_through_actual_helper(
         b'{"a":18446744073709551616}',
         b'{"a":-18446744073709551616}',
         b'{"a":' + b"9" * 200 + b"}",
-        '{"a":"한글 😀 \\u2028"}'.encode(),
+        '{"a":"\ud55c\uae00 😀 \\u2028"}'.encode(),
         b'{"a":"\\ud83d\\ude00"}',
         b'{"a":"\\ud800"}',
         b'{"a":1,"a":2}',

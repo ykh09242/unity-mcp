@@ -238,7 +238,7 @@ def main():
         "id": "01234567-89ab-cdef-0123-456789abcdef",
         "result": {
             "success": True,
-            "unicode": "한글😀",
+            "unicode": "\ud55c\uae00😀",
             "integer": 9007199254740993,
             "escaped_surrogate": "\\ud800",
         },

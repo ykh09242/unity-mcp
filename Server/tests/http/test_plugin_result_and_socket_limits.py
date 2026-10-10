@@ -270,7 +270,10 @@ async def test_raw_graph_rejected_before_json_decoder(isolated, monkeypatch, raw
 def test_ordinary_unicode_and_base64_response_remain_supported():
     from models.response_limits import response_size, bounded_json_text
 
-    result = {"success": True, "data": {"preview": "a" * (4 * 1024 * 1024), "name": "테스트 🎮"}}
+    result = {
+        "success": True,
+        "data": {"preview": "a" * (4 * 1024 * 1024), "name": "\ud14c\uc2a4\ud2b8 🎮"},
+    }
     assert response_size(result) is not None
     raw = json.dumps(result, ensure_ascii=False)
     assert (

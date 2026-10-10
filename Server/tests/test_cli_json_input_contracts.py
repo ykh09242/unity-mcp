@@ -72,7 +72,7 @@ def invoke_payload(consumer, payload):
         ),
         (
             r"""{'nested':[True,False,true,false,null,{"text":"False\n\uD55C\uAE00"}]}""",
-            {"nested": [True, False, True, False, None, {"text": "False\n한글"}]},
+            {"nested": [True, False, True, False, None, {"text": "False\n\ud55c\uae00"}]},
         ),
         (
             '{"name":"O\'Brien TrueNorth","enabled":true}',

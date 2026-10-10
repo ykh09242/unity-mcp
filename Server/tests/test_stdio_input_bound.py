@@ -30,7 +30,7 @@ class FragmentedBinary:
     "wire",
     [
         b"one\ntwo\r\nthree\rfour",
-        "한글😀\r\nlast".encode(),
+        "\ud55c\uae00😀\r\nlast".encode(),
         b"bad\xff\npartial\xe3\x81",
         b"\r\n\n\rlast\r",
         b"",
@@ -69,7 +69,7 @@ async def test_binary_oversize_stops_without_unbounded_read_or_drain(ending):
 
 @pytest.mark.asyncio
 async def test_utf8_limit_counts_wire_bytes_not_decoded_characters():
-    source = FragmentedBinary("한글😀".encode() + b"\n", 1)
+    source = FragmentedBinary("\ud55c\uae00😀".encode() + b"\n", 1)
     with pytest.raises(ValueError, match="size limit"):
         async for _ in module._BoundedStdioInput(source, max_bytes=9):
             pytest.fail("10-byte Unicode payload exceeded its allowance")
@@ -213,11 +213,11 @@ async def test_default_64mib_boundary_is_enforced_before_decode(oversize):
 async def test_explicit_text_multibyte_limit_accepts_exact_line_and_rejects_next():
     class Text:
         async def __aiter__(self):
-            yield "한글\r\n"
-            yield "한글😀\n"
+            yield "\ud55c\uae00\r\n"
+            yield "\ud55c\uae00😀\n"
 
     reader = module._CheckedTextInput(Text(), 6).__aiter__()
-    assert await reader.__anext__() == "한글\r\n"
+    assert await reader.__anext__() == "\ud55c\uae00\r\n"
     with pytest.raises(module._StdioInputTooLarge):
         await reader.__anext__()
 

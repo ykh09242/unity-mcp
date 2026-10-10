@@ -46,7 +46,7 @@ internal static class CodecHarness
         string text = Encoding.UTF8.GetString(source);
         string mode = args.Length > 2 ? args[2] : "bytes";
         if (mode.StartsWith("edges"))
-            text = new string('a', 16383) + "\ud83d\ude00|\ud800|\udfff|" + new string('한', 500000);
+            text = new string('a', 16383) + "\ud83d\ude00|\ud800|\udfff|" + new string('\uD55C', 500000);
         var times = new double[7];
         var allocations = new long[7];
         long wire = 0;

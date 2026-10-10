@@ -31,7 +31,7 @@ def test_omitted_file_keeps_instructions_identical_and_does_not_read(monkeypatch
 
 def test_unicode_text_is_preserved_in_labeled_appendix(tmp_path):
     path = tmp_path / "project-guidance.txt"
-    text = "  프로젝트 지침\r\nUse the existing test scene.\n"
+    text = "  \ud504\ub85c\uc81d\ud2b8 \uc9c0\uce68\r\nUse the existing test scene.\n"
     path.write_bytes(text.encode("utf-8"))
     loaded = load_custom_instructions(path)
     assert loaded == text

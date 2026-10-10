@@ -221,7 +221,7 @@ namespace MCPForUnityTests.Editor.Tools
                     throw new ArgumentException("Unknown test encoding.", nameof(kind));
             }
             byte[] preamble = encoding.GetPreamble();
-            string text = (preamble.Length > 0 ? "\uFEFF" : "") + "// 한글 😀 intentional \uFFFD\r\nclass Fixture {}\r\n";
+            string text = (preamble.Length > 0 ? "\uFEFF" : "") + "// \uD55C\uAE00 😀 intentional \uFFFD\r\nclass Fixture {}\r\n";
             byte[] payload = encoding.GetBytes(text);
             byte[] original = new byte[preamble.Length + payload.Length];
             Array.Copy(preamble, original, preamble.Length);

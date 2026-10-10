@@ -51,7 +51,7 @@ VALUES = [
     5e-324,
     -1.7976931348623157e308,
     "",
-    "경로 🎮",
+    "\uacbd\ub85c 🎮",
     '"\\\b\f\n\r\t\x00\x1f',
     "\ud800",
     [],
@@ -63,7 +63,7 @@ VALUES = [
     float("inf"),
     float("-inf"),
     {1: "invalid key"},
-    ResultModel(name="테스트", url=AnyUrl("https://example.test/resource")),
+    ResultModel(name="\ud14c\uc2a4\ud2b8", url=AnyUrl("https://example.test/resource")),
     AnyUrl("https://example.test/resource"),
     {"nested": [ShortString("value"), IntSubclass(17)]},
     ShortList(["a", "b"]),
@@ -80,7 +80,7 @@ def test_charge_and_admission_match_streaming(value, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "value", ["plain", "한글 🎮", "\x00" * 30, [True, None, -0.0], {"a": 100, "b": "c"}]
+    "value", ["plain", "\ud55c\uae00 🎮", "\x00" * 30, [True, None, -0.0], {"a": 100, "b": "c"}]
 )
 def test_exact_byte_boundary_and_conservative_bound_fallback(value):
     size = len(json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8"))
@@ -155,7 +155,7 @@ def test_streaming_ascii_size_avoids_whole_utf8_copy():
 
 @pytest.mark.parametrize(
     "value",
-    ["A" * 262_144, "한🧪" * 65_536, "\x00" * 65_536],
+    ["A" * 262_144, "\ud55c🧪" * 65_536, "\x00" * 65_536],
     ids=["ascii", "unicode", "escaped-controls"],
 )
 def test_streaming_scalar_keeps_exact_encoded_and_retained_limits(value, monkeypatch):
@@ -176,7 +176,7 @@ def test_streaming_string_subclass_cannot_understate_ascii_size():
 
 @pytest.mark.parametrize("raw_type", [str, bytes, bytearray])
 def test_raw_utf8_input_preserves_exact_byte_boundary(raw_type):
-    text = '{"label":"한🧪"}'
+    text = '{"label":"\ud55c🧪"}'
     encoded = text.encode("utf-8")
     raw = text if raw_type is str else raw_type(encoded)
     kwargs = {"max_depth": 64, "max_nodes": 100_000}
@@ -216,18 +216,20 @@ def test_raw_input_preserves_graph_boundaries(raw_type):
 def test_raw_bytes_subclass_keeps_decoded_utf8_recount():
     class DifferentDecodedBytes(bytes):
         def decode(self, *_args, **_kwargs):
-            return '"한🧪"'
+            return '"\ud55c🧪"'
 
     raw = DifferentDecodedBytes(b'"x"')
     assert limits.bounded_json_text(raw, max_bytes=8, max_depth=64, max_nodes=100_000) is None
-    assert limits.bounded_json_text(raw, max_bytes=9, max_depth=64, max_nodes=100_000) == '"한🧪"'
+    assert (
+        limits.bounded_json_text(raw, max_bytes=9, max_depth=64, max_nodes=100_000) == '"\ud55c🧪"'
+    )
 
 
 def test_raw_bytearray_subclass_keeps_normal_utf8_decoding():
     class DerivedBytearray(bytearray):
         pass
 
-    text = '"한🧪"'
+    text = '"\ud55c🧪"'
     raw = DerivedBytearray(text.encode("utf-8"))
     assert limits.bounded_json_text(raw, max_bytes=9, max_depth=64, max_nodes=100_000) == text
     assert limits.bounded_json_text(raw, max_bytes=8, max_depth=64, max_nodes=100_000) is None
@@ -242,11 +244,13 @@ def test_raw_bytearray_subclass_keeps_normal_utf8_decoding():
 def test_raw_bytearray_subclass_keeps_decoded_utf8_recount():
     class DifferentDecodedBytearray(bytearray):
         def decode(self, *_args, **_kwargs):
-            return '"한🧪"'
+            return '"\ud55c🧪"'
 
     raw = DifferentDecodedBytearray(b'"x"')
     assert limits.bounded_json_text(raw, max_bytes=8, max_depth=64, max_nodes=100_000) is None
-    assert limits.bounded_json_text(raw, max_bytes=9, max_depth=64, max_nodes=100_000) == '"한🧪"'
+    assert (
+        limits.bounded_json_text(raw, max_bytes=9, max_depth=64, max_nodes=100_000) == '"\ud55c🧪"'
+    )
 
 
 def test_raw_text_keeps_strict_surrogate_behavior():

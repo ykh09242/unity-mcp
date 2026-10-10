@@ -11,7 +11,7 @@ from models import response_limits as limits
 
 @pytest.mark.parametrize("fast_limit", [0, 2 * 1024 * 1024])
 def test_builtin_graph_avoids_model_and_url_type_probes(monkeypatch, fast_limit):
-    value = {"data": [True, False, None, 17, -0.0, "한🧪", (1, 2)]}
+    value = {"data": [True, False, None, 17, -0.0, "\ud55c🧪", (1, 2)]}
     model_checks = []
 
     def counted_isinstance(item, classes):
@@ -67,7 +67,7 @@ def test_subclasses_keep_sizeof_length_iterator_and_integer_hook_order():
             hooks.append("list_sizeof")
             return list.__sizeof__(self)
 
-    value = HookList([HookString("한🧪"), HookInt(1 << 13999)])
+    value = HookList([HookString("\ud55c🧪"), HookInt(1 << 13999)])
     assert limits.response_size(value) is not None
     assert hooks == [
         "list_sizeof",

@@ -29,7 +29,7 @@ namespace MCPForUnityTests.Editor.Services
         private const string EchoCommand = "__editor_qa_echo";
         private const string LargeCommand = "__editor_qa_large";
         private const string ReloadKey = "MCPForUnityTests.OwnedTransportReload";
-        private static readonly string LargeValue = new string('x', 1024 * 1024) + "한글😀";
+        private static readonly string LargeValue = new string('x', 1024 * 1024) + "\uD55C\uAE00😀";
         private static int _domainSentinel;
         private readonly Dictionary<string, object> _previousHandlers = new Dictionary<string, object>();
         private IDictionary _handlers;
@@ -135,7 +135,7 @@ namespace MCPForUnityTests.Editor.Services
             using var second = await StdioPeer.Connect(port, Token);
             Assert.AreEqual(server, second.Server);
             Assert.AreNotEqual(firstSession, second.Session);
-            string text = "Owned RPC\n한글😀";
+            string text = "Owned RPC\n\uD55C\uAE00😀";
             int mainThread = System.Threading.Thread.CurrentThread.ManagedThreadId;
             JObject response = await second.Command(EchoCommand, new JObject { ["text"] = text });
             Assert.AreEqual("success", response.Value<string>("status"));
@@ -422,7 +422,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             Register("read_console", new HandlerInfo("read_console", ReadConsole.HandleCommand, null));
             const string marker = "OwnedEditorQAConsole";
-            string multiline = marker + " first\nsecond line 한글😀";
+            string multiline = marker + " first\nsecond line \uD55C\uAE00😀";
             const string logCommand = "__editor_qa_console_seed";
             Register(
                 logCommand,
@@ -499,10 +499,10 @@ namespace MCPForUnityTests.Editor.Services
                 yield return null;
             using var after = afterTask.GetAwaiter().GetResult();
             Assert.AreNotEqual(SessionState.GetString(ReloadKey + ".server", ""), after.Server);
-            var command = after.Command(EchoCommand, new JObject { ["text"] = "after actual domain reload 한글😀" });
+            var command = after.Command(EchoCommand, new JObject { ["text"] = "after actual domain reload \uD55C\uAE00😀" });
             while (!command.IsCompleted)
                 yield return null;
-            Assert.AreEqual("after actual domain reload 한글😀", command.GetAwaiter().GetResult()["result"].Value<string>("text"));
+            Assert.AreEqual("after actual domain reload \uD55C\uAE00😀", command.GetAwaiter().GetResult()["result"].Value<string>("text"));
             TestContext.WriteLine("ACTUAL_DOMAIN_RELOAD_SENTINEL=0; FRESH_SERVER_GENERATION=true; RPC=success");
         }
 
@@ -555,7 +555,7 @@ namespace MCPForUnityTests.Editor.Services
                 string queuedId = Guid.NewGuid().ToString("D");
                 peer.Execute(activeId, name, new JObject());
                 Assert.AreSame(started.Task, await Task.WhenAny(started.Task, Task.Delay(10000)));
-                peer.Execute(queuedId, EchoCommand, new JObject { ["text"] = "queued after settlement 한글😀" });
+                peer.Execute(queuedId, EchoCommand, new JObject { ["text"] = "queued after settlement \uD55C\uAE00😀" });
                 peer.Send(new JObject { ["type"] = "ping" });
                 await peer.Message(m => m.Value<string>("type") == "pong");
                 Assert.IsFalse(settled.Task.IsCompleted, "Receive-loop control must respond while actual Unity work remains active.");
@@ -565,7 +565,7 @@ namespace MCPForUnityTests.Editor.Services
                 var cancelled = await peer.Result(activeId);
                 Assert.AreEqual("error", cancelled["result"].Value<string>("status"));
                 var queued = await peer.Result(queuedId);
-                Assert.AreEqual("queued after settlement 한글😀", queued["result"]["result"].Value<string>("text"));
+                Assert.AreEqual("queued after settlement \uD55C\uAE00😀", queued["result"]["result"].Value<string>("text"));
                 Assert.IsTrue(peer.AllAuthHeadersMatch, "The real HTTP upgrade must carry only the synthetic owned launch token.");
                 TestContext.WriteLine("LOCALHTTP_CONTROL_PONG_DURING_ACTIVE=true; CANCELLATION_SETTLED=true; QUEUED_RPC=success");
             }
@@ -588,9 +588,9 @@ namespace MCPForUnityTests.Editor.Services
                 await peer.WaitRegistered(2);
                 Assert.IsTrue(client.IsConnected);
                 string id = Guid.NewGuid().ToString("D");
-                peer.Execute(id, EchoCommand, new JObject { ["text"] = "after reset 한글😀" });
+                peer.Execute(id, EchoCommand, new JObject { ["text"] = "after reset \uD55C\uAE00😀" });
                 var response = await peer.Result(id);
-                Assert.AreEqual("after reset 한글😀", response["result"]["result"].Value<string>("text"));
+                Assert.AreEqual("after reset \uD55C\uAE00😀", response["result"]["result"].Value<string>("text"));
                 Assert.IsTrue(peer.AllAuthHeadersMatch);
                 TestContext.WriteLine("LOCALHTTP_AUTOMATIC_RECONNECT_REGISTRATIONS=" + peer.RegisteredCount);
             }

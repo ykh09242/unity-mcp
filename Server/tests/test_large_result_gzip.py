@@ -109,7 +109,7 @@ def test_actual_csharp_gzip_reconstructs_identical_json_and_numeric_unicode_valu
             "result": {
                 "large_integer": 9007199254740993,
                 "negative_zero": -0.0,
-                "unicode": "한글😀",
+                "unicode": "\ud55c\uae00😀",
                 "escaped_surrogate": "\ud800",
                 "body": "repeated-json" * 100000,
             },
@@ -124,7 +124,7 @@ def test_actual_csharp_gzip_reconstructs_identical_json_and_numeric_unicode_valu
     assert restored == payload
     decoded = json.loads(restored)
     assert decoded["result"]["large_integer"] == 9007199254740993
-    assert decoded["result"]["unicode"] == "한글😀"
+    assert decoded["result"]["unicode"] == "\ud55c\uae00😀"
     assert decoded["result"]["escaped_surrogate"] == "\ud800"
 
 
@@ -136,7 +136,7 @@ def test_missing_negotiation_or_policy_keeps_uncompressed_identical_frames(harne
 
 
 def test_legacy_peer_keeps_single_original_text_bytes(harness, tmp_path):
-    payload = json.dumps({"body": "한글" * 200000}, ensure_ascii=False).encode()
+    payload = json.dumps({"body": "\ud55c\uae00" * 200000}, ensure_ascii=False).encode()
     assert emit(harness, tmp_path, payload, "legacy") == [(0, payload)]
 
 

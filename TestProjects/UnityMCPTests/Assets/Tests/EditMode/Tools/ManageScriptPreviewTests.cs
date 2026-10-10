@@ -207,7 +207,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("apply_text_edits")]
         public void PreviewOverBound_IsReadOnlyAndReturnsNoPartialProposal(string action)
         {
-            string original = "// " + new string('가', 180000) + "\r\n" + Original;
+            string original = "// " + new string('\uAC00', 180000) + "\r\n" + Original;
             Write(original);
             var request = action == "edit" ? Structural("replace_method") : Text("    public void Anchor() { /* exact */ }\r\n");
             if (action == "apply_text_edits")

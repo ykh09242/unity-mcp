@@ -233,7 +233,7 @@ internal static class Phase12WebSocketHarness
     {
         // Given: Unicode pairs at staging boundaries plus isolated surrogates.
         string id = "01234567-89ab-cdef-0123-456789abcdef";
-        string text = new string('x', 16383) + "😀" + "\ud800x\udc00한글" + new string('a', 400000);
+        string text = new string('x', 16383) + "😀" + "\ud800x\udc00\uD55C\uAE00" + new string('a', 400000);
         foreach (bool negotiated in new[] { false, true })
         foreach (bool gzip in new[] { false, true })
         {
@@ -288,7 +288,7 @@ internal static class Phase12WebSocketHarness
     private static void CapsAndFallback()
     {
         // Given: the byte cap applies even when the string character count is below it.
-        string oversized = new string('한', LargeResultWriter.MaxResultBytes / 3 + 1);
+        string oversized = new string('\uD55C', LargeResultWriter.MaxResultBytes / 3 + 1);
         int frames = 0;
         Func<ArraySegment<byte>, WebSocketMessageType, CancellationToken, Task> rejectSend = (_, __, ___) =>
         {

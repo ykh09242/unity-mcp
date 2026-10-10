@@ -133,7 +133,7 @@ namespace MCPForUnityTests.Editor.Services
             var enabledField = loggingType.GetField("_isEnabledCached", StaticPrivate);
             var previousLogging = enabledField.GetValue(null);
             var previousHandler = handlers[name];
-            string payload = new string('x', 256 * 1024) + "한글😀";
+            string payload = new string('x', 256 * 1024) + "\uD55C\uAE00😀";
             Func<JObject, Task<object>> handler = _ => Task.FromResult<object>(new { payload });
             using var cts = new CancellationTokenSource();
             try

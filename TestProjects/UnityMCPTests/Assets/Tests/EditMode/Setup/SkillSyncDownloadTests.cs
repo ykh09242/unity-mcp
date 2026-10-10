@@ -94,8 +94,8 @@ namespace MCPForUnityTests.Editor.Setup
         [Test]
         public void TextDecode_BomAndUnicodePreserved()
         {
-            var stream = new ObservedStream("\ufeff한글", 2);
-            Assert.AreEqual("한글", Download(new ResponseHandler(stream, null), 32));
+            var stream = new ObservedStream("\ufeff\uD55C\uAE00", 2);
+            Assert.AreEqual("\uD55C\uAE00", Download(new ResponseHandler(stream, null), 32));
         }
 
         [Test]

@@ -73,7 +73,7 @@ namespace MCPForUnityTests.Editor.Services
             const string name = "architecture_sync_parity";
             var handlers = (IDictionary)typeof(CommandRegistry).GetField("_handlers", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
             var previous = handlers[name];
-            handlers[name] = new HandlerInfo(name, _ => new { text = "한글😀", nested = new { count = 3 } }, null);
+            handlers[name] = new HandlerInfo(name, _ => new { text = "\uD55C\uAE00😀", nested = new { count = 3 } }, null);
             try
             {
                 var command = new Command { type = name, @params = new JObject() };
@@ -99,7 +99,7 @@ namespace MCPForUnityTests.Editor.Services
             const string name = "architecture_async_parity";
             var handlers = (IDictionary)typeof(CommandRegistry).GetField("_handlers", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
             var previous = handlers[name];
-            handlers[name] = new HandlerInfo(name, null, _ => Task.FromResult<object>(new { text = "한글😀", values = new[] { 1, 2, 3 } }));
+            handlers[name] = new HandlerInfo(name, null, _ => Task.FromResult<object>(new { text = "\uD55C\uAE00😀", values = new[] { 1, 2, 3 } }));
             try
             {
                 var typed = TransportCommandDispatcher.ExecuteCommandAsync(new Command { type = name }, CancellationToken.None);

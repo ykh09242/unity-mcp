@@ -44,9 +44,9 @@ namespace MCPForUnityTests.Editor.Setup
             string previousPath = wasDirectory ? "notes/deep/guide.md" : "notes";
             string targetPath = wasDirectory ? "notes" : "notes/deep/guide.md";
             Write(previousPath, "old notes");
-            var remote = Remote(("SKILL.md", "old skill"), (targetPath, "new notes 한글"));
+            var remote = Remote(("SKILL.md", "old skill"), (targetPath, "new notes \uD55C\uAE00"));
             Apply(remote, path => remote[path]);
-            Assert.AreEqual("new notes 한글", File.ReadAllText(Path.Combine(_install, targetPath)));
+            Assert.AreEqual("new notes \uD55C\uAE00", File.ReadAllText(Path.Combine(_install, targetPath)));
             Assert.IsFalse(File.Exists(Path.Combine(_install, previousPath)));
             Assert.AreEqual("old skill", File.ReadAllText(Path.Combine(_install, "SKILL.md")));
         }

@@ -41,7 +41,7 @@ def receive(client, wire):
 
 
 def compressed(command_id):
-    result = {"success": True, "data": {"owned": "multiline\n" + "성공" * 200000}}
+    result = {"success": True, "data": {"owned": "multiline\n" + "\uc131\uacf5" * 200000}}
     decoded = json.dumps(
         {"type": "command_result", "id": command_id, "result": result}, ensure_ascii=False
     ).encode()

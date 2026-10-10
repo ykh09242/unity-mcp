@@ -2,6 +2,11 @@
 
 Read the ancestor workspace guidance and any guide on the target file's ancestor path.
 
+## Language
+
+- Write repository source, comments, documentation, UI text, and skills in English.
+- Keep literal Hangul out of authored text. Preserve Unicode regression test values with Unicode escape sequences instead of removing their coverage.
+
 ## Formatting
 
 - [docs/FORMATTING.md](docs/FORMATTING.md) owns formatter versions, source scope, setup and commands. Root `.editorconfig`, `ruff.toml` and `.config/dotnet-tools.json` are the canonical machine settings.

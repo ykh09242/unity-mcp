@@ -113,7 +113,7 @@ def barrier(client, wire, session_id):
 
 
 def payload_and_frames(command_id, *, envelope_id=None):
-    result = {"success": True, "data": {"synthetic": "성공" * 50000}}
+    result = {"success": True, "data": {"synthetic": "\uc131\uacf5" * 50000}}
     payload = json.dumps(
         {"type": "command_result", "id": envelope_id or command_id, "result": result},
         ensure_ascii=False,

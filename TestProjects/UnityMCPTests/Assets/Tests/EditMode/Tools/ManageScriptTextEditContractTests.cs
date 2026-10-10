@@ -569,7 +569,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("😀x", 1, 3, 3)]
         [TestCase("a😀b\r\nc", 1, 3, 3)]
         [TestCase("a😀b\r\nc", 2, 1, 6)]
-        [TestCase("é가x", 1, 3, 2)]
+        [TestCase("é\uAC00x", 1, 3, 2)]
         [TestCase("😀", 1, 3, -1)]
         public void LineColumn_UsesUnicodeCodepoints(string text, int line, int column, int expectedIndex)
         {

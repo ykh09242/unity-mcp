@@ -487,9 +487,9 @@ async def test_rejects_unpaired_surrogates_before_http_encoding(
 @pytest.mark.parametrize(
     "options,mutation",
     [
-        ({"action": "get_hierarchy", "target": "Canvas/한글😀"}, False),
-        ({"action": "create", "element_type": "text", "parent": "Canvas/한글😀"}, True),
-        ({"action": "create", "element_type": "canvas", "name": "한글😀"}, True),
+        ({"action": "get_hierarchy", "target": "Canvas/\ud55c\uae00😀"}, False),
+        ({"action": "create", "element_type": "text", "parent": "Canvas/\ud55c\uae00😀"}, True),
+        ({"action": "create", "element_type": "canvas", "name": "\ud55c\uae00😀"}, True),
     ],
 )
 async def test_preserves_unicode_in_gameobject_identifiers(
@@ -518,7 +518,7 @@ async def test_preserves_unicode_in_gameobject_identifiers(
     "properties,expected",
     [
         ('{"text":"\\ud83d\\ude00"}', {"text": "😀"}),
-        ('{"text":"한글 Ελληνικά العربية"}', {"text": "한글 Ελληνικά العربية"}),
+        ('{"text":"\ud55c\uae00 Ελληνικά العربية"}', {"text": "\ud55c\uae00 Ελληνικά العربية"}),
         ('{"text":"\\ufffd"}', {"text": "�"}),
     ],
 )

@@ -127,7 +127,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("Plain")]
         [TestCase("Nested/Name")]
         [TestCase("/Leading/")]
-        [TestCase("한글_😀")]
+        [TestCase("\uD55C\uAE00_😀")]
         [TestCase("Ch\u00ADild")]
         public void HierarchyPathPreservesLiteralNames(string name)
         {

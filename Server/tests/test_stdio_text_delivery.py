@@ -67,7 +67,7 @@ async def test_text_output_releases_last_response_reference_before_idle_receive(
 @pytest.mark.asyncio
 async def test_text_output_keeps_installed_sdk_serialization_and_newline():
     source, output = IdleInput(), DiscardText()
-    response = JSONRPCResponse(jsonrpc="2.0", id=7, result={"data": "owned\n한글"})
+    response = JSONRPCResponse(jsonrpc="2.0", id=7, result={"data": "owned\n\ud55c\uae00"})
     expected = response.model_dump_json(by_alias=True, exclude_unset=True) + "\n"
     async with retained_stdio_server(stdin=source, stdout=output) as (read, write):
         async with read, write:

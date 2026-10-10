@@ -87,7 +87,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("update", "4oI=")]
         public void MalformedUtf8RejectsBeforeFolderCreationOrExistingFileReplacement(string action, string encoded)
         {
-            byte[] original = Encoding.UTF8.GetBytes("// original shader bytes 한글");
+            byte[] original = Encoding.UTF8.GetBytes("// original shader bytes \uD55C\uAE00");
             if (action == "update")
                 Seed(original);
             var request = Request(action);
@@ -106,7 +106,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("update")]
         public void UnpairedSurrogateRejectsBeforeFolderCreationOrFileTruncation(string action)
         {
-            byte[] original = Encoding.UTF8.GetBytes("// original bytes 한글");
+            byte[] original = Encoding.UTF8.GetBytes("// original bytes \uD55C\uAE00");
             if (action == "update")
                 Seed(original);
             var request = Request(action);
@@ -186,7 +186,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
             byte[] preamble = encoding.GetPreamble();
             // Preserve an intentional second U+FEFF, as well as a valid replacement character.
-            string text = (preamble.Length > 0 ? "\uFEFF" : "") + "// 한글 😀 \uFFFD\r\n";
+            string text = (preamble.Length > 0 ? "\uFEFF" : "") + "// \uD55C\uAE00 😀 \uFFFD\r\n";
             byte[] payload = encoding.GetBytes(text);
             byte[] original = new byte[preamble.Length + payload.Length];
             Array.Copy(preamble, original, preamble.Length);
@@ -212,7 +212,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(10001)]
         public void DiskReadPreservesLargeContentEncodingThreshold(int length)
         {
-            string text = new string('한', length);
+            string text = new string('\uD55C', length);
             byte[] original = Encoding.UTF8.GetBytes(text);
             Seed(original);
 

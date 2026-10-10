@@ -574,7 +574,7 @@ function Get-Process {
 @pytest.mark.usefixtures("windows_api_double")
 class TestWindowsFocusScripts:
     @pytest.mark.parametrize(
-        "title", ["Terminal", "한글 'title' `test`\nsecond line", "", "x" * 500]
+        "title", ["Terminal", "\ud55c\uae00 'title' `test`\nsecond line", "", "x" * 500]
     )
     def test_capture_has_no_native_return_value_in_stdout(self, monkeypatch, title):
         monkeypatch.setenv("NUDGE_TEST_TITLE", title)
@@ -607,7 +607,9 @@ class TestWindowsFocusScripts:
         monkeypatch.setenv("NUDGE_TEST_NO_MATCH", "1")
         assert focus_nudge._focus_app_windows(title) is False
 
-    @pytest.mark.parametrize("project_path", [r"C:\Projects\My Game", r"C:\项目\한글"])
+    @pytest.mark.parametrize(
+        "project_path", [r"C:\Projects\My Game", "C:\\\u9879\u76ee\\\ud55c\uae00"]
+    )
     def test_exact_project_activation_still_works(self, monkeypatch, project_path):
         monkeypatch.setenv("NUDGE_TEST_PROJECT", project_path)
         assert focus_nudge._find_unity_pid_by_project_path_windows(project_path) == 321
@@ -623,7 +625,9 @@ class TestWindowsFocusScripts:
 class TestWindowsFocusRestore:
     """Keep the original window's identity independent of its mutable title."""
 
-    @pytest.mark.parametrize("title", ["Terminal", "notes\nsecond line", "한글 제목", ""])
+    @pytest.mark.parametrize(
+        "title", ["Terminal", "notes\nsecond line", "\ud55c\uae00 \uc81c\ubaa9", ""]
+    )
     def test_captures_window_handle_and_title(self, title):
         result = subprocess.CompletedProcess(
             [], 0, json.dumps({"name": title, "window_handle": 123456}), ""

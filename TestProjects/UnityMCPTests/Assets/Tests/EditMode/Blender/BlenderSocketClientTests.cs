@@ -113,7 +113,7 @@ namespace MCPForUnityTests.Editor.Blender
         {
             var expected = new JObject
             {
-                ["text"] = "한글 🌊 braces }{ [] quotes \" and slash \\",
+                ["text"] = "\uD55C\uAE00 🌊 braces }{ [] quotes \" and slash \\",
                 ["nested"] = new JArray(new JObject { ["escaped"] = "\\\"}" }, true, null),
             };
             byte[] payload = Bytes(new JObject { ["status"] = "success", ["result"] = expected }.ToString());

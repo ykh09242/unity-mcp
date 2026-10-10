@@ -64,7 +64,7 @@ def test_prefab_resource_preserves_decoded_path_and_error_metadata(
                 "Assets/Prefabs/Player.prefab", "Assets/Prefabs/My Player.prefab",
                 "Assets/Prefabs/Icon%20Small.prefab", "Assets/Prefabs/Icon%2FSmall.prefab",
                 "Assets/Prefabs/Rate%25.prefab", "Assets/Prefabs/Literal%23.prefab",
-                "Assets/Prefabs/Hash#Name.prefab", "Assets/Prefabs/한글.prefab",
+                "Assets/Prefabs/Hash#Name.prefab", "Assets/Prefabs/\ud55c\uae00.prefab",
                 "Assets/Prefabs/100%Ready.prefab",
             )
             for mode in ("2026-07-28", "legacy"):

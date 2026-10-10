@@ -238,7 +238,7 @@ internal static class TransportArchitectureHarness
         Assert.IsFalse(invoked.Contains("expired"));
         Pass("Actual async settlement preserves per-connection mutation order after response timeout");
         PumpUntil(() => commands.DrainAsync().IsCompleted, "FIFO commands drained");
-        string largeText = new string('x', 4 * 1024 * 1024) + "한글😀";
+        string largeText = new string('x', 4 * 1024 * 1024) + "\uD55C\uAE00😀";
         handlers["fixture_large"] = new HandlerInfo("fixture_large", _ => new { data = largeText }, null);
         peer.Send(Execute("opaque-large", "fixture_large"));
         PumpUntil(() => Result(peer, "opaque-large") != null, "legacy opaque large result");
@@ -315,7 +315,7 @@ internal static class TransportArchitectureHarness
 
     private static void BenchmarkProjection()
     {
-        var payload = new { status = "success", result = new { data = new string('x', 256 * 1024) + "한글😀" } };
+        var payload = new { status = "success", result = new { data = new string('x', 256 * 1024) + "\uD55C\uAE00😀" } };
         Func<string> before = () =>
             JsonConvert.SerializeObject(
                 new

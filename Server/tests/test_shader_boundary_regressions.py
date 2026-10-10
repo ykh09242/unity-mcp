@@ -93,7 +93,7 @@ def test_shader_success_retains_nullable_and_scalar_data(shader_transport, data,
     assert json.loads(encoded.content[0].text) == expected
 
 
-@pytest.mark.parametrize("contents", [None, "", "Shader Ω\n한글"])
+@pytest.mark.parametrize("contents", [None, "", "Shader Ω\n\ud55c\uae00"])
 def test_shader_encoding_and_native_failure_remain_unchanged(shader_route, contents):
     _, sender = shader_route
     failure = {
@@ -115,7 +115,7 @@ def test_shader_encoding_and_native_failure_remain_unchanged(shader_route, conte
     assert result is failure
 
 
-@pytest.mark.parametrize("contents", ["", "Shader Ω\n한글"])
+@pytest.mark.parametrize("contents", ["", "Shader Ω\n\ud55c\uae00"])
 def test_encoded_shader_reply_still_replaces_original_contents(shader_route, contents):
     _, sender = shader_route
     sender.return_value = {

@@ -100,7 +100,10 @@ def test_websocket_registration_rejects_log_injection(plugin_client, caplog, fie
     assert all("FORGED_ENTRY" not in record.getMessage() for record in caplog.records)
 
 
-@pytest.mark.parametrize("name", ["테스트 프로젝트 🎮", "Project 'quoted' %s 👩\u200d💻 \u202e"])
+@pytest.mark.parametrize(
+    "name",
+    ["\ud14c\uc2a4\ud2b8 \ud504\ub85c\uc81d\ud2b8 🎮", "Project 'quoted' %s 👩\u200d💻 \u202e"],
+)
 def test_registration_preserves_unicode_and_escapes_log_fields(plugin_client, caplog, name):
     caplog.set_level(logging.INFO, logger="transport.plugin_hub")
     with plugin_client.websocket_connect("/hub/plugin") as ws:

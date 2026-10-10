@@ -66,7 +66,7 @@ def exact(value):
 @pytest.mark.parametrize("binary", [False, True])
 async def test_hub_valid_decode_avoids_stdlib_parser(owned_hub, monkeypatch, binary):
     hub, websocket = owned_hub
-    text = '{"type":"command_result","id":"owned","result":{"text":"한글 😀","value":123}}'
+    text = '{"type":"command_result","id":"owned","result":{"text":"\ud55c\uae00 😀","value":123}}'
     expected = json.loads(text)
     parser = Mock(wraps=json.loads)
     monkeypatch.setattr(hub_module.json, "loads", parser)
@@ -84,7 +84,7 @@ async def test_hub_valid_decode_avoids_stdlib_parser(owned_hub, monkeypatch, bin
         '{"a":18446744073709551616,"b":-18446744073709551616}',
         '{"a":' + "9" * 200 + "}",
         '{"a":"\\ud800"}',
-        '{"a":"\\ud83d\\ude00","b":"한글 😀"}',
+        '{"a":"\\ud83d\\ude00","b":"\ud55c\uae00 😀"}',
         '{"a":1,"a":2}',
         "[1,2]",
         "null",

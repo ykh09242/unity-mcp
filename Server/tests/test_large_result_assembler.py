@@ -151,7 +151,7 @@ def test_csharp_large_result_reconstructs_identical_json_with_control_interleavi
         {
             "type": "command_result",
             "id": COMMAND_ID,
-            "result": {"status": "success", "text": "성공" * 100000},
+            "result": {"status": "success", "text": "\uc131\uacf5" * 100000},
         },
         ensure_ascii=False,
     ).encode()
@@ -346,7 +346,7 @@ async def test_real_csharp_websocket_messages_reconstruct_with_control_between_c
         {
             "type": "command_result",
             "id": COMMAND_ID,
-            "result": {"status": "success", "text": "가" * 100000},
+            "result": {"status": "success", "text": "\uac00" * 100000},
         },
         ensure_ascii=False,
     ).encode()

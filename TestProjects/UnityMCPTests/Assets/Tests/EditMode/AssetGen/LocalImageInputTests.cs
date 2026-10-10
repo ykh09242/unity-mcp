@@ -235,7 +235,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                     {
                         Mode = mode,
                         ImageUrl = hosted,
-                        Prompt = "한글😀",
+                        Prompt = "\uD55C\uAE00😀",
                     },
                     "fixture-only",
                     http,
@@ -247,7 +247,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 {
                     Mode = mode,
                     ImageUrl = hosted,
-                    Prompt = "한글😀",
+                    Prompt = "\uD55C\uAE00😀",
                 };
                 if (provider == "fal")
                     await new FalAdapter().SubmitAsync(request, "fixture-only", http, CancellationToken.None);
@@ -256,7 +256,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             }
             Assert.AreEqual(1, http.RecordedRequests.Count);
             string json = Encoding.UTF8.GetString(http.RecordedRequests[0].Body);
-            StringAssert.Contains(mode == "image" ? hosted : "한글😀", json);
+            StringAssert.Contains(mode == "image" ? hosted : "\uD55C\uAE00😀", json);
             Assert.AreEqual(json, JObject.Parse(json).ToString(Formatting.None));
         }
 
@@ -291,7 +291,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.Throws<IOException>(() => counter.WriteByte(0));
             var body = new JObject
             {
-                ["p"] = "한글😀\ud800\u0000\"\\\u0085\u2028\u2029",
+                ["p"] = "\uD55C\uAE00😀\ud800\u0000\"\\\u0085\u2028\u2029",
                 ["integer"] = 123,
                 ["float"] = 1.25,
                 ["bool"] = true,

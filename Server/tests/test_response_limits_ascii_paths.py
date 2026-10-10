@@ -53,7 +53,7 @@ def test_admitted_ascii_document_avoids_full_utf8_copy(length):
     assert encodes == []
 
 
-@pytest.mark.parametrize("raw", ['"경로🎮"', '"\ud800"'])
+@pytest.mark.parametrize("raw", ['"\uacbd\ub85c🎮"', '"\ud800"'])
 def test_raw_unicode_keeps_strict_utf8_byte_limits(raw):
     # Given non-ASCII text whose character count cannot prove its byte count.
     try:

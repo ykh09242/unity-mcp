@@ -88,7 +88,7 @@ def test_large_ascii_keys_and_numeric_metadata_keep_exact_json_length():
     assert short is None
 
 
-@pytest.mark.parametrize("tail", ["\n", "\x00", "\x7f", "경로🎮", "\ud800"])
+@pytest.mark.parametrize("tail", ["\n", "\x00", "\x7f", "\uacbd\ub85c🎮", "\ud800"])
 def test_large_scalar_keeps_unicode_escape_and_byte_boundaries(tail):
     # Given a large scalar with escaping, control characters or Unicode.
     value = "A" * (256 * 1024) + tail
@@ -182,7 +182,7 @@ def test_known_fallback_graphs_skip_native_encoding_and_printable_scans(monkeypa
         pass
 
     unsupported = {
-        "unicode": "경로🎮",
+        "unicode": "\uacbd\ub85c🎮",
         "model": ResultModel(label="ASCII"),
         "url": AnyUrl("https://example.test/owned"),
         "subclass": DerivedString("ASCII"),

@@ -15,7 +15,7 @@ FEATURES = ["large_result_v1", "large_result_gzip_v1"]
 
 
 def encoded(command_id, raw=None):
-    result = {"success": True, "data": "한글😀" * 120000, "large_integer": 9007199254740993}
+    result = {"success": True, "data": "\ud55c\uae00😀" * 120000, "large_integer": 9007199254740993}
     raw = (
         raw
         or json.dumps(
