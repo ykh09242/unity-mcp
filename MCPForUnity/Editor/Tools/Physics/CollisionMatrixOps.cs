@@ -17,7 +17,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return new ErrorResponse($"Invalid dimension: '{dimension}'. Use '3d' or '2d'.");
 
             var layers = new List<object>();
-            var populatedIndices = new List<int>();
+            var populatedLayers = new List<(int index, string name)>();
 
             for (int i = 0; i < 32; i++)
             {
@@ -25,21 +25,23 @@ namespace MCPForUnity.Editor.Tools.Physics
                 if (string.IsNullOrEmpty(name))
                     continue;
                 layers.Add(new { index = i, name });
-                populatedIndices.Add(i);
+                populatedLayers.Add((i, name));
             }
 
             var matrix = new Dictionary<string, Dictionary<string, bool>>();
 
-            foreach (int i in populatedIndices)
+            foreach (var layerA in populatedLayers)
             {
-                string nameA = LayerMask.LayerToName(i);
+                int i = layerA.index;
+                string nameA = layerA.name;
                 var row = new Dictionary<string, bool>();
 
-                foreach (int j in populatedIndices)
+                foreach (var layerB in populatedLayers)
                 {
+                    int j = layerB.index;
                     if (j > i)
                         continue;
-                    string nameB = LayerMask.LayerToName(j);
+                    string nameB = layerB.name;
                     bool collides = dimension == "2d" ? !Physics2D.GetIgnoreLayerCollision(i, j) : !UnityEngine.Physics.GetIgnoreLayerCollision(i, j);
                     row[nameB] = collides;
                 }
