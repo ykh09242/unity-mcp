@@ -553,9 +553,16 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (_sizes.TryGetValue(path, out int size))
                     return size;
+                using var resolved = Resolve(path);
+                return SizeFromResolved(path, resolved);
+            }
+
+            private int SizeFromResolved(string path, SerializedProperty resolved)
+            {
+                if (_sizes.TryGetValue(path, out int size))
+                    return size;
                 // Appended elements have unspecified content. Budget subsequent writes as if
                 // their nested arrays were empty, rather than crediting guessed copied sizes.
-                using var resolved = Resolve(path);
                 return resolved == null || resolved.propertyPath != path ? 0
                     : resolved.isArray ? resolved.arraySize
                     : 0;
@@ -579,7 +586,7 @@ namespace MCPForUnity.Editor.Tools
                 using var property = Resolve(path);
                 if (property != null && (!property.isArray || property.propertyType == SerializedPropertyType.String))
                     return;
-                int oldSize = Size(path);
+                int oldSize = SizeFromResolved(path, property);
                 if (size > oldSize)
                 {
                     if (size > MaxArrayGrowthSize)
@@ -696,7 +703,7 @@ namespace MCPForUnity.Editor.Tools
                 }
                 if (property.isArray && property.propertyType != SerializedPropertyType.String)
                 {
-                    int size = Math.Max(Size(path), property.arraySize);
+                    int size = Math.Max(SizeFromResolved(path, property), property.arraySize);
                     if (_peakSizes.TryGetValue(path, out int peak))
                         size = Math.Max(size, peak);
                     if (_arrayPeaks.TryGetValue(shape, out int shapePeak))
