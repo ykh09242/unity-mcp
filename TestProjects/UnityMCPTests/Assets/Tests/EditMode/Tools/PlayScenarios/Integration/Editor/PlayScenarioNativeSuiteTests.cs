@@ -89,6 +89,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             {
                 runnerField.SetValue(null, current);
             }
+            PlayScenarioNativeEvidence.Record(nameof(SuiteAdmissionFreezesSecondDefinitionAndSurvivesPlayEntryReload), report);
         }
 
         [UnityTest]
@@ -108,7 +109,13 @@ namespace MCPForUnityTests.PlayScenarios.Integration
                 Assert.That((string)report["scenarios"][1]["status"], Is.EqualTo(policy == "stop" ? "skipped" : "succeeded"));
                 Assert.That((string)report["error"], Is.Not.Empty);
                 AssertSuiteReport(report);
+                SessionState.SetString(SuiteContextKey + ".Evidence." + policy, suiteId);
             }
+            PlayScenarioNativeEvidence.RecordSuitesExported(
+                nameof(SuiteStopAndContinuePoliciesPreserveFailureAndPersistOnlyFinalizedChildren),
+                SessionState.GetString(SuiteContextKey + ".Evidence.continue", ""),
+                SessionState.GetString(SuiteContextKey + ".Evidence.stop", "")
+            );
         }
 
         [UnityTest]
@@ -134,7 +141,13 @@ namespace MCPForUnityTests.PlayScenarios.Integration
                 Assert.That((bool)report["scenarios"][0]["report"]["runner_resources_released"], Is.True);
                 Assert.That((string)report["scenarios"][0]["report"]["report_path"], Is.Not.Empty);
                 AssertSuiteReport(report);
+                SessionState.SetString(SuiteContextKey + (expire ? ".Evidence.timeout" : ".Evidence.cancel"), suiteId);
             }
+            PlayScenarioNativeEvidence.RecordSuitesExported(
+                nameof(SuiteCancellationAndTotalTimeoutWaitForChildReportAndSkipRemainingQueue),
+                SessionState.GetString(SuiteContextKey + ".Evidence.cancel", ""),
+                SessionState.GetString(SuiteContextKey + ".Evidence.timeout", "")
+            );
         }
 
         [UnityTearDown]
@@ -158,6 +171,8 @@ namespace MCPForUnityTests.PlayScenarios.Integration
                 PlayScenarioSuiteService.Handle(new JObject { ["action"] = "suite_delete", ["name"] = name });
             SessionState.EraseString(SuiteContextKey + ".Id");
             SessionState.EraseString(SuiteContextKey + ".Name");
+            foreach (string suffix in new[] { "continue", "stop", "cancel", "timeout" })
+                SessionState.EraseString(SuiteContextKey + ".Evidence." + suffix);
         }
 
         private static JObject StartSuite(string policy, string first, string second, int timeout = 60)
@@ -224,7 +239,10 @@ namespace MCPForUnityTests.PlayScenarios.Integration
                 AssertReport((JObject)child["report"]);
             string evidence = Path.Combine(project, "Library/MCPForUnity/PlayScenarioIntegrationEvidence");
             Directory.CreateDirectory(evidence);
-            File.WriteAllText(Path.Combine(evidence, (string)report["suite_id"] + ".suite.json"), report.ToString());
+            JObject stored = JObject.Parse(File.ReadAllText(Path.Combine(project, (string)report["report_path"])));
+            Assert.That((string)stored["suite_id"], Is.EqualTo((string)report["suite_id"]));
+            Assert.That((string)stored["status"], Is.EqualTo((string)report["status"]));
+            File.WriteAllText(Path.Combine(evidence, (string)report["suite_id"] + ".suite.json"), stored.ToString());
         }
     }
 }

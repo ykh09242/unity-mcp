@@ -27,6 +27,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             while (flow.MoveNext())
                 yield return flow.Current;
             yield return new ExitPlayMode();
+            PlayScenarioNativeEvidence.RecordExported(nameof(NativeServiceCleanupDestroysCloneUnsubscribesAndReleasesHandleBeforeCheck), NextId);
         }
 
         [UnityTest]
@@ -38,6 +39,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             while (flow.MoveNext())
                 yield return flow.Current;
             yield return new ExitPlayMode();
+            PlayScenarioNativeEvidence.RecordExported(nameof(NativeServiceDetectsRegisteredCloneSubscriptionAndHandleLeaksInStoredReport), NextId);
         }
 
         [UnityTest]
@@ -49,6 +51,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             while (flow.MoveNext())
                 yield return flow.Current;
             yield return new ExitPlayMode();
+            PlayScenarioNativeEvidence.RecordExported(nameof(NativeServiceNewHandleIdentityFailsEvenWhenOldReleaseKeepsCountUnchanged), NextId);
         }
 
         [UnityTest]
@@ -60,6 +63,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             while (flow.MoveNext())
                 yield return flow.Current;
             yield return new ExitPlayMode();
+            PlayScenarioNativeEvidence.RecordExported(nameof(NativeServiceCancellationKeepsPrimaryOutcomeAndRecordsSecondaryResourceFailure), NextId);
         }
 
         private static void ConfigureNativeResources(bool cleanup, bool replacement, bool cancel)

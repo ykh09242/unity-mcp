@@ -1,7 +1,13 @@
 name: Unity Tests
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      require_native_e2e:
+        description: "Require licensed native scenario bodies and fresh persisted evidence."
+        type: boolean
+        required: false
+        default: false
   workflow_call:
     secrets:
       UNITY_LICENSE:
@@ -13,6 +19,11 @@ on:
       UNITY_SERIAL:
         required: false
     inputs:
+      require_native_e2e:
+        description: "Fail unless required native scenario E2E executes with fresh evidence."
+        type: boolean
+        required: false
+        default: false
       ref:
         description: "Git ref to test (defaults to the triggering ref)."
         type: string
@@ -32,6 +43,8 @@ on:
       - MCPForUnity/Runtime/**
       - .github/workflows/unity-tests.yml
       - tools/check_unity_test_results.py
+      - tools/check_play_scenario_evidence.py
+      - tools/unity-native-e2e-tests.json
       - tools/unity-versions.json
       - tools/unity_ci.py
       - tools/unity-ci/**
@@ -57,6 +70,8 @@ on:
       - MCPForUnity/Runtime/**
       - .github/workflows/unity-tests.yml
       - tools/check_unity_test_results.py
+      - tools/check_play_scenario_evidence.py
+      - tools/unity-native-e2e-tests.json
       - tools/unity-versions.json
       - tools/unity_ci.py
       - tools/unity-ci/**
@@ -167,6 +182,35 @@ jobs:
             echo "The separate license-free compile matrix and \`Run Python Tests\` DO run on fork PRs."
             echo "Optional package preparation also runs without a license; it validates dependencies, not optional C# execution."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require licensed native E2E prerequisites
+        if: inputs.require_native_e2e
+        env:
+          LICENSED_POLICY: ${{ vars.UNITY_RUN_LICENSED_TESTS }}
+          UNITY_OK: ${{ steps.detect.outputs.unity_ok || 'false' }}
+        run: |
+          if [ "$LICENSED_POLICY" != 'true' ] || [ "$UNITY_OK" != 'true' ]; then
+            echo "::error::Required native E2E needs enabled licensed-test policy and available license credentials."
+            exit 1
+          fi
+
+  requiredNativeE2E:
+    name: Required native scenario E2E
+    needs: [license, testAllModes]
+    if: always() && inputs.require_native_e2e
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require prerequisites and native evidence execution to succeed
+        env:
+          LICENSE_RESULT: ${{ needs.license.result }}
+          UNITY_OK: ${{ needs.license.outputs.unity_ok }}
+          NATIVE_RESULT: ${{ needs.testAllModes.result }}
+        run: |
+          if [ "$LICENSE_RESULT" != 'success' ] || [ "$UNITY_OK" != 'true' ] || [ "$NATIVE_RESULT" != 'success' ]; then
+            echo "::error::Required native E2E failed: prerequisites or native execution/evidence did not succeed."
+            exit 1
+          fi
 
   optionalPackageInputs:
     name: Prepare optional packages for Unity ${{ matrix.unity.version }}
@@ -369,6 +413,16 @@ jobs:
           path: ${{ steps.packages.outputs.project_path }}/Library
           key: Library-${{ matrix.unity.version }}-${{ hashFiles('tools/unity-versions.json', 'tools/unity-ci-packages.json', 'tools/unity_ci_packages.py') }}
 
+      - name: Start fresh native scenario evidence session
+        id: native-session
+        env:
+          PROJECT_PATH: ${{ steps.packages.outputs.project_path }}
+        run: |
+          set -euo pipefail
+          session_id=$(python3 tools/check_play_scenario_evidence.py \
+            "$PROJECT_PATH/Library/MCPForUnity/PlayScenarioIntegrationEvidence" --initialize)
+          echo "session_id=$session_id" >> "$GITHUB_OUTPUT"
+
       # GameCI mounts this home at /root; Unity needs the parent directories before activation.
       - name: Prepare Unity preferences and license directory
         run: mkdir -p "$HOME/.local/share/unity3d/Unity"
@@ -438,8 +492,25 @@ jobs:
           fi
           python3 tools/check_unity_test_results.py "$RESULTS_XML" --runner-outcome "$TEST_RUN_OUTCOME"
 
+      - name: Require native scenario bodies and persisted evidence
+        if: always() && inputs.require_native_e2e
+        env:
+          PROJECT_PATH: ${{ steps.packages.outputs.project_path }}
+          NATIVE_SESSION_ID: ${{ steps.native-session.outputs.session_id }}
+          TEST_RUN_OUTCOME: ${{ steps.tests.outcome }}
+        run: |
+          python3 tools/check_play_scenario_evidence.py \
+            "$PROJECT_PATH/Library/MCPForUnity/PlayScenarioIntegrationEvidence" \
+            --results artifacts/editmode/editmode-results.xml \
+            --runner-outcome "$TEST_RUN_OUTCOME" --session-id "$NATIVE_SESSION_ID"
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always() && steps.domain-tests.outcome != 'skipped'
+        if: always()
         with:
           name: Test results for ${{ matrix.testMode }} on Unity ${{ matrix.unity.version }} (${{ matrix.unity.channel }})
-          path: artifacts/
+          path: |
+            artifacts/
+            ${{ steps.packages.outputs.project_path }}/Library/MCPForUnity/PlayScenarioIntegrationEvidence/
+            .unity-ci/${{ matrix.unity.version }}/resolved-packages.json
+          include-hidden-files: true
+          if-no-files-found: error

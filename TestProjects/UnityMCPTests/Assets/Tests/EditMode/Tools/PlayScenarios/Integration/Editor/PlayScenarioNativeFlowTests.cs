@@ -88,6 +88,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
                 if (scene.isDirty || (string.IsNullOrEmpty(scene.path) && (scene.rootCount != 0 || SceneManager.sceneCount != 1)))
                     Assert.Ignore("Existing dirty or nonempty untitled scenes are preserved.");
             }
+            PlayScenarioNativeEvidence.PrepareSession();
             string guid = Guid.NewGuid().ToString("N");
             var context = new TestContext
             {
@@ -259,6 +260,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             Assert.That((string)previous["status"], Is.EqualTo("succeeded"));
             Assert.That((int)previous["cursor"], Is.EqualTo(8));
             Debug.Log("PLAY_SCENARIO_QA_STARTUP_REPEAT_VERIFIED");
+            PlayScenarioNativeEvidence.Record(nameof(SavedRunFromEditModeSurvivesReloadAndRepeatsMenuClickGamePlayerTwice), done);
         }
 
         [UnityTest]
@@ -305,6 +307,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             Assert.That((string)Status(NextId)["status"], Is.EqualTo("succeeded"));
             AssertReport(Status(NextId));
             Debug.Log("PLAY_SCENARIO_QA_CANCEL_STATUS_FRESH_VERIFIED");
+            PlayScenarioNativeEvidence.Record(nameof(StatusDoesNotPollCancelStopsPollingAndFreshRunSucceeds), cancelled, Status(NextId));
         }
 
         [UnityTest]
@@ -338,6 +341,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             Assert.That(EditorApplication.isPlaying, Is.True);
             AssertReport(done);
             Debug.Log("PLAY_SCENARIO_QA_TIMEOUT_LOG_REPORT_VERIFIED");
+            PlayScenarioNativeEvidence.Record(nameof(MissingPlayerTimesOutCapturesLogAndSkipsPendingStep), done);
         }
 
         [UnityTest]
@@ -377,6 +381,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             );
             Assert.That(done["logs"].Count(log => (string)log["message"] == "PLAY_SCENARIO_QA_CLICK"), Is.EqualTo(1));
             AssertReport(done);
+            PlayScenarioNativeEvidence.Record(nameof(ThrowingButtonListenerFailsClickWithoutRetryAndPersistsError), done);
         }
 
         [UnityTest]
@@ -413,6 +418,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             Assert.That(done["logs"].Count(log => (string)log["message"] == "PLAY_SCENARIO_QA_CLICK"), Is.EqualTo(1));
             Assert.That(GameObject.Find("Player"), Is.Not.Null);
             AssertReport(done);
+            PlayScenarioNativeEvidence.Record(nameof(DisabledButtonWaitsUntilEnabledThenClicksOnce), done);
         }
 
         [UnityTest]
@@ -446,6 +452,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             Assert.That((string)done["steps"][2]["status"], Is.EqualTo("skipped"));
             Assert.That(done["logs"].Any(log => (string)log["message"] == "PLAY_SCENARIO_QA_CLICK"), Is.False);
             AssertReport(done);
+            PlayScenarioNativeEvidence.Record(nameof(DisabledButtonUsesStepTimeoutAndSkipsRemainingSteps), done);
         }
 
         private static void ConfigureMenu(bool disableButton = false, bool throwOnClick = false)

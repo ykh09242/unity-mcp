@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "tests": [
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.SavedRunFromEditModeSurvivesReloadAndRepeatsMenuClickGamePlayerTwice",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "succeeded"
+        }
+      ]
+    },
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.StatusDoesNotPollCancelStopsPollingAndFreshRunSucceeds",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "cancelled"
+        },
+        {
+          "kind": "run",
+          "status": "succeeded"
+        }
+      ]
+    },
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.MissingPlayerTimesOutCapturesLogAndSkipsPendingStep",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "timed_out"
+        }
+      ]
+    },
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.ThrowingButtonListenerFailsClickWithoutRetryAndPersistsError",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "failed"
+        }
+      ]
+    },
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.DisabledButtonWaitsUntilEnabledThenClicksOnce",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "succeeded"
+        }
+      ]
+    },
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.DisabledButtonUsesStepTimeoutAndSkipsRemainingSteps",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "timed_out"
+        }
+      ]
+    },
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.SuiteAdmissionFreezesSecondDefinitionAndSurvivesPlayEntryReload",
+      "reports": [
+        {
+          "kind": "suite",
+          "status": "succeeded",
+          "children": [
+            "succeeded",
+            "succeeded"
+          ]
+        }
+      ]
+    },
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.SuiteStopAndContinuePoliciesPreserveFailureAndPersistOnlyFinalizedChildren",
+      "reports": [
+        {
+          "kind": "suite",
+          "status": "failed",
+          "children": [
+            "timed_out",
+            "succeeded"
+          ]
+        },
+        {
+          "kind": "suite",
+          "status": "timed_out",
+          "children": [
+            "timed_out",
+            "skipped"
+          ]
+        }
+      ]
+    },
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.SuiteCancellationAndTotalTimeoutWaitForChildReportAndSkipRemainingQueue",
+      "reports": [
+        {
+          "kind": "suite",
+          "status": "cancelled",
+          "children": [
+            "cancelled",
+            "skipped"
+          ]
+        },
+        {
+          "kind": "suite",
+          "status": "timed_out",
+          "children": [
+            [
+              "cancelled",
+              "timed_out"
+            ],
+            "skipped"
+          ]
+        }
+      ]
+    },
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.NativeServiceCleanupDestroysCloneUnsubscribesAndReleasesHandleBeforeCheck",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "succeeded"
+        }
+      ]
+    },
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.NativeServiceDetectsRegisteredCloneSubscriptionAndHandleLeaksInStoredReport",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "failed"
+        }
+      ]
+    },
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.NativeServiceNewHandleIdentityFailsEvenWhenOldReleaseKeepsCountUnchanged",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "failed"
+        }
+      ]
+    },
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.NativeServiceCancellationKeepsPrimaryOutcomeAndRecordsSecondaryResourceFailure",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "cancelled"
+        }
+      ]
+    }
+  ]
+}

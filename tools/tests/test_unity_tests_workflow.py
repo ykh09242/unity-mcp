@@ -89,3 +89,107 @@ def test_optional_package_preparation_remains_independent_of_native_policy():
     assert "if" not in prepare
     assert "secrets." not in json.dumps(prepare)
     assert "game-ci/unity-test-runner" not in json.dumps(prepare)
+
+
+def test_strict_native_mode_is_opt_in_and_checks_fresh_evidence_after_execution():
+    config = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    triggers = config.get("on", config.get(True))
+    for trigger in ("workflow_dispatch", "workflow_call"):
+        field = triggers[trigger]["inputs"]["require_native_e2e"]
+        assert field["type"] == "boolean" and field["default"] is False
+    steps = config["jobs"]["testAllModes"]["steps"]
+    cache_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("uses", "").startswith("actions/cache@")
+    )
+    initialize = next(step for step in steps if step.get("id") == "native-session")
+    execute = next(step for step in steps if step.get("id") == "tests")
+    gate = next(
+        step
+        for step in steps
+        if step.get("name") == "Require native scenario bodies and persisted evidence"
+    )
+    assert cache_index < steps.index(initialize) < steps.index(execute) < steps.index(gate)
+    assert "--initialize" in initialize["run"]
+    assert gate["if"] == "always() && inputs.require_native_e2e"
+    assert gate["env"]["NATIVE_SESSION_ID"] == "${{ steps.native-session.outputs.session_id }}"
+    assert "--session-id" in gate["run"] and "--runner-outcome" in gate["run"]
+    assert not gate.get("continue-on-error", False)
+    artifact = next(
+        step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert artifact["if"] == "always()"
+    assert "PlayScenarioIntegrationEvidence" in artifact["with"]["path"]
+    assert "resolved-packages.json" in artifact["with"]["path"]
+    assert artifact["with"]["include-hidden-files"] is True
+
+
+@pytest.mark.parametrize(
+    "policy,license_ok,expected",
+    [("true", "true", 0), ("false", "true", 1), ("true", "false", 1), ("", "", 1)],
+)
+def test_required_mode_rejects_missing_prerequisites(policy, license_ok, expected):
+    import os
+    import shutil
+    import subprocess
+
+    config = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    step = next(
+        step
+        for step in config["jobs"]["license"]["steps"]
+        if step.get("name") == "Require licensed native E2E prerequisites"
+    )
+    assert step["if"] == "inputs.require_native_e2e"
+    shell = shutil.which("bash") or "C:/Program Files/Git/bin/bash.exe"
+    if not Path(shell).exists():
+        pytest.skip("Bash is unavailable")
+    result = subprocess.run(
+        [shell, "-c", step["run"]],
+        env={**os.environ, "LICENSED_POLICY": policy, "UNITY_OK": license_ok},
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == expected
+
+
+@pytest.mark.parametrize(
+    "license_result,unity_ok,native_result,expected",
+    [
+        ("success", "true", "success", 0),
+        ("failure", "true", "success", 1),
+        ("skipped", "", "skipped", 1),
+        ("success", "true", "skipped", 1),
+        ("success", "true", "failure", 1),
+        ("success", "true", "cancelled", 1),
+        ("success", "false", "success", 1),
+    ],
+)
+def test_always_run_required_gate_fails_skipped_or_unsuccessful_dependencies(
+    license_result, unity_ok, native_result, expected
+):
+    import os
+    import shutil
+    import subprocess
+
+    config = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    job = config["jobs"]["requiredNativeE2E"]
+    assert job["if"] == "always() && inputs.require_native_e2e"
+    assert job["needs"] == ["license", "testAllModes"]
+    shell = shutil.which("bash") or "C:/Program Files/Git/bin/bash.exe"
+    if not Path(shell).exists():
+        pytest.skip("Bash is unavailable")
+    result = subprocess.run(
+        [shell, "-c", job["steps"][0]["run"]],
+        env={
+            **os.environ,
+            "LICENSE_RESULT": license_result,
+            "UNITY_OK": unity_ok,
+            "NATIVE_RESULT": native_result,
+        },
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == expected
