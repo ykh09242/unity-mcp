@@ -155,6 +155,10 @@
       "description": "Manage 3D and 2D physics: settings, collision matrix, materials, joints, queries (raycast, shapecast, linecast, overlap), forces, rigidbody configuration, validation, and simulation"
     },
     {
+      "name": "manage_play_scenario",
+      "description": "Save, validate and run repeatable Play Mode scenarios with condition waits, step results and failure logs (group: testing)"
+    },
+    {
       "name": "manage_prefabs",
       "description": "Create and modify prefab assets; inspect, revert or apply scene instance overrides"
     },
