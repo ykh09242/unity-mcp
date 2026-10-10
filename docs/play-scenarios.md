@@ -226,7 +226,7 @@ omitted count, zero or one. The existing hierarchy-path selector remains support
 configured EventSystem raycasters, waits while the target is blocked or temporarily unavailable,
 and dispatches pointer events only when the hit resolves to the intended handler. Once dispatch
 starts, the click is never retried. This is simulated EventSystem input, not OS mouse injection or a
-standalone Player test. It needs a suitable uGUI Canvas, GraphicRaycaster and EventSystem; preflight
+standalone Player launch by itself. It needs a suitable uGUI Canvas, GraphicRaycaster and EventSystem; preflight
 cannot establish that future runtime geometry will be clickable. Pointer dispatch is synchronous;
 a Graphic created during a callback may not enter native raycast results until the next frame.
 Use follow-up readiness steps when the click creates new UI.
@@ -394,8 +394,9 @@ remain separate; a skipped licensed job is not a passed game scenario.
 - Unknown fields, explicit null optional fields, numeric coercion and action-incompatible arguments
   are rejected. New bounded component/property/error-message strings use UTF-16 length limits.
 
-These checks run in the selected Editor. Direct uGUI events do not verify OS input, UI Toolkit,
-raycast occlusion or human-visible pixels; repeated runs are not fresh isolated game processes.
+The default commands run in the selected Editor. Direct uGUI events do not verify OS input, UI Toolkit,
+raycast occlusion or human-visible pixels; repeated runs share one process. Use the explicit Player
+build/run workflow below to verify a standalone executable.
 
 ## Repeat the native E2E fixture
 
@@ -422,3 +423,10 @@ explicit screenshot-unavailable result, not successful composited screenshot cap
 The isolated verification uses Unity 6000.0.69f1, Test Framework 1.6.0 and uGUI 2.0.0 without changing
 the repository test project's dependencies. Synthetic scenes do not prove the user's game flow;
 author saved definitions using verified paths to exercise that game.
+
+## Reset, query diagnostics and standalone execution
+
+See [scenario execution and CI evidence](play-scenario-execution.md) for explicit `reset_state`
+participants, query budgets, bounded timelines, resource owner/call-site attribution, the **Build Player**
+workflow, `play-scenario player-run`, and required native E2E mode. These features preserve the existing
+bounded polling, once-only effect dispatch, best-effort cleanup and truthful report requirements.

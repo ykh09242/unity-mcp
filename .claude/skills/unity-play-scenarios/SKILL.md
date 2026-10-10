@@ -1,6 +1,6 @@
 ---
 name: unity-play-scenarios
-description: Author, save and run repeatable Unity Play Mode scenarios using manage_play_scenario, including menu-to-game flows, stable targets, resource release assertions, saved suites and CI evidence. Use for reusable gameplay checks or edits to saved Play Scenarios.
+description: Author, save and run repeatable Unity Play Mode scenarios using manage_play_scenario, including menu-to-game flows, stable targets, resource release assertions, saved suites, explicit repeat resets, query budgets, standalone Player builds and CI evidence. Use for reusable gameplay checks or edits to saved Play Scenarios.
 ---
 
 # Unity Play Scenarios
@@ -86,6 +86,13 @@ Inspect structured `failure`/`cleanup_failures`, `resource_checks` and `reproduc
 original error and screenshot evidence. A source_revision is caller-provided metadata, not independently
 verified provenance. Missing observation or failed report/export is not a passing check. Preserve first
 failure and skipped children; do not use automatic reruns to erase failures.
+
+## Execution controls and standalone Player
+
+Read [execution](references/execution.md) for explicit reset participants, actual query budgets,
+bounded timelines, owner/call-site resource attribution, standalone Player build/run and strict native
+CI evidence. Use verified registration IDs, preserve unsupported-capability failures, and require both
+the actual report and process outcome before claiming a built Player passed.
 
 ## CLI fallback
 
