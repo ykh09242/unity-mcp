@@ -25,8 +25,10 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             // Detect dimension
             string dimensionParam = p.Get("dimension")?.ToLowerInvariant();
-            bool has3DRb = go.GetComponent<Rigidbody>() != null;
-            bool has2DRb = go.GetComponent<Rigidbody2D>() != null;
+            var rb = go.GetComponent<Rigidbody>();
+            var rb2d = go.GetComponent<Rigidbody2D>();
+            bool has3DRb = rb != null;
+            bool has2DRb = rb2d != null;
             bool is2D;
 
             if (dimensionParam == "2d")
@@ -47,13 +49,11 @@ namespace MCPForUnity.Editor.Tools.Physics
             // Validate not kinematic
             if (is2D)
             {
-                var rb2d = go.GetComponent<Rigidbody2D>();
                 if (rb2d.bodyType == RigidbodyType2D.Kinematic)
                     return new ErrorResponse($"Cannot apply force to kinematic Rigidbody on '{go.name}'.");
             }
             else
             {
-                var rb = go.GetComponent<Rigidbody>();
                 if (rb.isKinematic)
                     return new ErrorResponse($"Cannot apply force to kinematic Rigidbody on '{go.name}'.");
             }
@@ -61,15 +61,15 @@ namespace MCPForUnity.Editor.Tools.Physics
             string forceType = (p.Get("force_type") ?? "normal").ToLowerInvariant();
 
             if (forceType == "explosion")
-                return ApplyExplosionForce(p, go, is2D);
+                return ApplyExplosionForce(p, go, is2D, rb);
 
             if (forceType == "normal")
-                return ApplyNormalForce(p, go, is2D);
+                return ApplyNormalForce(p, go, is2D, rb, rb2d);
 
             return new ErrorResponse($"Unknown force_type: '{forceType}'. Valid types: normal, explosion.");
         }
 
-        private static object ApplyNormalForce(ToolParams p, GameObject go, bool is2D)
+        private static object ApplyNormalForce(ToolParams p, GameObject go, bool is2D, Rigidbody rb, Rigidbody2D rb2d)
         {
             var forceToken = p.GetRaw("force");
             if (forceToken?.Type == JTokenType.Null)
@@ -131,7 +131,6 @@ namespace MCPForUnity.Editor.Tools.Physics
                 }
 
                 responseData["force_mode"] = mode2d.ToString();
-                var rb2d = go.GetComponent<Rigidbody2D>();
 
                 if (force != null)
                 {
@@ -169,7 +168,6 @@ namespace MCPForUnity.Editor.Tools.Physics
                 }
 
                 responseData["force_mode"] = mode.ToString();
-                var rb = go.GetComponent<Rigidbody>();
 
                 if (force != null)
                 {
@@ -236,7 +234,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             }
         }
 
-        private static object ApplyExplosionForce(ToolParams p, GameObject go, bool is2D)
+        private static object ApplyExplosionForce(ToolParams p, GameObject go, bool is2D, Rigidbody rb)
         {
             if (is2D)
                 return new ErrorResponse("Explosion force is only available for 3D physics.");
@@ -270,7 +268,6 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             var explosionPos = new Vector3(explosionPosition[0], explosionPosition[1], explosionPosition[2]);
 
-            var rb = go.GetComponent<Rigidbody>();
             rb.AddExplosionForce(explosionForce.Value, explosionPos, explosionRadius.Value, upwardsModifier, mode);
 
             return new
