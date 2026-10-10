@@ -45,7 +45,8 @@ Choose readiness based on what the game actually guarantees:
 
 - `wait_object` without count requires one unique target. Explicit `count` counts all exact matches, including inactive objects; every match must satisfy `active` (default true, explicit false requires inactivity). `count: 0` means absence and excludes active/component/property options.
 - At effective count one, `component` is an exact full type name. Add `property: {"path": "isInitialized", "equals": true}` only after verifying that component and serialized field. Equality accepts bool, signed 64-bit integer, finite number or string, not null/collections. Arbitrary getters and methods are never invoked. Component and property path limits are 256 UTF-16 units; string equality is at most 1024.
-- `stable_for_ms` on wait_object/wait_scene requires continuous successful sampled observations and resets on false. It is 0-60000 and strictly below the step timeout; it cannot detect changes between polls.
+- `wait_state` uses an explicitly registered read-only state provider with `state_id` and typed `state_equals`; use verified IDs, not reflected getters. See [Player assurance](references/player-assurance.md) for registration lifetime and missing/replaced provider behavior.
+- `stable_for_ms` on wait_object/wait_scene/wait_state requires continuous successful sampled observations and resets on false. It is 0-60000 and strictly below the step timeout; it cannot detect changes between polls.
 - Prefer the strict default error policy. Exact, case-sensitive full-message allowlists can admit known intentional errors (at most 32 unique messages, each 1-1024 UTF-16 units). Use `log_only` only when the requested scenario deliberately tolerates logged errors; thrown exceptions still fail.
 - The completion quiet window is 0-10000 ms, default 250, after main steps and before cleanup. It catches late logs only within that bounded interval. Prefer an initialized-property condition over extending it blindly.
 - Every repetition executes setup/main/cleanup. Scene reloads do not reset arbitrary statics or DontDestroyOnLoad objects. Express the application's intended reset actions explicitly. Cleanup has a separate 1-300 second budget (default 30) and may run after failure/cancel/timeout if execution began.
@@ -92,7 +93,9 @@ failure and skipped children; do not use automatic reruns to erase failures.
 Read [execution](references/execution.md) for explicit reset participants, actual query budgets,
 bounded timelines, owner/call-site resource attribution, standalone Player build/run and strict native
 CI evidence. Use verified registration IDs, preserve unsupported-capability failures, and require both
-the actual report and process outcome before claiming a built Player passed.
+the actual report and process outcome before claiming a built Player passed. For state probes, version-2
+build identity, crash progress, bounded repeat sessions and required Player CI, read
+[Player assurance](references/player-assurance.md).
 
 ## CLI fallback
 

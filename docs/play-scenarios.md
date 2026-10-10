@@ -136,7 +136,9 @@ actual component type and serialized field in the project:
 
 Supported equality values are boolean, signed 64-bit integer, finite number and string. Null, arrays
 and objects are rejected. A missing/incompatible serialized property fails with an explicit detail.
-`stable_for_ms` on `wait_object` or `wait_scene` requires uninterrupted successful observations for that
+For Editor/Player parity, use explicit read-only `wait_state` providers instead of serialized-property
+inspection; see [state provider authoring](play-scenario-player-assurance.md#read-game-state-explicitly).
+`stable_for_ms` on `wait_object`, `wait_scene` or `wait_state` requires uninterrupted successful observations for that
 duration; a false observation resets the interval. It cannot observe changes between polls. Clicks and
 scene-load dispatches are not retried after execution starts. A temporarily disabled uGUI Button waits
 for activation within the step timeout; a missing click handler is a capability failure.

@@ -41,7 +41,7 @@ project needs installed Windows x64 support and a Mono Standalone backend. Do no
 install modules or overwrite builds implicitly. The builder freezes definition/hash/scenes into the
 bundle and uses a per-build test define; ordinary Players never auto-start this runner.
 
-Player supports scene/object/component-presence checks, stable IDs, reset, query budgets, timeline
+Player supports scene/object/component-presence checks, explicit read-only state providers, stable IDs, reset, query budgets, timeline
 and optional native uGUI direct/raycast dispatch. Reject resources.enabled, metrics.enabled,
 screenshot_on_failure and every property condition before execution. Use Editor execution when
 those are required. Never silently drop unsupported checks to make a Player run pass.

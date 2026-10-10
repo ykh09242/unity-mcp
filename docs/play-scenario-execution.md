@@ -3,6 +3,8 @@
 Use these optional controls when repeats must reset game state, query cost needs a regression limit,
 or the scenario must run in an actual standalone Player. Existing saved definitions keep their defaults.
 See [saved Play scenarios](play-scenarios.md) for basic authoring, resource registration and suites.
+For read-only state probes, build identity, crash progress and longer repeat sessions, read
+[Player assurance](play-scenario-player-assurance.md).
 
 ## Explicit repeat reset
 
@@ -127,6 +129,7 @@ For batch builds, use a closed dedicated test project and these arguments to the
 -batchmode -quit -projectPath <absolute-project-path>
 -executeMethod MCPForUnity.Editor.Services.PlayScenarios.PlayScenarioPlayerBuild.BuildFromCommandLine
 --mcp-scenario-name menu-start --mcp-scenario-output <absolute-empty-output-directory>
+--mcp-scenario-source-revision <build-commit-sha>
 -logFile <absolute-build-log>
 ```
 
@@ -156,18 +159,22 @@ exit zero. Scenario failure exits nonzero; invalid startup or persistence also c
 whole per-run output directory and build provenance when diagnosing CI failures.
 
 The initial Player host supports exact included scenes, hierarchy paths/stable IDs, object count and
-activity, exact component presence, reset steps, query counts/timeline, and optional direct/raycast
+activity, exact component presence, explicit read-only state providers, reset steps, query counts/timeline, and optional direct/raycast
 uGUI EventSystem input. It rejects enabled resource assertions, memory metrics, screenshots and all
 serialized-property conditions before execution. No reflected property getter is substituted. These
 capabilities still belong to the Editor host. Windows Mono is the supported build target here; OS
 input, UI Toolkit, IL2CPP and visual pixel comparison are not claimed.
 
-The version-1 bundle retains the exact canonical `definition_json` bytes alongside its parsed object
-so both .NET and Python verify the same hash input. The executable validates its embedded bundle
-against a bounded explicit request. Requests contain job identity, scenario name, hash, repeat count,
-timeout and optional source label. Final reports and cancellation markers use fixed sibling names;
-requests cannot select arbitrary report destinations. Paths reject symbolic-link/reparse traversal,
-and final evidence never replaces an existing report.
+Both bundle versions retain exact canonical `definition_json` bytes so .NET and Python hash the same
+input. New version-2 builds also embed a build ID and build-time revision and provide a hashed payload
+inventory. The CLI verifies actual binaries/data before launch, while the Player checks its embedded
+identity against the bounded request. Legacy version-1 builds remain explicitly unverified for payload
+provenance. See [identity and progress contracts](play-scenario-player-assurance.md).
+
+Requests contain job identity, scenario name, definition hash, repeat count, timeout and optional run
+source label. Version 2 also binds the build identity and payload attestation. Final reports, progress
+and cancellation markers use fixed sibling names; requests cannot select arbitrary report destinations.
+Paths reject symbolic-link/reparse traversal, and final evidence never replaces an existing report.
 
 ## Require real native CI evidence
 
