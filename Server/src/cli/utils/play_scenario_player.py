@@ -1,6 +1,6 @@
 """Launch one explicitly selected standalone Player and verify its actual final report."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 import json
 import math
@@ -19,15 +19,36 @@ from models.play_scenarios import (
     RunTimeout,
     ScenarioName,
 )
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+from cli.utils.play_scenario_player_payload import (
+    PAYLOAD_MANIFEST_LIMIT,
+    PayloadFile,
+    PlayerPayload,
+    PlayerPayloadError,
+    check_deadline,
+    verify_player_payload,
+)
+from cli.utils.play_scenario_player_progress import ProgressIdentity, ProgressObserver
 
-MANIFEST_LIMIT: Final = 262144
+MANIFEST_LIMIT: Final = PAYLOAD_MANIFEST_LIMIT
 REPORT_LIMIT: Final = 2097152
 PROCESS_LOG_LIMIT: Final = 1048576
 
 
 class PlayerLaunchError(RuntimeError):
     """A bundle, process or final report could not establish a truthful Player outcome."""
+
+    def __init__(self, message: str, directory: Path | None = None) -> None:
+        super().__init__(message)
+        self.directory = directory
 
 
 def _native_definition(value: JsonValue) -> JsonValue:
@@ -46,6 +67,8 @@ def _native_definition(value: JsonValue) -> JsonValue:
         "component",
         "property",
         "stable_for_ms",
+        "state_id",
+        "state_equals",
     }
     for field in ("steps", "setup_steps", "cleanup_steps"):
         entries = normalized.get(field)
@@ -67,7 +90,7 @@ class PlayerBundle(BaseModel):
     """Versioned local build manifest, including the exact canonical hash input."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
-    schema_version: Annotated[int, Field(strict=True, ge=1, le=1)]
+    schema_version: Annotated[int, Field(strict=True, ge=1, le=2)]
     scenario_name: ScenarioName
     definition_hash: Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")]
     executable: Literal["MCPScenarioPlayer.exe"]
@@ -79,6 +102,33 @@ class PlayerBundle(BaseModel):
     definition_json: Annotated[str, Field(strict=True, max_length=65536)]
     unity_version: Annotated[str, Field(strict=True, max_length=128)]
     package_version: Annotated[str, Field(strict=True, max_length=128)]
+
+    build_id: JobId | None = None
+    build_source_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None
+    payload_inventory: Annotated[list[PayloadFile], Field(min_length=1, max_length=1024)] | None = (
+        None
+    )
+    payload_inventory_json: (
+        Annotated[str, Field(strict=True, max_length=PAYLOAD_MANIFEST_LIMIT)] | None
+    ) = None
+    payload_hash: Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")] | None = None
+
+    @property
+    def payload(self) -> PlayerPayload | None:
+        if self.schema_version == 1:
+            return None
+        return PlayerPayload.model_validate(
+            {
+                name: getattr(self, name)
+                for name in (
+                    "build_id",
+                    "build_source_revision",
+                    "payload_inventory",
+                    "payload_inventory_json",
+                    "payload_hash",
+                )
+            }
+        )
 
     @field_validator("definition", mode="before")
     @classmethod
@@ -97,6 +147,19 @@ class PlayerBundle(BaseModel):
     @model_validator(mode="after")
     def check_integrity(self) -> "PlayerBundle":
         """Verify canonical bytes and supported capabilities before a process is started."""
+        v2_fields = {
+            "build_id",
+            "build_source_revision",
+            "payload_inventory",
+            "payload_inventory_json",
+            "payload_hash",
+        }
+        if self.schema_version == 1 and self.model_fields_set & v2_fields:
+            raise PlayerLaunchError("Legacy Player manifest cannot claim verified payload metadata")
+        if self.schema_version == 2 and not v2_fields <= self.model_fields_set:
+            raise PlayerLaunchError("Player v2 manifest requires all payload identity fields")
+        if self.schema_version == 2:
+            self.payload
         if sha256(self.definition_json.encode("utf-8")).hexdigest() != self.definition_hash:
             raise PlayerLaunchError("Player bundle definition hash mismatch")
         canonical = PlayScenario.model_validate(
@@ -134,6 +197,8 @@ class PlayerFinalReport(BaseModel):
     timeout_seconds: RunTimeout
     reproduction: dict[str, JsonValue]
     runner_resources_released: Annotated[bool, Field(strict=True)]
+    player_schema_version: Annotated[int, Field(strict=True, ge=1, le=2)] = 1
+    progress_error: Annotated[str, Field(strict=True, max_length=2048)] | None = None
     report_error: str | None = None
     started_unix_ms: Annotated[int, Field(strict=True, ge=0)]
     finished_unix_ms: Annotated[int, Field(strict=True, ge=0)]
@@ -161,6 +226,11 @@ class PlayerRunOptions:
     source_revision: str | None = None
     cleanup_wait_seconds: float = 360
     poll_interval_seconds: float = 0.1
+    deadline_monotonic: float | None = None
+    expected_build_revision: str | None = None
+    expected_build_id: str | None = None
+    require_verified_payload: bool = False
+    player_job_id: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -187,6 +257,7 @@ class PlayerOutcome:
     directory: Path
     exit_code: int
     client_error: str | None = None
+    diagnostics: dict[str, JsonValue] = field(default_factory=dict)
 
 
 def _read_json(path: Path, limit: int) -> dict[str, JsonValue]:
@@ -236,13 +307,42 @@ def _stop_owned(process: subprocess.Popen) -> None:
         raise PlayerLaunchError("Owned Player did not exit after termination") from exc
 
 
+def _write_diagnostics(directory: Path, diagnostics: dict[str, JsonValue]) -> None:
+    """Write launcher evidence separately without changing or inventing native run.json."""
+    encoded = json.dumps(diagnostics, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > 65536:
+        raise PlayerLaunchError("Player launcher diagnostics exceed the byte bound", directory)
+    (directory / "diagnostics.json").write_bytes(encoded + b"\n")
+
+
 def run_player(options: PlayerRunOptions) -> PlayerOutcome:
     """Run foreground, request cancellation once, and require fresh native finalization evidence."""
+    check_deadline(options.deadline_monotonic)
     root = options.build_directory.resolve(strict=True)
     manifest = root / "scenario-bundle.json"
     if manifest.resolve(strict=True).parent != root:
         raise PlayerLaunchError("Player manifest leaves the selected build directory")
     bundle = PlayerBundle.model_validate(_read_json(manifest, MANIFEST_LIMIT))
+    payload = bundle.payload
+    if options.require_verified_payload and payload is None:
+        raise PlayerLaunchError("This command requires a verified v2 Player payload")
+    if options.expected_build_revision is not None:
+        PlayScenarioCommand.check_revision(options.expected_build_revision)
+        if payload is None or payload.build_source_revision != options.expected_build_revision:
+            raise PlayerLaunchError(
+                "Player embedded build revision does not match the expected label"
+            )
+    if options.expected_build_id is not None and (
+        payload is None or payload.build_id != options.expected_build_id
+    ):
+        raise PlayerLaunchError("Player embedded build ID does not match the expected ID")
+    if payload is not None:
+        output_root = options.output_directory.resolve()
+        if output_root.is_relative_to(root):
+            raise PlayerLaunchError(
+                "Verified Player request/output directories must be outside the build directory"
+            )
+        verify_player_payload(root, payload, options.deadline_monotonic)
     executable = root / bundle.executable
     if (
         executable.is_symlink()
@@ -255,7 +355,7 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
     command = PlayScenarioCommand(
         action="run",
         name=bundle.scenario_name,
-        job_id=uuid4().hex,
+        job_id=options.player_job_id or uuid4().hex,
         repeat_count=options.repeat_count,
         timeout_seconds=options.timeout_seconds,
         source_revision=options.source_revision,
@@ -265,17 +365,27 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
     directory.mkdir(exist_ok=False)
     request_path = directory / "request.json"
     request: dict[str, JsonValue] = {
-        "schema_version": 1,
+        "schema_version": bundle.schema_version,
         "job_id": command.job_id,
         "scenario_name": bundle.scenario_name,
         "definition_hash": bundle.definition_hash,
         "repeat_count": command.repeat_count,
         "timeout_seconds": command.timeout_seconds,
     }
+    if payload is not None:
+        request.update(
+            {
+                "build_id": payload.build_id,
+                "build_source_revision": payload.build_source_revision,
+                "payload_hash": payload.payload_hash,
+            }
+        )
     if command.source_revision is not None:
         request["source_revision"] = command.source_revision
     request_path.write_text(json.dumps(request, ensure_ascii=True) + "\n", encoding="utf-8")
     (directory / "definition.json").write_text(bundle.definition_json + "\n", encoding="utf-8")
+    check_deadline(options.deadline_monotonic)
+    process_started_unix_ms = int(time.time() * 1000)
     process = subprocess.Popen(
         [
             str(executable),
@@ -292,14 +402,33 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
     )
     log_capture = _LogCapture(process, directory / "player.log")
     capture = Thread(target=log_capture.drain, daemon=True)
+    observer = (
+        ProgressObserver(
+            ProgressIdentity(
+                str(command.job_id),
+                bundle.definition_hash,
+                bundle.build_id,
+                bundle.payload_hash,
+                bundle.build_source_revision,
+                process.pid,
+            )
+        )
+        if payload is not None
+        else None
+    )
     deadline = time.monotonic() + options.timeout_seconds
+    if options.deadline_monotonic is not None:
+        deadline = min(deadline, options.deadline_monotonic)
     interrupted = False
     deadline_reached = False
     cancellation_sent = False
+    forced_termination = False
     try:
         capture.start()
         while process.poll() is None:
             try:
+                if observer is not None:
+                    observer.observe(directory / "progress.json")
                 expired = time.monotonic() >= deadline or (
                     log_capture.error is not None and not cancellation_sent
                 )
@@ -309,12 +438,14 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                     deadline_reached = not interrupted
                     deadline = time.monotonic() + options.cleanup_wait_seconds
                 elif expired:
+                    forced_termination = process.poll() is None
                     _stop_owned(process)
                     break
                 time.sleep(max(0.05, options.poll_interval_seconds))
             except KeyboardInterrupt:
                 interrupted = True
                 if cancellation_sent:
+                    forced_termination = process.poll() is None
                     _stop_owned(process)
                     break
                 (directory / "cancel").write_text("cancel\n", encoding="utf-8")
@@ -322,37 +453,99 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                 deadline = time.monotonic() + options.cleanup_wait_seconds
         return_code = process.wait(timeout=5)
     finally:
+        forced_termination |= process.poll() is None
         _stop_owned(process)
+        if observer is not None:
+            observer.observe(directory / "progress.json")
+        process_evidence = {
+            "schema_version": 1,
+            "job_id": command.job_id,
+            "process_id": process.pid,
+            "actual_exit_code": process.returncode,
+            "process_ended": process.poll() is not None,
+            "forced_termination": forced_termination,
+            "started_unix_ms": process_started_unix_ms,
+            "finished_unix_ms": int(time.time() * 1000),
+            "request_sha256": sha256(request_path.read_bytes()).hexdigest(),
+            "progress_observations": list(observer.observations) if observer is not None else [],
+        }
+        encoded_evidence = json.dumps(
+            process_evidence, ensure_ascii=True, separators=(",", ":")
+        ).encode("utf-8")
+        if len(encoded_evidence) > 65536:
+            raise PlayerLaunchError("Owned process evidence exceeds its byte bound", directory)
+        (directory / "process.json").write_bytes(encoded_evidence + b"\n")
         if capture.ident is not None:
             capture.join(timeout=5)
     if capture.is_alive():
         raise PlayerLaunchError("Owned Player output stream did not close")
     if log_capture.error is not None:
         raise PlayerLaunchError("Owned Player log could not be retained") from log_capture.error
-    raw = _read_json(directory / "run.json", REPORT_LIMIT)
-    report = PlayerFinalReport.model_validate(raw)
-    if (
-        report.job_id != command.job_id
-        or report.scenario != bundle.definition
-        or report.reproduction.get("definition_hash") != bundle.definition_hash
-        or report.reproduction.get("unity_version") != bundle.unity_version
-        or report.reproduction.get("package_version") != bundle.package_version
-        or report.repeat_count != command.repeat_count
-        or report.timeout_seconds != command.timeout_seconds
-        or report.reproduction.get("source_revision") != command.source_revision
-        or report.finished_unix_ms < report.started_unix_ms
-        or report.exit_code != return_code
-        or (report.status == "succeeded") != (return_code == 0)
-    ):
-        raise PlayerLaunchError(
-            "Player final report does not match the owned request or process exit"
+    diagnostics: dict[str, JsonValue] = {
+        "schema_version": 1,
+        "job_id": command.job_id,
+        "process_id": process.pid,
+        "process_exit_code": return_code,
+        "cancellation_sent": cancellation_sent,
+        "interrupted": interrupted,
+        "deadline_reached": deadline_reached,
+        "cleanup_state": "process_exited",
+        "payload_verification": "launcher_admission"
+        if payload is not None
+        else "unverified_legacy",
+    }
+    if observer is not None:
+        observer.observe(directory / "progress.json")
+        diagnostics.update(observer.diagnostics())
+    try:
+        raw = _read_json(directory / "run.json", REPORT_LIMIT)
+        report = PlayerFinalReport.model_validate(raw)
+        if (
+            report.job_id != command.job_id
+            or report.scenario != bundle.definition
+            or report.reproduction.get("definition_hash") != bundle.definition_hash
+            or report.reproduction.get("unity_version") != bundle.unity_version
+            or report.reproduction.get("package_version") != bundle.package_version
+            or report.repeat_count != command.repeat_count
+            or report.timeout_seconds != command.timeout_seconds
+            or report.reproduction.get("source_revision") != command.source_revision
+            or report.finished_unix_ms < report.started_unix_ms
+            or report.exit_code != return_code
+            or (report.status == "succeeded") != (return_code == 0)
+        ):
+            raise PlayerLaunchError(
+                "Player final report does not match the owned request or process exit"
+            )
+        if payload is not None and (
+            report.player_schema_version != 2
+            or report.reproduction.get("build_id") != payload.build_id
+            or report.reproduction.get("build_source_revision") != payload.build_source_revision
+            or report.reproduction.get("payload_hash") != payload.payload_hash
+            or report.reproduction.get("payload_verification") != "launcher_admission"
+        ):
+            raise PlayerLaunchError("Player final report payload identity mismatch")
+    except (PlayerLaunchError, OSError, ValueError, ValidationError) as exc:
+        diagnostics["failure_code"] = (
+            "player_report_missing"
+            if not (directory / "run.json").exists()
+            else "player_report_invalid"
         )
+        _write_diagnostics(directory, diagnostics)
+        raise PlayerLaunchError(str(diagnostics["failure_code"]), directory) from exc
+    diagnostics["cleanup_state"] = "native_finalized"
+    _write_diagnostics(directory, diagnostics)
     exit_code = 0 if report.status == "succeeded" and not report.report_error else 1
-    client_error = None
+    client_error = report.progress_error
+    if observer is not None and (
+        observer.first_error or (report.status == "succeeded" and not observer.heartbeat_observed)
+    ):
+        client_error = client_error or observer.first_error or "player_heartbeat_missing"
+    if client_error:
+        exit_code = 1
     if interrupted:
         exit_code = 130
         client_error = "Player interrupted; native finalization confirmed"
     elif deadline_reached:
         exit_code = 1
         client_error = "Player launcher deadline expired"
-    return PlayerOutcome(raw, directory, exit_code, client_error)
+    return PlayerOutcome(raw, directory, exit_code, client_error, diagnostics)

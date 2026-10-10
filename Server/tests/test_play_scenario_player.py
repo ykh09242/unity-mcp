@@ -53,6 +53,10 @@ def child(monkeypatch, tmp_path):
         "request=json.loads(request_path.read_text())\n"
         "manifest=json.loads(pathlib.Path(sys.argv[2]).read_text())\n"
         "mode=sys.argv[3]\n"
+        "if request['schema_version'] == 2:\n"
+        " import os\n"
+        " progress={'schema_version':1,'job_id':request['job_id'],'definition_hash':request['definition_hash'],'build_id':request['build_id'],'payload_hash':request['payload_hash'],'build_source_revision':request['build_source_revision'],'process_id':os.getpid(),'sequence':1,'main_loop_sequence':1,'heartbeat_unix_ms':int(time.time()*1000),'elapsed_ms':1,'phase':'running','iteration':1,'stage':'steps','step_index':0,'status':'running'}\n"
+        " (request_path.parent/'progress.json').write_text(json.dumps(progress))\n"
         "print('owned output', flush=True)\n"
         "if mode == 'loud': sys.stdout.write('x'*2000000);sys.stdout.flush()\n"
         "if mode == 'crash': sys.exit(7)\n"
@@ -65,6 +69,10 @@ def child(monkeypatch, tmp_path):
         "report={**request,'scenario':manifest['definition'],'status':status,'execution_environment':'player',\n"
         " 'finalization_state':'completed','runner_resources_released':True,'exit_code':code,'started_unix_ms':1,'finished_unix_ms':2,\n"
         " 'reproduction':{'definition_hash':manifest['definition_hash'],'source_revision':request.get('source_revision'),'unity_version':manifest['unity_version'],'package_version':manifest['package_version']}}\n"
+        "report['player_schema_version']=request['schema_version']\n"
+        "if request['schema_version'] == 2:\n"
+        " report['reproduction'].update({key:request[key] for key in ('build_id','payload_hash','build_source_revision')})\n"
+        " report['reproduction']['payload_verification']='launcher_admission'\n"
         "report.pop('schema_version');report.pop('scenario_name');report.pop('definition_hash')\n"
         "if mode == 'wrong-id': report['job_id']='f'*32\n"
         "if mode == 'wrong-hash': report['reproduction']['definition_hash']='f'*64\n"
@@ -87,7 +95,7 @@ def child(monkeypatch, tmp_path):
         assert kwargs["shell"] is False
         process = real_popen(
             [
-                sys.executable,
+                sys._base_executable,
                 str(script),
                 arguments[2],
                 str(Path(kwargs["cwd"]) / "scenario-bundle.json"),

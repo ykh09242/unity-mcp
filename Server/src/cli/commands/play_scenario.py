@@ -11,6 +11,8 @@ from cli.utils.output import format_output
 from models.play_scenarios import PlayScenario, PlayScenarioCommand, PlayScenarioSuite
 from cli.utils.play_scenario_reports import write_suite_artifacts, write_player_artifacts
 from cli.utils.play_scenario_player import PlayerLaunchError, PlayerRunOptions, run_player
+from cli.utils.play_scenario_player_payload import PlayerPayloadError
+from cli.utils.play_scenario_player_session import PlayerSessionOptions, run_player_session
 from cli.utils.play_scenario_suite import wait_for_suite
 from pydantic import JsonValue, ValidationError
 
@@ -277,6 +279,11 @@ def suite_run(
 @click.option("--repeat-count", type=click.IntRange(1, 10), default=1, show_default=True)
 @click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
 @click.option("--source-revision", default=None)
+@click.option(
+    "--expected-build-revision", default=None, help="Require the frozen build label to match."
+)
+@click.option("--expected-build-id", default=None)
+@click.option("--require-verified-payload", is_flag=True, help="Reject legacy unverified bundles.")
 @click.option("--cleanup-wait-seconds", type=click.IntRange(1, 600), default=360, show_default=True)
 def player_run(
     build_directory: Path,
@@ -285,6 +292,9 @@ def player_run(
     timeout_seconds: int,
     source_revision: str | None,
     cleanup_wait_seconds: int,
+    expected_build_revision: str | None,
+    expected_build_id: str | None,
+    require_verified_payload: bool,
 ) -> None:
     """Launch an explicit local Player bundle, wait, and export actual run.json plus JUnit.
 
@@ -300,10 +310,13 @@ def player_run(
                 timeout_seconds=timeout_seconds,
                 source_revision=source_revision,
                 cleanup_wait_seconds=cleanup_wait_seconds,
+                expected_build_revision=expected_build_revision,
+                expected_build_id=expected_build_id,
+                require_verified_payload=require_verified_payload,
             )
         )
         write_player_artifacts(outcome.report, outcome.directory, outcome.client_error)
-    except (PlayerLaunchError, OSError, ValueError) as exc:
+    except (PlayerLaunchError, PlayerPayloadError, OSError, ValueError) as exc:
         # Bundle/process errors remain errors; no native success report is invented.
         raise click.ClickException(str(exc)) from exc
     click.echo(
@@ -313,3 +326,43 @@ def player_run(
     )
     if outcome.exit_code:
         raise click.exceptions.Exit(outcome.exit_code)
+
+
+@play_scenario.command("player-session")
+@click.argument("build_directory", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--output-dir", type=click.Path(file_okay=False, path_type=Path), required=True)
+@click.option(
+    "--mode",
+    type=click.Choice(["shared-batches", "fresh-process", "compare"]),
+    default="shared-batches",
+    show_default=True,
+)
+@click.option("--iterations", type=click.IntRange(1, 1000), default=100, show_default=True)
+@click.option("--batch-size", type=click.IntRange(2, 10), default=10, show_default=True)
+@click.option(
+    "--max-runtime-seconds", type=click.IntRange(1, 86400), default=3600, show_default=True
+)
+@click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
+@click.option("--cleanup-wait-seconds", type=click.IntRange(1, 600), default=360, show_default=True)
+@click.option("--interval-seconds", type=click.FloatRange(0, 60), default=0.5, show_default=True)
+@click.option(
+    "--failure-policy", type=click.Choice(["stop", "continue"]), default="stop", show_default=True
+)
+@click.option("--retain-reports", type=click.IntRange(1, 64), default=16, show_default=True)
+@click.option("--source-revision", default=None)
+@click.option(
+    "--expected-build-revision", default=None, help="Require the frozen build label to match."
+)
+@click.option("--expected-build-id", default=None)
+def player_session(build_directory: Path, output_dir: Path, **parameters: JsonValue) -> None:
+    """Run bounded verified Player batches and stream outcomes with explicit process scope."""
+    try:
+        options = PlayerSessionOptions(
+            build_directory=build_directory, output_directory=output_dir, **parameters
+        )
+        summary, _directory, exit_code = run_player_session(options)
+    except (PlayerLaunchError, PlayerPayloadError, OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(format_output({"success": exit_code == 0, "data": summary}, get_config().format))
+    if exit_code:
+        raise click.exceptions.Exit(exit_code)
