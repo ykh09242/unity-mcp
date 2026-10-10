@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import shutil
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -483,7 +484,13 @@ def test_keyboard_interrupt_reaps_actual_owned_native_descendant(tmp_path, monke
             raise KeyboardInterrupt()
         actual_sleep(seconds)
 
-    monkeypatch.setattr(processes.time, "sleep", interrupt_after_child_exists)
+    monkeypatch.setattr(
+        processes,
+        "time",
+        SimpleNamespace(
+            time=time.time, monotonic=time.monotonic, sleep=interrupt_after_child_exists
+        ),
+    )
     with pytest.raises(KeyboardInterrupt):
         execute(Invocation([base, "-c", script], tmp_path, timeout=5))
     child_pid = int(pid_file.read_text())
@@ -595,11 +602,21 @@ def test_owned_stdout_pipe_is_closed_after_actual_process(tmp_path, monkeypatch,
     script = "print('completed')" if outcome == "normal" else "import time;time.sleep(10)"
     invocation = Invocation([sys.executable, "-c", script], tmp_path, timeout=0.2)
     if outcome == "interrupt":
+        actual_clock = processes.time
+        actual_sleep = actual_clock.sleep
 
         def interrupt(_seconds):
             raise KeyboardInterrupt()
 
-        monkeypatch.setattr(processes.time, "sleep", interrupt)
+        # Subprocess reaping must retain the standard-library sleep function.
+        monkeypatch.setattr(
+            processes,
+            "time",
+            SimpleNamespace(
+                time=actual_clock.time, monotonic=actual_clock.monotonic, sleep=interrupt
+            ),
+        )
+        assert actual_clock.sleep is actual_sleep
         with pytest.raises(KeyboardInterrupt):
             execute(invocation)
     else:
