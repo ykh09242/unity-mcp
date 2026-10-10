@@ -66,8 +66,30 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
         }
 
-        public static object Start(string name, int repeatCount, int timeoutSeconds, string jobId)
+        internal static bool IsBusy => (_engine != null && (!_finalized || _engine.Running)) || _failureCapture?.Pending == true;
+
+        public static object Start(string name, int repeatCount, int timeoutSeconds, string jobId, string sourceRevision = null)
         {
+            PlayScenarioDefinition.ValidateName(name);
+            return StartCore(name, null, repeatCount, timeoutSeconds, jobId, sourceRevision);
+        }
+
+        internal static object Start(PlayScenarioDefinition definition, int repeatCount, int timeoutSeconds, string jobId, string sourceRevision = null)
+        {
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+            PlayScenarioDefinition frozen = PlayScenarioDefinition.Parse(JObject.FromObject(definition));
+            return StartCore(frozen.Name, frozen, repeatCount, timeoutSeconds, jobId, sourceRevision);
+        }
+
+        internal static void ValidateSourceRevision(string sourceRevision)
+        {
+            PlayScenarioReproduction.ValidateSourceRevision(sourceRevision);
+        }
+
+        private static object StartCore(string name, PlayScenarioDefinition frozen, int repeatCount, int timeoutSeconds, string jobId, string sourceRevision)
+        {
+            ValidateSourceRevision(sourceRevision);
             if (jobId != null)
             {
                 PlayScenarioRun previous = Find(jobId);
@@ -77,17 +99,29 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         previous.Scenario.Name != name
                         || previous.RepeatCount != repeatCount
                         || previous.DeadlineUnixMs - previous.StartedUnixMs != timeoutSeconds * 1000L
+                        || previous.Reproduction?.SourceRevision != sourceRevision
+                        || (frozen != null && previous.Reproduction?.DefinitionHash != PlayScenarioReproduction.Hash(frozen))
                     )
                         return new ErrorResponse("job_id already belongs to a different run request.");
                     return new SuccessResponse("Existing scenario job.", Snapshot(previous));
                 }
             }
-            if ((_engine != null && (!_finalized || _engine.Running)) || _failureCapture?.Pending == true)
-                return new ErrorResponse("play_scenario_busy", new { job_id = _engine.State.JobId });
+            if (!PlayScenarioSuiteService.CanStartChild(jobId) || IsBusy)
+                return new ErrorResponse("play_scenario_busy", new { job_id = _engine?.State.JobId });
             if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode)
                 return new ErrorResponse("Wait for the editor to finish compiling, importing or changing Play Mode.");
-            PlayScenarioDefinition definition = Store.Get(name);
+            PlayScenarioDefinition definition = frozen ?? Store.Get(name);
             var state = PlayScenarioEngine.Create(definition, jobId ?? Guid.NewGuid().ToString("N"), repeatCount, timeoutSeconds, Now);
+            state.Reproduction.UnityVersion = Application.unityVersion;
+            state.Reproduction.SourceRevision = sourceRevision;
+            try
+            {
+                state.Reproduction.PackageVersion = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(PlayScenarioService).Assembly)?.version;
+            }
+            catch (Exception)
+            {
+                // A missing package registration must not prevent execution in an embedded project.
+            }
             _engine = CreateEngine(state);
             _finalized = false;
             _suppressCapture = false;
@@ -106,7 +140,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             _failureCapture?.Dispose();
             _failureCapture = null;
             _processedUnexpectedLogCount = 0;
-            return new PlayScenarioEngine(state, new UnityPlayScenarioHost(state.Scenario.LogPolicy), CaptureFailure, DrainAndApplyErrors);
+            return new PlayScenarioEngine(
+                state,
+                new UnityPlayScenarioHost(state.Scenario.LogPolicy),
+                CaptureFailure,
+                DrainAndApplyErrors,
+                new UnityPlayScenarioResources()
+            );
         }
 
         private static void CaptureFailure(PlayScenarioRun state, PlayScenarioStep step, long now)

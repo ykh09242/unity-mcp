@@ -17,6 +17,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private AsyncOperation _loadOperation;
         private string _loadPath;
         private string _targetPath;
+        private string _targetId;
         private string[] _targetSegments;
 
         public UnityPlayScenarioHost(PlayScenarioLogPolicy logPolicy = null)
@@ -31,14 +32,18 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         public static string DescribeTarget(PlayScenarioStep step)
         {
-            if (step == null || string.IsNullOrEmpty(step.Target))
-                return "This step has no hierarchy target.";
+            if (step == null || (step.Target == null && step.TargetId == null))
+                return "This step has no object target.";
             try
             {
-                string[] segments = PlayScenarioObjectCondition.ParseTarget(step.Target);
+                PlayScenarioObjectCondition.ValidateSelector(step);
                 Scene scene = SceneManager.GetActiveScene();
-                var matches = PlayScenarioObjectCondition.Resolve(scene, segments);
-                string summary = "Exact path matches: " + matches.Count + "; active matches: " + matches.ActiveCount + ".";
+                var matches =
+                    step.TargetId != null
+                        ? PlayScenarioObjectCondition.ResolveId(scene, step.TargetId)
+                        : PlayScenarioObjectCondition.Resolve(scene, PlayScenarioObjectCondition.ParseTarget(step.Target));
+                string summary =
+                    (step.TargetId == null ? "Exact path matches: " : "Exact ID matches: ") + matches.Count + "; active matches: " + matches.ActiveCount + ".";
                 Type componentType = PlayScenarioObjectCondition.ValidateCondition(step);
                 if (componentType != null && matches.Count == 1)
                     summary += " " + PlayScenarioObjectCondition.Observe(step, matches, componentType).Detail;
@@ -62,19 +67,29 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     return ObserveScene(step.Scene);
                 case "wait_object":
                 case "click_ui":
-                    PrepareTarget(step.Target, firstPoll);
+                    PrepareTarget(step, firstPoll);
                     IUguiInputSimulationBackend backend = step.Action == "click_ui" ? ManageInput.UguiBackend : null;
                     if (step.Action == "click_ui" && backend == null)
-                        throw new InvalidOperationException("Scenario UI clicks require the optional uGUI input backend; UI Toolkit clicks are unsupported.");
+                        throw CapabilityFailure(step, "Scenario UI clicks require the optional uGUI input backend; UI Toolkit clicks are unsupported.");
+                    if (step.Action == "click_ui")
+                    {
+                        if (step.ClickMode != null && step.ClickMode != "direct" && step.ClickMode != "raycast")
+                            throw new ArgumentException("click_mode must be direct or raycast.");
+                        if (step.ClickMode == "raycast" && !(backend is IUguiScenarioRaycastClickBackend))
+                            throw CapabilityFailure(step, "The optional uGUI backend does not support raycast-verified clicks.");
+                    }
                     Type componentType = PlayScenarioObjectCondition.ValidateCondition(step);
                     Scene scene = SceneManager.GetActiveScene();
                     if (!scene.IsValid() || !scene.isLoaded)
                         return new PlayScenarioObservation(false, "Waiting for a loaded active scene.");
-                    var matches = PlayScenarioObjectCondition.Resolve(scene, _targetSegments);
+                    var matches =
+                        _targetId != null
+                            ? PlayScenarioObjectCondition.ResolveId(scene, _targetId)
+                            : PlayScenarioObjectCondition.Resolve(scene, _targetSegments);
                     PlayScenarioObservation observation = PlayScenarioObjectCondition.Observe(step, matches, componentType);
                     if (!observation.Ready || step.Action == "wait_object")
                         return observation;
-                    return Click(matches.Target, backend);
+                    return Click(step, matches.Target, backend);
                 default:
                     throw new ArgumentException("Unsupported play scenario action.");
             }
@@ -108,7 +123,20 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             Scene scene = SceneManager.GetActiveScene();
             bool ready = scene.IsValid() && scene.isLoaded && string.Equals(scene.path, expectedPath, StringComparison.Ordinal);
-            return new PlayScenarioObservation(ready, ready ? "Expected scene is loaded and active." : "Waiting for the expected active scene.");
+            string detail = ready ? "Expected scene is loaded and active." : "Waiting for the expected active scene.";
+            return new PlayScenarioObservation(
+                ready,
+                detail,
+                ready
+                    ? null
+                    : new PlayScenarioFailure
+                    {
+                        Code = "condition_unmet",
+                        Expected = expectedPath + "; loaded=true; active=true",
+                        Actual = scene.IsValid() ? scene.path + "; loaded=" + (scene.isLoaded ? "true" : "false") + "; active=true" : "no valid active scene",
+                        Message = detail,
+                    }
+            );
         }
 
         internal static string RequireSceneAsset(string scenePath)
@@ -128,15 +156,29 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             return containedPath;
         }
 
-        private void PrepareTarget(string path, bool firstPoll)
+        private void PrepareTarget(PlayScenarioStep step, bool firstPoll)
         {
-            if (!firstPoll && _targetSegments != null && path == _targetPath)
+            PlayScenarioObjectCondition.ValidateSelector(step);
+            if (!firstPoll && step.Target == _targetPath && step.TargetId == _targetId && (_targetSegments != null || _targetId != null))
                 return;
-            _targetSegments = PlayScenarioObjectCondition.ParseTarget(path);
-            _targetPath = path;
+            _targetSegments = step.TargetId == null ? PlayScenarioObjectCondition.ParseTarget(step.Target) : null;
+            _targetPath = step.Target;
+            _targetId = step.TargetId;
         }
 
-        private PlayScenarioObservation Click(GameObject target, IUguiInputSimulationBackend backend)
+        internal static PlayScenarioException CapabilityFailure(PlayScenarioStep step, string message) =>
+            new PlayScenarioException(
+                new PlayScenarioFailure
+                {
+                    Code = "capability_unavailable",
+                    Target = step.TargetId ?? step.Target,
+                    Expected = (step.ClickMode ?? "direct") + " uGUI click backend",
+                    Actual = "unavailable",
+                    Message = message,
+                }
+            );
+
+        private PlayScenarioObservation Click(PlayScenarioStep step, GameObject target, IUguiInputSimulationBackend backend)
         {
             object result;
             bool ready = true;
@@ -153,7 +195,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             Application.logMessageReceived += CaptureError;
             try
             {
-                if (backend is IUguiScenarioClickBackend scenarioBackend)
+                if (step.ClickMode == "raycast")
+                    ready = ((IUguiScenarioRaycastClickBackend)backend).TryRaycastClick(target, out result, out detail);
+                else if (backend is IUguiScenarioClickBackend scenarioBackend)
                     ready = scenarioBackend.TryClick(target, out result, out detail);
                 else
                     result = backend.Click(target);
@@ -165,10 +209,24 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (loggedError != null)
                 throw new InvalidOperationException("UI click logged an error: " + loggedError);
             if (!ready)
-                return new PlayScenarioObservation(false, detail);
+                return new PlayScenarioObservation(
+                    false,
+                    detail,
+                    new PlayScenarioFailure
+                    {
+                        Code = "input_blocked",
+                        Target = step.TargetId ?? step.Target,
+                        Expected = step.ClickMode == "raycast" ? "eligible first uGUI raycast hit at target center" : "ready direct uGUI click handler",
+                        Actual = detail,
+                        Message = detail,
+                    }
+                );
             if (!(result is IMcpResponse response) || !response.Success)
                 throw new InvalidOperationException(result is ErrorResponse error ? error.Error : "The UI backend did not confirm a successful click.");
-            return new PlayScenarioObservation(true, "UI click dispatched successfully.");
+            return new PlayScenarioObservation(
+                true,
+                step.ClickMode == "raycast" ? "Raycast-verified UI click dispatched successfully." : "UI click dispatched successfully."
+            );
         }
 
         public void Release()
@@ -177,6 +235,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             _loadOperation = null;
             _loadPath = null;
             _targetPath = null;
+            _targetId = null;
             _targetSegments = null;
         }
     }

@@ -14,7 +14,7 @@ namespace MCPForUnity.Editor.Tools
         "manage_play_scenario",
         AutoRegister = false,
         Group = "testing",
-        Description = "Save and repeat bounded Play Mode scenarios with condition waits, step results and failure logs."
+        Description = "Save and repeat bounded Play Mode scenarios, or run saved sequential suites with frozen definitions, cancellation and persisted reports."
     )]
     public static class ManagePlayScenario
     {
@@ -23,6 +23,8 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 string action = Text(parameters, "action");
+                if (action.StartsWith("suite_", StringComparison.Ordinal))
+                    return PlayScenarioSuiteService.Handle(parameters);
                 var store = new PlayScenarioStore(Path.GetDirectoryName(Application.dataPath));
                 switch (action)
                 {
@@ -47,12 +49,13 @@ namespace MCPForUnity.Editor.Tools
                         Allow(parameters, "action", "name");
                         return new SuccessResponse("Scenario deletion processed.", new { deleted = store.Delete(Name(parameters)) });
                     case "run":
-                        Allow(parameters, "action", "name", "job_id", "repeat_count", "timeout_seconds");
+                        Allow(parameters, "action", "name", "job_id", "repeat_count", "timeout_seconds", "source_revision");
                         return PlayScenarioService.Start(
                             Name(parameters),
                             Integer(parameters, "repeat_count", 1, 10, 1),
                             Integer(parameters, "timeout_seconds", 1, 1800, 300),
-                            JobId(parameters, false)
+                            JobId(parameters, false),
+                            SourceRevision(parameters)
                         );
                     case "status":
                         Allow(parameters, "action", "job_id");
@@ -61,7 +64,9 @@ namespace MCPForUnity.Editor.Tools
                         Allow(parameters, "action", "job_id");
                         return PlayScenarioService.Cancel(JobId(parameters, true));
                     default:
-                        throw new ArgumentException("action must be save, get, list, reports, delete, run, status or cancel.");
+                        throw new ArgumentException(
+                            "action must be save, get, list, reports, delete, run, status, cancel, or suite_save/get/list/delete/run/status/cancel/reports."
+                        );
                 }
             }
             catch (Exception exception)
@@ -74,6 +79,15 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse(exception.Message);
             }
+        }
+
+        private static string SourceRevision(JObject value)
+        {
+            if (value.Property("source_revision") == null)
+                return null;
+            string revision = Text(value, "source_revision");
+            PlayScenarioService.ValidateSourceRevision(revision);
+            return revision;
         }
 
         private static void Allow(JObject value, params string[] fields)

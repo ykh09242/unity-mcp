@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.PlayScenarios;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -34,6 +36,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         internal static Type ValidateCondition(PlayScenarioStep step)
         {
             int expectedCount = step.Count ?? 1;
+            if (step.TargetId != null && expectedCount > 1)
+                throw new ArgumentException("ID target conditions require count 0 or 1.");
             if (expectedCount < 0 || expectedCount > 10000)
                 throw new ArgumentException("count must be between 0 and 10000.");
             if (expectedCount == 0 && (step.Active.HasValue || step.Component != null || step.Property != null))
@@ -96,6 +100,62 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             return matches;
         }
 
+        internal static void ValidateSelector(PlayScenarioStep step)
+        {
+            if ((step.Target != null) == (step.TargetId != null))
+                throw new ArgumentException("Specify exactly one target or target_id.");
+            if (step.TargetId != null && !PlayScenarioTarget.IsValidTargetId(step.TargetId))
+                throw new ArgumentException("target_id must match [A-Za-z0-9][A-Za-z0-9_.:-]{0,127}.");
+        }
+
+        internal static Matches ResolveId(Scene scene, string identifier)
+        {
+            var matches = new Matches();
+            if (!scene.IsValid() || !scene.isLoaded)
+                return matches;
+            if (!PlayScenarioTarget.IsValidTargetId(identifier))
+                throw new ArgumentException("target_id must match [A-Za-z0-9][A-Za-z0-9_.:-]{0,127}.");
+            int inspected = 0;
+            var pending = new Stack<Transform>();
+            if (scene.rootCount > MaximumInspectedObjects)
+                throw new InvalidOperationException("Target inspection exceeds the bounded hierarchy budget.");
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                Inspect(ref inspected);
+                pending.Push(root.transform);
+            }
+            while (pending.Count > 0)
+            {
+                Transform current = pending.Pop();
+                PlayScenarioTarget marker = current.GetComponent<PlayScenarioTarget>();
+                if (marker != null && string.Equals(marker.TargetId, identifier, StringComparison.Ordinal))
+                {
+                    matches.Count++;
+                    if (current.gameObject.activeInHierarchy)
+                        matches.ActiveCount++;
+                    if (matches.Target == null)
+                        matches.Target = current.gameObject;
+                    if (matches.Count > 1)
+                        throw new PlayScenarioException(
+                            new PlayScenarioFailure
+                            {
+                                Code = "target_ambiguous",
+                                Target = identifier,
+                                Expected = "one unique ID in the active scene",
+                                Actual = "at least two matching markers, including inactive objects",
+                                Message = "Target ID is ambiguous in the active scene, including inactive objects.",
+                            }
+                        );
+                }
+                for (int index = 0; index < current.childCount; index++)
+                {
+                    Inspect(ref inspected);
+                    pending.Push(current.GetChild(index));
+                }
+            }
+            return matches;
+        }
+
         private static void Match(Transform parent, string[] segments, int index, ref Matches matches, ref int inspected)
         {
             if (index == segments.Length)
@@ -125,21 +185,56 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         internal static PlayScenarioObservation Observe(PlayScenarioStep step, Matches matches, Type componentType)
         {
             if (!step.Count.HasValue && matches.Count > 1)
-                throw new InvalidOperationException("Target path is ambiguous in the active scene, including inactive objects.");
+                throw new PlayScenarioException(
+                    new PlayScenarioFailure
+                    {
+                        Code = "target_ambiguous",
+                        Target = step.Target,
+                        Expected = "1",
+                        Actual = matches.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        Message = "Target path is ambiguous in the active scene, including inactive objects.",
+                    }
+                );
             int expectedCount = step.Count ?? 1;
-            string counts = "Exact path matches: " + matches.Count + "; expected: " + expectedCount + "; active matches: " + matches.ActiveCount + ".";
+            if (step.TargetId != null && expectedCount > 1)
+                throw new ArgumentException("ID target conditions require count 0 or 1.");
+            string counts =
+                (step.TargetId == null ? "Exact path matches: " : "Exact ID matches: ")
+                + matches.Count
+                + "; expected: "
+                + expectedCount
+                + "; active matches: "
+                + matches.ActiveCount
+                + ".";
             if (matches.Count != expectedCount)
-                return new PlayScenarioObservation(false, counts);
+                return new PlayScenarioObservation(
+                    false,
+                    counts,
+                    new PlayScenarioFailure
+                    {
+                        Code = matches.Count == 0 ? "target_missing" : "condition_unmet",
+                        Target = step.TargetId ?? step.Target,
+                        Expected = expectedCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        Actual = matches.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        Message = counts,
+                    }
+                );
             if (expectedCount == 0)
                 return new PlayScenarioObservation(true, counts + " Target is absent.");
             bool expectedActive = step.Active ?? true;
             if ((expectedActive && matches.ActiveCount != matches.Count) || (!expectedActive && matches.ActiveCount != 0))
-                return new PlayScenarioObservation(false, counts + " Waiting for every match to be " + (expectedActive ? "active." : "inactive."));
+                return Pending(
+                    step,
+                    counts + " Waiting for every match to be " + (expectedActive ? "active." : "inactive."),
+                    "condition_unmet",
+                    expectedActive ? "all active" : "all inactive",
+                    matches.ActiveCount + " active of " + matches.Count
+                );
             if (componentType == null)
                 return new PlayScenarioObservation(true, counts + " Every match has the required active state.");
             Component component = matches.Target.GetComponent(componentType);
             if (component == null)
-                return new PlayScenarioObservation(false, counts + " Waiting for component " + step.Component + ".");
+                return Pending(step, counts + " Waiting for component " + step.Component + ".", "condition_unmet", step.Component, "absent");
             if (step.Property == null)
                 return new PlayScenarioObservation(true, counts + " Required component exists.");
             bool equal = ReadScalar(component, step.Property, out JToken actual);
@@ -151,8 +246,27 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 + "; expected: "
                 + step.Property.Equals.ToString(Formatting.None)
                 + ".";
-            return new PlayScenarioObservation(equal, PlayScenarioEngine.Bounded(counts + propertyDetail, 2048));
+            string detail = PlayScenarioEngine.Bounded(counts + propertyDetail, 2048);
+            return equal
+                ? new PlayScenarioObservation(true, detail)
+                : Pending(step, detail, "property_mismatch", step.Property.Equals.ToString(Formatting.None), actual.ToString(Formatting.None));
         }
+
+        private static PlayScenarioObservation Pending(PlayScenarioStep step, string detail, string code, string expected, string actual) =>
+            new PlayScenarioObservation(
+                false,
+                detail,
+                new PlayScenarioFailure
+                {
+                    Code = code,
+                    Target = step.TargetId ?? step.Target,
+                    Component = step.Component,
+                    PropertyPath = step.Property?.Path,
+                    Expected = expected,
+                    Actual = actual,
+                    Message = detail,
+                }
+            );
 
         internal static bool ReadScalar(Component component, PlayScenarioPropertyCondition condition, out JToken actual)
         {

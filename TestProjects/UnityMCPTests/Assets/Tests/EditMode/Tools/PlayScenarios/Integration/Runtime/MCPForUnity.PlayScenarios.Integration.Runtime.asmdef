@@ -1,7 +1,8 @@
 {
   "name": "MCPForUnity.PlayScenarios.Integration.Runtime",
   "references": [
-    "UnityEngine.UI"
+    "UnityEngine.UI",
+    "MCPForUnity.Runtime"
   ],
   "autoReferenced": false,
   "defineConstraints": [

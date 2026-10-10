@@ -93,6 +93,18 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("failure_diagnostics")]
         public PlayScenarioFailureDiagnostics FailureDiagnostics;
 
+        [JsonProperty("failure")]
+        public PlayScenarioFailure Failure;
+
+        [JsonProperty("cleanup_failures")]
+        public List<PlayScenarioFailure> CleanupFailures = new List<PlayScenarioFailure>();
+
+        [JsonProperty("reproduction")]
+        public PlayScenarioReproduction Reproduction;
+
+        [JsonProperty("resource_checks")]
+        public List<PlayScenarioResourceCheck> ResourceChecks = new List<PlayScenarioResourceCheck>();
+
         [JsonProperty("runner_resources_released")]
         public bool? RunnerResourcesReleased;
     }
@@ -153,10 +165,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         public bool Ready { get; }
         public string Detail { get; }
 
-        public PlayScenarioObservation(bool ready, string detail)
+        public PlayScenarioFailure Failure { get; }
+
+        public PlayScenarioObservation(bool ready, string detail, PlayScenarioFailure failure = null)
         {
             Ready = ready;
             Detail = detail;
+            Failure = failure;
         }
     }
 

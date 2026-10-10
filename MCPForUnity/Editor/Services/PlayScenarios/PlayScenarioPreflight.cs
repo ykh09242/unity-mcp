@@ -64,18 +64,24 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                             Add(stage, index, step.Name, "passed", detail);
                             continue;
                         }
-                        string[] segments = PlayScenarioObjectCondition.ParseTarget(step.Target);
+                        PlayScenarioObjectCondition.ValidateSelector(step);
+                        string[] segments = step.TargetId == null ? PlayScenarioObjectCondition.ParseTarget(step.Target) : null;
                         Type componentType = PlayScenarioObjectCondition.ValidateCondition(step);
                         if (step.Action == "click_ui" && ManageInput.UguiBackend == null)
                             throw new InvalidOperationException(
                                 "Scenario UI clicks require the optional uGUI input backend; UI Toolkit clicks are unsupported."
                             );
+                        if (step.ClickMode == "raycast" && !(ManageInput.UguiBackend is IUguiScenarioRaycastClickBackend))
+                            throw UnityPlayScenarioHost.CapabilityFailure(step, "The optional uGUI backend does not support raycast-verified clicks.");
                         if (!activeScene.IsValid() || !activeScene.isLoaded || !string.Equals(activeScene.path, expectedScene, StringComparison.Ordinal))
                         {
                             Add(stage, index, step.Name, "deferred", "Target inspection is deferred until its expected scene is active; no scene was loaded.");
                             continue;
                         }
-                        var matches = PlayScenarioObjectCondition.Resolve(activeScene, segments);
+                        var matches =
+                            step.TargetId != null
+                                ? PlayScenarioObjectCondition.ResolveId(activeScene, step.TargetId)
+                                : PlayScenarioObjectCondition.Resolve(activeScene, segments);
                         if (step.Property != null && matches.Count == 1)
                         {
                             var component = matches.Target.GetComponent(componentType);

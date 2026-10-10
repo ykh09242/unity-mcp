@@ -169,6 +169,105 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 Target = target,
             };
 
+        private static PlayScenarioStep IdStep(string identifier = "player.ready", string action = "wait_object") =>
+            new PlayScenarioStep
+            {
+                Name = "stable target",
+                Action = action,
+                TargetId = identifier,
+            };
+
+        [Test]
+        public void StableIdSurvivesRenameReparentInactiveAndDestroyedStateWithoutSceneCache()
+        {
+            var target = CreateTarget();
+            target.AddComponent<MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget>().TargetId = "player.ready";
+            var step = IdStep();
+            Assert.That(_host.Evaluate(step, true).Ready, Is.True);
+            var parent = new GameObject("ReplacementParent");
+            target.name = "RenamedPlayer";
+            target.transform.SetParent(parent.transform);
+            Assert.That(_host.Evaluate(step, false).Ready, Is.True);
+            target.SetActive(false);
+            Assert.That(_host.Evaluate(step, false).Ready, Is.False);
+            step.Active = false;
+            Assert.That(_host.Evaluate(step, false).Ready, Is.True);
+            _host.Release();
+            Assert.That(target != null, Is.True);
+            UnityEngine.Object.DestroyImmediate(target);
+            step.Active = null;
+            step.Count = 0;
+            Assert.That(_host.Evaluate(step, true).Ready, Is.True);
+        }
+
+        [TestCase(null)]
+        [TestCase(0)]
+        [TestCase(1)]
+        public void DuplicateIdIncludingInactiveMarkerAlwaysFails(int? count)
+        {
+            CreateTarget().AddComponent<MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget>().TargetId = "player.ready";
+            var duplicate = new GameObject("Duplicate");
+            duplicate.AddComponent<MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget>().TargetId = "player.ready";
+            duplicate.SetActive(false);
+            var step = IdStep();
+            step.Count = count;
+            var error = Assert.Throws<PlayScenarioException>(() => _host.Evaluate(step, true));
+            Assert.That(error.Failure.Code, Is.EqualTo("target_ambiguous"));
+        }
+
+        [Test]
+        public void StableIdOnlySearchesActiveSceneAndIsCaseSensitive()
+        {
+            CreateTarget().AddComponent<MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget>().TargetId = "player.ready";
+            Assert.That(_host.Evaluate(IdStep("Player.Ready"), true).Ready, Is.False);
+            _otherOwnedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            SceneManager.SetActiveScene(_otherOwnedScene);
+            CreateTarget().AddComponent<MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget>().TargetId = "player.ready";
+            SceneManager.SetActiveScene(_ownedScene);
+            Assert.That(_host.Evaluate(IdStep(), true).Ready, Is.True);
+        }
+
+        [TestCase("bad/id")]
+        [TestCase("id\n")]
+        [TestCase(" leading")]
+        [TestCase("")]
+        public void InvalidIdSelectorsFailBeforeBackendExecution(string identifier)
+        {
+            var backend = new SpyBackend();
+            ManageInput.UguiBackend = backend;
+            Assert.Throws<ArgumentException>(() => _host.Evaluate(IdStep(identifier, "click_ui"), true));
+            Assert.That(backend.Clicks, Is.Zero);
+        }
+
+        [Test]
+        public void StableIdRejectsBothSelectorsAndMultipleCountAndReportsMissingTarget()
+        {
+            var step = IdStep();
+            step.Target = "ScenarioRoot/Player";
+            Assert.Throws<ArgumentException>(() => _host.Evaluate(step, true));
+            step.Target = null;
+            step.Count = 2;
+            Assert.Throws<ArgumentException>(() => _host.Evaluate(step, true));
+            step.Count = null;
+            PlayScenarioObservation observation = _host.Evaluate(step, true);
+            Assert.That(observation.Failure.Code, Is.EqualTo("target_missing"));
+            Assert.That(observation.Failure.Target, Is.EqualTo("player.ready"));
+            Assert.That(observation.Failure.Expected, Is.EqualTo("1"));
+            Assert.That(observation.Failure.Actual, Is.EqualTo("0"));
+        }
+
+        [Test]
+        public void RaycastCapabilityFailureNeverFallsBackToDirectDispatch()
+        {
+            var backend = new SpyBackend();
+            ManageInput.UguiBackend = backend;
+            var step = ObjectStep("click_ui");
+            step.ClickMode = "raycast";
+            var error = Assert.Throws<PlayScenarioException>(() => _host.Evaluate(step, true));
+            Assert.That(error.Failure.Code, Is.EqualTo("capability_unavailable"));
+            Assert.That(backend.Clicks, Is.Zero);
+        }
+
         [Test]
         public void MissingAndInactiveTargetsWaitThenObserveFreshState()
         {
@@ -201,7 +300,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             var duplicate = new GameObject("Player");
             duplicate.transform.SetParent(player.transform.parent);
             duplicate.SetActive(false);
-            Assert.Throws<InvalidOperationException>(() => _host.Evaluate(ObjectStep(), true));
+            Assert.Throws<PlayScenarioException>(() => _host.Evaluate(ObjectStep(), true));
         }
 
         [Test]
@@ -225,14 +324,33 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         [Test]
         public void WaitSceneDoesNotAcceptUnrelatedActiveScene()
         {
-            Assert.That(_host.Evaluate(new PlayScenarioStep { Action = "wait_scene", Scene = "Assets/Synthetic.unity" }, true).Ready, Is.False);
+            var observation = _host.Evaluate(new PlayScenarioStep { Action = "wait_scene", Scene = "Assets/Synthetic.unity" }, true);
+            Assert.That(observation.Ready, Is.False);
+            Assert.That(observation.Failure.Code, Is.EqualTo("condition_unmet"));
+            Assert.That(observation.Failure.Expected, Is.EqualTo("Assets/Synthetic.unity; loaded=true; active=true"));
+            Assert.That(observation.Failure.Actual, Is.EqualTo(_ownedScene.path + "; loaded=true; active=true"));
         }
 
         [Test]
-        public void OptionalBackendAbsenceFailsWithoutWaitingForTarget()
+        public void ReadySceneObservationDoesNotCarryFailureMetadata()
+        {
+            var observation = _host.Evaluate(new PlayScenarioStep { Action = "wait_scene", Scene = _ownedScene.path }, true);
+            Assert.That(observation.Ready, Is.True);
+            Assert.That(observation.Failure, Is.Null);
+        }
+
+        [TestCase(null)]
+        [TestCase("direct")]
+        [TestCase("raycast")]
+        public void OptionalBackendAbsenceFailsWithoutWaitingForTarget(string clickMode)
         {
             ManageInput.UguiBackend = null;
-            Assert.Throws<InvalidOperationException>(() => _host.Evaluate(ObjectStep("click_ui"), true));
+            var step = ObjectStep("click_ui");
+            step.ClickMode = clickMode;
+            var error = Assert.Throws<PlayScenarioException>(() => _host.Evaluate(step, true));
+            Assert.That(error.Failure.Code, Is.EqualTo("capability_unavailable"));
+            Assert.That(error.Failure.Expected, Is.EqualTo((clickMode ?? "direct") + " uGUI click backend"));
+            Assert.That(error.Failure.Actual, Is.EqualTo("unavailable"));
         }
 
         [Test]

@@ -27,6 +27,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             [typeof(PlayScenarioLog)] = Describe(typeof(PlayScenarioLog)),
             [typeof(PlayScenarioMetricsSnapshot)] = Describe(typeof(PlayScenarioMetricsSnapshot)),
             [typeof(PlayScenarioFailureDiagnostics)] = Describe(typeof(PlayScenarioFailureDiagnostics)),
+            [typeof(PlayScenarioFailure)] = Describe(typeof(PlayScenarioFailure)),
+            [typeof(PlayScenarioReproduction)] = Describe(typeof(PlayScenarioReproduction)),
+            [typeof(PlayScenarioResourceCheck)] = Describe(typeof(PlayScenarioResourceCheck)),
         };
 
         public PlayScenarioStore(string projectRoot)
@@ -270,7 +273,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 throw new ArgumentException("job_id must be 32 lowercase hexadecimal characters.");
         }
 
-        private static void ValidateReport(JObject value)
+        internal static void ValidateReport(JObject value)
         {
             ValidateShape(value, typeof(PlayScenarioRun));
             ValidateJobId((string)value["job_id"]);
@@ -324,6 +327,34 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Bound(log, "stack_trace", 2048);
                 Bound(log, "type", 32);
             }
+            var failures = (JArray)value["cleanup_failures"];
+            var checks = (JArray)value["resource_checks"];
+            if (failures.Count > 16 || checks.Count > 10)
+                throw new ArgumentException("Operation result arrays exceed their bounds.");
+            if (value["failure"] is JObject primary)
+                ValidateFailure(primary, repeats);
+            foreach (JObject secondary in failures)
+                ValidateFailure(secondary, repeats);
+            if (value["reproduction"] is JObject reproduction)
+            {
+                string hash = (string)reproduction["definition_hash"];
+                if (hash == null || !Regex.IsMatch(hash, @"\A[a-f0-9]{64}\z") || hash != PlayScenarioReproduction.Hash(definition))
+                    throw new ArgumentException("Invalid definition hash.");
+                Bound(reproduction, "unity_version", 128);
+                Bound(reproduction, "package_version", 128);
+                PlayScenarioReproduction.ValidateSourceRevision((string)reproduction["source_revision"]);
+            }
+            var checkedIterations = new HashSet<int>();
+            foreach (JObject check in checks)
+            {
+                int iteration = PlayScenarioDefinition.Integer(check, "iteration", 1, repeats, 0);
+                if (iteration == 0 || !checkedIterations.Add(iteration))
+                    throw new ArgumentException("Resource checks require unique valid iterations.");
+                Bound(check, "error", 2048);
+                foreach (string key in new[] { "new_scriptable_objects", "new_subscriptions", "new_handles" })
+                    if (check[key].Type != JTokenType.Null)
+                        PlayScenarioDefinition.Integer(check, key, 0, 4096, 0);
+            }
             var metrics = (JArray)value["metrics"];
             var warnings = (JArray)value["metric_warnings"];
             if (metrics.Count > 10 || warnings.Count > 16)
@@ -350,6 +381,40 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (screenshot != null && screenshot != Reports + "/" + (string)value["job_id"] + ".png")
                     throw new ArgumentException("Failure screenshot path does not belong to its report.");
             }
+        }
+
+        private static void ValidateFailure(JObject failure, int repeats)
+        {
+            State(
+                (string)failure["code"],
+                "target_missing",
+                "target_ambiguous",
+                "condition_unmet",
+                "property_mismatch",
+                "input_blocked",
+                "capability_unavailable",
+                "action_exception",
+                "step_timeout",
+                "run_timeout",
+                "unexpected_log",
+                "cancelled",
+                "interrupted",
+                "cleanup_timeout",
+                "resource_assertion_failed",
+                "resource_measurement_failed"
+            );
+            if (failure["stage"].Type != JTokenType.Null)
+                State((string)failure["stage"], "setup", "main", "cleanup");
+            if (failure["iteration"].Type != JTokenType.Null)
+                PlayScenarioDefinition.Integer(failure, "iteration", 1, repeats, 0);
+            if (failure["step_index"].Type != JTokenType.Null)
+                PlayScenarioDefinition.Integer(failure, "step_index", 0, 31, 0);
+            Bound(failure, "target", 4096);
+            Bound(failure, "component", 256);
+            Bound(failure, "property_path", 256);
+            Bound(failure, "expected", 2048);
+            Bound(failure, "actual", 2048);
+            Bound(failure, "message", 4096);
         }
 
         private static void Bound(JObject value, string key, int maximum)
@@ -396,6 +461,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 "metrics_summary",
                 "failure_diagnostics",
                 "runner_resources_released",
+                "failure",
+                "cleanup_failures",
+                "reproduction",
+                "resource_checks",
             }.Contains(key, StringComparer.Ordinal);
         }
 
@@ -417,7 +486,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Type fieldType = pair.Value;
                 if (fieldType == typeof(PlayScenarioDefinition))
                     continue;
-                if (fieldType == typeof(PlayScenarioFailureDiagnostics))
+                if (
+                    fieldType == typeof(PlayScenarioFailureDiagnostics)
+                    || fieldType == typeof(PlayScenarioFailure)
+                    || fieldType == typeof(PlayScenarioReproduction)
+                )
                 {
                     if (token.Type == JTokenType.Null)
                         continue;

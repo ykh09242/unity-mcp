@@ -39,6 +39,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("diagnostics")]
         public PlayScenarioDiagnosticsOptions Diagnostics = new PlayScenarioDiagnosticsOptions();
 
+        [JsonProperty("tags")]
+        public List<string> Tags = new List<string>();
+
+        [JsonProperty("resources")]
+        public PlayScenarioResourceOptions Resources = new PlayScenarioResourceOptions();
+
         public static void ValidateName(string name)
         {
             if (name == null || !Regex.IsMatch(name, @"\A[a-z0-9][a-z0-9_-]{0,63}\z"))
@@ -60,7 +66,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 "completion_stable_ms",
                 "log_policy",
                 "metrics",
-                "diagnostics"
+                "diagnostics",
+                "tags",
+                "resources"
             );
             string name = Text(value, "name", 64);
             ValidateName(name);
@@ -76,6 +84,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 LogPolicy = ParseLogPolicy(value),
                 Metrics = ParseMetrics(value),
                 Diagnostics = ParseDiagnostics(value),
+                Tags = ParseTags(value),
+                Resources = ParseResources(value),
             };
             if ((result.SetupSteps.Count > 0 ? result.SetupSteps[0] : result.Steps[0]).Action != "load_scene")
                 throw new ArgumentException("The first executed setup or main step must load_scene.");
@@ -91,7 +101,21 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             {
                 if (!(token is JObject step))
                     throw new ArgumentException("Each step must be an object.");
-                Fields(step, "name", "action", "scene", "target", "timeout_seconds", "count", "active", "component", "property", "stable_for_ms");
+                Fields(
+                    step,
+                    "name",
+                    "action",
+                    "scene",
+                    "target",
+                    "timeout_seconds",
+                    "count",
+                    "active",
+                    "component",
+                    "property",
+                    "stable_for_ms",
+                    "target_id",
+                    "click_mode"
+                );
                 var parsed = new PlayScenarioStep
                 {
                     Name = Text(step, "name", 128),
@@ -102,7 +126,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 {
                     case "load_scene":
                     case "wait_scene":
-                        if (step.Property("target") != null)
+                        if (step.Property("target") != null || step.Property("target_id") != null)
                             throw new ArgumentException("Scene actions cannot specify target.");
                         parsed.Scene = Text(step, "scene", 4096);
                         ValidateScene(parsed.Scene);
@@ -111,12 +135,33 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     case "wait_object":
                         if (step.Property("scene") != null)
                             throw new ArgumentException("Object actions cannot specify scene.");
-                        parsed.Target = Text(step, "target", 4096);
-                        ValidateHierarchy(parsed.Target);
+                        if ((step.Property("target") != null) == (step.Property("target_id") != null))
+                            throw new ArgumentException("Exactly one target or target_id is required.");
+                        if (step.Property("target") != null)
+                        {
+                            parsed.Target = Text(step, "target", 4096);
+                            ValidateHierarchy(parsed.Target);
+                        }
+                        else
+                        {
+                            parsed.TargetId = Text(step, "target_id", 128);
+                            if (!Regex.IsMatch(parsed.TargetId, @"\A[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\z"))
+                                throw new ArgumentException("target_id must contain 1-128 permitted identifier characters.");
+                        }
                         break;
                     default:
                         throw new ArgumentException("Unsupported step action.");
                 }
+                if (step.Property("click_mode") != null)
+                {
+                    if (parsed.Action != "click_ui")
+                        throw new ArgumentException("click_mode is permitted only on click_ui.");
+                    parsed.ClickMode = Text(step, "click_mode", 16);
+                    if (parsed.ClickMode != "direct" && parsed.ClickMode != "raycast")
+                        throw new ArgumentException("click_mode must be direct or raycast.");
+                }
+                else if (parsed.Action == "click_ui")
+                    parsed.ClickMode = "direct";
                 if (step.Property("stable_for_ms") != null)
                 {
                     if (parsed.Action != "wait_object" && parsed.Action != "wait_scene")
@@ -147,6 +192,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         if (parsed.Component == null)
                             throw new ArgumentException("property requires component.");
                     }
+                    if (parsed.TargetId != null && (parsed.Count ?? 1) > 1)
+                        throw new ArgumentException("ID selectors permit only count 0 or 1.");
                     if (parsed.Component != null && (parsed.Count ?? 1) != 1)
                         throw new ArgumentException("component and property require count 1.");
                     if (parsed.Count == 0 && parsed.Active.HasValue)
@@ -208,6 +255,41 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             JObject options = Object(value, "diagnostics");
             Fields(options, "screenshot_on_failure");
             return new PlayScenarioDiagnosticsOptions { ScreenshotOnFailure = Boolean(options, "screenshot_on_failure", false) };
+        }
+
+        internal static List<string> ParseTags(JObject value)
+        {
+            if (value.Property("tags") == null)
+                return new List<string>();
+            if (!(value["tags"] is JArray tags) || tags.Count > 16)
+                throw new ArgumentException("tags must contain at most 16 unique lowercase slugs.");
+            var result = new List<string>();
+            foreach (JToken tag in tags)
+            {
+                if (tag.Type != JTokenType.String)
+                    throw new ArgumentException("Each tag must be a lowercase slug.");
+                string text = (string)tag;
+                ValidateName(text);
+                if (result.Contains(text, StringComparer.Ordinal))
+                    throw new ArgumentException("tags must be unique.");
+                result.Add(text);
+            }
+            return result;
+        }
+
+        private static PlayScenarioResourceOptions ParseResources(JObject value)
+        {
+            if (value.Property("resources") == null)
+                return new PlayScenarioResourceOptions();
+            JObject options = Object(value, "resources");
+            Fields(options, "enabled", "max_scriptable_objects", "max_subscriptions", "max_handles");
+            return new PlayScenarioResourceOptions
+            {
+                Enabled = Boolean(options, "enabled", false),
+                MaxScriptableObjects = Integer(options, "max_scriptable_objects", 0, 4096, 0),
+                MaxSubscriptions = Integer(options, "max_subscriptions", 0, 4096, 0),
+                MaxHandles = Integer(options, "max_handles", 0, 4096, 0),
+            };
         }
 
         private static JObject Object(JObject value, string key) => value[key] as JObject ?? throw new ArgumentException(key + " must be an object.");
@@ -306,6 +388,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         [JsonProperty("target", NullValueHandling = NullValueHandling.Ignore)]
         public string Target;
+
+        [JsonProperty("target_id", NullValueHandling = NullValueHandling.Ignore)]
+        public string TargetId;
+
+        [JsonProperty("click_mode", NullValueHandling = NullValueHandling.Ignore)]
+        public string ClickMode;
 
         [JsonProperty("timeout_seconds")]
         public int TimeoutSeconds = 30;

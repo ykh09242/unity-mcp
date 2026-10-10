@@ -11,7 +11,7 @@ namespace MCPForUnity.Editor.Tools.Input
 {
     /// <summary>Direct uGUI event dispatch, independent of the project's raw input backend.</summary>
     [InitializeOnLoad]
-    public sealed class UguiInputSimulationBackend : IUguiInputSimulationBackend, IUguiScenarioClickBackend
+    public sealed partial class UguiInputSimulationBackend : IUguiInputSimulationBackend, IUguiScenarioClickBackend, IUguiScenarioRaycastClickBackend
     {
         static UguiInputSimulationBackend() => ManageInput.UguiBackend = new UguiInputSimulationBackend();
 
