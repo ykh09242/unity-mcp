@@ -4,6 +4,7 @@ using System.Linq;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using UnityEditor.UIElements;
 using UnityEngine.UIElements;
 
 namespace MCPForUnity.Editor.Windows.PlayScenarios

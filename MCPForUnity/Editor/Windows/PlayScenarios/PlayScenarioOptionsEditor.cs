@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MCPForUnity.Editor.Services.PlayScenarios;
+using UnityEditor.UIElements;
 using UnityEngine.UIElements;
 
 namespace MCPForUnity.Editor.Windows.PlayScenarios
