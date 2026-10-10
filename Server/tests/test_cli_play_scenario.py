@@ -15,7 +15,7 @@ from .test_manage_play_scenario import DEFINITION, JOB_ID
 def wire(monkeypatch):
     # Given: the real HTTP helper talks to an inert boundary, never a live server.
     calls = []
-    reply = {"success": True, "data": {"job_id": JOB_ID, "status": "queued"}}
+    reply = {"success": True, "data": {"job_id": JOB_ID, "status": "running"}}
     client_type = httpx.AsyncClient
 
     def respond(request):
@@ -141,4 +141,95 @@ def test_cli_unity_failure_keeps_full_machine_report(wire):
     # Then: the CLI exits unsuccessfully but retains the original structured diagnostics.
     assert result.exit_code == 1
     assert json.loads(result.stdout) == reply
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("action", ["status", "run"])
+@pytest.mark.parametrize("status", ["failed", "timed_out", "cancelled"])
+def test_cli_native_terminal_failure_keeps_full_machine_report(wire, action, status):
+    # Given: native status and idempotent run retries return a successful query envelope.
+    calls, reply = wire
+    reply.update(
+        message="Existing scenario job." if action == "run" else "Scenario job status.",
+        data={
+            "job_id": JOB_ID,
+            "status": status,
+            "error": "Run did not complete.",
+            "steps": [{"name": "Start", "status": status, "detail": "Player missing"}],
+            "logs": [{"message": "Player missing"}],
+        },
+    )
+    args = ["menu-start", "--job-id", JOB_ID] if action == "run" else [JOB_ID]
+    # When: the command observes the terminal job in one response.
+    result = CliRunner().invoke(cli, ["--format", "json", "play-scenario", action, *args])
+    # Then: failed jobs produce a failure exit without replacing their native diagnostics.
+    assert result.exit_code == 1
+    assert result.stderr == ""
+    assert json.loads(result.stdout) == reply
+    assert len(calls) == 1
+    assert calls[0]["params"]["action"] == action
+    assert calls[0]["params"]["job_id"] == JOB_ID
+
+
+@pytest.mark.parametrize("action", ["status", "run"])
+@pytest.mark.parametrize("status", ["accepted", "running", "succeeded"])
+def test_cli_nonfailure_job_status_exits_successfully(wire, action, status):
+    # Given: an accepted job, ongoing execution, or a successful completed run.
+    calls, reply = wire
+    reply["data"]["status"] = status
+    args = ["menu-start", "--job-id", JOB_ID] if action == "run" else [JOB_ID]
+    # When: the CLI observes the job once, without waiting for completion.
+    result = CliRunner().invoke(cli, ["--format", "json", "play-scenario", action, *args])
+    # Then: submitting or observing a nonfailure remains successful.
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert json.loads(result.stdout) == reply
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("status", ["cancelled", "failed", "timed_out", "succeeded"])
+def test_cli_successful_cancel_keeps_terminal_report_and_exit_zero(wire, status):
+    # Given: cancellation succeeded or an idempotent cancel returns an existing terminal job.
+    calls, reply = wire
+    reply["data"]["status"] = status
+    # When: the caller intentionally requests cancellation rather than run success.
+    result = CliRunner().invoke(cli, ["--format", "json", "play-scenario", "cancel", JOB_ID])
+    # Then: the command succeeds while preserving the job's reported outcome.
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert json.loads(result.stdout) == reply
+    assert len(calls) == 1
+    assert calls[0]["params"] == {"action": "cancel", "job_id": JOB_ID}
+
+
+@pytest.mark.parametrize("action", ["status", "run", "cancel"])
+@pytest.mark.parametrize("failure", ["http", "connect", "timeout"])
+def test_cli_job_transport_failure_keeps_stderr_and_single_request(monkeypatch, action, failure):
+    # Given: the request boundary fails rather than returning a native job report.
+    calls = []
+    client_type = httpx.AsyncClient
+
+    def respond(request):
+        calls.append(json.loads(request.content))
+        if failure == "connect":
+            raise httpx.ConnectError("Unavailable", request=request)
+        if failure == "timeout":
+            raise httpx.ReadTimeout("Too slow", request=request)
+        return httpx.Response(503, json={"error": "No Unity connected"})
+
+    monkeypatch.setattr(connection, "read_local_auth_token", lambda host, port: "fixture")
+    monkeypatch.setattr(
+        connection.httpx,
+        "AsyncClient",
+        lambda: client_type(transport=httpx.MockTransport(respond), trust_env=False),
+    )
+    args = ["menu-start", "--job-id", JOB_ID] if action == "run" else [JOB_ID]
+    # When: a job command encounters a transport error.
+    result = CliRunner().invoke(cli, ["--format", "json", "play-scenario", action, *args])
+    # Then: existing transport diagnostics stay on stderr with no report or retry.
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert {"http": "HTTP error", "connect": "Cannot connect", "timeout": "timed out"}[
+        failure
+    ] in result.stderr
     assert len(calls) == 1

@@ -19,6 +19,11 @@ def _dispatch(**arguments) -> None:
     config = get_config()
     result = run_command("manage_play_scenario", command.wire_parameters(), config)
     click.echo(format_output(result, config.format))
+    # Native queries and idempotent run retries succeed even when the reported job failed.
+    data = result.get("data")
+    if command.action in {"run", "status"} and isinstance(data, dict):
+        if data.get("status") in ("failed", "timed_out", "cancelled"):
+            raise click.exceptions.Exit(1)
 
 
 @click.group("play-scenario")
@@ -71,7 +76,10 @@ def delete(name: str):
 @click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
 @handle_unity_errors
 def run(name: str, job_id: str | None, repeat_count: int, timeout_seconds: int):
-    """Start a Unity job and return immediately; use status for subsequent observations."""
+    """Start once and return immediately; use status for later observations.
+
+    An idempotent retry reporting an unsuccessful terminal job exits with code 1.
+    """
     _dispatch(
         action="run",
         name=name,
@@ -85,7 +93,10 @@ def run(name: str, job_id: str | None, repeat_count: int, timeout_seconds: int):
 @click.argument("job_id")
 @handle_unity_errors
 def status(job_id: str):
-    """Read the job report once, including per-step status and bounded failure logs."""
+    """Read the job report once, including step status and bounded failure logs.
+
+    Failed, timed_out and cancelled jobs exit with code 1.
+    """
     _dispatch(action="status", job_id=job_id)
 
 
@@ -93,5 +104,8 @@ def status(job_id: str):
 @click.argument("job_id")
 @handle_unity_errors
 def cancel(job_id: str):
-    """Request cooperative cancellation; an in-flight native scene load cannot be cancelled."""
+    """Request cancellation; a processed request succeeds regardless of the job's outcome.
+
+    An in-flight native scene load cannot be cancelled.
+    """
     _dispatch(action="cancel", job_id=job_id)
