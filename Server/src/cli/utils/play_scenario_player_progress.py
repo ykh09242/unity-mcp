@@ -3,6 +3,7 @@
 from collections import deque
 from contextlib import ExitStack, contextmanager
 import ctypes
+from importlib import import_module
 import json
 from dataclasses import dataclass
 import os
@@ -23,7 +24,8 @@ def open_progress_snapshot(path: Path) -> Iterator[BinaryIO]:
         with path.open("rb") as stream:
             yield stream
         return
-    import msvcrt
+    # Resolve the Windows-only standard library module after the platform guard.
+    msvcrt = import_module("msvcrt")
     from ctypes import wintypes
 
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -47,7 +49,7 @@ def open_progress_snapshot(path: Path) -> Iterator[BinaryIO]:
         raise ctypes.WinError(ctypes.get_last_error())
     descriptor = None
     try:
-        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | getattr(os, "O_BINARY"))
     finally:
         if descriptor is None:
             close(handle)
