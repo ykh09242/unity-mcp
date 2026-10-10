@@ -16,6 +16,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration.Runtime
 
         public SceneRole Role;
         public string GameScenePath;
+        public bool DisableStartButton;
 
         private void Start()
         {
@@ -26,13 +27,13 @@ namespace MCPForUnityTests.PlayScenarios.Integration.Runtime
                 canvas.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
                 var button = new GameObject("StartButton", typeof(RectTransform), typeof(Image), typeof(Button));
                 button.transform.SetParent(canvas.transform, false);
-                button
-                    .GetComponent<Button>()
-                    .onClick.AddListener(() =>
-                    {
-                        Debug.Log("PLAY_SCENARIO_QA_CLICK");
-                        SceneManager.LoadSceneAsync(GameScenePath, LoadSceneMode.Single);
-                    });
+                var startButton = button.GetComponent<Button>();
+                startButton.enabled = !DisableStartButton;
+                startButton.onClick.AddListener(() =>
+                {
+                    Debug.Log("PLAY_SCENARIO_QA_CLICK");
+                    SceneManager.LoadSceneAsync(GameScenePath, LoadSceneMode.Single);
+                });
                 var events = new GameObject("EventSystem", typeof(EventSystem));
                 events.transform.SetParent(transform, false);
                 Debug.Log("PLAY_SCENARIO_QA_MENU");

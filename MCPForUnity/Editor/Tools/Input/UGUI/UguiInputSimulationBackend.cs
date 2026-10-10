@@ -55,7 +55,14 @@ namespace MCPForUnity.Editor.Tools.Input
                 return NotReady("ui_click target must be beneath an active Canvas.", waitForReady, out detail);
             GameObject handler = ExecuteEvents.GetEventHandler<IPointerClickHandler>(target);
             if (handler == null)
-                throw new ArgumentException("target has no active uGUI pointer click handler in its parent chain.");
+            {
+                for (Transform current = target.transform; current != null; current = current.parent)
+                {
+                    if (current.GetComponent<IPointerClickHandler>() != null)
+                        return NotReady("target has no active uGUI pointer click handler in its parent chain.", waitForReady, out detail);
+                }
+                throw new ArgumentException("target has no uGUI pointer click handler in its parent chain.");
+            }
             Selectable selectable = handler.GetComponent<Selectable>();
             if (selectable != null && !selectable.IsInteractable())
                 return NotReady("target's Selectable is not interactable.", waitForReady, out detail);

@@ -14,6 +14,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
+using UnityEngine.UI;
 
 namespace MCPForUnityTests.PlayScenarios.Integration
 {
@@ -205,7 +206,11 @@ namespace MCPForUnityTests.PlayScenarios.Integration
                 string project = Path.GetDirectoryName(Application.dataPath);
                 foreach (string id in new[] { context.RepeatId, context.WaitId, context.NextId, context.MissingId })
                     if (Guid.TryParseExact(id, "N", out _))
-                        File.Delete(Path.Combine(project, "Library/MCPForUnity/PlayScenarioRuns", id + ".json"));
+                    {
+                        string reportPath = Path.Combine(project, "Library/MCPForUnity/PlayScenarioRuns", id + ".json");
+                        if (File.Exists(reportPath))
+                            File.Delete(reportPath);
+                    }
             }
             finally
             {
@@ -332,6 +337,83 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             Assert.That(EditorApplication.isPlaying, Is.True);
             AssertReport(done);
             Debug.Log("PLAY_SCENARIO_QA_TIMEOUT_LOG_REPORT_VERIFIED");
+        }
+
+        [UnityTest]
+        public IEnumerator DisabledButtonWaitsUntilEnabledThenClicksOnce()
+        {
+            ConfigureMenu(disableButton: true);
+            Save(Context.NextName, RepeatSteps());
+            yield return new EnterPlayMode();
+            Command(
+                new JObject
+                {
+                    ["action"] = "run",
+                    ["name"] = Context.NextName,
+                    ["job_id"] = NextId,
+                    ["timeout_seconds"] = 30,
+                }
+            );
+            double deadline = Time.realtimeSinceStartupAsDouble + 5;
+            while (
+                (string)Status(NextId)["status"] == "running"
+                && (int)Status(NextId)["steps"][1]["poll_count"] < 3
+                && Time.realtimeSinceStartupAsDouble < deadline
+            )
+                yield return null;
+            JObject waiting = Status(NextId);
+            Assert.That((string)waiting["status"], Is.EqualTo("running"), waiting.ToString());
+            Assert.That((int)waiting["steps"][1]["poll_count"], Is.GreaterThanOrEqualTo(3));
+            Assert.That(waiting["logs"].Any(log => (string)log["message"] == "PLAY_SCENARIO_QA_CLICK"), Is.False);
+            GameObject.Find("ScenarioBootstrap/Canvas/StartButton").GetComponent<Button>().enabled = true;
+            yield return Finish(NextId);
+            JObject done = Status(NextId);
+            Assert.That((string)done["status"], Is.EqualTo("succeeded"), done.ToString());
+            Assert.That(done["steps"].All(step => (string)step["status"] == "passed"), Is.True);
+            Assert.That(done["logs"].Count(log => (string)log["message"] == "PLAY_SCENARIO_QA_CLICK"), Is.EqualTo(1));
+            Assert.That(GameObject.Find("Player"), Is.Not.Null);
+            AssertReport(done);
+        }
+
+        [UnityTest]
+        public IEnumerator DisabledButtonUsesStepTimeoutAndSkipsRemainingSteps()
+        {
+            ConfigureMenu(disableButton: true);
+            Save(
+                Context.NextName,
+                new JArray(
+                    SceneStep("menu", "load_scene", Menu),
+                    ObjectStep("start", "click_ui", "ScenarioBootstrap/Canvas/StartButton", 1),
+                    ObjectStep("skipped", "wait_object", "Player", 1)
+                )
+            );
+            yield return new EnterPlayMode();
+            Command(
+                new JObject
+                {
+                    ["action"] = "run",
+                    ["name"] = Context.NextName,
+                    ["job_id"] = NextId,
+                    ["timeout_seconds"] = 30,
+                }
+            );
+            yield return Finish(NextId);
+            JObject done = Status(NextId);
+            Assert.That((string)done["status"], Is.EqualTo("timed_out"), done.ToString());
+            Assert.That((string)done["steps"][1]["status"], Is.EqualTo("timed_out"));
+            Assert.That((int)done["steps"][1]["poll_count"], Is.GreaterThan(1));
+            Assert.That((long)done["steps"][1]["finished_unix_ms"] - (long)done["steps"][1]["started_unix_ms"], Is.GreaterThanOrEqualTo(1000));
+            Assert.That((string)done["steps"][2]["status"], Is.EqualTo("skipped"));
+            Assert.That(done["logs"].Any(log => (string)log["message"] == "PLAY_SCENARIO_QA_CLICK"), Is.False);
+            AssertReport(done);
+        }
+
+        private static void ConfigureMenu(bool disableButton = false)
+        {
+            Scene scene = EditorSceneManager.OpenScene(Menu, OpenSceneMode.Single);
+            var bootstrap = scene.GetRootGameObjects().Single(root => root.name == "ScenarioBootstrap").GetComponent<PlayScenarioIntegrationBootstrap>();
+            bootstrap.DisableStartButton = disableButton;
+            Assert.That(EditorSceneManager.SaveScene(scene), Is.True);
         }
 
         private static IEnumerator Finish(string id)

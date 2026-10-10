@@ -141,6 +141,79 @@ namespace MCPForUnityTests.EditMode.Tools.Input
         }
 
         [Test]
+        public void ScenarioDisabledButtonWaitsThenDispatchesOnce([Values(false, true)] bool targetChild)
+        {
+            GameObject target = _button.gameObject;
+            if (targetChild)
+            {
+                target = new GameObject("Label", typeof(RectTransform));
+                target.transform.SetParent(_button.transform);
+            }
+            InputPointerProbe probe = _button.gameObject.AddComponent<InputPointerProbe>();
+            probe.enabled = false;
+            _button.enabled = false;
+            int clicks = 0;
+            _button.onClick.AddListener(() => clicks++);
+            var backend = new UguiInputSimulationBackend();
+
+            Assert.That(backend.TryClick(target, out object waiting, out string detail), Is.False);
+            Assert.That(waiting, Is.Null);
+            Assert.That(detail, Does.Contain("active"));
+            Assert.That(probe.Events, Is.Empty);
+            Assert.That(clicks, Is.Zero);
+
+            _button.enabled = true;
+            probe.enabled = true;
+            Assert.That(backend.TryClick(target, out object result, out _), Is.True);
+            Assert.That(result, Is.TypeOf<SuccessResponse>());
+            Assert.That(probe.Events, Is.EqualTo(new[] { "enter", "down", "up", "click", "exit" }));
+            Assert.That(clicks, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ScenarioUnavailableButtonKeepsWaitingWithoutClicks([Values(false, true)] bool inactive)
+        {
+            if (inactive)
+                _button.gameObject.SetActive(false);
+            else
+                _button.enabled = false;
+            int clicks = 0;
+            _button.onClick.AddListener(() => clicks++);
+            var backend = new UguiInputSimulationBackend();
+
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                Assert.That(backend.TryClick(_button.gameObject, out object result, out string detail), Is.False);
+                Assert.That(result, Is.Null);
+                Assert.That(detail, Does.Contain("active"));
+            }
+            Assert.That(clicks, Is.Zero);
+            Assert.Throws<ArgumentException>(() => backend.Click(_button.gameObject));
+            Assert.That(clicks, Is.Zero);
+        }
+
+        [Test]
+        public void UnavailableChildButtonStillResolvesActiveParentHandler([Values(false, true)] bool inactive)
+        {
+            var child = new GameObject("ChildButton", typeof(RectTransform), typeof(Button));
+            child.transform.SetParent(_button.transform);
+            Button childButton = child.GetComponent<Button>();
+            if (inactive)
+                child.SetActive(false);
+            else
+                childButton.enabled = false;
+            int parentClicks = 0;
+            int childClicks = 0;
+            _button.onClick.AddListener(() => parentClicks++);
+            childButton.onClick.AddListener(() => childClicks++);
+
+            Assert.That(new UguiInputSimulationBackend().TryClick(child, out object result, out _), Is.True);
+            Assert.That(result, Is.TypeOf<SuccessResponse>());
+            Assert.That(parentClicks, Is.EqualTo(1));
+            Assert.That(childClicks, Is.Zero);
+        }
+
+        [Test]
         public void ScenarioInactiveCanvasWaitsWithoutPointerEvents()
         {
             InputPointerProbe probe = _button.gameObject.AddComponent<InputPointerProbe>();
