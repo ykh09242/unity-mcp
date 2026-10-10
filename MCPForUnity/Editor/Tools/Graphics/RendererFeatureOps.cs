@@ -195,7 +195,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 // Later failures must not destroy a feature that was already persisted.
                 if (feature != null && !EditorUtility.IsPersistent(feature))
+                {
+                    var disposableFeature = feature as IDisposable;
                     UnityEngine.Object.DestroyImmediate(feature);
+                    disposableFeature?.Dispose();
+                }
             }
         }
 
