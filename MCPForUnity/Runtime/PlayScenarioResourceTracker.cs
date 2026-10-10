@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using MCPForUnity.Runtime.Helpers;
 using UnityEngine;
@@ -9,27 +10,31 @@ using UnityEditor;
 
 namespace MCPForUnity.Runtime
 {
-    /// <summary>Opt-in resource registrations. Entries retain IDs and weak references, never game resources or release callbacks.</summary>
+    /// <summary>Opt-in resource registrations. Entries retain bounded scalars and weak references, never game resources or release callbacks.</summary>
     public static class PlayScenarioResourceTracker
     {
         public const int RegistrationLimit = 4096;
 #if UNITY_EDITOR
         private static readonly object Gate = new object();
         private static readonly Dictionary<ulong, ScriptableRegistration> ScriptableObjects = new Dictionary<ulong, ScriptableRegistration>();
-        private static readonly Dictionary<long, bool> Tokens = new Dictionary<long, bool>();
+        private static readonly Dictionary<long, PlayScenarioRegisteredResourceInfo> Tokens = new Dictionary<long, PlayScenarioRegisteredResourceInfo>();
         private static long _nextToken;
         private static int _registrationFailures;
         private static int _mainThreadId;
 
         /// <summary>Register a runtime ScriptableObject clone on the Unity main thread. Destroy the native object during the game's cleanup.</summary>
-        public static void RegisterScriptableObject(ScriptableObject resource)
+        public static void RegisterScriptableObject(
+            ScriptableObject resource,
+            string owner = null,
+            [CallerFilePath] string sourceFile = "",
+            [CallerMemberName] string sourceMember = "",
+            [CallerLineNumber] int sourceLine = 0
+        )
         {
             if (resource == null)
                 throw new ArgumentException("A live runtime ScriptableObject is required.", nameof(resource));
-#if UNITY_EDITOR
             if (EditorUtility.IsPersistent(resource))
                 throw new ArgumentException("Persistent ScriptableObject assets cannot be registered as runtime resources.", nameof(resource));
-#endif
             ulong id = NativeIdentity(resource);
             lock (Gate)
             {
@@ -44,17 +49,37 @@ namespace MCPForUnity.Runtime
                 if (ScriptableObjects.Count + Tokens.Count >= RegistrationLimit)
                     PruneScriptableObjects();
                 EnsureCapacity();
-                ScriptableObjects.Add(id, new ScriptableRegistration(++_nextToken, resource));
+                var details = new PlayScenarioRegisteredResourceInfo(
+                    ++_nextToken,
+                    "scriptable_object",
+                    owner,
+                    resource.GetType().FullName,
+                    resource.name,
+                    sourceFile,
+                    sourceMember,
+                    sourceLine
+                );
+                ScriptableObjects.Add(id, new ScriptableRegistration(resource, details));
             }
         }
 
         /// <summary>Dispose this tracking token after the game unsubscribes. At capacity, native lifetime reclamation requires the main thread.</summary>
-        public static IDisposable RegisterSubscription() => RegisterToken(true);
+        public static IDisposable RegisterSubscription(
+            string owner = null,
+            [CallerFilePath] string sourceFile = "",
+            [CallerMemberName] string sourceMember = "",
+            [CallerLineNumber] int sourceLine = 0
+        ) => RegisterToken(true, owner, sourceFile, sourceMember, sourceLine);
 
         /// <summary>Dispose this tracking token after the game releases its handle. At capacity, native lifetime reclamation requires the main thread.</summary>
-        public static IDisposable RegisterHandle() => RegisterToken(false);
+        public static IDisposable RegisterHandle(
+            string owner = null,
+            [CallerFilePath] string sourceFile = "",
+            [CallerMemberName] string sourceMember = "",
+            [CallerLineNumber] int sourceLine = 0
+        ) => RegisterToken(false, owner, sourceFile, sourceMember, sourceLine);
 
-        private static IDisposable RegisterToken(bool subscription)
+        private static IDisposable RegisterToken(bool subscription, string owner, string sourceFile, string sourceMember, int sourceLine)
         {
             lock (Gate)
             {
@@ -69,7 +94,19 @@ namespace MCPForUnity.Runtime
                 }
                 EnsureCapacity();
                 long id = ++_nextToken;
-                Tokens.Add(id, subscription);
+                Tokens.Add(
+                    id,
+                    new PlayScenarioRegisteredResourceInfo(
+                        id,
+                        subscription ? "subscription" : "handle",
+                        owner,
+                        null,
+                        null,
+                        sourceFile,
+                        sourceMember,
+                        sourceLine
+                    )
+                );
                 return new RegistrationToken(id);
             }
         }
@@ -90,28 +127,29 @@ namespace MCPForUnity.Runtime
             {
                 PruneScriptableObjects();
                 var scriptableIds = new List<long>();
+                var details = new List<PlayScenarioRegisteredResourceInfo>(ScriptableObjects.Count + Tokens.Count);
                 foreach (ScriptableRegistration registration in ScriptableObjects.Values)
+                {
                     scriptableIds.Add(registration.Id);
+                    details.Add(registration.Details);
+                }
                 var subscriptionIds = new List<long>();
                 var handleIds = new List<long>();
                 foreach (var token in Tokens)
-                    (token.Value ? subscriptionIds : handleIds).Add(token.Key);
-                int subscriptions = 0;
-                foreach (bool subscription in Tokens.Values)
-                    if (subscription)
-                        subscriptions++;
+                {
+                    (token.Value.Kind == "subscription" ? subscriptionIds : handleIds).Add(token.Key);
+                    details.Add(token.Value);
+                }
                 return new PlayScenarioRegisteredResources
                 {
                     ScriptableObjectIds = scriptableIds.ToArray(),
                     SubscriptionIds = subscriptionIds.ToArray(),
                     HandleIds = handleIds.ToArray(),
                     ScriptableObjectCount = ScriptableObjects.Count,
-                    SubscriptionCount = subscriptions,
-                    HandleCount = Tokens.Count - subscriptions,
+                    SubscriptionCount = subscriptionIds.Count,
+                    HandleCount = handleIds.Count,
                     RegistrationFailureCount = _registrationFailures,
-#if !UNITY_EDITOR
-                    Error = "Native ScriptableObject lifetime verification is supported only in the Editor.",
-#endif
+                    ResourceDetails = details.ToArray(),
                 };
             }
         }
@@ -139,12 +177,8 @@ namespace MCPForUnity.Runtime
             var removed = new List<ulong>();
             foreach (var entry in ScriptableObjects)
             {
-#if UNITY_EDITOR
                 var wrapper = entry.Value.Reference.Target as ScriptableObject;
                 var resource = !ReferenceEquals(wrapper, null) && wrapper == null ? null : ResolveNativeIdentity(entry.Key);
-#else
-                var resource = entry.Value.Reference.Target as ScriptableObject;
-#endif
                 if (resource == null)
                     removed.Add(entry.Key);
             }
@@ -174,13 +208,14 @@ namespace MCPForUnity.Runtime
 
         private sealed class ScriptableRegistration
         {
-            internal readonly long Id;
+            internal long Id => Details.Id;
             internal readonly WeakReference Reference;
+            internal readonly PlayScenarioRegisteredResourceInfo Details;
 
-            internal ScriptableRegistration(long id, ScriptableObject resource)
+            internal ScriptableRegistration(ScriptableObject resource, PlayScenarioRegisteredResourceInfo details)
             {
-                Id = id;
                 Reference = new WeakReference(resource);
+                Details = details;
             }
         }
 
@@ -200,11 +235,27 @@ namespace MCPForUnity.Runtime
             }
         }
 #else
-        public static void RegisterScriptableObject(ScriptableObject resource) { }
+        public static void RegisterScriptableObject(
+            ScriptableObject resource,
+            string owner = null,
+            [CallerFilePath] string sourceFile = "",
+            [CallerMemberName] string sourceMember = "",
+            [CallerLineNumber] int sourceLine = 0
+        ) { }
 
-        public static IDisposable RegisterSubscription() => NoopRegistration.Instance;
+        public static IDisposable RegisterSubscription(
+            string owner = null,
+            [CallerFilePath] string sourceFile = "",
+            [CallerMemberName] string sourceMember = "",
+            [CallerLineNumber] int sourceLine = 0
+        ) => NoopRegistration.Instance;
 
-        public static IDisposable RegisterHandle() => NoopRegistration.Instance;
+        public static IDisposable RegisterHandle(
+            string owner = null,
+            [CallerFilePath] string sourceFile = "",
+            [CallerMemberName] string sourceMember = "",
+            [CallerLineNumber] int sourceLine = 0
+        ) => NoopRegistration.Instance;
 
         public static PlayScenarioRegisteredResources Capture() =>
             new PlayScenarioRegisteredResources { Error = "Native resource lifetime verification is supported only in the Editor." };
@@ -218,6 +269,81 @@ namespace MCPForUnity.Runtime
 #endif
     }
 
+    /// <summary>Immutable registration-time scalar attribution. Caller file paths are reduced to basenames before storage.</summary>
+    public sealed class PlayScenarioRegisteredResourceInfo
+    {
+        public long Id { get; }
+        public string Kind { get; }
+        public string Owner { get; }
+        public string TypeName { get; }
+        public string ResourceName { get; }
+        public string SourceFile { get; }
+        public string SourceMember { get; }
+        public int SourceLine { get; }
+
+        public PlayScenarioRegisteredResourceInfo(
+            long id,
+            string kind,
+            string owner = null,
+            string typeName = null,
+            string resourceName = null,
+            string sourceFile = null,
+            string sourceMember = null,
+            int sourceLine = 0
+        )
+        {
+            if (kind != "scriptable_object" && kind != "subscription" && kind != "handle")
+                throw new ArgumentException("A supported registered resource kind is required.", nameof(kind));
+            Id = id;
+            Kind = kind;
+            Owner = Bounded(owner, 128);
+            TypeName = Bounded(typeName, 256);
+            ResourceName = Bounded(resourceName, 128);
+            SourceFile = Bounded(Basename(sourceFile), 128);
+            SourceMember = Bounded(sourceMember, 128);
+            SourceLine = Math.Max(0, sourceLine);
+        }
+
+        private static string Basename(string value)
+        {
+            if (value == null)
+                return null;
+            int separator = Math.Max(value.LastIndexOf('/'), value.LastIndexOf('\\'));
+            separator = Math.Max(separator, value.LastIndexOf(':'));
+            return value.Substring(separator + 1);
+        }
+
+        private static string Bounded(string value, int limit)
+        {
+            if (value == null)
+                return null;
+            int length = Math.Min(value.Length, limit);
+            if (length > 0 && char.IsHighSurrogate(value[length - 1]))
+                length--;
+            var characters = new char[length];
+            for (int index = 0; index < length; index++)
+            {
+                char character = value[index];
+                bool invalidSurrogate =
+                    char.IsSurrogate(character)
+                    && !(
+                        char.IsHighSurrogate(character)
+                            ? index + 1 < length && char.IsLowSurrogate(value[index + 1])
+                            : index > 0 && char.IsHighSurrogate(value[index - 1])
+                    );
+                characters[index] =
+                    char.IsControl(character)
+                    || char.GetUnicodeCategory(character) == System.Globalization.UnicodeCategory.Format
+                    || character == '\u2028'
+                    || character == '\u2029'
+                    || invalidSurrogate
+                        ? ' '
+                        : character;
+            }
+            return new string(characters).Trim();
+        }
+    }
+
     public sealed class PlayScenarioRegisteredResources
     {
         public long[] ScriptableObjectIds = Array.Empty<long>();
@@ -228,5 +354,19 @@ namespace MCPForUnity.Runtime
         public int HandleCount;
         public int RegistrationFailureCount;
         public string Error;
+        private PlayScenarioRegisteredResourceInfo[] _resourceDetails = Array.Empty<PlayScenarioRegisteredResourceInfo>();
+
+        /// <summary>A defensive bounded snapshot of scalar descriptions for registered IDs.</summary>
+        public PlayScenarioRegisteredResourceInfo[] ResourceDetails
+        {
+            get => (PlayScenarioRegisteredResourceInfo[])_resourceDetails.Clone();
+            set
+            {
+                int length = Math.Min(value?.Length ?? 0, PlayScenarioResourceTracker.RegistrationLimit);
+                _resourceDetails = new PlayScenarioRegisteredResourceInfo[length];
+                if (length > 0)
+                    Array.Copy(value, _resourceDetails, length);
+            }
+        }
     }
 }
