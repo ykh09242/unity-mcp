@@ -192,6 +192,84 @@ def test_first_failure_is_pinned_without_retry_to_green(verified_bundle, child, 
     assert len(child[1]) == count
 
 
+@pytest.mark.parametrize("executed", [0, 1, 2])
+@pytest.mark.parametrize("policy,batches", [("stop", 1), ("continue", 2)])
+def test_skipped_future_iterations_do_not_complete_a_session_arm(
+    verified_bundle, child, monkeypatch, executed, policy, batches
+):
+    from cli.utils import play_scenario_player as player_module
+
+    build, output, _manifest = verified_bundle
+    child[0][0] = "failed"
+    read = player_module._read_json
+
+    def with_skipped_tail(path, limit):
+        report = read(path, limit)
+        if path.name == "run.json":
+            report["steps"] = [
+                {
+                    "iteration": iteration,
+                    "step_index": index,
+                    "name": f"step-{index}",
+                    "action": "wait_scene",
+                    "stage": "main",
+                    "status": (
+                        "skipped"
+                        if iteration > executed
+                        else "failed"
+                        if iteration == executed and index == 1
+                        else "passed"
+                    ),
+                    "started_unix_ms": 1 if iteration <= executed else None,
+                    "finished_unix_ms": 2,
+                }
+                for iteration in range(1, report["repeat_count"] + 1)
+                for index in range(2)
+            ]
+            path.write_text(json.dumps(report), encoding="utf-8")
+        return report
+
+    monkeypatch.setattr(player_module, "_read_json", with_skipped_tail)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "play-scenario",
+            "player-session",
+            str(build),
+            "--output-dir",
+            str(output),
+            "--iterations",
+            str(3 * batches),
+            "--batch-size",
+            "3",
+            "--failure-policy",
+            policy,
+            "--interval-seconds",
+            "0",
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    response = json.loads(result.output)
+    assert response["success"] is False
+    summary = response["data"]
+    directory = output / summary["session_id"]
+    assert summary["status"] == "failed"
+    assert len(child[1]) == batches
+    assert summary["scheduled_iterations"] == {"shared-batches": 3 * batches}
+    assert summary["completed_iterations"] == {"shared-batches": executed * batches}
+    assert summary["arms_complete"] == {"shared-batches": False}
+    saved = json.loads((directory / "session.json").read_bytes())
+    assert saved["completed_iterations"] == summary["completed_iterations"]
+    assert saved["arms_complete"] == summary["arms_complete"]
+    junit = ElementTree.parse(directory / "junit.xml").getroot()
+    assert junit.attrib["failures"] == str(batches)
+    assert junit.attrib["errors"] == "1"
+    incomplete = junit.find("./testcase[@name='session_completion']/error")
+    assert incomplete is not None and incomplete.attrib["type"] == "session_incomplete"
+
+
 def test_crash_has_exit_evidence_and_incomplete_arm(verified_bundle, child):
     build, output, _manifest = verified_bundle
     child[0][0] = "crash"

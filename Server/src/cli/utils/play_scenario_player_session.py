@@ -394,17 +394,20 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
                             },
                         }
                     )
+                    # Native final reports retain skipped slots for unexecuted repeats.
                     observed_iterations = (
                         repeats
                         if outcome.report["status"] == "succeeded"
-                        else max(
-                            (
-                                step.get("iteration", 0)
+                        else len(
+                            {
+                                step["iteration"]
                                 for step in outcome.report.get("steps", [])
                                 if isinstance(step, dict)
-                                and isinstance(step.get("iteration", 0), int)
-                            ),
-                            default=0,
+                                and type(step.get("iteration")) is int
+                                and 1 <= step["iteration"] <= repeats
+                                and step.get("status") != "skipped"
+                                and step.get("started_unix_ms") is not None
+                            }
                         )
                     )
                     completed[mode] += min(repeats, observed_iterations)

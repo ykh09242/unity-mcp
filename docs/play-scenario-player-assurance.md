@@ -139,6 +139,11 @@ cleanup. Failure stops admission by default. Choosing the explicit continue poli
 observations but cannot erase the first failure or turn the overall session into a pass. Incomplete
 comparison modes are reported as incomplete, not successful or equivalent.
 
+`scheduled_iterations` counts slots admitted in each batch. `completed_iterations` counts distinct
+iterations with actual step execution in a final native report, including failed iterations. Untouched
+`skipped` slots never count as completed. Continuing after an early batch failure does not make those
+skipped slots complete, so the corresponding mode and JUnit completion check remain incomplete.
+
 Child outcomes are flushed to an append-only JSONL journal before the next admission. The journal has
 at most 2,000 bounded records; aggregate memory retains counters, the first failure and the last 32
 summaries. Keep 1-64 detailed child output directories using `--retain-reports`; their report, log,
