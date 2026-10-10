@@ -739,3 +739,176 @@ def test_progress_error_exceeding_native_bound_is_rejected():
     }
     with pytest.raises(ValidationError):
         PlayerFinalReport.model_validate(report)
+
+
+@pytest.mark.parametrize(
+    "policy,batches,executed,skipped", [("stop", 1, 2, 4), ("continue", 2, 4, 2)]
+)
+def test_native_iteration_counts_reconcile_session_journals_and_junit(
+    verified_bundle, child, monkeypatch, policy, batches, executed, skipped
+):
+    # Given two real child-process fixtures with the native partial-iteration ledger shape.
+    from cli.utils import play_scenario_player as player_module
+
+    build, output, _manifest = verified_bundle
+    child[0][0] = "failed"
+    read = player_module._read_json
+
+    def with_native_ledger(path, limit):
+        report = read(path, limit)
+        if path.name == "run.json":
+            start, finish = report["started_unix_ms"], report["finished_unix_ms"]
+            report["iteration_results_version"] = 1
+            report["iteration_results"] = [
+                dict(iteration=1, status="passed", started_unix_ms=start, finished_unix_ms=start),
+                dict(iteration=2, status="failed", started_unix_ms=start, finished_unix_ms=finish),
+                dict(iteration=3, status="skipped", started_unix_ms=None, finished_unix_ms=finish),
+            ]
+            path.write_text(json.dumps(report), encoding="utf-8")
+        return report
+
+    monkeypatch.setattr(player_module, "_read_json", with_native_ledger)
+    # When the real session runner observes native results under the selected failure policy.
+    summary, directory, code = run_player_session(
+        PlayerSessionOptions(
+            build_directory=build,
+            output_directory=output,
+            iterations=6,
+            batch_size=3,
+            failure_policy=policy,
+            interval_seconds=0,
+        )
+    )
+    # Then aggregate counters and exported evidence agree and unused slots cannot complete the arm.
+    counts = summary["iteration_counts"]["shared-batches"]
+    assert counts == dict(
+        planned=6,
+        executed=executed,
+        pending=0,
+        running=0,
+        passed=batches,
+        failed=batches,
+        timed_out=0,
+        cancelled=0,
+        skipped=skipped,
+        unknown=0,
+    )
+    assert code == 1 and summary["arms_complete"] == {"shared-batches": False}
+    assert summary["completed_iterations"] == {"shared-batches": executed}
+    admissions = [
+        json.loads(line) for line in (directory / "admissions.jsonl").read_bytes().splitlines()
+    ]
+    outcomes = [
+        json.loads(line) for line in (directory / "outcomes.jsonl").read_bytes().splitlines()
+    ]
+    assert [row["job_id"] for row in admissions] == [row["job_id"] for row in outcomes]
+    assert all(row["iteration_results_source"] == "native" for row in outcomes)
+    assert all(row["iteration_counts"]["executed"] == 2 for row in outcomes)
+    junit = ElementTree.parse(directory / "junit.xml").getroot()
+    properties = {
+        row.get("name"): row.get("value") for row in junit.findall("./properties/property")
+    }
+    assert properties["iteration.shared-batches.executed"] == str(executed)
+    assert properties["iteration.shared-batches.skipped"] == str(skipped)
+    child_junit = ElementTree.parse(
+        directory / outcomes[0]["artifact_directory"] / "junit.xml"
+    ).getroot()
+    child_properties = {
+        row.get("name"): row.get("value")
+        for row in child_junit.findall("./testcase/properties/property")
+    }
+    assert child_properties["iteration.executed"] == "2"
+    assert child_properties["iteration.skipped"] == "1"
+
+
+def test_session_persists_unknown_admission_before_launching_child(
+    verified_bundle, child, monkeypatch
+):
+    # Given a session whose launcher can observe its own on-disk admission boundary.
+    from cli.utils import play_scenario_player_session as session_module
+
+    build, output, _manifest = verified_bundle
+    launch = session_module.run_player
+    snapshots = []
+
+    def observe_before_launch(options):
+        directory = options.output_directory.parent
+        snapshots.append(json.loads((directory / "session.json").read_bytes()))
+        admissions = (directory / "admissions.jsonl").read_bytes().splitlines()
+        assert json.loads(admissions[-1])["job_id"] == options.player_job_id
+        assert (directory / "session-start.json").is_file()
+        return launch(options)
+
+    monkeypatch.setattr(session_module, "run_player", observe_before_launch)
+    # When an owned child is admitted and finalized.
+    summary, _directory, code = run_player_session(
+        PlayerSessionOptions(
+            build_directory=build,
+            output_directory=output,
+            iterations=2,
+            batch_size=3,
+            interval_seconds=0,
+        )
+    )
+    # Then an abrupt parent stop before finalization leaves unknown, never successful, evidence.
+    assert len(snapshots) == 1
+    before = snapshots[0]
+    assert before["scheduled_iterations"] == {"shared-batches": 2}
+    assert before["completed_iterations"] == {"shared-batches": 0}
+    assert before["iteration_counts"]["shared-batches"]["unknown"] == 2
+    assert before["active_child"]["repeat_count"] == 2
+    assert code == 0 and summary["iteration_counts"]["shared-batches"]["passed"] == 2
+    assert summary["active_child"] is None
+
+
+@pytest.mark.parametrize("character", [chr(0xE9), chr(0x1F4A5)])
+def test_unicode_failure_preview_keeps_session_journal_bounded(
+    verified_bundle, child, monkeypatch, character
+):
+    from cli.utils import play_scenario_player as player_module
+
+    build, output, _manifest = verified_bundle
+    child[0][0] = "failed"
+    message = character * 1024
+    read = player_module._read_json
+    native_bytes = []
+
+    def with_native_failure(path, limit):
+        report = read(path, limit)
+        if path.name == "run.json":
+            report["failure"] = {
+                "code": "unexpected_error_log",
+                "message": message,
+                "stage": "main",
+                "iteration": 1,
+                "step_index": 0,
+            }
+            encoded = json.dumps(report, ensure_ascii=False).encode("utf-8")
+            path.write_bytes(encoded)
+            native_bytes.append(encoded)
+        return report
+
+    monkeypatch.setattr(player_module, "_read_json", with_native_failure)
+    summary, directory, code = run_player_session(
+        PlayerSessionOptions(
+            build_directory=build,
+            output_directory=output,
+            mode="fresh-process",
+            iterations=1,
+            interval_seconds=0.0,
+        )
+    )
+    assert code == 1 and summary["status"] == "failed"
+    assert summary["outcome_counts"] == {"failures": 1, "errors": 0}
+    assert summary["children_started"] == summary["children_finalized"] == 1
+    encoded = (directory / "outcomes.jsonl").read_bytes()
+    assert len(encoded) <= session_module.OUTCOME_LIMIT
+    row = json.loads(encoded)
+    assert row["failure"]["message"] and message.startswith(row["failure"]["message"])
+    assert row["failure"]["message"] != message
+    assert row["iteration_counts"] == summary["iteration_counts"]["fresh-process"]
+    failure = dict(summary["first_failure"] or {})
+    assert row["job_id"] == failure["job_id"]
+    assert (directory / row["artifact_directory"] / "run.json").read_bytes() == native_bytes[0]
+    junit = ElementTree.parse(directory / "junit.xml").getroot()
+    assert junit.attrib["failures"] == "1"

@@ -366,3 +366,19 @@ def player_session(build_directory: Path, output_dir: Path, **parameters: JsonVa
     click.echo(format_output({"success": exit_code == 0, "data": summary}, get_config().format))
     if exit_code:
         raise click.exceptions.Exit(exit_code)
+
+
+@play_scenario.command("player-session-recover")
+@click.argument("session_directory", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--output-dir", required=True, type=click.Path(file_okay=False, path_type=Path))
+def player_session_recover(session_directory: Path, output_dir: Path) -> None:
+    """Recover an incomplete evidence snapshot without replaying or modifying the source session."""
+    from cli.utils.play_scenario_session_recovery import recover_player_session
+
+    try:
+        summary, _directory, exit_code = recover_player_session(session_directory, output_dir)
+    except (PlayerLaunchError, OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(format_output({"success": exit_code == 0, "data": summary}, get_config().format))
+    if exit_code:
+        raise click.exceptions.Exit(exit_code)

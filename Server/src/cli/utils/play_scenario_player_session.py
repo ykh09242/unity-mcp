@@ -8,7 +8,7 @@ import stat
 from pathlib import Path
 import re
 import time
-from typing import Annotated, Final, Literal
+from typing import Annotated, BinaryIO, Final, Literal
 from uuid import uuid4
 from xml.etree import ElementTree
 
@@ -16,6 +16,11 @@ from models.play_scenarios import JobId, PlayScenarioCommand
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 from cli.utils.play_scenario_player import PlayerLaunchError, PlayerRunOptions, run_player
 from cli.utils.play_scenario_player_payload import PlayerPayloadError
+from cli.utils.play_scenario_iterations import (
+    add_iteration_counts,
+    iteration_counts,
+    zero_iteration_counts,
+)
 from cli.utils.play_scenario_reports import write_player_artifacts
 
 OUTCOME_LIMIT: Final = 4096
@@ -162,13 +167,56 @@ def _retain(directory: Path, kept: deque[Path], pinned: str | None, limit: int) 
         kept.remove(candidate)
 
 
-def _summary_file(summary: dict[str, JsonValue], directory: Path) -> None:
+def _summary_file(
+    summary: dict[str, JsonValue], directory: Path, filename: str = "session.json"
+) -> None:
     encoded = json.dumps(summary, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
     if len(encoded) > SUMMARY_LIMIT:
         raise PlayerLaunchError("Player session summary exceeds its byte bound")
-    temporary = directory / "session.json.tmp"
+    temporary = directory / (filename + ".tmp")
     temporary.write_bytes(encoded + b"\n")
-    temporary.replace(directory / "session.json")
+    temporary.replace(directory / filename)
+
+
+def _append_record(stream: BinaryIO, record: dict[str, JsonValue]) -> None:
+    """Flush each bounded admission/outcome before exposing the next process boundary."""
+    encoded = json.dumps(record, ensure_ascii=True, separators=(",", ":")).encode("utf-8") + b"\n"
+    if len(encoded) > OUTCOME_LIMIT or stream.tell() + len(encoded) > OUTCOME_FILE_LIMIT:
+        raise PlayerLaunchError("Player session journal exceeds its fixed bounds")
+    stream.write(encoded)
+    stream.flush()
+    os.fsync(stream.fileno())
+
+
+def _compact_failure_text(value: str) -> str:
+    """Bound escaped JSON bytes so Unicode previews cannot exhaust a journal row."""
+    lower, upper = 0, min(len(value), 512)
+    while lower < upper:
+        middle = (lower + upper + 1) // 2
+        if len(json.dumps(value[:middle], ensure_ascii=True)) <= 512:
+            lower = middle
+        else:
+            upper = middle - 1
+    return value[:lower]
+
+
+def _compact_failure(report: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
+    failure = report.get("failure")
+    if not isinstance(failure, dict):
+        return None
+    return {
+        key: _compact_failure_text(value) if isinstance(value, str) else value
+        for key, value in failure.items()
+        if key in {"code", "message", "stage", "iteration", "step_index"}
+        and isinstance(value, (str, int))
+        and not isinstance(value, bool)
+    }
+
+
+def _arm_complete(counted: dict[str, int]) -> bool:
+    return counted["executed"] == counted["planned"] and not any(
+        counted[key] for key in ("pending", "running", "unknown")
+    )
 
 
 def _write_session_junit(summary: dict[str, JsonValue], directory: Path) -> None:
@@ -196,6 +244,15 @@ def _write_session_junit(summary: dict[str, JsonValue], directory: Path) -> None
         (directory / "outcomes.jsonl").open("rb") as inputs,
     ):
         output.write(b'<?xml version="1.0" encoding="utf-8"?>\n' + opening)
+        totals = summary.get("iteration_counts", {})
+        if totals:
+            properties = ElementTree.Element("properties")
+            for mode, states in totals.items():
+                for state, count in states.items():
+                    ElementTree.SubElement(
+                        properties, "property", name=f"iteration.{mode}.{state}", value=str(count)
+                    )
+            output.write(ElementTree.tostring(properties, encoding="utf-8"))
         for _index in range(2000):
             encoded = inputs.readline(OUTCOME_LIMIT + 1)
             if not encoded:
@@ -231,6 +288,10 @@ def _write_session_junit(summary: dict[str, JsonValue], directory: Path) -> None
             ):
                 ElementTree.SubElement(
                     properties, "property", name=key, value=str(entry.get(key, ""))
+                )
+            for state, count in entry.get("iteration_counts", {}).items():
+                ElementTree.SubElement(
+                    properties, "property", name=f"iteration.{state}", value=str(count)
                 )
             if entry["status"] == "failed" and not entry.get("client_error"):
                 ElementTree.SubElement(
@@ -274,8 +335,11 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
     completed = {mode: 0 for mode in modes}
     scheduled = {mode: 0 for mode in modes}
     counts = {"failures": 0, "errors": 0}
+    iteration_totals = {mode: zero_iteration_counts() for mode in modes}
+    for total in iteration_totals.values():
+        total["planned"] = total["pending"] = options.iterations
     summary: dict[str, JsonValue] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "session_id": session_id,
         "status": "running",
         "mode": options.mode,
@@ -285,6 +349,8 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
         },
         "requested_iterations": options.iterations,
         "completed_iterations": completed,
+        "iteration_counts": iteration_totals,
+        "active_child": None,
         "scheduled_iterations": scheduled,
         "children_started": 0,
         "children_finalized": 0,
@@ -308,7 +374,11 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
     stopped = False
     exit_code = 0
     _summary_file(summary, directory)
-    with (directory / "outcomes.jsonl").open("xb") as journal:
+    _summary_file(summary, directory, "session-start.json")
+    with (
+        (directory / "outcomes.jsonl").open("xb") as journal,
+        (directory / "admissions.jsonl").open("xb") as admissions,
+    ):
         for mode in modes:
             while scheduled[mode] < options.iterations and not stopped:
                 remaining = deadline - time.monotonic()
@@ -323,8 +393,24 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
                 )
                 job_id = uuid4().hex
                 child_directory = runs / job_id
-                record: dict[str, JsonValue] = {
+                admission: dict[str, JsonValue] = {
                     "schema_version": 1,
+                    "session_id": session_id,
+                    "sequence": summary["outcomes_recorded"] + 1,
+                    "mode": mode,
+                    "job_id": job_id,
+                    "repeat_count": repeats,
+                }
+                _append_record(admissions, admission)
+                scheduled[mode] += repeats
+                iteration_totals[mode]["pending"] -= repeats
+                iteration_totals[mode]["unknown"] += repeats
+                summary["active_child"] = admission
+                _summary_file(summary, directory)
+                child_counts = zero_iteration_counts()
+                child_counts["planned"] = child_counts["unknown"] = repeats
+                record: dict[str, JsonValue] = {
+                    "schema_version": 2,
                     "session_id": session_id,
                     "sequence": summary["outcomes_recorded"] + 1,
                     "mode": mode,
@@ -346,6 +432,9 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
                     "process_started_unix_ms": None,
                     "process_finished_unix_ms": None,
                     "request_sha256": None,
+                    "iteration_counts": child_counts,
+                    "iteration_results_source": "unavailable",
+                    "failure": None,
                 }
                 expected_native_exit = None
                 try:
@@ -394,23 +483,14 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
                             },
                         }
                     )
-                    # Native final reports retain skipped slots for unexecuted repeats.
-                    observed_iterations = (
-                        repeats
-                        if outcome.report["status"] == "succeeded"
-                        else len(
-                            {
-                                step["iteration"]
-                                for step in outcome.report.get("steps", [])
-                                if isinstance(step, dict)
-                                and type(step.get("iteration")) is int
-                                and 1 <= step["iteration"] <= repeats
-                                and step.get("status") != "skipped"
-                                and step.get("started_unix_ms") is not None
-                            }
-                        )
+                    child_counts = iteration_counts(outcome.report, repeats)
+                    record["iteration_counts"] = child_counts
+                    record["iteration_results_source"] = (
+                        "native"
+                        if "iteration_results_version" in outcome.report
+                        else "legacy_steps"
                     )
-                    completed[mode] += min(repeats, observed_iterations)
+                    record["failure"] = _compact_failure(outcome.report)
                     write_player_artifacts(outcome.report, child_directory, outcome.client_error)
                     del outcome
                 except KeyboardInterrupt:
@@ -465,24 +545,19 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
                     if summary["first_failure"] is None:
                         summary["first_failure"] = dict(record)
                         pinned = job_id
-                scheduled[mode] += repeats
+                # Resolve only this admitted batch; missing evidence stays unknown.
+                iteration_totals[mode]["unknown"] -= repeats
+                contribution = dict(child_counts)
+                contribution["planned"] = 0
+                iteration_totals[mode] = add_iteration_counts(iteration_totals[mode], contribution)
+                completed[mode] = iteration_totals[mode]["executed"]
+                summary["active_child"] = None
                 # Advance admission once, including a failed child; no retry can erase it.
                 if process.get("process_ended") is not True and child_directory.exists():
                     stopped = True
-                encoded = (
-                    json.dumps(record, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
-                    + b"\n"
-                )
-                if (
-                    len(encoded) > OUTCOME_LIMIT
-                    or journal.tell() + len(encoded) > OUTCOME_FILE_LIMIT
-                    or summary["outcomes_recorded"] >= 2000
-                ):
-                    raise PlayerLaunchError(
-                        "Player session outcome journal exceeds its fixed bounds"
-                    )
-                journal.write(encoded)
-                journal.flush()
+                if summary["outcomes_recorded"] >= 2000:
+                    raise PlayerLaunchError("Player session exceeds its child bound")
+                _append_record(journal, record)
                 summary["outcomes_recorded"] += 1
                 recent.append(record)
                 while len(json.dumps(list(recent), ensure_ascii=True).encode("utf-8")) > 49152:
@@ -496,7 +571,7 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
                 summary["last_outcomes"] = list(recent)
                 summary["retained_job_ids"] = [entry.name for entry in kept]
                 summary["arms_complete"] = {
-                    arm: completed[arm] >= options.iterations for arm in modes
+                    arm: _arm_complete(iteration_totals[arm]) for arm in modes
                 }
                 _summary_file(summary, directory)
                 if record["exit_code"] == 130:
@@ -518,6 +593,12 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
             if summary["first_failure"] is not None or summary["session_error"] is not None
             else "succeeded"
         )
+    for total in iteration_totals.values():
+        total["skipped"] += total["pending"]
+        total["pending"] = 0
+    summary["arms_complete"] = {
+        mode: _arm_complete(total) for mode, total in iteration_totals.items()
+    }
     summary["finished_unix_ms"] = int(time.time() * 1000)
     _summary_file(summary, directory)
     _write_session_junit(summary, directory)
