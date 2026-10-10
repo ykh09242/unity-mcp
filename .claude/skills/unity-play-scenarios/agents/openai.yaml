@@ -1,0 +1,4 @@
+interface:
+  display_name: "Unity Play Scenarios"
+  short_description: "Author repeatable Unity Play scenarios"
+  default_prompt: "Use $unity-play-scenarios to discover real scene and UI paths and author a repeatable menu-to-game scenario."
