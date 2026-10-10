@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "unity_version": "6000.0.69f1",
+  "release_revision": "5f8607f5118b",
+  "installer_url": "https://download.unity3d.com/download_unity/5f8607f5118b/Windows64EditorInstaller/UnitySetup64-6000.0.69f1.exe",
+  "installer_size_bytes": 4081741856,
+  "installer_integrity": "md5-jZK8N7FoIefHuhldUezY2A==",
+  "mono_module": "Editor/Data/PlaybackEngines/windowsstandalonesupport/Variations/win64_player_nondevelopment_mono",
+  "cases": {
+    "success": "succeeded",
+    "error": "failed",
+    "listener-error": "failed",
+    "timeout": "timed_out",
+    "blocked": "timed_out",
+    "cancel": "cancelled",
+    "missing-request": "startup-rejected",
+    "stale-output": "startup-rejected",
+    "wrong-build": "startup-rejected",
+    "crash": "missing-final",
+    "cli-repeat": "cli-succeeded",
+    "cli-session": "session-succeeded",
+    "ordinary": "boundary-verified",
+    "tampered-payload": "admission-rejected",
+    "session-stop": "session-stopped",
+    "session-continue": "session-continued",
+    "hang": "owned-timeout",
+    "state-wrong": "timed_out",
+    "state-missing": "timed_out",
+    "state-destroyed": "failed"
+  },
+  "failure_codes": {
+    "state-wrong": "condition_unmet",
+    "state-missing": "condition_unmet",
+    "state-destroyed": "state_provider_unavailable"
+  }
+}

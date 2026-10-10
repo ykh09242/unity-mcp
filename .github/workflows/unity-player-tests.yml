@@ -1,0 +1,173 @@
+name: Windows Mono Player Assurance
+
+on:
+  workflow_dispatch:
+    inputs:
+      require_player_e2e:
+        description: "Fail unless actual Windows Mono Player evidence completes."
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      require_player_e2e:
+        type: boolean
+        required: false
+        default: false
+      ref:
+        type: string
+        required: false
+        default: ""
+    secrets:
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+      UNITY_SERIAL:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  license:
+    name: Check Windows Player execution policy
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      unity_ok: ${{ steps.detect.outputs.unity_ok || 'false' }}
+    steps:
+      - name: Detect scoped Windows serial prerequisites
+        id: detect
+        if: vars.UNITY_RUN_LICENSED_TESTS == 'true'
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        run: |
+          if [ -n "$UNITY_EMAIL" ] && [ -n "$UNITY_PASSWORD" ] && [ -n "$UNITY_SERIAL" ]; then
+            echo "unity_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "unity_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Explain skipped execution
+        if: vars.UNITY_RUN_LICENSED_TESTS != 'true' || steps.detect.outputs.unity_ok != 'true'
+        run: |
+          echo 'Actual Windows Mono Player execution is SKIPPED: licensed execution policy or Windows serial prerequisites are unavailable.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'A skipped job provides no native Player assurance. Linux ULF availability does not establish Windows serial activation.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Require Windows Player prerequisites
+        if: inputs.require_player_e2e
+        env:
+          POLICY: ${{ vars.UNITY_RUN_LICENSED_TESTS }}
+          AVAILABLE: ${{ steps.detect.outputs.unity_ok || 'false' }}
+        run: |
+          if [ "$POLICY" != 'true' ] || [ "$AVAILABLE" != 'true' ]; then
+            echo '::error::Required Windows Player assurance needs enabled execution policy and scoped serial/email/password credentials.'
+            exit 1
+          fi
+
+  player:
+    name: Actual Windows Mono build and Player cases
+    needs: license
+    if: needs.license.outputs.unity_ok == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 100
+    concurrency:
+      group: unity-windows-player-license-${{ github.repository }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.ref }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.22"
+          python-version: "3.11"
+          enable-cache: false
+      - name: Install locked CLI environment
+        run: |
+          uv sync --project Server --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Locked CLI environment failed' }
+          "SOURCE_REVISION=$(git rev-parse HEAD)" >> $env:GITHUB_ENV
+          "UNITY_INSTALL_ROOT=$env:RUNNER_TEMP\unity-player-6000.0.69f1" >> $env:GITHUB_ENV
+      - name: Initialize fresh evidence
+        id: initialize
+        run: |
+          $session = uv run --project Server python tools/run_play_scenario_player_e2e.py --initialize --output .unity-ci/player-evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Fresh evidence initialization failed' }
+          "session_id=$session" >> $env:GITHUB_OUTPUT
+      - name: Verify and install official pinned Windows Editor
+        run: |
+          uv run --project Server python tools/unity_windows_ci.py provision $env:UNITY_INSTALL_ROOT
+          if ($LASTEXITCODE -ne 0) { throw 'Verified Windows Editor installation failed' }
+      - name: Activate scoped Windows serial license
+        id: activate
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        run: |
+          uv run --project Server python tools/unity_windows_ci.py activate "$env:UNITY_INSTALL_ROOT\installed\Editor\Unity.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Private Windows activation failed' }
+      - name: Prepare dedicated synthetic fixture project
+        run: |
+          uv run --project Server python tools/unity_ci_packages.py prepare --unity-version 6000.0.69f1 --unity-data "$env:UNITY_INSTALL_ROOT\installed\Editor\Data" --output .unity-ci/player-project
+          if ($LASTEXITCODE -ne 0) { throw 'Dedicated fixture package preparation failed' }
+      - name: Build and execute actual Player bodies
+        id: execute
+        env:
+          SESSION_ID: ${{ steps.initialize.outputs.session_id }}
+        run: |
+          uv run --project Server python tools/run_play_scenario_player_e2e.py --editor "$env:UNITY_INSTALL_ROOT\installed\Editor\Unity.exe" --project .unity-ci/player-project/project --output .unity-ci/player-evidence --session-id $env:SESSION_ID --source-revision $env:SOURCE_REVISION
+          if ($LASTEXITCODE -ne 0) { throw 'Actual Player execution or body assertions failed' }
+      - name: Independently check required persisted evidence
+        id: evidence
+        if: always()
+        env:
+          SESSION_ID: ${{ steps.initialize.outputs.session_id }}
+          RUNNER_OUTCOME: ${{ steps.execute.outcome }}
+        run: |
+          uv run --project Server python tools/check_play_scenario_player_evidence.py .unity-ci/player-evidence --session-id $env:SESSION_ID
+          if ($LASTEXITCODE -ne 0) { throw 'Fresh required Player evidence failed independent verification' }
+          if ($env:RUNNER_OUTCOME -ne 'success') { throw 'Actual Player runner did not succeed' }
+      - name: Return owned Windows license
+        if: always() && steps.activate.outcome != 'skipped'
+        run: |
+          if (Test-Path -LiteralPath "$env:UNITY_INSTALL_ROOT\installed\Editor\Unity.exe") {
+            uv run --project Server python tools/unity_windows_ci.py return "$env:UNITY_INSTALL_ROOT\installed\Editor\Unity.exe"
+            if ($LASTEXITCODE -ne 0) { throw 'Windows license return failed' }
+          }
+      - name: Retain actual Player evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-mono-player-evidence
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            .unity-ci/player-evidence/**
+            .unity-ci/player-project/resolved-packages.json
+            ${{ runner.temp }}/unity-player-6000.0.69f1/provision.json
+            ${{ runner.temp }}/unity-player-6000.0.69f1/install-evidence/**
+
+  requiredPlayerE2E:
+    name: Required actual Windows Mono Player assurance
+    needs: [license, player]
+    if: always() && inputs.require_player_e2e
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require actual licensed execution and evidence
+        env:
+          LICENSE_RESULT: ${{ needs.license.result }}
+          UNITY_OK: ${{ needs.license.outputs.unity_ok }}
+          PLAYER_RESULT: ${{ needs.player.result }}
+        run: |
+          if [ "$LICENSE_RESULT" != 'success' ] || [ "$UNITY_OK" != 'true' ] || [ "$PLAYER_RESULT" != 'success' ]; then
+            echo '::error::Required Windows Mono Player assurance did not complete its actual builds, process bodies and fresh evidence.'
+            exit 1
+          fi

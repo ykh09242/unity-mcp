@@ -3,6 +3,11 @@ name: Unity Tests
 on:
   workflow_dispatch:
     inputs:
+      require_player_e2e:
+        description: "Require actual Windows Mono Player builds and fresh process evidence."
+        type: boolean
+        required: false
+        default: false
       require_native_e2e:
         description: "Require licensed native scenario bodies and fresh persisted evidence."
         type: boolean
@@ -19,6 +24,11 @@ on:
       UNITY_SERIAL:
         required: false
     inputs:
+      require_player_e2e:
+        description: "Require actual Windows Mono Player builds and fresh process evidence."
+        type: boolean
+        required: false
+        default: false
       require_native_e2e:
         description: "Fail unless required native scenario E2E executes with fresh evidence."
         type: boolean
@@ -42,8 +52,18 @@ on:
       - MCPForUnity/Editor/**
       - MCPForUnity/Runtime/**
       - .github/workflows/unity-tests.yml
+      - .github/workflows/unity-player-tests.yml
+      - tools/*player*e2e*
+      - tools/unity_windows_ci.py
       - tools/check_unity_test_results.py
       - tools/check_play_scenario_evidence.py
+      - Server/src/cli/main.py
+      - Server/pyproject.toml
+      - Server/uv.lock
+      - Server/src/cli/commands/play_scenario.py
+      - Server/src/cli/utils/play_scenario_player*.py
+      - Server/src/cli/utils/play_scenario_reports.py
+      - Server/src/models/play_scenarios.py
       - tools/unity-native-e2e-tests.json
       - tools/unity-versions.json
       - tools/unity_ci.py
@@ -69,8 +89,18 @@ on:
       - MCPForUnity/Editor/**
       - MCPForUnity/Runtime/**
       - .github/workflows/unity-tests.yml
+      - .github/workflows/unity-player-tests.yml
+      - tools/*player*e2e*
+      - tools/unity_windows_ci.py
       - tools/check_unity_test_results.py
       - tools/check_play_scenario_evidence.py
+      - Server/src/cli/main.py
+      - Server/pyproject.toml
+      - Server/uv.lock
+      - Server/src/cli/commands/play_scenario.py
+      - Server/src/cli/utils/play_scenario_player*.py
+      - Server/src/cli/utils/play_scenario_reports.py
+      - Server/src/models/play_scenarios.py
       - tools/unity-native-e2e-tests.json
       - tools/unity-versions.json
       - tools/unity_ci.py
@@ -90,6 +120,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  playerAssurance:
+    name: Windows Mono Player assurance
+    uses: ./.github/workflows/unity-player-tests.yml
+    with:
+      require_player_e2e: ${{ inputs.require_player_e2e || false }}
+      ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.ref }}
+    secrets:
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+
   matrix:
     name: Compute Unity version matrix
     runs-on: ubuntu-latest
