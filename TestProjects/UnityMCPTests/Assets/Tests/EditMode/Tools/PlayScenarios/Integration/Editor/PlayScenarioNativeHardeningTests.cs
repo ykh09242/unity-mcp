@@ -64,24 +64,38 @@ namespace MCPForUnityTests.PlayScenarios.Integration
         [UnityTest]
         public IEnumerator ExactAllowedDelayedErrorStillCompletesSuccessfully()
         {
-            yield return AllowedDelayedError("strict", true);
+            PrepareAllowedDelayedError("strict", true);
+            yield return new EnterPlayMode();
+            LogAssert.Expect(LogType.Error, "PLAY_SCENARIO_QA_DELAYED_ERROR");
+            IEnumerator flow = VerifyAllowedDelayedError();
+            while (flow.MoveNext())
+                yield return flow.Current;
+            yield return new ExitPlayMode();
         }
 
         [UnityTest]
         public IEnumerator LogOnlyDelayedErrorStillCompletesSuccessfully()
         {
-            yield return AllowedDelayedError("log_only", false);
+            PrepareAllowedDelayedError("log_only", false);
+            yield return new EnterPlayMode();
+            LogAssert.Expect(LogType.Error, "PLAY_SCENARIO_QA_DELAYED_ERROR");
+            IEnumerator flow = VerifyAllowedDelayedError();
+            while (flow.MoveNext())
+                yield return flow.Current;
+            yield return new ExitPlayMode();
         }
 
-        private static IEnumerator AllowedDelayedError(string mode, bool allow)
+        private static void PrepareAllowedDelayedError(string mode, bool allow)
         {
             ConfigureHardening(delayedError: true);
             var policy = new JObject { ["mode"] = mode };
             if (allow)
                 policy["allowed_messages"] = new JArray("PLAY_SCENARIO_QA_DELAYED_ERROR");
             SaveHardening(new JArray(HardeningClick("start", "StartButton")), cleanup: true, policy: policy);
-            yield return new EnterPlayMode();
-            LogAssert.Expect(LogType.Error, "PLAY_SCENARIO_QA_DELAYED_ERROR");
+        }
+
+        private static IEnumerator VerifyAllowedDelayedError()
+        {
             StartHardening();
             yield return Finish(NextId);
             JObject done = Status(NextId);
@@ -90,6 +104,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             Assert.That(HardeningBootstrap().StartClickCount, Is.EqualTo(1));
             AssertCleanup(done);
             AssertReport(done);
+            Debug.Log("PLAY_SCENARIO_QA_ALLOWED_DELAYED_REPORT_VERIFIED " + NextId);
         }
 
         [UnityTest]
@@ -206,7 +221,13 @@ namespace MCPForUnityTests.PlayScenarios.Integration
         [UnityTest]
         public IEnumerator StepTimeoutRunsCleanupAndPreservesTimedOutOutcome()
         {
-            yield return TimeoutCleanup();
+            ConfigureHardening();
+            SaveHardening(new JArray(ObjectStep("pending", "wait_object", "NeverCreated", 1)), cleanup: true);
+            yield return new EnterPlayMode();
+            IEnumerator flow = VerifyTimeoutCleanup();
+            while (flow.MoveNext())
+                yield return flow.Current;
+            yield return new ExitPlayMode();
         }
 
         [UnityTest]
@@ -226,11 +247,8 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             AssertReport(done);
         }
 
-        private static IEnumerator TimeoutCleanup()
+        private static IEnumerator VerifyTimeoutCleanup()
         {
-            ConfigureHardening();
-            SaveHardening(new JArray(ObjectStep("pending", "wait_object", "NeverCreated", 1)), cleanup: true);
-            yield return new EnterPlayMode();
             StartHardening();
             yield return Finish(NextId);
             JObject done = Status(NextId);
@@ -239,6 +257,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             Assert.That(HardeningBootstrap().CleanupClickCount, Is.EqualTo(1));
             AssertCleanup(done);
             AssertReport(done);
+            Debug.Log("PLAY_SCENARIO_QA_TIMEOUT_CLEANUP_REPORT_VERIFIED " + NextId);
         }
 
         [Test]
