@@ -299,6 +299,31 @@ def test_optional_preparation_uses_complete_editor_image_without_license_or_slim
     assert 'prepare "$UNITY_VERSION" --purpose tests' in editor["run"]
 
 
+def test_optional_project_transfer_requires_the_same_opt_in_as_license_detection():
+    # No native consumer can run without the explicit policy opt-in.
+    detect = named_step("license", "Detect Unity license secrets")
+    for name in ("Archive prepared optional project", "Upload prepared optional project"):
+        transfer = named_step("optionalPackageInputs", name)
+        assert transfer.get("if") == detect["if"]
+    preparation = named_step("optionalPackageInputs", "Prepare optional integration packages")
+    assert "if" not in preparation
+
+
+def test_optional_preparation_retains_only_resolution_metadata_without_native_execution():
+    steps = workflow("unity-tests.yml")["jobs"]["optionalPackageInputs"]["steps"]
+    reports = [step for step in steps if step.get("name") == "Upload optional package resolution"]
+    assert len(reports) == 1, "License-free validation must retain its resolution evidence"
+    report = reports[0]
+    assert report["uses"].startswith("actions/upload-artifact@")
+    assert report["if"] == "always() && steps.packages.outcome == 'success'"
+    assert report["with"]["name"] == "optional-package-resolution-${{ matrix.unity.version }}"
+    assert report["with"]["path"] == "${{ steps.packages.outputs.resolution_report }}"
+    assert report["with"]["if-no-files-found"] == "error"
+    assert report["with"]["include-hidden-files"] is True
+    assert report["with"]["retention-days"] == 7
+    assert not report.get("continue-on-error", False)
+
+
 def test_optional_native_jobs_are_gated_isolated_and_use_suite_filter_and_required_results():
     jobs = workflow("unity-tests.yml")["jobs"]
     job = jobs["optionalIntegrations"]

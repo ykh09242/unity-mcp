@@ -103,8 +103,13 @@ The profile also stages the official uGUI package's TMP Essential Resources into
 generated project, retaining font/settings GUIDs. It excludes example resources and
 rejects archive path escapes or collisions with existing project assets before writing.
 
-`optionalPackageInputs` runs without license secrets and uploads the prepared source
-project as a tar archive, preserving package modes and relative `file:` references.
+`optionalPackageInputs` runs without license secrets and always retains the successful
+package resolution receipt as `optional-package-resolution-<version>`. When
+`UNITY_RUN_LICENSED_TESTS` is `true`, it also archives and uploads the prepared source
+project for licensed consumers, preserving package modes and relative `file:` references.
+With native execution disabled, the dependency checks still run but the unused large
+archive and upload are skipped. Opting in without usable credentials still prepares the
+archive; the separate license gate decides whether native execution can proceed.
 This proves package preparation only. The small reference-compiler cache lacks graphics
 package sources and cannot substitute for the complete Editor image in this job.
 

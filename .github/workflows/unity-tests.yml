@@ -288,9 +288,22 @@ jobs:
             --unity-version "$UNITY_VERSION" --image "$UNITY_IMAGE" \
             --output ".unity-ci/optional-$UNITY_VERSION" --include-optional
 
+      # Retain dependency evidence even when no licensed job can consume the project.
+      - name: Upload optional package resolution
+        if: always() && steps.packages.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: optional-package-resolution-${{ matrix.unity.version }}
+          path: ${{ steps.packages.outputs.resolution_report }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+      # Skip the large transfer when native execution is disabled, keeping preparation above.
       # Preserve relative file: links and package executable modes across jobs.
       # The generator copies only source inputs, excluding Library and credentials.
       - name: Archive prepared optional project
+        if: vars.UNITY_RUN_LICENSED_TESTS == 'true'
         env:
           UNITY_VERSION: ${{ matrix.unity.version }}
         run: |
@@ -299,6 +312,7 @@ jobs:
             package packages project resolved-packages.json
 
       - name: Upload prepared optional project
+        if: vars.UNITY_RUN_LICENSED_TESTS == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: optional-project-${{ matrix.unity.version }}
