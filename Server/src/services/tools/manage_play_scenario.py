@@ -46,7 +46,7 @@ class PlayScenarioResponse(TypedDict, total=False):
         "active-scene hierarchy paths. uGUI click_mode direct dispatches events; raycast verifies a visible hit. "
         "wait conditions support stability and object count/active/component/property. log_policy defaults "
         "strict; metrics are diagnostic, resources assert registered growth and screenshots/timeline opt-in. "
-        "reset_state invokes registered reset_ids explicitly; query_budget bounds actual target searches. Tags select "
+        "wait_state reads an explicit registered state_id scalar without reflection; reset_state invokes registered reset_ids explicitly; query_budget bounds actual target searches. Tags select "
         "sequential suite children in one Editor. Unity polls; Python does not. End leaves Play "
         "unchanged; load_scene does not reset DontDestroyOnLoad or static state without explicit reset participants."
     ),

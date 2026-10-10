@@ -64,6 +64,17 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                             Add(stage, index, step.Name, "passed", detail);
                             continue;
                         }
+                        if (step.Action == "wait_state")
+                        {
+                            Add(
+                                stage,
+                                index,
+                                step.Name,
+                                "deferred",
+                                "Explicit state provider resolution and scalar reads are deferred until runtime; no provider was read."
+                            );
+                            continue;
+                        }
                         if (step.Action == "reset_state")
                         {
                             Add(

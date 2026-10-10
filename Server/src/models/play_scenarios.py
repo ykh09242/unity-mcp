@@ -28,7 +28,9 @@ ScenarioAction = Literal[
     "suite_cancel",
     "suite_reports",
 ]
-StepAction = Literal["load_scene", "wait_scene", "click_ui", "wait_object", "reset_state"]
+StepAction = Literal[
+    "load_scene", "wait_scene", "click_ui", "wait_object", "reset_state", "wait_state"
+]
 TargetId = Annotated[str, Field(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
 
 
@@ -50,17 +52,20 @@ def _condition_text(value: str) -> str:
     return value
 
 
+ScenarioScalar = (
+    Annotated[bool, Field(strict=True)]
+    | Annotated[int, Field(strict=True, ge=-(2**63), le=2**63 - 1)]
+    | Annotated[float, Field(strict=True, allow_inf_nan=False)]
+    | Annotated[str, Field(strict=True, max_length=1024)]
+)
+
+
 class PlayScenarioPropertyCondition(BaseModel):
     """Compare one serialized component property with an exact finite JSON scalar."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     path: Annotated[str, Field(strict=True, min_length=1, max_length=256)]
-    equals: (
-        Annotated[bool, Field(strict=True)]
-        | Annotated[int, Field(strict=True, ge=-(2**63), le=2**63 - 1)]
-        | Annotated[float, Field(strict=True, allow_inf_nan=False)]
-        | Annotated[str, Field(strict=True, max_length=1024)]
-    )
+    equals: ScenarioScalar
 
     @field_validator("equals", mode="before")
     @classmethod
@@ -155,6 +160,8 @@ class ScenarioStep(BaseModel):
     target: Annotated[str, Field(strict=True, min_length=1, max_length=4096)] | None = None
     target_id: TargetId | None = None
     reset_ids: Annotated[list[TargetId], Field(min_length=1, max_length=16)] | None = None
+    state_id: TargetId | None = None
+    state_equals: ScenarioScalar | None = None
     click_mode: Literal["direct", "raycast"] | None = None
     timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=120)] = 30
     count: Annotated[int, Field(strict=True, ge=0, le=10000)] | None = None
@@ -162,6 +169,12 @@ class ScenarioStep(BaseModel):
     component: Annotated[str, Field(strict=True, min_length=1, max_length=256)] | None = None
     property: PlayScenarioPropertyCondition | None = None
     stable_for_ms: Annotated[int, Field(strict=True, ge=0, le=60000)] | None = None
+
+    @field_validator("state_equals", mode="before")
+    @classmethod
+    def check_state_scalar(cls, value: JsonValue) -> JsonValue:
+        """Read-only probes share exact scalar and UTF-16 bounds with property conditions."""
+        return PlayScenarioPropertyCondition.check_scalar_bounds(value)
 
     @field_validator("component")
     @classmethod
@@ -186,12 +199,30 @@ class ScenarioStep(BaseModel):
                 if self.reset_ids is None or len(set(self.reset_ids)) != len(self.reset_ids):
                     message = "reset_state requires unique reset_ids"
                     raise ValueError(message)
+            case "wait_state":
+                if self.model_fields_set - {
+                    "name",
+                    "action",
+                    "timeout_seconds",
+                    "state_id",
+                    "state_equals",
+                    "stable_for_ms",
+                }:
+                    raise ValueError(
+                        "wait_state accepts only name, action, timeout_seconds, state_id, state_equals and stable_for_ms"
+                    )
+                if self.state_id is None or self.state_equals is None:
+                    raise ValueError(
+                        "wait_state requires state_id and a non-null scalar state_equals"
+                    )
             case "load_scene" | "wait_scene" | "click_ui" | "wait_object":
                 if "reset_ids" in self.model_fields_set:
                     message = "reset_ids is only valid for reset_state"
                     raise ValueError(message)
             case unreachable:
                 assert_never(unreachable)
+        if self.action != "wait_state" and self.model_fields_set & {"state_id", "state_equals"}:
+            raise ValueError("state_id and state_equals are only valid for wait_state")
         object_fields = {"count", "active", "component", "property"}
         optional_fields = object_fields | {"stable_for_ms", "target_id", "click_mode"}
         authored_fields = self.model_fields_set & optional_fields
@@ -219,7 +250,7 @@ class ScenarioStep(BaseModel):
                 if self.property is not None and self.component is None:
                     message = "Property conditions require component"
                     raise ValueError(message)
-            case "wait_scene":
+            case "wait_scene" | "wait_state":
                 if authored_fields & object_fields:
                     message = "Object conditions are only valid for wait_object"
                     raise ValueError(message)
@@ -260,7 +291,7 @@ class ScenarioStep(BaseModel):
                     raise ValueError(message)
                 if self.target is not None:
                     _path_segments(self.target)
-            case "reset_state":
+            case "reset_state" | "wait_state":
                 pass
             case unreachable:
                 assert_never(unreachable)

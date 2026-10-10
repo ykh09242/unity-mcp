@@ -501,7 +501,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 "resource_assertion_failed",
                 "resource_measurement_failed",
                 "query_budget_exceeded",
-                "reset_participant_unavailable"
+                "reset_participant_unavailable",
+                "state_provider_unavailable",
+                "state_provider_error"
             );
             if (failure["stage"].Type != JTokenType.Null)
                 State((string)failure["stage"], "setup", "main", "cleanup");

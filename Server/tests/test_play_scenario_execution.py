@@ -228,3 +228,104 @@ async def test_sdk_execution_options_preserve_strict_wire_and_single_dispatch(ro
         == PlayScenarioCommand(action="save", scenario=definition).wire_parameters()
     )
     assert route.send.call_args.kwargs == {"retry_on_reload": False}
+
+
+@pytest.mark.parametrize("value", [False, 0, -(2**63), 2**63 - 1, 1.25, "ready", ""])
+def test_read_only_wait_state_preserves_typed_scalar_and_stability(value):
+    # Given: an explicitly registered scalar probe is observed through its stable ID.
+    authored = {
+        "name": "Wait state",
+        "action": "wait_state",
+        "state_id": "Fixture.State",
+        "state_equals": value,
+        "stable_for_ms": 250,
+    }
+    # When: the shared Python wire schema parses the condition.
+    step = ScenarioStep.model_validate(authored)
+    # Then: exact scalar kind and bounded stability survive the command boundary.
+    actual = step.model_dump(exclude_none=True)
+    assert actual["state_equals"] == value and type(actual["state_equals"]) is type(value)
+    assert actual["state_id"] == "Fixture.State" and actual["stable_for_ms"] == 250
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {},
+        {"state_id": "bad id", "state_equals": 1},
+        {"state_id": "State", "state_equals": None},
+        {"state_id": "State", "state_equals": []},
+        {"state_id": "State", "state_equals": 2**63},
+        {"state_id": "State", "state_equals": float("inf")},
+        {"state_id": "State", "state_equals": "x" * 1025},
+        {"state_id": "State", "state_equals": 1, "target": "Player"},
+        {"state_id": "State", "state_equals": 1, "component": None},
+        {"state_id": "State", "state_equals": 1, "reset_ids": ["State"]},
+        {"state_id": "State", "state_equals": 1, "scene": None},
+    ],
+)
+def test_wait_state_rejects_invalid_scalar_or_unused_selectors(fields):
+    # Given: a condition omits its identity/value or contains an unused side-effect selector.
+    # When/Then: the schema rejects it before a provider could be touched.
+    with pytest.raises(ValidationError):
+        ScenarioStep.model_validate({"name": "State", "action": "wait_state", **fields})
+
+
+@pytest.mark.parametrize(
+    "action,fields",
+    [
+        ("load_scene", {"scene": "Assets/Menu.unity"}),
+        ("wait_scene", {"scene": "Assets/Menu.unity"}),
+        ("click_ui", {"target": "Canvas/Start"}),
+        ("wait_object", {"target_id": "Player"}),
+        ("reset_state", {"reset_ids": ["State"]}),
+    ],
+)
+def test_other_actions_reject_state_probe_fields(action, fields):
+    # Given: a state selector is authored on an unrelated existing action.
+    # When/Then: it cannot be ignored silently by the native dispatch.
+    with pytest.raises(ValidationError):
+        ScenarioStep.model_validate(
+            {"name": "Step", "action": action, "state_id": "State", "state_equals": 1, **fields}
+        )
+
+
+@pytest.mark.parametrize("value", [False, 9007199254740993, 1.0, "state\U0001f600"])
+def test_wait_state_preserves_scalar_cli_wire(wire, tmp_path, value):
+    definition = copy.deepcopy(DEFINITION)
+    definition["steps"].append(
+        {
+            "name": "Observe",
+            "action": "wait_state",
+            "state_id": "game.state",
+            "state_equals": value,
+            "stable_for_ms": 10,
+        }
+    )
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps(definition))
+    expected = PlayScenarioCommand(action="save", scenario=definition).wire_parameters()
+    result = CliRunner().invoke(cli, ["play-scenario", "save", str(path)])
+    assert result.exit_code == 0, result.output
+    assert wire[0][0]["params"] == expected
+    scalar = expected["scenario"]["steps"][-1]["state_equals"]
+    assert scalar == value and type(scalar) is type(value)
+
+
+@pytest.mark.asyncio
+async def test_wait_state_public_tool_dispatches_one_preserved_scalar(route):
+    definition = copy.deepcopy(DEFINITION)
+    definition["steps"].append(
+        {
+            "name": "Observe",
+            "action": "wait_state",
+            "state_id": "game.state",
+            "state_equals": 9007199254740993,
+        }
+    )
+    await manage_play_scenario(
+        None, action="save", scenario=PlayScenario.model_validate(definition)
+    )
+    actual = route.send.call_args.args[-1]["scenario"]["steps"][-1]
+    assert actual["state_equals"] == 9007199254740993
+    route.send.assert_awaited_once()

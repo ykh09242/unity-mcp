@@ -9,6 +9,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     public sealed partial class PlayScenarioEngine
     {
         private PlayScenarioResetRegistry.Snapshot _resetSnapshot;
+        private PlayScenarioStateRegistry.Snapshot _stateSnapshot;
+        private PlayScenarioStateValue _stateExpected;
+        private string _stateExpectedText;
         private bool _queryBudgetExceeded;
         private string _lastObservation;
         private string _lastObservationCode;
@@ -19,6 +22,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private PlayScenarioObservation EvaluateCounted(PlayScenarioStep step, bool firstPoll, PlayScenarioStepResult result)
         {
+            if (step.Action == "wait_state")
+                return EvaluateState(step, firstPoll);
             if (step.Action == "reset_state")
             {
                 if (firstPoll)
@@ -57,6 +62,69 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     result.QueryCounts.HierarchyVisits = Add(result.QueryCounts.HierarchyVisits, visits);
                 }
             }
+        }
+
+        private PlayScenarioObservation EvaluateState(PlayScenarioStep step, bool firstPoll)
+        {
+            if (firstPoll)
+            {
+                _stateExpected = PlayScenarioStateValue.FromJson(step.StateEquals);
+                _stateExpectedText = Bounded(_stateExpected.JsonText(), 2048);
+                _stateSnapshot = PlayScenarioStateRegistry.Resolve(step.StateId);
+            }
+            if (_stateSnapshot == null)
+                throw new PlayScenarioException(
+                    new PlayScenarioFailure
+                    {
+                        Code = "state_provider_unavailable",
+                        Target = step.StateId,
+                        Message = "A started state probe cannot resume after losing its snapshot.",
+                    }
+                );
+            bool available = _stateSnapshot.TryRead(out PlayScenarioStateValue actual, out bool providerMissing);
+            string expected = _stateExpectedText;
+            if (!available)
+            {
+                string detail = providerMissing
+                    ? "Waiting for registered state provider: " + step.StateId
+                    : "Waiting for state provider readiness: " + step.StateId;
+                return new PlayScenarioObservation(
+                    false,
+                    detail,
+                    new PlayScenarioFailure
+                    {
+                        Code = "condition_unmet",
+                        Target = step.StateId,
+                        Expected = Bounded(expected, 2048),
+                        Actual = providerMissing ? "provider not registered" : "value not ready",
+                        Message = detail,
+                    }
+                );
+            }
+            bool equal = actual.Matches(_stateExpected);
+            string actualText = actual.JsonText();
+            string observation = Bounded("State " + step.StateId + ": " + actualText + "; expected: " + expected + ".", 2048);
+            return new PlayScenarioObservation(
+                equal,
+                observation,
+                equal
+                    ? null
+                    : new PlayScenarioFailure
+                    {
+                        Code = "condition_unmet",
+                        Target = step.StateId,
+                        Expected = Bounded(expected, 2048),
+                        Actual = Bounded(actualText, 2048),
+                        Message = observation,
+                    }
+            );
+        }
+
+        private void ClearStateProbe()
+        {
+            _stateSnapshot = null;
+            _stateExpected = default;
+            _stateExpectedText = null;
         }
 
         private static long Delta(long before, long after) => before >= 0 && after >= before ? after - before : 0;

@@ -120,7 +120,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     "stable_for_ms",
                     "target_id",
                     "click_mode",
-                    "reset_ids"
+                    "reset_ids",
+                    "state_id",
+                    "state_equals"
                 );
                 var parsed = new PlayScenarioStep
                 {
@@ -128,6 +130,25 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     Action = Text(step, "action", 32),
                     TimeoutSeconds = Integer(step, "timeout_seconds", 1, 120, 30),
                 };
+                if (parsed.Action == "wait_state")
+                {
+                    Fields(step, "name", "action", "timeout_seconds", "state_id", "state_equals", "stable_for_ms");
+                    parsed.StateId = Text(step, "state_id", 128);
+                    if (!MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget.IsValidTargetId(parsed.StateId))
+                        throw new ArgumentException("state_id must contain 1-128 permitted identifier characters.");
+                    MCPForUnity.Runtime.PlayScenarios.PlayScenarioStateValue.FromJson(step["state_equals"]);
+                    parsed.StateEquals = step["state_equals"].DeepClone();
+                    if (step.Property("stable_for_ms") != null)
+                    {
+                        parsed.StableForMs = Integer(step, "stable_for_ms", 0, 60000, 0);
+                        if (parsed.StableForMs >= parsed.TimeoutSeconds * 1000)
+                            throw new ArgumentException("stable_for_ms must be less than the step timeout.");
+                    }
+                    result.Add(parsed);
+                    continue;
+                }
+                if (step.Property("state_id") != null || step.Property("state_equals") != null)
+                    throw new ArgumentException("state_id and state_equals are permitted only on wait_state.");
                 if (parsed.Action == "reset_state")
                 {
                     Fields(step, "name", "action", "timeout_seconds", "reset_ids");
@@ -436,6 +457,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         [JsonProperty("target_id", NullValueHandling = NullValueHandling.Ignore)]
         public string TargetId;
+
+        [JsonProperty("state_id", NullValueHandling = NullValueHandling.Ignore)]
+        public string StateId;
+
+        [JsonProperty("state_equals", NullValueHandling = NullValueHandling.Ignore)]
+        public JToken StateEquals;
 
         [JsonProperty("reset_ids", NullValueHandling = NullValueHandling.Ignore)]
         public List<string> ResetIds;

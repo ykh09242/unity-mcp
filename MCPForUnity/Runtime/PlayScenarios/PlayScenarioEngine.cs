@@ -166,6 +166,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 result.StartedUnixMs = now;
                 _observationFailure = null;
                 _resetSnapshot = null;
+                ClearStateProbe();
                 _lastObservation = null;
                 _hasObservation = false;
                 Timeline(now, "step_started", result.Name, result);
@@ -213,6 +214,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 result.FinishedUnixMs = now;
                 Timeline(now, "step_passed", result.Detail, result);
                 _resetSnapshot = null;
+                ClearStateProbe();
                 State.Cursor++;
                 State.NextPollUnixMs = now;
                 Revision++;
@@ -320,6 +322,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             State.PendingError = Bounded(error, 4096);
             Timeline(now, "outcome_requested", status + ": " + State.PendingError);
             _resetSnapshot = null;
+            if (State.Phase != "cleaning")
+                ClearStateProbe();
             CaptureFailure(now);
             Revision++;
             if (State.Phase == "cleaning")
@@ -363,6 +367,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return;
             }
             _resetSnapshot = null;
+            ClearStateProbe();
             Timeline(now, "cleanup_started", "Best-effort cleanup started.", State.Steps[cleanup]);
             State.Cursor = cleanup;
             State.Phase = "cleaning";
@@ -390,6 +395,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             result.FinishedUnixMs = now;
             Timeline(now, "cleanup_failed", result.Detail, result);
             _resetSnapshot = null;
+            ClearStateProbe();
             State.Cursor++;
             State.NextPollUnixMs = now;
             Revision++;
@@ -445,7 +451,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Stage = failure.Stage ?? result?.Stage,
                 Iteration = failure.Iteration ?? result?.Iteration,
                 StepIndex = resourceFailure ? null : failure.StepIndex ?? result?.StepIndex,
-                Target = Bounded(failure.Target ?? step?.Target ?? step?.TargetId, 4096),
+                Target = Bounded(failure.Target ?? step?.Target ?? step?.TargetId ?? step?.StateId, 4096),
                 Component = Bounded(failure.Component ?? step?.Component, 256),
                 PropertyPath = Bounded(failure.PropertyPath ?? step?.Property?.Path, 256),
                 Expected = Bounded(failure.Expected ?? expected, 2048),
@@ -724,6 +730,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             _resourceBaseline = null;
             _observationFailure = null;
             _resetSnapshot = null;
+            ClearStateProbe();
             _lastObservation = null;
             try
             {
