@@ -1,0 +1,85 @@
+"""Save and run bounded Unity-owned Play Mode scenarios without Python polling."""
+
+from typing import Annotated
+
+from fastmcp import Context
+from mcp.types import ToolAnnotations
+from models.models import MCPResponse
+from models.play_scenarios import (
+    JobId,
+    PlayScenario,
+    PlayScenarioCommand,
+    RepeatCount,
+    RunTimeout,
+    ScenarioAction,
+    ScenarioName,
+)
+from pydantic import JsonValue, ValidationError
+from services.registry import mcp_for_unity_tool
+from services.tools import get_unity_instance_from_context
+from transport.legacy.unity_connection import async_send_command_with_retry
+from transport.unity_transport import send_with_unity_instance
+from typing_extensions import TypedDict
+
+
+class PlayScenarioResponse(TypedDict, total=False):
+    """Preserve Unity job state, per-step results and bounded failure logs."""
+
+    success: bool
+    message: str
+    error: str
+    code: str
+    hint: str
+    data: JsonValue
+
+
+@mcp_for_unity_tool(
+    group="testing",
+    description=(
+        "Save/get/list/delete repeatable Play Mode scenarios and run/status/cancel Unity-owned jobs. "
+        "save takes a whole scenario definition; get/delete/run take its name. "
+        "status/cancel require a 32-character lowercase hexadecimal job_id. "
+        "run returns immediately, enters Play if needed and reloads the first scene each repeat. "
+        "Steps load_scene/wait_scene use Assets/... .unity paths; click_ui/wait_object use exact "
+        "active-scene hierarchy paths. uGUI clicks dispatch direct events, not UI Toolkit or occlusion tests. "
+        "Conditions are polled in Unity; Python creates no polling task. Completion/cancel leaves Play "
+        "unchanged; repeats do not reset DontDestroyOnLoad or static state."
+    ),
+    annotations=ToolAnnotations(
+        title="Manage Play Scenario", readOnlyHint=False, destructiveHint=True
+    ),
+)
+async def manage_play_scenario(
+    ctx: Context,
+    action: Annotated[ScenarioAction, "save, get, list, delete, run, status or cancel"],
+    scenario: Annotated[PlayScenario | None, "Whole scenario definition for save"] = None,
+    name: Annotated[ScenarioName | None, "Saved scenario name for get/delete/run"] = None,
+    job_id: Annotated[JobId | None, "Required for status/cancel; optional run request key"] = None,
+    repeat_count: Annotated[RepeatCount | None, "run repetitions, default 1"] = None,
+    timeout_seconds: Annotated[
+        RunTimeout | None, "run total timeout in seconds, default 300"
+    ] = None,
+) -> PlayScenarioResponse:
+    """Validate once, resolve the selected instance once and dispatch without replay."""
+    try:
+        command = PlayScenarioCommand(
+            action=action,
+            scenario=scenario,
+            name=name,
+            job_id=job_id,
+            repeat_count=repeat_count,
+            timeout_seconds=timeout_seconds,
+        )
+    except ValidationError as exc:
+        return {"success": False, "error": f"Invalid play scenario parameters: {exc}"}
+    unity_instance = await get_unity_instance_from_context(ctx)
+    response = await send_with_unity_instance(
+        async_send_command_with_retry,
+        unity_instance,
+        "manage_play_scenario",
+        command.wire_parameters(),
+        retry_on_reload=False,
+    )
+    if isinstance(response, MCPResponse):
+        return response.model_dump(exclude_none=True)
+    return response

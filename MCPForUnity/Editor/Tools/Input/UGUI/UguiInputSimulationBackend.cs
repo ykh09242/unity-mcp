@@ -11,24 +11,78 @@ namespace MCPForUnity.Editor.Tools.Input
 {
     /// <summary>Direct uGUI event dispatch, independent of the project's raw input backend.</summary>
     [InitializeOnLoad]
-    public sealed class UguiInputSimulationBackend : IUguiInputSimulationBackend
+    public sealed class UguiInputSimulationBackend : IUguiInputSimulationBackend, IUguiScenarioClickBackend
     {
         static UguiInputSimulationBackend() => ManageInput.UguiBackend = new UguiInputSimulationBackend();
 
+        private struct ClickContext
+        {
+            public EventSystem EventSystem;
+            public Canvas Canvas;
+            public GameObject Handler;
+            public Selectable Selectable;
+        }
+
         public object Click(GameObject target)
         {
+            TryPrepare(target, false, out var context, out _);
+            return Dispatch(target, context);
+        }
+
+        public bool TryClick(GameObject target, out object result, out string detail)
+        {
+            result = null;
+            if (!TryPrepare(target, true, out var context, out detail))
+                return false;
+            result = Dispatch(target, context);
+            detail = "Dispatched uGUI pointer click.";
+            return true;
+        }
+
+        private static bool TryPrepare(GameObject target, bool waitForReady, out ClickContext context, out string detail)
+        {
+            context = default;
+            detail = null;
+            if (target == null)
+                throw new ArgumentException("ui_click requires a non-null target.");
             EventSystem eventSystem = EventSystem.current;
             if (eventSystem == null || !eventSystem.isActiveAndEnabled)
-                throw new ArgumentException("ui_click requires an active EventSystem in the scene.");
+                return NotReady("ui_click requires an active EventSystem in the scene.", waitForReady, out detail);
             Canvas canvas = target.GetComponentInParent<Canvas>();
-            if (canvas == null || !canvas.isActiveAndEnabled)
+            if (canvas == null)
                 throw new ArgumentException("ui_click target must be beneath an active Canvas.");
+            if (!canvas.isActiveAndEnabled)
+                return NotReady("ui_click target must be beneath an active Canvas.", waitForReady, out detail);
             GameObject handler = ExecuteEvents.GetEventHandler<IPointerClickHandler>(target);
             if (handler == null)
                 throw new ArgumentException("target has no active uGUI pointer click handler in its parent chain.");
             Selectable selectable = handler.GetComponent<Selectable>();
             if (selectable != null && !selectable.IsInteractable())
-                throw new ArgumentException("target's Selectable is not interactable.");
+                return NotReady("target's Selectable is not interactable.", waitForReady, out detail);
+            context = new ClickContext
+            {
+                EventSystem = eventSystem,
+                Canvas = canvas,
+                Handler = handler,
+                Selectable = selectable,
+            };
+            return true;
+        }
+
+        private static bool NotReady(string reason, bool waitForReady, out string detail)
+        {
+            detail = reason;
+            if (!waitForReady)
+                throw new ArgumentException(reason);
+            return false;
+        }
+
+        private static object Dispatch(GameObject target, ClickContext context)
+        {
+            EventSystem eventSystem = context.EventSystem;
+            Canvas canvas = context.Canvas;
+            GameObject handler = context.Handler;
+            Selectable selectable = context.Selectable;
             var rect = target.transform as RectTransform;
             Camera camera = canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
             Vector2 position = RectTransformUtility.WorldToScreenPoint(

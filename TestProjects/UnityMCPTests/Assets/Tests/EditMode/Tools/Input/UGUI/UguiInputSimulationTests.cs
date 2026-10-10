@@ -24,10 +24,15 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             IPointerExitHandler
     {
         public readonly List<string> Events = new List<string>();
+        public Action PointerDownAction;
 
         public void OnPointerEnter(PointerEventData data) => Events.Add("enter");
 
-        public void OnPointerDown(PointerEventData data) => Events.Add("down");
+        public void OnPointerDown(PointerEventData data)
+        {
+            Events.Add("down");
+            PointerDownAction?.Invoke();
+        }
 
         public void OnPointerUp(PointerEventData data) => Events.Add("up");
 
@@ -113,6 +118,52 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             // When/Then: direct dispatch respects uGUI interactability.
             Assert.Throws<ArgumentException>(() => new UguiInputSimulationBackend().Click(_button.gameObject));
             Assert.That(count, Is.Zero);
+        }
+
+        [Test]
+        public void ScenarioClickWaitsBeforeEventsThenDispatchesOnce()
+        {
+            InputPointerProbe probe = _button.gameObject.AddComponent<InputPointerProbe>();
+            int clicks = 0;
+            _button.onClick.AddListener(() => clicks++);
+            _button.interactable = false;
+            var backend = new UguiInputSimulationBackend();
+            Assert.That(backend.TryClick(_button.gameObject, out object waiting, out string detail), Is.False);
+            Assert.That(waiting, Is.Null);
+            Assert.That(detail, Does.Contain("interactable"));
+            Assert.That(probe.Events, Is.Empty);
+            Assert.That(clicks, Is.Zero);
+            _button.interactable = true;
+            Assert.That(backend.TryClick(_button.gameObject, out object result, out _), Is.True);
+            Assert.That(result, Is.TypeOf<SuccessResponse>());
+            Assert.That(probe.Events, Is.EqualTo(new[] { "enter", "down", "up", "click", "exit" }));
+            Assert.That(clicks, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ScenarioInactiveCanvasWaitsWithoutPointerEvents()
+        {
+            InputPointerProbe probe = _button.gameObject.AddComponent<InputPointerProbe>();
+            _canvas.GetComponent<Canvas>().enabled = false;
+            Assert.That(new UguiInputSimulationBackend().TryClick(_button.gameObject, out _, out _), Is.False);
+            Assert.That(probe.Events, Is.Empty);
+        }
+
+        [Test]
+        public void ScenarioInvalidTargetFailsRatherThanWaitingForever()
+        {
+            var backend = new UguiInputSimulationBackend();
+            Assert.Throws<ArgumentException>(() => backend.TryClick(null, out _, out _));
+            Assert.Throws<ArgumentException>(() => backend.TryClick(_canvas, out _, out _));
+        }
+
+        [Test]
+        public void ScenarioPostDispatchFailureThrowsAndReleasesPointerState()
+        {
+            InputPointerProbe probe = _button.gameObject.AddComponent<InputPointerProbe>();
+            probe.PointerDownAction = () => _button.interactable = false;
+            Assert.Throws<InvalidOperationException>(() => new UguiInputSimulationBackend().TryClick(_button.gameObject, out _, out _));
+            Assert.That(probe.Events, Is.EqualTo(new[] { "enter", "down", "up", "exit" }));
         }
     }
 }
