@@ -109,3 +109,11 @@ def cancel(job_id: str):
     An in-flight native scene load cannot be cancelled.
     """
     _dispatch(action="cancel", job_id=job_id)
+
+
+@play_scenario.command("reports")
+@click.option("--name", default=None, help="Optional saved scenario name filter.")
+@handle_unity_errors
+def reports(name: str | None):
+    """Read retained terminal reports once; history outcomes do not change query success."""
+    _dispatch(action="reports", name=name)

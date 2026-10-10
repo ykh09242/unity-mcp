@@ -233,3 +233,71 @@ def test_cli_job_transport_failure_keeps_stderr_and_single_request(monkeypatch, 
         failure
     ] in result.stderr
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("name", [None, "menu-start"])
+def test_cli_reports_preserves_failed_history_and_exits_zero(wire, name):
+    # Given: a successful history query contains a failed retained job.
+    calls, reply = wire
+    reply["data"] = {"reports": [{"job_id": JOB_ID, "status": "failed"}]}
+    args = ["--name", name] if name else []
+    # When: the registered reports command requests history once.
+    result = CliRunner().invoke(cli, ["--format", "json", "play-scenario", "reports", *args])
+    # Then: query success does not depend on historical scenario outcomes.
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert json.loads(result.stdout) == reply
+    assert calls[0]["params"] == {"action": "reports", **({"name": name} if name else {})}
+    assert len(calls) == 1
+
+
+def test_cli_save_preserves_expanded_lifecycle_conditions_and_options(wire, tmp_path):
+    # Given: one complete authored definition includes all new options.
+    from .test_play_scenario_hardening import HARDENED
+
+    path = tmp_path / "expanded.json"
+    path.write_text(json.dumps(HARDENED), encoding="utf-8")
+    # When: the public CLI saves it once.
+    result = CliRunner().invoke(cli, ["--format", "json", "play-scenario", "save", str(path)])
+    # Then: false/zero conditions and each stage survive the actual HTTP boundary.
+    assert result.exit_code == 0, result.output
+    calls, reply = wire
+    assert len(calls) == 1
+    definition = calls[0]["params"]["scenario"]
+    for field, value in HARDENED.items():
+        if field.endswith("steps"):
+            for expected, actual in zip(value, definition[field], strict=True):
+                assert actual == {"timeout_seconds": 30, **expected}
+        else:
+            assert definition[field] == value
+    assert json.loads(result.stdout) == reply
+
+
+@pytest.mark.parametrize("args", [["--name", "../unsafe"], ["--job-id", JOB_ID], ["--limit", "1"]])
+def test_cli_reports_invalid_arguments_have_no_request(wire, args):
+    # Given: reports supports an optional canonical name and no additional wire options.
+    # When: invalid history arguments enter the registered CLI.
+    result = CliRunner().invoke(cli, ["--format", "json", "play-scenario", "reports", *args])
+    # Then: diagnostics stay on stderr and no REST command is sent.
+    assert result.exit_code != 0
+    assert result.stdout == ""
+    assert result.stderr
+    assert not wire[0]
+
+
+def test_cli_oversized_definition_has_no_request(wire, tmp_path):
+    # Given: a valid-shaped definition exceeds the existing 64 KiB file budget.
+    definition = {
+        "name": "oversized",
+        "steps": [DEFINITION["steps"][0]]
+        + [{"name": "Player", "action": "wait_object", "target": "x" * 4096}] * 31,
+    }
+    path = tmp_path / "oversized.json"
+    path.write_text(json.dumps(definition), encoding="utf-8")
+    # When: save reads the authored file through the public CLI.
+    result = CliRunner().invoke(cli, ["--format", "json", "play-scenario", "save", str(path)])
+    # Then: size rejection precedes native execution and keeps machine stdout empty.
+    assert result.exit_code != 0
+    assert result.stdout == ""
+    assert result.stderr
+    assert not wire[0]

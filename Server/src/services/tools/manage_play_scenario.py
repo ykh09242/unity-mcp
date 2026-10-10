@@ -36,13 +36,14 @@ class PlayScenarioResponse(TypedDict, total=False):
 @mcp_for_unity_tool(
     group="testing",
     description=(
-        "Save/get/list/delete repeatable Play Mode scenarios and run/status/cancel Unity-owned jobs. "
-        "save takes a whole scenario definition; get/delete/run take its name. "
+        "Save/get/list/delete scenarios, reports history and run/status/cancel Unity-owned jobs. "
+        "save takes a whole definition; get/delete/run take its name; reports accepts optional name. "
         "status/cancel require a 32-character lowercase hexadecimal job_id. "
-        "run returns immediately, enters Play if needed and reloads the first scene each repeat. "
+        "run returns immediately; each repeat executes setup_steps, steps, then bounded cleanup_steps. "
         "Steps load_scene/wait_scene use Assets/... .unity paths; click_ui/wait_object use exact "
         "active-scene hierarchy paths. uGUI clicks dispatch direct events, not UI Toolkit or occlusion tests. "
-        "Conditions are polled in Unity; Python creates no polling task. Completion/cancel leaves Play "
+        "wait conditions support stability and object count/active/component/property. log_policy defaults "
+        "strict; metrics are diagnostic and screenshots opt-in. Unity polls; Python does not. End leaves Play "
         "unchanged; repeats do not reset DontDestroyOnLoad or static state."
     ),
     annotations=ToolAnnotations(
@@ -51,9 +52,11 @@ class PlayScenarioResponse(TypedDict, total=False):
 )
 async def manage_play_scenario(
     ctx: Context,
-    action: Annotated[ScenarioAction, "save, get, list, delete, run, status or cancel"],
+    action: Annotated[ScenarioAction, "save, get, list, delete, run, status, cancel or reports"],
     scenario: Annotated[PlayScenario | None, "Whole scenario definition for save"] = None,
-    name: Annotated[ScenarioName | None, "Saved scenario name for get/delete/run"] = None,
+    name: Annotated[
+        ScenarioName | None, "Saved name for get/delete/run; optional reports filter"
+    ] = None,
     job_id: Annotated[JobId | None, "Required for status/cancel; optional run request key"] = None,
     repeat_count: Annotated[RepeatCount | None, "run repetitions, default 1"] = None,
     timeout_seconds: Annotated[
