@@ -139,10 +139,39 @@ cleanup. Failure stops admission by default. Choosing the explicit continue poli
 observations but cannot erase the first failure or turn the overall session into a pass. Incomplete
 comparison modes are reported as incomplete, not successful or equivalent.
 
-`scheduled_iterations` counts slots admitted in each batch. `completed_iterations` counts distinct
-iterations with actual step execution in a final native report, including failed iterations. Untouched
-`skipped` slots never count as completed. Continuing after an early batch failure does not make those
-skipped slots complete, so the corresponding mode and JUnit completion check remain incomplete.
+New native reports contain `iteration_results_version: 1` and one `iteration_results` entry for each
+planned repeat. Each entry records its iteration number, status and nullable start/finish timestamps.
+The first permitted evaluation, including resource baseline initialization, starts an iteration.
+Completion follows cleanup and the resource/metrics boundary. A final native report has no pending or
+running iteration. Untouched slots become `skipped` with no start timestamp; a failure between
+iterations cannot start the next iteration or run its cleanup.
+
+Session schema version 2 exposes `iteration_counts` separately for each selected mode:
+
+| Counter | Meaning |
+| --- | --- |
+| `planned` | Requested slots for this mode. |
+| `executed` | Iterations with established execution: running, passed, failed, timed out or cancelled. |
+| `pending` | Slots not yet admitted while the session is running. |
+| `running` | An observed attempt without an established terminal outcome; legacy evidence may retain this state. |
+| `passed`, `failed`, `timed_out`, `cancelled` | Explicit terminal iteration outcomes. |
+| `skipped` | Slots established as not started in this session snapshot. |
+| `unknown` | Slots without enough evidence to establish execution or an outcome. |
+
+The state counters sum to `planned`; `executed` sums the five attempted states. `scheduled_iterations`
+counts admitted slots, and the existing `completed_iterations` field remains an alias for `executed`,
+including failures. It does not mean that those iterations passed. An arm is complete only when every
+planned slot was executed and no pending, running or unknown evidence remains. For example, with six
+planned slots and a three-repeat batch failing in iteration two, stopping gives two executed, one
+passed, one failed and four skipped. Continuing with a second identically failing batch gives four
+executed, two passed, two failed and two skipped. Neither result completes the arm.
+
+Readers still accept older native reports without a ledger. A validated legacy success retains its
+previous full-success meaning; unsuccessful reports require actual step starts, never the largest
+preallocated iteration number. Missing evidence stays unknown and unresolved earlier attempts stay
+unfinished. Outcome rows identify `iteration_results_source` as `native`, `legacy_steps` or
+`unavailable`. Session and Player JUnit properties expose the same counters without changing the
+existing one-testcase-per-child/session-scenario convention.
 
 Child outcomes are flushed to an append-only JSONL journal before the next admission. The journal has
 at most 2,000 bounded records; aggregate memory retains counters, the first failure and the last 32
@@ -150,8 +179,57 @@ summaries. Keep 1-64 detailed child output directories using `--retain-reports`;
 request and progress files share that retention boundary. Finalized child rows retain validated native
 PID, actual exit, process timestamps and request hash after pruning; valid native reports also retain
 their hash and build identity. Admission failures cannot claim process or report evidence. Summary
-and JUnit preserve those outcomes. This bounds runner evidence, not the game's own allocations
-or files.
+and JUnit preserve those outcomes. Compact failure text is bounded by its escaped JSON byte size;
+the retained native report keeps the original message. This bounds runner evidence, not the game's
+own allocations or files.
+
+## Recover an incomplete session snapshot
+
+The launcher writes an immutable `session-start.json` and flushes a bounded `admissions.jsonl` entry
+before each child launch. It flushes `outcomes.jsonl` after each observed child outcome. The replaceable
+`session.json` remains a compact checkpoint, so a damaged or stale checkpoint does not erase the
+original plan or establish that an admitted child passed.
+
+Recover into a different output directory:
+
+```sh
+unity-mcp --format json play-scenario player-session-recover reports/original-session \
+  --output-dir reports/recovered-sessions
+```
+
+The command creates a new directory named by `recovery_id`, retaining the original `session_id` for
+journal identity. It reads source evidence without launching, replaying, cancelling or changing any
+Player, source report or log. It cannot establish that the original process has stopped. Recovery is
+an evidence snapshot, never an automatic resume operation.
+
+Valid journal prefixes survive a torn final line. Admitted slots without a trustworthy outcome stay
+unknown. Missing or damaged admission evidence also leaves the unclassified remainder unknown;
+`recovery_admissions_complete` identifies whether the captured admission journal was intact. Legacy
+sessions can be recovered from their existing header, but old aggregate completion values are not
+trusted as iteration evidence. Invalid headers, unsafe paths and unsupported schema versions fail
+explicitly. Reads reject links/reparse points and enforce the existing row, byte and child bounds.
+
+Recovered summaries have `recovered: true`, an `interrupted` status, bounded `recovery_issues`, and an
+explicit incomplete JUnit case. The CLI exits **1**, even if every preserved child passed: producing
+a recovery snapshot does not turn an unconfirmed overall session into a successful automated check.
+Recovery does not copy native artifacts; recovered rows have no artifact path. Open the original
+session separately when its retained logs are needed.
+
+## Inspect Player sessions in the Editor
+
+In **Play Scenarios > Run & results**, expand **Imported Player session**. Choose **Open session.json**
+or enter a local **Session file** path, then use **Import snapshot**. The view shows per-mode planned,
+executed and outcome counters, compact failure location, and 25 child outcomes per page. Legacy
+sessions show their available legacy totals without inventing a missing outcome breakdown.
+
+**View saved steps and logs** reads the selected retained native report, verifies its recorded
+SHA-256, and supports stage, iteration and step filters. Logs are paged in bounded sections. The
+separate Player-log preview is bounded too. Evicted, missing, mismatched or unsafe artifacts are shown
+as unavailable. Recovered snapshots keep their explicit incomplete status and can still be inspected.
+
+Importing, paging and filtering use stored snapshots only. They add no scene/provider/status queries,
+file watcher or recurring refresh. Import the snapshot again to see newer persisted results. Version-2
+success claims and complete journal counters must agree; contradictory reports are rejected.
 
 ## Require actual Player CI
 
