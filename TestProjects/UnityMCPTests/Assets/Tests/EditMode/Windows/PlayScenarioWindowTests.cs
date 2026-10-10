@@ -911,6 +911,117 @@ namespace MCPForUnityTests.Editor.Windows
             StringAssert.Contains("Source revision (caller-provided): caller-label", rendered);
         }
 
+        [TestCase("String", "ready", JTokenType.String)]
+        [TestCase("Boolean", "true", JTokenType.Boolean)]
+        [TestCase("Integer", "9223372036854775807", JTokenType.Integer)]
+        [TestCase("Number", "1.25", JTokenType.Float)]
+        public void WaitStateTypedScalarStrictFieldsRoundTripAndDuplicate(string type, string text, JTokenType tokenType)
+        {
+            ConfigureTemplate();
+            Field<PopupField<string>>("stepAction1").value = "wait_state";
+            Assert.IsNull(Field<TextField>("stepTarget1"));
+            Assert.IsNull(Field<TextField>("stepTargetId1"));
+            Assert.IsNull(Field<TextField>("stepResetIds1"));
+            Assert.IsNull(Field<PopupField<string>>("stepClickMode1"));
+            Assert.IsNull(Field<TextField>("stepPropertyPath1"));
+            Field<TextField>("stepStateId1").value = "game.status";
+            Field<PopupField<string>>("stepStateType1").value = type;
+            Field<TextField>("stepStateValue1").value = text;
+            Field<IntegerField>("stepTimeout1").value = 9;
+            Field<Toggle>("stepStable1Enabled").value = true;
+            Field<IntegerField>("stepStable1").value = 750;
+            Assert.IsTrue(Field<Button>("saveScenario").enabledSelf);
+            var validated = PlayScenarioDefinition.Parse(JObject.FromObject(window.Draft, JsonSerializer.Create()));
+            Assert.AreEqual("game.status", validated.Steps[1].StateId);
+            Assert.AreEqual(tokenType, validated.Steps[1].StateEquals.Type);
+            if (type == "Integer")
+                Assert.AreEqual(long.MaxValue, (long)validated.Steps[1].StateEquals, "Integer editing must retain all 64 bits.");
+            if (type == "Number")
+                Assert.AreEqual(1.25, (double)validated.Steps[1].StateEquals);
+            var wire = (JObject)JObject.FromObject(validated, JsonSerializer.Create())["steps"][1];
+            CollectionAssert.AreEquivalent(
+                new[] { "name", "action", "timeout_seconds", "state_id", "state_equals", "stable_for_ms" },
+                wire.Properties().Select(property => property.Name)
+            );
+            Click("duplicateStep1");
+            Assert.AreEqual(type, Field<PopupField<string>>("stepStateType2").value);
+            Assert.AreEqual(tokenType, window.Draft.Steps[2].StateEquals.Type);
+            Assert.IsTrue(JToken.DeepEquals(window.Draft.Steps[1].StateEquals, window.Draft.Steps[2].StateEquals));
+            Click("saveScenario");
+            Assert.AreEqual(tokenType, store.Get("created-flow").Steps[1].StateEquals.Type);
+            Assert.AreEqual(750, store.Get("created-flow").Steps[1].StableForMs);
+        }
+
+        [TestCase("Boolean", "tru")]
+        [TestCase("Integer", "-")]
+        [TestCase("Integer", "9223372036854775808")]
+        [TestCase("Number", "1e")]
+        [TestCase("Number", "NaN")]
+        [TestCase("Number", "Infinity")]
+        [TestCase("Number", "1e309")]
+        public void WaitStateInvalidScalarBlocksSaveAndKeepsRawTypeAndTextAcrossReorder(string type, string text)
+        {
+            ConfigureTemplate();
+            Field<PopupField<string>>("stepAction1").value = "wait_state";
+            Field<TextField>("stepStateId1").value = "game.status";
+            Field<PopupField<string>>("stepStateType1").value = type;
+            Field<TextField>("stepStateValue1").value = text;
+            Assert.IsNull(window.Draft.Steps[1].StateEquals);
+            Assert.IsFalse(Field<Button>("saveScenario").enabledSelf);
+            Assert.IsNotEmpty(Field<Label>("stepStateError1").text);
+            Assert.Throws<ArgumentException>(() => window.SaveChanges());
+            Assert.AreEqual(0, store.List().Count);
+            Click("moveStepDown1");
+            Assert.AreEqual(type, Field<PopupField<string>>("stepStateType2").value);
+            Assert.AreEqual(text, Field<TextField>("stepStateValue2").value);
+            Assert.IsNotEmpty(Field<Label>("stepStateError2").text);
+            Assert.IsFalse(Field<Button>("saveScenario").enabledSelf);
+            Field<TextField>("stepStateValue2").value = type == "Boolean" ? "false" : "1";
+            Assert.IsTrue(Field<Button>("saveScenario").enabledSelf);
+        }
+
+        [Test]
+        public void WaitStateStringBoundsValidRawTextAndActionSwitchesDoNotLeaveIncompatibleFields()
+        {
+            ConfigureTemplate();
+            Field<PopupField<string>>("stepAction1").value = "wait_state";
+            Field<TextField>("stepStateId1").value = "game.status";
+            Field<TextField>("stepStateValue1").value = new string('x', 1024);
+            Assert.IsTrue(Field<Button>("saveScenario").enabledSelf);
+            Field<TextField>("stepStateValue1").value = new string('x', 1025);
+            Assert.IsFalse(Field<Button>("saveScenario").enabledSelf);
+            Assert.IsNotEmpty(Field<Label>("stepStateError1").text);
+            Field<PopupField<string>>("stepStateType1").value = "Integer";
+            Field<TextField>("stepStateValue1").value = "0007";
+            Field<PopupField<string>>("stepStateType1").value = "Number";
+            Assert.AreEqual("0007", Field<TextField>("stepStateValue1").value, "Changing scalar type preserves typed text.");
+            Assert.AreEqual(JTokenType.Float, window.Draft.Steps[1].StateEquals.Type);
+            Click("moveStepDown1");
+            Assert.AreEqual("Number", Field<PopupField<string>>("stepStateType2").value);
+            Assert.AreEqual("0007", Field<TextField>("stepStateValue2").value, "Rebuilding the row preserves valid edit text.");
+            Field<Toggle>("stepStable2Enabled").value = true;
+            Field<IntegerField>("stepStable2").value = 500;
+            Field<PopupField<string>>("stepAction2").value = "reset_state";
+            Assert.IsNull(window.Draft.Steps[2].StateId);
+            Assert.IsNull(window.Draft.Steps[2].StateEquals);
+            Assert.IsNull(window.Draft.Steps[2].StableForMs);
+            Assert.IsNull(Field<TextField>("stepStateValue2"));
+            Field<TextField>("stepResetIds2").value = "game.session";
+            Assert.IsTrue(Field<Button>("saveScenario").enabledSelf);
+            Field<PopupField<string>>("stepAction2").value = "wait_state";
+            Assert.IsNull(window.Draft.Steps[2].ResetIds);
+            Assert.IsNull(window.Draft.Steps[2].Target);
+            Assert.IsNull(window.Draft.Steps[2].Scene);
+            Assert.IsNull(Field<TextField>("stepResetIds2"));
+            Assert.IsFalse(Field<Button>("saveScenario").enabledSelf, "A new state probe requires an explicit stable ID.");
+            Field<TextField>("stepStateId2").value = "game.status";
+            Field<TextField>("stepStateValue2").value = "ready";
+            Assert.IsTrue(Field<Button>("saveScenario").enabledSelf);
+            Field<PopupField<string>>("stepAction0").value = "wait_state";
+            Field<TextField>("stepStateId0").value = "game.status";
+            Assert.IsFalse(Field<Button>("saveScenario").enabledSelf, "The first executed step must still load_scene.");
+        }
+
         [Test]
         public void ResetActionShowsOnlyIdsAndTimeoutAndClearsOtherActionFields()
         {
@@ -985,15 +1096,17 @@ namespace MCPForUnityTests.Editor.Windows
                 pickers++;
                 return "explicit-output";
             };
-            window.BuildPlayerBundle = (name, folder) =>
+            window.BuildPlayerBundle = (name, folder, revision) =>
             {
                 builds++;
                 Assert.AreEqual("created-flow", name);
                 Assert.AreEqual("explicit-output", folder);
+                Assert.AreEqual("build-revision-label", revision);
                 Assert.IsFalse(Field<Button>("buildPlayerScenario").enabledSelf);
                 return "explicit-output/scenario-player.bundle.json";
             };
             ConfigureTemplate();
+            Field<TextField>("sourceRevision").value = "build-revision-label";
             Assert.IsFalse(Field<Button>("buildPlayerScenario").enabledSelf);
             typeof(PlayScenarioWindow).GetMethod("BuildPlayer", PrivateInstance).Invoke(window, null);
             Assert.AreEqual(0, pickers);
@@ -1014,7 +1127,7 @@ namespace MCPForUnityTests.Editor.Windows
             Click("buildPlayerScenario");
             Assert.AreEqual(1, builds, "Cancelling the folder picker must not start a build.");
             window.ChoosePlayerBuildFolder = () => "explicit-output";
-            window.BuildPlayerBundle = (_, __) => throw new InvalidOperationException("test build failure");
+            window.BuildPlayerBundle = (_, __, ___) => throw new InvalidOperationException("test build failure");
             Click("buildPlayerScenario");
             StringAssert.Contains("Player build failed: test build failure", Field<Label>("scenarioMessage").text);
             Assert.IsTrue(Field<Button>("buildPlayerScenario").enabledSelf);

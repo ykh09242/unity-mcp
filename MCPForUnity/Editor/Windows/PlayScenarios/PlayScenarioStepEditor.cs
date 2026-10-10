@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Runtime.CompilerServices;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -13,7 +15,16 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
     /// <summary>Builds step fields. Selection is copied to a string selector and never retained.</summary>
     internal static class PlayScenarioStepEditor
     {
-        private static readonly List<string> Actions = new List<string> { "load_scene", "click_ui", "wait_scene", "wait_object", "reset_state" };
+        private static readonly List<string> Actions = new List<string> { "load_scene", "click_ui", "wait_scene", "wait_object", "reset_state", "wait_state" };
+
+        private sealed class StateValueDraft
+        {
+            internal string Type;
+            internal string Text;
+        }
+
+        private static readonly ConditionalWeakTable<PlayScenarioStep, StateValueDraft> StateValueDrafts =
+            new ConditionalWeakTable<PlayScenarioStep, StateValueDraft>();
 
         internal static void Render(ScrollView stepList, PlayScenarioDefinition draft, Action<Action> edit, Action<string, bool> setMessage) =>
             Render(stepList, draft.Steps, "", edit, setMessage);
@@ -58,12 +69,15 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 var action = new PopupField<string>("Action", Actions, Actions.IndexOf(step.Action)) { name = "stepAction" + suffix };
                 action.RegisterValueChangedCallback(evt =>
                 {
+                    StateValueDrafts.Remove(step);
                     edit(() =>
                     {
                         step.Action = evt.newValue;
                         step.Scene = IsSceneAction(step.Action) ? "" : null;
-                        step.Target = IsSceneAction(step.Action) || step.Action == "reset_state" ? null : "";
+                        step.Target = IsSceneAction(step.Action) || step.Action == "reset_state" || step.Action == "wait_state" ? null : "";
                         step.ResetIds = step.Action == "reset_state" ? new List<string>() : null;
+                        step.StateId = step.Action == "wait_state" ? "" : null;
+                        step.StateEquals = step.Action == "wait_state" ? new JValue("") : null;
                         step.TargetId = null;
                         step.ClickMode = step.Action == "click_ui" ? "direct" : null;
                         step.Count = null;
@@ -77,6 +91,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 card.Add(action);
                 if (step.Action == "reset_state")
                     BuildResetFields(card, step, suffix, edit);
+                else if (step.Action == "wait_state")
+                    BuildStateFields(card, step, suffix, edit);
                 else if (IsSceneAction(step.Action))
                     BuildSceneFields(card, step, suffix, edit);
                 else
@@ -86,12 +102,101 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 var timeout = new IntegerField("Timeout (s)") { name = "stepTimeout" + suffix, value = step.TimeoutSeconds };
                 timeout.RegisterValueChangedCallback(evt => edit(() => step.TimeoutSeconds = evt.newValue));
                 card.Add(timeout);
-                if (step.Action == "wait_scene" || step.Action == "wait_object")
+                if (step.Action == "wait_scene" || step.Action == "wait_object" || step.Action == "wait_state")
                     OptionalInteger(card, "Stable duration (ms)", "stepStable" + suffix, step.StableForMs, value => edit(() => step.StableForMs = value));
                 if (step.Action == "wait_object")
                     BuildConditionFields(card, step, suffix, edit);
                 stepList.Add(card);
             }
+        }
+
+        private static void BuildStateFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit)
+        {
+            var id = new TextField("State ID") { name = "stepStateId" + index, value = step.StateId ?? "" };
+            id.RegisterValueChangedCallback(evt => edit(() => step.StateId = evt.newValue));
+            card.Add(id);
+            var raw = StateValueDrafts.GetValue(
+                step,
+                value =>
+                {
+                    JToken expected = value.StateEquals;
+                    return new StateValueDraft
+                    {
+                        Type =
+                            expected?.Type == JTokenType.Boolean ? "Boolean"
+                            : expected?.Type == JTokenType.Integer ? "Integer"
+                            : expected?.Type == JTokenType.Float ? "Number"
+                            : "String",
+                        Text = expected?.Type == JTokenType.String ? (string)expected : expected?.ToString(Formatting.None) ?? "",
+                    };
+                }
+            );
+            var types = new List<string> { "String", "Boolean", "Integer", "Number" };
+            var type = new PopupField<string>("Value type", types, types.IndexOf(raw.Type)) { name = "stepStateType" + index };
+            var valueField = new TextField("Expected value") { name = "stepStateValue" + index, value = raw.Text };
+            var error = new Label { name = "stepStateError" + index };
+            error.AddToClassList("scenario-error");
+            error.text = TryStateScalar(raw.Type, raw.Text, out _) ? "" : StateScalarError(raw.Type);
+            Action update = () =>
+            {
+                raw.Type = type.value;
+                raw.Text = valueField.value;
+                bool valid = TryStateScalar(raw.Type, raw.Text, out JToken token);
+                error.text = valid ? "" : StateScalarError(raw.Type);
+                edit(() => step.StateEquals = token);
+            };
+            type.RegisterValueChangedCallback(_ => update());
+            valueField.RegisterValueChangedCallback(_ => update());
+            card.Add(type);
+            card.Add(valueField);
+            card.Add(error);
+            card.Add(
+                new Label(
+                    "Waits for an explicitly registered scalar state probe. IDs are case-sensitive stable IDs, as with reset_state. This action does not query scenes, hierarchy objects or reflected properties. Boolean: true/false; Integer: signed 64-bit; Number: finite invariant decimal; String: up to 1024 characters. Stable duration requires a continuous match."
+                )
+            );
+        }
+
+        private static string StateScalarError(string type) =>
+            type == "String" ? "Enter a string of at most 1024 characters."
+            : type == "Boolean" ? "Enter true or false."
+            : type == "Integer" ? "Enter a signed 64-bit integer."
+            : "Enter a finite number using invariant decimal or exponent notation.";
+
+        private static bool TryStateScalar(string type, string text, out JToken token)
+        {
+            token = null;
+            if (text == null)
+                return false;
+            if (type == "Boolean")
+            {
+                if (!bool.TryParse(text, out bool parsed))
+                    return false;
+                token = new JValue(parsed);
+            }
+            else if (type == "Integer")
+            {
+                if (!long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed))
+                    return false;
+                token = new JValue(parsed);
+            }
+            else if (type == "Number")
+            {
+                if (
+                    !double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+                    || double.IsNaN(parsed)
+                    || double.IsInfinity(parsed)
+                )
+                    return false;
+                token = new JValue(parsed);
+            }
+            else
+            {
+                if (text.Length > 1024)
+                    return false;
+                token = new JValue(text);
+            }
+            return true;
         }
 
         private static void BuildResetFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit)

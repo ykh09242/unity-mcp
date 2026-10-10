@@ -99,7 +99,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private bool buildingPlayer;
         private string renderedReportJson;
         internal Func<string> ChoosePlayerBuildFolder;
-        internal Func<string, string, string> BuildPlayerBundle;
+        internal Func<string, string, string, string> BuildPlayerBundle;
         internal Func<bool> IsEditorBusy;
         private bool EditorBusy =>
             IsEditorBusy != null
@@ -298,6 +298,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 value = sourceRevision,
                 maxLength = 128,
             };
+            revision.tooltip = "Optional caller-provided label. Player builds freeze this as build_source_revision; Editor runs record it as source_revision.";
             revision.RegisterValueChangedCallback(evt => sourceRevision = evt.newValue);
             panel.Add(revision);
             panel.Add(
@@ -863,7 +864,11 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 UpdateValidation();
                 SetMessage("Building Player for " + savedName + "...", false);
                 EditorUtility.DisplayProgressBar("Play Scenario Player", "Building " + savedName + " for Windows x64 Mono", 0.1f);
-                string bundle = BuildPlayerBundle != null ? BuildPlayerBundle(savedName, folder) : PlayScenarioPlayerBuild.Build(savedName, folder).BundlePath;
+                string revision = string.IsNullOrEmpty(sourceRevision) ? null : sourceRevision;
+                string bundle =
+                    BuildPlayerBundle != null
+                        ? BuildPlayerBundle(savedName, folder, revision)
+                        : PlayScenarioPlayerBuild.Build(savedName, folder, revision).BundlePath;
                 SetMessage("Player built. Bundle: " + bundle, false);
             }
             catch (Exception exception)
