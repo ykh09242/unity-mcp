@@ -169,11 +169,11 @@ namespace MCPForUnity.Editor.Tools.Physics
                         {
                             name = go.name,
                             instanceID = go.GetInstanceIDCompat(),
-                            position = new[] { rb2d.position.x, rb2d.position.y },
+                            position = ToArray(rb2d.position),
 #if UNITY_6000_0_OR_NEWER
-                            velocity = new[] { rb2d.linearVelocity.x, rb2d.linearVelocity.y },
+                            velocity = ToArray(rb2d.linearVelocity),
 #else
-                            velocity = new[] { rb2d.velocity.x, rb2d.velocity.y },
+                            velocity = ToArray(rb2d.velocity),
 #endif
                             angularVelocity = rb2d.angularVelocity,
                         }
@@ -190,13 +190,13 @@ namespace MCPForUnity.Editor.Tools.Physics
                         {
                             name = go.name,
                             instanceID = go.GetInstanceIDCompat(),
-                            position = new[] { rb.position.x, rb.position.y, rb.position.z },
+                            position = ToArray(rb.position),
 #if UNITY_6000_0_OR_NEWER
-                            velocity = new[] { rb.linearVelocity.x, rb.linearVelocity.y, rb.linearVelocity.z },
+                            velocity = ToArray(rb.linearVelocity),
 #else
-                            velocity = new[] { rb.velocity.x, rb.velocity.y, rb.velocity.z },
+                            velocity = ToArray(rb.velocity),
 #endif
-                            angularVelocity = new[] { rb.angularVelocity.x, rb.angularVelocity.y, rb.angularVelocity.z },
+                            angularVelocity = ToArray(rb.angularVelocity),
                         }
                     );
                 }
@@ -222,16 +222,17 @@ namespace MCPForUnity.Editor.Tools.Physics
                     if (rb2d.IsSleeping())
                         continue;
 
+                    var go = rb2d.gameObject;
                     results.Add(
                         new
                         {
-                            name = rb2d.gameObject.name,
-                            instanceID = rb2d.gameObject.GetInstanceIDCompat(),
-                            position = new[] { rb2d.position.x, rb2d.position.y },
+                            name = go.name,
+                            instanceID = go.GetInstanceIDCompat(),
+                            position = ToArray(rb2d.position),
 #if UNITY_6000_0_OR_NEWER
-                            velocity = new[] { rb2d.linearVelocity.x, rb2d.linearVelocity.y },
+                            velocity = ToArray(rb2d.linearVelocity),
 #else
-                            velocity = new[] { rb2d.velocity.x, rb2d.velocity.y },
+                            velocity = ToArray(rb2d.velocity),
 #endif
                             angularVelocity = rb2d.angularVelocity,
                         }
@@ -250,18 +251,19 @@ namespace MCPForUnity.Editor.Tools.Physics
                     if (rb.IsSleeping())
                         continue;
 
+                    var go = rb.gameObject;
                     results.Add(
                         new
                         {
-                            name = rb.gameObject.name,
-                            instanceID = rb.gameObject.GetInstanceIDCompat(),
-                            position = new[] { rb.position.x, rb.position.y, rb.position.z },
+                            name = go.name,
+                            instanceID = go.GetInstanceIDCompat(),
+                            position = ToArray(rb.position),
 #if UNITY_6000_0_OR_NEWER
-                            velocity = new[] { rb.linearVelocity.x, rb.linearVelocity.y, rb.linearVelocity.z },
+                            velocity = ToArray(rb.linearVelocity),
 #else
-                            velocity = new[] { rb.velocity.x, rb.velocity.y, rb.velocity.z },
+                            velocity = ToArray(rb.velocity),
 #endif
-                            angularVelocity = new[] { rb.angularVelocity.x, rb.angularVelocity.y, rb.angularVelocity.z },
+                            angularVelocity = ToArray(rb.angularVelocity),
                         }
                     );
                 }
@@ -269,5 +271,9 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             return results;
         }
+
+        private static float[] ToArray(Vector2 value) => new[] { value.x, value.y };
+
+        private static float[] ToArray(Vector3 value) => new[] { value.x, value.y, value.z };
     }
 }
