@@ -74,6 +74,63 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private static string Duration(PlayScenarioStepResult step) =>
             step?.StartedUnixMs != null && step.FinishedUnixMs != null ? (step.FinishedUnixMs.Value - step.StartedUnixMs.Value) + " ms" : "n/a";
 
+        internal static void AppendStructuredDetails(JObject data, Action<string> add)
+        {
+            if (data["failure"] is JObject failure)
+                AppendFailure("Failure", failure, add);
+            if (data["cleanup_failures"] is JArray cleanup)
+                foreach (JObject item in cleanup.OfType<JObject>())
+                    AppendFailure("Cleanup failure", item, add);
+            if (data["resource_checks"] is JArray resources)
+                foreach (JObject item in resources.OfType<JObject>())
+                {
+                    add(
+                        "Resource release check, iteration "
+                            + item["iteration"]
+                            + ": "
+                            + ((bool?)item["passed"] == true ? "passed" : "failed")
+                            + "; new runtime ScriptableObjects "
+                            + (item["new_scriptable_objects"]?.Type == JTokenType.Integer ? item["new_scriptable_objects"].ToString() : "unavailable")
+                            + "; subscriptions "
+                            + (item["new_subscriptions"]?.Type == JTokenType.Integer ? item["new_subscriptions"].ToString() : "unavailable")
+                            + "; handles "
+                            + (item["new_handles"]?.Type == JTokenType.Integer ? item["new_handles"].ToString() : "unavailable")
+                    );
+                    if (item["error"]?.Type == JTokenType.String)
+                        add("Resource check error: " + item["error"]);
+                }
+            if (data["cleanup_error"]?.Type == JTokenType.String)
+                add("Cleanup error: " + data["cleanup_error"]);
+            if (data["runner_resources_released"]?.Type == JTokenType.Boolean)
+                add("Runner resources released: " + data["runner_resources_released"]);
+            if (data["reproduction"] is JObject reproduction)
+            {
+                add("Definition hash: " + reproduction["definition_hash"]);
+                add("Unity: " + reproduction["unity_version"] + "; package: " + reproduction["package_version"]);
+                if (reproduction["source_revision"]?.Type == JTokenType.String)
+                    add("Source revision (caller-provided): " + reproduction["source_revision"]);
+            }
+        }
+
+        private static void AppendFailure(string label, JObject failure, Action<string> add)
+        {
+            add(
+                label
+                    + " code: "
+                    + failure["code"]
+                    + "; stage: "
+                    + failure["stage"]
+                    + "; iteration: "
+                    + failure["iteration"]
+                    + "; step: "
+                    + failure["step_index"]
+            );
+            add(label + " detail: " + failure["message"]);
+            foreach (string field in new[] { "target", "component", "property_path", "expected", "actual" })
+                if (failure[field] != null && failure[field].Type != JTokenType.Null)
+                    add(field.Replace('_', ' ') + ": " + failure[field]);
+        }
+
         private void Compare(PlayScenarioRun baseline, PlayScenarioRun candidate)
         {
             comparison.Clear();
@@ -106,6 +163,10 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             Add("Candidate metrics: " + (candidate.MetricsSummary ?? "No summary"));
             foreach (string warning in candidate.MetricWarnings)
                 Add("Candidate warning: " + warning);
+            Add("Baseline structured details:");
+            AppendStructuredDetails(JObject.FromObject(baseline, JsonSerializer.Create()), Add);
+            Add("Candidate structured details:");
+            AppendStructuredDetails(JObject.FromObject(candidate, JsonSerializer.Create()), Add);
             if (!string.IsNullOrEmpty(baseline.Error))
                 Add("Baseline error: " + baseline.Error);
             if (!string.IsNullOrEmpty(candidate.Error))

@@ -118,3 +118,18 @@
     max-height: 220px;
     min-height: 0;
 }
+
+.scenario-suite-editor .unity-base-field {
+    flex-direction: column;
+    align-items: stretch;
+}
+.scenario-suite-editor Label,
+#scenarioAuthoring Label {
+    white-space: normal;
+}
+.scenario-suite-editor .unity-base-field__label {
+    min-width: 0;
+}
+.scenario-suite-lines .unity-text-field__input {
+    min-height: 64px;
+}

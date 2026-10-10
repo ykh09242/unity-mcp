@@ -21,6 +21,7 @@ namespace MCPForUnityTests.Editor.Windows
     {
         private string root;
         private string previousJob;
+        private bool previousSuiteMode;
         private PlayScenarioStore store;
         private PlayScenarioWindow window;
         private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -33,6 +34,8 @@ namespace MCPForUnityTests.Editor.Windows
             store = new PlayScenarioStore(root);
             previousJob = SessionState.GetString(PlayScenarioWindow.SessionJobKey, "");
             SessionState.SetString(PlayScenarioWindow.SessionJobKey, "");
+            previousSuiteMode = SessionState.GetBool(PlayScenarioWindow.SessionSuiteModeKey, false);
+            SessionState.SetBool(PlayScenarioWindow.SessionSuiteModeKey, false);
             window = ScriptableObject.CreateInstance<PlayScenarioWindow>();
             window.ConfigureForTests(store);
             window.ShowDialog = (_, __, ___, ____, _____) => 1;
@@ -52,6 +55,7 @@ namespace MCPForUnityTests.Editor.Windows
                 UnityEngine.Object.DestroyImmediate(window);
             }
             SessionState.SetString(PlayScenarioWindow.SessionJobKey, previousJob);
+            SessionState.SetBool(PlayScenarioWindow.SessionSuiteModeKey, previousSuiteMode);
             if (Directory.Exists(root))
                 Directory.Delete(root, true);
         }
@@ -768,6 +772,275 @@ namespace MCPForUnityTests.Editor.Windows
             {
                 JsonConvert.DefaultSettings = previous;
             }
+        }
+
+        [Test]
+        public void TagsTargetIdsClickModeAndResourceLimitsUseSerializedDraftHistory()
+        {
+            ConfigureTemplate();
+            Click("addScenarioTag");
+            Field<TextField>("scenarioTag0").value = "smoke";
+            Field<Toggle>("resourcesEnabled").value = true;
+            Field<IntegerField>("resourcesScriptableObjects").value = 2;
+            Field<IntegerField>("resourcesSubscriptions").value = 3;
+            Field<IntegerField>("resourcesHandles").value = 4;
+            Field<PopupField<string>>("stepTargetSelector1").value = "Test ID";
+            Assert.IsNull(Field<TextField>("stepTarget1"));
+            Field<TextField>("stepTargetId1").value = "menu.start";
+            Field<PopupField<string>>("stepClickMode1").value = "Raycast + pointer events";
+            Assert.AreEqual("raycast", window.Draft.Steps[1].ClickMode);
+            Click("undoDraft");
+            Assert.AreEqual("Direct handler", Field<PopupField<string>>("stepClickMode1").value);
+            Click("redoDraft");
+            Assert.AreEqual("Raycast + pointer events", Field<PopupField<string>>("stepClickMode1").value);
+            Click("saveScenario");
+            PlayScenarioDefinition saved = store.Get("created-flow");
+            CollectionAssert.AreEqual(new[] { "smoke" }, saved.Tags);
+            Assert.IsNull(saved.Steps[1].Target);
+            Assert.AreEqual("menu.start", saved.Steps[1].TargetId);
+            Assert.AreEqual("raycast", saved.Steps[1].ClickMode);
+            Assert.IsTrue(saved.Resources.Enabled);
+            Assert.AreEqual(2, saved.Resources.MaxScriptableObjects);
+            Assert.AreEqual(3, saved.Resources.MaxSubscriptions);
+            Assert.AreEqual(4, saved.Resources.MaxHandles);
+            Field<TextField>("stepTargetId1").value = "menu.alternate";
+            typeof(PlayScenarioWindow).GetMethod("OnEnable", PrivateInstance).Invoke(window, null);
+            window.CreateGUI();
+            Assert.AreEqual("menu.alternate", Field<TextField>("stepTargetId1").value);
+            Assert.IsTrue(window.hasUnsavedChanges);
+            Field<PopupField<string>>("stepAction1").value = "wait_scene";
+            Assert.IsNull(window.Draft.Steps[1].TargetId);
+            Assert.IsNull(window.Draft.Steps[1].ClickMode);
+            Assert.IsNull(Field<PopupField<string>>("stepClickMode1"));
+        }
+
+        [Test]
+        public void MarkerSelectionCopiesIdWithoutAddingOrDirtyingSceneComponents()
+        {
+            var prior = Selection.activeObject;
+            var previewScene = UnityEditor.SceneManagement.EditorSceneManager.NewPreviewScene();
+            var selected = new GameObject("ScenarioWindowIdSelection");
+            UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(selected, previewScene);
+            var marker = selected.AddComponent<MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget>();
+            marker.TargetId = "player.main";
+            EditorUtility.ClearDirty(marker);
+            EditorUtility.ClearDirty(selected);
+            try
+            {
+                Selection.activeGameObject = selected;
+                Field<PopupField<string>>("stepTargetSelector3").value = "Test ID";
+                int components = selected.GetComponents<Component>().Length;
+                bool sceneDirty = previewScene.isDirty;
+                Click("useSelection3");
+                Assert.AreEqual("player.main", window.Draft.Steps[3].TargetId);
+                Assert.AreEqual(components, selected.GetComponents<Component>().Length);
+                Assert.IsFalse(EditorUtility.IsDirty(marker));
+                Assert.IsFalse(EditorUtility.IsDirty(selected));
+                Assert.AreEqual(sceneDirty, previewScene.isDirty);
+                marker.TargetId = "";
+                Click("useSelection3");
+                Assert.AreEqual("player.main", window.Draft.Steps[3].TargetId, "Missing marker ID must preserve the prior draft value.");
+                StringAssert.Contains("Author the marker explicitly", Field<Label>("scenarioMessage").text);
+                UnityEngine.Object.DestroyImmediate(selected);
+                Assert.AreEqual("player.main", Field<TextField>("stepTargetId3").value);
+            }
+            finally
+            {
+                Selection.activeObject = prior;
+                UnityEditor.SceneManagement.EditorSceneManager.ClosePreviewScene(previewScene);
+            }
+        }
+
+        [Test]
+        public void StructuredFailureResourcesAndReproductionAreVisibleInRunResults()
+        {
+            ConfigureTemplate();
+            window.StartRun = (_, __, ___, id) =>
+                new SuccessResponse(
+                    "Synthetic failure",
+                    JObject.FromObject(
+                        new PlayScenarioRun
+                        {
+                            JobId = id,
+                            Scenario = Definition(),
+                            Status = "failed",
+                            Phase = "finished",
+                            Failure = new PlayScenarioFailure
+                            {
+                                Code = "target_not_found",
+                                Stage = "main",
+                                Iteration = 1,
+                                StepIndex = 1,
+                                Target = "player.main",
+                                Expected = "one target",
+                                Actual = "none",
+                                Message = "Target missing",
+                            },
+                            CleanupFailures = new System.Collections.Generic.List<PlayScenarioFailure>
+                            {
+                                new PlayScenarioFailure { Code = "cleanup_failed", Message = "Cleanup unavailable" },
+                            },
+                            ResourceChecks = new System.Collections.Generic.List<PlayScenarioResourceCheck>
+                            {
+                                new PlayScenarioResourceCheck
+                                {
+                                    Iteration = 1,
+                                    NewScriptableObjects = 2,
+                                    NewSubscriptions = 0,
+                                    NewHandles = 1,
+                                    Passed = false,
+                                },
+                            },
+                            Reproduction = new PlayScenarioReproduction
+                            {
+                                DefinitionHash = new string('a', 64),
+                                UnityVersion = "2021.3",
+                                PackageVersion = "test-package",
+                                SourceRevision = "caller-label",
+                            },
+                        }
+                    )
+                );
+            Click("runScenario");
+            string rendered = string.Join("\n", Field<ScrollView>("runResults").Query<Label>().ToList().Select(label => label.text));
+            StringAssert.Contains("Failure code: target_not_found", rendered);
+            StringAssert.Contains("actual: none", rendered);
+            StringAssert.Contains("Cleanup failure code: cleanup_failed", rendered);
+            StringAssert.Contains("new runtime ScriptableObjects 2", rendered);
+            StringAssert.Contains("Unity: 2021.3; package: test-package", rendered);
+            StringAssert.Contains("Source revision (caller-provided): caller-label", rendered);
+        }
+
+        [Test]
+        public void SuiteAuthoringDelegatesNativeQueueAndOnlyPollsActiveSuite()
+        {
+            OpenSaved();
+            int lists = 0;
+            int reads = 0;
+            int runs = 0;
+            const string suiteId = "11111111111111111111111111111111";
+            JObject savedSuite = null;
+            window.HandleSuite = request =>
+            {
+                string action = (string)request["action"];
+                if (action == "suite_save")
+                {
+                    savedSuite = (JObject)request["suite"].DeepClone();
+                    return new SuccessResponse("Saved", savedSuite);
+                }
+                if (action == "suite_list")
+                {
+                    lists++;
+                    return new SuccessResponse("Suites", new JObject { ["suites"] = new JArray("editor-suite") });
+                }
+                if (action == "suite_reports")
+                    return new SuccessResponse("Reports", new JObject { ["reports"] = new JArray() });
+                if (action == "suite_run")
+                {
+                    runs++;
+                    Assert.AreEqual("editor-suite", (string)request["name"]);
+                    Assert.IsNull(request["suite_id"], "Native service assigns suite identity.");
+                    Assert.AreEqual("revision-label", (string)request["source_revision"]);
+                    Assert.AreEqual(2, (int)request["repeat_count"]);
+                    Assert.AreEqual(90, (int)request["timeout_seconds"]);
+                }
+                else if (action == "suite_status")
+                {
+                    reads++;
+                    Assert.AreEqual(suiteId, (string)request["suite_id"]);
+                }
+                else if (action != "suite_cancel")
+                    Assert.Fail("Unexpected suite request: " + action);
+                return new SuccessResponse(
+                    "Suite observed",
+                    new JObject
+                    {
+                        ["suite_id"] = suiteId,
+                        ["suite"] = savedSuite,
+                        ["status"] = action == "suite_status" ? "succeeded" : "running",
+                        ["scenarios"] = new JArray(
+                            new JObject
+                            {
+                                ["name"] = "saved-flow",
+                                ["status"] = action == "suite_status" ? "succeeded" : "running",
+                                ["job_id"] = new string('2', 32),
+                            }
+                        ),
+                    }
+                );
+            };
+            Field<TextField>("suiteName").value = "editor-suite";
+            Field<TextField>("suiteScenarios").value = "saved-flow";
+            Field<TextField>("suiteTags").value = "smoke\nregression";
+            Field<PopupField<string>>("suiteFailurePolicy").value = "continue";
+            Field<TextField>("suiteSourceRevision").value = "revision-label";
+            Field<IntegerField>("suiteRepeatCount").value = 2;
+            Field<IntegerField>("suiteTimeout").value = 90;
+            Assert.IsTrue(window.hasUnsavedChanges);
+            Click("refreshSuites");
+            Assert.AreEqual(1, lists);
+            Click("runSuite");
+            Assert.AreEqual(1, runs);
+            Assert.AreEqual("continue", (string)savedSuite["failure_policy"]);
+            CollectionAssert.AreEqual(new[] { "smoke", "regression" }, ((JArray)savedSuite["tags"]).Values<string>());
+            Assert.IsTrue(window.IsPolling);
+            Assert.IsFalse(Field<Button>("runSuite").enabledSelf);
+            Assert.IsFalse(Field<Button>("runScenario").enabledSelf);
+            Assert.IsTrue(SessionState.GetBool(PlayScenarioWindow.SessionSuiteModeKey, false));
+            Click("cancelScenario");
+            Assert.IsTrue(window.IsPolling, "Cancellation observes native child cleanup before terminal status.");
+            ForceStatusTick();
+            Assert.AreEqual(1, reads);
+            Assert.IsFalse(window.IsPolling);
+            Assert.IsTrue(Field<Button>("runSuite").enabledSelf);
+            ForceStatusTick();
+            Assert.AreEqual(1, reads);
+            Assert.AreEqual(1, lists, "Status polling must not continuously refresh saved suites.");
+        }
+
+        [Test]
+        public void SuiteDraftRestoreAndNavigationProtectUnsavedDefinition()
+        {
+            Field<TextField>("suiteName").value = "draft-suite";
+            Field<TextField>("suiteScenarios").value = "first\nsecond";
+            Field<TextField>("suiteTags").value = "smoke";
+            Field<TextField>("suiteSourceRevision").value = "persisted-label";
+            Field<IntegerField>("suiteRepeatCount").value = 3;
+            Field<IntegerField>("suiteTimeout").value = 70;
+            typeof(PlayScenarioWindow).GetMethod("OnEnable", PrivateInstance).Invoke(window, null);
+            window.CreateGUI();
+            Assert.AreEqual("draft-suite", Field<TextField>("suiteName").value);
+            Assert.AreEqual("first\nsecond", Field<TextField>("suiteScenarios").value);
+            Assert.AreEqual("persisted-label", Field<TextField>("suiteSourceRevision").value);
+            Assert.AreEqual(3, Field<IntegerField>("suiteRepeatCount").value);
+            Assert.AreEqual(70, Field<IntegerField>("suiteTimeout").value);
+            Assert.IsTrue(window.hasUnsavedChanges);
+            int gets = 0;
+            window.HandleSuite = request =>
+            {
+                if ((string)request["action"] == "suite_list")
+                    return new SuccessResponse("Listed", new JObject { ["suites"] = new JArray("other-suite") });
+                gets++;
+                return new SuccessResponse(
+                    "Loaded",
+                    new JObject
+                    {
+                        ["schema_version"] = 1,
+                        ["name"] = "other-suite",
+                        ["scenarios"] = new JArray("first"),
+                        ["tags"] = new JArray(),
+                        ["failure_policy"] = "stop",
+                    }
+                );
+            };
+            Click("refreshSuites");
+            Click("savedSuite_other-suite");
+            Assert.AreEqual(0, gets);
+            Assert.AreEqual("draft-suite", Field<TextField>("suiteName").value);
+            window.ShowDialog = (_, __, ___, ____, _____) => 2;
+            Click("savedSuite_other-suite");
+            Assert.AreEqual(1, gets);
+            Assert.AreEqual("other-suite", Field<TextField>("suiteName").value);
         }
     }
 }

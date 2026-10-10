@@ -11,6 +11,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         internal static void Render(VisualElement container, PlayScenarioDefinition draft, Action<Action> edit)
         {
             container.Clear();
+            RenderTags(container, draft, edit);
             var options = new Foldout { text = "Run policies and diagnostics", name = "scenarioOptions" };
             Integer(
                 options,
@@ -181,7 +182,120 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 edit(() => draft.Diagnostics = new PlayScenarioDiagnosticsOptions { ScreenshotOnFailure = evt.newValue })
             );
             options.Add(screenshot);
+            RenderResources(options, draft, edit);
             container.Add(options);
+        }
+
+        private static void RenderTags(VisualElement container, PlayScenarioDefinition draft, Action<Action> edit)
+        {
+            var tags = new Foldout
+            {
+                text = "Scenario tags",
+                name = "scenarioTags",
+                value = true,
+            };
+            Action render = null;
+            render = () =>
+            {
+                tags.Clear();
+                for (int index = 0; index < draft.Tags.Count; index++)
+                {
+                    int position = index;
+                    var row = new VisualElement();
+                    row.AddToClassList("scenario-row");
+                    var field = new TextField("Tag " + (index + 1)) { name = "scenarioTag" + index, value = draft.Tags[index] };
+                    field.RegisterValueChangedCallback(evt => edit(() => draft.Tags[position] = evt.newValue));
+                    row.Add(field);
+                    row.Add(
+                        new Button(() =>
+                        {
+                            edit(() => draft.Tags.RemoveAt(position));
+                            render();
+                        })
+                        {
+                            name = "removeScenarioTag" + index,
+                            text = "Remove",
+                        }
+                    );
+                    tags.Add(row);
+                }
+                var add = new Button(() =>
+                {
+                    edit(() => draft.Tags.Add(""));
+                    render();
+                })
+                {
+                    name = "addScenarioTag",
+                    text = "Add tag",
+                };
+                add.SetEnabled(draft.Tags.Count < 16);
+                tags.Add(add);
+                tags.Add(new Label("Up to 16 unique lowercase tags. Suites select saved scenarios matching any requested tag."));
+            };
+            render();
+            container.Add(tags);
+        }
+
+        private static void RenderResources(VisualElement container, PlayScenarioDefinition draft, Action<Action> edit)
+        {
+            var resources = draft.Resources ?? new PlayScenarioResourceOptions();
+            var section = new Foldout { name = "resourceOptions", text = "Registered resource release assertions" };
+            var enabled = new Toggle("Assert release after cleanup") { name = "resourcesEnabled", value = resources.Enabled };
+            var fields = new VisualElement();
+            enabled.RegisterValueChangedCallback(evt =>
+            {
+                edit(() =>
+                {
+                    draft.Resources = resources;
+                    resources.Enabled = evt.newValue;
+                });
+                fields.SetEnabled(evt.newValue);
+            });
+            Integer(
+                fields,
+                "Remaining runtime ScriptableObjects",
+                "resourcesScriptableObjects",
+                resources.MaxScriptableObjects,
+                value =>
+                    edit(() =>
+                    {
+                        draft.Resources = resources;
+                        resources.MaxScriptableObjects = value;
+                    })
+            );
+            Integer(
+                fields,
+                "Remaining subscriptions",
+                "resourcesSubscriptions",
+                resources.MaxSubscriptions,
+                value =>
+                    edit(() =>
+                    {
+                        draft.Resources = resources;
+                        resources.MaxSubscriptions = value;
+                    })
+            );
+            Integer(
+                fields,
+                "Remaining handles",
+                "resourcesHandles",
+                resources.MaxHandles,
+                value =>
+                    edit(() =>
+                    {
+                        draft.Resources = resources;
+                        resources.MaxHandles = value;
+                    })
+            );
+            fields.SetEnabled(resources.Enabled);
+            section.Add(enabled);
+            section.Add(fields);
+            section.Add(
+                new Label(
+                    "Opt-in registrations only; limits 0–4096. Checks compare new resource identities after cleanup, including failed runs. No global scan or forced garbage collection."
+                )
+            );
+            container.Add(section);
         }
 
         private static void Integer(VisualElement container, string label, string name, int value, Action<int> change)

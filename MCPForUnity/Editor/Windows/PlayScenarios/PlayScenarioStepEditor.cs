@@ -10,7 +10,7 @@ using UnityEngine.UIElements;
 
 namespace MCPForUnity.Editor.Windows.PlayScenarios
 {
-    /// <summary>Builds step fields. Selection is copied to a path and never retained.</summary>
+    /// <summary>Builds step fields. Selection is copied to a string selector and never retained.</summary>
     internal static class PlayScenarioStepEditor
     {
         private static readonly List<string> Actions = new List<string> { "load_scene", "click_ui", "wait_scene", "wait_object" };
@@ -63,6 +63,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                         step.Action = evt.newValue;
                         step.Scene = IsSceneAction(step.Action) ? "" : null;
                         step.Target = IsSceneAction(step.Action) ? null : "";
+                        step.TargetId = null;
+                        step.ClickMode = step.Action == "click_ui" ? "direct" : null;
                         step.Count = null;
                         step.Active = null;
                         step.Component = null;
@@ -76,6 +78,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     BuildSceneFields(card, step, suffix, edit);
                 else
                     BuildTargetFields(card, step, suffix, edit, setMessage);
+                if (step.Action == "click_ui")
+                    BuildClickFields(card, step, suffix, edit);
                 var timeout = new IntegerField("Timeout (s)") { name = "stepTimeout" + suffix, value = step.TimeoutSeconds };
                 timeout.RegisterValueChangedCallback(evt => edit(() => step.TimeoutSeconds = evt.newValue));
                 card.Add(timeout);
@@ -124,32 +128,107 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
 
         private static void BuildTargetFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit, Action<string, bool> setMessage)
         {
-            var target = new TextField("Exact hierarchy path") { name = "stepTarget" + index, value = step.Target ?? "" };
-            target.tooltip =
-                "Active scene hierarchy path, for example Canvas/StartButton or World/Player. Template targets are placeholders; replace them with your objects.";
-            target.RegisterValueChangedCallback(evt => edit(() => step.Target = evt.newValue));
-            card.Add(target);
-            card.Add(
-                ActionButton(
-                    "Use Current Selection",
-                    "useSelection" + index,
-                    () =>
+            var selector = new PopupField<string>("Target selector", new List<string> { "Hierarchy path", "Test ID" }, step.TargetId != null ? 1 : 0)
+            {
+                name = "stepTargetSelector" + index,
+            };
+            var fields = new VisualElement();
+            Action renderTarget = () =>
+            {
+                fields.Clear();
+                bool useId = step.TargetId != null;
+                var target = new TextField(useId ? "Stable test ID" : "Exact hierarchy path")
+                {
+                    name = (useId ? "stepTargetId" : "stepTarget") + index,
+                    value = (useId ? step.TargetId : step.Target) ?? "",
+                };
+                target.tooltip = useId
+                    ? "Unique PlayScenarioTarget marker ID in the active scene, including inactive objects."
+                    : "Exact active-scene hierarchy path, for example Canvas/StartButton or World/Player.";
+                target.RegisterValueChangedCallback(evt =>
+                    edit(() =>
                     {
-                        var selected = Selection.activeGameObject;
-                        if (selected == null || !selected.scene.IsValid())
+                        if (useId)
+                            step.TargetId = evt.newValue;
+                        else
+                            step.Target = evt.newValue;
+                    })
+                );
+                fields.Add(target);
+                fields.Add(
+                    ActionButton(
+                        "Use Current Selection",
+                        "useSelection" + index,
+                        () =>
                         {
-                            setMessage("Select a scene GameObject first.", true);
-                            return;
+                            var selected = Selection.activeGameObject;
+                            if (selected == null || !selected.scene.IsValid())
+                            {
+                                setMessage("Select a scene GameObject first.", true);
+                                return;
+                            }
+                            string value;
+                            if (useId)
+                            {
+                                var marker = selected.GetComponent<MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget>();
+                                if (marker == null || string.IsNullOrEmpty(marker.TargetId))
+                                {
+                                    setMessage(
+                                        "Selection needs a PlayScenarioTarget marker with a nonempty ID. Author the marker explicitly in the Inspector.",
+                                        true
+                                    );
+                                    return;
+                                }
+                                value = marker.TargetId;
+                            }
+                            else
+                            {
+                                var names = new List<string>();
+                                for (Transform current = selected.transform; current != null; current = current.parent)
+                                    names.Add(current.name);
+                                names.Reverse();
+                                value = string.Join("/", names);
+                            }
+                            edit(() =>
+                            {
+                                if (useId)
+                                    step.TargetId = value;
+                                else
+                                    step.Target = value;
+                            });
+                            target.SetValueWithoutNotify(value);
                         }
-                        var names = new List<string>();
-                        for (Transform current = selected.transform; current != null; current = current.parent)
-                            names.Add(current.name);
-                        names.Reverse();
-                        string value = string.Join("/", names);
-                        edit(() => step.Target = value);
-                        target.SetValueWithoutNotify(value);
-                    }
-                )
+                    )
+                );
+            };
+            selector.RegisterValueChangedCallback(evt =>
+            {
+                edit(() =>
+                {
+                    step.TargetId = evt.newValue == "Test ID" ? "" : null;
+                    step.Target = evt.newValue == "Hierarchy path" ? "" : null;
+                });
+                renderTarget();
+            });
+            card.Add(selector);
+            card.Add(fields);
+            renderTarget();
+        }
+
+        private static void BuildClickFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit)
+        {
+            var click = new PopupField<string>(
+                "uGUI click mode",
+                new List<string> { "Direct handler", "Raycast + pointer events" },
+                step.ClickMode == "raycast" ? 1 : 0
+            )
+            {
+                name = "stepClickMode" + index,
+            };
+            click.RegisterValueChangedCallback(evt => edit(() => step.ClickMode = evt.newValue == "Raycast + pointer events" ? "raycast" : "direct"));
+            card.Add(click);
+            card.Add(
+                new Label("Direct invokes the handler. Raycast checks the target at its center before dispatching pointer events. Neither mode sends OS input.")
             );
         }
 

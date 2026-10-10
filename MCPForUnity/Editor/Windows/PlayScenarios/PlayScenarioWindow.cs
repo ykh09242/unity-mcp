@@ -30,6 +30,35 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private List<string> redoDrafts = new List<string>();
 
         private const int DraftHistoryLimit = 50;
+        internal const string SessionSuiteModeKey = "MCPForUnity.PlayScenarios.WindowSuiteMode";
+
+        [SerializeField]
+        private string suiteDraftJson;
+
+        [SerializeField]
+        private string suiteCleanJson;
+
+        [SerializeField]
+        private bool suiteDirty;
+
+        [SerializeField]
+        private bool suiteMode;
+
+        [SerializeField]
+        private string sourceRevision = "";
+
+        [SerializeField]
+        private int suiteRepeatCount = 1;
+
+        [SerializeField]
+        private int suiteTimeoutSeconds = 300;
+
+        [SerializeField]
+        private string suiteSourceRevision = "";
+        private JObject suiteReport;
+        private PlayScenarioSuiteEditor suiteEditor;
+        internal Func<JObject, object> HandleSuite;
+        private bool Running => report?.Status == "running" || (string)suiteReport?["status"] == "running";
 
         [SerializeField]
         private string savedName;
@@ -91,8 +120,11 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             draft = null;
             RestoreDraft();
             if (string.IsNullOrEmpty(jobId))
+            {
                 jobId = SessionState.GetString(SessionJobKey, "");
-            hasUnsavedChanges = dirty;
+                suiteMode = SessionState.GetBool(SessionSuiteModeKey, false);
+            }
+            hasUnsavedChanges = dirty || suiteDirty;
         }
 
         private void OnDisable()
@@ -102,6 +134,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             ReadStatus = null;
             CancelRun = null;
             CheckPreflight = null;
+            HandleSuite = null;
             ShowDialog = null;
         }
 
@@ -125,7 +158,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             heading.AddToClassList("scenario-heading");
             rootVisualElement.Add(heading);
             rootVisualElement.Add(
-                Note("Save a repeatable menu → Start → game → Player flow. Configure the scene assets and exact hierarchy paths before running.")
+                Note("Save a repeatable menu → Start → game → Player flow. Configure scene assets and exact hierarchy paths or stable test IDs before running.")
             );
             var columns = new VisualElement();
             columns.AddToClassList("scenario-columns");
@@ -200,6 +233,30 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             authoring.AddToClassList("scenario-scroll");
             optionsContainer = new VisualElement();
             authoring.Add(optionsContainer);
+            suiteEditor = new PlayScenarioSuiteEditor(
+                authoring,
+                Store,
+                CallSuite,
+                SetMessage,
+                RunSuite,
+                Dialog,
+                () => suiteDraftJson,
+                () => suiteCleanJson,
+                PersistSuiteDraft,
+                () =>
+                    new JObject
+                    {
+                        ["repeat_count"] = suiteRepeatCount,
+                        ["timeout_seconds"] = suiteTimeoutSeconds,
+                        ["source_revision"] = suiteSourceRevision,
+                    },
+                options =>
+                {
+                    suiteRepeatCount = (int)options["repeat_count"];
+                    suiteTimeoutSeconds = (int)options["timeout_seconds"];
+                    suiteSourceRevision = (string)options["source_revision"];
+                }
+            );
             setupList = BuildStage(authoring, "Setup", "setup");
             stepList = new ScrollView { name = "scenarioSteps" };
             authoring.Add(new Label("Main steps"));
@@ -218,6 +275,14 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             var timeout = new IntegerField("Run timeout (s)") { name = "runTimeout", value = runTimeoutSeconds };
             timeout.RegisterValueChangedCallback(evt => runTimeoutSeconds = evt.newValue);
             panel.Add(timeout);
+            var revision = new TextField("Source revision label (optional)")
+            {
+                name = "sourceRevision",
+                value = sourceRevision,
+                maxLength = 128,
+            };
+            revision.RegisterValueChangedCallback(evt => sourceRevision = evt.newValue);
+            panel.Add(revision);
             panel.Add(
                 Note(
                     "Repeat: 1–10. Total timeout: 1–1800 s. Each repeat executes setup → main → cleanup. Static state and DontDestroyOnLoad objects persist unless your stages reset them."
@@ -404,7 +469,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             PushHistory(undoDrafts, previous);
             redoDrafts.Clear();
             dirty = draftJson != cleanDraftJson;
-            hasUnsavedChanges = dirty;
+            hasUnsavedChanges = dirty || suiteDirty;
             UpdateValidation();
         }
 
@@ -445,7 +510,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             pollField.SetValueWithoutNotify(draft.PollIntervalMs);
             copyNameField.SetValueWithoutNotify("");
             deleteButton.SetEnabled(!string.IsNullOrEmpty(savedName));
-            hasUnsavedChanges = dirty;
+            hasUnsavedChanges = dirty || suiteDirty;
             PlayScenarioOptionsEditor.Render(optionsContainer, draft, Edit);
             preflightResult.text = "";
             RenderSteps();
@@ -485,7 +550,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             undoButton.SetEnabled(undoDrafts.Count > 0);
             redoButton.SetEnabled(redoDrafts.Count > 0);
             saveButton.SetEnabled(valid);
-            runButton.SetEnabled(valid && report?.Status != "running");
+            runButton.SetEnabled(valid && !Running);
+            suiteEditor?.SetRunning(Running);
             bool copyValid = valid;
             try
             {
@@ -604,7 +670,14 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             SetMessage("Saved " + savedName + ".", false);
         }
 
-        public override void SaveChanges() => SaveCurrent();
+        public override void SaveChanges()
+        {
+            if (dirty)
+                SaveCurrent();
+            if (suiteDirty && (suiteEditor == null || !suiteEditor.Save()))
+                throw new InvalidOperationException("Suite changes could not be saved.");
+            base.SaveChanges();
+        }
 
         public override void DiscardChanges()
         {
@@ -620,6 +693,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             dirty = false;
             PersistDraft();
             ResetHistory();
+            suiteEditor?.Discard();
             base.DiscardChanges();
             if (nameField != null)
                 RenderDraft();
@@ -674,7 +748,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 dirty = false;
                 PersistDraft();
                 ResetHistory();
-                hasUnsavedChanges = false;
+                hasUnsavedChanges = suiteDirty;
                 RenderDraft();
                 RefreshSavedList();
                 SetMessage("Deleted " + deleting + ".", false);
@@ -722,7 +796,13 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 object result =
                     StartRun != null
                         ? StartRun(savedName, repeatCount, runTimeoutSeconds, jobId)
-                        : PlayScenarioService.Start(savedName, repeatCount, runTimeoutSeconds, jobId);
+                        : PlayScenarioService.Start(
+                            savedName,
+                            repeatCount,
+                            runTimeoutSeconds,
+                            jobId,
+                            string.IsNullOrEmpty(sourceRevision) ? null : sourceRevision
+                        );
                 if (!AcceptReport(result))
                 {
                     jobId = priorId;
@@ -743,12 +823,97 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 return;
             try
             {
-                AcceptReport(CancelRun != null ? CancelRun(jobId) : PlayScenarioService.Cancel(jobId));
+                if (suiteMode)
+                    AcceptSuiteReport(CallSuite(new JObject { ["action"] = "suite_cancel", ["suite_id"] = jobId }));
+                else
+                    AcceptReport(CancelRun != null ? CancelRun(jobId) : PlayScenarioService.Cancel(jobId));
             }
             catch (Exception exception)
             {
                 SetMessage(exception.Message, true);
             }
+        }
+
+        private object CallSuite(JObject request) => HandleSuite != null ? HandleSuite(request) : PlayScenarioSuiteService.Handle(request);
+
+        private void PersistSuiteDraft(string json, bool saved)
+        {
+            suiteDraftJson = json;
+            if (saved)
+                suiteCleanJson = json;
+            suiteDirty = suiteDraftJson != suiteCleanJson;
+            hasUnsavedChanges = dirty || suiteDirty;
+        }
+
+        private void RunSuite(JObject request)
+        {
+            if (Running)
+            {
+                SetMessage("A scenario or suite is already running.", true);
+                return;
+            }
+            if (dirty)
+            {
+                int choice = Dialog(
+                    "Unsaved scenario changes",
+                    "Suites use saved definitions. Save current scenario changes before running?",
+                    "Save",
+                    "Cancel",
+                    "Run saved definitions"
+                );
+                if (choice == 1 || (choice == 0 && !TrySave()))
+                    return;
+            }
+            string previousId = jobId;
+            bool previousMode = suiteMode;
+            try
+            {
+                if (!AcceptSuiteReport(CallSuite(request)))
+                {
+                    jobId = previousId;
+                    suiteMode = previousMode;
+                    SessionState.SetString(SessionJobKey, jobId ?? "");
+                    SessionState.SetBool(SessionSuiteModeKey, suiteMode);
+                }
+            }
+            catch (Exception exception)
+            {
+                jobId = previousId;
+                suiteMode = previousMode;
+                SessionState.SetString(SessionJobKey, jobId ?? "");
+                SessionState.SetBool(SessionSuiteModeKey, suiteMode);
+                SetMessage(exception.Message, true);
+            }
+        }
+
+        private bool AcceptSuiteReport(object response)
+        {
+            if (!(response is SuccessResponse success))
+            {
+                StopPolling();
+                SetMessage(response is ErrorResponse error ? error.Error : "Unexpected suite response.", true);
+                return false;
+            }
+            bool wasRunning = Running;
+            string previousId = jobId;
+            suiteReport = success.Data as JObject ?? Json(success.Data);
+            jobId = (string)suiteReport["suite_id"];
+            suiteMode = true;
+            report = null;
+            SessionState.SetString(SessionJobKey, jobId ?? "");
+            SessionState.SetBool(SessionSuiteModeKey, true);
+            RenderReport();
+            if (Running)
+                StartPolling();
+            else
+            {
+                StopPolling();
+                if (wasRunning || previousId != jobId)
+                    suiteEditor?.RefreshReports();
+            }
+            SetMessage(success.Message, false);
+            UpdateValidation();
+            return true;
         }
 
         private bool AcceptReport(object response)
@@ -760,6 +925,9 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 return false;
             }
             bool wasRunning = report?.Status == "running";
+            suiteMode = false;
+            suiteReport = null;
+            SessionState.SetBool(SessionSuiteModeKey, false);
             JObject data = success.Data as JObject ?? Json(success.Data);
             report = data.ToObject<PlayScenarioRun>(JsonSerializer.Create());
             if (report == null)
@@ -807,7 +975,10 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         {
             try
             {
-                AcceptReport(ReadStatus != null ? ReadStatus(jobId) : PlayScenarioService.Status(jobId));
+                if (suiteMode)
+                    AcceptSuiteReport(CallSuite(new JObject { ["action"] = "suite_status", ["suite_id"] = jobId }));
+                else
+                    AcceptReport(ReadStatus != null ? ReadStatus(jobId) : PlayScenarioService.Status(jobId));
             }
             catch (Exception exception)
             {
@@ -821,7 +992,13 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             if (runResults == null)
                 return;
             runResults.Clear();
-            cancelButton.SetEnabled(report?.Status == "running");
+            cancelButton.SetEnabled(Running);
+            if (suiteMode && suiteReport != null)
+            {
+                runResults.Add(new Label((string)suiteReport["status"] + " • suite") { name = "runStatus" });
+                PlayScenarioSuiteEditor.AppendReport(suiteReport, text => runResults.Add(Note(text)));
+                return;
+            }
             if (report == null)
             {
                 runResults.Add(Note("No run yet. Save & Run starts a job and displays its step results here."));
@@ -829,6 +1006,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             }
             runResults.Add(new Label(report.Status + " • " + report.Phase) { name = "runStatus" });
             runResults.Add(Note("Job: " + report.JobId));
+            PlayScenarioHistoryEditor.AppendStructuredDetails(Json(report), text => runResults.Add(Note(text)));
             if (!string.IsNullOrEmpty(report.Error))
             {
                 var error = Note(report.Error);
