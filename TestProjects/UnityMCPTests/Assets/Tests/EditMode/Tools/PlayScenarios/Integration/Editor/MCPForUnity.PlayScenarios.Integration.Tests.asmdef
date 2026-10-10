@@ -1,0 +1,32 @@
+{
+  "name": "MCPForUnity.PlayScenarios.Integration.Tests",
+  "references": [
+    "MCPForUnity.Editor",
+    "MCPForUnity.Runtime",
+    "MCPForUnity.PlayScenarios.Integration.Runtime",
+    "UnityEngine.UI",
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "nunit.framework.dll",
+    "Newtonsoft.Json.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS",
+    "MCP_INPUT_UGUI"
+  ],
+  "versionDefines": [
+    {
+      "name": "com.unity.ugui",
+      "expression": "1.0.0",
+      "define": "MCP_INPUT_UGUI"
+    }
+  ],
+  "noEngineReferences": false
+}
