@@ -4,33 +4,31 @@ import sys
 from importlib import import_module
 
 import click
-from typing import Optional
-
 from cli import __version__
 from cli.utils.config import (
-    CLIConfig,
-    set_config,
-    get_config,
     HTTP_PORT_TYPE,
-    TIMEOUT_TYPE,
     OUTPUT_FORMAT_TYPE,
+    TIMEOUT_TYPE,
+    CLIConfig,
+    get_config,
+    set_config,
 )
-from cli.utils.suggestions import suggest_matches, format_suggestions
-from cli.utils.output import format_output, print_error, print_success, print_info
 from cli.utils.connection import (
-    run_command,
-    run_check_connection,
-    run_list_instances,
     UnityConnectionError,
     handle_unity_errors,
+    run_check_connection,
+    run_command,
+    run_list_instances,
     warn_if_remote_host,
 )
+from cli.utils.output import format_output, print_error, print_info, print_success
+from cli.utils.suggestions import format_suggestions, suggest_matches
 
 
 # Context object to pass configuration between commands
 class Context:
     def __init__(self):
-        self.config: Optional[CLIConfig] = None
+        self.config: CLIConfig | None = None
 
 
 pass_context = click.make_pass_decorator(Context, ensure=True)
@@ -114,7 +112,7 @@ def cli(
     port: int,
     timeout: int,
     format: str,
-    instance: Optional[str],
+    instance: str | None,
     verbose: bool,
 ):
     """Unity MCP (ykh09242) Command Line Interface.
@@ -294,6 +292,7 @@ def register_commands():
         ("cli.commands.script", "script"),
         ("cli.commands.code", "code"),
         ("cli.commands.editor", "editor"),
+        ("cli.commands.play_scenario", "play_scenario"),
         ("cli.commands.prefab", "prefab"),
         ("cli.commands.material", "material"),
         ("cli.commands.lighting", "lighting"),
