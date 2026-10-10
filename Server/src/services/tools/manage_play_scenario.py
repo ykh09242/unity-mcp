@@ -45,9 +45,10 @@ class PlayScenarioResponse(TypedDict, total=False):
         "Steps load_scene/wait_scene use Assets/... .unity paths; click_ui/wait_object use target_id or exact "
         "active-scene hierarchy paths. uGUI click_mode direct dispatches events; raycast verifies a visible hit. "
         "wait conditions support stability and object count/active/component/property. log_policy defaults "
-        "strict; metrics are diagnostic, resources assert registered growth and screenshots opt-in. Tags select "
+        "strict; metrics are diagnostic, resources assert registered growth and screenshots/timeline opt-in. "
+        "reset_state invokes registered reset_ids explicitly; query_budget bounds actual target searches. Tags select "
         "sequential suite children in one Editor. Unity polls; Python does not. End leaves Play "
-        "unchanged; repeats do not reset DontDestroyOnLoad or static state."
+        "unchanged; load_scene does not reset DontDestroyOnLoad or static state without explicit reset participants."
     ),
     annotations=ToolAnnotations(
         title="Manage Play Scenario", readOnlyHint=False, destructiveHint=True

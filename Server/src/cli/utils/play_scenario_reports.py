@@ -1,6 +1,7 @@
 """Export native suite reports as bounded JUnit XML and original JSON artifacts."""
 
 import json
+import re
 from pathlib import Path
 from typing import Annotated, Final
 from xml.etree import ElementTree
@@ -24,6 +25,12 @@ class ReportEvidence(BaseModel):
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
     reproduction: dict[str, JsonValue] = Field(default_factory=dict)
     failure_diagnostics: dict[str, JsonValue] | None = None
+    failure: dict[str, JsonValue] | None = None
+    query_counts: dict[str, JsonValue] = Field(default_factory=dict)
+    timeline: list[dict[str, JsonValue]] = Field(default_factory=list, max_length=128)
+    dropped_timeline_count: int = 0
+    resource_checks: list[dict[str, JsonValue]] = Field(default_factory=list, max_length=10)
+    steps: list[dict[str, JsonValue]] = Field(default_factory=list, max_length=640)
 
 
 class SuiteCase(BaseModel):
@@ -87,6 +94,113 @@ def _properties(element: ElementTree.Element, values: dict[str, JsonValue]) -> N
                 name=_xml_text(name[:128]),
                 value=_xml_text(str(value)[:4096]),
             )
+
+
+def _safe_context_text(value: str) -> str:
+    """Redact credential assignments and absolute paths in newly exported diagnostic context."""
+    value = re.sub(
+        r"(?i)\b(token|secret|password|api[_-]?key|authorization)\s*[:=]\s*[^\s,;]+",
+        r"\1=<redacted>",
+        value,
+    )
+    value = re.sub(r"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\|/)[^\s<>\"']+", "<path>", value)
+    return _xml_text(value[:512])
+
+
+def _context_fields(entry: dict[str, JsonValue], fields: set[str]) -> dict[str, JsonValue]:
+    """Export only known bounded scalar diagnostic fields, never arbitrary object graphs."""
+    return {
+        key: _safe_context_text(value) if isinstance(value, str) else value
+        for key, value in entry.items()
+        if key in fields and isinstance(value, (str, int, float, bool))
+    }
+
+
+def _failure_context(evidence: ReportEvidence) -> str:
+    """Build a bounded additive summary of timeline, query budgets and resource ownership."""
+    context: dict[str, JsonValue] = {}
+    if evidence.failure:
+        context["failure"] = _context_fields(
+            evidence.failure,
+            {
+                "code",
+                "stage",
+                "iteration",
+                "step_index",
+                "target",
+                "component",
+                "property_path",
+                "message",
+            },
+        )
+    if evidence.query_counts:
+        context["query_counts"] = _context_fields(
+            evidence.query_counts, {"target_searches", "hierarchy_visits"}
+        )
+    if evidence.timeline:
+        context["timeline"] = [
+            _context_fields(
+                event,
+                {
+                    "sequence",
+                    "timestamp_unix_ms",
+                    "stage",
+                    "iteration",
+                    "step_index",
+                    "event",
+                    "detail",
+                },
+            )
+            for event in evidence.timeline
+        ]
+        context["dropped_timeline_count"] = evidence.dropped_timeline_count
+    if evidence.resource_checks:
+        checks: list[JsonValue] = []
+        for check in evidence.resource_checks:
+            bounded = _context_fields(
+                check,
+                {
+                    "iteration",
+                    "new_scriptable_objects",
+                    "new_subscriptions",
+                    "new_handles",
+                    "passed",
+                    "omitted_resource_count",
+                },
+            )
+            resources = check.get("retained_resources")
+            if isinstance(resources, list):
+                bounded["retained_resources"] = [
+                    _context_fields(
+                        resource,
+                        {
+                            "id",
+                            "kind",
+                            "owner",
+                            "type_name",
+                            "resource_name",
+                            "source_file",
+                            "source_member",
+                            "source_line",
+                        },
+                    )
+                    for resource in resources[:32]
+                    if isinstance(resource, dict)
+                ]
+            checks.append(bounded)
+        context["resource_checks"] = checks
+    counted_steps: list[JsonValue] = []
+    for step in evidence.steps:
+        counts = step.get("query_counts")
+        if isinstance(counts, dict):
+            entry = _context_fields(step, {"stage", "iteration", "step_index", "name"})
+            entry["query_counts"] = _context_fields(counts, {"target_searches", "hierarchy_visits"})
+            counted_steps.append(entry)
+    if counted_steps:
+        context["step_query_counts"] = counted_steps
+    return (
+        json.dumps(context, ensure_ascii=True, separators=(",", ":"))[:LOG_LIMIT] if context else ""
+    )
 
 
 def junit_xml(raw: dict[str, JsonValue]) -> bytes:
@@ -165,6 +279,14 @@ def junit_xml(raw: dict[str, JsonValue]) -> bytes:
             ]
             logs = json.dumps(bounded_logs, ensure_ascii=True, separators=(",", ":"))
             ElementTree.SubElement(case, "system-out").text = _xml_text(logs[:LOG_LIMIT])
+        context = _failure_context(evidence)
+        if context:
+            output = case.find("system-out")
+            if output is None:
+                output = ElementTree.SubElement(case, "system-out")
+            output.text = _xml_text(((output.text + "\n") if output.text else "") + context)[
+                :LOG_LIMIT
+            ]
     infrastructure_error = report.report_error or report.client_error
     missing_parent_outcome = report.status in {"failed", "timed_out", "cancelled"} and not (
         counts["failures"] or counts["errors"]
@@ -198,5 +320,46 @@ def write_suite_artifacts(raw: dict[str, JsonValue], directory: Path) -> tuple[P
     json_path = directory / "suite.json"
     xml_path = directory / "junit.xml"
     json_path.write_text(json.dumps(raw, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+    xml_path.write_bytes(xml)
+    return json_path, xml_path
+
+
+def write_player_artifacts(
+    raw: dict[str, JsonValue], directory: Path, client_error: str | None = None
+) -> tuple[Path, Path]:
+    """Export a single actual Player report without fabricating a suite execution outcome."""
+    scenario = raw.get("scenario")
+    name = str(scenario.get("name", "player")) if isinstance(scenario, dict) else "player"
+    reproduction = raw.get("reproduction")
+    definition_hash = (
+        reproduction.get("definition_hash") if isinstance(reproduction, dict) else None
+    )
+    adapter: dict[str, JsonValue] = {
+        "suite": {"name": name},
+        "started_unix_ms": raw.get("started_unix_ms"),
+        "finished_unix_ms": raw.get("finished_unix_ms"),
+        "repeat_count": raw.get("repeat_count"),
+        "timeout_seconds": raw.get("timeout_seconds"),
+        "source_revision": (
+            reproduction.get("source_revision") if isinstance(reproduction, dict) else None
+        ),
+        "scenarios": [
+            {
+                "name": name,
+                "status": raw.get("status"),
+                "job_id": raw.get("job_id"),
+                "definition_hash": definition_hash,
+                "report": raw,
+            }
+        ],
+    }
+    if client_error is not None:
+        adapter["client_error"] = client_error
+    xml = junit_xml(adapter)
+    json_path = directory / "run.json"
+    xml_path = directory / "junit.xml"
+    # run.json is the native artifact; preserve its exact bytes when it already exists.
+    if not json_path.exists():
+        json_path.write_text(json.dumps(raw, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
     xml_path.write_bytes(xml)
     return json_path, xml_path

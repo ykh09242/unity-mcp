@@ -40,7 +40,7 @@ HARDENED = {
         "allocated_growth_bytes": 200,
         "object_growth_count": 1,
     },
-    "diagnostics": {"screenshot_on_failure": True},
+    "diagnostics": {"screenshot_on_failure": True, "record_timeline": False},
 }
 
 
@@ -62,7 +62,10 @@ def test_legacy_definition_gains_safe_hardening_defaults():
         "allocated_growth_bytes": 1048576,
         "object_growth_count": 0,
     }
-    assert scenario.diagnostics.model_dump() == {"screenshot_on_failure": False}
+    assert scenario.diagnostics.model_dump() == {
+        "screenshot_on_failure": False,
+        "record_timeline": False,
+    }
     assert "stable_for_ms" not in scenario.steps[0].model_dump(exclude_none=True)
 
 

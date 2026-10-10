@@ -9,7 +9,8 @@ from cli.utils.config import get_config
 from cli.utils.connection import handle_unity_errors, run_command
 from cli.utils.output import format_output
 from models.play_scenarios import PlayScenario, PlayScenarioCommand, PlayScenarioSuite
-from cli.utils.play_scenario_reports import write_suite_artifacts
+from cli.utils.play_scenario_reports import write_suite_artifacts, write_player_artifacts
+from cli.utils.play_scenario_player import PlayerLaunchError, PlayerRunOptions, run_player
 from cli.utils.play_scenario_suite import wait_for_suite
 from pydantic import JsonValue, ValidationError
 
@@ -268,3 +269,47 @@ def suite_run(
         )
     ):
         raise click.exceptions.Exit(1)
+
+
+@play_scenario.command("player-run")
+@click.argument("build_directory", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--output-dir", type=click.Path(file_okay=False, path_type=Path), required=True)
+@click.option("--repeat-count", type=click.IntRange(1, 10), default=1, show_default=True)
+@click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
+@click.option("--source-revision", default=None)
+@click.option("--cleanup-wait-seconds", type=click.IntRange(1, 600), default=360, show_default=True)
+def player_run(
+    build_directory: Path,
+    output_dir: Path,
+    repeat_count: int,
+    timeout_seconds: int,
+    source_revision: str | None,
+    cleanup_wait_seconds: int,
+) -> None:
+    """Launch an explicit local Player bundle, wait, and export actual run.json plus JUnit.
+
+    Each invocation owns a new output subdirectory. Timeout and Ctrl+C request cleanup
+    once, then terminate only the owned process if its bounded cleanup wait expires.
+    """
+    try:
+        outcome = run_player(
+            PlayerRunOptions(
+                build_directory=build_directory,
+                output_directory=output_dir,
+                repeat_count=repeat_count,
+                timeout_seconds=timeout_seconds,
+                source_revision=source_revision,
+                cleanup_wait_seconds=cleanup_wait_seconds,
+            )
+        )
+        write_player_artifacts(outcome.report, outcome.directory, outcome.client_error)
+    except (PlayerLaunchError, OSError, ValueError) as exc:
+        # Bundle/process errors remain errors; no native success report is invented.
+        raise click.ClickException(str(exc)) from exc
+    click.echo(
+        format_output(
+            {"success": outcome.exit_code == 0, "data": outcome.report}, get_config().format
+        )
+    )
+    if outcome.exit_code:
+        raise click.exceptions.Exit(outcome.exit_code)

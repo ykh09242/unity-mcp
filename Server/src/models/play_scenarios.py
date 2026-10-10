@@ -28,7 +28,8 @@ ScenarioAction = Literal[
     "suite_cancel",
     "suite_reports",
 ]
-StepAction = Literal["load_scene", "wait_scene", "click_ui", "wait_object"]
+StepAction = Literal["load_scene", "wait_scene", "click_ui", "wait_object", "reset_state"]
+TargetId = Annotated[str, Field(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
 
 
 def _utf16_units(value: str) -> int:
@@ -127,6 +128,7 @@ class PlayScenarioDiagnosticsOptions(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     screenshot_on_failure: Annotated[bool, Field(strict=True)] = False
+    record_timeline: Annotated[bool, Field(strict=True)] = False
 
 
 def _path_segments(path: str) -> list[str]:
@@ -151,9 +153,8 @@ class ScenarioStep(BaseModel):
     action: StepAction
     scene: Annotated[str, Field(strict=True, min_length=1, max_length=4096)] | None = None
     target: Annotated[str, Field(strict=True, min_length=1, max_length=4096)] | None = None
-    target_id: (
-        Annotated[str, Field(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")] | None
-    ) = None
+    target_id: TargetId | None = None
+    reset_ids: Annotated[list[TargetId], Field(min_length=1, max_length=16)] | None = None
     click_mode: Literal["direct", "raycast"] | None = None
     timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=120)] = 30
     count: Annotated[int, Field(strict=True, ge=0, le=10000)] | None = None
@@ -177,6 +178,20 @@ class ScenarioStep(BaseModel):
     @model_validator(mode="after")
     def check_arguments(self) -> "ScenarioStep":
         """Reject unused selectors, invalid conditions and unsafe scene/object paths."""
+        match self.action:
+            case "reset_state":
+                if self.model_fields_set - {"name", "action", "timeout_seconds", "reset_ids"}:
+                    message = "reset_state accepts only name, action, timeout_seconds and reset_ids"
+                    raise ValueError(message)
+                if self.reset_ids is None or len(set(self.reset_ids)) != len(self.reset_ids):
+                    message = "reset_state requires unique reset_ids"
+                    raise ValueError(message)
+            case "load_scene" | "wait_scene" | "click_ui" | "wait_object":
+                if "reset_ids" in self.model_fields_set:
+                    message = "reset_ids is only valid for reset_state"
+                    raise ValueError(message)
+            case unreachable:
+                assert_never(unreachable)
         object_fields = {"count", "active", "component", "property"}
         optional_fields = object_fields | {"stable_for_ms", "target_id", "click_mode"}
         authored_fields = self.model_fields_set & optional_fields
@@ -208,7 +223,7 @@ class ScenarioStep(BaseModel):
                 if authored_fields & object_fields:
                     message = "Object conditions are only valid for wait_object"
                     raise ValueError(message)
-            case "load_scene" | "click_ui":
+            case "load_scene" | "click_ui" | "reset_state":
                 if condition_fields:
                     message = "Effect steps do not accept wait conditions"
                     raise ValueError(message)
@@ -245,9 +260,20 @@ class ScenarioStep(BaseModel):
                     raise ValueError(message)
                 if self.target is not None:
                     _path_segments(self.target)
+            case "reset_state":
+                pass
             case unreachable:
                 assert_never(unreachable)
         return self
+
+
+class PlayScenarioQueryBudget(BaseModel):
+    """Opt into strict budgets for actual target resolutions and hierarchy visits."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    enabled: Annotated[bool, Field(strict=True)] = False
+    max_target_searches: Annotated[int, Field(strict=True, ge=0, le=1000000)] = 4096
+    max_hierarchy_visits: Annotated[int, Field(strict=True, ge=0, le=10000000)] = 1000000
 
 
 class PlayScenarioResourceOptions(BaseModel):
@@ -275,6 +301,7 @@ class PlayScenario(BaseModel):
     name: ScenarioName
     tags: Annotated[list[ScenarioName], Field(max_length=16)] = Field(default_factory=list)
     resources: PlayScenarioResourceOptions = Field(default_factory=PlayScenarioResourceOptions)
+    query_budget: PlayScenarioQueryBudget = Field(default_factory=PlayScenarioQueryBudget)
     poll_interval_ms: Annotated[int, Field(strict=True, ge=100, le=2000)] = 250
     steps: Annotated[list[ScenarioStep], Field(min_length=1, max_length=32)]
     setup_steps: Annotated[list[ScenarioStep], Field(max_length=16)] = Field(default_factory=list)
