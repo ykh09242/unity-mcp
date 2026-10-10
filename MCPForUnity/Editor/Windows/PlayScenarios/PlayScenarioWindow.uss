@@ -1,0 +1,115 @@
+.play-scenarios {
+    padding: 12px;
+}
+.scenario-heading {
+    font-size: 20px;
+    -unity-font-style: bold;
+    margin-bottom: 4px;
+}
+.scenario-columns {
+    flex-direction: row;
+    flex-grow: 1;
+    min-height: 0;
+    margin-top: 8px;
+}
+.scenario-panel {
+    background-color: var(--mcp-surface);
+    border-width: 1px;
+    border-color: var(--mcp-border);
+    border-radius: 4px;
+    padding: 8px;
+    min-width: 0;
+}
+.scenario-library {
+    width: 180px;
+    flex-shrink: 0;
+    margin-right: 8px;
+}
+.scenario-editor {
+    flex-grow: 3;
+    flex-basis: 0;
+    margin-right: 8px;
+}
+.scenario-results {
+    flex-grow: 2;
+    flex-basis: 0;
+}
+.scenario-section-title {
+    -unity-font-style: bold;
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+.scenario-row {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+.scenario-row > Button {
+    margin-left: 0;
+    margin-right: 4px;
+    min-height: 24px;
+}
+.scenario-copy-name {
+    flex-grow: 1;
+    min-width: 120px;
+}
+.scenario-note {
+    color: var(--mcp-muted);
+    white-space: normal;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    flex-shrink: 0;
+}
+.scenario-scroll {
+    flex-grow: 1;
+    min-height: 0;
+    margin-top: 6px;
+}
+.scenario-scroll .unity-scroll-view__content-container {
+    padding-right: 4px;
+}
+.scenario-list-item {
+    min-height: 28px;
+    white-space: normal;
+    -unity-text-align: middle-left;
+    margin: 2px 0;
+}
+.scenario-selected {
+    border-color: var(--mcp-accent);
+    border-width: 1px;
+}
+.scenario-step {
+    background-color: var(--mcp-bg);
+    border-color: var(--mcp-border);
+    border-width: 1px;
+    border-radius: 4px;
+    padding: 6px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+}
+.scenario-step .unity-base-field__label {
+    min-width: 112px;
+}
+.scenario-validation {
+    white-space: normal;
+    color: var(--mcp-success);
+    margin-top: 4px;
+    flex-shrink: 0;
+}
+.scenario-error {
+    color: var(--mcp-danger);
+}
+.scenario-result-row {
+    border-bottom-width: 1px;
+    border-bottom-color: var(--mcp-border);
+    padding-bottom: 6px;
+    margin-bottom: 6px;
+}
+.scenario-message {
+    white-space: normal;
+    min-height: 20px;
+    margin-top: 8px;
+    flex-shrink: 0;
+}
