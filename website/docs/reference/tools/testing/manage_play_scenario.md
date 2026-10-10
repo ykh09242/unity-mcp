@@ -1,7 +1,7 @@
 ---
 title: manage_play_scenario
 sidebar_label: manage_play_scenario
-description: "Save/get/list/delete scenarios, reports history and run/status/cancel Unity-owned jobs. save takes a whole definition; get/delete/run take its name; reports accepts optional name. status/cancel require a 32-character lowercase hexadecima…"
+description: "Save/get/list/delete scenarios and suites; reports history and run/status/cancel Unity-owned jobs."
 ---
 
 # `manage_play_scenario`
@@ -12,14 +12,17 @@ description: "Save/get/list/delete scenarios, reports history and run/status/can
 
 ## Description
 
-Save/get/list/delete scenarios, reports history and run/status/cancel Unity-owned jobs. save takes a whole definition; get/delete/run take its name; reports accepts optional name. status/cancel require a 32-character lowercase hexadecimal job_id. run returns immediately; each repeat executes setup_steps, steps, then bounded cleanup_steps. Steps load_scene/wait_scene use Assets/... .unity paths; click_ui/wait_object use exact active-scene hierarchy paths. uGUI clicks dispatch direct events, not UI Toolkit or occlusion tests. wait conditions support stability and object count/active/component/property. log_policy defaults strict; metrics are diagnostic and screenshots opt-in. Unity polls; Python does not. End leaves Play unchanged; repeats do not reset DontDestroyOnLoad or static state.
+Save/get/list/delete scenarios and suites; reports history and run/status/cancel Unity-owned jobs. Suite actions use suite_ prefixes, suite_save takes suite and suite_status/cancel take suite_id. save takes a whole definition; get/delete/run take its name; reports accepts optional name. status/cancel require a 32-character lowercase hexadecimal job_id. run returns immediately; each repeat executes setup_steps, steps, then bounded cleanup_steps. Steps load_scene/wait_scene use Assets/... .unity paths; click_ui/wait_object use target_id or exact active-scene hierarchy paths. uGUI click_mode direct dispatches events; raycast verifies a visible hit. wait conditions support stability and object count/active/component/property. log_policy defaults strict; metrics are diagnostic, resources assert registered growth and screenshots opt-in. Tags select sequential suite children in one Editor. Unity polls; Python does not. End leaves Play unchanged; repeats do not reset DontDestroyOnLoad or static state.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['save', 'get', 'list', 'delete', 'run', 'status', 'cancel', 'reports']` | yes | save, get, list, delete, run, status, cancel or reports |
+| `action` | `Literal['save', 'get', 'list', 'delete', 'run', 'status', 'cancel', 'reports', 'suite_save', 'suite_get', 'suite_list', 'suite_delete', 'suite_run', 'suite_status', 'suite_cancel', 'suite_reports']` | yes | save, get, list, delete, run, status, cancel or reports |
 | `scenario` | `PlayScenario \| None` | — | Whole scenario definition for save |
+| `suite` | `PlayScenarioSuite \| None` | — | Whole suite definition for suite_save |
+| `suite_id` | `str \| None` | — | suite_status/suite_cancel ID; optional suite_run key |
+| `source_revision` | `str \| None` | — | Optional caller-provided run revision label, at most 128 UTF-16 units |
 | `name` | `str \| None` | — | Saved name for get/delete/run; optional reports filter |
 | `job_id` | `str \| None` | — | Required for status/cancel; optional run request key |
 | `repeat_count` | `int \| None` | — | run repetitions, default 1 |

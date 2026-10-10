@@ -10,7 +10,24 @@ ScenarioName = Annotated[str, Field(strict=True, pattern=r"^[a-z0-9][a-z0-9_-]{0
 JobId = Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{32}$")]
 RepeatCount = Annotated[int, Field(strict=True, ge=1, le=10)]
 RunTimeout = Annotated[int, Field(strict=True, ge=1, le=1800)]
-ScenarioAction = Literal["save", "get", "list", "delete", "run", "status", "cancel", "reports"]
+ScenarioAction = Literal[
+    "save",
+    "get",
+    "list",
+    "delete",
+    "run",
+    "status",
+    "cancel",
+    "reports",
+    "suite_save",
+    "suite_get",
+    "suite_list",
+    "suite_delete",
+    "suite_run",
+    "suite_status",
+    "suite_cancel",
+    "suite_reports",
+]
 StepAction = Literal["load_scene", "wait_scene", "click_ui", "wait_object"]
 
 
@@ -134,6 +151,10 @@ class ScenarioStep(BaseModel):
     action: StepAction
     scene: Annotated[str, Field(strict=True, min_length=1, max_length=4096)] | None = None
     target: Annotated[str, Field(strict=True, min_length=1, max_length=4096)] | None = None
+    target_id: (
+        Annotated[str, Field(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")] | None
+    ) = None
+    click_mode: Literal["direct", "raycast"] | None = None
     timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=120)] = 30
     count: Annotated[int, Field(strict=True, ge=0, le=10000)] | None = None
     active: Annotated[bool, Field(strict=True)] | None = None
@@ -157,7 +178,7 @@ class ScenarioStep(BaseModel):
     def check_arguments(self) -> "ScenarioStep":
         """Reject unused selectors, invalid conditions and unsafe scene/object paths."""
         object_fields = {"count", "active", "component", "property"}
-        optional_fields = object_fields | {"stable_for_ms"}
+        optional_fields = object_fields | {"stable_for_ms", "target_id", "click_mode"}
         authored_fields = self.model_fields_set & optional_fields
         if any(getattr(self, field) is None for field in authored_fields):
             message = "Optional step fields must be omitted rather than null"
@@ -165,6 +186,13 @@ class ScenarioStep(BaseModel):
         if self.stable_for_ms is not None and self.stable_for_ms >= self.timeout_seconds * 1000:
             message = "stable_for_ms must be less than the step timeout"
             raise ValueError(message)
+        if self.action != "click_ui" and "click_mode" in self.model_fields_set:
+            message = "click_mode is only valid for click_ui"
+            raise ValueError(message)
+        if self.target_id is not None and self.count not in (None, 0, 1):
+            message = "ID selectors allow only count zero or one"
+            raise ValueError(message)
+        condition_fields = authored_fields & (object_fields | {"stable_for_ms"})
         match self.action:
             case "wait_object":
                 if self.count == 0 and authored_fields & (object_fields - {"count"}):
@@ -181,7 +209,7 @@ class ScenarioStep(BaseModel):
                     message = "Object conditions are only valid for wait_object"
                     raise ValueError(message)
             case "load_scene" | "click_ui":
-                if authored_fields:
+                if condition_fields:
                     message = "Effect steps do not accept wait conditions"
                     raise ValueError(message)
             case unreachable:
@@ -194,7 +222,7 @@ class ScenarioStep(BaseModel):
             raise ValueError("Step name has an invalid character")
         match self.action:
             case "load_scene" | "wait_scene":
-                if self.scene is None or "target" in self.model_fields_set:
+                if self.scene is None or self.model_fields_set & {"target", "target_id"}:
                     raise ValueError("Scene steps require scene and do not accept target")
                 segments = _path_segments(self.scene)
                 if (
@@ -207,12 +235,37 @@ class ScenarioStep(BaseModel):
                 ):
                     raise ValueError("Scene must be an Assets/... .unity path outside GameData")
             case "click_ui" | "wait_object":
-                if self.target is None or "scene" in self.model_fields_set:
-                    raise ValueError("Object steps require target and do not accept scene")
-                _path_segments(self.target)
+                if (self.target is None) == (
+                    self.target_id is None
+                ) or "scene" in self.model_fields_set:
+                    message = "Object steps require exactly one target or target_id and no scene"
+                    raise ValueError(message)
+                if "target" in self.model_fields_set and self.target is None:
+                    message = "target must be omitted rather than null"
+                    raise ValueError(message)
+                if self.target is not None:
+                    _path_segments(self.target)
             case unreachable:
                 assert_never(unreachable)
         return self
+
+
+class PlayScenarioResourceOptions(BaseModel):
+    """Opt into registered resource identity growth assertions after cleanup."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    enabled: Annotated[bool, Field(strict=True)] = False
+    max_scriptable_objects: Annotated[int, Field(strict=True, ge=0, le=4096)] = 0
+    max_subscriptions: Annotated[int, Field(strict=True, ge=0, le=4096)] = 0
+    max_handles: Annotated[int, Field(strict=True, ge=0, le=4096)] = 0
+
+
+def _unique_selectors(values: list[str]) -> list[str]:
+    """Keep authored order while rejecting duplicate canonical selectors."""
+    if len(set(values)) != len(values):
+        message = "Selectors must be unique"
+        raise ValueError(message)
+    return values
 
 
 class PlayScenario(BaseModel):
@@ -220,6 +273,8 @@ class PlayScenario(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     name: ScenarioName
+    tags: Annotated[list[ScenarioName], Field(max_length=16)] = Field(default_factory=list)
+    resources: PlayScenarioResourceOptions = Field(default_factory=PlayScenarioResourceOptions)
     poll_interval_ms: Annotated[int, Field(strict=True, ge=100, le=2000)] = 250
     steps: Annotated[list[ScenarioStep], Field(min_length=1, max_length=32)]
     setup_steps: Annotated[list[ScenarioStep], Field(max_length=16)] = Field(default_factory=list)
@@ -231,6 +286,12 @@ class PlayScenario(BaseModel):
     diagnostics: PlayScenarioDiagnosticsOptions = Field(
         default_factory=PlayScenarioDiagnosticsOptions
     )
+
+    @field_validator("tags")
+    @classmethod
+    def check_tags(cls, value: list[str]) -> list[str]:
+        """Tags are unique canonical slugs shared with suite selection."""
+        return _unique_selectors(value)
 
     @model_validator(mode="after")
     def check_first_step(self) -> "PlayScenario":
@@ -253,52 +314,100 @@ class PlayScenario(BaseModel):
         return self
 
 
+class PlayScenarioSuite(BaseModel):
+    """A bounded native suite selects saved names and the union of matching tags."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    schema_version: Annotated[int, Field(strict=True, ge=1, le=1)] = 1
+    name: ScenarioName
+    scenarios: Annotated[list[ScenarioName], Field(max_length=16)] = Field(default_factory=list)
+    tags: Annotated[list[ScenarioName], Field(max_length=16)] = Field(default_factory=list)
+    failure_policy: Literal["stop", "continue"] = "stop"
+
+    @field_validator("scenarios", "tags")
+    @classmethod
+    def check_selectors(cls, value: list[str]) -> list[str]:
+        """Duplicate selectors are invalid rather than silently normalized."""
+        return _unique_selectors(value)
+
+    @model_validator(mode="after")
+    def check_selection(self) -> "PlayScenarioSuite":
+        """Admission requires at least one selector; Unity resolves the bounded snapshot."""
+        if not self.scenarios and not self.tags:
+            message = "A suite requires scenarios or tags"
+            raise ValueError(message)
+        return self
+
+
 class PlayScenarioCommand(BaseModel):
     """Parse action-specific arguments before dispatching a single Unity command."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     action: ScenarioAction
     scenario: PlayScenario | None = None
+    suite: PlayScenarioSuite | None = None
+    suite_id: JobId | None = None
+    source_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None
     name: ScenarioName | None = None
     job_id: JobId | None = None
     repeat_count: RepeatCount | None = None
     timeout_seconds: RunTimeout | None = None
 
+    @field_validator("source_revision")
+    @classmethod
+    def check_revision(cls, value: str | None) -> str | None:
+        """Bound caller-provided reproduction labels in native UTF-16 units."""
+        if value is not None and (
+            not value.strip()
+            or any(category(char) == "Cc" for char in value)
+            or _utf16_units(value) > 128
+        ):
+            message = "source_revision must be at most 128 UTF-16 units"
+            raise ValueError(message)
+        return value
+
     @model_validator(mode="after")
     def check_arguments(self) -> "PlayScenarioCommand":
-        """Only run accepts repeat/timeout, and only run/status/cancel accept job_id."""
-        if self.action != "run" and (
-            self.repeat_count is not None or self.timeout_seconds is not None
-        ):
-            raise ValueError("repeat_count and timeout_seconds are only valid for run")
+        """Reject unused fields before selecting an Editor or issuing any request."""
+        fields = set(self.model_dump(exclude_none=True)) - {"action"}
         match self.action:
             case "save":
-                if self.scenario is None or self.name is not None or self.job_id is not None:
-                    raise ValueError("save requires scenario and accepts no name or job_id")
-            case "get" | "delete":
-                if self.name is None or self.scenario is not None or self.job_id is not None:
-                    raise ValueError("get/delete require name and accept no scenario or job_id")
+                required, allowed = {"scenario"}, {"scenario"}
+            case "suite_save":
+                required, allowed = {"suite"}, {"suite"}
+            case "get" | "delete" | "suite_get" | "suite_delete":
+                required, allowed = {"name"}, {"name"}
             case "run":
-                if self.name is None or self.scenario is not None:
-                    raise ValueError("run requires name and accepts no scenario")
+                required, allowed = (
+                    {"name"},
+                    {"name", "job_id", "repeat_count", "timeout_seconds", "source_revision"},
+                )
+            case "suite_run":
+                required, allowed = (
+                    {"name"},
+                    {"name", "suite_id", "repeat_count", "timeout_seconds", "source_revision"},
+                )
             case "status" | "cancel":
-                if self.job_id is None or self.name is not None or self.scenario is not None:
-                    raise ValueError("status/cancel require job_id and accept no name or scenario")
-            case "reports":
-                if self.scenario is not None or self.job_id is not None:
-                    message = "reports accepts only an optional name"
-                    raise ValueError(message)
-            case "list":
-                if self.scenario is not None or self.name is not None or self.job_id is not None:
-                    raise ValueError("list accepts no scenario, name or job_id")
+                required, allowed = {"job_id"}, {"job_id"}
+            case "suite_status" | "suite_cancel":
+                required, allowed = {"suite_id"}, {"suite_id"}
+            case "reports" | "suite_reports":
+                required, allowed = set(), {"name"}
+            case "list" | "suite_list":
+                required, allowed = set(), set()
             case unreachable:
                 assert_never(unreachable)
+        if not required <= fields or fields - allowed:
+            message = (
+                f"{self.action} requires {sorted(required)} and accepts only {sorted(allowed)}"
+            )
+            raise ValueError(message)
         return self
 
     def wire_parameters(self) -> dict[str, JsonValue]:
         """Emit only action arguments; supply run defaults at the command boundary."""
         params = self.model_dump(mode="json", exclude_none=True)
-        if self.action == "run":
+        if self.action in ("run", "suite_run"):
             params.setdefault("repeat_count", 1)
             params.setdefault("timeout_seconds", 300)
         return params

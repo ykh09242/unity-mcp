@@ -1,13 +1,17 @@
 """CLI commands for saved Unity-owned Play Mode scenarios."""
 
+from pathlib import Path
 from typing import TextIO
+from uuid import uuid4
 
 import click
 from cli.utils.config import get_config
 from cli.utils.connection import handle_unity_errors, run_command
 from cli.utils.output import format_output
-from models.play_scenarios import PlayScenario, PlayScenarioCommand
-from pydantic import ValidationError
+from models.play_scenarios import PlayScenario, PlayScenarioCommand, PlayScenarioSuite
+from cli.utils.play_scenario_reports import write_suite_artifacts
+from cli.utils.play_scenario_suite import wait_for_suite
+from pydantic import JsonValue, ValidationError
 
 
 def _dispatch(**arguments) -> None:
@@ -21,8 +25,8 @@ def _dispatch(**arguments) -> None:
     click.echo(format_output(result, config.format))
     # Native queries and idempotent run retries succeed even when the reported job failed.
     data = result.get("data")
-    if command.action in {"run", "status"} and isinstance(data, dict):
-        if data.get("status") in ("failed", "timed_out", "cancelled"):
+    if command.action in {"run", "status", "suite_run", "suite_status"} and isinstance(data, dict):
+        if data.get("status") in ("failed", "timed_out", "cancelled") or data.get("report_error"):
             raise click.exceptions.Exit(1)
 
 
@@ -74,8 +78,17 @@ def delete(name: str):
 @click.option("--job-id", default=None, help="Optional 32-character lowercase hex request key.")
 @click.option("--repeat-count", type=click.IntRange(1, 10), default=1, show_default=True)
 @click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
+@click.option(
+    "--source-revision", default=None, help="Optional caller-provided reproduction label."
+)
 @handle_unity_errors
-def run(name: str, job_id: str | None, repeat_count: int, timeout_seconds: int):
+def run(
+    name: str,
+    job_id: str | None,
+    repeat_count: int,
+    timeout_seconds: int,
+    source_revision: str | None,
+):
     """Start once and return immediately; use status for later observations.
 
     An idempotent retry reporting an unsuccessful terminal job exits with code 1.
@@ -86,6 +99,7 @@ def run(name: str, job_id: str | None, repeat_count: int, timeout_seconds: int):
         job_id=job_id,
         repeat_count=repeat_count,
         timeout_seconds=timeout_seconds,
+        source_revision=source_revision,
     )
 
 
@@ -117,3 +131,140 @@ def cancel(job_id: str):
 def reports(name: str | None):
     """Read retained terminal reports once; history outcomes do not change query success."""
     _dispatch(action="reports", name=name)
+
+
+@play_scenario.command("suite-save")
+@click.argument("definition", type=click.File("r", encoding="utf-8"))
+@handle_unity_errors
+def suite_save(definition: TextIO) -> None:
+    """Save a bounded native suite definition from UTF-8 JSON or stdin."""
+    raw = definition.read(65537)
+    if len(raw.encode("utf-8")) > 65536:
+        raise click.BadParameter("Suite definition exceeds 64 KiB", param_hint="definition")
+    try:
+        suite = PlayScenarioSuite.model_validate_json(raw)
+    except ValidationError as exc:
+        raise click.BadParameter(str(exc), param_hint="definition") from exc
+    _dispatch(action="suite_save", suite=suite)
+
+
+@play_scenario.command("suite-get")
+@click.argument("name")
+@handle_unity_errors
+def suite_get(name: str) -> None:
+    """Get a saved native suite definition."""
+    _dispatch(action="suite_get", name=name)
+
+
+@play_scenario.command("suite-list")
+@handle_unity_errors
+def suite_list() -> None:
+    """List saved native suite names."""
+    _dispatch(action="suite_list")
+
+
+@play_scenario.command("suite-delete")
+@click.argument("name")
+@handle_unity_errors
+def suite_delete(name: str) -> None:
+    """Delete a saved native suite definition."""
+    _dispatch(action="suite_delete", name=name)
+
+
+@play_scenario.command("suite-status")
+@click.argument("suite_id")
+@handle_unity_errors
+def suite_status(suite_id: str) -> None:
+    """Observe a suite once; this command never waits."""
+    _dispatch(action="suite_status", suite_id=suite_id)
+
+
+@play_scenario.command("suite-cancel")
+@click.argument("suite_id")
+@handle_unity_errors
+def suite_cancel(suite_id: str) -> None:
+    """Request native cancellation once, including child cleanup."""
+    _dispatch(action="suite_cancel", suite_id=suite_id)
+
+
+@play_scenario.command("suite-reports")
+@click.option("--name", default=None)
+@handle_unity_errors
+def suite_reports(name: str | None) -> None:
+    """Query retained native suite reports once."""
+    _dispatch(action="suite_reports", name=name)
+
+
+@play_scenario.command("suite-run")
+@click.argument("name")
+@click.option("--suite-id", default=None, help="Optional 32-character lowercase hex request key.")
+@click.option("--repeat-count", type=click.IntRange(1, 10), default=1, show_default=True)
+@click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
+@click.option("--source-revision", default=None)
+@click.option("--output-dir", type=click.Path(file_okay=False, path_type=Path), required=True)
+@click.option(
+    "--poll-interval-seconds", type=click.FloatRange(0.1, 10), default=0.5, show_default=True
+)
+@click.option("--cleanup-wait-seconds", type=click.IntRange(1, 600), default=360, show_default=True)
+@handle_unity_errors
+def suite_run(
+    name: str,
+    suite_id: str | None,
+    repeat_count: int,
+    timeout_seconds: int,
+    source_revision: str | None,
+    output_dir: Path,
+    poll_interval_seconds: float,
+    cleanup_wait_seconds: int,
+) -> None:
+    """Run one native suite, explicitly wait, and save suite.json plus junit.xml.
+
+    Requires global --instance to pin every observation to the same Editor.
+    Timeout or Ctrl+C requests cancellation once and observes bounded finalization.
+    """
+    config = get_config()
+    if not config.unity_instance:
+        raise click.UsageError("suite-run requires global --instance to select one Editor")
+    try:
+        command = PlayScenarioCommand(
+            action="suite_run",
+            name=name,
+            suite_id=suite_id if suite_id is not None else uuid4().hex,
+            repeat_count=repeat_count,
+            timeout_seconds=timeout_seconds,
+            source_revision=source_revision,
+        )
+    except ValidationError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    def request(parameters: dict[str, JsonValue], request_timeout: int) -> dict[str, JsonValue]:
+        return run_command("manage_play_scenario", parameters, config, timeout=request_timeout)
+
+    report = wait_for_suite(
+        request,
+        command.wire_parameters(),
+        timeout_seconds=timeout_seconds,
+        cleanup_wait_seconds=cleanup_wait_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+        request_timeout=config.timeout,
+    )
+    result = {"success": True, "data": report}
+    try:
+        write_suite_artifacts(report, output_dir)
+    except (OSError, ValueError) as exc:
+        report = {**report, "artifact_error": str(exc)}
+        result = {"success": False, "error": "report_persist_failed", "data": report}
+    click.echo(format_output(result, config.format))
+    if (
+        report.get("status") != "succeeded"
+        or report.get("report_error")
+        or report.get("client_error")
+        or report.get("artifact_error")
+        or any(
+            isinstance(entry, dict)
+            and isinstance(entry.get("report"), dict)
+            and entry["report"].get("report_error")
+            for entry in report.get("scenarios", [])
+        )
+    ):
+        raise click.exceptions.Exit(1)
