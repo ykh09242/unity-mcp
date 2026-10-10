@@ -8,6 +8,7 @@ using System.Text;
 using MCPForUnity.Editor.Windows.PlayScenarios;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.TestTools;
 using UnityEngine.UIElements;
