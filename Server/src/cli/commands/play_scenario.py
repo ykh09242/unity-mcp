@@ -15,6 +15,12 @@ from cli.utils.play_scenario_player_payload import PlayerPayloadError
 from cli.utils.play_scenario_player_session import PlayerSessionOptions, run_player_session
 from cli.utils.play_scenario_suite import wait_for_suite
 from pydantic import JsonValue, ValidationError
+from cli.utils.play_scenario_query_compare import (
+    MAX_COUNT,
+    QueryComparisonError,
+    compare_reports,
+    read_report,
+)
 
 
 def _dispatch(**arguments) -> None:
@@ -36,6 +42,44 @@ def _dispatch(**arguments) -> None:
 @click.group("play-scenario")
 def play_scenario():
     """Save and run repeatable Play Mode scenarios; status never waits or polls."""
+
+
+@play_scenario.command("compare-queries")
+@click.argument("baseline", type=str)
+@click.argument("candidate", type=str)
+@click.option("--max-target-searches-increase", type=click.IntRange(0, MAX_COUNT), required=True)
+@click.option("--max-hierarchy-visits-increase", type=click.IntRange(0, MAX_COUNT), required=True)
+def compare_queries(
+    baseline: str,
+    candidate: str,
+    max_target_searches_increase: int,
+    max_hierarchy_visits_increase: int,
+):
+    """Compare two saved native reports offline; exit 0 within limits, 1 exceeded, 2 invalid."""
+    try:
+        result = compare_reports(
+            read_report(Path(baseline), "baseline"),
+            read_report(Path(candidate), "candidate"),
+            max_target_searches_increase=max_target_searches_increase,
+            max_hierarchy_visits_increase=max_hierarchy_visits_increase,
+        )
+        exit_code = 0 if result["status"] == "within_budget" else 1
+    except QueryComparisonError as exc:
+        result = {"schema_version": 1, "status": "not_comparable", "error": str(exc)}
+        exit_code = 2
+    output_format = get_config().format
+    if output_format == "table" and "queries" in result:
+        click.echo(
+            format_output({key: value for key, value in result.items() if key != "queries"}, "text")
+        )
+        click.echo(
+            format_output(
+                [{"metric": name, **values} for name, values in result["queries"].items()], "table"
+            )
+        )
+    else:
+        click.echo(format_output(result, output_format))
+    raise click.exceptions.Exit(exit_code)
 
 
 @play_scenario.command("save")

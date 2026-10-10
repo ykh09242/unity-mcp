@@ -18,6 +18,7 @@ from models.play_scenarios import (
     RepeatCount,
     RunTimeout,
     ScenarioName,
+    normalize_native_definition,
 )
 from pydantic import (
     BaseModel,
@@ -50,41 +51,6 @@ class PlayerLaunchError(RuntimeError):
     def __init__(self, message: str, directory: Path | None = None) -> None:
         super().__init__(message)
         self.directory = directory
-
-
-def _native_definition(value: JsonValue) -> JsonValue:
-    """Omit native serialized null step options without weakening authored schema validation."""
-    if not isinstance(value, dict):
-        return value
-    normalized = dict(value)
-    optional = {
-        "scene",
-        "target",
-        "target_id",
-        "reset_ids",
-        "click_mode",
-        "count",
-        "active",
-        "component",
-        "property",
-        "stable_for_ms",
-        "state_id",
-        "state_equals",
-    }
-    for field in ("steps", "setup_steps", "cleanup_steps"):
-        entries = normalized.get(field)
-        if isinstance(entries, list):
-            normalized[field] = [
-                {
-                    key: item
-                    for key, item in entry.items()
-                    if item is not None or key not in optional
-                }
-                if isinstance(entry, dict)
-                else entry
-                for entry in entries
-            ]
-    return normalized
 
 
 class PlayerBundle(BaseModel):
@@ -134,7 +100,7 @@ class PlayerBundle(BaseModel):
     @field_validator("definition", mode="before")
     @classmethod
     def parse_native_definition(cls, value: JsonValue) -> JsonValue:
-        return _native_definition(value)
+        return normalize_native_definition(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -164,7 +130,7 @@ class PlayerBundle(BaseModel):
         if sha256(self.definition_json.encode("utf-8")).hexdigest() != self.definition_hash:
             raise PlayerLaunchError("Player bundle definition hash mismatch")
         canonical = PlayScenario.model_validate(
-            _native_definition(json.loads(self.definition_json))
+            normalize_native_definition(json.loads(self.definition_json))
         )
         if canonical != self.definition or self.scenario_name != self.definition.name:
             raise PlayerLaunchError("Player bundle definition identity mismatch")
@@ -221,7 +187,7 @@ class PlayerFinalReport(BaseModel):
     @field_validator("scenario", mode="before")
     @classmethod
     def parse_native_definition(cls, value: JsonValue) -> JsonValue:
-        return _native_definition(value)
+        return normalize_native_definition(value)
 
 
 @dataclass(frozen=True, slots=True)

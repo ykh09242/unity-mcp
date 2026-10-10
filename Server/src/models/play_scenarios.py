@@ -34,6 +34,41 @@ StepAction = Literal[
 TargetId = Annotated[str, Field(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
 
 
+def normalize_native_definition(value: JsonValue) -> JsonValue:
+    """Omit native serialized null step options without weakening authored schema validation."""
+    if not isinstance(value, dict):
+        return value
+    normalized = dict(value)
+    optional = {
+        "scene",
+        "target",
+        "target_id",
+        "reset_ids",
+        "click_mode",
+        "count",
+        "active",
+        "component",
+        "property",
+        "stable_for_ms",
+        "state_id",
+        "state_equals",
+    }
+    for field in ("steps", "setup_steps", "cleanup_steps"):
+        entries = normalized.get(field)
+        if isinstance(entries, list):
+            normalized[field] = [
+                {
+                    key: item
+                    for key, item in entry.items()
+                    if item is not None or key not in optional
+                }
+                if isinstance(entry, dict)
+                else entry
+                for entry in entries
+            ]
+    return normalized
+
+
 def _utf16_units(value: str) -> int:
     """Match native string.Length bounds without normalizing authored Unicode text."""
     return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
