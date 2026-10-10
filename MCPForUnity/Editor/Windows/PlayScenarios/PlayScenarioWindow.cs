@@ -99,6 +99,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private bool buildingPlayer;
         private string renderedReportJson;
         internal Func<string> ChoosePlayerBuildFolder;
+        internal Func<string> ChoosePlayerSessionFile;
         internal Func<string, string, string, string> BuildPlayerBundle;
         internal Func<bool> IsEditorBusy;
         private bool EditorBusy =>
@@ -150,6 +151,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             HandleSuite = null;
             ShowDialog = null;
             ChoosePlayerBuildFolder = null;
+            ChoosePlayerSessionFile = null;
             BuildPlayerBundle = null;
             IsEditorBusy = null;
         }
@@ -326,6 +328,11 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             runResults.AddToClassList("scenario-scroll");
             panel.Add(runResults);
             history = new PlayScenarioHistoryEditor(panel, Store, () => draft.Name, SetMessage);
+            new PlayScenarioPlayerSessionEditor(
+                panel,
+                SetMessage,
+                () => ChoosePlayerSessionFile != null ? ChoosePlayerSessionFile() : EditorUtility.OpenFilePanel("Open Player session.json", "", "json")
+            );
             columns.Add(panel);
         }
 

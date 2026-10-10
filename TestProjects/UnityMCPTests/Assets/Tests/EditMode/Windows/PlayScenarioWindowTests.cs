@@ -1363,5 +1363,37 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.AreEqual(1, gets);
             Assert.AreEqual("other-suite", Field<TextField>("suiteName").value);
         }
+
+        [Test]
+        public void ImportedPlayerSessionDoesNotQuerySceneStartJobOrSubscribeToPolling()
+        {
+            string file = Path.Combine(root, "session.json");
+            File.WriteAllText(
+                file,
+                new JObject
+                {
+                    ["schema_version"] = 1,
+                    ["session_id"] = "11111111111111111111111111111111",
+                    ["mode"] = "fresh-process",
+                    ["status"] = "succeeded",
+                    ["requested_iterations"] = 1,
+                    ["outcomes_recorded"] = 0,
+                    ["last_outcomes"] = new JArray(),
+                }.ToString()
+            );
+            window.ReadStatus = _ => throw new InvalidOperationException("Imported sessions must not query a live job.");
+            window.StartRun = (_, __, ___, ____) => throw new InvalidOperationException("Imported sessions must not start jobs.");
+            window.CheckPreflight = _ => throw new InvalidOperationException("Imported sessions must not inspect the scene.");
+            window.ChoosePlayerSessionFile = () => file;
+            Click("openPlayerSession");
+            StringAssert.Contains("Imported Player session snapshot", Field<Label>("scenarioMessage").text);
+            Assert.IsFalse(window.IsPolling);
+            Assert.IsTrue(string.IsNullOrEmpty(window.CurrentJobId));
+            Assert.IsTrue(Field<VisualElement>("playerSessionSummary").Query<Label>().ToList().Any(label => label.text.Contains("counts unavailable")));
+            ForceStatusTick();
+            Assert.IsFalse(window.IsPolling);
+            window.CreateGUI();
+            Assert.AreEqual(1, window.rootVisualElement.Query<Button>("openPlayerSession").ToList().Count);
+        }
     }
 }
