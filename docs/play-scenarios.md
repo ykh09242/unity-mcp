@@ -2,7 +2,8 @@
 
 `manage_play_scenario` saves repeatable checks such as **menu -> Start -> game scene -> player**.
 Unity owns the job, condition waits, step results and bounded diagnostics. `run` returns a `job_id`
-immediately; `status` reads once. The Python tool and CLI do not start a polling task or replay effects.
+immediately; `status` reads once. Individual commands never start background polling or replay effects.
+The explicit `suite-run` CLI command waits for its own bounded suite and exports CI reports.
 
 Select the intended Unity instance. If needed, activate the `testing` group with
 `manage_tools(action="activate", group="testing")` after enabling the tool in Unity.
@@ -167,7 +168,7 @@ jobs under new IDs. Only one job runs at a time. Unity enters Play Mode if neede
 on completion, failure or cancellation.
 
 The outer `success` means the command was handled. Only report `status: succeeded` means the scenario
-passed. CLI run/status return a nonzero exit code for failed, timed-out or cancelled jobs;
+passed. CLI run/status return a nonzero exit code for failed, timed-out or cancelled jobs, or report persistence errors;
 a processed cancel request and a successful history query return zero regardless of job outcome. JSON output retains the report. While evidence/report saving is pending, status stays `running` with phase `finalizing` and the terminal `pending_status`; keep observing until the final report is available.
 
 Failure, timeout or cancellation skips the remaining main steps and future iterations. If execution
@@ -202,6 +203,181 @@ maximum 1,280-pixel-edge PNG sidecar of at most 4 MiB. Textures and callbacks ar
 Batch/headless/unavailable capture records `screenshot_error` without replacing the primary failure.
 Retention deletes the report's owned PNG with its JSON. This is diagnostic evidence, not pixel matching.
 
+## Stable targets and raycast clicks
+
+Add a **Play Scenario Target** component to an intended scene object or prefab and assign a unique
+`TargetId`. Use `target_id` instead of `target` in that step; the Editor target selector and **Use
+Selection** can read an existing marker without modifying the scene. IDs use
+`[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}` and survive hierarchy renames or reparenting. Resolution is scoped to
+the active scene, includes inactive objects and rejects duplicate IDs. An ID condition accepts only
+omitted count, zero or one. The existing hierarchy-path selector remains supported.
+
+```json
+{
+  "name": "Start through the visible UI",
+  "action": "click_ui",
+  "target_id": "menu.start",
+  "click_mode": "raycast",
+  "timeout_seconds": 15
+}
+```
+
+`click_mode` is `direct` by default. `raycast` checks the target's screen-space center against the
+configured EventSystem raycasters, waits while the target is blocked or temporarily unavailable,
+and dispatches pointer events only when the hit resolves to the intended handler. Once dispatch
+starts, the click is never retried. This is simulated EventSystem input, not OS mouse injection or a
+standalone Player test. It needs a suitable uGUI Canvas, GraphicRaycaster and EventSystem; preflight
+cannot establish that future runtime geometry will be clickable. Pointer dispatch is synchronous;
+a Graphic created during a callback may not enter native raycast results until the next frame.
+Use follow-up readiness steps when the click creates new UI.
+
+The implementation follows the [uGUI EventSystem API](https://docs.unity3d.com/Packages/com.unity.ugui@1.0/api/UnityEngine.EventSystems.EventSystem.html)
+and [Unity's input-module source](https://github.com/Unity-Technologies/uGUI/blob/main/com.unity.ugui/Runtime/UGUI/EventSystem/InputModules/StandaloneInputModule.cs).
+
+## Assert registered resource release
+
+Enable `resources` to fail when newly registered resources remain after an iteration's cleanup:
+
+```json
+{
+  "enabled": true,
+  "max_scriptable_objects": 0,
+  "max_subscriptions": 0,
+  "max_handles": 0
+}
+```
+
+Integrate the opt-in runtime tracker at the game's actual ownership boundaries:
+
+```csharp
+using System;
+using MCPForUnity.Runtime;
+
+// Register the runtime clone, never its persistent source asset.
+PlayScenarioResourceTracker.RegisterScriptableObject(runtimeSettings);
+
+// Retain these small tokens with the owners, not the subscribed delegates or handles.
+IDisposable subscriptionRegistration = PlayScenarioResourceTracker.RegisterSubscription();
+IDisposable handleRegistration = PlayScenarioResourceTracker.RegisterHandle();
+
+// During real cleanup, first unsubscribe or release the owned resource, then dispose its token.
+subscriptionRegistration.Dispose();
+handleRegistration.Dispose();
+// Destroy(runtimeSettings) when its real owner releases the runtime clone.
+```
+
+Registration does not release the game's resources. Token disposal records the application's
+release claim; it cannot independently prove that a delegate was removed or a third-party handle
+was released. Unregistered resources are outside this assertion. Persistent SO assets are rejected;
+pre-existing registrations are the baseline, so intentional long-lived resources can be registered
+before the iteration. Thresholds allow a bounded number of new retained resources where intended.
+
+The runner compares registration identities, not net counts: releasing an old resource cannot hide
+a new retained one. It samples before the first executed step and after cleanup, including unsuccessful
+iterations when execution is still available. `resource_checks` records the result; missing observation
+or exceeded limits is an explicit failure. A prior failure remains primary. No global object scan,
+per-poll memory sampling or forced GC is added. There are at most 4,096 active registrations and ten
+iteration checks. SO liveness uses transient native-ID resolution in the Editor; it does not rely
+only on whether a managed wrapper was collected. Register SOs and capture them on Unity's main thread.
+Reclaiming dead SO entries when token registration reaches capacity also needs the main thread;
+a background registration that cannot reclaim capacity fails explicitly.
+Tracking is Editor-only; Player registration calls do no work and return shared no-op tokens.
+A registration overflow makes coverage uncertain until the next Play entry; resolve the overflow and
+start a fresh Play session before relying on subsequent resource assertions.
+
+## Failure classification and reproduction
+
+Reports retain their existing human-readable `error` and per-step `detail`. The additional `failure`
+record identifies a semantic `code`, stage, iteration, step, target and bounded expected/actual values;
+`cleanup_failures` preserves secondary problems. Consumers should branch on the code, not parse prose.
+`reproduction` stores the normalized definition hash, Unity version and package version. An optional
+`source_revision` on run/suite-run records the caller's source label (at most 128 characters); it is
+not an independently verified Git revision. Pass the CI checkout SHA explicitly.
+
+Use the stored definition and environment information to reproduce a failure. Compare equivalent
+hashes and environments before treating timing differences as a regression. No automatic retries
+replace the original result, and evidence export errors must not be reported as a successful CI run.
+
+## Save and run scenario suites
+
+Add up to 16 unique tags to a scenario, for example `"tags": ["smoke", "resource-lifetime"]`.
+Tags use the same lower-case grammar as scenario names. In the Play Scenarios window, use the suite
+editor to save an ordered list of scenario names, tag selectors and a stop/continue policy. The
+Editor and CLI use the same native suite runner; neither starts multiple Play jobs in parallel.
+
+Save this illustrative definition as `smoke-suite.json` after saving its referenced scenarios:
+
+```json
+{
+  "schema_version": 1,
+  "name": "smoke-suite",
+  "scenarios": ["menu-start"],
+  "tags": ["smoke"],
+  "failure_policy": "stop"
+}
+```
+
+A suite selects the union of explicit names (in authored order) and matching tags (OR matching, then
+ordinal name order), deduplicates it, and freezes the resolved definitions before execution. At most
+16 scenarios can be selected; an empty selection fails before Play starts. `stop` skips remaining
+scenarios after the first unsuccessful child; `continue` proceeds but preserves the suite failure.
+Definitions are not re-read between children. Suite execution reserves the runner until the active
+child's cleanup and report finalization finish.
+
+```sh
+unity-mcp --instance "MyProject@<hash>" --format json play-scenario suite-save smoke-suite.json
+unity-mcp --instance "MyProject@<hash>" --format json play-scenario suite-run smoke-suite \
+  --repeat-count 2 --timeout-seconds 300 --source-revision COMMIT_SHA \
+  --output-dir reports/play-scenarios
+unity-mcp --instance "MyProject@<hash>" --format json play-scenario suite-status SUITE_ID
+unity-mcp --instance "MyProject@<hash>" --format json play-scenario suite-cancel SUITE_ID
+unity-mcp --format json play-scenario suite-reports --name smoke-suite
+```
+
+MCP uses actions `suite_save`, `suite_get`, `suite_list`, `suite_delete`, `suite_run`, `suite_status`,
+`suite_cancel` and `suite_reports`. Save accepts `suite`, status/cancel accept `suite_id`, and run uses
+`name`, optional `suite_id`, `repeat_count`, `timeout_seconds` and `source_revision`. A suite ID is a
+32-character lowercase hexadecimal idempotency key. Reuse it after an uncertain dispatch.
+
+Native suite_run returns immediately; CLI `suite-run` explicitly waits and requires `--instance` to
+keep requests pinned to the same Editor. `--timeout-seconds` is the whole suite's execution budget,
+not a fresh budget for every child. Cancellation stops the queue, cancels the active child once, and
+waits for its bounded cleanup/finalization. Initial Play entry can restore the queue after reload;
+executing effects are never replayed. The CLI poll interval defaults to 0.5 seconds and its cleanup
+wait defaults to 360 seconds. If observation cannot finish, the exported receipt reports that limit
+instead of inventing a successful terminal result.
+
+The output directory contains `suite.json` and `junit.xml`, including skipped cases, original failures,
+structured errors, environment information and evidence paths. Exit zero requires a fully successful
+suite and successful persistence/export. XML content is escaped and sanitized. Screenshot links refer
+to the actual Unity-host file; a remote server cannot turn them into local image evidence. Preserve
+the PNGs while they remain in the bounded native report history. Batch/headless screenshots remain
+explicitly unavailable.
+
+For an existing CI job with a connected, licensed Editor and authored scenarios, run the CLI command
+above and upload the explicit output directory even on failure. For example:
+
+```yaml
+- name: Run saved Play scenarios
+  env:
+    UNITY_INSTANCE: ${{ vars.UNITY_SCENARIO_INSTANCE }}
+  run: |
+    unity-mcp --instance "$UNITY_INSTANCE" --format json play-scenario suite-run smoke-suite \
+      --timeout-seconds 300 --source-revision "$GITHUB_SHA" --output-dir reports/play-scenarios
+- name: Retain Play scenario evidence
+  if: always()
+  uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+  with:
+    name: play-scenarios
+    path: |
+      reports/play-scenarios/
+      TestProjects/UnityMCPTests/Library/MCPForUnity/PlayScenarioRuns/*.png
+```
+
+Replace the PNG path with the actual same-host Unity project when applicable. This recipe does not
+provision an Editor, activate a license or start a server. Existing license-gated native test workflows
+remain separate; a skipped licensed job is not a passed game scenario.
+
 ## Validation limits
 
 - Names use `[a-z0-9][a-z0-9_-]{0,63}`. Main steps: 1-32; setup and cleanup: 0-16 each; total: at most 64.
@@ -235,7 +411,7 @@ choose **Run Selected**. For batch execution use absolute paths:
 
 ```text
 -batchmode -projectPath <test-project-path> -runTests -testPlatform EditMode
--testFilter "PlayScenario;UguiInputSimulationTests" -testResults <results.xml> -logFile <editor.log>
+-testFilter "PlayScenario;Ugui" -testResults <results.xml> -logFile <editor.log>
 ```
 
 Combine these arguments into one invocation. The project must not already be open. Keep graphics

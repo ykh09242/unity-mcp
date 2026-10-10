@@ -1,6 +1,6 @@
 ---
 name: unity-play-scenarios
-description: Author, save and run repeatable Unity Play Mode scenarios using manage_play_scenario, including menu-to-game flows, stable readiness conditions, setup/cleanup, bounded diagnostics and saved run comparisons. Use for reusable gameplay checks or edits to saved Play Scenarios.
+description: Author, save and run repeatable Unity Play Mode scenarios using manage_play_scenario, including menu-to-game flows, stable targets, resource release assertions, saved suites and CI evidence. Use for reusable gameplay checks or edits to saved Play Scenarios.
 ---
 
 # Unity Play Scenarios
@@ -11,8 +11,8 @@ Translate the user's requested game flow into a saved scenario using real projec
 
 - Select the intended Unity instance. If the tool is hidden, inspect `manage_tools(action="list_groups")` and activate `testing` in a stateful MCP session. Activation cannot enable a tool disabled in Unity; after Editor tool-setting changes, sync and refresh available tools.
 - Discover scene assets and active-scene hierarchy paths through available scene/asset queries. Do not assume the game contains Menu, Canvas/Start or Player. Do not query GameData or credential files. Clarify only paths that cannot be established from available evidence.
-- Object targets are exact root-relative hierarchy paths in the active scene, not instance IDs. Unique-path conditions reject ambiguity; explicit object counts deliberately support duplicate exact paths. Do not reuse IDs after reload.
-- `click_ui` dispatches direct uGUI events. It does not cover UI Toolkit, OS input, occlusion or raycast hits. Confirm the UI system. A disabled Button can become ready within its timeout; a missing click component is a failure.
+- Use exactly one object selector: an exact root-relative `target` hierarchy path or `target_id` from an existing PlayScenarioTarget marker in the active scene. Test IDs survive rename/reparenting and must be unique, including inactive objects; they are not Unity instance IDs. ID counts are omitted, zero or one. Do not add markers or mutate the game without authoring scope.
+- Confirm the UI system. `click_ui` defaults to direct uGUI events. Opt into `click_mode: "raycast"` to verify center-point EventSystem raycast eligibility before pointer dispatch. Neither mode is OS input or UI Toolkit automation. A disabled/blocked target can become ready within its timeout; never retry a click after dispatch begins.
 
 ## Author a bounded definition
 
@@ -72,6 +72,21 @@ Unity enters Play if needed and leaves it unchanged at completion. Reload during
 
 Use `manage_play_scenario(action="reports", name="menu-start")` for saved history; omit name to list recent terminal runs across scenarios. Compare equivalent definitions and the same stage/iteration/index before interpreting timing or metric changes.
 
+## Resource assertions and suite execution
+
+Read [operations](references/operations.md) when authoring resource checks, tagged suites, raycast
+selectors or CI exports. These remain optional; ordinary single scenarios keep their existing defaults.
+
+Use the Editor's tag, target mode, resource-limit and saved-suite controls for visual authoring. Keep
+suite selection bounded and sequential. Use the same native suite service through Editor, MCP or CLI;
+never launch independent parallel Play jobs. `suite-run` is the explicit foreground CLI waiter and
+requires a pinned `--instance` and `--output-dir`. Other status commands still read once.
+
+Inspect structured `failure`/`cleanup_failures`, `resource_checks` and `reproduction` along with the
+original error and screenshot evidence. A source_revision is caller-provided metadata, not independently
+verified provenance. Missing observation or failed report/export is not a passing check. Preserve first
+failure and skipped children; do not use automatic reruns to erase failures.
+
 ## CLI fallback
 
 Use an existing CLI connection when MCP is unavailable; installing/starting a new server is outside this skill's own scope. Select the instance with the global --instance option where needed and keep --format json for complete evidence:
@@ -84,4 +99,4 @@ unity-mcp --format json play-scenario cancel JOB_ID
 unity-mcp --format json play-scenario reports --name menu-start
 ```
 
-Status reads once. Run/status return nonzero for failed/timed-out/cancelled jobs; a processed cancel request and successful reports query return zero regardless of job outcome. Summarize what was saved/executed, verified paths, repetitions, final outcome and actual evidence. Synthetic fixture success does not establish that the user's game or visible pixels were tested.
+Status reads once. Run/status return nonzero for failed/timed-out/cancelled jobs or report persistence errors; a processed cancel request and successful reports query return zero regardless of job outcome. Summarize what was saved/executed, verified paths, repetitions, final outcome and actual evidence. Synthetic fixture success does not establish that the user's game or visible pixels were tested.

@@ -50,7 +50,7 @@ Root commands also include `status`, `instances`, and `raw`. Raw parameters must
 
 The `sprite` group uses [`manage_sprite`](./tools/animation/manage_sprite.md) for sheet inspection, slicing, clip creation and controller setup. The beta checkout includes this group; use matching Editor/server revisions and inspect `unity-mcp sprite --help` before changing assets. Published older server pins may not expose it.
 
-The `play_scenario` registration is exposed as `play-scenario` in CLI commands. Use `unity-mcp play-scenario --help` for save/get/list/reports/delete/run/status/cancel; runs return a Unity-owned job immediately. See the [scenario tool reference](./tools/testing/manage_play_scenario.md) for its bounded definition and execution contract.
+The `play_scenario` registration is exposed as `play-scenario` in CLI commands. Use `unity-mcp play-scenario --help` for save/get/list/reports/delete/run/status/cancel and the corresponding suite-save/get/list/reports/delete/run/status/cancel commands. Single runs return a Unity-owned job immediately; suite-run explicitly waits on the selected `--instance` and writes suite.json plus junit.xml to its required `--output-dir`. See the [scenario tool reference](./tools/testing/manage_play_scenario.md) for its bounded definition and execution contract.
 
 ## Output and failures
 
