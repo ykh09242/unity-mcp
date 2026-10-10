@@ -8,6 +8,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
 {
@@ -234,6 +235,48 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That(backend.Clicks, Is.EqualTo(2));
         }
 
+        [TestCase(LogType.Error)]
+        [TestCase(LogType.Assert)]
+        [TestCase(LogType.Exception)]
+        public void LoggedCallbackErrorsFailEvenWhenBackendReturnsSuccess(LogType type)
+        {
+            CreateTarget();
+            const string message = "synthetic logged callback failure";
+            var backend = new SpyBackend
+            {
+                OnClick = () =>
+                {
+                    if (type == LogType.Exception)
+                        Debug.LogException(new InvalidOperationException(message));
+                    else
+                        Debug.unityLogger.Log(type, message);
+                },
+            };
+            ManageInput.UguiBackend = backend;
+            LogAssert.Expect(type, type == LogType.Exception ? "InvalidOperationException: " + message : message);
+            var error = Assert.Throws<InvalidOperationException>(() => _host.Evaluate(ObjectStep("click_ui"), true));
+            Assert.That(error.Message, Does.Contain(message));
+            Assert.That(backend.Clicks, Is.EqualTo(1));
+            backend.OnClick = null;
+            Assert.That(_host.Evaluate(ObjectStep("click_ui"), true).Ready, Is.True, "An earlier click error must not contaminate a later dispatch.");
+        }
+
+        [Test]
+        public void WarningsAndErrorsOutsideClickDispatchDoNotFailTheClick()
+        {
+            CreateTarget();
+            var backend = new SpyBackend { OnClick = () => Debug.LogWarning("synthetic click warning") };
+            ManageInput.UguiBackend = backend;
+            LogAssert.Expect(LogType.Error, "unrelated earlier error");
+            Debug.LogError("unrelated earlier error");
+            LogAssert.Expect(LogType.Warning, "synthetic click warning");
+            Assert.That(_host.Evaluate(ObjectStep("click_ui"), true).Ready, Is.True);
+            LogAssert.Expect(LogType.Error, "unrelated later error");
+            Debug.LogError("unrelated later error");
+            backend.OnClick = null;
+            Assert.That(_host.Evaluate(ObjectStep("click_ui"), true).Ready, Is.True);
+        }
+
         [Test]
         public void ReleaseIsIdempotentAndNeverDestroysBorrowedObjects()
         {
@@ -251,11 +294,13 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             public GameObject Target;
             public object Result = new SuccessResponse("clicked");
             public Exception Fault;
+            public Action OnClick;
 
             public object Click(GameObject target)
             {
                 Clicks++;
                 Target = target;
+                OnClick?.Invoke();
                 if (Fault != null)
                     throw Fault;
                 return Result;

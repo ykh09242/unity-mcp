@@ -17,6 +17,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration.Runtime
         public SceneRole Role;
         public string GameScenePath;
         public bool DisableStartButton;
+        public bool ThrowOnStartClick;
 
         private void Start()
         {
@@ -32,6 +33,8 @@ namespace MCPForUnityTests.PlayScenarios.Integration.Runtime
                 startButton.onClick.AddListener(() =>
                 {
                     Debug.Log("PLAY_SCENARIO_QA_CLICK");
+                    if (ThrowOnStartClick)
+                        throw new System.InvalidOperationException("PLAY_SCENARIO_QA_LISTENER_FAILURE");
                     SceneManager.LoadSceneAsync(GameScenePath, LoadSceneMode.Single);
                 });
                 var events = new GameObject("EventSystem", typeof(EventSystem));

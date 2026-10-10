@@ -134,13 +134,33 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static PlayScenarioObservation Click(GameObject target, IUguiInputSimulationBackend backend)
         {
             object result;
-            if (backend is IUguiScenarioClickBackend scenarioBackend)
+            bool ready = true;
+            string detail = null;
+            string loggedError = null;
+            void CaptureError(string message, string stackTrace, LogType type)
             {
-                if (!scenarioBackend.TryClick(target, out result, out string detail))
-                    return new PlayScenarioObservation(false, detail);
+                if (loggedError == null && (type == LogType.Error || type == LogType.Assert || type == LogType.Exception))
+                    loggedError = type + ": " + PlayScenarioEngine.Bounded(message, 1024);
             }
-            else
-                result = backend.Click(target);
+
+            // ExecuteEvents logs listener exceptions instead of propagating them. Only
+            // observe this synchronous dispatch; unrelated and later logs are not click failures.
+            Application.logMessageReceived += CaptureError;
+            try
+            {
+                if (backend is IUguiScenarioClickBackend scenarioBackend)
+                    ready = scenarioBackend.TryClick(target, out result, out detail);
+                else
+                    result = backend.Click(target);
+            }
+            finally
+            {
+                Application.logMessageReceived -= CaptureError;
+            }
+            if (loggedError != null)
+                throw new InvalidOperationException("UI click logged an error: " + loggedError);
+            if (!ready)
+                return new PlayScenarioObservation(false, detail);
             if (!(result is IMcpResponse response) || !response.Success)
                 throw new InvalidOperationException(result is ErrorResponse error ? error.Error : "The UI backend did not confirm a successful click.");
             return new PlayScenarioObservation(true, "UI click dispatched successfully.");

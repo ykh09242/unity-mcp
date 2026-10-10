@@ -340,6 +340,45 @@ namespace MCPForUnityTests.PlayScenarios.Integration
         }
 
         [UnityTest]
+        public IEnumerator ThrowingButtonListenerFailsClickWithoutRetryAndPersistsError()
+        {
+            ConfigureMenu(throwOnClick: true);
+            Save(
+                Context.NextName,
+                new JArray(
+                    SceneStep("menu", "load_scene", Menu),
+                    ObjectStep("start", "click_ui", "ScenarioBootstrap/Canvas/StartButton", 5),
+                    ObjectStep("skipped", "wait_object", "Player", 1)
+                )
+            );
+            yield return new EnterPlayMode();
+            LogAssert.Expect(LogType.Exception, "InvalidOperationException: PLAY_SCENARIO_QA_LISTENER_FAILURE");
+            Command(
+                new JObject
+                {
+                    ["action"] = "run",
+                    ["name"] = Context.NextName,
+                    ["job_id"] = NextId,
+                    ["timeout_seconds"] = 30,
+                }
+            );
+            yield return Finish(NextId);
+            JObject done = Status(NextId);
+            Assert.That((string)done["status"], Is.EqualTo("failed"), done.ToString());
+            Assert.That((string)done["steps"][0]["status"], Is.EqualTo("passed"));
+            Assert.That((string)done["steps"][1]["status"], Is.EqualTo("failed"));
+            Assert.That((int)done["steps"][1]["poll_count"], Is.EqualTo(1));
+            Assert.That((string)done["steps"][2]["status"], Is.EqualTo("skipped"));
+            Assert.That((string)done["error"], Does.Contain("PLAY_SCENARIO_QA_LISTENER_FAILURE"));
+            Assert.That(
+                done["logs"].Any(log => (string)log["type"] == "Exception" && ((string)log["message"]).Contains("PLAY_SCENARIO_QA_LISTENER_FAILURE")),
+                Is.True
+            );
+            Assert.That(done["logs"].Count(log => (string)log["message"] == "PLAY_SCENARIO_QA_CLICK"), Is.EqualTo(1));
+            AssertReport(done);
+        }
+
+        [UnityTest]
         public IEnumerator DisabledButtonWaitsUntilEnabledThenClicksOnce()
         {
             ConfigureMenu(disableButton: true);
@@ -408,11 +447,12 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             AssertReport(done);
         }
 
-        private static void ConfigureMenu(bool disableButton = false)
+        private static void ConfigureMenu(bool disableButton = false, bool throwOnClick = false)
         {
             Scene scene = EditorSceneManager.OpenScene(Menu, OpenSceneMode.Single);
             var bootstrap = scene.GetRootGameObjects().Single(root => root.name == "ScenarioBootstrap").GetComponent<PlayScenarioIntegrationBootstrap>();
             bootstrap.DisableStartButton = disableButton;
+            bootstrap.ThrowOnStartClick = throwOnClick;
             Assert.That(EditorSceneManager.SaveScene(scene), Is.True);
         }
 
