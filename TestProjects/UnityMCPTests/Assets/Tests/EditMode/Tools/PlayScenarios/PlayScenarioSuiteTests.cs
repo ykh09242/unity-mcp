@@ -155,6 +155,30 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That(harness.Runner.State.Report.Scenarios[0].Report, Is.Not.Null);
         }
 
+        [TestCase("cancelled", 1)]
+        [TestCase("cancelled", 50)]
+        [TestCase("timed_out", 1)]
+        [TestCase("timed_out", 50)]
+        public void SynchronousChildCancellationCannotFinishAfterThePersistedSuite(string outcome, int clockAdvance)
+        {
+            var harness = new Harness(Suite("continue"));
+            harness.Runner.Tick(1001, true);
+            long sampledNow = outcome == "timed_out" ? harness.Runner.State.DeadlineUnixMs : 1003;
+            harness.SynchronousCancelFinishedUnixMs = sampledNow + clockAdvance;
+            if (outcome == "cancelled")
+                harness.Runner.RequestStop(outcome, "requested stop", sampledNow);
+            harness.Runner.Tick(sampledNow, true);
+            Assert.That(harness.Cancels, Is.EqualTo(1));
+            Assert.That(harness.Starts, Is.EqualTo(1));
+            Assert.That(harness.Runner.State.Report.Status, Is.EqualTo(outcome));
+            Assert.That(harness.Runner.State.Report.Scenarios[1].Status, Is.EqualTo("skipped"));
+            long childFinished = (long)harness.Runner.State.Report.Scenarios[0].Report["finished_unix_ms"];
+            Assert.That(childFinished, Is.EqualTo(sampledNow + clockAdvance));
+            Assert.That(harness.Runner.State.Report.FinishedUnixMs, Is.EqualTo(childFinished));
+            suites.SaveReport(harness.Runner.State.Report);
+            Assert.That(suites.GetReport(harness.Runner.State.Report.SuiteId).FinishedUnixMs, Is.EqualTo(childFinished));
+        }
+
         [Test]
         public void LaterCancellationCannotMaskAnEarlierContinuedFailure()
         {
@@ -532,6 +556,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             internal JObject Snapshot = new JObject { ["status"] = "running" };
             internal int Starts;
             internal int Cancels;
+            internal long? SynchronousCancelFinishedUnixMs;
             internal int Checkpoints;
 
             internal Harness(PlayScenarioSuiteDefinition suite, int repeats = 1, int timeout = 30, string revision = null, string suiteId = null)
@@ -559,6 +584,11 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                     id =>
                     {
                         Cancels++;
+                        if (SynchronousCancelFinishedUnixMs.HasValue)
+                        {
+                            Complete("cancelled", "child cancelled");
+                            Snapshot["finished_unix_ms"] = SynchronousCancelFinishedUnixMs.Value;
+                        }
                         return Snapshot;
                     },
                     () => Checkpoints++,

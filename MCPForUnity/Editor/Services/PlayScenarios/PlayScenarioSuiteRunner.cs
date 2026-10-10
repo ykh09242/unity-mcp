@@ -251,7 +251,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 State.Report.ReportError != null
                     ? "failed"
                     : State.RequestedStatus ?? (State.Report.Scenarios.All(child => child.Status == "succeeded") ? "succeeded" : "failed");
-            State.Report.FinishedUnixMs = now;
+            // Synchronous cancellation can finish a child after this tick sampled its clock.
+            long finished = now;
+            foreach (PlayScenarioSuiteChild child in State.Report.Scenarios)
+                finished = Math.Max(finished, child.Report?.Value<long?>("finished_unix_ms") ?? now);
+            State.Report.FinishedUnixMs = finished;
             checkpoint();
         }
 
