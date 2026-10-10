@@ -85,6 +85,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         internal static Matches Resolve(Scene scene, string[] segments)
         {
+            PlayScenarioQueryCounts counts = default;
+            return Resolve(scene, segments, ref counts);
+        }
+
+        internal static Matches Resolve(Scene scene, string[] segments, ref PlayScenarioQueryCounts counts)
+        {
+            counts.TargetSearches++;
             var matches = new Matches();
             if (!scene.IsValid() || !scene.isLoaded)
                 return matches;
@@ -93,9 +100,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             int inspected = 0;
             foreach (GameObject root in scene.GetRootGameObjects())
             {
-                Inspect(ref inspected);
+                Inspect(ref inspected, ref counts);
                 if (root.name == segments[0])
-                    Match(root.transform, segments, 1, ref matches, ref inspected);
+                    Match(root.transform, segments, 1, ref matches, ref inspected, ref counts);
             }
             return matches;
         }
@@ -110,6 +117,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         internal static Matches ResolveId(Scene scene, string identifier)
         {
+            PlayScenarioQueryCounts counts = default;
+            return ResolveId(scene, identifier, ref counts);
+        }
+
+        internal static Matches ResolveId(Scene scene, string identifier, ref PlayScenarioQueryCounts counts)
+        {
+            counts.TargetSearches++;
             var matches = new Matches();
             if (!scene.IsValid() || !scene.isLoaded)
                 return matches;
@@ -121,7 +135,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 throw new InvalidOperationException("Target inspection exceeds the bounded hierarchy budget.");
             foreach (GameObject root in scene.GetRootGameObjects())
             {
-                Inspect(ref inspected);
+                Inspect(ref inspected, ref counts);
                 pending.Push(root.transform);
             }
             while (pending.Count > 0)
@@ -149,14 +163,14 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 }
                 for (int index = 0; index < current.childCount; index++)
                 {
-                    Inspect(ref inspected);
+                    Inspect(ref inspected, ref counts);
                     pending.Push(current.GetChild(index));
                 }
             }
             return matches;
         }
 
-        private static void Match(Transform parent, string[] segments, int index, ref Matches matches, ref int inspected)
+        private static void Match(Transform parent, string[] segments, int index, ref Matches matches, ref int inspected, ref PlayScenarioQueryCounts counts)
         {
             if (index == segments.Length)
             {
@@ -169,15 +183,16 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
             for (int i = 0; i < parent.childCount; i++)
             {
-                Inspect(ref inspected);
+                Inspect(ref inspected, ref counts);
                 Transform child = parent.GetChild(i);
                 if (child.name == segments[index])
-                    Match(child, segments, index + 1, ref matches, ref inspected);
+                    Match(child, segments, index + 1, ref matches, ref inspected, ref counts);
             }
         }
 
-        private static void Inspect(ref int inspected)
+        private static void Inspect(ref int inspected, ref PlayScenarioQueryCounts counts)
         {
+            counts.HierarchyVisits++;
             if (++inspected > MaximumInspectedObjects)
                 throw new InvalidOperationException("Target inspection exceeds the bounded hierarchy budget.");
         }

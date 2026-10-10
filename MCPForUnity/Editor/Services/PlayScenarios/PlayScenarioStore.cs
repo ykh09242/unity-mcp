@@ -30,6 +30,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             [typeof(PlayScenarioFailure)] = Describe(typeof(PlayScenarioFailure)),
             [typeof(PlayScenarioReproduction)] = Describe(typeof(PlayScenarioReproduction)),
             [typeof(PlayScenarioResourceCheck)] = Describe(typeof(PlayScenarioResourceCheck)),
+            [typeof(PlayScenarioQueryCounts)] = Describe(typeof(PlayScenarioQueryCounts)),
+            [typeof(PlayScenarioTimelineEvent)] = Describe(typeof(PlayScenarioTimelineEvent)),
+            [typeof(PlayScenarioRetainedResource)] = Describe(typeof(PlayScenarioRetainedResource)),
         };
 
         public PlayScenarioStore(string projectRoot)
@@ -128,7 +131,14 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             lock (gate)
             {
                 JObject value = Read(Checked(Reports + "/" + jobId + ".json"), ReportLimit);
+                var legacyResourceChecks =
+                    (value["resource_checks"] as JArray)?.OfType<JObject>().Where(check => check.Property("retained_resources") == null).ToArray()
+                    ?? Array.Empty<JObject>();
                 ValidateShape(value, typeof(PlayScenarioRun));
+                foreach (JObject check in legacyResourceChecks)
+                    check["omitted_resource_count"] = new[] { "new_scriptable_objects", "new_subscriptions", "new_handles" }.Sum(key =>
+                        check[key].Type == JTokenType.Null ? 0 : (int)check[key]
+                    );
                 ValidateJobId((string)value["job_id"]);
                 if ((string)value["job_id"] != jobId)
                     throw new InvalidDataException("Stored report job_id does not match its filename.");
@@ -275,7 +285,14 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         internal static void ValidateReport(JObject value)
         {
+            var legacyResourceChecks =
+                (value["resource_checks"] as JArray)?.OfType<JObject>().Where(check => check.Property("retained_resources") == null).ToArray()
+                ?? Array.Empty<JObject>();
             ValidateShape(value, typeof(PlayScenarioRun));
+            foreach (JObject check in legacyResourceChecks)
+                check["omitted_resource_count"] = new[] { "new_scriptable_objects", "new_subscriptions", "new_handles" }.Sum(key =>
+                    check[key].Type == JTokenType.Null ? 0 : (int)check[key]
+                );
             ValidateJobId((string)value["job_id"]);
             if (!(value["scenario"] is JObject scenario))
                 throw new ArgumentException("Report scenario is required.");
@@ -287,6 +304,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             var logs = (JArray)value["logs"];
             if (steps.Count > (definition.Steps.Count + definition.SetupSteps.Count + definition.CleanupSteps.Count) * repeats || logs.Count > 50)
                 throw new ArgumentException("Report arrays exceed their bounds.");
+            State((string)value["execution_environment"], "editor", "player");
+            ValidateQueryCounts((JObject)value["query_counts"]);
+            ValidateTimeline(value, repeats);
             State((string)value["status"], "running", "succeeded", "failed", "timed_out", "cancelled");
             State((string)value["phase"], "starting", "executing", "settling", "cleaning", "finished");
             if (value["pending_status"].Type != JTokenType.Null)
@@ -320,6 +340,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Bound(step, "detail", 4096);
                 Bound(step, "name", 128);
                 Bound(step, "action", 32);
+                ValidateQueryCounts((JObject)step["query_counts"]);
             }
             foreach (JObject log in logs)
             {
@@ -338,7 +359,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (value["reproduction"] is JObject reproduction)
             {
                 string hash = (string)reproduction["definition_hash"];
-                if (hash == null || !Regex.IsMatch(hash, @"\A[a-f0-9]{64}\z") || hash != PlayScenarioReproduction.Hash(definition))
+                if (
+                    hash == null
+                    || !Regex.IsMatch(hash, @"\A[a-f0-9]{64}\z")
+                    || (hash != PlayScenarioReproduction.Hash(definition) && !LegacyDefinitionHash(scenario, definition, hash))
+                )
                     throw new ArgumentException("Invalid definition hash.");
                 Bound(reproduction, "unity_version", 128);
                 Bound(reproduction, "package_version", 128);
@@ -351,6 +376,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (iteration == 0 || !checkedIterations.Add(iteration))
                     throw new ArgumentException("Resource checks require unique valid iterations.");
                 Bound(check, "error", 2048);
+                ValidateRetainedResources(check);
                 foreach (string key in new[] { "new_scriptable_objects", "new_subscriptions", "new_handles" })
                     if (check[key].Type != JTokenType.Null)
                         PlayScenarioDefinition.Integer(check, key, 0, 4096, 0);
@@ -383,6 +409,78 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
         }
 
+        private static void ValidateQueryCounts(JObject counts)
+        {
+            if ((long)counts["target_searches"] < 0 || (long)counts["hierarchy_visits"] < 0)
+                throw new ArgumentException("Query counts cannot be negative.");
+        }
+
+        private static void ValidateTimeline(JObject value, int repeats)
+        {
+            PlayScenarioDefinition.Integer(value, "dropped_timeline_count", 0, int.MaxValue, 0);
+            var timeline = (JArray)value["timeline"];
+            if (timeline.Count > 128)
+                throw new ArgumentException("Timeline exceeds its event bound.");
+            long previous = 0;
+            foreach (JObject item in timeline)
+            {
+                long sequence = (long)item["sequence"];
+                if (sequence <= previous)
+                    throw new ArgumentException("Timeline requires positive increasing event sequences.");
+                previous = sequence;
+                string stage = (string)item["stage"];
+                State(stage, "run", "setup", "main", "cleanup");
+                int iteration = PlayScenarioDefinition.Integer(item, "iteration", 0, repeats, -1);
+                int index = PlayScenarioDefinition.Integer(item, "step_index", -1, 31, -2);
+                if ((stage == "run" && (iteration != 0 || index != -1)) || (stage != "run" && (iteration == 0 || index < 0)))
+                    throw new ArgumentException("Timeline attribution is invalid.");
+                Bound(item, "event", 64);
+                if (string.IsNullOrWhiteSpace((string)item["event"]))
+                    throw new ArgumentException("Timeline event is required.");
+                Bound(item, "detail", 512);
+            }
+        }
+
+        private static void ValidateRetainedResources(JObject check)
+        {
+            var resources = (JArray)check["retained_resources"];
+            if (resources.Count > 32)
+                throw new ArgumentException("Retained resource descriptions exceed their bound.");
+            int omitted = PlayScenarioDefinition.Integer(check, "omitted_resource_count", 0, 4096, -1);
+            var unique = new HashSet<long>();
+            foreach (JObject resource in resources)
+            {
+                long id = (long)resource["id"];
+                if (id <= 0 || !unique.Add(id))
+                    throw new ArgumentException("Retained resources require unique positive identities.");
+                State((string)resource["kind"], "scriptable_object", "subscription", "handle");
+                Bound(resource, "owner", 128);
+                Bound(resource, "type_name", 256);
+                Bound(resource, "resource_name", 128);
+                Bound(resource, "source_file", 128);
+                Bound(resource, "source_member", 128);
+                string file = (string)resource["source_file"];
+                if (file != null && (file.IndexOf('/') >= 0 || file.IndexOf('\\') >= 0))
+                    throw new ArgumentException("Resource call-site file must be a basename.");
+                PlayScenarioDefinition.Integer(resource, "source_line", 0, int.MaxValue, -1);
+            }
+            int total = new[] { "new_scriptable_objects", "new_subscriptions", "new_handles" }.Sum(key =>
+                check[key].Type == JTokenType.Null ? 0 : (int)check[key]
+            );
+            if (resources.Count + omitted > total)
+                throw new ArgumentException("Retained resource details do not match the measured identity count.");
+        }
+
+        private static bool LegacyDefinitionHash(JObject stored, PlayScenarioDefinition definition, string hash)
+        {
+            if (stored.Property("query_budget") != null || (stored["diagnostics"] as JObject)?.Property("record_timeline") != null)
+                return false;
+            JObject legacy = ToJson(definition);
+            legacy.Remove("query_budget");
+            ((JObject)legacy["diagnostics"]).Remove("record_timeline");
+            return PlayScenarioReproduction.HashSerializedDefinition(legacy) == hash;
+        }
+
         private static void ValidateFailure(JObject failure, int repeats)
         {
             State(
@@ -401,7 +499,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 "interrupted",
                 "cleanup_timeout",
                 "resource_assertion_failed",
-                "resource_measurement_failed"
+                "resource_measurement_failed",
+                "query_budget_exceeded",
+                "reset_participant_unavailable"
             );
             if (failure["stage"].Type != JTokenType.Null)
                 State((string)failure["stage"], "setup", "main", "cleanup");
@@ -443,7 +543,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static bool LegacyOptional(Type type, string key)
         {
             if (type == typeof(PlayScenarioStepResult))
-                return key == "stage" || key == "stable_since_unix_ms";
+                return key == "stage" || key == "stable_since_unix_ms" || key == "query_counts";
+            if (type == typeof(PlayScenarioResourceCheck))
+                return key == "retained_resources" || key == "omitted_resource_count";
             if (type != typeof(PlayScenarioRun))
                 return false;
             return new[]
@@ -465,6 +567,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 "cleanup_failures",
                 "reproduction",
                 "resource_checks",
+                "execution_environment",
+                "query_counts",
+                "timeline",
+                "dropped_timeline_count",
             }.Contains(key, StringComparer.Ordinal);
         }
 
@@ -490,9 +596,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     fieldType == typeof(PlayScenarioFailureDiagnostics)
                     || fieldType == typeof(PlayScenarioFailure)
                     || fieldType == typeof(PlayScenarioReproduction)
+                    || fieldType == typeof(PlayScenarioQueryCounts)
                 )
                 {
-                    if (token.Type == JTokenType.Null)
+                    if (token.Type == JTokenType.Null && fieldType != typeof(PlayScenarioQueryCounts))
                         continue;
                     if (!(token is JObject nested))
                         throw new ArgumentException("Invalid failure diagnostics.");
@@ -503,6 +610,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     if (!(token is JArray array))
                         throw new ArgumentException("Invalid report array: " + pair.Key);
                     Type itemType = fieldType.GetGenericArguments()[0];
+                    int maximum =
+                        itemType == typeof(PlayScenarioTimelineEvent) ? 128
+                        : itemType == typeof(PlayScenarioRetainedResource) ? 32
+                        : itemType == typeof(PlayScenarioStepResult) ? 640
+                        : itemType == typeof(PlayScenarioLog) ? 50
+                        : itemType == typeof(PlayScenarioResourceCheck) || itemType == typeof(PlayScenarioMetricsSnapshot) ? 10
+                        : 16;
+                    if (array.Count > maximum)
+                        throw new ArgumentException("Report array exceeds its bound: " + pair.Key);
                     foreach (JToken child in array)
                     {
                         if (itemType == typeof(string))

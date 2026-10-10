@@ -64,6 +64,17 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                             Add(stage, index, step.Name, "passed", detail);
                             continue;
                         }
+                        if (step.Action == "reset_state")
+                        {
+                            Add(
+                                stage,
+                                index,
+                                step.Name,
+                                "deferred",
+                                "Explicit reset participant resolution and reset execution are deferred until runtime; no participant was invoked."
+                            );
+                            continue;
+                        }
                         PlayScenarioObjectCondition.ValidateSelector(step);
                         string[] segments = step.TargetId == null ? PlayScenarioObjectCondition.ParseTarget(step.Target) : null;
                         Type componentType = PlayScenarioObjectCondition.ValidateCondition(step);

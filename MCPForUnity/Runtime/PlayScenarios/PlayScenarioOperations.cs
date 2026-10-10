@@ -90,7 +90,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         public static string Hash(PlayScenarioDefinition definition)
         {
-            JToken normalized = Sort(JObject.FromObject(definition));
+            return HashSerializedDefinition(JObject.FromObject(definition));
+        }
+
+        internal static string HashSerializedDefinition(JObject definition)
+        {
+            JToken normalized = Sort(definition);
             using (SHA256 hash = SHA256.Create())
                 return string.Concat(hash.ComputeHash(Encoding.UTF8.GetBytes(normalized.ToString(Formatting.None))).Select(value => value.ToString("x2")));
         }
@@ -129,6 +134,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         [JsonProperty("new_handles")]
         public int? NewHandles;
+
+        [JsonProperty("retained_resources")]
+        public List<PlayScenarioRetainedResource> RetainedResources = new List<PlayScenarioRetainedResource>();
+
+        [JsonProperty("omitted_resource_count")]
+        public int OmittedResourceCount;
 
         [JsonProperty("passed")]
         public bool Passed;

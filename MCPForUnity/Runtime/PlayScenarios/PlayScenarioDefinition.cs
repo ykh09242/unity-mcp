@@ -45,6 +45,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("resources")]
         public PlayScenarioResourceOptions Resources = new PlayScenarioResourceOptions();
 
+        [JsonProperty("query_budget")]
+        public PlayScenarioQueryBudgetOptions QueryBudget = new PlayScenarioQueryBudgetOptions();
+
         public static void ValidateName(string name)
         {
             if (name == null || !Regex.IsMatch(name, @"\A[a-z0-9][a-z0-9_-]{0,63}\z"))
@@ -68,7 +71,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 "metrics",
                 "diagnostics",
                 "tags",
-                "resources"
+                "resources",
+                "query_budget"
             );
             string name = Text(value, "name", 64);
             ValidateName(name);
@@ -86,6 +90,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Diagnostics = ParseDiagnostics(value),
                 Tags = ParseTags(value),
                 Resources = ParseResources(value),
+                QueryBudget = ParseQueryBudget(value),
             };
             if ((result.SetupSteps.Count > 0 ? result.SetupSteps[0] : result.Steps[0]).Action != "load_scene")
                 throw new ArgumentException("The first executed setup or main step must load_scene.");
@@ -114,7 +119,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     "property",
                     "stable_for_ms",
                     "target_id",
-                    "click_mode"
+                    "click_mode",
+                    "reset_ids"
                 );
                 var parsed = new PlayScenarioStep
                 {
@@ -122,6 +128,27 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     Action = Text(step, "action", 32),
                     TimeoutSeconds = Integer(step, "timeout_seconds", 1, 120, 30),
                 };
+                if (parsed.Action == "reset_state")
+                {
+                    Fields(step, "name", "action", "timeout_seconds", "reset_ids");
+                    if (!(step["reset_ids"] is JArray ids) || ids.Count < 1 || ids.Count > 16)
+                        throw new ArgumentException("reset_ids must contain 1-16 unique stable identifiers.");
+                    parsed.ResetIds = new List<string>();
+                    foreach (JToken id in ids)
+                    {
+                        if (
+                            id.Type != JTokenType.String
+                            || !MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget.IsValidTargetId((string)id)
+                            || parsed.ResetIds.Contains((string)id, StringComparer.Ordinal)
+                        )
+                            throw new ArgumentException("reset_ids must contain unique case-sensitive stable identifiers.");
+                        parsed.ResetIds.Add((string)id);
+                    }
+                    result.Add(parsed);
+                    continue;
+                }
+                if (step.Property("reset_ids") != null)
+                    throw new ArgumentException("reset_ids is permitted only on reset_state.");
                 switch (parsed.Action)
                 {
                     case "load_scene":
@@ -253,8 +280,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (value.Property("diagnostics") == null)
                 return new PlayScenarioDiagnosticsOptions();
             JObject options = Object(value, "diagnostics");
-            Fields(options, "screenshot_on_failure");
-            return new PlayScenarioDiagnosticsOptions { ScreenshotOnFailure = Boolean(options, "screenshot_on_failure", false) };
+            Fields(options, "screenshot_on_failure", "record_timeline");
+            return new PlayScenarioDiagnosticsOptions
+            {
+                ScreenshotOnFailure = Boolean(options, "screenshot_on_failure", false),
+                RecordTimeline = Boolean(options, "record_timeline", false),
+            };
         }
 
         internal static List<string> ParseTags(JObject value)
@@ -289,6 +320,20 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 MaxScriptableObjects = Integer(options, "max_scriptable_objects", 0, 4096, 0),
                 MaxSubscriptions = Integer(options, "max_subscriptions", 0, 4096, 0),
                 MaxHandles = Integer(options, "max_handles", 0, 4096, 0),
+            };
+        }
+
+        private static PlayScenarioQueryBudgetOptions ParseQueryBudget(JObject value)
+        {
+            if (value.Property("query_budget") == null)
+                return new PlayScenarioQueryBudgetOptions();
+            JObject options = Object(value, "query_budget");
+            Fields(options, "enabled", "max_target_searches", "max_hierarchy_visits");
+            return new PlayScenarioQueryBudgetOptions
+            {
+                Enabled = Boolean(options, "enabled", false),
+                MaxTargetSearches = Integer(options, "max_target_searches", 0, 1000000, 4096),
+                MaxHierarchyVisits = Integer(options, "max_hierarchy_visits", 0, 10000000, 1000000),
             };
         }
 
@@ -392,6 +437,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("target_id", NullValueHandling = NullValueHandling.Ignore)]
         public string TargetId;
 
+        [JsonProperty("reset_ids", NullValueHandling = NullValueHandling.Ignore)]
+        public List<string> ResetIds;
+
         [JsonProperty("click_mode", NullValueHandling = NullValueHandling.Ignore)]
         public string ClickMode;
 
@@ -462,5 +510,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     {
         [JsonProperty("screenshot_on_failure")]
         public bool ScreenshotOnFailure;
+
+        [JsonProperty("record_timeline")]
+        public bool RecordTimeline;
     }
 }

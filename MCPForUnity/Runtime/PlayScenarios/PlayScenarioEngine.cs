@@ -6,7 +6,7 @@ using MCPForUnity.Runtime;
 namespace MCPForUnity.Editor.Services.PlayScenarios
 {
     /// <summary>Bounded clock-driven execution; evaluation, cleanup and sampling never replay a dispatched step.</summary>
-    public sealed class PlayScenarioEngine
+    public sealed partial class PlayScenarioEngine
     {
         private readonly IPlayScenarioHost _host;
         private readonly Action<PlayScenarioRun, PlayScenarioStep, long> _onFailure;
@@ -58,6 +58,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 AddSteps(run, scenario.Steps, "main", iteration);
                 AddSteps(run, scenario.CleanupSteps, "cleanup", iteration);
             }
+            RecordTimeline(run, now, null, "run_started", "Scenario execution created.");
             return run;
         }
 
@@ -92,6 +93,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (!Running || State.Phase != "starting")
                 return;
             State.Phase = "executing";
+            Timeline(State.StartedUnixMs, "run_entered_play", "Execution host is ready.", null);
             Revision++;
         }
 
@@ -163,6 +165,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 result.Status = "running";
                 result.StartedUnixMs = now;
                 _observationFailure = null;
+                _resetSnapshot = null;
+                _lastObservation = null;
+                _hasObservation = false;
+                Timeline(now, "step_started", result.Name, result);
                 Revision++;
             }
             State.NextPollUnixMs = now + State.Scenario.PollIntervalMs;
@@ -171,13 +177,16 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             string phase = State.Phase;
             try
             {
-                PlayScenarioObservation observation = _host.Evaluate(step, firstPoll);
+                PlayScenarioObservation observation = EvaluateCounted(step, firstPoll, result);
                 // Apply logs from this evaluation before attributing effects to a later iteration
                 // or sampling a purportedly successful cleanup.
                 _onEvaluationCompleted?.Invoke();
+                if (ObserveQueryBudget(now))
+                    return;
                 // A UI listener may cancel, fail or interrupt synchronously during dispatch.
                 if (!Running || State.Cursor != cursor || State.Phase != phase)
                     return;
+                ObserveTimeline(now, result, observation);
                 result.Detail = Bounded(observation.Detail, 2048);
                 _observationFailure = observation.Failure == null ? null : Attribute(observation.Failure);
                 if (!observation.Ready)
@@ -202,6 +211,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 _observationFailure = null;
                 result.Status = "passed";
                 result.FinishedUnixMs = now;
+                Timeline(now, "step_passed", result.Detail, result);
+                _resetSnapshot = null;
                 State.Cursor++;
                 State.NextPollUnixMs = now;
                 Revision++;
@@ -209,6 +220,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
             catch (Exception exception)
             {
+                // Query work is counted even when the evaluation throws.
+                if (ObserveQueryBudget(now))
+                    return;
                 // A partially dispatched click must never be retried.
                 string error = exception.GetType().Name + ": " + exception.Message;
                 if (!Running || State.Cursor != cursor || State.Phase != phase)
@@ -304,6 +318,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             State.Failure = State.Failure ?? Attribute(failure ?? Failure("action_exception", error));
             State.PendingStatus = status;
             State.PendingError = Bounded(error, 4096);
+            Timeline(now, "outcome_requested", status + ": " + State.PendingError);
+            _resetSnapshot = null;
             CaptureFailure(now);
             Revision++;
             if (State.Phase == "cleaning")
@@ -346,6 +362,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 CompleteIteration(iteration, now);
                 return;
             }
+            _resetSnapshot = null;
+            Timeline(now, "cleanup_started", "Best-effort cleanup started.", State.Steps[cleanup]);
             State.Cursor = cleanup;
             State.Phase = "cleaning";
             State.CleanupDeadlineUnixMs = null;
@@ -370,6 +388,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             result.Status = all || timedOut ? "timed_out" : "failed";
             result.Detail = Bounded(error, 2048);
             result.FinishedUnixMs = now;
+            Timeline(now, "cleanup_failed", result.Detail, result);
+            _resetSnapshot = null;
             State.Cursor++;
             State.NextPollUnixMs = now;
             Revision++;
@@ -446,6 +466,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return true;
             _resourceIteration = iteration;
             _resourceBaselineAt = now;
+            Timeline(now, "resource_baseline", "Resource baseline requested.");
             try
             {
                 _resourceBaseline = CaptureResources();
@@ -485,11 +506,21 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 || groups.SelectMany(group => group).Distinct().Count() != groups.Sum(group => group.Length)
             )
                 throw new InvalidOperationException("Registered resource identities are incomplete or exceed their bound.");
+            var identities = new HashSet<long>(groups.SelectMany(group => group));
+            PlayScenarioRegisteredResourceInfo[] details = snapshot.ResourceDetails;
+            if (
+                details == null
+                || details.Length > PlayScenarioResourceTracker.RegistrationLimit
+                || details.Any(info => info == null || !identities.Contains(info.Id))
+                || details.Select(info => info.Id).Distinct().Count() != details.Length
+            )
+                throw new InvalidOperationException("Registered resource metadata is invalid or exceeds its bound.");
             return new PlayScenarioRegisteredResources
             {
                 ScriptableObjectIds = (long[])snapshot.ScriptableObjectIds.Clone(),
                 SubscriptionIds = (long[])snapshot.SubscriptionIds.Clone(),
                 HandleIds = (long[])snapshot.HandleIds.Clone(),
+                ResourceDetails = details,
             };
         }
 
@@ -521,6 +552,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 check.NewScriptableObjects = snapshot.ScriptableObjectIds.Except(_resourceBaseline.ScriptableObjectIds).Count();
                 check.NewSubscriptions = snapshot.SubscriptionIds.Except(_resourceBaseline.SubscriptionIds).Count();
                 check.NewHandles = snapshot.HandleIds.Except(_resourceBaseline.HandleIds).Count();
+                CaptureRetainedResources(check, snapshot, _resourceBaseline);
                 PlayScenarioResourceOptions options = State.Scenario.Resources;
                 check.Passed =
                     check.NewScriptableObjects <= options.MaxScriptableObjects
@@ -538,6 +570,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 _resourceBaseline = null;
             }
             State.ResourceChecks.Add(check);
+            Timeline(
+                now,
+                "resource_checked",
+                check.Passed ? "Resource check passed." : check.Error,
+                State.Steps.LastOrDefault(result => result.Iteration == check.Iteration && result.StartedUnixMs.HasValue)
+            );
             Revision++;
             if (check.Passed)
                 return;
@@ -574,6 +612,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (_failureCaptured)
                 return;
             _failureCaptured = true;
+            Timeline(now, "failure", State.Failure?.Code + ": " + State.Failure?.Message);
             try
             {
                 _onFailure?.Invoke(State, State.Phase == "settling" && State.Cursor > 0 ? DefinitionStep(State.Steps[State.Cursor - 1]) : CurrentStep, now);
@@ -665,6 +704,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             State.Phase = "finished";
             State.Error = Bounded(error, 4096);
             State.FinishedUnixMs = now;
+            Timeline(now, "run_finished", status + (error == null ? "" : ": " + error), null);
             foreach (PlayScenarioStepResult result in State.Steps.Where(result => result.Status == "running" || result.Status == "pending"))
             {
                 result.Status = result.Status == "running" ? status : "skipped";
@@ -683,6 +723,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             _released = true;
             _resourceBaseline = null;
             _observationFailure = null;
+            _resetSnapshot = null;
+            _lastObservation = null;
             try
             {
                 _host.Release();

@@ -12,6 +12,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("scenario")]
         public PlayScenarioDefinition Scenario;
 
+        [JsonProperty("execution_environment")]
+        public string ExecutionEnvironment = "editor";
+
         [JsonProperty("status")]
         public string Status = "running";
 
@@ -105,6 +108,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("resource_checks")]
         public List<PlayScenarioResourceCheck> ResourceChecks = new List<PlayScenarioResourceCheck>();
 
+        [JsonProperty("query_counts")]
+        public PlayScenarioQueryCounts QueryCounts;
+
+        [JsonProperty("timeline")]
+        public List<PlayScenarioTimelineEvent> Timeline = new List<PlayScenarioTimelineEvent>();
+
+        [JsonProperty("dropped_timeline_count")]
+        public int DroppedTimelineCount;
+
         [JsonProperty("runner_resources_released")]
         public bool? RunnerResourcesReleased;
     }
@@ -143,6 +155,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         [JsonProperty("poll_count")]
         public int PollCount;
+
+        [JsonProperty("query_counts")]
+        public PlayScenarioQueryCounts QueryCounts;
     }
 
     public sealed class PlayScenarioLog

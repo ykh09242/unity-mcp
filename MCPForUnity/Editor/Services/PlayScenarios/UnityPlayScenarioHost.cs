@@ -11,9 +11,13 @@ using UnityEngine.SceneManagement;
 namespace MCPForUnity.Editor.Services.PlayScenarios
 {
     /// <summary>One-step Unity adapter. Scene objects are borrowed only during an evaluation.</summary>
-    public sealed class UnityPlayScenarioHost : IPlayScenarioHost, IPlayScenarioMetricsHost
+    public sealed class UnityPlayScenarioHost : IPlayScenarioHost, IPlayScenarioMetricsHost, IPlayScenarioQueryHost
     {
         private readonly PlayScenarioLogPolicy _logPolicy;
+        private PlayScenarioQueryCounts _queryCounts;
+
+        public PlayScenarioQueryCounts CaptureQueryCounts() => _queryCounts;
+
         private AsyncOperation _loadOperation;
         private string _loadPath;
         private string _targetPath;
@@ -84,8 +88,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         return new PlayScenarioObservation(false, "Waiting for a loaded active scene.");
                     var matches =
                         _targetId != null
-                            ? PlayScenarioObjectCondition.ResolveId(scene, _targetId)
-                            : PlayScenarioObjectCondition.Resolve(scene, _targetSegments);
+                            ? PlayScenarioObjectCondition.ResolveId(scene, _targetId, ref _queryCounts)
+                            : PlayScenarioObjectCondition.Resolve(scene, _targetSegments, ref _queryCounts);
                     PlayScenarioObservation observation = PlayScenarioObjectCondition.Observe(step, matches, componentType);
                     if (!observation.Ready || step.Action == "wait_object")
                         return observation;
