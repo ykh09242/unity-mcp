@@ -403,6 +403,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 var layer = controllerLayers[i];
                 var layerStates = layer.stateMachine.states;
                 var states = new List<object>();
+                AnimatorState defaultState = null;
+                bool defaultStateRead = false;
                 foreach (var cs in layerStates)
                 {
                     var stateTransitions = cs.state.transitions;
@@ -436,14 +438,24 @@ namespace MCPForUnity.Editor.Tools.Animation
                         );
                     }
 
+                    string stateName = cs.state.name;
+                    float stateSpeed = cs.state.speed;
+                    var motion = cs.state.motion;
+                    bool hasMotion = motion != null;
+                    string motionName = motion?.name;
+                    if (!defaultStateRead)
+                    {
+                        defaultState = layer.stateMachine.defaultState;
+                        defaultStateRead = true;
+                    }
                     states.Add(
                         new
                         {
-                            name = cs.state.name,
-                            speed = cs.state.speed,
-                            hasMotion = cs.state.motion != null,
-                            motionName = cs.state.motion?.name,
-                            isDefault = layer.stateMachine.defaultState == cs.state,
+                            name = stateName,
+                            speed = stateSpeed,
+                            hasMotion,
+                            motionName,
+                            isDefault = defaultState == cs.state,
                             transitionCount = stateTransitions.Length,
                             transitions,
                         }
