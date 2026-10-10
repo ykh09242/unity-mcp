@@ -177,13 +177,79 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 )
             );
             options.Add(metricSection);
-            var screenshot = new Toggle("Screenshot on failure") { name = "screenshotOnFailure", value = draft.Diagnostics?.ScreenshotOnFailure ?? false };
+            var diagnostics = draft.Diagnostics ?? new PlayScenarioDiagnosticsOptions();
+            var screenshot = new Toggle("Screenshot on failure") { name = "screenshotOnFailure", value = diagnostics.ScreenshotOnFailure };
             screenshot.RegisterValueChangedCallback(evt =>
-                edit(() => draft.Diagnostics = new PlayScenarioDiagnosticsOptions { ScreenshotOnFailure = evt.newValue })
+                edit(() =>
+                {
+                    draft.Diagnostics = diagnostics;
+                    diagnostics.ScreenshotOnFailure = evt.newValue;
+                })
             );
             options.Add(screenshot);
+            var timeline = new Toggle("Record state change timeline") { name = "recordTimeline", value = diagnostics.RecordTimeline };
+            timeline.RegisterValueChangedCallback(evt =>
+                edit(() =>
+                {
+                    draft.Diagnostics = diagnostics;
+                    diagnostics.RecordTimeline = evt.newValue;
+                })
+            );
+            options.Add(timeline);
+            options.Add(new Label("Timeline stores the last 128 changes with bounded details. Repeated unchanged observations do not add events."));
+            RenderQueryBudget(options, draft, edit);
             RenderResources(options, draft, edit);
             container.Add(options);
+        }
+
+        private static void RenderQueryBudget(VisualElement container, PlayScenarioDefinition draft, Action<Action> edit)
+        {
+            var budget = draft.QueryBudget ?? new PlayScenarioQueryBudgetOptions();
+            var section = new Foldout { name = "queryBudgetOptions", text = "Target query regression budget" };
+            var enabled = new Toggle("Enforce query budget") { name = "queryBudgetEnabled", value = budget.Enabled };
+            var fields = new VisualElement { name = "queryBudgetFields" };
+            enabled.RegisterValueChangedCallback(evt =>
+            {
+                edit(() =>
+                {
+                    draft.QueryBudget = budget;
+                    budget.Enabled = evt.newValue;
+                });
+                fields.SetEnabled(evt.newValue);
+            });
+            Integer(
+                fields,
+                "Maximum target searches",
+                "queryMaxTargetSearches",
+                budget.MaxTargetSearches,
+                value =>
+                    edit(() =>
+                    {
+                        draft.QueryBudget = budget;
+                        budget.MaxTargetSearches = value;
+                    })
+            );
+            Integer(
+                fields,
+                "Maximum hierarchy visits",
+                "queryMaxHierarchyVisits",
+                budget.MaxHierarchyVisits,
+                value =>
+                    edit(() =>
+                    {
+                        draft.QueryBudget = budget;
+                        budget.MaxHierarchyVisits = value;
+                    })
+            );
+            fields.SetEnabled(budget.Enabled);
+            section.Add(enabled);
+            section.Add(fields);
+            section.Add(
+                new Label(
+                    "Actual target evaluations are counted even when enforcement is off. Limits: searches 0–1000000; visits 0–10000000. Zero is a strict budget."
+                )
+            );
+            container.Add(section);
         }
 
         private static void RenderTags(VisualElement container, PlayScenarioDefinition draft, Action<Action> edit)

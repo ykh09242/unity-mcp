@@ -54,6 +54,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 controls.Add(
                     new Button(() => Compare(reports[baseline.index], reports[candidate.index])) { text = "Compare reports", name = "compareReports" }
                 );
+                controls.Add(new Button(() => ShowDetails(reports[candidate.index])) { text = "View candidate details", name = "viewReportDetails" });
                 controls.Add(new Label("Newest reports first. Comparing stored data does not query the scene or running job."));
             }
             catch (Exception exception)
@@ -76,6 +77,31 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
 
         internal static void AppendStructuredDetails(JObject data, Action<string> add)
         {
+            if (data["query_counts"] is JObject counts)
+                add("Run queries: " + QuerySummary(counts));
+            if (data["timeline"] is JArray timeline && timeline.Count > 0)
+            {
+                add("State change timeline (last 128 events):");
+                foreach (JObject item in timeline.OfType<JObject>().Take(128))
+                    add(
+                        "#"
+                            + item["sequence"]
+                            + " @ "
+                            + item["timestamp_unix_ms"]
+                            + " ms; "
+                            + item["stage"]
+                            + "."
+                            + item["iteration"]
+                            + "."
+                            + item["step_index"]
+                            + " "
+                            + item["event"]
+                            + ": "
+                            + Bounded(item["detail"], 512)
+                    );
+            }
+            if ((long?)data["dropped_timeline_count"] > 0)
+                add("Earlier timeline events omitted: " + data["dropped_timeline_count"]);
             if (data["failure"] is JObject failure)
                 AppendFailure("Failure", failure, add);
             if (data["cleanup_failures"] is JArray cleanup)
@@ -96,6 +122,28 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                             + "; handles "
                             + (item["new_handles"]?.Type == JTokenType.Integer ? item["new_handles"].ToString() : "unavailable")
                     );
+                    if (item["retained_resources"] is JArray retained)
+                        foreach (JObject resource in retained.OfType<JObject>().Take(32))
+                            add(
+                                "Retained resource #"
+                                    + resource["id"]
+                                    + " ("
+                                    + Bounded(resource["kind"], 64)
+                                    + "); owner: "
+                                    + Bounded(resource["owner"], 128)
+                                    + "; type: "
+                                    + Bounded(resource["type_name"], 256)
+                                    + "; name: "
+                                    + Bounded(resource["resource_name"], 128)
+                                    + "; registered at "
+                                    + Bounded(resource["source_file"], 128)
+                                    + ":"
+                                    + resource["source_line"]
+                                    + " "
+                                    + Bounded(resource["source_member"], 128)
+                            );
+                    if ((long?)item["omitted_resource_count"] > 0)
+                        add("Additional retained resources omitted: " + item["omitted_resource_count"]);
                     if (item["error"]?.Type == JTokenType.String)
                         add("Resource check error: " + item["error"]);
                 }
@@ -110,6 +158,24 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 if (reproduction["source_revision"]?.Type == JTokenType.String)
                     add("Source revision (caller-provided): " + reproduction["source_revision"]);
             }
+        }
+
+        private static string Bounded(JToken value, int limit)
+        {
+            string text = value?.Type == JTokenType.String ? (string)value : "";
+            return text.Length <= limit ? text : text.Substring(0, limit);
+        }
+
+        internal static string QuerySummary(JObject counts) =>
+            "target searches " + counts["target_searches"] + "; hierarchy visits " + counts["hierarchy_visits"];
+
+        private void ShowDetails(PlayScenarioRun selected)
+        {
+            comparison.Clear();
+            Add(selected.JobId + ": " + selected.Status);
+            foreach (var step in selected.Steps)
+                Add(Key(step) + " " + step.Name + ": " + step.Status + "; " + QuerySummary(JObject.FromObject(step.QueryCounts, JsonSerializer.Create())));
+            AppendStructuredDetails(JObject.FromObject(selected, JsonSerializer.Create()), Add);
         }
 
         private static void AppendFailure(string label, JObject failure, Action<string> add)
@@ -157,6 +223,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     $"{key} {left?.Name ?? "(absent)"} ({left?.Action ?? "n/a"}) → {right?.Name ?? "(absent)"} ({right?.Action ?? "n/a"}): {left?.Status ?? "absent"} → {right?.Status ?? "absent"}; duration {Duration(left)} → {Duration(right)}; polls {left?.PollCount.ToString() ?? "n/a"} → {right?.PollCount.ToString() ?? "n/a"}"
                 );
             }
+            Add("Baseline queries: " + QuerySummary(JObject.FromObject(baseline.QueryCounts, JsonSerializer.Create())));
+            Add("Candidate queries: " + QuerySummary(JObject.FromObject(candidate.QueryCounts, JsonSerializer.Create())));
             Add("Baseline metrics: " + (baseline.MetricsSummary ?? "No summary"));
             foreach (string warning in baseline.MetricWarnings)
                 Add("Baseline warning: " + warning);

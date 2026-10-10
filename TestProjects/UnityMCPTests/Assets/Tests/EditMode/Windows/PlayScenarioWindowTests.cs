@@ -912,6 +912,214 @@ namespace MCPForUnityTests.Editor.Windows
         }
 
         [Test]
+        public void ResetActionShowsOnlyIdsAndTimeoutAndClearsOtherActionFields()
+        {
+            ConfigureTemplate();
+            Field<PopupField<string>>("stepAction1").value = "reset_state";
+            Assert.IsNull(Field<TextField>("stepTarget1"));
+            Assert.IsNull(Field<TextField>("stepTargetId1"));
+            Assert.IsNull(Field<PopupField<string>>("stepClickMode1"));
+            Assert.IsNotNull(Field<IntegerField>("stepTimeout1"));
+            Field<TextField>("stepResetIds1").value = "game.session\nplayer.state";
+            Field<IntegerField>("stepTimeout1").value = 12;
+            var validated = PlayScenarioDefinition.Parse(JObject.FromObject(window.Draft, JsonSerializer.Create()));
+            CollectionAssert.AreEqual(new[] { "game.session", "player.state" }, validated.Steps[1].ResetIds);
+            var wireStep = (JObject)JObject.FromObject(validated, JsonSerializer.Create())["steps"][1];
+            CollectionAssert.AreEquivalent(new[] { "name", "action", "timeout_seconds", "reset_ids" }, wireStep.Properties().Select(property => property.Name));
+            Field<TextField>("stepResetIds1").value = "game.session\ngame.session";
+            Assert.IsFalse(Field<Button>("saveScenario").enabledSelf);
+            Field<TextField>("stepResetIds1").value = "game.session";
+            Click("saveScenario");
+            CollectionAssert.AreEqual(new[] { "game.session" }, store.Get("created-flow").Steps[1].ResetIds);
+            Field<PopupField<string>>("stepAction1").value = "wait_object";
+            Assert.IsNull(window.Draft.Steps[1].ResetIds);
+            Assert.IsNull(Field<TextField>("stepResetIds1"));
+            Assert.IsNotNull(Field<TextField>("stepTarget1"));
+            Field<PopupField<string>>("stepAction0").value = "reset_state";
+            Field<TextField>("stepResetIds0").value = "game.session";
+            Assert.IsFalse(Field<Button>("saveScenario").enabledSelf, "The first executed step must still load_scene.");
+        }
+
+        [Test]
+        public void QueryBudgetAndTimelineDefaultsRoundTripAndPreserveScreenshotSetting()
+        {
+            ConfigureTemplate();
+            Assert.IsFalse(Field<Toggle>("queryBudgetEnabled").value);
+            Assert.AreEqual(4096, Field<IntegerField>("queryMaxTargetSearches").value);
+            Assert.AreEqual(1000000, Field<IntegerField>("queryMaxHierarchyVisits").value);
+            Assert.IsFalse(Field<VisualElement>("queryBudgetFields").enabledSelf);
+            Assert.IsFalse(Field<Toggle>("recordTimeline").value);
+            Field<Toggle>("queryBudgetEnabled").value = true;
+            Assert.IsTrue(Field<VisualElement>("queryBudgetFields").enabledSelf);
+            Field<IntegerField>("queryMaxTargetSearches").value = 0;
+            Field<IntegerField>("queryMaxHierarchyVisits").value = 0;
+            Field<Toggle>("recordTimeline").value = true;
+            Field<Toggle>("screenshotOnFailure").value = true;
+            Assert.IsTrue(window.Draft.Diagnostics.RecordTimeline, "Changing screenshot must preserve timeline.");
+            Field<Toggle>("recordTimeline").value = false;
+            Assert.IsTrue(window.Draft.Diagnostics.ScreenshotOnFailure, "Changing timeline must preserve screenshot.");
+            Field<Toggle>("recordTimeline").value = true;
+            Click("saveScenario");
+            var saved = store.Get("created-flow");
+            Assert.IsTrue(saved.QueryBudget.Enabled);
+            Assert.AreEqual(0, saved.QueryBudget.MaxTargetSearches);
+            Assert.AreEqual(0, saved.QueryBudget.MaxHierarchyVisits);
+            Assert.IsTrue(saved.Diagnostics.RecordTimeline);
+            Assert.IsTrue(saved.Diagnostics.ScreenshotOnFailure);
+            Field<IntegerField>("queryMaxHierarchyVisits").value = 10000001;
+            Assert.IsFalse(Field<Button>("saveScenario").enabledSelf);
+            Click("undoDraft");
+            Assert.AreEqual(0, Field<IntegerField>("queryMaxHierarchyVisits").value);
+            Assert.IsTrue(Field<Toggle>("recordTimeline").value);
+        }
+
+        [Test]
+        public void PlayerBuildRequiresCleanSavedDraftExplicitFolderAndIdleEditor()
+        {
+            int builds = 0;
+            int pickers = 0;
+            bool busy = false;
+            window.IsEditorBusy = () => busy;
+            window.ChoosePlayerBuildFolder = () =>
+            {
+                pickers++;
+                return "explicit-output";
+            };
+            window.BuildPlayerBundle = (name, folder) =>
+            {
+                builds++;
+                Assert.AreEqual("created-flow", name);
+                Assert.AreEqual("explicit-output", folder);
+                Assert.IsFalse(Field<Button>("buildPlayerScenario").enabledSelf);
+                return "explicit-output/scenario-player.bundle.json";
+            };
+            ConfigureTemplate();
+            Assert.IsFalse(Field<Button>("buildPlayerScenario").enabledSelf);
+            typeof(PlayScenarioWindow).GetMethod("BuildPlayer", PrivateInstance).Invoke(window, null);
+            Assert.AreEqual(0, pickers);
+            Click("saveScenario");
+            Assert.IsTrue(Field<Button>("buildPlayerScenario").enabledSelf);
+            busy = true;
+            typeof(PlayScenarioWindow).GetMethod("UpdateValidation", PrivateInstance).Invoke(window, null);
+            Assert.IsFalse(Field<Button>("buildPlayerScenario").enabledSelf);
+            typeof(PlayScenarioWindow).GetMethod("BuildPlayer", PrivateInstance).Invoke(window, null);
+            Assert.AreEqual(0, pickers);
+            busy = false;
+            typeof(PlayScenarioWindow).GetMethod("UpdateValidation", PrivateInstance).Invoke(window, null);
+            Click("buildPlayerScenario");
+            Assert.AreEqual(1, builds);
+            Assert.AreEqual(1, pickers);
+            StringAssert.Contains("scenario-player.bundle.json", Field<Label>("scenarioMessage").text);
+            window.ChoosePlayerBuildFolder = () => "";
+            Click("buildPlayerScenario");
+            Assert.AreEqual(1, builds, "Cancelling the folder picker must not start a build.");
+            window.ChoosePlayerBuildFolder = () => "explicit-output";
+            window.BuildPlayerBundle = (_, __) => throw new InvalidOperationException("test build failure");
+            Click("buildPlayerScenario");
+            StringAssert.Contains("Player build failed: test build failure", Field<Label>("scenarioMessage").text);
+            Assert.IsTrue(Field<Button>("buildPlayerScenario").enabledSelf);
+            Field<TextField>("stepName1").value = "Unsaved edit";
+            Assert.IsFalse(Field<Button>("buildPlayerScenario").enabledSelf);
+        }
+
+        [Test]
+        public void IdenticalStatusReportPreservesResultControlsWhileChangedDataUpdatesThem()
+        {
+            ConfigureTemplate();
+            window.StartRun = (_, __, ___, job) => Response(job);
+            window.ReadStatus = job =>
+            {
+                var response = (SuccessResponse)Response(job);
+                var data = (JObject)response.Data;
+                data["next_poll_unix_ms"] = 9876;
+                ((JObject)data["steps"][0])["poll_count"] = 17;
+                return response;
+            };
+            Click("runScenario");
+            var previous = Field<Label>("runStatus");
+            ForceStatusTick();
+            Assert.AreSame(previous, Field<Label>("runStatus"));
+            window.ReadStatus = job => Response(job, "succeeded");
+            ForceStatusTick();
+            Assert.AreNotSame(previous, Field<Label>("runStatus"));
+            StringAssert.Contains("succeeded", Field<Label>("runStatus").text);
+        }
+
+        [Test]
+        public void SavedReportDetailsShowQueryCountsRetainedOwnerCallsiteAndTimelineWithoutPolling()
+        {
+            OpenSaved();
+            int reads = 0;
+            window.ReadStatus = _ =>
+            {
+                reads++;
+                return new ErrorResponse("Unexpected status read");
+            };
+            store.SaveReport(
+                new PlayScenarioRun
+                {
+                    JobId = new string('d', 32),
+                    Scenario = Definition(),
+                    RepeatCount = 1,
+                    StartedUnixMs = 1000,
+                    FinishedUnixMs = 2000,
+                    Status = "failed",
+                    Phase = "finished",
+                    QueryCounts = new PlayScenarioQueryCounts { TargetSearches = 9, HierarchyVisits = 30 },
+                    Timeline = new System.Collections.Generic.List<PlayScenarioTimelineEvent>
+                    {
+                        new PlayScenarioTimelineEvent
+                        {
+                            Sequence = 3,
+                            TimestampUnixMs = 1234,
+                            Stage = "main",
+                            Iteration = 1,
+                            StepIndex = 1,
+                            Event = "observation_changed",
+                            Detail = "player appeared",
+                        },
+                    },
+                    DroppedTimelineCount = 2,
+                    ResourceChecks = new System.Collections.Generic.List<PlayScenarioResourceCheck>
+                    {
+                        new PlayScenarioResourceCheck
+                        {
+                            Iteration = 1,
+                            NewHandles = 5,
+                            Passed = false,
+                            RetainedResources = new System.Collections.Generic.List<PlayScenarioRetainedResource>
+                            {
+                                new PlayScenarioRetainedResource
+                                {
+                                    Id = 7,
+                                    Kind = "handle",
+                                    Owner = "game.session",
+                                    TypeName = "Lease",
+                                    ResourceName = "persistent lease",
+                                    SourceFile = "Session.cs",
+                                    SourceMember = "Create",
+                                    SourceLine = 42,
+                                },
+                            },
+                            OmittedResourceCount = 4,
+                        },
+                    },
+                }
+            );
+            Click("refreshReports");
+            Click("viewReportDetails");
+            string rendered = string.Join("\n", Field<ScrollView>("reportComparison").Query<Label>().ToList().Select(label => label.text));
+            StringAssert.Contains("target searches 9; hierarchy visits 30", rendered);
+            StringAssert.Contains("owner: game.session", rendered);
+            StringAssert.Contains("Session.cs:42 Create", rendered);
+            StringAssert.Contains("player appeared", rendered);
+            StringAssert.Contains("Earlier timeline events omitted: 2", rendered);
+            StringAssert.Contains("Additional retained resources omitted: 4", rendered);
+            Assert.AreEqual(0, reads);
+            Assert.IsFalse(window.IsPolling);
+        }
+
+        [Test]
         public void SuiteAuthoringDelegatesNativeQueueAndOnlyPollsActiveSuite()
         {
             OpenSaved();

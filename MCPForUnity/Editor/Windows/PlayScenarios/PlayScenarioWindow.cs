@@ -95,6 +95,19 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private Button deleteButton;
         private Button runButton;
         private Button cancelButton;
+        private Button buildPlayerButton;
+        private bool buildingPlayer;
+        private string renderedReportJson;
+        internal Func<string> ChoosePlayerBuildFolder;
+        internal Func<string, string, string> BuildPlayerBundle;
+        internal Func<bool> IsEditorBusy;
+        private bool EditorBusy =>
+            IsEditorBusy != null
+                ? IsEditorBusy()
+                : EditorApplication.isPlayingOrWillChangePlaymode
+                    || EditorApplication.isCompiling
+                    || EditorApplication.isUpdating
+                    || BuildPipeline.isBuildingPlayer;
         private Button undoButton;
         private Button redoButton;
         private bool polling;
@@ -136,6 +149,9 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             CheckPreflight = null;
             HandleSuite = null;
             ShowDialog = null;
+            ChoosePlayerBuildFolder = null;
+            BuildPlayerBundle = null;
+            IsEditorBusy = null;
         }
 
         public void CreateGUI()
@@ -143,6 +159,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             StopPolling();
             RestoreDraft();
             rootVisualElement.Clear();
+            renderedReportJson = null;
             rootVisualElement.AddToClassList("mcp-editor");
             rootVisualElement.AddToClassList("play-scenarios");
             rootVisualElement.EnableInClassList("unity-theme-light", !EditorGUIUtility.isProSkin);
@@ -285,7 +302,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             panel.Add(revision);
             panel.Add(
                 Note(
-                    "Repeat: 1–10. Total timeout: 1–1800 s. Each repeat executes setup → main → cleanup. Static state and DontDestroyOnLoad objects persist unless your stages reset them."
+                    "Repeat: 1–10. Total timeout: 1–1800 s. Each repeat executes setup → main → cleanup. Use reset_state after the first load_scene in Setup to reset registered state before each repeat. Static state and DontDestroyOnLoad objects otherwise persist."
                 )
             );
             var toolbar = Row();
@@ -294,6 +311,10 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             cancelButton = ActionButton("Cancel Run", "cancelScenario", CancelScenario);
             toolbar.Add(runButton);
             toolbar.Add(cancelButton);
+            buildPlayerButton = ActionButton("Build Player", "buildPlayerScenario", BuildPlayer);
+            buildPlayerButton.tooltip =
+                "Builds the clean saved scenario as a Windows x64 Mono test Player in an explicitly chosen empty folder. The executable is launched separately.";
+            toolbar.Add(buildPlayerButton);
             panel.Add(toolbar);
             panel.Add(
                 Note(
@@ -550,7 +571,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             undoButton.SetEnabled(undoDrafts.Count > 0);
             redoButton.SetEnabled(redoDrafts.Count > 0);
             saveButton.SetEnabled(valid);
-            runButton.SetEnabled(valid && !Running);
+            runButton.SetEnabled(valid && !Running && !buildingPlayer);
+            buildPlayerButton.SetEnabled(valid && !dirty && !string.IsNullOrEmpty(savedName) && !Running && !buildingPlayer && !EditorBusy);
             suiteEditor?.SetRunning(Running);
             bool copyValid = valid;
             try
@@ -817,6 +839,45 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             }
         }
 
+        private void BuildPlayer()
+        {
+            if (Running || buildingPlayer || EditorBusy)
+            {
+                SetMessage("Wait for the Editor and scenario runner to become idle before building a Player.", true);
+                return;
+            }
+            if (dirty || string.IsNullOrEmpty(savedName) || !ValidateDraft(out _))
+            {
+                SetMessage("Save a valid scenario before building its Player.", true);
+                return;
+            }
+            try
+            {
+                // Revalidate persisted data before opening the folder picker or invoking the builder.
+                PlayScenarioDefinition.Parse(Json(Store.Get(savedName)));
+                string folder =
+                    ChoosePlayerBuildFolder != null ? ChoosePlayerBuildFolder() : EditorUtility.OpenFolderPanel("Choose an empty Player build folder", "", "");
+                if (string.IsNullOrEmpty(folder))
+                    return;
+                buildingPlayer = true;
+                UpdateValidation();
+                SetMessage("Building Player for " + savedName + "...", false);
+                EditorUtility.DisplayProgressBar("Play Scenario Player", "Building " + savedName + " for Windows x64 Mono", 0.1f);
+                string bundle = BuildPlayerBundle != null ? BuildPlayerBundle(savedName, folder) : PlayScenarioPlayerBuild.Build(savedName, folder).BundlePath;
+                SetMessage("Player built. Bundle: " + bundle, false);
+            }
+            catch (Exception exception)
+            {
+                SetMessage("Player build failed: " + exception.Message, true);
+            }
+            finally
+            {
+                buildingPlayer = false;
+                EditorUtility.ClearProgressBar();
+                UpdateValidation();
+            }
+        }
+
         private void CancelScenario()
         {
             if (string.IsNullOrEmpty(jobId))
@@ -991,8 +1052,15 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         {
             if (runResults == null)
                 return;
-            runResults.Clear();
             cancelButton.SetEnabled(Running);
+            string currentReportJson =
+                suiteMode && suiteReport != null ? suiteReport.ToString(Formatting.None)
+                : report != null ? ReportDisplayJson(report)
+                : "";
+            if (currentReportJson == renderedReportJson)
+                return;
+            renderedReportJson = currentReportJson;
+            runResults.Clear();
             if (suiteMode && suiteReport != null)
             {
                 runResults.Add(new Label((string)suiteReport["status"] + " • suite") { name = "runStatus" });
@@ -1020,6 +1088,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             foreach (var step in report.Steps)
             {
                 var text = Note($"{step.Stage ?? "main"}.{step.Iteration}.{step.StepIndex + 1} {step.Name} — {step.Status}\n{step.Detail}");
+                text.text += "\nQueries: " + PlayScenarioHistoryEditor.QuerySummary(Json(step.QueryCounts));
                 text.AddToClassList("scenario-result-row");
                 runResults.Add(text);
             }
@@ -1064,6 +1133,50 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             if (report.DroppedLogCount > 0)
                 logs.Add(Note("Older captured logs dropped: " + report.DroppedLogCount));
             runResults.Add(logs);
+        }
+
+        private static string ReportDisplayJson(PlayScenarioRun value)
+        {
+            JObject data = Json(value);
+            var displayed = new JObject();
+            foreach (
+                string field in new[]
+                {
+                    "job_id",
+                    "status",
+                    "phase",
+                    "query_counts",
+                    "timeline",
+                    "dropped_timeline_count",
+                    "failure",
+                    "cleanup_failures",
+                    "resource_checks",
+                    "cleanup_error",
+                    "runner_resources_released",
+                    "reproduction",
+                    "error",
+                    "report_path",
+                    "report_error",
+                    "metrics_summary",
+                    "metric_warnings",
+                    "metrics",
+                    "failure_diagnostics",
+                    "logs",
+                    "dropped_log_count",
+                }
+            )
+                displayed[field] = data[field];
+            var steps = new JArray();
+            foreach (JObject step in ((JArray)data["steps"]).OfType<JObject>())
+            {
+                var row = new JObject();
+                foreach (string field in new[] { "stage", "iteration", "step_index", "name", "status", "detail", "query_counts" })
+                    row[field] = step[field];
+                steps.Add(row);
+            }
+            displayed["steps"] = steps;
+            displayed["screenshot_on_failure"] = value.Scenario?.Diagnostics?.ScreenshotOnFailure ?? false;
+            return displayed.ToString(Formatting.None);
         }
 
         private void SetMessage(string text, bool error)

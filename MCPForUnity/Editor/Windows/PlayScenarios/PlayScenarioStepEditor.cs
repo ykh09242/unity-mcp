@@ -13,7 +13,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
     /// <summary>Builds step fields. Selection is copied to a string selector and never retained.</summary>
     internal static class PlayScenarioStepEditor
     {
-        private static readonly List<string> Actions = new List<string> { "load_scene", "click_ui", "wait_scene", "wait_object" };
+        private static readonly List<string> Actions = new List<string> { "load_scene", "click_ui", "wait_scene", "wait_object", "reset_state" };
 
         internal static void Render(ScrollView stepList, PlayScenarioDefinition draft, Action<Action> edit, Action<string, bool> setMessage) =>
             Render(stepList, draft.Steps, "", edit, setMessage);
@@ -62,7 +62,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     {
                         step.Action = evt.newValue;
                         step.Scene = IsSceneAction(step.Action) ? "" : null;
-                        step.Target = IsSceneAction(step.Action) ? null : "";
+                        step.Target = IsSceneAction(step.Action) || step.Action == "reset_state" ? null : "";
+                        step.ResetIds = step.Action == "reset_state" ? new List<string>() : null;
                         step.TargetId = null;
                         step.ClickMode = step.Action == "click_ui" ? "direct" : null;
                         step.Count = null;
@@ -74,7 +75,9 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     Render(stepList, steps, prefix, edit, setMessage, limit);
                 });
                 card.Add(action);
-                if (IsSceneAction(step.Action))
+                if (step.Action == "reset_state")
+                    BuildResetFields(card, step, suffix, edit);
+                else if (IsSceneAction(step.Action))
                     BuildSceneFields(card, step, suffix, edit);
                 else
                     BuildTargetFields(card, step, suffix, edit, setMessage);
@@ -89,6 +92,25 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     BuildConditionFields(card, step, suffix, edit);
                 stepList.Add(card);
             }
+        }
+
+        private static void BuildResetFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit)
+        {
+            var ids = new TextField("Reset IDs (one per line)")
+            {
+                name = "stepResetIds" + index,
+                multiline = true,
+                value = string.Join("\n", step.ResetIds ?? new List<string>()),
+            };
+            ids.RegisterValueChangedCallback(evt =>
+                edit(() => step.ResetIds = new List<string>(evt.newValue.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.RemoveEmptyEntries)))
+            );
+            card.Add(ids);
+            card.Add(
+                new Label(
+                    "Use 1–16 unique, case-sensitive stable IDs registered by reset participants. Place after load_scene in Setup to reset before each repeat. BeginReset runs once; completion is polled until this step's timeout."
+                )
+            );
         }
 
         private static bool IsSceneAction(string action) => action == "load_scene" || action == "wait_scene";
