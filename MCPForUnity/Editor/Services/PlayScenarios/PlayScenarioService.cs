@@ -18,6 +18,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static Application.LogCallback _logCallback;
         private static bool _attached;
         private static bool _finalized;
+        private static bool _suppressCapture;
+        private static int _processedUnexpectedLogCount;
+        private static PlayScenarioFailureCapture _failureCapture;
+        internal static int ActiveSubscriptionCount => _attached ? 5 : 0;
         private static int _savedRevision;
         private static long _checkpointAt;
         private static PlayScenarioStore Store => new PlayScenarioStore(Path.GetDirectoryName(Application.dataPath));
@@ -37,7 +41,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     state = JsonSerializer.Create().Deserialize<PlayScenarioRun>(reader);
                 if (state == null)
                     return;
-                _engine = new PlayScenarioEngine(state, new UnityPlayScenarioHost());
+                _engine = CreateEngine(state);
                 _finalized = !_engine.Running;
                 if (_engine.Running)
                 {
@@ -52,6 +56,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             catch (Exception exception)
             {
                 Detach();
+                _failureCapture?.Dispose();
+                _failureCapture = null;
+                _logs = null;
+                _engine?.Release();
                 _engine = null;
                 SessionState.EraseString(SessionKey);
                 Debug.LogWarning("MCP play scenario restore failed: " + exception.Message);
@@ -74,14 +82,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     return new SuccessResponse("Existing scenario job.", Snapshot(previous));
                 }
             }
-            if (_engine?.Running == true)
+            if ((_engine != null && (!_finalized || _engine.Running)) || _failureCapture?.Pending == true)
                 return new ErrorResponse("play_scenario_busy", new { job_id = _engine.State.JobId });
             if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode)
                 return new ErrorResponse("Wait for the editor to finish compiling, importing or changing Play Mode.");
             PlayScenarioDefinition definition = Store.Get(name);
             var state = PlayScenarioEngine.Create(definition, jobId ?? Guid.NewGuid().ToString("N"), repeatCount, timeoutSeconds, Now);
-            _engine = new PlayScenarioEngine(state, new UnityPlayScenarioHost());
+            _engine = CreateEngine(state);
             _finalized = false;
+            _suppressCapture = false;
             Attach();
             if (EditorApplication.isPlaying)
                 _engine.EnteredPlayMode();
@@ -90,6 +99,37 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (!EditorApplication.isPlaying)
                 EditorApplication.delayCall += RequestPlay;
             return new SuccessResponse("Scenario job started.", Snapshot(state));
+        }
+
+        private static PlayScenarioEngine CreateEngine(PlayScenarioRun state)
+        {
+            _failureCapture?.Dispose();
+            _failureCapture = null;
+            _processedUnexpectedLogCount = 0;
+            return new PlayScenarioEngine(state, new UnityPlayScenarioHost(state.Scenario.LogPolicy), CaptureFailure, DrainAndApplyErrors);
+        }
+
+        private static void CaptureFailure(PlayScenarioRun state, PlayScenarioStep step, long now)
+        {
+            if (state.FailureDiagnostics != null)
+                return;
+            // Consume the primary operation's logs before cleanup starts, so they are not
+            // subsequently mislabeled as fresh cleanup failures.
+            _logs?.DrainTo(state);
+            _processedUnexpectedLogCount = state.UnexpectedLogCount;
+            state.FailureDiagnostics = UnityPlayScenarioDiagnostics.DescribeFailure(state, step, now);
+            _failureCapture = new PlayScenarioFailureCapture(state, Store, now, _suppressCapture);
+        }
+
+        private static void DrainAndApplyErrors()
+        {
+            if (_engine == null)
+                return;
+            _logs?.DrainTo(_engine.State);
+            if (_engine.State.UnexpectedLogCount <= _processedUnexpectedLogCount)
+                return;
+            _processedUnexpectedLogCount = _engine.State.UnexpectedLogCount;
+            _engine.ObserveUnexpectedError(_engine.State.LastUnexpectedLogError ?? _engine.State.UnexpectedLogError, Now);
         }
 
         public static object Status(string jobId)
@@ -102,6 +142,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (_engine?.State.JobId == jobId)
             {
+                DrainAndApplyErrors();
                 _engine.Cancel(Now);
                 Synchronize(true);
                 return new SuccessResponse("Scenario job cancellation processed.", Snapshot(_engine.State));
@@ -131,7 +172,17 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (ReferenceEquals(state, _engine?.State))
                 _logs?.DrainTo(state);
-            return JObject.FromObject(state, JsonSerializer.Create());
+            var snapshot = JObject.FromObject(state, JsonSerializer.Create());
+            if (ReferenceEquals(state, _engine?.State) && !_engine.Running && !_finalized)
+            {
+                // Publish a terminal outcome only after optional evidence and report saving finish.
+                // Otherwise the Editor/CLI can stop observing before the final report exists.
+                snapshot["pending_status"] = state.Status;
+                snapshot["status"] = "running";
+                snapshot["phase"] = "finalizing";
+                snapshot["runner_resources_released"] = false;
+            }
+            return snapshot;
         }
 
         private static void RequestPlay()
@@ -160,19 +211,30 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private static void Tick()
         {
-            if (_engine?.Running != true)
+            if (_engine == null)
                 return;
-            try
+            _failureCapture?.Tick(Now);
+            DrainAndApplyErrors();
+            if (_failureCapture?.Pending == true)
             {
-                _engine.Tick(
-                    Now,
-                    EditorApplication.isPlaying && !EditorApplication.isPaused && !EditorApplication.isCompiling && !EditorApplication.isUpdating
-                );
+                Synchronize(false);
+                return;
             }
-            catch (Exception exception)
+            if (_engine.Running)
             {
-                _engine.Interrupt("Scenario runner failed: " + exception.Message, Now);
+                try
+                {
+                    _engine.Tick(
+                        Now,
+                        EditorApplication.isPlaying && !EditorApplication.isPaused && !EditorApplication.isCompiling && !EditorApplication.isUpdating
+                    );
+                }
+                catch (Exception exception)
+                {
+                    _engine.Interrupt("Scenario runner failed: " + exception.Message, Now);
+                }
             }
+            DrainAndApplyErrors();
             Synchronize(false);
         }
 
@@ -183,12 +245,18 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (state == PlayModeStateChange.EnteredPlayMode)
                 _engine.EnteredPlayMode();
             else if (state == PlayModeStateChange.ExitingPlayMode || state == PlayModeStateChange.EnteredEditMode)
+            {
+                _suppressCapture = true;
+                _failureCapture?.Stop("Play Mode ended before a screenshot became available.");
                 _engine.Interrupt("Play Mode stopped before the scenario finished.", Now);
+            }
             Synchronize(true);
         }
 
         private static void BeforeReload()
         {
+            _suppressCapture = true;
+            _failureCapture?.Stop("Assembly reload interrupted screenshot capture.");
             if (_engine?.Running == true && _engine.State.Phase != "starting")
                 _engine.Interrupt("Assembly reload interrupted scenario execution; effects were not replayed.", Now);
             Synchronize(true);
@@ -198,6 +266,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private static void Quit()
         {
+            _suppressCapture = true;
+            _failureCapture?.Stop("Editor shutdown interrupted screenshot capture.");
             _engine?.Interrupt("Editor is quitting.", Now);
             Synchronize(true);
             Detach();
@@ -208,7 +278,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (_attached)
                 return;
             _attached = true;
-            _logs = new PlayScenarioLogBuffer();
+            _logs = new PlayScenarioLogBuffer(_engine.State.Scenario.LogPolicy);
             PlayScenarioLogBuffer capture = _logs;
             _logCallback = (message, stack, type) => capture.Add(Now, type.ToString(), message, stack);
             Application.logMessageReceivedThreaded += _logCallback;
@@ -237,11 +307,20 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (_engine == null)
                 return;
+            DrainAndApplyErrors();
             long now = Now;
             if (!_engine.Running && !_finalized)
             {
+                _logs?.Close();
+                DrainAndApplyErrors();
+                if (_failureCapture?.Pending == true)
+                    return;
                 Detach();
-                _logs?.DrainTo(_engine.State);
+                _failureCapture?.Dispose();
+                _failureCapture = null;
+                _logs = null;
+                _engine.Release();
+                _engine.State.RunnerResourcesReleased = _engine.State.RunnerResourcesReleased != false && !_attached && _logCallback == null;
                 _finalized = true;
                 try
                 {

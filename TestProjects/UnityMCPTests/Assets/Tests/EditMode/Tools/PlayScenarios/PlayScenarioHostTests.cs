@@ -3,6 +3,7 @@ using System.IO;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Editor.Tools.Input;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -12,8 +13,34 @@ using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
 {
+    public sealed class PlayScenarioConditionProbe : MonoBehaviour
+    {
+        public bool Ready;
+        public long Counter;
+        public float Ratio;
+        public double Precise;
+        public string Label;
+        public Vector3 Unsupported;
+        public int GetterReadCount;
+
+        [SerializeField]
+        private bool _privateReady;
+
+        public bool DangerousGetter
+        {
+            get
+            {
+                GetterReadCount++;
+                throw new InvalidOperationException("The condition must not execute a property getter.");
+            }
+        }
+
+        public void SetPrivateReady(bool ready) => _privateReady = ready;
+    }
+
     public class PlayScenarioHostTests
     {
+        private UnityEngine.Object _previousSelection;
         private Scene _previousActive;
         private Scene _ownedScene;
         private Scene _otherOwnedScene;
@@ -27,6 +54,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         [SetUp]
         public void SetUp()
         {
+            _previousSelection = Selection.activeObject;
             _previousActive = SceneManager.GetActiveScene();
             _previousBackend = ManageInput.UguiBackend;
             _host = new UnityPlayScenarioHost();
@@ -85,6 +113,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         [TearDown]
         public void TearDown()
         {
+            Selection.activeObject = _previousSelection;
             ManageInput.UguiBackend = _previousBackend;
             _host?.Release();
             if (_previousActive.IsValid() && _previousActive.isLoaded)
@@ -286,6 +315,255 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             _host.Release();
             Assert.That(player != null, Is.True);
             Assert.That(_host.Evaluate(ObjectStep(), true).Ready, Is.True);
+        }
+
+        [Test]
+        public void InactiveConditionRequiresInactiveAndObservesReactivation()
+        {
+            GameObject player = CreateTarget();
+            var step = ObjectStep();
+            step.Active = false;
+            Assert.That(_host.Evaluate(step, true).Ready, Is.False);
+            player.SetActive(false);
+            Assert.That(_host.Evaluate(step, false).Ready, Is.True);
+            player.SetActive(true);
+            Assert.That(_host.Evaluate(step, false).Ready, Is.False);
+        }
+
+        [Test]
+        public void ExplicitCountsIncludeInactiveMatchesAndRequireEveryRequestedState()
+        {
+            GameObject player = CreateTarget();
+            var duplicate = new GameObject("Player");
+            duplicate.transform.SetParent(player.transform.parent);
+            duplicate.SetActive(false);
+            var step = ObjectStep();
+            step.Count = 2;
+            PlayScenarioObservation mixed = _host.Evaluate(step, true);
+            Assert.That(mixed.Ready, Is.False);
+            Assert.That(mixed.Detail, Does.Contain("Exact path matches: 2"));
+            duplicate.SetActive(true);
+            Assert.That(_host.Evaluate(step, false).Ready, Is.True);
+            step.Active = false;
+            Assert.That(_host.Evaluate(step, false).Ready, Is.False);
+            duplicate.SetActive(false);
+            player.SetActive(false);
+            Assert.That(_host.Evaluate(step, false).Ready, Is.True);
+            step.Count = 1;
+            Assert.That(_host.Evaluate(step, false).Ready, Is.False, "Explicit count mismatches wait rather than choosing the first duplicate.");
+        }
+
+        [Test]
+        public void AbsenceConditionWaitsUntilEvenInactiveMatchesDisappear()
+        {
+            GameObject player = CreateTarget();
+            player.SetActive(false);
+            var step = ObjectStep();
+            step.Count = 0;
+            Assert.That(_host.Evaluate(step, true).Ready, Is.False);
+            UnityEngine.Object.DestroyImmediate(player);
+            Assert.That(_host.Evaluate(step, false).Ready, Is.True);
+        }
+
+        [Test]
+        public void ComponentAppearingAndDisappearingIsObservedFresh()
+        {
+            GameObject player = CreateTarget();
+            var step = ObjectStep();
+            step.Component = typeof(PlayScenarioConditionProbe).FullName;
+            Assert.That(_host.Evaluate(step, true).Ready, Is.False);
+            var probe = player.AddComponent<PlayScenarioConditionProbe>();
+            Assert.That(_host.Evaluate(step, false).Ready, Is.True);
+            UnityEngine.Object.DestroyImmediate(probe);
+            Assert.That(_host.Evaluate(step, false).Ready, Is.False);
+        }
+
+        [TestCase("Transform")]
+        [TestCase("System.String")]
+        [TestCase("Synthetic.MissingComponent")]
+        public void ComponentConditionRequiresExactValidComponentFullName(string component)
+        {
+            var step = ObjectStep();
+            step.Component = component;
+            Assert.Throws<ArgumentException>(() => _host.Evaluate(step, true));
+        }
+
+        private static PlayScenarioStep PropertyStep(string path, JToken expected)
+        {
+            var step = ObjectStep();
+            step.Component = typeof(PlayScenarioConditionProbe).FullName;
+            step.Property = new PlayScenarioPropertyCondition { Path = path, Equals = expected };
+            return step;
+        }
+
+        [Test]
+        public void PrivateSerializedFieldWaitsForEqualityWithoutCallingGetters()
+        {
+            var probe = CreateTarget().AddComponent<PlayScenarioConditionProbe>();
+            var step = PropertyStep("_privateReady", new JValue(true));
+            Assert.That(_host.Evaluate(step, true).Ready, Is.False);
+            probe.SetPrivateReady(true);
+            Assert.That(_host.Evaluate(step, false).Ready, Is.True);
+            probe.SetPrivateReady(false);
+            Assert.That(_host.Evaluate(step, false).Ready, Is.False);
+            Assert.That(probe.GetterReadCount, Is.Zero);
+        }
+
+        [TestCase("Ready", "true")]
+        [TestCase("Counter", "9223372036854775807")]
+        [TestCase("Ratio", "0.1")]
+        [TestCase("Precise", "0.1")]
+        [TestCase("Label", "\"Case Sensitive\"")]
+        public void ScalarConditionsUseTheirSerializedValueType(string path, string expectedJson)
+        {
+            var probe = CreateTarget().AddComponent<PlayScenarioConditionProbe>();
+            probe.Ready = true;
+            probe.Counter = long.MaxValue;
+            probe.Ratio = 0.1f;
+            probe.Precise = 0.1;
+            probe.Label = "Case Sensitive";
+            var step = PropertyStep(path, JToken.Parse(expectedJson));
+            Assert.That(_host.Evaluate(step, true).Ready, Is.True);
+            Assert.That(_host.Evaluate(step, false).Detail, Does.Contain("Serialized property " + path));
+        }
+
+        [TestCase("DangerousGetter")]
+        [TestCase("ready")]
+        [TestCase("Unsupported")]
+        public void MissingGetterAndUnsupportedPropertyTypesFailWithoutExecutingUserCode(string path)
+        {
+            var probe = CreateTarget().AddComponent<PlayScenarioConditionProbe>();
+            var step = PropertyStep(path, new JValue(true));
+            Assert.Throws<ArgumentException>(() => _host.Evaluate(step, true));
+            Assert.That(probe.GetterReadCount, Is.Zero);
+        }
+
+        [Test]
+        public void ScalarConditionRejectsValueTypeMismatchAndReportsCaseSensitiveMismatch()
+        {
+            var probe = CreateTarget().AddComponent<PlayScenarioConditionProbe>();
+            probe.Label = "Ready";
+            Assert.Throws<ArgumentException>(() => _host.Evaluate(PropertyStep("Ready", new JValue(1)), true));
+            Assert.That(_host.Evaluate(PropertyStep("Label", new JValue("ready")), true).Ready, Is.False);
+        }
+
+        [TestCase("strict")]
+        [TestCase("log_only")]
+        public void ClickLogPolicyAllowsExactMessagesButNeverDirectExceptions(string mode)
+        {
+            CreateTarget();
+            const string allowed = "synthetic allowed callback";
+            var policy = new PlayScenarioLogPolicy { Mode = mode };
+            if (mode == "strict")
+                policy.AllowedMessages.Add(allowed);
+            var host = new UnityPlayScenarioHost(policy);
+            var backend = new SpyBackend { OnClick = () => Debug.LogError(allowed) };
+            ManageInput.UguiBackend = backend;
+            LogAssert.Expect(LogType.Error, allowed);
+            Assert.That(host.Evaluate(ObjectStep("click_ui"), true).Ready, Is.True);
+            backend.OnClick = null;
+            backend.Fault = new InvalidOperationException("direct callback exception");
+            Assert.Throws<InvalidOperationException>(() => host.Evaluate(ObjectStep("click_ui"), true));
+            host.Release();
+        }
+
+        [Test]
+        public void ClickAllowlistMatchesFullMessagesBeforeTruncation()
+        {
+            CreateTarget();
+            string prefix = new string('a', 1024);
+            var policy = new PlayScenarioLogPolicy();
+            policy.AllowedMessages.Add(prefix);
+            var host = new UnityPlayScenarioHost(policy);
+            string unexpected = prefix + " differs";
+            ManageInput.UguiBackend = new SpyBackend { OnClick = () => Debug.LogError(unexpected) };
+            LogAssert.Expect(LogType.Error, unexpected);
+            Assert.Throws<InvalidOperationException>(() => host.Evaluate(ObjectStep("click_ui"), true));
+            host.Release();
+        }
+
+        private PlayScenarioDefinition PreflightDefinition(PlayScenarioStep condition) =>
+            new PlayScenarioDefinition
+            {
+                Name = "host-preflight",
+                Steps =
+                {
+                    new PlayScenarioStep
+                    {
+                        Name = "load",
+                        Action = "load_scene",
+                        Scene = _ownedScene.path,
+                    },
+                    condition,
+                },
+            };
+
+        [Test]
+        public void PreflightInspectsCurrentCapabilitiesWithoutChangingEditorState()
+        {
+            var probe = CreateTarget().AddComponent<PlayScenarioConditionProbe>();
+            probe.Ready = true;
+            var definition = PreflightDefinition(PropertyStep("Ready", new JValue(true)));
+            var backend = new SpyBackend();
+            ManageInput.UguiBackend = backend;
+            definition.CleanupSteps.Add(ObjectStep("click_ui"));
+            Selection.activeGameObject = probe.gameObject;
+            UnityEngine.Object selected = Selection.activeObject;
+            int sceneCount = SceneManager.sceneCount;
+            bool dirty = _ownedScene.isDirty;
+            bool playing = EditorApplication.isPlaying;
+
+            JObject result = UnityPlayScenarioHost.Preflight(definition);
+
+            Assert.That(result["success"].Value<bool>(), Is.True);
+            Assert.That(result["data"]["valid"].Value<bool>(), Is.True);
+            Assert.That(result["data"]["checks"][1]["status"].Value<string>(), Is.EqualTo("passed"));
+            Assert.That(result["data"]["checks"][2]["status"].Value<string>(), Is.EqualTo("deferred"));
+            Assert.That(SceneManager.GetActiveScene().handle, Is.EqualTo(_ownedScene.handle));
+            Assert.That(SceneManager.sceneCount, Is.EqualTo(sceneCount));
+            Assert.That(_ownedScene.isDirty, Is.EqualTo(dirty));
+            Assert.That(EditorApplication.isPlaying, Is.EqualTo(playing));
+            Assert.That(Selection.activeObject, Is.SameAs(selected));
+            Assert.That(backend.Clicks, Is.Zero);
+            Assert.That(probe.GetterReadCount, Is.Zero);
+            Assert.That(definition.Steps[1].Property.Path, Is.EqualTo("Ready"));
+        }
+
+        [Test]
+        public void PreflightDefersMissingRuntimeTargetsButRejectsAmbiguityAndUnsupportedFields()
+        {
+            var definition = PreflightDefinition(ObjectStep());
+            JObject missing = UnityPlayScenarioHost.Preflight(definition);
+            Assert.That(missing["data"]["valid"].Value<bool>(), Is.True);
+            Assert.That(missing["data"]["checks"][1]["status"].Value<string>(), Is.EqualTo("deferred"));
+            GameObject player = CreateTarget();
+            var duplicate = new GameObject("Player");
+            duplicate.transform.SetParent(player.transform.parent);
+            Assert.That(UnityPlayScenarioHost.Preflight(definition)["data"]["valid"].Value<bool>(), Is.False);
+            UnityEngine.Object.DestroyImmediate(duplicate);
+            var probe = player.AddComponent<PlayScenarioConditionProbe>();
+            definition.Steps[1] = PropertyStep("DangerousGetter", new JValue(true));
+            Assert.That(UnityPlayScenarioHost.Preflight(definition)["data"]["valid"].Value<bool>(), Is.False);
+            Assert.That(probe.GetterReadCount, Is.Zero);
+            definition.Steps[1] = PropertyStep("Unsupported", new JValue(0));
+            Assert.That(UnityPlayScenarioHost.Preflight(definition)["data"]["valid"].Value<bool>(), Is.False);
+            player.SetActive(false);
+            Assert.That(
+                UnityPlayScenarioHost.Preflight(definition)["data"]["valid"].Value<bool>(),
+                Is.False,
+                "Inactive components still permit safe capability inspection."
+            );
+        }
+
+        [Test]
+        public void PreflightRejectsUnsafeScenePathAndDescriptionStaysBounded()
+        {
+            var definition = PreflightDefinition(ObjectStep());
+            definition.Steps[0].Scene = "Assets/Resources/Game" + "Data/Hidden.unity";
+            Assert.That(UnityPlayScenarioHost.Preflight(definition)["data"]["valid"].Value<bool>(), Is.False);
+            var step = ObjectStep(target: new string('x', 4097));
+            Assert.That(UnityPlayScenarioHost.DescribeTarget(step).Length, Is.LessThanOrEqualTo(2048));
+            Assert.That(UnityPlayScenarioHost.DescribeTarget(step), Does.Contain("failed"));
         }
 
         private class SpyBackend : IUguiInputSimulationBackend

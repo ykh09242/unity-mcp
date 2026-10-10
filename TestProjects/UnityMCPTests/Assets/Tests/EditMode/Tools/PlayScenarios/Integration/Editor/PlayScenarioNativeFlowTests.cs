@@ -18,7 +18,7 @@ using UnityEngine.UI;
 
 namespace MCPForUnityTests.PlayScenarios.Integration
 {
-    public class PlayScenarioNativeFlowTests
+    public partial class PlayScenarioNativeFlowTests
     {
         private const string ContextKey = "MCPForUnity.Tests.PlayScenarioIntegration.Context";
         private static TestContext Context
@@ -32,6 +32,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
         private static string Menu => Context.Root + "/Menu.unity";
         private static string Game => Context.Root + "/Game.unity";
         private static string Missing => Context.Root + "/Missing.unity";
+        private static string Hardening => Context.Root + "/Hardening.unity";
         private static string RepeatId => Context.RepeatId;
         private static string WaitId => Context.WaitId;
         private static string NextId => Context.NextId;
@@ -118,7 +119,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             context.FolderGuid = AssetDatabase.CreateFolder("Assets", "PlayScenarioIntegration_" + guid);
             SessionState.SetString(ContextKey, JsonUtility.ToJson(context));
             EditorSettings.enterPlayModeOptionsEnabled = false;
-            string[] paths = { Menu, Game, Missing };
+            string[] paths = { Menu, Game, Missing, Hardening };
             for (int i = 0; i < paths.Length; i++)
             {
                 Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);

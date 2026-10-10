@@ -203,5 +203,150 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
                 File.Delete(link);
             }
         }
+
+        [Test]
+        public void OlderReportsDefaultNewFieldsAndKeepStrictExistingValidation()
+        {
+            var run = Run(new string('c', 32));
+            run.Steps.Add(
+                new PlayScenarioStepResult
+                {
+                    Iteration = 1,
+                    StepIndex = 0,
+                    Name = "Load menu",
+                    Action = "load_scene",
+                    Status = "passed",
+                }
+            );
+            store.SaveReport(run);
+            var legacy = JObject.FromObject(run);
+            foreach (
+                string key in new[]
+                {
+                    "pending_status",
+                    "pending_error",
+                    "cleanup_deadline_unix_ms",
+                    "settle_deadline_unix_ms",
+                    "cleanup_error",
+                    "unexpected_log_count",
+                    "unexpected_log_error",
+                    "last_unexpected_log_error",
+                    "metrics",
+                    "metric_warnings",
+                    "metrics_summary",
+                    "failure_diagnostics",
+                    "runner_resources_released",
+                }
+            )
+                legacy.Remove(key);
+            ((JObject)legacy["steps"][0]).Remove("stage");
+            ((JObject)legacy["steps"][0]).Remove("stable_since_unix_ms");
+            legacy["steps"][0]["detail"] = new string('d', 3000);
+            foreach (
+                string key in new[]
+                {
+                    "setup_steps",
+                    "cleanup_steps",
+                    "cleanup_timeout_seconds",
+                    "completion_stable_ms",
+                    "log_policy",
+                    "metrics",
+                    "diagnostics",
+                }
+            )
+                ((JObject)legacy["scenario"]).Remove(key);
+            string path = Path.Combine(Reports, run.JobId + ".json");
+            File.WriteAllText(path, legacy.ToString());
+            var restored = store.GetReport(run.JobId);
+            Assert.AreEqual("main", restored.Steps[0].Stage);
+            Assert.IsEmpty(restored.Metrics);
+            Assert.AreEqual(0, restored.UnexpectedLogCount);
+            Assert.IsNull(restored.FailureDiagnostics);
+            Assert.IsNull(restored.RunnerResourcesReleased);
+            legacy.Remove("repeat_count");
+            File.WriteAllText(path, legacy.ToString());
+            Assert.Throws<ArgumentException>(() => store.GetReport(run.JobId));
+        }
+
+        [Test]
+        public void HistoryIsFilteredOrderedDetachedAndTerminalOnly()
+        {
+            var first = Run(new string('a', 32));
+            first.FinishedUnixMs = 400;
+            store.SaveReport(first);
+            var second = Run(new string('b', 32));
+            second.FinishedUnixMs = 600;
+            second.Status = "failed";
+            store.SaveReport(second);
+            var other = Run(new string('c', 32));
+            other.Scenario = Definition("other");
+            other.FinishedUnixMs = 700;
+            store.SaveReport(other);
+            var active = Run(new string('d', 32));
+            active.Status = "running";
+            active.Phase = "starting";
+            store.SaveReport(active);
+            CollectionAssert.AreEqual(new[] { other.JobId, second.JobId, first.JobId }, store.ListReports().Select(run => run.JobId));
+            CollectionAssert.AreEqual(new[] { second.JobId }, store.ListReports("menu-start", 1).Select(run => run.JobId));
+            var reports = store.ListReports("menu-start");
+            reports[0].Error = "mutated";
+            Assert.IsNull(store.GetReport(second.JobId).Error);
+            Assert.Throws<ArgumentException>(() => store.ListReports("../bad"));
+            Assert.Throws<ArgumentException>(() => store.ListReports(limit: 21));
+        }
+
+        [Test]
+        public void RetentionRemovesOnlyOwnedScreenshotAndScreenshotBytesAreBounded()
+        {
+            string oldest = 0.ToString("x32");
+            string screenshot = store.SaveFailureScreenshot(oldest, new byte[] { 137, 80, 78, 71 });
+            for (int i = 0; i < 25; i++)
+            {
+                var run = Run(i.ToString("x32"));
+                run.FinishedUnixMs = i;
+                store.SaveReport(run);
+                if (i == 0)
+                    File.SetLastWriteTimeUtc(Path.Combine(Reports, oldest + ".json"), DateTime.UtcNow.AddDays(-1));
+            }
+            Assert.IsFalse(File.Exists(Path.Combine(root, screenshot)));
+            string latest = 24.ToString("x32");
+            string path = store.SaveFailureScreenshot(latest, new byte[] { 137, 80, 78, 71 });
+            Assert.IsTrue(File.Exists(Path.Combine(root, path)));
+            Assert.Throws<ArgumentException>(() => store.SaveFailureScreenshot(latest, new byte[4 * 1024 * 1024 + 1]));
+            Assert.Throws<ArgumentException>(() => store.SaveFailureScreenshot("../bad", new byte[] { 1 }));
+            Assert.AreEqual(4, File.ReadAllBytes(Path.Combine(root, path)).Length);
+        }
+
+        [Test]
+        public void AdvancedReportShapeAndDiagnosticPathsRejectUnboundedOrCoercedValues()
+        {
+            var run = Run(new string('e', 32));
+            run.FailureDiagnostics = new PlayScenarioFailureDiagnostics { ScreenshotPath = "../borrowed.png" };
+            Assert.Throws<ArgumentException>(() => store.SaveReport(run));
+            run.FailureDiagnostics.ScreenshotPath = "Library/MCPForUnity/PlayScenarioRuns/" + run.JobId + ".png";
+            run.Metrics.Add(
+                new PlayScenarioMetricsSnapshot
+                {
+                    Iteration = 1,
+                    ManagedBytes = 500,
+                    ObjectCount = 2,
+                }
+            );
+            run.MetricWarnings.Add("diagnostic only");
+            run.RunnerResourcesReleased = true;
+            store.SaveReport(run);
+            Assert.AreEqual(500, store.GetReport(run.JobId).Metrics[0].ManagedBytes);
+            var value = JObject.FromObject(run);
+            value["metrics"][0]["managed_bytes"] = "500";
+            string path = Path.Combine(Reports, run.JobId + ".json");
+            File.WriteAllText(path, value.ToString());
+            Assert.Throws<ArgumentException>(() => store.GetReport(run.JobId));
+            value = JObject.FromObject(run);
+            value["runner_resources_released"] = 1;
+            File.WriteAllText(path, value.ToString());
+            Assert.Throws<ArgumentException>(() => store.GetReport(run.JobId));
+            run.MetricWarnings = Enumerable.Repeat("warning", 17).ToList();
+            Assert.Throws<ArgumentException>(() => store.SaveReport(run));
+        }
     }
 }

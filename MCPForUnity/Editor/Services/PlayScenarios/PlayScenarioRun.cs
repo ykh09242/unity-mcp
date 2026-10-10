@@ -56,10 +56,55 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         [JsonProperty("report_error")]
         public string ReportError;
+
+        [JsonProperty("pending_status")]
+        public string PendingStatus;
+
+        [JsonProperty("pending_error")]
+        public string PendingError;
+
+        [JsonProperty("cleanup_deadline_unix_ms")]
+        public long? CleanupDeadlineUnixMs;
+
+        [JsonProperty("settle_deadline_unix_ms")]
+        public long? SettleDeadlineUnixMs;
+
+        [JsonProperty("cleanup_error")]
+        public string CleanupError;
+
+        [JsonProperty("unexpected_log_count")]
+        public int UnexpectedLogCount;
+
+        [JsonProperty("unexpected_log_error")]
+        public string UnexpectedLogError;
+
+        [JsonProperty("last_unexpected_log_error")]
+        public string LastUnexpectedLogError;
+
+        [JsonProperty("metrics")]
+        public List<PlayScenarioMetricsSnapshot> Metrics = new List<PlayScenarioMetricsSnapshot>();
+
+        [JsonProperty("metric_warnings")]
+        public List<string> MetricWarnings = new List<string>();
+
+        [JsonProperty("metrics_summary")]
+        public string MetricsSummary;
+
+        [JsonProperty("failure_diagnostics")]
+        public PlayScenarioFailureDiagnostics FailureDiagnostics;
+
+        [JsonProperty("runner_resources_released")]
+        public bool? RunnerResourcesReleased;
     }
 
     public sealed class PlayScenarioStepResult
     {
+        [JsonProperty("stage")]
+        public string Stage = "main";
+
+        [JsonProperty("stable_since_unix_ms")]
+        public long? StableSinceUnixMs;
+
         [JsonProperty("iteration")]
         public int Iteration;
 
@@ -113,6 +158,66 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             Ready = ready;
             Detail = detail;
         }
+    }
+
+    public sealed class PlayScenarioMetricsSnapshot
+    {
+        [JsonProperty("iteration")]
+        public int Iteration;
+
+        [JsonProperty("timestamp_unix_ms")]
+        public long TimestampUnixMs;
+
+        [JsonProperty("managed_bytes")]
+        public long? ManagedBytes;
+
+        [JsonProperty("allocated_bytes")]
+        public long? AllocatedBytes;
+
+        [JsonProperty("object_count")]
+        public int? ObjectCount;
+
+        [JsonProperty("runner_subscription_count")]
+        public int? RunnerSubscriptionCount;
+
+        [JsonProperty("runner_handle_count")]
+        public int? RunnerHandleCount;
+
+        [JsonProperty("ignored_for_trend")]
+        public bool IgnoredForTrend;
+
+        [JsonProperty("error")]
+        public string Error;
+    }
+
+    public sealed class PlayScenarioFailureDiagnostics
+    {
+        [JsonProperty("captured_unix_ms")]
+        public long CapturedUnixMs;
+
+        [JsonProperty("active_scene")]
+        public string ActiveScene;
+
+        [JsonProperty("target")]
+        public string Target;
+
+        [JsonProperty("observation")]
+        public string Observation;
+
+        [JsonProperty("target_detail")]
+        public string TargetDetail;
+
+        [JsonProperty("screenshot_path")]
+        public string ScreenshotPath;
+
+        [JsonProperty("screenshot_error")]
+        public string ScreenshotError;
+    }
+
+    /// <summary>Optional sampling boundary; existing hosts need only implement step evaluation.</summary>
+    public interface IPlayScenarioMetricsHost
+    {
+        PlayScenarioMetricsSnapshot CaptureMetrics(int iteration, long now);
     }
 
     /// <summary>Evaluate only the current condition; a ready click dispatches exactly once.</summary>

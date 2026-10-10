@@ -25,6 +25,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             [typeof(PlayScenarioRun)] = Describe(typeof(PlayScenarioRun)),
             [typeof(PlayScenarioStepResult)] = Describe(typeof(PlayScenarioStepResult)),
             [typeof(PlayScenarioLog)] = Describe(typeof(PlayScenarioLog)),
+            [typeof(PlayScenarioMetricsSnapshot)] = Describe(typeof(PlayScenarioMetricsSnapshot)),
+            [typeof(PlayScenarioFailureDiagnostics)] = Describe(typeof(PlayScenarioFailureDiagnostics)),
         };
 
         public PlayScenarioStore(string projectRoot)
@@ -112,7 +114,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         .ThenBy(file => file, StringComparer.Ordinal)
                         .Skip(19)
                 )
-                    File.Delete(Checked(file));
+                    DeleteReport(file);
             }
             return relative;
         }
@@ -123,11 +125,58 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             lock (gate)
             {
                 JObject value = Read(Checked(Reports + "/" + jobId + ".json"), ReportLimit);
-                ValidateReport(value);
+                ValidateShape(value, typeof(PlayScenarioRun));
+                ValidateJobId((string)value["job_id"]);
                 if ((string)value["job_id"] != jobId)
                     throw new InvalidDataException("Stored report job_id does not match its filename.");
+                ValidateReport(value);
                 return value.ToObject<PlayScenarioRun>(new JsonSerializer { TypeNameHandling = TypeNameHandling.None });
             }
+        }
+
+        public IReadOnlyList<PlayScenarioRun> ListReports(string name = null, int limit = 20)
+        {
+            if (name != null)
+                PlayScenarioDefinition.ValidateName(name);
+            if (limit < 1 || limit > 20)
+                throw new ArgumentException("Report limit must be between 1 and 20.");
+            lock (gate)
+            {
+                var reports = new List<PlayScenarioRun>();
+                foreach (string file in Files(Reports, 20))
+                {
+                    PlayScenarioRun run = GetReport(Path.GetFileNameWithoutExtension(file));
+                    if (run.Status != "running" && (name == null || run.Scenario.Name == name))
+                        reports.Add(run);
+                }
+                return reports
+                    .OrderByDescending(run => run.FinishedUnixMs ?? run.StartedUnixMs)
+                    .ThenBy(run => run.JobId, StringComparer.Ordinal)
+                    .Take(limit)
+                    .ToList()
+                    .AsReadOnly();
+            }
+        }
+
+        public string SaveFailureScreenshot(string jobId, byte[] png)
+        {
+            ValidateJobId(jobId);
+            if (png == null || png.Length == 0 || png.Length > 4 * 1024 * 1024)
+                throw new ArgumentException("Failure screenshot must contain 1 byte to 4 MiB.");
+            string relative = Reports + "/" + jobId + ".png";
+            lock (gate)
+                AtomicWrite(Checked(relative), png);
+            return relative;
+        }
+
+        private void DeleteReport(string file)
+        {
+            string jobId = Path.GetFileNameWithoutExtension(file);
+            ValidateJobId(jobId);
+            string screenshot = Checked(Reports + "/" + jobId + ".png");
+            File.Delete(Checked(file));
+            if (File.Exists(screenshot))
+                File.Delete(Checked(screenshot));
         }
 
         private string DefinitionPath(string name)
@@ -233,21 +282,80 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 throw new ArgumentException("Report repeat_count is required.");
             var steps = (JArray)value["steps"];
             var logs = (JArray)value["logs"];
-            if (steps.Count > definition.Steps.Count * repeats || logs.Count > 50)
+            if (steps.Count > (definition.Steps.Count + definition.SetupSteps.Count + definition.CleanupSteps.Count) * repeats || logs.Count > 50)
                 throw new ArgumentException("Report arrays exceed their bounds.");
             State((string)value["status"], "running", "succeeded", "failed", "timed_out", "cancelled");
-            State((string)value["phase"], "starting", "executing", "finished");
+            State((string)value["phase"], "starting", "executing", "settling", "cleaning", "finished");
+            if (value["pending_status"].Type != JTokenType.Null)
+                State((string)value["pending_status"], "failed", "timed_out", "cancelled");
+            Bound(value, "error", 4096);
+            Bound(value, "report_error", 4096);
+            Bound(value, "pending_error", 4096);
+            Bound(value, "cleanup_error", 4096);
+            Bound(value, "unexpected_log_error", 4096);
+            Bound(value, "last_unexpected_log_error", 4096);
+            Bound(value, "metrics_summary", 2048);
+            string reportPath = (string)value["report_path"];
+            if (reportPath != null && reportPath != Reports + "/" + (string)value["job_id"] + ".json")
+                throw new ArgumentException("Report path does not belong to its job.");
+            if ((int)value["unexpected_log_count"] < 0)
+                throw new ArgumentException("Unexpected log count cannot be negative.");
             foreach (JObject step in steps)
             {
                 PlayScenarioDefinition.Integer(step, "iteration", 1, repeats, 0);
-                PlayScenarioDefinition.Integer(step, "step_index", 0, definition.Steps.Count - 1, -1);
+                string stage = (string)step["stage"];
+                State(stage, "setup", "main", "cleanup");
+                int count =
+                    stage == "setup" ? definition.SetupSteps.Count
+                    : stage == "cleanup" ? definition.CleanupSteps.Count
+                    : definition.Steps.Count;
+                if (count == 0)
+                    throw new ArgumentException("Report step stage has no definition steps.");
+                PlayScenarioDefinition.Integer(step, "step_index", 0, count - 1, -1);
                 State((string)step["status"], "pending", "running", "passed", "failed", "timed_out", "cancelled", "skipped");
+                // Older engines copied the bounded 4096-character primary error into a step detail.
+                Bound(step, "detail", 4096);
+                Bound(step, "name", 128);
+                Bound(step, "action", 32);
             }
             foreach (JObject log in logs)
             {
-                if (((string)log["message"])?.Length > 1024 || ((string)log["stack_trace"])?.Length > 2048)
-                    throw new ArgumentException("Report log exceeds its bounds.");
+                Bound(log, "message", 1024);
+                Bound(log, "stack_trace", 2048);
+                Bound(log, "type", 32);
             }
+            var metrics = (JArray)value["metrics"];
+            var warnings = (JArray)value["metric_warnings"];
+            if (metrics.Count > 10 || warnings.Count > 16)
+                throw new ArgumentException("Metric arrays exceed their bounds.");
+            foreach (JObject snapshot in metrics)
+            {
+                PlayScenarioDefinition.Integer(snapshot, "iteration", 1, repeats, 0);
+                Bound(snapshot, "error", 2048);
+                foreach (string key in new[] { "managed_bytes", "allocated_bytes", "object_count", "runner_subscription_count", "runner_handle_count" })
+                    if (snapshot[key].Type != JTokenType.Null && (long)snapshot[key] < 0)
+                        throw new ArgumentException("Metrics cannot be negative.");
+            }
+            foreach (JToken warning in warnings)
+                if (((string)warning).Length > 2048)
+                    throw new ArgumentException("Metric warning exceeds its bound.");
+            if (value["failure_diagnostics"] is JObject diagnostics)
+            {
+                Bound(diagnostics, "active_scene", 4096);
+                Bound(diagnostics, "target", 4096);
+                Bound(diagnostics, "observation", 2048);
+                Bound(diagnostics, "target_detail", 2048);
+                Bound(diagnostics, "screenshot_error", 2048);
+                string screenshot = (string)diagnostics["screenshot_path"];
+                if (screenshot != null && screenshot != Reports + "/" + (string)value["job_id"] + ".png")
+                    throw new ArgumentException("Failure screenshot path does not belong to its report.");
+            }
+        }
+
+        private static void Bound(JObject value, string key, int maximum)
+        {
+            if (((string)value[key])?.Length > maximum)
+                throw new ArgumentException(key + " exceeds its report bound.");
         }
 
         private static void State(string value, params string[] allowed)
@@ -267,27 +375,74 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     StringComparer.Ordinal
                 );
 
+        private static bool LegacyOptional(Type type, string key)
+        {
+            if (type == typeof(PlayScenarioStepResult))
+                return key == "stage" || key == "stable_since_unix_ms";
+            if (type != typeof(PlayScenarioRun))
+                return false;
+            return new[]
+            {
+                "pending_status",
+                "pending_error",
+                "cleanup_deadline_unix_ms",
+                "settle_deadline_unix_ms",
+                "cleanup_error",
+                "unexpected_log_count",
+                "unexpected_log_error",
+                "last_unexpected_log_error",
+                "metrics",
+                "metric_warnings",
+                "metrics_summary",
+                "failure_diagnostics",
+                "runner_resources_released",
+            }.Contains(key, StringComparer.Ordinal);
+        }
+
         private static void ValidateShape(JObject value, Type type)
         {
             Dictionary<string, Type> fields = ReportFields[type];
             PlayScenarioDefinition.Fields(value, fields.Keys.ToArray());
+            JObject defaults = null;
             foreach (var pair in fields)
             {
                 JToken token = value[pair.Key];
                 if (token == null)
-                    throw new ArgumentException("Missing report field: " + pair.Key);
+                {
+                    if (!LegacyOptional(type, pair.Key))
+                        throw new ArgumentException("Missing report field: " + pair.Key);
+                    defaults = defaults ?? ToJson(Activator.CreateInstance(type));
+                    value[pair.Key] = token = defaults[pair.Key].DeepClone();
+                }
                 Type fieldType = pair.Value;
                 if (fieldType == typeof(PlayScenarioDefinition))
                     continue;
-                if (fieldType.IsGenericType && fieldType.GetGenericTypeDefinition() == typeof(List<>))
+                if (fieldType == typeof(PlayScenarioFailureDiagnostics))
+                {
+                    if (token.Type == JTokenType.Null)
+                        continue;
+                    if (!(token is JObject nested))
+                        throw new ArgumentException("Invalid failure diagnostics.");
+                    ValidateShape(nested, fieldType);
+                }
+                else if (fieldType.IsGenericType && fieldType.GetGenericTypeDefinition() == typeof(List<>))
                 {
                     if (!(token is JArray array))
                         throw new ArgumentException("Invalid report array: " + pair.Key);
+                    Type itemType = fieldType.GetGenericArguments()[0];
                     foreach (JToken child in array)
                     {
-                        if (!(child is JObject item))
-                            throw new ArgumentException("Invalid report array entry.");
-                        ValidateShape(item, fieldType.GetGenericArguments()[0]);
+                        if (itemType == typeof(string))
+                        {
+                            if (child.Type != JTokenType.String)
+                                throw new ArgumentException("Invalid report string array entry.");
+                        }
+                        else
+                        {
+                            if (!(child is JObject item))
+                                throw new ArgumentException("Invalid report array entry.");
+                            ValidateShape(item, itemType);
+                        }
                     }
                 }
                 else if (fieldType == typeof(string))
@@ -295,20 +450,21 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     if (token.Type != JTokenType.String && token.Type != JTokenType.Null)
                         throw new ArgumentException("Invalid report string: " + pair.Key);
                 }
-                else if (fieldType == typeof(bool))
-                {
-                    if (token.Type != JTokenType.Boolean)
-                        throw new ArgumentException("Invalid report boolean: " + pair.Key);
-                }
                 else
                 {
                     bool nullable = Nullable.GetUnderlyingType(fieldType) != null;
+                    Type scalarType = Nullable.GetUnderlyingType(fieldType) ?? fieldType;
                     if (nullable && token.Type == JTokenType.Null)
                         continue;
-                    if (
+                    if (scalarType == typeof(bool))
+                    {
+                        if (token.Type != JTokenType.Boolean)
+                            throw new ArgumentException("Invalid report boolean: " + pair.Key);
+                    }
+                    else if (
                         token.Type != JTokenType.Integer
                         || !long.TryParse(token.ToString(), out long number)
-                        || (fieldType == typeof(int) && (number < int.MinValue || number > int.MaxValue))
+                        || (scalarType == typeof(int) && (number < int.MinValue || number > int.MaxValue))
                     )
                         throw new ArgumentException("Invalid report integer: " + pair.Key);
                 }

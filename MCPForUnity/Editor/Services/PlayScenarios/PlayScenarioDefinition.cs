@@ -18,6 +18,27 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("steps")]
         public List<PlayScenarioStep> Steps = new List<PlayScenarioStep>();
 
+        [JsonProperty("setup_steps")]
+        public List<PlayScenarioStep> SetupSteps = new List<PlayScenarioStep>();
+
+        [JsonProperty("cleanup_steps")]
+        public List<PlayScenarioStep> CleanupSteps = new List<PlayScenarioStep>();
+
+        [JsonProperty("cleanup_timeout_seconds")]
+        public int CleanupTimeoutSeconds = 30;
+
+        [JsonProperty("completion_stable_ms")]
+        public int CompletionStableMs = 250;
+
+        [JsonProperty("log_policy")]
+        public PlayScenarioLogPolicy LogPolicy = new PlayScenarioLogPolicy();
+
+        [JsonProperty("metrics")]
+        public PlayScenarioMetricsOptions Metrics = new PlayScenarioMetricsOptions();
+
+        [JsonProperty("diagnostics")]
+        public PlayScenarioDiagnosticsOptions Diagnostics = new PlayScenarioDiagnosticsOptions();
+
         public static void ValidateName(string name)
         {
             if (name == null || !Regex.IsMatch(name, @"\A[a-z0-9][a-z0-9_-]{0,63}\z"))
@@ -28,18 +49,49 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (value == null)
                 throw new ArgumentException("Scenario must be an object.");
-            Fields(value, "name", "poll_interval_ms", "steps");
+            Fields(
+                value,
+                "name",
+                "poll_interval_ms",
+                "steps",
+                "setup_steps",
+                "cleanup_steps",
+                "cleanup_timeout_seconds",
+                "completion_stable_ms",
+                "log_policy",
+                "metrics",
+                "diagnostics"
+            );
             string name = Text(value, "name", 64);
             ValidateName(name);
-            int polling = Integer(value, "poll_interval_ms", 100, 2000, 250);
-            if (!(value["steps"] is JArray steps) || steps.Count < 1 || steps.Count > 32)
-                throw new ArgumentException("steps must contain 1-32 objects.");
-            var result = new PlayScenarioDefinition { Name = name, PollIntervalMs = polling };
+            var result = new PlayScenarioDefinition
+            {
+                Name = name,
+                PollIntervalMs = Integer(value, "poll_interval_ms", 100, 2000, 250),
+                Steps = ParseSteps(value["steps"], 1, 32),
+                SetupSteps = value.Property("setup_steps") == null ? new List<PlayScenarioStep>() : ParseSteps(value["setup_steps"], 0, 16),
+                CleanupSteps = value.Property("cleanup_steps") == null ? new List<PlayScenarioStep>() : ParseSteps(value["cleanup_steps"], 0, 16),
+                CleanupTimeoutSeconds = Integer(value, "cleanup_timeout_seconds", 1, 300, 30),
+                CompletionStableMs = Integer(value, "completion_stable_ms", 0, 10000, 250),
+                LogPolicy = ParseLogPolicy(value),
+                Metrics = ParseMetrics(value),
+                Diagnostics = ParseDiagnostics(value),
+            };
+            if ((result.SetupSteps.Count > 0 ? result.SetupSteps[0] : result.Steps[0]).Action != "load_scene")
+                throw new ArgumentException("The first executed setup or main step must load_scene.");
+            return result;
+        }
+
+        private static List<PlayScenarioStep> ParseSteps(JToken value, int minimum, int maximum)
+        {
+            if (!(value is JArray steps) || steps.Count < minimum || steps.Count > maximum)
+                throw new ArgumentException("Step array must contain " + minimum + "-" + maximum + " objects.");
+            var result = new List<PlayScenarioStep>();
             foreach (JToken token in steps)
             {
                 if (!(token is JObject step))
                     throw new ArgumentException("Each step must be an object.");
-                Fields(step, "name", "action", "scene", "target", "timeout_seconds");
+                Fields(step, "name", "action", "scene", "target", "timeout_seconds", "count", "active", "component", "property", "stable_for_ms");
                 var parsed = new PlayScenarioStep
                 {
                     Name = Text(step, "name", 128),
@@ -65,11 +117,128 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     default:
                         throw new ArgumentException("Unsupported step action.");
                 }
-                result.Steps.Add(parsed);
+                if (step.Property("stable_for_ms") != null)
+                {
+                    if (parsed.Action != "wait_object" && parsed.Action != "wait_scene")
+                        throw new ArgumentException("stable_for_ms is permitted only on wait actions.");
+                    parsed.StableForMs = Integer(step, "stable_for_ms", 0, 60000, 0);
+                    if (parsed.StableForMs >= parsed.TimeoutSeconds * 1000)
+                        throw new ArgumentException("stable_for_ms must be less than the step timeout.");
+                }
+                string[] conditionKeys = { "count", "active", "component", "property" };
+                if (parsed.Action != "wait_object" && conditionKeys.Any(key => step.Property(key) != null))
+                    throw new ArgumentException("Object conditions are permitted only on wait_object.");
+                if (parsed.Action == "wait_object")
+                {
+                    if (step.Property("count") != null)
+                        parsed.Count = Integer(step, "count", 0, 10000, 1);
+                    if (step.Property("active") != null)
+                        parsed.Active = Boolean(step, "active", true);
+                    if (step.Property("component") != null)
+                        parsed.Component = Text(step, "component", 256);
+                    if (step.Property("property") != null)
+                    {
+                        JObject condition = Object(step, "property");
+                        Fields(condition, "path", "equals");
+                        JToken expected = condition["equals"];
+                        if (!Scalar(expected))
+                            throw new ArgumentException("property.equals must be a bounded boolean, signed integer, finite number or string.");
+                        parsed.Property = new PlayScenarioPropertyCondition { Path = Text(condition, "path", 256), Equals = expected.DeepClone() };
+                        if (parsed.Component == null)
+                            throw new ArgumentException("property requires component.");
+                    }
+                    if (parsed.Component != null && (parsed.Count ?? 1) != 1)
+                        throw new ArgumentException("component and property require count 1.");
+                    if (parsed.Count == 0 && parsed.Active.HasValue)
+                        throw new ArgumentException("count 0 cannot specify active.");
+                }
+                result.Add(parsed);
             }
-            if (result.Steps[0].Action != "load_scene")
-                throw new ArgumentException("The first step must load_scene.");
             return result;
+        }
+
+        private static PlayScenarioLogPolicy ParseLogPolicy(JObject value)
+        {
+            var policy = new PlayScenarioLogPolicy();
+            if (value.Property("log_policy") == null)
+                return policy;
+            JObject options = Object(value, "log_policy");
+            Fields(options, "mode", "allowed_messages");
+            if (options.Property("mode") != null)
+                policy.Mode = Text(options, "mode", 16);
+            if (policy.Mode != "strict" && policy.Mode != "log_only")
+                throw new ArgumentException("log_policy.mode must be strict or log_only.");
+            if (options.Property("allowed_messages") != null)
+            {
+                if (!(options["allowed_messages"] is JArray allowed) || allowed.Count > 32)
+                    throw new ArgumentException("allowed_messages must contain at most 32 unique literal messages.");
+                foreach (JToken message in allowed)
+                {
+                    if (message.Type != JTokenType.String || ((string)message).Length < 1 || ((string)message).Length > 1024)
+                        throw new ArgumentException("Allowed messages must be nonempty strings of at most 1024 characters.");
+                    if (policy.AllowedMessages.Contains((string)message, StringComparer.Ordinal))
+                        throw new ArgumentException("Allowed messages must be unique.");
+                    policy.AllowedMessages.Add((string)message);
+                }
+            }
+            return policy;
+        }
+
+        private static PlayScenarioMetricsOptions ParseMetrics(JObject value)
+        {
+            if (value.Property("metrics") == null)
+                return new PlayScenarioMetricsOptions();
+            JObject options = Object(value, "metrics");
+            Fields(options, "enabled", "warmup_iterations", "consecutive_increases", "managed_growth_bytes", "allocated_growth_bytes", "object_growth_count");
+            return new PlayScenarioMetricsOptions
+            {
+                Enabled = Boolean(options, "enabled", false),
+                WarmupIterations = Integer(options, "warmup_iterations", 0, 9, 1),
+                ConsecutiveIncreases = Integer(options, "consecutive_increases", 2, 9, 2),
+                ManagedGrowthBytes = Integer(options, "managed_growth_bytes", 0, int.MaxValue, 1048576),
+                AllocatedGrowthBytes = Integer(options, "allocated_growth_bytes", 0, int.MaxValue, 1048576),
+                ObjectGrowthCount = Integer(options, "object_growth_count", 0, 10000, 0),
+            };
+        }
+
+        private static PlayScenarioDiagnosticsOptions ParseDiagnostics(JObject value)
+        {
+            if (value.Property("diagnostics") == null)
+                return new PlayScenarioDiagnosticsOptions();
+            JObject options = Object(value, "diagnostics");
+            Fields(options, "screenshot_on_failure");
+            return new PlayScenarioDiagnosticsOptions { ScreenshotOnFailure = Boolean(options, "screenshot_on_failure", false) };
+        }
+
+        private static JObject Object(JObject value, string key) => value[key] as JObject ?? throw new ArgumentException(key + " must be an object.");
+
+        internal static bool Boolean(JObject value, string key, bool fallback)
+        {
+            if (value.Property(key) == null)
+                return fallback;
+            if (value[key].Type != JTokenType.Boolean)
+                throw new ArgumentException(key + " must be a boolean.");
+            return (bool)value[key];
+        }
+
+        internal static bool Scalar(JToken token)
+        {
+            if (token == null)
+                return false;
+            switch (token.Type)
+            {
+                case JTokenType.Boolean:
+                    return true;
+                case JTokenType.Integer:
+                    return long.TryParse(token.ToString(), out _);
+                case JTokenType.Float:
+                    double number = (double)token;
+                    return !double.IsNaN(number) && !double.IsInfinity(number);
+                case JTokenType.String:
+                    return ((string)token).Length <= 1024;
+                default:
+                    return false;
+            }
         }
 
         private static void ValidateScene(string scene)
@@ -140,5 +309,70 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         [JsonProperty("timeout_seconds")]
         public int TimeoutSeconds = 30;
+
+        [JsonProperty("count", NullValueHandling = NullValueHandling.Ignore)]
+        public int? Count;
+
+        [JsonProperty("active", NullValueHandling = NullValueHandling.Ignore)]
+        public bool? Active;
+
+        [JsonProperty("component", NullValueHandling = NullValueHandling.Ignore)]
+        public string Component;
+
+        [JsonProperty("property", NullValueHandling = NullValueHandling.Ignore)]
+        public PlayScenarioPropertyCondition Property;
+
+        [JsonProperty("stable_for_ms", NullValueHandling = NullValueHandling.Ignore)]
+        public int? StableForMs;
+    }
+
+    public sealed class PlayScenarioPropertyCondition
+    {
+        [JsonProperty("path")]
+        public string Path;
+
+        [JsonProperty("equals")]
+        public new JToken Equals;
+    }
+
+    public sealed class PlayScenarioLogPolicy
+    {
+        [JsonProperty("mode")]
+        public string Mode = "strict";
+
+        [JsonProperty("allowed_messages")]
+        public List<string> AllowedMessages = new List<string>();
+
+        public bool IsUnexpected(string type, string message) =>
+            Mode == "strict" && (type == "Error" || type == "Assert" || type == "Exception") && !AllowedMessages.Contains(message, StringComparer.Ordinal);
+
+        public bool IsUnexpectedError(string message, string type) => IsUnexpected(type, message);
+    }
+
+    public sealed class PlayScenarioMetricsOptions
+    {
+        [JsonProperty("enabled")]
+        public bool Enabled;
+
+        [JsonProperty("warmup_iterations")]
+        public int WarmupIterations = 1;
+
+        [JsonProperty("consecutive_increases")]
+        public int ConsecutiveIncreases = 2;
+
+        [JsonProperty("managed_growth_bytes")]
+        public int ManagedGrowthBytes = 1048576;
+
+        [JsonProperty("allocated_growth_bytes")]
+        public int AllocatedGrowthBytes = 1048576;
+
+        [JsonProperty("object_growth_count")]
+        public int ObjectGrowthCount;
+    }
+
+    public sealed class PlayScenarioDiagnosticsOptions
+    {
+        [JsonProperty("screenshot_on_failure")]
+        public bool ScreenshotOnFailure;
     }
 }

@@ -39,6 +39,10 @@ namespace MCPForUnity.Editor.Tools
                     case "list":
                         Allow(parameters, "action");
                         return new SuccessResponse("Saved scenario names.", new { scenarios = store.List() });
+                    case "reports":
+                        Allow(parameters, "action", "name");
+                        string filter = parameters.Property("name") == null ? null : Name(parameters);
+                        return new SuccessResponse("Saved scenario reports.", new { reports = store.ListReports(filter) });
                     case "delete":
                         Allow(parameters, "action", "name");
                         return new SuccessResponse("Scenario deletion processed.", new { deleted = store.Delete(Name(parameters)) });
@@ -57,7 +61,7 @@ namespace MCPForUnity.Editor.Tools
                         Allow(parameters, "action", "job_id");
                         return PlayScenarioService.Cancel(JobId(parameters, true));
                     default:
-                        throw new ArgumentException("action must be save, get, list, delete, run, status or cancel.");
+                        throw new ArgumentException("action must be save, get, list, reports, delete, run, status or cancel.");
                 }
             }
             catch (Exception exception)
