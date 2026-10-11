@@ -267,47 +267,68 @@ namespace MCPForUnityTests
             Exception readerError = null;
             int reads = 0;
             using (var stop = new CancellationTokenSource())
-            using (var started = new ManualResetEventSlim())
+            using (var snapshotOpened = new AutoResetEvent(false))
+            using (var replacementPublished = new AutoResetEvent(false))
+            using (var snapshotRead = new AutoResetEvent(false))
             {
                 var readerThread = new Thread(() =>
                 {
                     try
                     {
-                        while (!stop.IsCancellationRequested)
+                        for (int index = 1; index <= 64 && !stop.IsCancellationRequested; index++)
                         {
                             using (var stream = OpenProgressSnapshot(path))
                             using (var reader = new StreamReader(stream, Encoding.UTF8))
                             {
-                                JObject.Parse(reader.ReadToEnd());
+                                // The writer replaces the path while this old snapshot handle remains open.
+                                snapshotOpened.Set();
+                                if (!replacementPublished.WaitOne(3000))
+                                    throw new TimeoutException("The writer did not publish its bounded replacement.");
+                                if (stop.IsCancellationRequested)
+                                    return;
+                                JObject snapshot = JObject.Parse(reader.ReadToEnd());
+                                Assert.That((int)snapshot["sequence"], Is.EqualTo(index - 1));
                                 Interlocked.Increment(ref reads);
-                                started.Set();
                             }
+                            snapshotRead.Set();
                         }
                     }
                     catch (Exception error)
                     {
                         readerError = error;
-                        started.Set();
+                        snapshotOpened.Set();
+                        snapshotRead.Set();
                     }
                 })
                 {
                     IsBackground = true,
                 };
+                bool readerJoined = false;
                 readerThread.Start();
                 try
                 {
-                    Assert.That(started.Wait(3000), Is.True);
                     for (int index = 1; index <= 64; index++)
+                    {
+                        Assert.That(snapshotOpened.WaitOne(3000), Is.True, "The reader must own the prior snapshot before replacement.");
+                        Assert.That(readerError, Is.Null);
                         PlayScenarioPlayerFiles.ReplaceExisting(path, "{\"sequence\":" + index + "}", 1024);
+                        replacementPublished.Set();
+                        Assert.That(snapshotRead.WaitOne(3000), Is.True, "The reader must validate the unchanged old handle after replacement.");
+                        Assert.That(readerError, Is.Null);
+                    }
                 }
                 finally
                 {
                     stop.Cancel();
-                    Assert.That(readerThread.Join(3000), Is.True);
+                    replacementPublished.Set();
+                    snapshotOpened.Set();
+                    snapshotRead.Set();
+                    readerJoined = readerThread.Join(3000);
                 }
+                Assert.That(readerJoined, Is.True);
             }
             Assert.That(readerError, Is.Null);
-            Assert.That(reads, Is.GreaterThan(0));
+            Assert.That(reads, Is.EqualTo(64));
             UnityEngine.Debug.Log(
                 "PLAYER_PROGRESS_ATOMIC_READER_VALID_READS:" + reads + ";final_sequence:" + (int)JObject.Parse(File.ReadAllText(path))["sequence"]
             );
