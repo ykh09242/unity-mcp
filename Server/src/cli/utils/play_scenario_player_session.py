@@ -21,7 +21,7 @@ from cli.utils.play_scenario_iterations import (
     iteration_counts,
     zero_iteration_counts,
 )
-from cli.utils.play_scenario_reports import write_player_artifacts
+from cli.utils.play_scenario_reports import _xml_text, write_player_artifacts
 
 OUTCOME_LIMIT: Final = 4096
 OUTCOME_FILE_LIMIT: Final = 8 * 1024**2
@@ -287,7 +287,7 @@ def _write_session_junit(summary: dict[str, JsonValue], directory: Path) -> None
                 "payload_verification",
             ):
                 ElementTree.SubElement(
-                    properties, "property", name=key, value=str(entry.get(key, ""))
+                    properties, "property", name=key, value=_xml_text(str(entry.get(key, "")))
                 )
             for state, count in entry.get("iteration_counts", {}).items():
                 ElementTree.SubElement(
@@ -302,8 +302,8 @@ def _write_session_junit(summary: dict[str, JsonValue], directory: Path) -> None
                 or entry["exit_code"] != 0
                 or entry.get("client_error")
             ):
-                ElementTree.SubElement(case, "error", type="player_child_error").text = str(
-                    entry.get("client_error") or entry["status"]
+                ElementTree.SubElement(case, "error", type="player_child_error").text = _xml_text(
+                    str(entry.get("client_error") or entry["status"])
                 )
             output.write(ElementTree.tostring(case, encoding="utf-8"))
         if inputs.read(1):

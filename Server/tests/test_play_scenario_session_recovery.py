@@ -722,3 +722,32 @@ def test_omitted_native_failure_message_remains_compatible(tmp_path):
     assert report["first_failure"]["failure"]["code"] == row["failure"]["code"]
     assert report["iteration_counts"]["shared-batches"]["executed"] == 2
     assert not report["recovery_issues"]
+
+
+@pytest.mark.parametrize("field", ["client_error", "build_source_revision"])
+def test_recovery_junit_filters_xml_controls_without_rewriting_evidence(tmp_path, field):
+    source = _session(tmp_path)
+    row = _first_outcome(source)
+    expected = 'I/O <failed> & "quoted"\t\n\U0001f4a5 remains'
+    message = "\x00\x01\x08\x0b\x0c\x1f\ufffe\uffff" + expected
+    row[field] = message
+    _journal(source, "outcomes", [row])
+    before = {path.name: path.read_bytes() for path in source.iterdir()}
+    output = tmp_path / "recovered"
+    report = _recover(source, output)
+    assert report["status"] == "interrupted" and not report["recovery_issues"]
+    assert report["first_failure"][field] == message
+    directory = output / report["recovery_id"]
+    recovered_row = json.loads((directory / "outcomes.jsonl").read_text().splitlines()[0])
+    assert recovered_row[field] == message
+    junit = ElementTree.parse(directory / "junit.xml").getroot()
+    case = junit.find("testcase[@name='" + row["job_id"] + "']")
+    if field == "client_error":
+        assert case.find("error[@type='player_child_error']").text == expected
+    else:
+        assert (
+            case.find("properties/property[@name='build_source_revision']").attrib["value"]
+            == expected
+        )
+    assert junit.find("testcase[@name='session_completion']/error") is not None
+    assert {path.name: path.read_bytes() for path in source.iterdir()} == before

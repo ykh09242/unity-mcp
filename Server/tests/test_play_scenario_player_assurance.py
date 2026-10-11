@@ -983,3 +983,60 @@ def test_unicode_progress_error_finalizes_session_and_junit(
     assert junit.attrib["errors"] == str(children + 1)
     assert len(junit.findall("testcase/error[@type='player_child_error']")) == children
     assert len(junit.findall("testcase/error[@type='session_incomplete']")) == 1
+
+
+def test_session_junit_filters_xml_controls_without_changing_native_error(
+    verified_bundle, child, monkeypatch
+):
+    from cli.utils import play_scenario_player as player_module
+
+    build, output, _manifest = verified_bundle
+    child[0][0] = "failed"
+    expected = 'I/O <failed> & "quoted"\t\n\U0001f4a5 remains'
+    message = "\x00\x01\x08\x0b\x0c\x1f\ufffe\uffff" + expected
+    read = player_module._read_json
+    native_bytes = []
+
+    def with_progress_error(path, limit):
+        report = read(path, limit)
+        if path.name == "run.json":
+            report["progress_error"] = message
+            encoded = json.dumps(report, ensure_ascii=True).encode("utf-8")
+            path.write_bytes(encoded)
+            native_bytes.append(encoded)
+        return report
+
+    monkeypatch.setattr(player_module, "_read_json", with_progress_error)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "play-scenario",
+            "player-session",
+            str(build),
+            "--output-dir",
+            str(output),
+            "--mode",
+            "fresh-process",
+            "--iterations",
+            "1",
+            "--interval-seconds",
+            "0",
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    summary = json.loads(result.output)["data"]
+    assert summary["status"] == "failed"
+    assert summary["children_started"] == summary["children_finalized"] == 1
+    directory = output / summary["session_id"]
+    row = json.loads((directory / "outcomes.jsonl").read_bytes())
+    assert row["client_error"] == summary["first_failure"]["client_error"] == message
+    native = directory / row["artifact_directory"] / "run.json"
+    assert native.read_bytes() == native_bytes[0]
+    assert sha256(native_bytes[0]).hexdigest() == row["native_report_sha256"]
+    ElementTree.parse(native.with_name("junit.xml"))
+    junit = ElementTree.parse(directory / "junit.xml").getroot()
+    assert junit.find("testcase/error[@type='player_child_error']").text == expected
+    assert junit.attrib["errors"] == "2"
+    assert len(child[1]) == 1 and child[1][0].poll() == 1
