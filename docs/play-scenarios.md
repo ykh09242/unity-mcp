@@ -10,6 +10,11 @@ budgets and named screenshot checkpoints, saved soak baselines, offline flakines
 and standalone HTML reports. These preserve original native outcomes; offline export is not an
 execution success verdict.
 
+See [repeatable scenario workflows](play-scenario-workflows.md) for profile execution, complete
+history/UI snapshots, persisted input actions and recording to a review-required draft. The existing
+stable `target_id` remains the selector for registered `wait_object`/`click_ui` targets; input steps
+use bounded virtual-device commands.
+
 Select the intended Unity instance. If needed, activate the `testing` group with
 `manage_tools(action="activate", group="testing")` after enabling the tool in Unity.
 
@@ -32,6 +37,10 @@ success does not establish that the complete game flow will pass. Inspect its st
 cleanup timeout, optional per-iteration memory samples and failure screenshots. Run validates and saves
 the draft before starting. Status refreshes every 500 ms only while the job is active. Closing the
 window leaves the backend job running; reopen it to inspect or cancel the retained job ID.
+
+Recorded definitions carry `draft: true` and cannot preflight, run or enter a Player bundle. Review
+their steps, clear **Recorded draft (review required)** and save before execution; ordinary editing
+history and a recorded definition's admission flag are separate.
 
 **Previous runs and comparison** reads saved reports on **Refresh history** and after completion.
 Choose two different reports and **Compare reports** to compare status, duration, poll counts and

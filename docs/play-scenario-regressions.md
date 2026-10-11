@@ -6,6 +6,10 @@ change the original scenario result. Start with [scenario authoring](play-scenar
 [standalone execution](play-scenario-execution.md) and
 [Player assurance](play-scenario-player-assurance.md).
 
+See [repeatable scenario workflows](play-scenario-workflows.md) for saved regression profiles,
+complete soak/session history analysis, semantic UI snapshots, bounded input, interaction drafts
+and reviewed scene edits.
+
 Examples use explicit artifact paths. Replace them with the actual job directories returned by the
 launcher; a parent output directory is not a saved soak. Create the selected output parent
 directories before exporting. Use a new filename for each output: analysis, visual artifacts and
@@ -200,6 +204,9 @@ Soak parent `run.json` files, session parent reports and session JSONL are unsup
 incomplete evidence. An ordinary retained iteration report describes only that selected iteration;
 it cannot establish the outcome of its entire soak or session. The analyzer neither searches those
 parents for children nor reruns unsupported inputs.
+
+For complete parent ledgers, use [analyze-history](play-scenario-workflows.md#analyze-complete-soak-and-session-history).
+This adds source-local complete history analysis without changing `analyze-flakiness` admission.
 
 ## Compare visual checkpoints
 

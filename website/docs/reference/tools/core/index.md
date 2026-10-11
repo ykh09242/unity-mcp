@@ -32,6 +32,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_prefabs`](./manage_prefabs.md)** — Manages Unity Prefab assets.
 - **[`manage_recording`](./manage_recording.md)** — Start, poll or stop a bounded silent MP4 recording of Unity Game View or Scene View. start returns job_id immediately; poll status explicitly or stop to finalize.
 - **[`manage_scene`](./manage_scene.md)** — Performs CRUD operations on Unity scenes.
+- **[`manage_scene_edits`](./manage_scene_edits.md)** — Preview or apply 1-64 allowlisted native Transform, BoxCollider, SphereCollider, or Rigidbody serialized property edits in a stable Edit-mode scene.
 - **[`manage_script`](./manage_script.md)** — Compatibility router for legacy script operations.
 - **[`manage_script_capabilities`](./manage_script_capabilities.md)** — Get manage_script capabilities (supported ops, limits, and guards).
 - **[`manage_tools`](./manage_tools.md)** — Manage which tool groups are visible in this session.

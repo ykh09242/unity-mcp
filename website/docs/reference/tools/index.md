@@ -26,7 +26,7 @@ AI asset generation – 3D model gen/import, 2D image gen & audio gen (bring-you
 - **[`import_model`](./asset_gen/import_model.md)** — Import 3D models from the Sketchfab marketplace into the Unity project.
 - **[`import_model_file`](./asset_gen/import_model_file.md)** — Import a local 3D model file that already exists within the Unity project's Assets folder (e.g. an FBX/OBJ/glTF exported from Blender or another DCC tool) into the Unity project.
 
-## `core` &nbsp; (32 tools)
+## `core` &nbsp; (33 tools)
 Essential scene, script, asset, editor & view recording tools (always on by default)
 - **[`apply_text_edits`](./core/apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`batch_execute`](./core/batch_execute.md)** — Executes multiple MCP commands in a single batch for dramatically better performance.
@@ -52,6 +52,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_prefabs`](./core/manage_prefabs.md)** — Manages Unity Prefab assets.
 - **[`manage_recording`](./core/manage_recording.md)** — Start, poll or stop a bounded silent MP4 recording of Unity Game View or Scene View. start returns job_id immediately; poll status explicitly or stop to finalize.
 - **[`manage_scene`](./core/manage_scene.md)** — Performs CRUD operations on Unity scenes.
+- **[`manage_scene_edits`](./core/manage_scene_edits.md)** — Preview or apply 1-64 allowlisted native Transform, BoxCollider, SphereCollider, or Rigidbody serialized property edits in a stable Edit-mode scene.
 - **[`manage_script`](./core/manage_script.md)** — Compatibility router for legacy script operations.
 - **[`manage_script_capabilities`](./core/manage_script_capabilities.md)** — Get manage_script capabilities (supported ops, limits, and guards).
 - **[`manage_tools`](./core/manage_tools.md)** — Manage which tool groups are visible in this session.
@@ -79,15 +80,17 @@ ScriptableObject management
 - **[`execute_code`](./scripting_ext/execute_code.md)** — Execute arbitrary C# code inside the Unity Editor.
 - **[`manage_scriptable_object`](./scripting_ext/manage_scriptable_object.md)** — Creates and modifies ScriptableObject assets using Unity SerializedObject property paths.
 
-## `testing` &nbsp; (4 tools)
+## `testing` &nbsp; (5 tools)
 Test runner, async test jobs & bounded Play Mode input simulation
 - **[`get_test_job`](./testing/get_test_job.md)** — Polls an async Unity test job by job_id.
 - **[`manage_input`](./testing/manage_input.md)** — Simulate bounded input in Unity Play Mode. status reports capabilities and held controls. ui_click dispatches uGUI pointer events to a scene instance ID or exact root hierarchy path (independent of raw input backend; does not test raycas…
 - **[`manage_play_scenario`](./testing/manage_play_scenario.md)** — Save/get/list/delete scenarios and suites; reports history and run/status/cancel Unity-owned jobs.
+- **[`manage_scenario_recording`](./testing/manage_scenario_recording.md)** — Record observed uGUI Button pointer clicks and active-scene changes during unpaused Editor Play Mode into a bounded scenario draft. start returns recording_id immediately; status polls explicitly. stop saves a NEW scenario with draft=tru…
 - **[`run_tests`](./testing/run_tests.md)** — Starts a Unity test run asynchronously and returns a job_id immediately.
 
-## `ui` &nbsp; (2 tools)
+## `ui` &nbsp; (3 tools)
 UI Toolkit (UXML, USS, UIDocument, optional PanelRenderer) and Canvas-based uGUI editing and diagnostics
+- **[`capture_ui_snapshot`](./ui/capture_ui_snapshot.md)** — Capture a bounded complete semantic scene UI snapshot for ugui or uitoolkit.
 - **[`manage_ugui`](./ui/manage_ugui.md)** — Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings.
 - **[`manage_ui`](./ui/manage_ui.md)** — Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer components).
 

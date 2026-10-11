@@ -10,6 +10,10 @@ HTML reports. `player-run`, `player-soak` and `player-session` accept `--graphic
 checkpoint requests; default batch/headless launches report those captures as unavailable. Saved
 analysis and export never replace the original Player outcome or process-exit evidence.
 
+[Repeatable scenario workflows](play-scenario-workflows.md) combines explicit verified-build profiles
+with pinned soak budgets and independent analysis gates. Complete session/soak ledgers use
+`analyze-history`; session environment gaps remain visible and cannot establish cross-source trends.
+
 ## Read game state explicitly
 
 Use `wait_state` when readiness belongs to application state rather than a scene object's presence.
