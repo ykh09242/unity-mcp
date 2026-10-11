@@ -22,6 +22,9 @@ from cli.utils.play_scenario_iterations import (
     zero_iteration_counts,
 )
 from cli.utils.play_scenario_reports import _xml_text, write_player_artifacts
+from cli.utils.play_scenario_checkpoint_artifacts import (
+    admit_checkpoint_artifacts,
+)
 
 OUTCOME_LIMIT: Final = 4096
 OUTCOME_FILE_LIMIT: Final = 8 * 1024**2
@@ -62,6 +65,7 @@ class PlayerSessionOptions(BaseModel):
     source_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None
     expected_build_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None
     expected_build_id: JobId | None = None
+    graphical: Annotated[bool, Field(strict=True)] = False
 
     @field_validator("source_revision", "expected_build_revision")
     @classmethod
@@ -115,6 +119,37 @@ def _read_small(path: Path) -> dict[str, JsonValue]:
     return value if isinstance(value, dict) else {}
 
 
+def _retained_entries(directory: Path) -> tuple[Path, ...]:
+    """Validate the entire bounded owned inventory before any eviction deletion."""
+    captures = (
+        admit_checkpoint_artifacts(directory, (directory / "run.json",))
+        if (directory / "run.json").exists()
+        else ()
+    )
+    allowed_files = OWNED_FILES | {capture.filename for capture in captures}
+    entries = []
+    with os.scandir(directory) as discovered:
+        for entry in discovered:
+            if len(entries) >= len(allowed_files):
+                raise PlayerLaunchError("Session child contains too many artifacts", directory)
+            entries.append(Path(entry.path))
+    if any(
+        entry.name not in allowed_files
+        or entry.is_symlink()
+        or getattr(entry.lstat(), "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        or not entry.is_file()
+        for entry in entries
+    ):
+        raise PlayerLaunchError("Session child contains unexpected or linked artifacts", directory)
+    checkpoint_names = {capture.filename for capture in captures}
+    if (
+        sum(entry.stat().st_size for entry in entries if entry.name not in checkpoint_names)
+        > CHILD_ARTIFACT_LIMIT
+    ):
+        raise PlayerLaunchError("Session child artifacts exceed their byte bound", directory)
+    return tuple(entries)
+
+
 def _retain(directory: Path, kept: deque[Path], pinned: str | None, limit: int) -> None:
     """Evict only bounded, finalized owned child files beneath this session's runs directory."""
     if not directory.exists():
@@ -130,38 +165,13 @@ def _retain(directory: Path, kept: deque[Path], pinned: str | None, limit: int) 
         raise PlayerLaunchError(
             "Session cannot retain/evict an unconfirmed owned process", directory
         )
-    entries = []
-    with os.scandir(directory) as discovered:
-        for entry in discovered:
-            if len(entries) >= len(OWNED_FILES):
-                raise PlayerLaunchError("Session child contains too many artifacts", directory)
-            entries.append(Path(entry.path))
-    if any(
-        entry.name not in OWNED_FILES
-        or entry.is_symlink()
-        or getattr(entry.lstat(), "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
-        or not entry.is_file()
-        for entry in entries
-    ):
-        raise PlayerLaunchError("Session child contains unexpected or linked artifacts", directory)
-    if sum(entry.stat().st_size for entry in entries) > CHILD_ARTIFACT_LIMIT:
-        raise PlayerLaunchError("Session child artifacts exceed their byte bound", directory)
+    _retained_entries(directory)
     kept.append(directory)
     while len(kept) > limit:
         candidate = next(entry for entry in kept if entry.name != pinned)
         if candidate.resolve().parent != directory.resolve().parent:
             raise PlayerLaunchError("Session eviction target leaves the owned runs directory")
-        for entry in candidate.iterdir():
-            if (
-                entry.name not in OWNED_FILES
-                or entry.is_symlink()
-                or getattr(entry.lstat(), "st_file_attributes", 0)
-                & stat.FILE_ATTRIBUTE_REPARSE_POINT
-                or not entry.is_file()
-            ):
-                raise PlayerLaunchError(
-                    "Session eviction encountered unexpected or linked artifacts"
-                )
+        for entry in _retained_entries(candidate):
             entry.unlink()
         candidate.rmdir()
         kept.remove(candidate)
@@ -466,6 +476,7 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
                                 build_directory=options.build_directory,
                                 output_directory=runs,
                                 repeat_count=repeats,
+                                graphical=options.graphical,
                                 timeout_seconds=options.timeout_seconds,
                                 source_revision=options.source_revision,
                                 cleanup_wait_seconds=options.cleanup_wait_seconds,

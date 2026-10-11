@@ -474,6 +474,7 @@ def suite_run(
 )
 @click.option("--expected-build-id", default=None)
 @click.option("--require-verified-payload", is_flag=True, help="Reject legacy unverified bundles.")
+@click.option("--graphical", is_flag=True, help="Run with graphics for screenshot checkpoints.")
 @click.option("--cleanup-wait-seconds", type=click.IntRange(1, 600), default=360, show_default=True)
 def player_run(
     build_directory: Path,
@@ -485,6 +486,7 @@ def player_run(
     expected_build_revision: str | None,
     expected_build_id: str | None,
     require_verified_payload: bool,
+    graphical: bool,
 ) -> None:
     """Launch an explicit local Player bundle, wait, and export actual run.json plus JUnit.
 
@@ -503,6 +505,7 @@ def player_run(
                 expected_build_revision=expected_build_revision,
                 expected_build_id=expected_build_id,
                 require_verified_payload=require_verified_payload,
+                graphical=graphical,
             )
         )
         write_player_artifacts(outcome.report, outcome.directory, outcome.client_error)
@@ -532,6 +535,7 @@ def player_run(
 @click.option("--expected-build-revision", default=None)
 @click.option("--expected-build-id", default=None)
 @click.option("--cleanup-wait-seconds", type=click.IntRange(1, 600), default=360, show_default=True)
+@click.option("--graphical", is_flag=True, help="Run with graphics for screenshot checkpoints.")
 def player_soak(
     build_directory: Path,
     output_dir: Path,
@@ -544,6 +548,7 @@ def player_soak(
     expected_build_revision: str | None,
     expected_build_id: str | None,
     cleanup_wait_seconds: int,
+    graphical: bool,
 ) -> None:
     """Execute bounded iterations in one verified native Player process and export evidence."""
     try:
@@ -557,6 +562,7 @@ def player_soak(
                 expected_build_id=expected_build_id,
                 cleanup_wait_seconds=cleanup_wait_seconds,
                 require_verified_payload=True,
+                graphical=graphical,
                 soak=SoakRequest.model_validate(
                     {
                         "iterations": iterations,
@@ -605,6 +611,9 @@ def player_soak(
     "--expected-build-revision", default=None, help="Require the frozen build label to match."
 )
 @click.option("--expected-build-id", default=None)
+@click.option(
+    "--graphical", is_flag=True, help="Run each child with graphics for screenshot checkpoints."
+)
 def player_session(build_directory: Path, output_dir: Path, **parameters: JsonValue) -> None:
     """Run bounded verified Player batches and stream outcomes with explicit process scope."""
     try:

@@ -11,6 +11,7 @@ from xml.etree import ElementTree
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from cli.utils.play_scenario_iterations import validate_iteration_results
+from cli.utils.play_scenario_checkpoint_artifacts import admit_checkpoint_artifacts
 from cli.utils.play_scenario_reports import _duration, _properties, _xml_text
 from cli.utils.play_scenario_soak import (
     IDENTITY_FIELDS,
@@ -131,6 +132,11 @@ def admit_soak_run(
         and journal.rows[selected - 1].report_file not in summary.retained_report_files
     ):
         raise SoakContractError("Soak selected native report was not retained")
+    admit_checkpoint_artifacts(
+        directory,
+        tuple(directory / filename for filename in summary.retained_report_files),
+        selected_report=raw,
+    )
     return summary, journal
 
 

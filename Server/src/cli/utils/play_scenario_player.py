@@ -205,8 +205,11 @@ class PlayerRunOptions:
     require_verified_payload: bool = False
     player_job_id: str | None = None
     soak: SoakRequest | None = None
+    graphical: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.graphical) is not bool:
+            raise PlayerLaunchError("Player graphical option must be a boolean")
         if self.soak is not None and self.repeat_count != 1:
             raise PlayerLaunchError("Player soak requires repeat_count 1")
         if (
@@ -372,7 +375,7 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
             str(executable),
             "--mcp-scenario-request",
             str(request_path),
-            "-batchmode",
+            *([] if options.graphical else ["-batchmode"]),
             "-logFile",
             "-",
         ],
