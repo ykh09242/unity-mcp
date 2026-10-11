@@ -13,6 +13,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private readonly Foldout section;
         private readonly Slot baseline;
         private readonly Slot candidate;
+        private readonly PlayScenarioSoakBaselineSelector baselineSelector;
         private readonly VisualElement summary;
         private readonly VisualElement rows;
         private readonly Label state;
@@ -151,8 +152,21 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             content.AddToClassList("scenario-soak-comparison-scroll");
             section.Add(content);
             content.Add(Note("Saved native snapshot diagnostics. Natural process exit is unverified here; this view makes no CI budget or leak verdict."));
-            baseline = new Slot(content, "Baseline", choose, Refresh, read ?? PlayScenarioSoakComparisonSnapshot.Read);
+            baseline = new Slot(
+                content,
+                "Baseline",
+                choose,
+                Refresh,
+                (file, cancellation) =>
+                {
+                    baselineSelector?.ValidateSelected(file, cancellation);
+                    var snapshot = (read ?? PlayScenarioSoakComparisonSnapshot.Read)(file, cancellation);
+                    baselineSelector?.ValidateSelected(file, cancellation);
+                    return snapshot;
+                }
+            );
             candidate = new Slot(content, "Candidate", choose, Refresh, read ?? PlayScenarioSoakComparisonSnapshot.Read);
+            baselineSelector = new PlayScenarioSoakBaselineSelector(content, path => baseline.Path.value = path);
             state = Note("Import baseline and candidate sources to compare saved measurements.");
             state.name = "soakComparisonState";
             content.Add(state);
@@ -342,6 +356,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             disposed = true;
             baseline.Dispose();
             candidate.Dispose();
+            baselineSelector.Dispose();
             chart.Dispose();
             comparison = null;
             metric.UnregisterValueChangedCallback(OnMetricChanged);
