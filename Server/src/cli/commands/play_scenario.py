@@ -5,6 +5,7 @@ from typing import TextIO
 from uuid import uuid4
 
 import click
+from cli.commands.play_scenario_analysis import register_analysis_commands
 from cli.utils.config import get_config
 from cli.utils.connection import handle_unity_errors, run_command
 from cli.utils.output import format_output
@@ -47,6 +48,9 @@ def _dispatch(**arguments) -> None:
 @click.group("play-scenario")
 def play_scenario():
     """Save and run repeatable Play Mode scenarios; status never waits or polls."""
+
+
+register_analysis_commands(play_scenario)
 
 
 @play_scenario.command("compare-queries")
