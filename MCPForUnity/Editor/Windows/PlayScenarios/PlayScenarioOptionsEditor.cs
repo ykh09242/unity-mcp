@@ -11,6 +11,11 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         internal static void Render(VisualElement container, PlayScenarioDefinition draft, Action<Action> edit)
         {
             container.Clear();
+            var recordedDraft = new Toggle("Recorded draft (review required)") { name = "scenarioRecordedDraft", value = draft.Draft == true };
+            recordedDraft.tooltip =
+                "Review the recorded steps, then clear this flag and save to admit execution. Recorded drafts cannot run or build a Player.";
+            recordedDraft.RegisterValueChangedCallback(evt => edit(() => draft.Draft = evt.newValue));
+            container.Add(recordedDraft);
             RenderTags(container, draft, edit);
             var options = new Foldout { text = "Run policies and diagnostics", name = "scenarioOptions" };
             Integer(

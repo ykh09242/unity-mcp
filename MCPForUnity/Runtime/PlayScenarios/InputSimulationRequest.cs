@@ -19,6 +19,41 @@ namespace MCPForUnity.Editor.Tools.Input
         public Vector2? Position { get; private set; }
         public JToken Target { get; private set; }
 
+        public static InputSimulationRequest ParseScenario(JObject parameters)
+        {
+            if (parameters == null)
+                throw new ArgumentException("input must be an object.");
+            var request = Parse(parameters);
+            string[] allowed;
+            switch (request.Action)
+            {
+                case "key":
+                    allowed = new[] { "action", "state", "key", "frames" };
+                    break;
+                case "mouse":
+                    allowed = new[] { "action", "state", "button", "position", "frames" };
+                    break;
+                case "touch":
+                    allowed = new[] { "action", "state", "touch_id", "position", "frames" };
+                    break;
+                case "release_all":
+                    allowed = new[] { "action" };
+                    break;
+                default:
+                    throw new ArgumentException("Scenario input action must be key, mouse, touch or release_all.");
+            }
+            foreach (JProperty property in parameters.Properties())
+            {
+                if (Array.IndexOf(allowed, property.Name) < 0 || property.Value.Type == JTokenType.Null)
+                    throw new ArgumentException("Unsupported or null scenario input field: " + property.Name);
+            }
+            if (request.Key != null && request.Key.Length > 128)
+                throw new ArgumentException("key must contain at most 128 characters.");
+            if (request.State != "press" && parameters.Property("frames") != null)
+                throw new ArgumentException("frames is permitted only on press input.");
+            return request;
+        }
+
         public static InputSimulationRequest Parse(JObject parameters)
         {
             if (parameters == null)

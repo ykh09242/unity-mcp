@@ -46,6 +46,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return Result();
             }
 
+            if (definition.Draft == true)
+                Add("definition", -1, "draft", "failed", "Recorded drafts require review and draft=false before execution.");
+
             Scene activeScene = SceneManager.GetActiveScene();
             string expectedScene = null;
             void CheckStage(string stage, List<PlayScenarioStep> steps)
@@ -78,6 +81,29 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                             string detail =
                                 "The permitted scene asset exists. Runtime " + (step.Action == "load_scene" ? "reload" : "readiness") + " is deferred.";
                             Add(stage, index, step.Name, "passed", detail);
+                            continue;
+                        }
+                        if (step.Action == "input")
+                        {
+                            var backend = MCPForUnity.Runtime.PlayScenarios.PlayScenarioPlayerInput.CreateInputBackend?.Invoke();
+                            try
+                            {
+                                if (step.Input["action"].Value<string>() != "release_all" && (backend == null || !backend.Available))
+                                    throw new InvalidOperationException(
+                                        backend?.UnavailableReason ?? "Scenario input requires the optional Input System backend."
+                                    );
+                                Add(
+                                    stage,
+                                    index,
+                                    step.Name,
+                                    "deferred",
+                                    "Bounded virtual device input and actual input update completion are deferred; no input was dispatched."
+                                );
+                            }
+                            finally
+                            {
+                                backend?.ReleaseAll();
+                            }
                             continue;
                         }
                         if (step.Action == "wait_state")

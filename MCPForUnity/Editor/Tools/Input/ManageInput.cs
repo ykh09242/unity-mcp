@@ -6,15 +6,6 @@ using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools.Input
 {
-    public interface IInputSimulationBackend
-    {
-        bool Available { get; }
-        string UnavailableReason { get; }
-        object Status { get; }
-        object Apply(InputSimulationRequest request);
-        void ReleaseAll();
-    }
-
     /// <summary>Optional assemblies register strongly typed adapters without adding package dependencies.</summary>
     [InitializeOnLoad]
     [McpForUnityTool(

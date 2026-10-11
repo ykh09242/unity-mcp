@@ -44,6 +44,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         public static PlayScenarioRun Create(PlayScenarioDefinition scenario, string jobId, int repeatCount, int timeoutSeconds, long now)
         {
+            if (scenario?.Draft == true)
+                throw new ArgumentException("Recorded scenario drafts must be reviewed and saved with draft=false before execution.");
             if (scenario == null)
                 throw new ArgumentNullException(nameof(scenario));
             if (repeatCount < 1 || repeatCount > 10 || timeoutSeconds < 1 || timeoutSeconds > 1800)
@@ -119,6 +121,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         public void Tick(long now, bool ready)
         {
+            (_host as MCPForUnity.Runtime.PlayScenarios.IPlayScenarioInputHost)?.MaintainInput();
             if (!Running)
                 return;
             if (State.Phase == "cleaning")
@@ -378,6 +381,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (!Running || State.PendingStatus != null)
                 return;
+            (_host as MCPForUnity.Runtime.PlayScenarios.IPlayScenarioInputHost)?.ReleaseInput();
             State.Failure = State.Failure ?? Attribute(failure ?? Failure("action_exception", error));
             _stepObserver.Abort("Step ended with " + status + ": " + error, now);
             _stepReady = false;
@@ -440,6 +444,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private void CleanupFailure(string error, long now, bool all, PlayScenarioFailure failure = null, bool timedOut = false)
         {
+            (_host as MCPForUnity.Runtime.PlayScenarios.IPlayScenarioInputHost)?.ReleaseInput();
             _stepObserver.Abort("Cleanup ended: " + error, now);
             _stepReady = false;
             failure = Attribute(failure ?? Failure("action_exception", error));
@@ -479,6 +484,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             _completingIteration = iteration;
             try
             {
+                (_host as MCPForUnity.Runtime.PlayScenarios.IPlayScenarioInputHost)?.ReleaseInput();
                 State.CleanupDeadlineUnixMs = null;
                 VerifyResources(now);
                 if (State.PendingStatus != null)

@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Input;
+using MCPForUnity.Runtime.PlayScenarios;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -11,8 +12,14 @@ using UnityEngine.SceneManagement;
 namespace MCPForUnity.Editor.Services.PlayScenarios
 {
     /// <summary>One-step Unity adapter. Scene objects are borrowed only during an evaluation.</summary>
-    public sealed class UnityPlayScenarioHost : IPlayScenarioHost, IPlayScenarioMetricsHost, IPlayScenarioQueryHost
+    public sealed class UnityPlayScenarioHost : IPlayScenarioInputHost, IPlayScenarioHost, IPlayScenarioMetricsHost, IPlayScenarioQueryHost
     {
+        private readonly PlayScenarioInputSession inputSession = new PlayScenarioInputSession();
+
+        public void MaintainInput() => inputSession.Maintain();
+
+        public void ReleaseInput() => inputSession.Release();
+
         private readonly PlayScenarioLogPolicy _logPolicy;
         private PlayScenarioQueryCounts _queryCounts;
 
@@ -65,6 +72,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 throw new ArgumentNullException(nameof(step));
             switch (step.Action)
             {
+                case "input":
+                    return inputSession.Evaluate(step, firstPoll);
                 case "load_scene":
                     return LoadScene(step.Scene, firstPoll);
                 case "wait_scene":
@@ -235,6 +244,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         public void Release()
         {
+            ReleaseInput();
             // Releasing a reference does not cancel Unity's scene load or destroy scene objects.
             _loadOperation = null;
             _loadPath = null;

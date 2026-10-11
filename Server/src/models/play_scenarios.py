@@ -4,7 +4,15 @@ import json
 from typing import Annotated, Literal, assert_never
 from unicodedata import category
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 ScenarioName = Annotated[str, Field(strict=True, pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
 JobId = Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{32}$")]
@@ -29,7 +37,7 @@ ScenarioAction = Literal[
     "suite_reports",
 ]
 StepAction = Literal[
-    "load_scene", "wait_scene", "click_ui", "wait_object", "reset_state", "wait_state"
+    "load_scene", "wait_scene", "click_ui", "wait_object", "reset_state", "wait_state", "input"
 ]
 TargetId = Annotated[str, Field(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
 
@@ -39,6 +47,8 @@ def normalize_native_definition(value: JsonValue) -> JsonValue:
     if not isinstance(value, dict):
         return value
     normalized = dict(value)
+    if normalized.get("draft") is None:
+        normalized.pop("draft", None)
     optional = {
         "scene",
         "target",
@@ -54,6 +64,8 @@ def normalize_native_definition(value: JsonValue) -> JsonValue:
         "state_equals",
         "performance",
         "screenshot",
+        "input",
+        "wait_frames",
     }
     for field in ("steps", "setup_steps", "cleanup_steps"):
         entries = normalized.get(field)
@@ -224,12 +236,66 @@ class PlayScenarioScreenshotOptions(BaseModel):
         return self
 
 
+class ScenarioInput(BaseModel):
+    """A bounded virtual-device command; press leases survive subsequent drag/release steps."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    action: Literal["key", "mouse", "touch", "release_all"]
+    state: Literal["press", "move", "release"] = "press"
+    key: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = None
+    button: Literal["left", "right", "middle"] = "left"
+    frames: Annotated[int, Field(strict=True, ge=1, le=600)] = 1
+    touch_id: Annotated[int, Field(strict=True, ge=1, le=10)] = 1
+    position: (
+        list[Annotated[float, Field(strict=True, ge=0, le=1000000, allow_inf_nan=False)]] | None
+    ) = None
+
+    @model_serializer(mode="plain")
+    def serialize_command(self) -> dict[str, JsonValue]:
+        """Preserve authored payload fields; defaults for other devices are not wire fields."""
+        return {field: getattr(self, field) for field in self.model_fields_set}
+
+    @model_validator(mode="after")
+    def check_command(self) -> "ScenarioInput":
+        """Reject unrelated fields and invalid transitions before persistence."""
+        match self.action:
+            case "key":
+                allowed = {"action", "state", "key", "frames"}
+                if self.key is None or not self.key.strip() or self.state == "move":
+                    raise ValueError("key requires a named key and state press or release")
+            case "mouse":
+                allowed = {"action", "state", "button", "position", "frames"}
+                if self.state == "move" and self.position is None:
+                    raise ValueError("mouse move requires position")
+            case "touch":
+                allowed = {"action", "state", "touch_id", "position", "frames"}
+                if self.state != "release" and self.position is None:
+                    raise ValueError("touch press/move requires position")
+            case "release_all":
+                allowed = {"action"}
+            case unreachable:
+                assert_never(unreachable)
+        if self.model_fields_set - allowed:
+            raise ValueError("Input command contains fields unrelated to its action")
+        if self.state != "press" and "frames" in self.model_fields_set:
+            raise ValueError("frames is permitted only on press input")
+        if self.model_fields_set & {"key", "position"} and any(
+            getattr(self, field) is None for field in self.model_fields_set & {"key", "position"}
+        ):
+            raise ValueError("Input fields must be omitted rather than null")
+        if self.position is not None and len(self.position) != 2:
+            raise ValueError("position must contain two screen coordinates")
+        return self
+
+
 class ScenarioStep(BaseModel):
     """One bounded active-scene condition or effect; targets are paths, never Unity IDs."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     action: StepAction
+    input: ScenarioInput | None = None
+    wait_frames: Annotated[int, Field(strict=True, ge=1, le=600)] | None = None
     scene: Annotated[str, Field(strict=True, min_length=1, max_length=4096)] | None = None
     target: Annotated[str, Field(strict=True, min_length=1, max_length=4096)] | None = None
     target_id: TargetId | None = None
@@ -267,6 +333,25 @@ class ScenarioStep(BaseModel):
     @model_validator(mode="after")
     def check_arguments(self) -> "ScenarioStep":
         """Reject unused selectors, invalid conditions and unsafe scene/object paths."""
+        if self.action == "input":
+            if self.model_fields_set - {
+                "name",
+                "action",
+                "timeout_seconds",
+                "input",
+                "wait_frames",
+                "performance",
+                "screenshot",
+            }:
+                raise ValueError("Input steps contain unrelated scenario fields")
+            if self.input is None:
+                raise ValueError("Input steps require input command")
+            if "wait_frames" in self.model_fields_set and self.wait_frames is None:
+                raise ValueError("wait_frames must be omitted rather than null")
+            if self.input.action == "release_all" and self.wait_frames is not None:
+                raise ValueError("release_all does not accept wait_frames")
+        elif self.model_fields_set & {"input", "wait_frames"}:
+            raise ValueError("input and wait_frames are permitted only on input steps")
         match self.action:
             case "reset_state":
                 if self.model_fields_set - {
@@ -300,7 +385,7 @@ class ScenarioStep(BaseModel):
                     raise ValueError(
                         "wait_state requires state_id and a non-null scalar state_equals"
                     )
-            case "load_scene" | "wait_scene" | "click_ui" | "wait_object":
+            case "load_scene" | "wait_scene" | "click_ui" | "wait_object" | "input":
                 if "reset_ids" in self.model_fields_set:
                     message = "reset_ids is only valid for reset_state"
                     raise ValueError(message)
@@ -345,7 +430,7 @@ class ScenarioStep(BaseModel):
                 if authored_fields & object_fields:
                     message = "Object conditions are only valid for wait_object"
                     raise ValueError(message)
-            case "load_scene" | "click_ui" | "reset_state":
+            case "load_scene" | "click_ui" | "reset_state" | "input":
                 if condition_fields:
                     message = "Effect steps do not accept wait conditions"
                     raise ValueError(message)
@@ -382,7 +467,7 @@ class ScenarioStep(BaseModel):
                     raise ValueError(message)
                 if self.target is not None:
                     _path_segments(self.target)
-            case "reset_state" | "wait_state":
+            case "reset_state" | "wait_state" | "input":
                 pass
             case unreachable:
                 assert_never(unreachable)
@@ -421,6 +506,7 @@ class PlayScenario(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     name: ScenarioName
+    draft: Annotated[bool, Field(strict=True)] | None = None
     tags: Annotated[list[ScenarioName], Field(max_length=16)] = Field(default_factory=list)
     resources: PlayScenarioResourceOptions = Field(default_factory=PlayScenarioResourceOptions)
     query_budget: PlayScenarioQueryBudget = Field(default_factory=PlayScenarioQueryBudget)
@@ -445,6 +531,8 @@ class PlayScenario(BaseModel):
     @model_validator(mode="after")
     def check_first_step(self) -> "PlayScenario":
         """Every iteration begins by loading a scene, within the definition byte bound."""
+        if "draft" in self.model_fields_set and self.draft is None:
+            raise ValueError("draft must be omitted rather than null")
         first = self.setup_steps[0] if self.setup_steps else self.steps[0]
         if first.action != "load_scene":
             message = "The first executed step must be load_scene"

@@ -3,7 +3,9 @@
   "rootNamespace": "",
   "references": [
     "MCPForUnity.Editor",
-    "Unity.InputSystem"
+    "Unity.InputSystem",
+    "MCPForUnity.Runtime",
+    "MCPForUnity.Input.InputSystem.Runtime"
   ],
   "includePlatforms": [
     "Editor"

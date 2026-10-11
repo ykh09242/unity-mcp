@@ -333,10 +333,25 @@ namespace MCPForUnity.Runtime.PlayScenarios
     {
         public static void Validate(PlayScenarioDefinition definition, bool uguiAvailable)
         {
+            if (definition.Draft == true)
+                throw Unsupported("Recorded drafts require review and draft=false before Player execution.");
             if (definition.Diagnostics.ScreenshotOnFailure)
                 throw Unsupported("diagnostics.screenshot_on_failure is unsupported by the Player host.");
             foreach (PlayScenarioStep step in PlayScenarioPlayerBundle.Steps(definition))
             {
+                if (step.Action == "input" && step.Input?["action"]?.Value<string>() != "release_all")
+                {
+                    var backend = PlayScenarioPlayerInput.CreateInputBackend?.Invoke();
+                    try
+                    {
+                        if (backend == null || !backend.Available)
+                            throw Unsupported(backend?.UnavailableReason ?? "input requires the optional runtime Input System backend.");
+                    }
+                    finally
+                    {
+                        backend?.ReleaseAll();
+                    }
+                }
                 if (step.Property != null)
                     throw Unsupported("Serialized property conditions are unsupported by the Player host; no reflected getters are invoked.");
                 if (step.Action == "click_ui" && !uguiAvailable)

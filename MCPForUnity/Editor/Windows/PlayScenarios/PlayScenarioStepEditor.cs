@@ -15,7 +15,16 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
     /// <summary>Builds step fields. Selection is copied to a string selector and never retained.</summary>
     internal static class PlayScenarioStepEditor
     {
-        private static readonly List<string> Actions = new List<string> { "load_scene", "click_ui", "wait_scene", "wait_object", "reset_state", "wait_state" };
+        private static readonly List<string> Actions = new List<string>
+        {
+            "load_scene",
+            "click_ui",
+            "wait_scene",
+            "wait_object",
+            "reset_state",
+            "wait_state",
+            "input",
+        };
 
         private sealed class StateValueDraft
         {
@@ -74,10 +83,21 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     {
                         step.Action = evt.newValue;
                         step.Scene = IsSceneAction(step.Action) ? "" : null;
-                        step.Target = IsSceneAction(step.Action) || step.Action == "reset_state" || step.Action == "wait_state" ? null : "";
+                        step.Target =
+                            IsSceneAction(step.Action) || step.Action == "reset_state" || step.Action == "wait_state" || step.Action == "input" ? null : "";
                         step.ResetIds = step.Action == "reset_state" ? new List<string>() : null;
                         step.StateId = step.Action == "wait_state" ? "" : null;
                         step.StateEquals = step.Action == "wait_state" ? new JValue("") : null;
+                        step.Input =
+                            step.Action == "input"
+                                ? new JObject
+                                {
+                                    ["action"] = "key",
+                                    ["key"] = "Space",
+                                    ["frames"] = 1,
+                                }
+                                : null;
+                        step.WaitFrames = null;
                         step.TargetId = null;
                         step.ClickMode = step.Action == "click_ui" ? "direct" : null;
                         step.Count = null;
@@ -89,7 +109,9 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     Render(stepList, steps, prefix, edit, setMessage, limit);
                 });
                 card.Add(action);
-                if (step.Action == "reset_state")
+                if (step.Action == "input")
+                    BuildInputFields(card, step, suffix, edit, setMessage);
+                else if (step.Action == "reset_state")
                     BuildResetFields(card, step, suffix, edit);
                 else if (step.Action == "wait_state")
                     BuildStateFields(card, step, suffix, edit);
@@ -109,6 +131,37 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 BuildObservationFields(card, step, suffix, edit);
                 stepList.Add(card);
             }
+        }
+
+        private static void BuildInputFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit, Action<string, bool> setMessage)
+        {
+            var payload = new TextField("Input command JSON")
+            {
+                name = "stepInput" + index,
+                multiline = true,
+                value = step.Input?.ToString(Formatting.Indented) ?? "{}",
+            };
+            payload.RegisterValueChangedCallback(evt =>
+            {
+                try
+                {
+                    JObject command = JObject.Parse(evt.newValue);
+                    MCPForUnity.Editor.Tools.Input.InputSimulationRequest.ParseScenario(command);
+                    edit(() => step.Input = command);
+                }
+                catch (Exception exception)
+                {
+                    edit(() => step.Input = null);
+                    setMessage("Invalid input command: " + exception.Message, true);
+                }
+            });
+            card.Add(payload);
+            OptionalInteger(card, "Wait for input updates", "stepWaitFrames" + index, step.WaitFrames, value => edit(() => step.WaitFrames = value));
+            card.Add(
+                new Label(
+                    "Commands: key, mouse, touch or release_all. Press frames bounds the hold (1-600); subsequent move/release commands share the scenario devices. Wait defaults to one actual game input update. All devices release on failure, cancellation and iteration completion."
+                )
+            );
         }
 
         private static void BuildObservationFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit)

@@ -12,6 +12,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("name")]
         public string Name;
 
+        [JsonProperty("draft", NullValueHandling = NullValueHandling.Ignore)]
+        public bool? Draft;
+
         [JsonProperty("poll_interval_ms")]
         public int PollIntervalMs = 250;
 
@@ -61,6 +64,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             Fields(
                 value,
                 "name",
+                "draft",
                 "poll_interval_ms",
                 "steps",
                 "setup_steps",
@@ -79,6 +83,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             var result = new PlayScenarioDefinition
             {
                 Name = name,
+                Draft = value.Property("draft") == null ? (bool?)null : Boolean(value, "draft", false),
                 PollIntervalMs = Integer(value, "poll_interval_ms", 100, 2000, 250),
                 Steps = ParseSteps(value["steps"], 1, 32),
                 SetupSteps = value.Property("setup_steps") == null ? new List<PlayScenarioStep>() : ParseSteps(value["setup_steps"], 0, 16),
@@ -124,7 +129,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     "state_id",
                     "state_equals",
                     "performance",
-                    "screenshot"
+                    "screenshot",
+                    "input",
+                    "wait_frames"
                 );
                 var parsed = new PlayScenarioStep
                 {
@@ -134,6 +141,21 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     Performance = step.Property("performance") == null ? null : PlayScenarioPerformanceOptions.Parse(Object(step, "performance")),
                     Screenshot = step.Property("screenshot") == null ? null : PlayScenarioScreenshotOptions.Parse(Object(step, "screenshot")),
                 };
+                if (parsed.Action == "input")
+                {
+                    Fields(step, "name", "action", "timeout_seconds", "input", "wait_frames", "performance", "screenshot");
+                    parsed.Input = Object(step, "input");
+                    var request = MCPForUnity.Editor.Tools.Input.InputSimulationRequest.ParseScenario(parsed.Input);
+                    if (step.Property("wait_frames") != null)
+                        parsed.WaitFrames = Integer(step, "wait_frames", 1, 600, 1);
+                    if (request.Action == "release_all" && parsed.WaitFrames.HasValue)
+                        throw new ArgumentException("release_all does not accept wait_frames.");
+                    parsed.Input = (JObject)parsed.Input.DeepClone();
+                    result.Add(parsed);
+                    continue;
+                }
+                if (step.Property("input") != null || step.Property("wait_frames") != null)
+                    throw new ArgumentException("input and wait_frames are permitted only on input steps.");
                 if (parsed.Action == "wait_state")
                 {
                     Fields(step, "name", "action", "timeout_seconds", "state_id", "state_equals", "stable_for_ms", "performance", "screenshot");
@@ -447,6 +469,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
     public sealed class PlayScenarioStep
     {
+        [JsonProperty("input", NullValueHandling = NullValueHandling.Ignore)]
+        public JObject Input;
+
+        [JsonProperty("wait_frames", NullValueHandling = NullValueHandling.Ignore)]
+        public int? WaitFrames;
+
         [JsonProperty("performance", NullValueHandling = NullValueHandling.Ignore)]
         public PlayScenarioPerformanceOptions Performance;
 

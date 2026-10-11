@@ -30,6 +30,8 @@
 #   EDITOR_COROUTINES_SOURCE extracted pinned UPM package (required; compiles its Editor assembly)
 #   TEST_PROJECT   isolated test project                 (optional; compiles fixture and EditMode tests)
 #   COMPILE_INPUT_UGUI  compile optional uGUI assemblies  (default 0; set 1 to enable)
+#   COMPILE_INPUT_SYSTEM compile optional Input System adapters (default 0)
+#   INPUT_SYSTEM_REFS directory with verified Unity.InputSystem DLLs (required when selected)
 #   PLATFORMS      editor platforms to compile           (default "win osx linux")
 #   OUT            scratch dir                           (default /tmp/mcp-compile-check)
 #
@@ -87,6 +89,24 @@ if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
   if [ -n "$TEST_PROJECT" ]; then
     entry=Assets/Tests/EditMode/Tools/Input/UGUI/MCPForUnity.Input.UGUI.Tests.asmdef
     [ -f "$TEST_PROJECT/$entry" ] || die "optional uGUI test assembly definition not found: $entry"
+  fi
+fi
+COMPILE_INPUT_SYSTEM=${COMPILE_INPUT_SYSTEM:-0}
+case "$COMPILE_INPUT_SYSTEM" in 0|1) ;; *) die "COMPILE_INPUT_SYSTEM must be 0 or 1" ;; esac
+INPUT_SYSTEM_REFS=${INPUT_SYSTEM_REFS:-}
+if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
+  [ -n "$INPUT_SYSTEM_REFS" ] || die "INPUT_SYSTEM_REFS must select verified Input System reference assemblies"
+  INPUT_SYSTEM_REFS=$(winpath "$INPUT_SYSTEM_REFS") || exit 2
+  [ -f "$INPUT_SYSTEM_REFS/Unity.InputSystem.dll" ] || die "Input System reference not found: Unity.InputSystem.dll"
+  for entry in \
+    MCPForUnity/Runtime/PlayScenarios/InputSystem/MCPForUnity.Input.InputSystem.Runtime.asmdef \
+    MCPForUnity/Editor/Tools/Input/InputSystem/MCPForUnity.Input.InputSystem.Editor.asmdef; do
+    [ -f "$REPO/$entry" ] || die "optional Input System assembly definition not found: $entry"
+  done
+  if [ -n "$TEST_PROJECT" ]; then
+    entry=Assets/Tests/EditMode/Tools/Input/InputSystem/MCPForUnity.Input.InputSystem.Tests.asmdef
+    [ -f "$TEST_PROJECT/$entry" ] || die "optional Input System test assembly definition not found: $entry"
+    [ -f "$INPUT_SYSTEM_REFS/Unity.InputSystem.TestFramework.dll" ] || die "Input System reference not found: Unity.InputSystem.TestFramework.dll"
   fi
 fi
 PLATFORMS=${PLATFORMS:-"win osx linux"}
@@ -250,7 +270,7 @@ compile() {
   # Initial Unity 7 uses CoreCLR with the .NET Standard 2.1 scripting API surface,
   # including Editor assemblies. The bundled .NET 10 SDK does not widen that surface.
   case "$ver_major.$ver_minor:$name" in
-    7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:TestAsmdef) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
+    7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:MCPForUnity.Input.InputSystem.Runtime|*:TestAsmdef) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
   esac
   [ -d "$srcdir" ] && [ -n "$(assembly_sources "$srcdir")" ] || {
     echo "::error::assembly sources not found: $srcdir" >&2; return 1;
@@ -278,10 +298,11 @@ compile() {
     echo "-out:\"$dir/$name.dll\""
     case "$name" in UnityEngine.TestRunner|UnityEditor.TestRunner) echo "-define:UNITY_TESTS_FRAMEWORK" ;; esac
     case "$name" in
-      MCPForUnity.Runtime|MCPForUnity.Editor|MCPForUnity.Input.UGUI.*|MCPForUnity.CustomTools.Roslyn*|TestAsmdef|MCPForUnityTests.EditMode)
+      MCPForUnity.Runtime|MCPForUnity.Editor|MCPForUnity.Input.UGUI.*|MCPForUnity.Input.InputSystem.*|MCPForUnity.CustomTools.Roslyn*|TestAsmdef|MCPForUnityTests.EditMode)
         echo "-warnaserror+" ;;
     esac
     case "$name" in MCPForUnity.Input.UGUI.*) echo "-define:MCP_INPUT_UGUI" ;; esac
+    case "$name" in MCPForUnity.Input.InputSystem.*) echo "-define:MCP_INPUT_SYSTEM"; echo "-define:ENABLE_INPUT_SYSTEM" ;; esac
     case "$name" in MCPForUnity.CustomTools.RoslynOn) echo "-define:USE_ROSLYN" ;; esac
     case "$name" in
       UnityEngine.UI|UnityEditor.UI)
@@ -384,6 +405,11 @@ for platform in $PLATFORMS; do
       "$REFS_PROFILE/Runtime.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
       || { failed=1; continue; }
   fi
+  if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
+    compile MCPForUnity.Input.InputSystem.Runtime "$REPO/MCPForUnity/Runtime/PlayScenarios/InputSystem" "$platform" \
+      "$REFS_PROFILE/Runtime.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" "$INPUT_SYSTEM_REFS/Unity.InputSystem.dll" \
+      || { failed=1; continue; }
+  fi
   compile Unity.EditorCoroutines.Editor "$EDITOR_COROUTINES_SOURCE/Editor" "$platform" \
     "$REFS_PROFILE/Editor.txt" || { failed=1; continue; }
   compile MCPForUnity.Editor "$REPO/MCPForUnity/Editor" "$platform" \
@@ -393,6 +419,12 @@ for platform in $PLATFORMS; do
     compile MCPForUnity.Input.UGUI.Editor "$REPO/MCPForUnity/Editor/Tools/Input/UGUI" "$platform" \
       "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
       "$OUT/$platform/MCPForUnity.Editor.dll" "$OUT/$platform/MCPForUnity.Input.UGUI.Runtime.dll" \
+      || { failed=1; continue; }
+  fi
+  if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
+    compile MCPForUnity.Input.InputSystem.Editor "$REPO/MCPForUnity/Editor/Tools/Input/InputSystem" "$platform" \
+      "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" "$OUT/$platform/MCPForUnity.Editor.dll" \
+      "$OUT/$platform/MCPForUnity.Input.InputSystem.Runtime.dll" "$INPUT_SYSTEM_REFS/Unity.InputSystem.dll" \
       || { failed=1; continue; }
   fi
   # Use Unity's coherent Mono/.NET Framework Roslyn group in both modes: the
@@ -419,6 +451,13 @@ for platform in $PLATFORMS; do
       compile MCPForUnity.Input.UGUI.Tests "$TEST_PROJECT/Assets/Tests/EditMode/Tools/Input/UGUI" "$platform" \
         "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
         "$OUT/$platform/MCPForUnity.Editor.dll" "$OUT/$platform/MCPForUnity.Input.UGUI.Editor.dll" \
+        || failed=1
+    fi
+    if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
+      compile MCPForUnity.Input.InputSystem.Tests "$TEST_PROJECT/Assets/Tests/EditMode/Tools/Input/InputSystem" "$platform" \
+        "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" "$OUT/$platform/MCPForUnity.Editor.dll" \
+        "$OUT/$platform/MCPForUnity.Input.InputSystem.Runtime.dll" "$OUT/$platform/MCPForUnity.Input.InputSystem.Editor.dll" \
+        "$INPUT_SYSTEM_REFS/Unity.InputSystem.dll" "$INPUT_SYSTEM_REFS/Unity.InputSystem.TestFramework.dll" \
         || failed=1
     fi
   fi

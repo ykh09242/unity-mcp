@@ -61,6 +61,7 @@ class CompileHarness:
         framework: Path | None = None,
         coroutines: Path | None = None,
         ugui: bool = False,
+        input_system: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         env = dict(
             os.environ,
@@ -73,6 +74,8 @@ class CompileHarness:
             EDITOR_COROUTINES_SOURCE=(coroutines or self.coroutines).as_posix(),
             PLATFORMS=platforms,
             COMPILE_INPUT_UGUI="1" if ugui else "0",
+            COMPILE_INPUT_SYSTEM="1" if input_system else "0",
+            INPUT_SYSTEM_REFS=self.extra.as_posix(),
             OUT=self.output.as_posix(),
             FAKE_COMPILER_CALLS=self.calls.as_posix(),
         )
@@ -1417,3 +1420,128 @@ def test_license_free_ci_enables_separate_ugui_compile_passes() -> None:
     assert arguments[selected - 1] == "-e"
     assert arguments[-1] == "/repo/tools/compile-check.sh"
     assert arguments.index("docker") < selected < arguments.index("$UNITY_IMAGE")
+
+
+INPUT_SYSTEM_ASSEMBLIES = (
+    "MCPForUnity.Input.InputSystem.Runtime",
+    "MCPForUnity.Input.InputSystem.Editor",
+    "MCPForUnity.Input.InputSystem.Tests",
+)
+
+
+@pytest.fixture
+def input_system_sources(
+    harness: CompileHarness, staged_tests: tuple[Path, Path]
+) -> tuple[Path, Path]:
+    project, framework = staged_tests
+    for root, relative, assembly in (
+        (harness.repo, "MCPForUnity/Runtime/PlayScenarios/InputSystem", INPUT_SYSTEM_ASSEMBLIES[0]),
+        (harness.repo, "MCPForUnity/Editor/Tools/Input/InputSystem", INPUT_SYSTEM_ASSEMBLIES[1]),
+        (project, "Assets/Tests/EditMode/Tools/Input/InputSystem", INPUT_SYSTEM_ASSEMBLIES[2]),
+    ):
+        directory = root / relative
+        directory.mkdir(parents=True)
+        (directory / "Fixture.cs").write_text("class OptionalInputFixture {}", encoding="utf-8")
+        original = (
+            ROOT / relative / f"{assembly}.asmdef"
+            if root == harness.repo
+            else ROOT / "TestProjects/UnityMCPTests" / relative / f"{assembly}.asmdef"
+        )
+        shutil.copy2(original, directory / f"{assembly}.asmdef")
+    for name in ("Unity.InputSystem.dll", "Unity.InputSystem.TestFramework.dll"):
+        (harness.extra / name).touch()
+    return project, framework
+
+
+@pytest.mark.parametrize("version", ["2021.3.45f2", "6000.0.69f1", "7000.0.0a7"])
+def test_selected_input_system_compiles_runtime_editor_and_tests_in_order(
+    harness: CompileHarness, input_system_sources: tuple[Path, Path], version: str
+) -> None:
+    project, framework = input_system_sources
+    result = harness.run(version, test_project=project, framework=framework, input_system=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
+    order = (
+        "MCPForUnity.Runtime",
+        INPUT_SYSTEM_ASSEMBLIES[0],
+        "MCPForUnity.Editor",
+        INPUT_SYSTEM_ASSEMBLIES[1],
+        "MCPForUnityTests.EditMode",
+        INPUT_SYSTEM_ASSEMBLIES[2],
+    )
+    assert [calls.index(name) for name in order] == sorted(calls.index(name) for name in order)
+    for name in INPUT_SYSTEM_ASSEMBLIES:
+        response = (harness.output / "linux" / f"{name}.rsp").read_text(encoding="utf-8")
+        assert "/InputSystem/Fixture.cs" in response
+        assert "-define:MCP_INPUT_SYSTEM" in response.splitlines()
+        assert "-define:ENABLE_INPUT_SYSTEM" in response.splitlines()
+        assert "-warnaserror+" in response.splitlines()
+        assert '/Unity.InputSystem.dll"' in response
+        assert '/MCPForUnity.Runtime.dll"' in response
+    for name in ("MCPForUnity.Runtime", "MCPForUnity.Editor", "MCPForUnityTests.EditMode"):
+        response = (harness.output / "linux" / f"{name}.rsp").read_text(encoding="utf-8")
+        assert "/InputSystem/Fixture.cs" not in response
+        assert "-define:MCP_INPUT_SYSTEM" not in response
+    tests = (harness.output / "linux" / f"{INPUT_SYSTEM_ASSEMBLIES[2]}.rsp").read_text(
+        encoding="utf-8"
+    )
+    assert '/Unity.InputSystem.TestFramework.dll"' in tests
+    assert '/MCPForUnity.Input.InputSystem.Runtime.dll"' in tests
+
+
+def test_input_system_absent_path_excludes_optional_sources(
+    harness: CompileHarness, input_system_sources: tuple[Path, Path]
+) -> None:
+    project, framework = input_system_sources
+    result = harness.run("6000.0.69f1", test_project=project, framework=framework)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = {Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()}
+    assert not calls.intersection(INPUT_SYSTEM_ASSEMBLIES)
+    for name in ("MCPForUnity.Runtime", "MCPForUnity.Editor", "MCPForUnityTests.EditMode"):
+        response = (harness.output / "linux" / f"{name}.rsp").read_text(encoding="utf-8")
+        assert "/InputSystem/Fixture.cs" not in response
+        assert '/Unity.InputSystem.dll"' not in response
+
+
+@pytest.mark.parametrize(
+    "missing",
+    INPUT_SYSTEM_ASSEMBLIES + ("Unity.InputSystem.dll", "Unity.InputSystem.TestFramework.dll"),
+)
+def test_selected_input_system_rejects_missing_assembly_metadata_and_references(
+    harness: CompileHarness, input_system_sources: tuple[Path, Path], missing: str
+) -> None:
+    project, framework = input_system_sources
+    if missing.endswith(".dll"):
+        (harness.extra / missing).unlink()
+    else:
+        next(
+            path for root in (harness.repo, project) for path in root.rglob(f"{missing}.asmdef")
+        ).unlink()
+    result = harness.run(
+        "6000.0.69f1", test_project=project, framework=framework, input_system=True
+    )
+    assert result.returncode == 2
+    assert missing in result.stderr
+    assert not harness.calls.exists()
+
+
+def test_input_system_runtime_compile_failure_blocks_adapter_consumers(
+    harness: CompileHarness, input_system_sources: tuple[Path, Path]
+) -> None:
+    project, framework = input_system_sources
+    compiler = harness.data / "NetCoreRuntime/dotnet"
+    compiler.write_text(
+        compiler.read_text(encoding="utf-8").replace(
+            'touch "$output"',
+            f'case "$output" in *{INPUT_SYSTEM_ASSEMBLIES[0]}.dll) ;; *) touch "$output" ;; esac',
+        ),
+        encoding="utf-8",
+    )
+    result = harness.run(
+        "6000.0.69f1", test_project=project, framework=framework, input_system=True
+    )
+    assert result.returncode == 1
+    calls = {Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()}
+    assert INPUT_SYSTEM_ASSEMBLIES[0] in calls
+    assert INPUT_SYSTEM_ASSEMBLIES[1] not in calls
+    assert INPUT_SYSTEM_ASSEMBLIES[2] not in calls

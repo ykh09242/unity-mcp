@@ -90,6 +90,16 @@
       ]
     },
     {
+      "id": "persisted-input",
+      "filter": "MCPForUnityTests.EditMode.Tools.Input.PersistedInputSimulationTests",
+      "requiredTests": [
+        "MCPForUnityTests.EditMode.Tools.Input.PersistedInputSimulationTests.ExpiredLeaseRemovesOwnedDeviceWithoutAnotherInputUpdate",
+        "MCPForUnityTests.EditMode.Tools.Input.PersistedInputSimulationTests.SavedMousePressMoveReleaseFormsAContinuousDrag",
+        "MCPForUnityTests.EditMode.Tools.Input.PersistedInputSimulationTests.ScenarioCleanupDoesNotRemoveDirectInputDevices",
+        "MCPForUnityTests.EditMode.Tools.Input.PersistedInputSimulationTests.SavedTouchMoveRetainsContactUntilExplicitRelease"
+      ]
+    },
+    {
       "id": "input-pause",
       "filter": "MCPForUnityTests.EditMode.Tools.Input.InputPauseCleanupTests",
       "requiredTests": [

@@ -9,8 +9,19 @@ using UnityEngine.SceneManagement;
 namespace MCPForUnity.Runtime.PlayScenarios
 {
     /// <summary>A scene-only Player adapter. Unity objects are borrowed during each evaluation.</summary>
-    public sealed class PlayScenarioPlayerHost : IPlayScenarioHost, IPlayScenarioQueryHost, IPlayScenarioResourceHost, IPlayScenarioMetricsHost
+    public sealed class PlayScenarioPlayerHost
+        : IPlayScenarioInputHost,
+            IPlayScenarioHost,
+            IPlayScenarioQueryHost,
+            IPlayScenarioResourceHost,
+            IPlayScenarioMetricsHost
     {
+        private readonly PlayScenarioInputSession inputSession = new PlayScenarioInputSession();
+
+        public void MaintainInput() => inputSession.Maintain();
+
+        public void ReleaseInput() => inputSession.Release();
+
         private readonly HashSet<string> scenes;
         private AsyncOperation load;
         private PlayScenarioQueryCounts counts;
@@ -96,6 +107,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         public PlayScenarioObservation Evaluate(PlayScenarioStep step, bool firstPoll)
         {
+            if (step.Action == "input")
+                return inputSession.Evaluate(step, firstPoll);
             if (step.Action == "load_scene" || step.Action == "wait_scene")
             {
                 if (!scenes.Contains(step.Scene))
@@ -228,6 +241,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         public void Release()
         {
+            ReleaseInput();
             load = null;
             preparedTarget = null;
             preparedTargetId = null;
