@@ -35,7 +35,17 @@
     "iteration-cleanup-stop": "iteration-session",
     "iteration-cleanup-continue": "iteration-session",
     "iteration-timeout": "iteration-run",
-    "iteration-cancel": "iteration-run"
+    "iteration-cancel": "iteration-run",
+    "soak-100": "soak-succeeded",
+    "soak-late-stop": "soak-failed",
+    "soak-late-continue": "soak-failed",
+    "soak-cancel": "soak-cancelled",
+    "soak-timeout": "soak-timed-out",
+    "soak-deadline": "soak-timed-out",
+    "soak-initial-io": "soak-incomplete",
+    "soak-mid-io": "soak-incomplete",
+    "soak-final-io": "soak-incomplete",
+    "soak-resources": "soak-resources"
   },
   "failure_codes": {
     "state-wrong": "condition_unmet",

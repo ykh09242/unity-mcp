@@ -160,7 +160,7 @@ def inventory(root: Path) -> list[dict]:
     )
 
 
-def verify_bundle(root: Path, revision: str) -> dict:
+def verify_bundle(root: Path, revision: str | None) -> dict:
     """Verify v2 exact canonical inventory plus every real file, not only the executable."""
     bundle = read_json(root / "scenario-bundle.json")
     if bundle.get("schema_version") != 2 or bundle.get("build_source_revision") != revision:

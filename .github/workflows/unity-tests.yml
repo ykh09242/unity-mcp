@@ -62,6 +62,7 @@ on:
       - Server/uv.lock
       - Server/src/cli/commands/play_scenario.py
       - Server/src/cli/utils/play_scenario_player*.py
+      - Server/src/cli/utils/play_scenario_soak*.py
       - Server/src/cli/utils/play_scenario_reports.py
       - Server/src/models/play_scenarios.py
       - tools/unity-native-e2e-tests.json
@@ -99,6 +100,7 @@ on:
       - Server/uv.lock
       - Server/src/cli/commands/play_scenario.py
       - Server/src/cli/utils/play_scenario_player*.py
+      - Server/src/cli/utils/play_scenario_soak*.py
       - Server/src/cli/utils/play_scenario_reports.py
       - Server/src/models/play_scenarios.py
       - tools/unity-native-e2e-tests.json

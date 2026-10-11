@@ -13,6 +13,7 @@ from check_play_scenario_player_evidence import check, check_case
 from player_e2e_artifacts import digest, inventory, read_json, verify_bundle, write_json
 from player_e2e_process import Invocation, execute
 from player_e2e_iterations import iteration_command
+from player_e2e_soak import CASES as SOAK_CASES, soak_command
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Server/src"))
@@ -61,6 +62,8 @@ def build_players(args: argparse.Namespace) -> tuple[Path, Path]:
             "--mcp-scenario-source-revision",
             args.source_revision,
         ]
+        if kind == "scenario":
+            command.append("--mcp-fixture-metrics")
         process = execute(Invocation(command, args.output / "build-evidence" / kind, timeout=1800))
         if process["actual_exit_code"] or process["forced_termination"]:
             raise ValueError("Actual Unity fixture build failed: " + kind)
@@ -214,6 +217,14 @@ def run_case(args: argparse.Namespace, case: str, bundle: dict, builds: tuple[Pa
         if case != "cli-session":
             environment["MCP_SCENARIO_FIXTURE_MODE"] = "error"
     cancel_iteration = None
+    observe_cli = False
+    if case in SOAK_CASES:
+        command, fixture_mode = soak_command(case, builds[0], directory, args.source_revision)
+        environment["MCP_SCENARIO_FIXTURE_MODE"] = fixture_mode
+        (directory / "request.json").unlink()
+        timeout = SOAK_CASES[case][3] + 45
+        cancel_iteration = 13 if case == "soak-cancel" else None
+        observe_cli = True
     if case.startswith("iteration-"):
         command, fixture_mode, cancel_iteration = iteration_command(
             case, builds[0], directory, args.source_revision
@@ -230,6 +241,7 @@ def run_case(args: argparse.Namespace, case: str, bundle: dict, builds: tuple[Pa
             cancel_iteration=cancel_iteration,
             deadline_after_progress=3 if case == "hang" else None,
             environment=environment,
+            observe_cli=observe_cli,
         )
     )
     receipt = {

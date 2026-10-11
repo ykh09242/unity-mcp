@@ -150,6 +150,7 @@ namespace MCPForUnityTests.PlayScenarios.Player
                         ["poll_interval_ms"] = 100,
                         ["completion_stable_ms"] = 100,
                         ["diagnostics"] = new JObject { ["record_timeline"] = true },
+                        ["metrics"] = new JObject { ["enabled"] = Array.IndexOf(args, "--mcp-fixture-metrics") >= 0 },
                         ["query_budget"] = new JObject
                         {
                             ["enabled"] = true,

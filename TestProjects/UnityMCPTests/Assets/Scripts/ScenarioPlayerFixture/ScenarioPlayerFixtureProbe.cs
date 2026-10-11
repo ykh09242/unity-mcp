@@ -19,6 +19,8 @@ namespace MCPForUnityTests.PlayScenarios.Player
             reads++;
             if (ScenarioPlayerFixture.Iteration == 2 && ScenarioPlayerFixture.Mode == "iteration-main-failure")
                 throw new InvalidOperationException("Player fixture iteration 2 main failure.");
+            if (ScenarioPlayerFixture.Iteration == 13 && ScenarioPlayerFixture.Mode == "soak-late-failure")
+                throw new InvalidOperationException("Player fixture iteration 13 main failure.");
             value = PlayScenarioStateValue.FromBoolean(ready);
             return true;
         }
@@ -52,6 +54,8 @@ namespace MCPForUnityTests.PlayScenarios.Player
             if (mode == "state-wrong" || mode == "timeout" || mode == "cancel")
                 yield break;
             if (ScenarioPlayerFixture.Iteration == 2 && (mode == "iteration-timeout" || mode == "iteration-cancel"))
+                yield break;
+            if (ScenarioPlayerFixture.Iteration == 13 && (mode == "soak-cancel" || mode == "soak-timeout"))
                 yield break;
             ready = true;
             Debug.Log("PLAYER_FIXTURE_PROVIDER_READY:reads=" + reads);

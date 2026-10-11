@@ -1,5 +1,8 @@
 using System;
+using System.IO;
+using MCPForUnity.Runtime;
 using MCPForUnity.Runtime.PlayScenarios;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 namespace MCPForUnityTests.PlayScenarios.Player
@@ -14,6 +17,12 @@ namespace MCPForUnityTests.PlayScenarios.Player
         private IDisposable cleanupRegistration;
         private StageProbe setupProbe;
         private StageProbe cleanupProbe;
+        private FixtureResource resource;
+        private IDisposable subscription;
+        private IDisposable handle;
+        private MemoryStream stream;
+        private int resourceIteration;
+        private int faultIteration;
         public bool IsResetComplete => true;
 
         private void Awake()
@@ -29,8 +38,78 @@ namespace MCPForUnityTests.PlayScenarios.Player
         {
             ClicksInIteration = 0;
             ResetCount++;
+            if (ScenarioPlayerFixture.Mode == "soak-resources")
+            {
+                resource = ScriptableObject.CreateInstance<FixtureResource>();
+                resource.name = "Player fixture runtime clone";
+                PlayScenarioResourceTracker.RegisterScriptableObject(resource, "player-fixture");
+                Application.lowMemory += OnLowMemory;
+                subscription = PlayScenarioResourceTracker.RegisterSubscription("player-fixture");
+                stream = new MemoryStream();
+                handle = PlayScenarioResourceTracker.RegisterHandle("player-fixture");
+                WriteResources("retained");
+            }
             Debug.Log("Player fixture reset:" + ResetCount);
         }
+
+        private static string RunDirectory()
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            int index = Array.IndexOf(args, "--mcp-scenario-request");
+            if (index < 0 || index + 1 >= args.Length)
+                throw new InvalidOperationException("The Player fixture requires its owned native request.");
+            return Path.GetDirectoryName(PlayScenarioPlayerFiles.CheckedAbsolute(args[index + 1]));
+        }
+
+        private void WriteResources(string stage)
+        {
+            PlayScenarioRegisteredResources captured = PlayScenarioResourceTracker.Capture();
+            int pid;
+            using (var process = System.Diagnostics.Process.GetCurrentProcess())
+                pid = process.Id;
+            var row = new JObject
+            {
+                ["iteration"] = ResetCount,
+                ["stage"] = stage,
+                ["process_id"] = pid,
+                ["scriptable_objects"] = captured.ScriptableObjectCount,
+                ["subscriptions"] = captured.SubscriptionCount,
+                ["handles"] = captured.HandleCount,
+                ["error"] = captured.Error,
+                ["handle_closed"] = stream == null || !stream.CanWrite,
+            };
+            File.AppendAllText(
+                Path.Combine(RunDirectory(), "fixture-resources.jsonl"),
+                row.ToString(Newtonsoft.Json.Formatting.None) + "\n",
+                new System.Text.UTF8Encoding(false)
+            );
+        }
+
+        private static void OnLowMemory() { }
+
+        private bool CleanupResources()
+        {
+            if (resourceIteration == ResetCount)
+                return true;
+            if (subscription != null)
+            {
+                Application.lowMemory -= OnLowMemory;
+                subscription.Dispose();
+                subscription = null;
+                stream.Dispose();
+                handle.Dispose();
+                handle = null;
+                Destroy(resource);
+                return false;
+            }
+            if (resource != null)
+                return false;
+            WriteResources("destroyed-and-disposed");
+            resourceIteration = ResetCount;
+            return true;
+        }
+
+        private sealed class FixtureResource : ScriptableObject { }
 
         private void OnDestroy()
         {
@@ -54,7 +133,21 @@ namespace MCPForUnityTests.PlayScenarios.Player
             {
                 if (owner.ResetCount == 2 && ScenarioPlayerFixture.Mode == "iteration-" + stage + "-failure")
                     throw new InvalidOperationException("Player fixture iteration 2 " + stage + " failure.");
-                value = PlayScenarioStateValue.FromBoolean(true);
+                if (stage == "cleanup" && owner.faultIteration != owner.ResetCount)
+                {
+                    string mode = ScenarioPlayerFixture.Mode;
+                    string blocker =
+                        mode == "soak-mid-io" && owner.ResetCount == 13 ? "iteration-0013.json.tmp"
+                        : mode == "soak-final-io" && owner.ResetCount == 3 ? "run.json.tmp"
+                        : null;
+                    if (blocker != null)
+                    {
+                        Directory.CreateDirectory(Path.Combine(RunDirectory(), blocker));
+                        Debug.Log("PLAYER_FIXTURE_PERSISTENCE_BLOCKED:" + blocker);
+                    }
+                    owner.faultIteration = owner.ResetCount;
+                }
+                value = PlayScenarioStateValue.FromBoolean(stage != "cleanup" || ScenarioPlayerFixture.Mode != "soak-resources" || owner.CleanupResources());
                 return true;
             }
         }

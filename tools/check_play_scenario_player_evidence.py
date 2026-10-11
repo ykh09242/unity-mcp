@@ -8,6 +8,7 @@ import re
 from player_e2e_artifacts import contained, digest, inventory, read_json, verify_bundle
 from player_e2e_cli_evidence import check_cli
 from player_e2e_iterations import check_iteration_case
+from player_e2e_soak import check_soak_case
 from player_e2e_reports import (
     require,
     check_report,
@@ -44,6 +45,9 @@ def check_case(root: Path, case: str, bundle: dict, receipt: dict) -> None:
     require(hashes == observed_hashes, "Receipt does not cover every underlying artifact")
     for relative, expected_hash in hashes.items():
         require(digest(contained(directory, relative)) == expected_hash, "Artifact hash mismatch")
+    if case.startswith("soak-"):
+        check_soak_case(directory, bundle, process, case)
+        return
     if case.startswith("iteration-"):
         check_iteration_case(directory, bundle, process, case)
         return

@@ -25,6 +25,7 @@ class Invocation:
     cancel_iteration: int | None = None
     deadline_after_progress: float | None = None
     environment: dict[str, str] | None = None
+    observe_cli: bool = False
 
 
 def stop_owned_tree(process: subprocess.Popen) -> None:
@@ -98,7 +99,7 @@ def execute(invocation: Invocation) -> dict:
         while process.poll() is None:
             progress_path = directory / "progress.json"
             native_pid = process.pid
-            if invocation.cancel_iteration is not None:
+            if invocation.cancel_iteration is not None or invocation.observe_cli:
                 candidates = list(directory.glob("cli-output/*/progress.json"))
                 if len(candidates) > 1:
                     raise ValueError("Cancellation requires one owned CLI child")
@@ -115,8 +116,11 @@ def execute(invocation: Invocation) -> dict:
                     )
                     if not isinstance(progress, dict):
                         raise ValueError("Progress snapshot must be an object")
-                    if not observations or progress != observations[-1]:
-                        if len(observations) >= 256:
+                    distinct = not observations or progress != observations[-1]
+                    if invocation.observe_cli and observations:
+                        distinct = progress.get("iteration") != observations[-1].get("iteration")
+                    if distinct:
+                        if len(observations) >= (1024 if invocation.observe_cli else 256):
                             raise ValueError("Progress snapshot count exceeds bound")
                         observations.append(progress)
                     matching_live = (
