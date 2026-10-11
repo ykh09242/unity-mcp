@@ -202,7 +202,7 @@ def test_invalid_bundle_is_rejected_before_launch(bundle, child, change):
     elif change == "unknown":
         manifest["unexpected"] = True
     else:
-        manifest["definition"]["resources"]["enabled"] = True
+        manifest["definition"]["diagnostics"]["screenshot_on_failure"] = True
         manifest["definition_json"] = json.dumps(
             manifest["definition"], sort_keys=True, separators=(",", ":")
         )
@@ -299,12 +299,10 @@ def test_player_junit_records_client_deadline_error_without_rewriting_native_jso
     assert (outcome.directory / "run.json").read_bytes() == original
 
 
-@pytest.mark.parametrize("capability", ["metrics", "screenshot", "property"])
+@pytest.mark.parametrize("capability", ["screenshot", "property"])
 def test_each_unsupported_capability_is_rejected_before_launch(bundle, child, capability):
     build, output, manifest = bundle
-    if capability == "metrics":
-        manifest["definition"]["metrics"]["enabled"] = True
-    elif capability == "screenshot":
+    if capability == "screenshot":
         manifest["definition"]["diagnostics"]["screenshot_on_failure"] = True
     else:
         manifest["definition"]["steps"].append(
@@ -373,6 +371,33 @@ def test_report_resource_release_proof_rejects_bool_coercion(bundle):
                 "finished_unix_ms": 2,
             }
         )
+
+
+def test_process_receipt_write_failure_still_joins_owned_output(bundle, child, monkeypatch):
+    # Given: a real owned child and a failed process evidence write.
+    build, output, _manifest = bundle
+    original_write = Path.write_bytes
+    original_thread = player.Thread
+    joined = []
+
+    class TrackedThread(original_thread):
+        def join(self, timeout=None):
+            super().join(timeout)
+            joined.append(not self.is_alive())
+
+    def fail_receipt(path, data):
+        if path.name == "process.json":
+            raise OSError("fixture process receipt failure")
+        return original_write(path, data)
+
+    monkeypatch.setattr(player, "Thread", TrackedThread)
+    monkeypatch.setattr(Path, "write_bytes", fail_receipt)
+    # When: persistence fails after the child exits.
+    with pytest.raises(OSError, match="process receipt failure"):
+        run_player(PlayerRunOptions(build, output))
+    # Then: the output owner was joined and the child is gone.
+    assert joined == [True]
+    assert child[1][0].poll() is not None
 
 
 @pytest.mark.parametrize("status", ["succeeded", "failed", "timed_out"])

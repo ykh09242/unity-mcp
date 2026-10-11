@@ -117,6 +117,12 @@ class PlayerProgress(BaseModel):
         return PlayScenarioCommand.check_revision(value)
 
 
+class SoakPlayerProgress(PlayerProgress):
+    """Only an explicit soak request admits a global iteration beyond native repetition ten."""
+
+    iteration: Annotated[int, Field(strict=True, ge=0, le=1000)]
+
+
 @dataclass(frozen=True, slots=True)
 class ProgressIdentity:
     """The launcher-owned identity to which every progress receipt must belong."""
@@ -132,9 +138,12 @@ class ProgressIdentity:
 class ProgressObserver:
     """Mutable bounded observer retains one scalar receipt and one first integrity error."""
 
-    def __init__(self, identity: ProgressIdentity, stale_seconds: float = 30) -> None:
+    def __init__(
+        self, identity: ProgressIdentity, stale_seconds: float = 30, *, max_iteration: int = 10
+    ) -> None:
         self.identity = identity
         self.stale_seconds = stale_seconds
+        self.max_iteration = max_iteration
         self.last: PlayerProgress | None = None
         self.first_error: str | None = None
         self.last_advance = time.monotonic()
@@ -149,7 +158,10 @@ class ProgressObserver:
             if path.is_symlink():
                 raise ValueError("progress is linked")
             encoded = read_progress_bytes(path)
-            receipt = PlayerProgress.model_validate_json(encoded)
+            parser = SoakPlayerProgress if self.max_iteration > 10 else PlayerProgress
+            receipt = parser.model_validate_json(encoded)
+            if receipt.iteration > self.max_iteration:
+                raise ValueError("progress iteration exceeds the owned request")
         except OSError as exc:
             if isinstance(exc, FileNotFoundError) or getattr(exc, "winerror", None) in (32, 33):
                 self.unavailable_observations = min(2**31 - 1, self.unavailable_observations + 1)
@@ -175,6 +187,9 @@ class ProgressObserver:
             receipt.sequence < self.last.sequence
             or receipt.main_loop_sequence < self.last.main_loop_sequence
             or receipt.elapsed_ms < self.last.elapsed_ms
+            or receipt.heartbeat_unix_ms < self.last.heartbeat_unix_ms
+            or receipt.iteration < self.last.iteration
+            or (receipt.sequence == self.last.sequence and receipt != self.last)
         ):
             self.first_error = self.first_error or "player_progress_sequence_regressed"
             return

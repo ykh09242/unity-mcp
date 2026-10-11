@@ -39,6 +39,7 @@ from cli.utils.play_scenario_player_payload import (
 )
 from cli.utils.play_scenario_player_progress import ProgressIdentity, ProgressObserver
 from cli.utils.play_scenario_iterations import validate_iteration_results
+from cli.utils.play_scenario_soak import SoakIdentity, SoakJournal, SoakRequest
 
 MANIFEST_LIMIT: Final = PAYLOAD_MANIFEST_LIMIT
 REPORT_LIMIT: Final = 2097152
@@ -140,11 +141,8 @@ class PlayerBundle(BaseModel):
         required = {step.scene for step in steps if step.scene is not None}
         if set(self.scene_paths) != required:
             raise PlayerLaunchError("Player bundle scenes do not match the frozen definition")
-        if (
-            self.definition.resources.enabled
-            or self.definition.metrics.enabled
-            or self.definition.diagnostics.screenshot_on_failure
-            or any(step.property is not None for step in steps)
+        if self.definition.diagnostics.screenshot_on_failure or any(
+            step.property is not None for step in steps
         ):
             raise PlayerLaunchError("Player bundle requires unsupported runtime capabilities")
         return self
@@ -206,8 +204,11 @@ class PlayerRunOptions:
     expected_build_id: str | None = None
     require_verified_payload: bool = False
     player_job_id: str | None = None
+    soak: SoakRequest | None = None
 
     def __post_init__(self) -> None:
+        if self.soak is not None and self.repeat_count != 1:
+            raise PlayerLaunchError("Player soak requires repeat_count 1")
         if (
             not math.isfinite(self.cleanup_wait_seconds)
             or not 0.05 <= self.cleanup_wait_seconds <= 600
@@ -233,6 +234,7 @@ class PlayerOutcome:
     exit_code: int
     client_error: str | None = None
     diagnostics: dict[str, JsonValue] = field(default_factory=dict)
+    soak_journal: SoakJournal | None = None
 
 
 def _read_json(path: Path, limit: int) -> dict[str, JsonValue]:
@@ -299,6 +301,8 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
         raise PlayerLaunchError("Player manifest leaves the selected build directory")
     bundle = PlayerBundle.model_validate(_read_json(manifest, MANIFEST_LIMIT))
     payload = bundle.payload
+    if options.soak is not None and payload is None:
+        raise PlayerLaunchError("Player soak requires a verified v2 Player payload")
     if options.require_verified_payload and payload is None:
         raise PlayerLaunchError("This command requires a verified v2 Player payload")
     if options.expected_build_revision is not None:
@@ -357,6 +361,8 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
         )
     if command.source_revision is not None:
         request["source_revision"] = command.source_revision
+    if options.soak is not None:
+        request["soak"] = options.soak.model_dump(mode="json")
     request_path.write_text(json.dumps(request, ensure_ascii=True) + "\n", encoding="utf-8")
     (directory / "definition.json").write_text(bundle.definition_json + "\n", encoding="utf-8")
     check_deadline(options.deadline_monotonic)
@@ -386,12 +392,21 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                 bundle.payload_hash,
                 bundle.build_source_revision,
                 process.pid,
-            )
+            ),
+            max_iteration=options.soak.iterations if options.soak is not None else 10,
         )
         if payload is not None
         else None
     )
-    deadline = time.monotonic() + options.timeout_seconds
+    runtime = (
+        options.soak.max_runtime_seconds if options.soak is not None else options.timeout_seconds
+    )
+    deadline = time.monotonic() + runtime
+    if options.soak is not None:
+        # Unity startup precedes the native journal clock. Once progress establishes
+        # that clock, tighten this bounded startup allowance to native runtime + cleanup.
+        deadline += options.timeout_seconds + options.cleanup_wait_seconds
+    native_clock_observed = False
     if options.deadline_monotonic is not None:
         deadline = min(deadline, options.deadline_monotonic)
     interrupted = False
@@ -404,6 +419,19 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
             try:
                 if observer is not None:
                     observer.observe(directory / "progress.json")
+                    if (
+                        options.soak is not None
+                        and not native_clock_observed
+                        and not cancellation_sent
+                        and observer.last is not None
+                    ):
+                        deadline = min(
+                            deadline,
+                            time.monotonic()
+                            + max(0, runtime - observer.last.elapsed_ms / 1000)
+                            + options.cleanup_wait_seconds,
+                        )
+                        native_clock_observed = True
                 expired = time.monotonic() >= deadline or (
                     log_capture.error is not None and not cancellation_sent
                 )
@@ -428,30 +456,34 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                 deadline = time.monotonic() + options.cleanup_wait_seconds
         return_code = process.wait(timeout=5)
     finally:
-        forced_termination |= process.poll() is None
-        _stop_owned(process)
-        if observer is not None:
-            observer.observe(directory / "progress.json")
-        process_evidence = {
-            "schema_version": 1,
-            "job_id": command.job_id,
-            "process_id": process.pid,
-            "actual_exit_code": process.returncode,
-            "process_ended": process.poll() is not None,
-            "forced_termination": forced_termination,
-            "started_unix_ms": process_started_unix_ms,
-            "finished_unix_ms": int(time.time() * 1000),
-            "request_sha256": sha256(request_path.read_bytes()).hexdigest(),
-            "progress_observations": list(observer.observations) if observer is not None else [],
-        }
-        encoded_evidence = json.dumps(
-            process_evidence, ensure_ascii=True, separators=(",", ":")
-        ).encode("utf-8")
-        if len(encoded_evidence) > 65536:
-            raise PlayerLaunchError("Owned process evidence exceeds its byte bound", directory)
-        (directory / "process.json").write_bytes(encoded_evidence + b"\n")
-        if capture.ident is not None:
-            capture.join(timeout=5)
+        try:
+            forced_termination |= process.poll() is None
+            _stop_owned(process)
+            if observer is not None:
+                observer.observe(directory / "progress.json")
+            process_evidence = {
+                "schema_version": 1,
+                "job_id": command.job_id,
+                "process_id": process.pid,
+                "actual_exit_code": process.returncode,
+                "process_ended": process.poll() is not None,
+                "forced_termination": forced_termination,
+                "started_unix_ms": process_started_unix_ms,
+                "finished_unix_ms": int(time.time() * 1000),
+                "request_sha256": sha256(request_path.read_bytes()).hexdigest(),
+                "progress_observations": list(observer.observations)
+                if observer is not None
+                else [],
+            }
+            encoded_evidence = json.dumps(
+                process_evidence, ensure_ascii=True, separators=(",", ":")
+            ).encode("utf-8")
+            if len(encoded_evidence) > 65536:
+                raise PlayerLaunchError("Owned process evidence exceeds its byte bound", directory)
+            (directory / "process.json").write_bytes(encoded_evidence + b"\n")
+        finally:
+            if capture.ident is not None:
+                capture.join(timeout=5)
     if capture.is_alive():
         raise PlayerLaunchError("Owned Player output stream did not close")
     if log_capture.error is not None:
@@ -473,8 +505,35 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
         observer.observe(directory / "progress.json")
         diagnostics.update(observer.diagnostics())
     try:
-        raw = _read_json(directory / "run.json", REPORT_LIMIT)
+        if options.soak is not None:
+            from cli.utils.play_scenario_soak import read_soak_json
+
+            raw = read_soak_json(directory / "run.json", REPORT_LIMIT)
+        else:
+            raw = _read_json(directory / "run.json", REPORT_LIMIT)
         report = PlayerFinalReport.model_validate(raw)
+        soak_summary = None
+        soak_journal = None
+        if options.soak is not None:
+            from cli.utils.play_scenario_soak_reports import admit_soak_run
+
+            if forced_termination:
+                raise PlayerLaunchError("Player soak requires natural owned process exit")
+            soak_summary, soak_journal = admit_soak_run(
+                directory,
+                raw,
+                options.soak,
+                SoakIdentity.model_validate(
+                    {
+                        "job_id": command.job_id,
+                        "definition_hash": bundle.definition_hash,
+                        "build_id": bundle.build_id,
+                        "payload_hash": bundle.payload_hash,
+                        "build_source_revision": bundle.build_source_revision,
+                        "process_id": process.pid,
+                    }
+                ),
+            )
         if (
             report.job_id != command.job_id
             or report.scenario != bundle.definition
@@ -486,7 +545,8 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
             or report.reproduction.get("source_revision") != command.source_revision
             or report.finished_unix_ms < report.started_unix_ms
             or report.exit_code != return_code
-            or (report.status == "succeeded") != (return_code == 0)
+            or ((soak_summary.status if soak_summary is not None else report.status) == "succeeded")
+            != (return_code == 0)
         ):
             raise PlayerLaunchError(
                 "Player final report does not match the owned request or process exit"
@@ -509,7 +569,8 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
         raise PlayerLaunchError(str(diagnostics["failure_code"]), directory) from exc
     diagnostics["cleanup_state"] = "native_finalized"
     _write_diagnostics(directory, diagnostics)
-    exit_code = 0 if report.status == "succeeded" and not report.report_error else 1
+    status = soak_summary.status if soak_summary is not None else report.status
+    exit_code = 0 if status == "succeeded" and not report.report_error else 1
     client_error = report.progress_error
     if observer is not None and (
         observer.first_error or (report.status == "succeeded" and not observer.heartbeat_observed)
@@ -523,4 +584,4 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
     elif deadline_reached:
         exit_code = 1
         client_error = "Player launcher deadline expired"
-    return PlayerOutcome(raw, directory, exit_code, client_error, diagnostics)
+    return PlayerOutcome(raw, directory, exit_code, client_error, diagnostics, soak_journal)

@@ -14,7 +14,7 @@ namespace MCPForUnity.Runtime
     public static class PlayScenarioResourceTracker
     {
         public const int RegistrationLimit = 4096;
-#if UNITY_EDITOR
+#if UNITY_EDITOR || MCP_FOR_UNITY_PLAY_SCENARIOS
         private static readonly object Gate = new object();
         private static readonly Dictionary<ulong, ScriptableRegistration> ScriptableObjects = new Dictionary<ulong, ScriptableRegistration>();
         private static readonly Dictionary<long, PlayScenarioRegisteredResourceInfo> Tokens = new Dictionary<long, PlayScenarioRegisteredResourceInfo>();
@@ -23,6 +23,7 @@ namespace MCPForUnity.Runtime
         private static int _mainThreadId;
 
         /// <summary>Register a runtime ScriptableObject clone on the Unity main thread. Destroy the native object during the game's cleanup.</summary>
+        /// <remarks>Players cannot verify asset persistence. Callers must register only runtime clones, never loaded assets.</remarks>
         public static void RegisterScriptableObject(
             ScriptableObject resource,
             string owner = null,
@@ -31,14 +32,16 @@ namespace MCPForUnity.Runtime
             [CallerLineNumber] int sourceLine = 0
         )
         {
+            EnsureMainThread();
             if (resource == null)
                 throw new ArgumentException("A live runtime ScriptableObject is required.", nameof(resource));
+#if UNITY_EDITOR
             if (EditorUtility.IsPersistent(resource))
                 throw new ArgumentException("Persistent ScriptableObject assets cannot be registered as runtime resources.", nameof(resource));
+#endif
             ulong id = NativeIdentity(resource);
             lock (Gate)
             {
-                _mainThreadId = Thread.CurrentThread.ManagedThreadId;
                 if (ScriptableObjects.TryGetValue(id, out ScriptableRegistration existing))
                 {
                     var previous = existing.Reference.Target as ScriptableObject;
@@ -120,9 +123,10 @@ namespace MCPForUnity.Runtime
             throw new InvalidOperationException(error);
         }
 
-        /// <summary>Capture only registered resources on the Unity main thread. Editor snapshots resolve native IDs so collected wrappers cannot hide a live native clone.</summary>
+        /// <summary>Capture only registered resources on the Unity main thread. Resolve native IDs so collected wrappers cannot hide a live native clone.</summary>
         public static PlayScenarioRegisteredResources Capture()
         {
+            EnsureMainThread();
             lock (Gate)
             {
                 PruneScriptableObjects();
@@ -165,10 +169,18 @@ namespace MCPForUnity.Runtime
 
         private static ScriptableObject ResolveNativeIdentity(ulong id)
         {
+#if UNITY_EDITOR
 #if UNITY_6000_6_OR_NEWER
             return EditorUtility.EntityIdToObject(EntityId.FromULong(id)) as ScriptableObject;
 #else
             return UnityObjectIdCompat.InstanceIDToObjectCompat(unchecked((int)(uint)id)) as ScriptableObject;
+#endif
+#else
+#if UNITY_6000_6_OR_NEWER
+            return UnityEngine.Resources.EntityIdToObject(EntityId.FromULong(id)) as ScriptableObject;
+#else
+            return UnityEngine.Resources.InstanceIDToObject(unchecked((int)(uint)id)) as ScriptableObject;
+#endif
 #endif
         }
 
@@ -186,12 +198,20 @@ namespace MCPForUnity.Runtime
                 ScriptableObjects.Remove(id);
         }
 
+        private static void EnsureMainThread()
+        {
+            if (Thread.CurrentThread.ManagedThreadId != Volatile.Read(ref _mainThreadId))
+                throw new InvalidOperationException("ScriptableObject registration and resource capture require the Unity main thread.");
+        }
+
+#if UNITY_EDITOR
         [InitializeOnLoadMethod]
         private static void InitializeEditorMainThread()
         {
             lock (Gate)
                 _mainThreadId = Thread.CurrentThread.ManagedThreadId;
         }
+#endif
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetOnPlayEntry()
@@ -258,7 +278,7 @@ namespace MCPForUnity.Runtime
         ) => NoopRegistration.Instance;
 
         public static PlayScenarioRegisteredResources Capture() =>
-            new PlayScenarioRegisteredResources { Error = "Native resource lifetime verification is supported only in the Editor." };
+            new PlayScenarioRegisteredResources { Error = "Resource tracking requires the Editor or an MCP_FOR_UNITY_PLAY_SCENARIOS Player." };
 
         private sealed class NoopRegistration : IDisposable
         {

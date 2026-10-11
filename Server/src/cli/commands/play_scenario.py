@@ -13,6 +13,8 @@ from cli.utils.play_scenario_reports import write_suite_artifacts, write_player_
 from cli.utils.play_scenario_player import PlayerLaunchError, PlayerRunOptions, run_player
 from cli.utils.play_scenario_player_payload import PlayerPayloadError
 from cli.utils.play_scenario_player_session import PlayerSessionOptions, run_player_session
+from cli.utils.play_scenario_soak import SoakRequest
+from cli.utils.play_scenario_soak_reports import run_player_soak
 from cli.utils.play_scenario_suite import wait_for_suite
 from pydantic import JsonValue, ValidationError
 from cli.utils.play_scenario_query_compare import (
@@ -396,6 +398,67 @@ def player_run(
     click.echo(
         format_output(
             {"success": outcome.exit_code == 0, "data": outcome.report}, get_config().format
+        )
+    )
+    if outcome.exit_code:
+        raise click.exceptions.Exit(outcome.exit_code)
+
+
+@play_scenario.command("player-soak")
+@click.argument("build_directory", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--output-dir", required=True, type=click.Path(file_okay=False, path_type=Path))
+@click.option("--iterations", type=click.IntRange(2, 1000), default=100, show_default=True)
+@click.option(
+    "--max-runtime-seconds", type=click.IntRange(1, 86400), default=3600, show_default=True
+)
+@click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
+@click.option("--failure-policy", type=click.Choice(["stop", "continue"]), default="stop")
+@click.option("--retain-reports", type=click.IntRange(1, 64), default=4, show_default=True)
+@click.option("--source-revision", default=None)
+@click.option("--expected-build-revision", default=None)
+@click.option("--expected-build-id", default=None)
+@click.option("--cleanup-wait-seconds", type=click.IntRange(1, 600), default=360, show_default=True)
+def player_soak(
+    build_directory: Path,
+    output_dir: Path,
+    iterations: int,
+    max_runtime_seconds: int,
+    timeout_seconds: int,
+    failure_policy: str,
+    retain_reports: int,
+    source_revision: str | None,
+    expected_build_revision: str | None,
+    expected_build_id: str | None,
+    cleanup_wait_seconds: int,
+) -> None:
+    """Execute bounded iterations in one verified native Player process and export evidence."""
+    try:
+        outcome = run_player_soak(
+            PlayerRunOptions(
+                build_directory=build_directory,
+                output_directory=output_dir,
+                timeout_seconds=timeout_seconds,
+                source_revision=source_revision,
+                expected_build_revision=expected_build_revision,
+                expected_build_id=expected_build_id,
+                cleanup_wait_seconds=cleanup_wait_seconds,
+                require_verified_payload=True,
+                soak=SoakRequest.model_validate(
+                    {
+                        "iterations": iterations,
+                        "max_runtime_seconds": max_runtime_seconds,
+                        "failure_policy": failure_policy,
+                        "retain_reports": retain_reports,
+                    }
+                ),
+            )
+        )
+    except (PlayerLaunchError, PlayerPayloadError, OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(
+        format_output(
+            {"success": outcome.exit_code == 0, "data": outcome.summary.model_dump(mode="json")},
+            get_config().format,
         )
     )
     if outcome.exit_code:

@@ -75,18 +75,12 @@ namespace MCPForUnityTests
             Assert.Throws<Newtonsoft.Json.JsonReaderException>(() => PlayScenarioPlayerRequest.Parse("{\"schema_version\":1,\"schema_version\":1}"));
         }
 
-        [TestCase("resources")]
-        [TestCase("metrics")]
         [TestCase("screenshot")]
         [TestCase("property")]
         [TestCase("ugui")]
         public void UnsupportedCapabilitiesFailBeforeHostExecution(string capability)
         {
             PlayScenarioDefinition definition = Definition();
-            if (capability == "resources")
-                definition.Resources.Enabled = true;
-            if (capability == "metrics")
-                definition.Metrics.Enabled = true;
             if (capability == "screenshot")
                 definition.Diagnostics.ScreenshotOnFailure = true;
             if (capability == "property")
@@ -102,6 +96,18 @@ namespace MCPForUnityTests
                 );
             PlayScenarioException error = Assert.Throws<PlayScenarioException>(() => PlayScenarioPlayerCapabilities.Validate(definition, false));
             Assert.That(error.Failure.Code, Is.EqualTo("unsupported_capability"));
+        }
+
+        [TestCase("resources")]
+        [TestCase("metrics")]
+        public void OptionalPlayerDiagnosticsAreAdmittedWithoutChangingFrozenOptions(string capability)
+        {
+            PlayScenarioDefinition definition = Definition();
+            definition.Resources.Enabled = capability == "resources";
+            definition.Metrics.Enabled = capability == "metrics";
+            Assert.DoesNotThrow(() => PlayScenarioPlayerCapabilities.Validate(definition, false));
+            Assert.That(definition.Resources.Enabled, Is.EqualTo(capability == "resources"));
+            Assert.That(definition.Metrics.Enabled, Is.EqualTo(capability == "metrics"));
         }
 
         [Test]

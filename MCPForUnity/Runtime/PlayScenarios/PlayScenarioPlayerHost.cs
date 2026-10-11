@@ -3,12 +3,13 @@ using System.Collections.Generic;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Editor.Tools.Input;
 using UnityEngine;
+using UnityEngine.Profiling;
 using UnityEngine.SceneManagement;
 
 namespace MCPForUnity.Runtime.PlayScenarios
 {
     /// <summary>A scene-only Player adapter. Unity objects are borrowed during each evaluation.</summary>
-    public sealed class PlayScenarioPlayerHost : IPlayScenarioHost, IPlayScenarioQueryHost
+    public sealed class PlayScenarioPlayerHost : IPlayScenarioHost, IPlayScenarioQueryHost, IPlayScenarioResourceHost, IPlayScenarioMetricsHost
     {
         private readonly HashSet<string> scenes;
         private AsyncOperation load;
@@ -18,10 +19,80 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private string preparedComponent;
         private string[] targetSegments;
         private Type componentType;
+        private Func<int> subscriptionCount;
 
-        public PlayScenarioPlayerHost(IEnumerable<string> scenePaths) => scenes = new HashSet<string>(scenePaths, StringComparer.Ordinal);
+        public PlayScenarioPlayerHost(IEnumerable<string> scenePaths, Func<int> subscriptionCount = null)
+        {
+            scenes = new HashSet<string>(scenePaths, StringComparer.Ordinal);
+            this.subscriptionCount = subscriptionCount;
+        }
 
         public PlayScenarioQueryCounts CaptureQueryCounts() => counts;
+
+        public PlayScenarioRegisteredResources CaptureResources() => PlayScenarioResourceTracker.Capture();
+
+        /// <summary>Sample diagnostic scalars at an iteration boundary without collecting garbage or retaining scene objects.</summary>
+        /// <remarks>ObjectCount includes active and inactive GameObjects in loaded SceneManager scenes, excluding the separate DontDestroyOnLoad scene.</remarks>
+        public PlayScenarioMetricsSnapshot CaptureMetrics(int iteration, long now)
+        {
+            var snapshot = new PlayScenarioMetricsSnapshot
+            {
+                Iteration = iteration,
+                TimestampUnixMs = now,
+                RunnerHandleCount = load == null ? 0 : 1,
+            };
+            try
+            {
+                int subscriptions = subscriptionCount?.Invoke() ?? 0;
+                if (subscriptions < 0)
+                    throw new InvalidOperationException("Runner subscription count must be nonnegative.");
+                snapshot.RunnerSubscriptionCount = subscriptions;
+                snapshot.ManagedBytes = GC.GetTotalMemory(false);
+                long allocated = Profiler.GetTotalAllocatedMemoryLong();
+                if (allocated > 0)
+                    snapshot.AllocatedBytes = allocated;
+                else
+                    snapshot.Error = "Unity allocated-memory statistics are unavailable.";
+                snapshot.ObjectCount = CountLoadedSceneObjects();
+            }
+            catch (Exception error)
+            {
+                snapshot.Error = error.GetType().Name + ": " + error.Message;
+            }
+            return snapshot;
+        }
+
+        private static int CountLoadedSceneObjects()
+        {
+            const int limit = 100000;
+            int count = 0;
+            var roots = new List<GameObject>();
+            var pending = new Stack<Transform>();
+            for (int index = 0; index < SceneManager.sceneCount; index++)
+            {
+                Scene scene = SceneManager.GetSceneAt(index);
+                if (!scene.IsValid() || !scene.isLoaded)
+                    continue;
+                if (scene.rootCount > limit - count)
+                    throw new InvalidOperationException("Loaded-scene object sampling exceeds the 100000-entry inspection limit.");
+                roots.Clear();
+                scene.GetRootGameObjects(roots);
+                foreach (GameObject root in roots)
+                    if (root != null)
+                        pending.Push(root.transform);
+                while (pending.Count > 0)
+                {
+                    Transform current = pending.Pop();
+                    if (current == null)
+                        continue;
+                    if (++count > limit || current.childCount > limit - count - pending.Count)
+                        throw new InvalidOperationException("Loaded-scene object sampling exceeds the 100000-entry inspection limit.");
+                    for (int child = 0; child < current.childCount; child++)
+                        pending.Push(current.GetChild(child));
+                }
+            }
+            return count;
+        }
 
         public PlayScenarioObservation Evaluate(PlayScenarioStep step, bool firstPoll)
         {
@@ -163,6 +234,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             preparedComponent = null;
             targetSegments = null;
             componentType = null;
+            subscriptionCount = null;
         }
     }
 }

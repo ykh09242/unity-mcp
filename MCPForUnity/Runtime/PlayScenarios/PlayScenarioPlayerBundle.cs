@@ -217,6 +217,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public int RepeatCount { get; private set; }
         public int TimeoutSeconds { get; private set; }
         public string SourceRevision { get; private set; }
+        public PlayScenarioPlayerSoakOptions Soak { get; private set; }
 
         public static PlayScenarioPlayerRequest Parse(string json)
         {
@@ -225,7 +226,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             string[] fields = { "schema_version", "job_id", "scenario_name", "definition_hash", "repeat_count", "timeout_seconds", "source_revision" };
             PlayScenarioPlayerBundle.Fields(
                 value,
-                schema == 1 ? fields : fields.Concat(new[] { "build_id", "build_source_revision", "payload_hash" }).ToArray()
+                schema == 1 ? fields : fields.Concat(new[] { "build_id", "build_source_revision", "payload_hash", "soak" }).ToArray()
             );
             string buildId = null,
                 buildRevision = null,
@@ -250,6 +251,14 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 revision = PlayScenarioPlayerBundle.Text(value, "source_revision", 128);
                 PlayScenarioReproduction.ValidateSourceRevision(revision);
             }
+            int repeatCount = Integer(value, "repeat_count", 1, 10);
+            PlayScenarioPlayerSoakOptions soak = null;
+            if (value.Property("soak") != null)
+            {
+                if (schema != 2 || repeatCount != 1 || !(value["soak"] is JObject options))
+                    throw new ArgumentException("Player soak requires schema 2, repeat_count 1 and an options object.");
+                soak = PlayScenarioPlayerSoakOptions.Parse(options);
+            }
             return new PlayScenarioPlayerRequest
             {
                 SchemaVersion = schema,
@@ -259,9 +268,10 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 JobId = job,
                 ScenarioName = name,
                 DefinitionHash = hash,
-                RepeatCount = Integer(value, "repeat_count", 1, 10),
+                RepeatCount = repeatCount,
                 TimeoutSeconds = Integer(value, "timeout_seconds", 1, 1800),
                 SourceRevision = revision,
+                Soak = soak,
             };
         }
 
@@ -323,10 +333,6 @@ namespace MCPForUnity.Runtime.PlayScenarios
     {
         public static void Validate(PlayScenarioDefinition definition, bool uguiAvailable)
         {
-            if (definition.Resources.Enabled)
-                throw Unsupported("resources.enabled requires Editor native resource identity resolution.");
-            if (definition.Metrics.Enabled)
-                throw Unsupported("metrics.enabled is unsupported by the Player host.");
             if (definition.Diagnostics.ScreenshotOnFailure)
                 throw Unsupported("diagnostics.screenshot_on_failure is unsupported by the Player host.");
             foreach (PlayScenarioStep step in PlayScenarioPlayerBundle.Steps(definition))

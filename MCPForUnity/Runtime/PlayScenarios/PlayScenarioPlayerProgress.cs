@@ -39,7 +39,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         }
 
         /// <summary>The runner calls this only after a real main-loop Tick completes.</summary>
-        public bool PublishMainLoop(PlayScenarioRun run, long mainLoopSequence, long heartbeatUnixMs, long elapsedMs)
+        public bool PublishMainLoop(PlayScenarioRun run, long mainLoopSequence, long heartbeatUnixMs, long elapsedMs, int? soakIteration = null)
         {
             if (!published || mainLoopSequence <= lastLoop || heartbeatUnixMs <= 0 || elapsedMs < lastElapsed)
                 throw new InvalidOperationException("Player progress requires monotonic actual main-loop observations.");
@@ -48,7 +48,10 @@ namespace MCPForUnity.Runtime.PlayScenarios
             if (elapsedMs < nextPublish)
                 return false;
             sequence++;
-            PlayScenarioPlayerFiles.ReplaceExisting(path, Snapshot(run, mainLoopSequence, heartbeatUnixMs, elapsedMs).ToString(Formatting.None), Limit);
+            JObject snapshot = Snapshot(run, mainLoopSequence, heartbeatUnixMs, elapsedMs);
+            if (soakIteration.HasValue)
+                snapshot["iteration"] = soakIteration.Value;
+            PlayScenarioPlayerFiles.ReplaceExisting(path, snapshot.ToString(Formatting.None), Limit);
             nextPublish = elapsedMs + 1000;
             return true;
         }

@@ -27,6 +27,10 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private readonly Stopwatch elapsed = new Stopwatch();
         private long mainLoopSequence;
         private string progressError;
+        private PlayScenarioPlayerSoakJournal soak;
+        private string soakStopStatus;
+        private string soakStopError;
+        private bool iterationRecorded;
         private static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
@@ -105,16 +109,25 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     if (!included)
                         throw new ArgumentException("Frozen Player scene is absent from the executable: " + path);
                 }
-                logs = new PlayScenarioLogBuffer(bundle.Definition.LogPolicy);
-                Application.logMessageReceivedThreaded += OnLog;
-                subscribed = true;
-                engine = new PlayScenarioEngine(run, new PlayScenarioPlayerHost(bundle.ScenePaths), onEvaluationCompleted: Drain);
-                engine.EnteredPlayMode();
+                if (request.Soak != null)
+                    soak = new PlayScenarioPlayerSoakJournal(directory, request, bundle, processId, run.StartedUnixMs);
+                StartEngine();
             }
             catch (Exception error)
             {
                 StartupFailure(error);
             }
+        }
+
+        private void StartEngine()
+        {
+            iterationRecorded = false;
+            processedUnexpectedLogs = 0;
+            logs = new PlayScenarioLogBuffer(bundle.Definition.LogPolicy);
+            Application.logMessageReceivedThreaded += OnLog;
+            subscribed = true;
+            engine = new PlayScenarioEngine(run, new PlayScenarioPlayerHost(bundle.ScenePaths, () => subscribed ? 1 : 0), onEvaluationCompleted: Drain);
+            engine.EnteredPlayMode();
         }
 
         private void OnLog(string message, string stack, LogType type) => logs?.Add(Now, type.ToString(), message, stack);
@@ -129,13 +142,23 @@ namespace MCPForUnity.Runtime.PlayScenarios
             {
                 Drain();
                 if (File.Exists(PlayScenarioPlayerFiles.CheckedAbsolute(Path.Combine(directory, "cancel"))))
+                {
+                    soakStopStatus = "cancelled";
+                    soakStopError = "Cancelled by caller.";
                     engine.Cancel(Now);
+                }
+                if (soak != null && soak.DeadlineReached(Now) && soakStopStatus == null)
+                {
+                    soakStopStatus = "timed_out";
+                    soakStopError = "Player soak exceeded its whole-session wall-clock deadline.";
+                    engine.Cancel(Now);
+                }
                 engine.Tick(Now, true);
                 Drain();
                 mainLoopSequence++;
                 try
                 {
-                    if (progress.PublishMainLoop(run, mainLoopSequence, Now, elapsed.ElapsedMilliseconds))
+                    if (progress.PublishMainLoop(run, mainLoopSequence, Now, elapsed.ElapsedMilliseconds, soak?.CurrentIteration))
                         Debug.Log("PLAYER_MAIN_LOOP_HEARTBEAT:" + mainLoopSequence);
                 }
                 catch (Exception error)
@@ -146,12 +169,19 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     return;
                 }
                 if (!engine.Running)
-                    Complete(PlayScenarioPlayerLogDrain.ExitCode(run));
+                {
+                    if (soak != null)
+                        CompleteSoakIteration();
+                    else
+                        Complete(PlayScenarioPlayerLogDrain.ExitCode(run));
+                }
             }
             catch (Exception error)
             {
                 engine.Interrupt("Player runner failed: " + error.GetType().Name + ": " + error.Message, Now);
-                Complete(1);
+                soakStopStatus = "failed";
+                soakStopError = PlayScenarioEngine.Bounded(error.GetType().Name + ": " + error.Message, 2048);
+                Complete(2);
             }
         }
 
@@ -233,6 +263,61 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 run.RunnerResourcesReleased = run.RunnerResourcesReleased != false && !subscribed;
         }
 
+        private void CompleteSoakIteration()
+        {
+            Close();
+            int iteration = soak.CurrentIteration;
+            bool continueRunning;
+            try
+            {
+                continueRunning = soak.Append(run, Report(PlayScenarioPlayerLogDrain.ExitCode(run)));
+            }
+            finally
+            {
+                iterationRecorded = soak.CurrentIteration > iteration;
+            }
+            if (soakStopStatus == null && soak.DeadlineReached(Now))
+            {
+                soakStopStatus = "timed_out";
+                soakStopError = "Player soak exceeded its whole-session wall-clock deadline.";
+            }
+            if (!continueRunning && soakStopStatus == null && (run.Status == "cancelled" || run.Status == "timed_out"))
+            {
+                soakStopStatus = run.Status;
+                soakStopError = run.Error;
+            }
+            if (!continueRunning || soakStopStatus != null)
+            {
+                Complete(PlayScenarioPlayerLogDrain.ExitCode(run));
+                return;
+            }
+            run = PlayScenarioEngine.Create(bundle.Definition, request.JobId, 1, request.TimeoutSeconds, Now);
+            run.ExecutionEnvironment = "player";
+            run.Reproduction.UnityVersion = Application.unityVersion;
+            run.Reproduction.PackageVersion = bundle.PackageVersion;
+            run.Reproduction.SourceRevision = request.SourceRevision;
+            StartEngine();
+        }
+
+        private JObject Report(int exitCode)
+        {
+            if (run == null || directory == null)
+                throw new InvalidOperationException("Player startup identity is unavailable; no report can be attributed.");
+            if (run.Status == "running")
+                throw new InvalidOperationException("A running Player cannot export a completed report.");
+            run.ReportPath = "run.json";
+            JObject report = JObject.FromObject(
+                run,
+                JsonSerializer.Create(new JsonSerializerSettings { NullValueHandling = NullValueHandling.Include, TypeNameHandling = TypeNameHandling.None })
+            );
+            request.AddReproduction(report, bundle);
+            report["progress_error"] = progressError;
+            report["finalization_state"] = "completed";
+            report["exit_code"] = exitCode;
+            report["timeout_seconds"] = request.TimeoutSeconds;
+            return report;
+        }
+
         private void Complete(int exitCode)
         {
             if (finished)
@@ -243,22 +328,29 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 exitCode = PlayScenarioPlayerLogDrain.ExitCode(run);
             try
             {
-                if (run == null || directory == null)
-                    throw new InvalidOperationException("Player startup identity is unavailable; no report can be attributed.");
-                if (run.Status == "running")
-                    throw new InvalidOperationException("A running Player cannot export a completed report.");
-                run.ReportPath = "run.json";
-                JObject report = JObject.FromObject(
-                    run,
-                    JsonSerializer.Create(
-                        new JsonSerializerSettings { NullValueHandling = NullValueHandling.Include, TypeNameHandling = TypeNameHandling.None }
-                    )
-                );
-                request.AddReproduction(report, bundle);
-                report["progress_error"] = progressError;
-                report["finalization_state"] = "completed";
-                report["exit_code"] = exitCode;
-                report["timeout_seconds"] = request.TimeoutSeconds;
+                JObject report = Report(exitCode);
+                if (soak != null)
+                {
+                    if (!iterationRecorded)
+                    {
+                        soak.Append(run, report);
+                        iterationRecorded = true;
+                    }
+                    JObject summary = soak.Finish(
+                        exitCode == 2 ? "failed" : soakStopStatus,
+                        soakStopError ?? progressError,
+                        run.RunnerResourcesReleased == true,
+                        Now
+                    );
+                    if (soak.SelectedReportFile != null)
+                        report = soak.SelectedReport();
+                    exitCode =
+                        exitCode == 2 ? 2
+                        : (string)summary["status"] == "succeeded" ? 0
+                        : 1;
+                    report["exit_code"] = exitCode;
+                    report["soak"] = summary;
+                }
                 PlayScenarioPlayerFiles.WriteNew(Path.Combine(directory, "run.json"), report.ToString(Formatting.None), 2 * 1024 * 1024);
             }
             catch (Exception error)
@@ -266,10 +358,18 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 Debug.LogError("Player report persistence failed: " + error.GetType().Name + ": " + error.Message);
                 exitCode = 2;
             }
+            finally
+            {
+                soak?.Dispose();
+            }
             Application.Quit(exitCode);
         }
 
-        private void OnDestroy() => Close();
+        private void OnDestroy()
+        {
+            Close();
+            soak?.Dispose();
+        }
     }
 }
 #endif
