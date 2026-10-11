@@ -43,6 +43,10 @@
       "description": "Drive a running Blender through the BlenderMCP addon and bring its results into Unity"
     },
     {
+      "name": "capture_ui_snapshot",
+      "description": "Read bounded semantic uGUI or UI Toolkit snapshots without changing layout, resolution or project files (group: ui)"
+    },
+    {
       "name": "create_script",
       "description": "Create new C# scripts"
     },
@@ -175,8 +179,16 @@
       "description": "Start, poll and stop bounded silent Game View or Scene View MP4 recording on supported interactive Editors (group: core)"
     },
     {
+      "name": "manage_scenario_recording",
+      "description": "Record bounded Play Mode uGUI Button clicks and active-scene transitions; explicitly stop to save a scenario draft for review (group: testing)"
+    },
+    {
       "name": "manage_scene",
       "description": "Load, save, query hierarchy, multi-scene editing, templates, validation, and manage Unity scenes"
+    },
+    {
+      "name": "manage_scene_edits",
+      "description": "Preview and apply bounded allowlisted native scene component property edits with drift checks and named Undo (group: core)"
     },
     {
       "name": "manage_script",

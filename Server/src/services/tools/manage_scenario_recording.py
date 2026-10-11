@@ -45,7 +45,7 @@ class ScenarioRecordingResponse(TypedDict, total=False):
         "a status snapshot; domain-reloaded sessions cannot be resumed or saved."
     ),
     annotations=ToolAnnotations(
-        title="Manage Scenario Recording", readOnlyHint=False, destructiveHint=False
+        title="Manage Scenario Recording", readOnlyHint=False, destructiveHint=True
     ),
 )
 async def manage_scenario_recording(

@@ -33,6 +33,7 @@ from utils.module_discovery import discover_modules
 # tool that writes to the project, and do not set readOnlyHint on a tool whose
 # body calls preflight(refresh_if_dirty=True) -- that can trigger a domain reload.
 READ_ONLY = {
+    "capture_ui_snapshot",  # Reads UI state; preflight does not refresh project assets.
     "debug_request_context",
     "find_in_file",
     "get_sha",

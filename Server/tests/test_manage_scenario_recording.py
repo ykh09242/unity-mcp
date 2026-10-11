@@ -12,6 +12,7 @@ from pydantic import TypeAdapter, ValidationError
 from cli.commands.scenario_recording import scenario_recording
 from models.models import MCPResponse
 from models.scenario_recording import ScenarioRecordingCommand
+from services.registry.tool_registry import get_registered_tools
 from services.tools.manage_scenario_recording import manage_scenario_recording
 
 RECORDING_ID = "0123456789abcdef0123456789abcdef"
@@ -140,10 +141,17 @@ async def test_legacy_failure_is_preserved(route):
 @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
 async def test_actual_sdk_dispatch_and_schema(route, mode):
     server = FastMCP("scenario-recording")
-    server.tool(manage_scenario_recording)
+    metadata = next(
+        tool for tool in get_registered_tools() if tool["func"] is manage_scenario_recording
+    )
+    server.tool(**metadata["kwargs"])(manage_scenario_recording)
     registered = (await server.list_tools(run_middleware=False))[0]
     assert registered.parameters["properties"]["max_events"]["anyOf"][0]["maximum"] == 31
     async with Client(server, mode=mode) as client:
+        advertised = (await client.list_tools())[0]
+        hints = advertised.annotations.model_dump(by_alias=True)
+        assert hints["readOnlyHint"] is False
+        assert hints["destructiveHint"] is True
         result = await client.call_tool(
             "manage_scenario_recording", {"action": "start", "name": "menu-draft"}
         )
