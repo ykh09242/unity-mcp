@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -13,7 +14,7 @@ using UnityEngine.UIElements;
 namespace MCPForUnity.Editor.Windows.PlayScenarios
 {
     /// <summary>Manual, bounded imports of stored same-process Player evidence.</summary>
-    internal sealed class PlayScenarioSoakEditor
+    internal sealed class PlayScenarioSoakEditor : IDisposable
     {
         private const int PageSize = 25;
         private readonly Action<string, bool> message;
@@ -25,11 +26,23 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private readonly Button next;
         private PlayScenarioSoakEvidence evidence;
         private int page;
+        private readonly PlayScenarioImportWorker worker = new PlayScenarioImportWorker();
+        private readonly Func<string, CancellationToken, PlayScenarioSoakEvidence> read;
+        private readonly Foldout section;
+        private readonly Label importState;
+        private string selectedSource = "";
+        private bool disposed;
 
-        internal PlayScenarioSoakEditor(VisualElement parent, Action<string, bool> message, Func<string> chooseFile)
+        internal PlayScenarioSoakEditor(
+            VisualElement parent,
+            Action<string, bool> message,
+            Func<string> chooseFile,
+            Func<string, CancellationToken, PlayScenarioSoakEvidence> read = null
+        )
         {
             this.message = message;
-            var section = new Foldout
+            this.read = read ?? PlayScenarioSoakEvidence.Read;
+            section = new Foldout
             {
                 text = "Imported same-process Player soak",
                 name = "playerSoak",
@@ -37,7 +50,11 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             };
             section.Add(Note("Import soak.json or client-soak.json and its local evidence. Reads happen only on import; paging uses the imported snapshot."));
             path = new TextField("Soak file") { name = "playerSoakPath", maxLength = 4096 };
+            path.RegisterValueChangedCallback(OnPathChanged);
             section.Add(path);
+            importState = new Label("Select a source and import a snapshot.") { name = "playerSoakImportState" };
+            importState.AddToClassList("scenario-note");
+            section.Add(importState);
             section.Add(
                 new Button(() =>
                 {
@@ -81,27 +98,72 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             rows.AddToClassList("scenario-history-comparison");
             section.Add(rows);
             parent.Add(section);
+            section.userData = worker;
+            section.RegisterCallback<DetachFromPanelEvent>(OnDetached);
             RenderRows();
         }
 
         private void Import()
         {
-            evidence = null;
-            summary.Clear();
-            page = 0;
-            try
+            if (disposed)
+                return;
+            string source = path.value;
+            Func<string, CancellationToken, PlayScenarioSoakEvidence> reader = read;
+            if (worker.RequestRead(selectedSource, token => reader(source, token), CompleteImport))
+                importState.text =
+                    evidence == null
+                        ? "Import pending. No snapshot is displayed."
+                        : "Refresh pending. Displayed snapshot is stale until the requested read completes.";
+        }
+
+        private void CompleteImport(object value, Exception exception)
+        {
+            if (exception == null)
             {
-                evidence = PlayScenarioSoakEvidence.Read(path.value);
+                evidence = (PlayScenarioSoakEvidence)value;
+                summary.Clear();
+                page = 0;
                 RenderSummary();
+                importState.text = "Imported snapshot for the selected source. Refresh is manual.";
                 message("Imported Player soak snapshot.", false);
             }
-            catch (Exception exception)
+            else
             {
                 string detail = exception.Message.Length > 1024 ? exception.Message.Substring(0, 1024) + "..." : exception.Message;
-                summary.Add(Note("Unavailable: " + detail));
+                importState.text =
+                    evidence == null
+                        ? "Import failed. No snapshot is displayed. " + detail
+                        : "Refresh failed. Displayed snapshot is stale and remains from the same selected source. " + detail;
                 message("Player soak import failed: " + detail, true);
             }
             RenderRows();
+        }
+
+        private void OnPathChanged(ChangeEvent<string> change)
+        {
+            string source = PlayScenarioImportWorker.SourceKey(change.newValue);
+            if (source == selectedSource)
+                return;
+            selectedSource = source;
+            worker.Cancel();
+            evidence = null;
+            summary.Clear();
+            page = 0;
+            importState.text = "Selected source changed. Import it to display evidence.";
+            RenderRows();
+        }
+
+        private void OnDetached(DetachFromPanelEvent _) => Dispose();
+
+        public void Dispose()
+        {
+            if (disposed)
+                return;
+            disposed = true;
+            worker.Dispose();
+            path.UnregisterValueChangedCallback(OnPathChanged);
+            section.UnregisterCallback<DetachFromPanelEvent>(OnDetached);
+            section.userData = null;
         }
 
         private void RenderSummary()
@@ -331,17 +393,20 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         internal JObject Summary;
         internal JObject ClientSummary;
         internal readonly List<JObject> Rows = new List<JObject>();
+        private readonly List<long> rowEndBytes = new List<long>();
         internal string Completeness;
 
-        internal static PlayScenarioSoakEvidence Read(string file)
+        internal static PlayScenarioSoakEvidence Read(string file, CancellationToken cancellation = default)
         {
+            cancellation.ThrowIfCancellationRequested();
             string full = Path.GetFullPath(file);
             string root = Path.GetDirectoryName(full);
             string name = Path.GetFileName(full);
             if (name != "soak.json" && name != "client-soak.json")
                 throw new InvalidDataException("Select soak.json or client-soak.json.");
             PlayScenarioPlayerSessionEditor.CheckPath(root, full);
-            JObject source = PlayScenarioPlayerSessionEditor.ReadJson(full, 65536);
+            PlayScenarioImportFileStamp sourceStamp = PlayScenarioImportFileStamp.Capture(full);
+            JObject source = PlayScenarioPlayerSessionEditor.ReadJson(full, 65536, cancellation);
             if (name == "client-soak.json")
             {
                 ValidateClient(source);
@@ -352,7 +417,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                         ClientSummary = source,
                         Completeness = "Unavailable: native soak.json is missing; client claims cannot be verified.",
                     };
-                PlayScenarioSoakEvidence imported = Read(native);
+                PlayScenarioSoakEvidence imported = Read(native, cancellation);
+                sourceStamp.Verify(full);
                 imported.ClientSummary = source;
                 if (
                     !JToken.DeepEquals(source["job_id"], imported.Summary["job_id"])
@@ -394,13 +460,14 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             }
             string hash;
             long bytes;
-            bool terminated = result.ReadJournal(journal, out hash, out bytes);
+            bool terminated = result.ReadJournal(journal, out hash, out bytes, cancellation);
+            sourceStamp.Verify(full);
             if (!terminated)
             {
                 result.Completeness = "Incomplete: truncated journal tail; only complete rows are shown. Success is unverified.";
                 return result;
             }
-            result.ValidateRows();
+            result.ValidateRows(cancellation);
             bool complete = (bool)source["journal_complete"] && (string)source["finalization_state"] == "completed" && (string)source["status"] != "running";
             if (complete && (bytes != (long)source["journal_bytes"] || hash != (string)source["journal_sha256"]))
                 throw new InvalidDataException("Journal byte count or SHA256 differs from the completed checkpoint.");
@@ -415,7 +482,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 result.Completeness = "Incomplete: verified journal, but final run.json is missing; success is unverified.";
                 return result;
             }
-            JObject report = PlayScenarioPlayerSessionEditor.ReadJson(reportFile, 2 * 1024 * 1024);
+            JObject report = PlayScenarioPlayerSessionEditor.ReadJson(reportFile, 2 * 1024 * 1024, cancellation);
+            cancellation.ThrowIfCancellationRequested();
             if (!JToken.DeepEquals(report["soak"], source) || (string)report["job_id"] != (string)source["job_id"])
                 throw new InvalidDataException("Final report soak checkpoint or job identity differs.");
             Integer(report, "player_schema_version", 2, 2);
@@ -448,63 +516,85 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             return result;
         }
 
-        private bool ReadJournal(string file, out string digest, out long bytes)
+        private bool ReadJournal(string file, out string digest, out long bytes, CancellationToken cancellation)
         {
-            using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-            using (SHA256 hash = SHA256.Create())
+            cancellation.ThrowIfCancellationRequested();
+            PlayScenarioImportFileStamp stamp = PlayScenarioImportFileStamp.Capture(file);
+            try
             {
-                long expectedLength = stream.Length;
-                if (expectedLength > JournalLimit)
-                    throw new InvalidDataException("Soak journal exceeds its byte limit.");
-                byte[] buffer = new byte[4096];
-                byte[] line = new byte[RowLimit];
-                int length = 0;
-                bytes = 0;
-                int read;
-                // Observe one bounded snapshot without blocking or chasing the live writer.
-                while (bytes < expectedLength && (read = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, expectedLength - bytes))) != 0)
+                using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                using (SHA256 hash = SHA256.Create())
                 {
-                    bytes += read;
-                    if (bytes > JournalLimit)
+                    long expectedLength = stream.Length;
+                    if (expectedLength > JournalLimit)
                         throw new InvalidDataException("Soak journal exceeds its byte limit.");
-                    hash.TransformBlock(buffer, 0, read, buffer, 0);
-                    for (int index = 0; index < read; index++)
+                    byte[] buffer = new byte[4096];
+                    byte[] line = new byte[RowLimit];
+                    int length = 0;
+                    bytes = 0;
+                    int read;
+                    // Observe one bounded snapshot without blocking or chasing the live writer.
+                    while (bytes < expectedLength && (read = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, expectedLength - bytes))) != 0)
                     {
-                        byte current = buffer[index];
-                        if (length >= RowLimit - 1 && current != 10)
-                            throw new InvalidDataException("Soak journal row exceeds its byte limit.");
-                        if (current != 10)
+                        cancellation.ThrowIfCancellationRequested();
+                        bytes += read;
+                        if (bytes > JournalLimit)
+                            throw new InvalidDataException("Soak journal exceeds its byte limit.");
+                        hash.TransformBlock(buffer, 0, read, buffer, 0);
+                        for (int index = 0; index < read; index++)
                         {
-                            line[length++] = current;
-                            continue;
+                            byte current = buffer[index];
+                            if (length >= RowLimit - 1 && current != 10)
+                                throw new InvalidDataException("Soak journal row exceeds its byte limit.");
+                            if (current != 10)
+                            {
+                                line[length++] = current;
+                                continue;
+                            }
+                            if (Rows.Count >= 1000)
+                                throw new InvalidDataException("Soak journal exceeds 1000 rows.");
+                            JObject row = Parse(Utf8.GetString(line, 0, length), cancellation);
+                            ValidateRow(row, Rows.Count + 1, Summary);
+                            if (
+                                Rows.Count > 0
+                                && row["started_unix_ms"].Type != JTokenType.Null
+                                && (long?)Rows[Rows.Count - 1]["finished_unix_ms"] > (long)row["started_unix_ms"]
+                            )
+                                throw new InvalidDataException("Soak journal iteration intervals overlap.");
+                            Rows.Add(row);
+                            rowEndBytes.Add(bytes - read + index + 1);
+                            length = 0;
                         }
-                        if (Rows.Count >= 1000)
-                            throw new InvalidDataException("Soak journal exceeds 1000 rows.");
-                        JObject row = Parse(Utf8.GetString(line, 0, length));
-                        ValidateRow(row, Rows.Count + 1, Summary);
-                        if (
-                            Rows.Count > 0
-                            && row["started_unix_ms"].Type != JTokenType.Null
-                            && (long?)Rows[Rows.Count - 1]["finished_unix_ms"] > (long)row["started_unix_ms"]
-                        )
-                            throw new InvalidDataException("Soak journal iteration intervals overlap.");
-                        Rows.Add(row);
-                        length = 0;
                     }
+                    if (bytes != expectedLength || stream.Length != expectedLength)
+                        throw new PlayScenarioImportRaceException("Soak journal changed during import.");
+                    stamp.Verify(file);
+                    hash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                    digest = string.Concat(hash.Hash.Select(value => value.ToString("x2")));
+                    return length == 0;
                 }
-                if (bytes != expectedLength || stream.Length != expectedLength)
-                    throw new InvalidDataException("Soak journal changed during import.");
-                hash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-                digest = string.Concat(hash.Hash.Select(value => value.ToString("x2")));
-                return length == 0;
+            }
+            catch (FileNotFoundException exception)
+            {
+                throw new PlayScenarioImportRaceException("Previously observed journal disappeared during import.", exception);
+            }
+            catch (DirectoryNotFoundException exception)
+            {
+                throw new PlayScenarioImportRaceException("Previously observed journal directory disappeared during import.", exception);
             }
         }
 
-        private static JObject Parse(string text)
+        private static JObject Parse(string text, CancellationToken cancellation)
         {
             if (text.IndexOf('\r') >= 0 || text.StartsWith("\uFEFF", StringComparison.Ordinal))
                 throw new InvalidDataException("Soak journal requires UTF-8 without BOM and LF rows.");
-            using (var reader = new JsonTextReader(new StringReader(text)) { DateParseHandling = DateParseHandling.None, MaxDepth = 32 })
+            using (
+                var reader = new PlayScenarioImportJsonReader(new StringReader(text), cancellation)
+                {
+                    DateParseHandling = DateParseHandling.None,
+                    MaxDepth = 32,
+                }
+            )
             {
                 JObject value = JObject.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
                 if (reader.Read())
@@ -622,25 +712,18 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 throw new InvalidDataException("Client soak success requires every planned pass.");
         }
 
-        private void ValidateRows()
+        private void ValidateRows(CancellationToken cancellation)
         {
             int attempted = Rows.Count(row => row["started_unix_ms"].Type != JTokenType.Null);
             int passed = Rows.Count(Passed);
             JObject first = Rows.FirstOrDefault(row => row["started_unix_ms"].Type != JTokenType.Null && !Passed(row));
             long? firstFailure = (long?)first?["iteration"];
             long? selected = firstFailure ?? (long?)Rows.LastOrDefault(row => row["started_unix_ms"].Type != JTokenType.Null)?["iteration"];
-            if (
-                Rows.Count != (long)Summary["recorded_iterations"]
-                || attempted != (long)Summary["attempted_iterations"]
-                || passed != (long)Summary["passed_iterations"]
-                || firstFailure != (long?)Summary["first_failure_iteration"]
-                || selected != (long?)Summary["selected_iteration"]
-            )
-                throw new InvalidDataException("Ordered journal counters or first/selected failure differ from checkpoint.");
             long sessionStart = (long)Summary["started_unix_ms"];
             long? sessionFinish = (long?)Summary["finished_unix_ms"];
             foreach (JObject row in Rows)
             {
+                cancellation.ThrowIfCancellationRequested();
                 long? start = (long?)row["started_unix_ms"];
                 long? finish = (long?)row["finished_unix_ms"];
                 if (start.HasValue && start.Value < sessionStart || finish.HasValue && sessionFinish.HasValue && finish.Value > sessionFinish.Value)
@@ -655,6 +738,36 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     || (string)Summary["failure_policy"] == "stop" && !Passed(Rows[index])
                 )
                     throw new InvalidDataException("Soak journal continued after a stopping iteration.");
+            int recorded = (int)Summary["recorded_iterations"];
+            if (
+                (string)Summary["status"] == "running"
+                && (string)Summary["finalization_state"] == "running"
+                && !(bool)Summary["journal_complete"]
+                && Rows.Count == recorded + 1
+                && Rows.Count <= (long)Summary["requested_iterations"]
+                && (recorded == 0 ? 0 : rowEndBytes[recorded - 1]) == (long)Summary["journal_bytes"]
+            )
+            {
+                // Append flushes one terminal row before publishing its checkpoint. Only a
+                // fully validated checkpoint prefix proves this narrow publication gap.
+                var prefix = new PlayScenarioSoakEvidence { Summary = Summary };
+                prefix.Rows.AddRange(Rows.Take(recorded));
+                prefix.rowEndBytes.AddRange(rowEndBytes.Take(recorded));
+                prefix.ValidateRows(cancellation);
+                if (Summary["metrics_summary"] is JObject prefixMetrics)
+                    foreach (JObject sample in (Rows[recorded]["metrics"] as JArray ?? new JArray()).OfType<JObject>())
+                        if ((bool)sample["ignored_for_trend"] != ((long)sample["iteration"] <= (long)prefixMetrics["warmup_iterations"]))
+                            throw new InvalidDataException("Soak sample warmup attribution differs.");
+                throw new PlayScenarioImportRaceException("Validated journal is one row ahead of its running checkpoint publication.");
+            }
+            if (
+                Rows.Count != recorded
+                || attempted != (long)Summary["attempted_iterations"]
+                || passed != (long)Summary["passed_iterations"]
+                || firstFailure != (long?)Summary["first_failure_iteration"]
+                || selected != (long?)Summary["selected_iteration"]
+            )
+                throw new InvalidDataException("Ordered journal counters or first/selected failure differ from checkpoint.");
             if (Summary["metrics_summary"] is JObject metrics)
             {
                 List<JObject> samples = Rows.SelectMany(row => (row["metrics"] as JArray ?? new JArray()).OfType<JObject>()).ToList();

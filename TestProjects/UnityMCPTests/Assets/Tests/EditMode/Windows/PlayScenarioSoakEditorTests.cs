@@ -1,10 +1,12 @@
 using System;
 using System.Collections;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using MCPForUnity.Editor.Windows.PlayScenarios;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -150,6 +152,156 @@ namespace MCPForUnityTests.EditMode.Windows
             return file;
         }
 
+        private JObject RunningCheckpointOneBehind(string file)
+        {
+            JObject value = PlayScenarioPlayerSessionEditor.ReadJson(file);
+            value["recorded_iterations"] = 1;
+            value["attempted_iterations"] = 1;
+            value["passed_iterations"] = 1;
+            value["failed_iterations"] = 0;
+            value["skipped_iterations"] = (int)value["requested_iterations"] - 1;
+            value["selected_iteration"] = 1;
+            value["finished_unix_ms"] = null;
+            value["status"] = "running";
+            value["finalization_state"] = "running";
+            value["journal_rows"] = 1;
+            byte[] journal = File.ReadAllBytes(Path.Combine(root, "iterations.jsonl"));
+            value["journal_bytes"] = Array.IndexOf(journal, (byte)10) + 1;
+            value["journal_sha256"] = null;
+            value["journal_complete"] = false;
+            value["runner_resources_released"] = false;
+            value["retained_report_files"] = new JArray("iteration-0001.json");
+            return value;
+        }
+
+        [UnityTest]
+        public IEnumerator JournalFirstPublicationRetriesUntilTheMatchingCheckpointIsPublished()
+        {
+            string file = Save();
+            JObject completed = PlayScenarioPlayerSessionEditor.ReadJson(file);
+            Write("soak.json", RunningCheckpointOneBehind(file));
+            int reads = 0;
+            object imported = null;
+            Exception failure = null;
+            using (var publicationGap = new ManualResetEventSlim())
+            using (var releaseWriter = new ManualResetEventSlim())
+            using (var worker = new PlayScenarioImportWorker())
+            {
+                worker.RequestRead(
+                    file,
+                    token =>
+                    {
+                        Interlocked.Increment(ref reads);
+                        try
+                        {
+                            return PlayScenarioSoakEvidence.Read(file, token);
+                        }
+                        catch (PlayScenarioImportRaceException)
+                        {
+                            publicationGap.Set();
+                            releaseWriter.Wait(token);
+                            throw;
+                        }
+                    },
+                    (value, error) =>
+                    {
+                        imported = value;
+                        failure = error;
+                    }
+                );
+                var elapsed = Stopwatch.StartNew();
+                while (!publicationGap.IsSet && worker.IsBusy && elapsed.ElapsedMilliseconds < 4000)
+                    yield return null;
+                Assert.IsTrue(publicationGap.IsSet, "The valid journal-first checkpoint gap was rejected as permanent evidence.");
+                Assert.IsNull(imported);
+                Write("soak.json", completed);
+                releaseWriter.Set();
+                yield return PlayScenarioImportTestPump.Wait(worker);
+                Assert.IsNull(failure);
+                Assert.AreEqual(2, reads);
+                StringAssert.StartsWith("Complete:", ((PlayScenarioSoakEvidence)imported).Completeness);
+                Assert.AreEqual(2, ((PlayScenarioSoakEvidence)imported).Rows.Count);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator PersistenceBrokenRunningCheckpointRemainsABoundedFailure()
+        {
+            string file = Save();
+            Write("soak.json", RunningCheckpointOneBehind(file));
+            JObject report = PlayScenarioPlayerSessionEditor.ReadJson(Path.Combine(root, "run.json"));
+            report["exit_code"] = 2;
+            report["persistence_error"] = new JObject
+            {
+                ["schema_version"] = 1,
+                ["stage"] = "checkpoint_replace",
+                ["exception_type"] = "IOException",
+                ["error"] = "Checkpoint publication failed",
+                ["iteration"] = 2,
+            };
+            Write("run.json", report);
+            int reads = 0;
+            object imported = null;
+            Exception failure = null;
+            using (var worker = new PlayScenarioImportWorker())
+            {
+                var elapsed = Stopwatch.StartNew();
+                worker.RequestRead(
+                    file,
+                    token =>
+                    {
+                        Interlocked.Increment(ref reads);
+                        return PlayScenarioSoakEvidence.Read(file, token);
+                    },
+                    (value, error) =>
+                    {
+                        imported = value;
+                        failure = error;
+                    }
+                );
+                yield return PlayScenarioImportTestPump.Wait(worker);
+                Assert.AreEqual(PlayScenarioImportWorker.MaximumAttempts, reads);
+                Assert.IsInstanceOf<PlayScenarioImportRaceException>(failure);
+                Assert.IsNull(imported);
+                Assert.IsFalse(worker.IsPumping);
+                Assert.Less(elapsed.ElapsedMilliseconds, PlayScenarioImportWorker.DeadlineMilliseconds);
+            }
+        }
+
+        [TestCase("prefix-counter")]
+        [TestCase("prefix-bytes")]
+        [TestCase("malformed-row")]
+        [TestCase("completed")]
+        [TestCase("two-rows-ahead")]
+        public void PublicationRaceClassificationRequiresAValidPrefixAndExactlyOneRunningRow(string contradiction)
+        {
+            string file = Save(contradiction == "two-rows-ahead" ? 3 : 2);
+            JObject running = RunningCheckpointOneBehind(file);
+            if (contradiction == "prefix-counter")
+            {
+                running["passed_iterations"] = 0;
+                running["failed_iterations"] = 1;
+            }
+            else if (contradiction == "prefix-bytes")
+                running["journal_bytes"] = (long)running["journal_bytes"] + 1;
+            else if (contradiction == "malformed-row")
+                File.AppendAllText(Path.Combine(root, "iterations.jsonl"), "{ malformed }\n", new UTF8Encoding(false));
+            else if (contradiction == "completed")
+            {
+                running["status"] = "failed";
+                running["finalization_state"] = "completed";
+                running["journal_complete"] = true;
+                running["journal_sha256"] = new string('a', 64);
+                running["finished_unix_ms"] = 26;
+            }
+            Write("soak.json", running);
+            Exception failure =
+                contradiction == "malformed-row"
+                    ? Assert.Throws<JsonReaderException>(() => PlayScenarioSoakEvidence.Read(file))
+                    : Assert.Throws<InvalidDataException>(() => PlayScenarioSoakEvidence.Read(file));
+            Assert.IsFalse(PlayScenarioImportWorker.IsTransient(failure));
+        }
+
         private VisualElement Viewer(string file, out Func<string> message)
         {
             string latest = "";
@@ -166,6 +318,7 @@ namespace MCPForUnityTests.EditMode.Windows
             Assert.IsNotNull(button);
             Assert.IsTrue(button.enabledSelf);
             typeof(Clickable).GetMethod("Invoke", PrivateInstance).Invoke(button.clickable, new object[] { null });
+            PlayScenarioImportTestPump.Drain(parent, "playerSoak");
         }
 
         private static string Summary(VisualElement parent) =>
@@ -413,7 +566,8 @@ namespace MCPForUnityTests.EditMode.Windows
             Write("client-soak.json", client);
             Click(parent, "openPlayerSoak");
             StringAssert.Contains("import failed", message());
-            Assert.IsNull(parent.Q("soakIteration_1"));
+            Assert.IsNotNull(parent.Q("soakIteration_1"));
+            StringAssert.Contains("stale", parent.Q<Label>("playerSoakImportState").text);
         }
 
         [Test]

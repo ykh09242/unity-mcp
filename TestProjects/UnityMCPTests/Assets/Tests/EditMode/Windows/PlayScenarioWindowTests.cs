@@ -6,6 +6,7 @@ using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Editor.Windows.PlayScenarios;
+using MCPForUnityTests.EditMode.Windows;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -70,6 +71,10 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.IsTrue(button.enabledInHierarchy, name + " must be enabled");
             // Execute the registered UITK Clickable callback, without a mouse/panel dependency.
             typeof(Clickable).GetMethod("Invoke", PrivateInstance).Invoke(button.clickable, new object[] { null });
+            if (name == "openPlayerSession" || name == "importPlayerSession")
+                PlayScenarioImportTestPump.Drain(window.rootVisualElement, "playerSession");
+            if (name == "openPlayerSoak" || name == "importPlayerSoak")
+                PlayScenarioImportTestPump.Drain(window.rootVisualElement, "playerSoak");
         }
 
         private static PlayScenarioDefinition Definition(string name = "saved-flow") =>

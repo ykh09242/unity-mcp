@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
@@ -16,7 +17,7 @@ using UnityEngine.UIElements;
 namespace MCPForUnity.Editor.Windows.PlayScenarios
 {
     /// <summary>Explicit, value-only imports of Player session summaries and saved evidence.</summary>
-    internal sealed class PlayScenarioPlayerSessionEditor
+    internal sealed class PlayScenarioPlayerSessionEditor : IDisposable
     {
         internal const int JsonLimit = 8 * 1024 * 1024;
         private const int PageSize = 25;
@@ -46,14 +47,37 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private List<JObject> outcomes = new List<JObject>();
         private string directory;
         private int page;
+        private readonly PlayScenarioImportWorker worker = new PlayScenarioImportWorker();
+        private readonly Func<string, CancellationToken, SessionSnapshot> read;
+        private readonly Foldout section;
+        private readonly Label importState;
+        private string selectedSource = "";
+        private bool disposed;
 
-        internal PlayScenarioPlayerSessionEditor(VisualElement parent, Action<string, bool> message, Func<string> chooseFile)
+        internal sealed class SessionSnapshot
+        {
+            internal JObject Session;
+            internal List<JObject> Outcomes;
+            internal string Directory;
+        }
+
+        internal PlayScenarioPlayerSessionEditor(
+            VisualElement parent,
+            Action<string, bool> message,
+            Func<string> chooseFile,
+            Func<string, CancellationToken, SessionSnapshot> read = null
+        )
         {
             this.message = message;
-            var section = new Foldout { text = "Imported Player session", name = "playerSession" };
+            this.read = read ?? ReadSnapshot;
+            section = new Foldout { text = "Imported Player session", name = "playerSession" };
             section.Add(Note("Import a local session.json snapshot. Saved evidence is read on request; retention may remove it."));
             path = new TextField("Session file") { name = "playerSessionPath", maxLength = 4096 };
+            path.RegisterValueChangedCallback(OnPathChanged);
             section.Add(path);
+            importState = new Label("Select a source and import a snapshot.") { name = "playerSessionImportState" };
+            importState.AddToClassList("scenario-note");
+            section.Add(importState);
             section.Add(
                 new Button(() =>
                 {
@@ -101,35 +125,100 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             details.AddToClassList("scenario-history-comparison");
             section.Add(details);
             parent.Add(section);
+            section.userData = worker;
+            section.RegisterCallback<DetachFromPanelEvent>(OnDetached);
             previous.SetEnabled(false);
             next.SetEnabled(false);
         }
 
         private void Import()
         {
-            try
+            if (disposed)
+                return;
+            string source = path.value;
+            Func<string, CancellationToken, SessionSnapshot> reader = read;
+            if (worker.RequestRead(selectedSource, token => reader(source, token), CompleteImport))
+                importState.text =
+                    session == null
+                        ? "Import pending. No snapshot is displayed."
+                        : "Refresh pending. Displayed snapshot is stale until the requested read completes.";
+        }
+
+        internal static SessionSnapshot ReadSnapshot(string file, CancellationToken cancellation = default)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            string fullPath = Path.GetFullPath(file);
+            if (!string.Equals(Path.GetFileName(fullPath), "session.json", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Select a session.json file.");
+            string root = Path.GetDirectoryName(fullPath);
+            CheckPath(root, fullPath);
+            PlayScenarioImportFileStamp sourceStamp = PlayScenarioImportFileStamp.Capture(fullPath);
+            JObject snapshot = ReadJson(fullPath, 65536, cancellation);
+            Validate(snapshot, root);
+            cancellation.ThrowIfCancellationRequested();
+            List<JObject> imported = ReadOutcomes(snapshot, root, cancellation, sourceStamp, fullPath);
+            return new SessionSnapshot
             {
-                string fullPath = Path.GetFullPath(path.value);
-                if (!string.Equals(Path.GetFileName(fullPath), "session.json", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("Select a session.json file.");
-                string root = Path.GetDirectoryName(fullPath);
-                CheckPath(root, fullPath);
-                JObject snapshot = ReadJson(fullPath, 65536);
-                Validate(snapshot, root);
-                List<JObject> imported = ReadOutcomes(snapshot, root);
-                session = snapshot;
-                directory = root;
-                outcomes = imported;
+                Session = snapshot,
+                Directory = root,
+                Outcomes = imported,
+            };
+        }
+
+        private void CompleteImport(object value, Exception exception)
+        {
+            if (exception == null)
+            {
+                var snapshot = (SessionSnapshot)value;
+                session = snapshot.Session;
+                directory = snapshot.Directory;
+                outcomes = snapshot.Outcomes;
                 page = 0;
                 details.Clear();
                 RenderSummary();
                 RenderRows();
+                importState.text = "Imported snapshot for the selected source. Refresh is manual.";
                 message("Imported Player session snapshot.", false);
             }
-            catch (Exception exception)
+            else
             {
-                message("Player session import failed: " + exception.Message, true);
+                string detail = exception.Message.Length > 1024 ? exception.Message.Substring(0, 1024) + "..." : exception.Message;
+                importState.text =
+                    session == null
+                        ? "Import failed. No snapshot is displayed. " + detail
+                        : "Refresh failed. Displayed snapshot is stale and remains from the same selected source. " + detail;
+                message("Player session import failed: " + detail, true);
             }
+        }
+
+        private void OnPathChanged(ChangeEvent<string> change)
+        {
+            string source = PlayScenarioImportWorker.SourceKey(change.newValue);
+            if (source == selectedSource)
+                return;
+            selectedSource = source;
+            worker.Cancel();
+            session = null;
+            directory = null;
+            outcomes.Clear();
+            summary.Clear();
+            details.Clear();
+            page = 0;
+            importState.text = "Selected source changed. Import it to display evidence.";
+            RenderRows();
+        }
+
+        private void OnDetached(DetachFromPanelEvent _) => Dispose();
+
+        public void Dispose()
+        {
+            if (disposed)
+                return;
+            disposed = true;
+            worker.Dispose();
+            path.UnregisterValueChangedCallback(OnPathChanged);
+            section.UnregisterCallback<DetachFromPanelEvent>(OnDetached);
+            section.userData = null;
         }
 
         internal static string CheckPath(string root, string file)
@@ -148,35 +237,57 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             return full;
         }
 
-        private static byte[] ReadBytes(string file, int maximum)
+        private static byte[] ReadBytes(string file, int maximum, CancellationToken cancellation = default)
         {
+            cancellation.ThrowIfCancellationRequested();
             CheckPath(Path.GetDirectoryName(file), file);
-            // Readers must also allow the owner to atomically replace checkpoints or prune reports.
-            using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            PlayScenarioImportFileStamp stamp = PlayScenarioImportFileStamp.Capture(file);
+            try
             {
-                long expectedLength = stream.Length;
-                if (expectedLength > maximum)
-                    throw new InvalidDataException("Saved artifact exceeds its byte limit.");
-                byte[] bytes = new byte[(int)expectedLength];
-                int offset = 0;
-                while (offset < bytes.Length)
+                // Readers must also allow the owner to atomically replace checkpoints or prune reports.
+                using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
                 {
-                    int read = stream.Read(bytes, offset, bytes.Length - offset);
-                    if (read == 0)
-                        throw new InvalidDataException("Saved artifact changed while being read.");
-                    offset += read;
+                    long expectedLength = stream.Length;
+                    if (expectedLength > maximum)
+                        throw new InvalidDataException("Saved artifact exceeds its byte limit.");
+                    byte[] bytes = new byte[(int)expectedLength];
+                    int offset = 0;
+                    while (offset < bytes.Length)
+                    {
+                        cancellation.ThrowIfCancellationRequested();
+                        int read = stream.Read(bytes, offset, Math.Min(65536, bytes.Length - offset));
+                        if (read == 0)
+                            throw new PlayScenarioImportRaceException("Saved artifact changed while being read.");
+                        offset += read;
+                    }
+                    if (stream.ReadByte() != -1 || stream.Length != expectedLength)
+                        throw new PlayScenarioImportRaceException("Saved artifact changed while being read.");
+                    stamp.Verify(file);
+                    return bytes;
                 }
-                if (stream.ReadByte() != -1)
-                    throw new InvalidDataException("Saved artifact changed while being read.");
-                return bytes;
+            }
+            catch (FileNotFoundException exception)
+            {
+                throw new PlayScenarioImportRaceException("Previously observed artifact disappeared during its read.", exception);
+            }
+            catch (DirectoryNotFoundException exception)
+            {
+                throw new PlayScenarioImportRaceException("Previously observed artifact directory disappeared during its read.", exception);
             }
         }
 
-        internal static JObject ReadJson(string file, int maximum = JsonLimit) => Parse(new UTF8Encoding(false, true).GetString(ReadBytes(file, maximum)));
+        internal static JObject ReadJson(string file, int maximum = JsonLimit, CancellationToken cancellation = default) =>
+            Parse(new UTF8Encoding(false, true).GetString(ReadBytes(file, maximum, cancellation)), cancellation);
 
-        private static JObject Parse(string json)
+        private static JObject Parse(string json, CancellationToken cancellation = default)
         {
-            using (var reader = new JsonTextReader(new StringReader(json)) { DateParseHandling = DateParseHandling.None, MaxDepth = 32 })
+            using (
+                var reader = new PlayScenarioImportJsonReader(new StringReader(json), cancellation)
+                {
+                    DateParseHandling = DateParseHandling.None,
+                    MaxDepth = 32,
+                }
+            )
             {
                 JObject value = JObject.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
                 if (reader.Read())
@@ -403,7 +514,13 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 throw new InvalidDataException("failure must be an object or null.");
         }
 
-        private static List<JObject> ReadOutcomes(JObject value, string root)
+        private static List<JObject> ReadOutcomes(
+            JObject value,
+            string root,
+            CancellationToken cancellation,
+            PlayScenarioImportFileStamp sourceStamp,
+            string sourceFile
+        )
         {
             string file = CheckPath(root, Path.Combine(root, "outcomes.jsonl"));
             var result = new List<JObject>();
@@ -412,22 +529,26 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 result.AddRange(((JArray)value["last_outcomes"]).OfType<JObject>());
             else
             {
-                byte[] bytes = ReadBytes(file, JsonLimit);
+                byte[] bytes = ReadBytes(file, JsonLimit, cancellation);
                 int start = 0;
                 for (int index = 0; index < bytes.Length; index++)
                 {
+                    if ((index & 4095) == 0)
+                        cancellation.ThrowIfCancellationRequested();
                     if (bytes[index] != 10)
                         continue;
                     if (index - start + 1 > 4096 || result.Count >= 2000)
                         throw new InvalidDataException("Outcome journal exceeds its row or line bound.");
-                    JObject item = Parse(new UTF8Encoding(false, true).GetString(bytes, start, index - start));
+                    JObject item = Parse(new UTF8Encoding(false, true).GetString(bytes, start, index - start), cancellation);
                     ValidateOutcome(value, item, root);
                     result.Add(item);
                     start = index + 1;
                 }
+                sourceStamp.Verify(sourceFile);
                 if (start != bytes.Length || result.Count != (long)value["outcomes_recorded"])
                     throw new InvalidDataException("Outcome journal is truncated or differs from the summary.");
             }
+            sourceStamp.Verify(sourceFile);
             if (
                 result.Select(item => (string)item["job_id"]).Distinct().Count() != result.Count
                 || result.Select(item => (long)item["sequence"]).Distinct().Count() != result.Count
@@ -441,6 +562,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     var observed = CountFields.ToDictionary(field => field, field => 0L);
                     foreach (JObject item in result.Where(item => (string)item["mode"] == mode))
                     {
+                        cancellation.ThrowIfCancellationRequested();
                         if (!(item["iteration_counts"] is JObject child))
                         {
                             if (fullJournal)

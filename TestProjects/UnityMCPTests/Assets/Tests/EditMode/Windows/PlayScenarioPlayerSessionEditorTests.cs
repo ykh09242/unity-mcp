@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Windows.PlayScenarios;
+using MCPForUnityTests.EditMode.Windows;
 using Microsoft.Win32.SafeHandles;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -114,6 +115,7 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.IsNotNull(button, name);
             Assert.IsTrue(button.enabledSelf, name);
             typeof(Clickable).GetMethod("Invoke", PrivateInstance).Invoke(button.clickable, new object[] { null });
+            PlayScenarioImportTestPump.Drain(parent, "playerSession");
         }
 
         private VisualElement Viewer(string file, out Func<string> readMessage)

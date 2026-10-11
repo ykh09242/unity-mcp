@@ -84,6 +84,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private ScrollView setupList;
         private ScrollView cleanupList;
         private PlayScenarioHistoryEditor history;
+        private PlayScenarioPlayerSessionEditor playerSessionEditor;
+        private PlayScenarioSoakEditor playerSoakEditor;
         private Label preflightResult;
         private TextField nameField;
         private TextField copyNameField;
@@ -144,6 +146,10 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
 
         private void OnDisable()
         {
+            playerSessionEditor?.Dispose();
+            playerSoakEditor?.Dispose();
+            playerSessionEditor = null;
+            playerSoakEditor = null;
             StopPolling();
             StartRun = null;
             ReadStatus = null;
@@ -329,12 +335,14 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             runResults.AddToClassList("scenario-scroll");
             panel.Add(runResults);
             history = new PlayScenarioHistoryEditor(panel, Store, () => draft.Name, SetMessage);
-            new PlayScenarioPlayerSessionEditor(
+            playerSessionEditor?.Dispose();
+            playerSoakEditor?.Dispose();
+            playerSessionEditor = new PlayScenarioPlayerSessionEditor(
                 panel,
                 SetMessage,
                 () => ChoosePlayerSessionFile != null ? ChoosePlayerSessionFile() : EditorUtility.OpenFilePanel("Open Player session.json", "", "json")
             );
-            new PlayScenarioSoakEditor(
+            playerSoakEditor = new PlayScenarioSoakEditor(
                 panel,
                 SetMessage,
                 () => ChoosePlayerSoakFile != null ? ChoosePlayerSoakFile() : EditorUtility.OpenFilePanel("Open Player soak evidence", "", "json")
