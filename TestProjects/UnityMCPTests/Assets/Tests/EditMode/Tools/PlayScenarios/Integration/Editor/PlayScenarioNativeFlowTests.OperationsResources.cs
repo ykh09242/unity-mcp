@@ -66,7 +66,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             PlayScenarioNativeEvidence.RecordExported(nameof(NativeServiceCancellationKeepsPrimaryOutcomeAndRecordsSecondaryResourceFailure), NextId);
         }
 
-        private static void ConfigureNativeResources(bool cleanup, bool replacement, bool cancel)
+        private static JObject ConfigureNativeResources(bool cleanup, bool replacement, bool cancel)
         {
             var scene = EditorSceneManager.OpenScene(Hardening, OpenSceneMode.Single);
             var probe = new GameObject("ResourceProbe").AddComponent<PlayScenarioResourceIntegrationProbe>();
@@ -93,6 +93,7 @@ namespace MCPForUnityTests.PlayScenarios.Integration
             }
             Command(new JObject { ["action"] = "save", ["scenario"] = definition });
             SessionState.SetString(ContextKey + ".ResourceDefinitionHash", PlayScenarioReproduction.Hash(PlayScenarioDefinition.Parse(definition)));
+            return definition;
         }
 
         private static IEnumerator ExecuteNativeResourceFlow(bool cleanup, bool replacement, bool cancel)

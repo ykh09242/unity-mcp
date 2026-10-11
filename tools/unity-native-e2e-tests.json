@@ -152,6 +152,31 @@
           "status": "cancelled"
         }
       ]
+    },
+    {
+      "method": "MCPForUnityTests.PlayScenarios.Integration.PlayScenarioNativeFlowTests.NativeServiceTenResourceCyclesPreserveBaselineAcrossFailureAndCancellation",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "succeeded"
+        },
+        {
+          "kind": "run",
+          "status": "failed"
+        },
+        {
+          "kind": "run",
+          "status": "succeeded"
+        },
+        {
+          "kind": "run",
+          "status": "cancelled"
+        },
+        {
+          "kind": "run",
+          "status": "succeeded"
+        }
+      ]
     }
   ]
 }
