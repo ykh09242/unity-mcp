@@ -11,6 +11,7 @@ from cli.utils.config import get_config
 from cli.utils.output import format_output
 from cli.utils.play_scenario_analysis_io import write_new
 from cli.utils.play_scenario_flakiness import analyze_flakiness
+from cli.utils.play_scenario_history import analyze_history
 from cli.utils.play_scenario_visual_compare import VisualPair, compare_visual, load_visual_policy
 from cli.utils.play_scenario_visual_reports import CheckpointSelection, pair_visual_reports
 
@@ -33,6 +34,30 @@ def analyze_saved_flakiness(reports: tuple[Path, ...], output: Path | None) -> N
             write_new(output, json.dumps(result, indent=2).encode("utf-8"))
     except (OSError, ValueError) as exc:
         result = {"schema_version": 1, "status": "not_comparable", "error": str(exc)}
+        exit_code = 2
+    click.echo(format_output(result, get_config().format))
+    raise click.exceptions.Exit(exit_code)
+
+
+@click.command("analyze-history")
+@click.argument(
+    "histories", nargs=-1, type=click.Path(dir_okay=False, path_type=Path), required=True
+)
+@click.option("--output", type=click.Path(dir_okay=False, path_type=Path))
+def analyze_saved_history(histories: tuple[Path, ...], output: Path | None) -> None:
+    """Analyze <=16 explicit session/soak summaries offline. Exit 0 analyzed, 2 incomplete.
+
+    Reads bounded local journals and owned soak artifacts. All outcomes survive report
+    eviction; source-local trends and streaks never infer missing batch iteration order.
+    """
+    try:
+        analysis = analyze_history(histories)
+        result = analysis.to_dict()
+        exit_code = 0 if analysis.status == "analyzed" else 2
+        if output is not None:
+            write_new(output, json.dumps(result, indent=2).encode("utf-8"))
+    except (OSError, ValueError) as exc:
+        result = {"schema_version": 1, "status": "incomplete", "error": str(exc)}
         exit_code = 2
     click.echo(format_output(result, get_config().format))
     raise click.exceptions.Exit(exit_code)
@@ -131,5 +156,6 @@ def compare_saved_visual_reports(
 def register_analysis_commands(group: click.Group) -> None:
     """Attach offline commands without changing native execution behavior."""
     group.add_command(analyze_saved_flakiness)
+    group.add_command(analyze_saved_history)
     group.add_command(compare_saved_visual)
     group.add_command(compare_saved_visual_reports)
