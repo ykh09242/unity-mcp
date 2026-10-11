@@ -586,8 +586,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                         Cancels++;
                         if (SynchronousCancelFinishedUnixMs.HasValue)
                         {
-                            Complete("cancelled", "child cancelled");
-                            Snapshot["finished_unix_ms"] = SynchronousCancelFinishedUnixMs.Value;
+                            Complete("cancelled", "child cancelled", SynchronousCancelFinishedUnixMs.Value);
                         }
                         return Snapshot;
                     },
@@ -596,13 +595,17 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 );
             }
 
-            internal void Complete(string status, string error)
+            internal void Complete(string status, string error, long finishedUnixMs = 1002)
             {
                 PlayScenarioSuiteChild child = Runner.Current;
                 PlayScenarioRun run = PlayScenarioEngine.Create(Runner.State.Definitions[Runner.State.Cursor], child.JobId, 1, 30, 1000);
                 run.Status = status;
                 run.Phase = "finished";
-                run.FinishedUnixMs = 1002;
+                run.FinishedUnixMs = finishedUnixMs;
+                PlayScenarioIterationResult iteration = run.IterationResults.Single();
+                iteration.Status = status == "succeeded" ? "passed" : status;
+                iteration.StartedUnixMs = run.StartedUnixMs;
+                iteration.FinishedUnixMs = finishedUnixMs;
                 run.Error = error;
                 run.ReportPath = "Library/MCPForUnity/PlayScenarioRuns/" + child.JobId + ".json";
                 run.RunnerResourcesReleased = true;

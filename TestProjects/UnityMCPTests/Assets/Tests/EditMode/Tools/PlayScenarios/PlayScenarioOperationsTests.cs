@@ -227,14 +227,17 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
         }
 
         [Test]
-        public void MeasurementFailureFailsBeforeDispatchAndDisabledAssertionsNeverSample()
+        public void MeasurementFailureRunsCleanupAndDisabledAssertionsNeverSample()
         {
             var host = new Host { Capture = () => throw new InvalidOperationException("measurement missing") };
             var engine = Engine(host);
             Complete(engine);
             Assert.That(engine.State.Status, Is.EqualTo("failed"));
             Assert.That(engine.State.Failure.Code, Is.EqualTo("resource_measurement_failed"));
-            Assert.That(host.Events, Is.EqualTo(new[] { "capture" }));
+            Assert.That(host.Events, Is.EqualTo(new[] { "capture", "cleanup" }));
+            Assert.That(engine.State.Steps.Where(step => step.Stage != "cleanup").All(step => step.Status == "skipped"), Is.True);
+            Assert.That(engine.State.Steps.Single(step => step.Stage == "cleanup").Status, Is.EqualTo("passed"));
+            Assert.That(engine.State.IterationResults.Single().Status, Is.EqualTo("failed"));
             var definition = PlayScenarioDefinition.Parse(DefinitionJson());
             definition.Resources.Enabled = false;
             host.Events.Clear();
