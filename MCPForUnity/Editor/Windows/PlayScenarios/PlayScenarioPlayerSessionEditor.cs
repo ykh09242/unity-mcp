@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -131,7 +132,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             }
         }
 
-        private static string CheckPath(string root, string file)
+        internal static string CheckPath(string root, string file)
         {
             string full = Path.GetFullPath(Path.Combine(root, file));
             if (full.StartsWith(@"\\", StringComparison.Ordinal))
@@ -371,12 +372,16 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     )
                         throw new InvalidDataException("Unavailable iteration evidence must keep every admitted repeat unknown.");
                 }
+                if (source == "native" && new[] { "pending", "running", "unknown" }.Any(field => (long)counts[field] != 0))
+                    throw new InvalidDataException("Native outcomes cannot retain unfinished or unknown iteration evidence.");
                 if (value["iteration_counts"] is JObject total && total[mode] is JObject arm)
                     foreach (string field in CountFields)
                         if ((long)counts[field] > (long)arm[field])
                             throw new InvalidDataException("Outcome counters exceed session counters.");
             }
             string reportHash = Text(item, "native_report_sha256", 64, true);
+            if (status != "succeeded" && (long?)item["exit_code"] == 0)
+                throw new InvalidDataException("Failed outcomes cannot claim a successful exit.");
             if (reportHash != null && !Regex.IsMatch(reportHash, "^[0-9a-f]{64}$"))
                 throw new InvalidDataException("native_report_sha256 must be a lowercase SHA256.");
             Text(item, "client_error", 4096, true);
@@ -594,8 +599,16 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             }
         }
 
-        private static void ValidateReport(JObject report)
+        internal static void ValidateReport(JObject report)
         {
+            if (report.Property("iteration_results_version") != null || report.Property("iteration_results") != null)
+            {
+                long repeats = Integer(report, "repeat_count", 1, 10);
+                string status = Text(report, "status", 32);
+                if (!new[] { "succeeded", "failed", "timed_out", "cancelled" }.Contains(status))
+                    throw new InvalidDataException("Saved native report must have a terminal status.");
+                PlayScenarioStore.ValidateIterationResults(report, (int)repeats);
+            }
             if (report["steps"] is JArray steps)
             {
                 if (steps.Count > 2048 || steps.Any(item => !(item is JObject)))

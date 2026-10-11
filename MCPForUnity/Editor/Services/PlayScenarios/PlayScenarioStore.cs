@@ -411,28 +411,36 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
         }
 
-        private static void ValidateIterationResults(JObject value, int repeats)
+        internal static void ValidateIterationResults(JObject value, int repeats)
         {
             // Missing both fields identifies a legacy report, whose iteration history
             // cannot be reconstructed safely from step rows.
             if (value.Property("iteration_results_version") == null && value.Property("iteration_results") == null)
                 return;
-            if (value["iteration_results_version"].Type != JTokenType.Integer || (int)value["iteration_results_version"] != 1)
+            if (repeats < 1 || repeats > 10)
+                throw new ArgumentException("Iteration repeat_count must be 1-10.");
+            if (value["iteration_results_version"]?.Type != JTokenType.Integer || (long)value["iteration_results_version"] != 1)
                 throw new ArgumentException("Unsupported iteration_results_version.");
-            var results = (JArray)value["iteration_results"];
-            if (results.Count != repeats)
+            if (!(value["iteration_results"] is JArray results) || results.Count != repeats)
                 throw new ArgumentException("Iteration results must contain one ordered row per repetition.");
+            State((string)value["status"], "running", "succeeded", "failed", "timed_out", "cancelled");
+            long reportStarted = IterationTimestamp(value["started_unix_ms"], false).Value;
+            long? reportFinished = IterationTimestamp(value["finished_unix_ms"], true);
+            if (reportFinished.HasValue && reportFinished.Value < reportStarted)
+                throw new ArgumentException("Iteration report timestamps run backwards.");
             bool terminal = (string)value["status"] != "running";
             long? previousFinished = null;
             for (int index = 0; index < results.Count; index++)
             {
-                var result = (JObject)results[index];
+                if (!(results[index] is JObject result))
+                    throw new ArgumentException("Iteration results must contain objects.");
+                ValidateShape(result, typeof(PlayScenarioIterationResult));
                 if ((int)result["iteration"] != index + 1)
                     throw new ArgumentException("Iteration results require ordered unique iteration numbers.");
                 string status = (string)result["status"];
                 State(status, "pending", "running", "passed", "failed", "timed_out", "cancelled", "skipped");
-                long? started = (long?)result["started_unix_ms"];
-                long? finished = (long?)result["finished_unix_ms"];
+                long? started = IterationTimestamp(result["started_unix_ms"], true);
+                long? finished = IterationTimestamp(result["finished_unix_ms"], true);
                 bool attempted = status != "pending" && status != "skipped";
                 if (
                     attempted != started.HasValue
@@ -443,8 +451,6 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     || ((string)value["status"] == "succeeded" && status != "passed")
                 )
                     throw new ArgumentException("Iteration result status and timestamps are inconsistent.");
-                long reportStarted = (long)value["started_unix_ms"];
-                long? reportFinished = (long?)value["finished_unix_ms"];
                 if (
                     (started.HasValue && (started.Value < reportStarted || (previousFinished.HasValue && started.Value < previousFinished.Value)))
                     || (
@@ -456,6 +462,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (attempted)
                     previousFinished = finished;
             }
+        }
+
+        private static long? IterationTimestamp(JToken token, bool nullable)
+        {
+            if (nullable && token?.Type == JTokenType.Null)
+                return null;
+            if (token?.Type != JTokenType.Integer || !long.TryParse(token.ToString(), out long number) || number < 0)
+                throw new ArgumentException("Iteration timestamps must be nonnegative signed 64-bit integers or declared nulls.");
+            return number;
         }
 
         private static void ValidateQueryCounts(JObject counts)

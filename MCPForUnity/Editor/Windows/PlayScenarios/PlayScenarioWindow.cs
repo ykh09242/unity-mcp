@@ -100,6 +100,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private string renderedReportJson;
         internal Func<string> ChoosePlayerBuildFolder;
         internal Func<string> ChoosePlayerSessionFile;
+        internal Func<string> ChoosePlayerSoakFile;
         internal Func<string, string, string, string> BuildPlayerBundle;
         internal Func<bool> IsEditorBusy;
         private bool EditorBusy =>
@@ -332,6 +333,11 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 panel,
                 SetMessage,
                 () => ChoosePlayerSessionFile != null ? ChoosePlayerSessionFile() : EditorUtility.OpenFilePanel("Open Player session.json", "", "json")
+            );
+            new PlayScenarioSoakEditor(
+                panel,
+                SetMessage,
+                () => ChoosePlayerSoakFile != null ? ChoosePlayerSoakFile() : EditorUtility.OpenFilePanel("Open Player soak evidence", "", "json")
             );
             columns.Add(panel);
         }
