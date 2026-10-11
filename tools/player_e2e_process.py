@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import signal
-from threading import Thread
+from threading import Event, Thread
 import time
 
 from player_e2e_artifacts import read_json, write_json, unique_object
@@ -26,6 +26,7 @@ class Invocation:
     deadline_after_progress: float | None = None
     environment: dict[str, str] | None = None
     observe_cli: bool = False
+    stop_requested: Event | None = None
 
 
 def stop_owned_tree(process: subprocess.Popen) -> None:
@@ -97,6 +98,10 @@ def execute(invocation: Invocation) -> dict:
     deadline = time.monotonic() + invocation.timeout
     try:
         while process.poll() is None:
+            if invocation.stop_requested is not None and invocation.stop_requested.is_set():
+                forced = True
+                stop_owned_tree(process)
+                break
             progress_path = directory / "progress.json"
             native_pid = process.pid
             if invocation.cancel_iteration is not None or invocation.observe_cli:

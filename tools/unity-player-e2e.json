@@ -40,6 +40,8 @@
     "soak-late-stop": "soak-failed",
     "soak-late-continue": "soak-failed",
     "soak-cancel": "soak-cancelled",
+    "soak-import-overlap": "soak-succeeded",
+    "soak-import-cancel": "soak-cancelled",
     "soak-timeout": "soak-timed-out",
     "soak-deadline": "soak-timed-out",
     "soak-initial-io": "soak-incomplete",

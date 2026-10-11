@@ -14,6 +14,12 @@ from player_e2e_artifacts import digest, inventory, read_json, verify_bundle, wr
 from player_e2e_process import Invocation, execute
 from player_e2e_iterations import iteration_command
 from player_e2e_soak import CASES as SOAK_CASES, soak_command
+from player_e2e_imports import (
+    CASES as IMPORT_CASES,
+    ImportEditor,
+    ImportE2EError,
+    execute_with_imports,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Server/src"))
@@ -223,7 +229,7 @@ def run_case(args: argparse.Namespace, case: str, bundle: dict, builds: tuple[Pa
         environment["MCP_SCENARIO_FIXTURE_MODE"] = fixture_mode
         (directory / "request.json").unlink()
         timeout = SOAK_CASES[case][3] + 45
-        cancel_iteration = 13 if case == "soak-cancel" else None
+        cancel_iteration = 13 if case in {"soak-cancel", "soak-import-cancel"} else None
         observe_cli = True
     if case.startswith("iteration-"):
         command, fixture_mode, cancel_iteration = iteration_command(
@@ -232,18 +238,20 @@ def run_case(args: argparse.Namespace, case: str, bundle: dict, builds: tuple[Pa
         environment["MCP_SCENARIO_FIXTURE_MODE"] = fixture_mode
         # The actual CLI creates its own attributed native request.
         (directory / "request.json").unlink()
-    execute(
-        Invocation(
-            command,
-            directory,
-            timeout=timeout,
-            cancel_on_progress=case == "cancel" or cancel_iteration is not None,
-            cancel_iteration=cancel_iteration,
-            deadline_after_progress=3 if case == "hang" else None,
-            environment=environment,
-            observe_cli=observe_cli,
-        )
+    invocation = Invocation(
+        command,
+        directory,
+        timeout=timeout,
+        cancel_on_progress=case == "cancel" or cancel_iteration is not None,
+        cancel_iteration=cancel_iteration,
+        deadline_after_progress=3 if case == "hang" else None,
+        environment=environment,
+        observe_cli=observe_cli,
     )
+    if case in IMPORT_CASES:
+        execute_with_imports(invocation, ImportEditor(args.editor, args.project))
+    else:
+        execute(invocation)
     receipt = {
         "schema_version": 1,
         "session_id": args.session_id,
@@ -289,6 +297,11 @@ def main() -> int:
             not args.build and (not args.editor or not args.project)
         ):
             raise ValueError("Supply both prebuilt roots or an Editor and isolated project")
+        if not args.editor or not args.project:
+            raise ImportE2EError(
+                "Concurrent imports require --editor and --project, including prebuilt runs"
+            )
+        ImportEditor(args.editor, args.project).validate()
         builds = (
             (args.build.resolve(), args.ordinary_build.resolve())
             if args.build and args.ordinary_build

@@ -13,6 +13,8 @@ CASES = {
     "soak-late-stop": (20, "soak-late-failure", "stop", 180),
     "soak-late-continue": (20, "soak-late-failure", "continue", 180),
     "soak-cancel": (20, "soak-cancel", "continue", 180),
+    "soak-import-overlap": (50, "success", "stop", 180),
+    "soak-import-cancel": (20, "soak-cancel", "continue", 180),
     "soak-timeout": (20, "soak-timeout", "continue", 180),
     "soak-deadline": (100, "success", "continue", 1),
     "soak-initial-io": (20, "success", "continue", 180),
@@ -239,7 +241,7 @@ def check_soak_case(directory: Path, bundle: dict, invocation: dict, case: str) 
         "Outer soak fabricated engine repeat ledger",
     )
     _check_progress(root, invocation, request, native["process_id"])
-    success = case in {"soak-100", "soak-resources", "soak-unlabeled"}
+    success = case in {"soak-100", "soak-resources", "soak-unlabeled", "soak-import-overlap"}
     require(
         (invocation["actual_exit_code"] == native["actual_exit_code"] == 0) == success,
         "Soak exit codes differ from whole-session result",
@@ -273,7 +275,7 @@ def check_soak_case(directory: Path, bundle: dict, invocation: dict, case: str) 
             "Original later failure disappeared",
         )
     else:
-        expected = "cancelled" if case == "soak-cancel" else "timed_out"
+        expected = "cancelled" if case in {"soak-cancel", "soak-import-cancel"} else "timed_out"
         require(
             summary["status"] == expected
             and len(rows) < requested
@@ -283,7 +285,7 @@ def check_soak_case(directory: Path, bundle: dict, invocation: dict, case: str) 
         require(
             junit.findall("testcase/skipped"), "Unattempted terminal iterations were not skipped"
         )
-        if case == "soak-cancel":
+        if case in {"soak-cancel", "soak-import-cancel"}:
             require(
                 invocation["cancel_requested"] and len(rows) == 13,
                 "Cancellation did not reach iteration 13",
