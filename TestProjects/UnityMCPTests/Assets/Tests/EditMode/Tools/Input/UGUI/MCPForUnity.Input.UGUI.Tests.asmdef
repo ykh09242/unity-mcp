@@ -5,6 +5,7 @@
     "MCPForUnity.Editor",
     "MCPForUnity.Runtime",
     "MCPForUnity.Input.UGUI.Editor",
+    "MCPForUnity.Input.UGUI.Runtime",
     "UnityEngine.UI",
     "UnityEngine.TestRunner",
     "UnityEditor.TestRunner"
