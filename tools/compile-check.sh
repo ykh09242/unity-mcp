@@ -451,6 +451,7 @@ for platform in $PLATFORMS; do
       compile MCPForUnity.Input.UGUI.Tests "$TEST_PROJECT/Assets/Tests/EditMode/Tools/Input/UGUI" "$platform" \
         "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
         "$OUT/$platform/MCPForUnity.Editor.dll" "$OUT/$platform/MCPForUnity.Input.UGUI.Editor.dll" \
+        "$OUT/$platform/MCPForUnity.Input.UGUI.Runtime.dll" \
         || failed=1
     fi
     if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then

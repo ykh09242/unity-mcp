@@ -1318,7 +1318,10 @@ def test_enabled_ugui_compiles_separate_assemblies_in_dependency_order(
     for assembly, dependencies in (
         (UGUI_ASSEMBLIES[0], ("MCPForUnity.Runtime",)),
         (UGUI_ASSEMBLIES[1], ("MCPForUnity.Runtime", "MCPForUnity.Editor", UGUI_ASSEMBLIES[0])),
-        (UGUI_ASSEMBLIES[2], ("MCPForUnity.Runtime", "MCPForUnity.Editor", UGUI_ASSEMBLIES[1])),
+        (
+            UGUI_ASSEMBLIES[2],
+            ("MCPForUnity.Runtime", "MCPForUnity.Editor", UGUI_ASSEMBLIES[0], UGUI_ASSEMBLIES[1]),
+        ),
     ):
         for dependency in dependencies:
             assert f'/linux/{dependency}.dll"' in responses[assembly]
@@ -1344,6 +1347,43 @@ def test_disabled_ugui_keeps_nested_sources_out_of_parent_assemblies(
         assert "/UGUI/Fixture.cs" not in response
         assert "/Excluded.cs" not in response
         assert "-define:MCP_INPUT_UGUI" not in response
+
+
+@pytest.mark.parametrize("version", ["2021.3.45f2", "2022.3.76f1", "6000.3.25f1"])
+def test_ugui_test_compiler_receives_current_asmdef_dependencies_on_all_platforms(
+    harness: CompileHarness, ugui_sources: tuple[Path, Path], version: str
+) -> None:
+    project, framework = ugui_sources
+    runtime_directory = harness.repo / "MCPForUnity/Runtime/PlayScenarios/UGUI"
+    observer = "UguiScenarioRecordingObserver.cs"
+    shutil.copy2(ROOT / "MCPForUnity/Runtime/PlayScenarios/UGUI" / observer, runtime_directory)
+    definition = json.loads(
+        (
+            project / "Assets/Tests/EditMode/Tools/Input/UGUI" / f"{UGUI_ASSEMBLIES[2]}.asmdef"
+        ).read_text(encoding="utf-8")
+    )
+    required = {
+        reference for reference in definition["references"] if reference.startswith("MCPForUnity.")
+    }
+    result = harness.run(
+        version, "win osx linux", test_project=project, framework=framework, ugui=True
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    for platform in ("win", "osx", "linux"):
+        runtime_response = (harness.output / platform / f"{UGUI_ASSEMBLIES[0]}.rsp").read_text(
+            encoding="utf-8"
+        )
+        test_response = (harness.output / platform / f"{UGUI_ASSEMBLIES[2]}.rsp").read_text(
+            encoding="utf-8"
+        )
+        assert f"/UGUI/{observer}" in runtime_response
+        assert f"/UGUI/{observer}" not in test_response
+        assert "-define:MCP_INPUT_UGUI" in runtime_response.splitlines()
+        for reference in required:
+            assert (
+                f'-r:"{harness.output.as_posix()}/{platform}/{reference}.dll"'
+                in test_response.splitlines()
+            )
 
 
 @pytest.mark.parametrize("missing", UGUI_ASSEMBLIES)
