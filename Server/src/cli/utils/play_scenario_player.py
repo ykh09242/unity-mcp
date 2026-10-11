@@ -406,6 +406,7 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
         # Unity startup precedes the native journal clock. Once progress establishes
         # that clock, tighten this bounded startup allowance to native runtime + cleanup.
         deadline += options.timeout_seconds + options.cleanup_wait_seconds
+    soak_deadline = deadline if options.soak is not None else math.inf
     native_clock_observed = False
     if options.deadline_monotonic is not None:
         deadline = min(deadline, options.deadline_monotonic)
@@ -425,12 +426,13 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                         and not cancellation_sent
                         and observer.last is not None
                     ):
-                        deadline = min(
-                            deadline,
+                        soak_deadline = min(
+                            soak_deadline,
                             time.monotonic()
                             + max(0, runtime - observer.last.elapsed_ms / 1000)
                             + options.cleanup_wait_seconds,
                         )
+                        deadline = min(deadline, soak_deadline)
                         native_clock_observed = True
                 expired = time.monotonic() >= deadline or (
                     log_capture.error is not None and not cancellation_sent
@@ -439,8 +441,9 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                     (directory / "cancel").write_text("cancel\n", encoding="utf-8")
                     cancellation_sent = True
                     deadline_reached = not interrupted
-                    deadline = time.monotonic() + options.cleanup_wait_seconds
-                elif expired:
+                    # The soak deadline already includes cleanup; cancellation cannot extend it.
+                    deadline = min(time.monotonic() + options.cleanup_wait_seconds, soak_deadline)
+                if cancellation_sent and time.monotonic() >= deadline:
                     forced_termination = process.poll() is None
                     _stop_owned(process)
                     break
@@ -453,7 +456,7 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                     break
                 (directory / "cancel").write_text("cancel\n", encoding="utf-8")
                 cancellation_sent = True
-                deadline = time.monotonic() + options.cleanup_wait_seconds
+                deadline = min(time.monotonic() + options.cleanup_wait_seconds, soak_deadline)
         return_code = process.wait(timeout=5)
     finally:
         try:

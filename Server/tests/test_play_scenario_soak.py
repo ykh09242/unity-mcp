@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 from xml.etree import ElementTree
 
 from click.testing import CliRunner
@@ -419,6 +420,155 @@ def test_forced_process_termination_cannot_admit_previously_written_success(
     assert (
         json.loads((outcome.directory / "process.json").read_bytes())["forced_termination"] is True
     )
+
+
+@pytest.mark.parametrize("cleanup_wait", [1, 2])
+def test_soak_cli_grants_one_cleanup_wait_to_a_real_stalled_child(
+    verified_bundle, soak_child, monkeypatch, cleanup_wait
+):
+    build, output, _manifest = verified_bundle
+    soak_child[0][0] = "forced"
+    observed = []
+    stopped = []
+    original_observer = player.ProgressObserver
+    original_stop = player._stop_owned
+
+    class TimedObserver(original_observer):
+        def observe(self, path):
+            super().observe(path)
+            if self.last is not None and not observed:
+                observed.append((time.monotonic(), self.last.elapsed_ms))
+
+    def stop_owned(process):
+        if process.poll() is None:
+            stopped.append(time.monotonic())
+        original_stop(process)
+
+    monkeypatch.setattr(player, "ProgressObserver", TimedObserver)
+    monkeypatch.setattr(player, "_stop_owned", stop_owned)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "play-scenario",
+            "player-soak",
+            str(build),
+            "--output-dir",
+            str(output),
+            "--iterations",
+            "2",
+            "--timeout-seconds",
+            "1",
+            "--max-runtime-seconds",
+            "1",
+            "--cleanup-wait-seconds",
+            str(cleanup_wait),
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert len(observed) == len(stopped) == len(soak_child[1]) == 1
+    assert soak_child[1][0].poll() is not None
+    first_observed, native_elapsed_ms = observed[0]
+    cleanup_elapsed = stopped[0] - first_observed - max(0, 1 - native_elapsed_ms / 1000)
+    print(f"cleanup_wait={cleanup_wait}s, observed_cleanup={cleanup_elapsed:.3f}s")
+    # Permit polling and scheduler jitter, but not a second full cleanup budget.
+    assert cleanup_wait <= cleanup_elapsed < cleanup_wait + 0.75
+    directory = next(output.iterdir())
+    receipt = json.loads((directory / "process.json").read_bytes())
+    assert receipt["forced_termination"] is True and receipt["process_ended"] is True
+    assert ElementTree.parse(directory / "junit.xml").getroot().attrib["errors"] == "1"
+
+
+@pytest.mark.parametrize("cleanup_wait", [1, 2])
+@pytest.mark.parametrize(
+    "native_elapsed_ms,cancel_mode",
+    [
+        (None, None),
+        (0, None),
+        (1000, None),
+        (0, "deadline"),
+        (1000, "deadline"),
+        (0, "interrupt"),
+        (1000, "interrupt"),
+    ],
+)
+def test_soak_shutdown_keeps_its_original_cleanup_deadline(
+    verified_bundle, monkeypatch, cleanup_wait, native_elapsed_ms, cancel_mode
+):
+    from io import BytesIO
+    from types import SimpleNamespace
+
+    build, output, _manifest = verified_bundle
+    started = time.monotonic()
+    clock = SimpleNamespace(now=started, interrupted=False)
+    stopped = []
+    process = SimpleNamespace(pid=123456, stdout=BytesIO(), returncode=None)
+    process.poll = lambda: process.returncode
+    process.wait = lambda timeout: process.returncode
+
+    def kill():
+        stopped.append(clock.now - started)
+        process.returncode = 1
+
+    def advance(seconds):
+        if cancel_mode == "interrupt" and not clock.interrupted and clock.now >= started + 0.5:
+            clock.interrupted = True
+            raise KeyboardInterrupt
+        clock.now += seconds
+
+    def launch(arguments, **_kwargs):
+        path = Path(arguments[2])
+        request = json.loads(path.read_bytes())
+        if native_elapsed_ms is not None:
+            identity = {
+                key: request[key]
+                for key in (
+                    "job_id",
+                    "definition_hash",
+                    "build_id",
+                    "build_source_revision",
+                    "payload_hash",
+                )
+            }
+            progress = dict(
+                identity,
+                process_id=process.pid,
+                schema_version=1,
+                sequence=1,
+                main_loop_sequence=1,
+                heartbeat_unix_ms=int(time.time() * 1000),
+                elapsed_ms=native_elapsed_ms,
+                phase="running",
+                iteration=1,
+                stage="steps",
+                step_index=0,
+                status="running",
+            )
+            (path.parent / "progress.json").write_text(json.dumps(progress), encoding="utf-8")
+        return process
+
+    process.kill = kill
+    monkeypatch.setattr(player.subprocess, "Popen", launch)
+    monkeypatch.setattr(
+        player, "time", SimpleNamespace(monotonic=lambda: clock.now, sleep=advance, time=time.time)
+    )
+    outcome = run_player_soak(
+        PlayerRunOptions(
+            build,
+            output,
+            timeout_seconds=1,
+            cleanup_wait_seconds=cleanup_wait,
+            poll_interval_seconds=0.05,
+            deadline_monotonic=started + 0.5 if cancel_mode == "deadline" else None,
+            soak=SoakRequest(iterations=2, max_runtime_seconds=1),
+        )
+    )
+    runtime_left = 2 if native_elapsed_ms is None else max(0, 1 - native_elapsed_ms / 1000)
+    expected_stop = min(runtime_left, 0.5) if cancel_mode else runtime_left
+    assert len(stopped) == 1
+    assert stopped[0] == pytest.approx(expected_stop + cleanup_wait, abs=0.11)
+    assert outcome.exit_code != 0 and outcome.summary.evidence_state == "incomplete"
 
 
 def test_soak_junit_replacement_failure_propagates_and_preserves_existing_xml(
