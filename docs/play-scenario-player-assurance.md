@@ -91,6 +91,16 @@ version-2 provenance gate. Use `--require-verified-payload` on `player-run` to r
 needed, `--expected-build-id`. These checks are separate from the caller label `--source-revision`.
 Do not confuse matching scenario-definition hashes with matching binaries.
 
+New runs capture `reproduction.environment` once at explicit execution start and reuse it
+across reports and all soak iterations. It records the actual operating system, runtime
+platform, process architecture, scripting backend, build mode and reported managed runtime
+version. Unavailable values remain null; older reports can omit the entire object. No
+device identifier, installed path or recurring environment query is collected.
+
+`runtime_version` is the value reported by `System.Environment.Version`; it is not a claim
+about an installed Mono or .NET Framework patch level. See the [managed runtime API contract](https://learn.microsoft.com/en-us/dotnet/api/system.environment.version).
+The limits and versioned fields are documented in the [soak contract](play-scenario-soak-contract.md).
+
 ## Keep progress when finalization fails
 
 Each Player writes bounded `progress.json` beside its request. The first snapshot is startup evidence;
@@ -274,6 +284,64 @@ performance budget. Check each metric's state. `insufficient_evidence` and `not_
 exit 2; missing or invalid evidence is never treated as zero growth. The command does not
 rewrite reports, force GC, query the game or create a new test run.
 
+## Gate an explicit regression budget
+
+Use a separate policy when CI must decide whether a candidate exceeds a baseline's observed
+growth. The following example allows no increase in managed-memory net change or slope;
+choose limits from repeated comparable measurements for the actual project.
+
+```json
+{
+  "schema_version": 1,
+  "metrics": {
+    "managed_bytes": {
+      "max_net_change_increase": 0,
+      "max_slope_increase_per_iteration": 0,
+      "min_paired_samples": 20,
+      "min_consecutive_samples": 20
+    }
+  }
+}
+```
+
+Save the policy as `soak-budget.json`, then run:
+
+```sh
+unity-mcp --format json play-scenario check-soak-budget \
+  reports/baseline/JOB_ID reports/candidate/JOB_ID --policy soak-budget.json
+```
+
+Select one to three metrics from `managed_bytes`, `allocated_bytes` and `object_count`.
+Every selected metric requires all four limits. Minimum sample counts are integers from
+2 through 1,000. Net-change limits are nonnegative signed 64-bit integers; slope limits
+are finite nonnegative JSON numbers, bounded to the same maximum and 18 decimal places.
+Byte metrics use bytes and bytes per iteration; object counts use objects and objects
+per iteration. Policies are at most 8 KiB and depth 8. Unknown or duplicate keys, links,
+nonfinite numbers and malformed evidence fail admission.
+
+The gate requires successful complete native, client and natural process-exit evidence,
+matching execution parameters, and all six environment values known and equal. Supported
+recorded platforms are WindowsPlayer, LinuxPlayer and OSXPlayer with Mono or IL2CPP;
+accepting a recorded platform does not establish that this repository tested that build.
+Legacy or unknown environments cannot pass the budget gate.
+
+Only paired post-warmup observations in sufficiently long consecutive segments are used.
+Short segments are removed before checking the minimum paired sample count; gaps never
+join separate segments. Limits compare candidate minus baseline net change and slope.
+Decisions use exact decimal/rational arithmetic and include the limit itself. Display
+rounding cannot change a result. The output includes the policy's exact-byte SHA-256,
+sample counts, per-metric reasons and exact slope fractions.
+
+| Status | CLI exit | Meaning |
+| --- | --- | --- |
+| `within_budget` | 0 | Every selected metric has sufficient comparable evidence within both limits. |
+| `budget_exceeded` | 1 | Comparable evidence exceeds at least one explicit limit. |
+| `not_comparable` | 2 | A policy, environment, source or required sample condition prevents a decision. |
+
+The output always has `leak_verdict: false`. This is a regression budget over saved
+observations, not proof that either run is leak-free. The command never changes its
+source files or samples the game again.
+
 ## Recover an incomplete session snapshot
 
 The launcher writes an immutable `session-start.json` and flushes a bounded `admissions.jsonl` entry
@@ -341,6 +409,20 @@ page. Incomplete, missing or contradictory evidence stays explicit. This native 
 independently establish a natural child exit. Reimport to read newer evidence; paging never rereads
 the Player state or adds file watchers.
 
+Expand **Compare saved Player soaks** to select and manually import a baseline and
+candidate. Choose managed bytes, allocated bytes or object count to inspect cached
+curves, warmup shading, raw values and exact paired differences. Missing observations
+break the curve. Rows use 25-entry pages, interval details are capped at 16, and each
+run contributes at most 1,000 points. Metric changes and paging perform no new reads.
+
+Both snapshots must be fresh and complete before differences are displayed. Known
+definition, failure-policy, version, warmup or environment mismatches suppress differences;
+unknown environment metadata stays visibly unverified. Refresh failures preserve a
+labeled last-good snapshot, while changing the path clears it. The comparison view uses
+the same cancellable background import and window-disposal rules as individual imports.
+It shows native snapshot diagnostics only; it does not establish natural process exit
+or issue the CLI's budget verdict.
+
 ## Require actual Player CI
 
 Use `require_player_e2e: true` on **Unity Tests** when built Player execution is mandatory. The reusable
@@ -363,3 +445,38 @@ both processes, including failure paths. Retain the `editor-import` NUnit result
 markers and receipt alongside native artifacts. Even when supplying prebuilt Players to
 `tools/run_play_scenario_player_e2e.py`, provide `--editor` and a prepared isolated `--project`
 under repository `.tmp` or `.unity-ci` for these actual import cases.
+
+Choose `player_profile` in the workflow dispatch UI or reusable-workflow input. Direct local
+commands default to `standard`; pull-request runs through Unity Tests select `quick`, and
+other automatic runs select `standard` unless their caller provides another profile.
+The maintained configuration is `tools/unity-player-e2e-profiles.json`:
+
+| Profile | Native cases | Execution bound after builds | CI artifact retention |
+| --- | --- | --- | --- |
+| `quick` | 11 core, failure, ordinary-build, budget and concurrent-import cases | 600 seconds | 7 days |
+| `standard` | All 43 regular cases, including 100 same-PID iterations | 1,800 seconds | 14 days |
+| `long` | All 44 cases, adding 1,000 same-PID iterations | 3,600 seconds | 30 days |
+
+Every profile also runs three real `check-soak-budget` commands against fresh 30-iteration
+baseline and controlled-growth Players. The bounded fixture retains at most 30 MiB and
+releases it at shutdown. These checks require exits 0, 1 and 2 for generous limits, zero
+growth allowance and insufficient samples respectively, preserving native input hashes.
+This fixture proves gate behavior; its limits are not a recommended game-memory budget.
+
+Initialize, execute and independently check the same selected profile:
+
+```sh
+python tools/run_play_scenario_player_e2e.py --initialize --profile long --output <new-evidence-root>
+python tools/run_play_scenario_player_e2e.py --profile long --output <new-evidence-root> \
+  --session-id <returned-nonce> --source-revision <trusted-revision> \
+  --editor <Unity.exe> --project <isolated-project>
+python tools/check_play_scenario_player_evidence.py <new-evidence-root> \
+  --session-id <returned-nonce> --profile long
+```
+
+Initialization freezes the profile, exact case set, manifest hash and limits. The checker
+takes an independent profile requirement and rejects changed scope, missing or extra cases,
+failed outcomes, missing budget receipts or exceeded execution limits. The execution bound
+includes cases and offline budget checks, excludes building, and stops new admission at
+the deadline; owned process cleanup still runs. Never relabel partial long evidence as a
+completed quick run. Retention settings apply to CI uploads, not arbitrary local folders.

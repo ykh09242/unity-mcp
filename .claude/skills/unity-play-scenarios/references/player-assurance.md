@@ -70,10 +70,32 @@ states and missing/unpaired counts; gaps break trend segments. Exit 0 means at l
 was computed, not a leak verdict or budget pass. Insufficient/incompatible evidence exits 2. Do not
 launch, query or resample merely to inspect saved metrics unless further execution is in scope.
 
+New runs capture `reproduction.environment` once and reuse it across reports. OS, runtime
+platform, architecture, backend, build mode and reported managed runtime version must all
+be known and equal for a budget decision. Unknown values remain null; older reports can
+omit the object. Do not guess missing metadata from a build target or treat the reported
+managed runtime version as an installed Mono/.NET Framework patch level.
+
+For an explicit CI threshold, use `play-scenario check-soak-budget BASELINE_DIRECTORY
+CANDIDATE_DIRECTORY --policy POLICY_FILE`. The schema-1 JSON policy selects one to three
+metrics (`managed_bytes`, `allocated_bytes`, `object_count`) and requires each metric's
+`max_net_change_increase`, `max_slope_increase_per_iteration`, `min_paired_samples` and
+`min_consecutive_samples`. Choose limits from the project's repeated comparable observations;
+there are no automatic safe defaults. Consult the repository assurance guide for exact
+bounds and examples. Consecutive segments too short for the policy are excluded before
+testing the paired-sample minimum. Warmup, missing data and gaps never become zero growth.
+Exact inclusive comparisons produce `within_budget`/exit 0, `budget_exceeded`/exit 1 or
+`not_comparable`/exit 2. Preserve policy hashes and reasons; `leak_verdict` remains false.
+
 Editor session/soak imports are manual background snapshots. Repeated same-source clicks coalesce;
 source changes and window lifetimes cancel delivery. A last-good same-source display is labeled
 stale during refresh/failure. Only identified file races receive at most three bounded retries;
 malformed or contradictory evidence fails. Paging adds no reads or game queries.
+
+Use **Compare saved Player soaks** for two manually imported native snapshots. The cached
+metric chart breaks gaps, shades warmup and pages raw values/differences. Known metadata
+mismatches or stale/incomplete snapshots suppress differences; unknown environment stays
+unverified. This UI does not establish process-exit evidence or replace the CLI budget gate.
 
 ## Required built-Player CI
 
@@ -86,3 +108,12 @@ keep fresh case receipts, hashes, logs and reports on failure. Compile-only chec
 The maintained concurrent-import cases require an installed Editor and an isolated prepared project,
 including prebuilt-Player runs. Keep their Editor NUnit/process receipts and live-prefix observations;
 reading only a completed journal does not establish concurrent import coverage.
+
+Select `player_profile` in CI or `--profile quick|standard|long` in the maintained local
+initializer, runner and independent checker. Quick selects 11 core cases; standard has
+43 cases; long adds the 1,000-iteration same-PID case. Each profile also requires the three
+actual offline budget CLI outcomes against controlled native baseline/growth runs. Limits
+are fixed in `tools/unity-player-e2e-profiles.json`; do not weaken the manifest or relabel
+partial evidence to pass. Keep the same externally selected profile across initialization,
+execution and verification. Local default is standard; long is explicit. No recurring
+execution or repository license/secret changes are implied by selecting a profile.

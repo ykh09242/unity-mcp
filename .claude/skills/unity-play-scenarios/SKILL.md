@@ -94,7 +94,8 @@ Read [execution](references/execution.md) for explicit reset participants, actua
 bounded timelines, owner/call-site resource attribution, standalone Player build/run and strict native
 CI evidence. Use verified registration IDs, preserve unsupported-capability failures, and require both
 the actual report and process outcome before claiming a built Player passed. For state probes, version-2
-build identity, crash progress, bounded repeat sessions, offline soak-metric comparison and required Player CI, read
+build identity, crash progress, bounded repeat sessions, saved soak comparisons, explicit regression
+budgets and quick/standard/long Player CI profiles, read
 [Player assurance](references/player-assurance.md).
 
 ## CLI fallback

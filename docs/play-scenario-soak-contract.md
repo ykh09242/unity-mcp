@@ -94,6 +94,30 @@ Progress schema stays 1. Its launch identity, sequence, main_loop_sequence and
 elapsed_ms are session-wide and monotonic even when engine timestamps reset.
 `iteration` is global during soak. Normal progress retains its existing meaning.
 
+## Optional execution environment
+
+Native `reproduction.environment` is an additive schema-1 object captured once at explicit
+Editor or Player execution start and shared unchanged by every iteration report. Restored
+reports preserve their original snapshot. It is not added to every journal row or progress
+poll. Legacy reports can omit it; unknown values are JSON null.
+
+| Field | Value and UTF-16-unit bound |
+| --- | --- |
+| `schema_version` | Integer 1 |
+| `operating_system` | Actual OS description, at most 256 units |
+| `platform` | Actual `Application.platform`, at most 64 units |
+| `architecture` | Actual process architecture, at most 32 units |
+| `scripting_backend` | `mono`, `il2cpp` or null |
+| `build_mode` | `editor`, `development`, `release` or null |
+| `runtime_version` | Reported managed runtime version, at most 64 units |
+
+Text rejects broken surrogate pairs and C0/C1 control characters. A failed native getter
+or invalid/oversized value becomes null without truncation or scenario failure. The Python
+and Editor readers use the same UTF-16 and control-character rules. Runtime version is
+reported API metadata, not an installed-framework patch assertion. No device IDs or
+installed paths are captured. The explicit offline budget gate requires a fully known,
+matching environment; diagnostic comparison can preserve unknown metadata as unverified.
+
 ## Unknown and interrupted evidence
 
 An interrupted file write, stale output, missing row, mismatched identity, invalid
