@@ -122,17 +122,21 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     "click_mode",
                     "reset_ids",
                     "state_id",
-                    "state_equals"
+                    "state_equals",
+                    "performance",
+                    "screenshot"
                 );
                 var parsed = new PlayScenarioStep
                 {
                     Name = Text(step, "name", 128),
                     Action = Text(step, "action", 32),
                     TimeoutSeconds = Integer(step, "timeout_seconds", 1, 120, 30),
+                    Performance = step.Property("performance") == null ? null : PlayScenarioPerformanceOptions.Parse(Object(step, "performance")),
+                    Screenshot = step.Property("screenshot") == null ? null : PlayScenarioScreenshotOptions.Parse(Object(step, "screenshot")),
                 };
                 if (parsed.Action == "wait_state")
                 {
-                    Fields(step, "name", "action", "timeout_seconds", "state_id", "state_equals", "stable_for_ms");
+                    Fields(step, "name", "action", "timeout_seconds", "state_id", "state_equals", "stable_for_ms", "performance", "screenshot");
                     parsed.StateId = Text(step, "state_id", 128);
                     if (!MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget.IsValidTargetId(parsed.StateId))
                         throw new ArgumentException("state_id must contain 1-128 permitted identifier characters.");
@@ -151,7 +155,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     throw new ArgumentException("state_id and state_equals are permitted only on wait_state.");
                 if (parsed.Action == "reset_state")
                 {
-                    Fields(step, "name", "action", "timeout_seconds", "reset_ids");
+                    Fields(step, "name", "action", "timeout_seconds", "reset_ids", "performance", "screenshot");
                     if (!(step["reset_ids"] is JArray ids) || ids.Count < 1 || ids.Count > 16)
                         throw new ArgumentException("reset_ids must contain 1-16 unique stable identifiers.");
                     parsed.ResetIds = new List<string>();
@@ -443,6 +447,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
     public sealed class PlayScenarioStep
     {
+        [JsonProperty("performance", NullValueHandling = NullValueHandling.Ignore)]
+        public PlayScenarioPerformanceOptions Performance;
+
+        [JsonProperty("screenshot", NullValueHandling = NullValueHandling.Ignore)]
+        public PlayScenarioScreenshotOptions Screenshot;
+
         [JsonProperty("name")]
         public string Name;
 

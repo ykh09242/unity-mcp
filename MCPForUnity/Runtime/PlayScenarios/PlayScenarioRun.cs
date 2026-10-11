@@ -144,6 +144,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
     public sealed class PlayScenarioStepResult
     {
+        [JsonProperty("performance", NullValueHandling = NullValueHandling.Ignore)]
+        public PlayScenarioPerformanceResult Performance;
+
+        [JsonProperty("screenshot", NullValueHandling = NullValueHandling.Ignore)]
+        public PlayScenarioScreenshotResult Screenshot;
+
         [JsonProperty("stage")]
         public string Stage = "main";
 

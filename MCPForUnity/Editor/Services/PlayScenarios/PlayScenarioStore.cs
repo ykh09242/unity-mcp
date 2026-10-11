@@ -25,6 +25,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             [typeof(PlayScenarioRun)] = Describe(typeof(PlayScenarioRun)),
             [typeof(PlayScenarioStepResult)] = Describe(typeof(PlayScenarioStepResult)),
+            [typeof(PlayScenarioPerformanceResult)] = Describe(typeof(PlayScenarioPerformanceResult)),
+            [typeof(PlayScenarioScreenshotResult)] = Describe(typeof(PlayScenarioScreenshotResult)),
             [typeof(PlayScenarioIterationResult)] = Describe(typeof(PlayScenarioIterationResult)),
             [typeof(PlayScenarioLog)] = Describe(typeof(PlayScenarioLog)),
             [typeof(PlayScenarioMetricsSnapshot)] = Describe(typeof(PlayScenarioMetricsSnapshot)),
@@ -184,6 +186,33 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             return relative;
         }
 
+        public string SaveCheckpointScreenshot(string jobId, PlayScenarioStepResult step, byte[] png)
+        {
+            ValidateJobId(jobId);
+            if (step?.Screenshot == null || png == null || png.Length == 0 || png.Length > 4 * 1024 * 1024)
+                throw new ArgumentException("Checkpoint screenshot must contain 1 byte to 4 MiB and an owned step identity.");
+            PlayScenarioDefinition.ValidateName(step.Screenshot.Name);
+            string filename = jobId + "-" + step.Iteration + "-" + step.Stage + "-" + step.StepIndex + "-" + step.Screenshot.Name + ".png";
+            if (step.Stage != "setup" && step.Stage != "main" && step.Stage != "cleanup")
+                throw new ArgumentException("Unknown checkpoint stage.");
+            lock (gate)
+            {
+                Directory.CreateDirectory(Checked(Reports));
+                long bytes = 0;
+                int count = 0;
+                foreach (string existing in Directory.EnumerateFiles(Checked(Reports), jobId + "-*.png", SearchOption.TopDirectoryOnly))
+                {
+                    if (++count > 640)
+                        throw new IOException("Checkpoint file count exceeds the bounded run budget.");
+                    bytes += new FileInfo(Checked(existing)).Length;
+                }
+                if (bytes + png.Length > 64 * 1024 * 1024)
+                    throw new IOException("Checkpoint screenshots exceed the 64-MiB run artifact budget.");
+                AtomicWrite(Checked(Reports + "/" + filename), png);
+            }
+            return filename;
+        }
+
         private void DeleteReport(string file)
         {
             string jobId = Path.GetFileNameWithoutExtension(file);
@@ -192,6 +221,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             File.Delete(Checked(file));
             if (File.Exists(screenshot))
                 File.Delete(Checked(screenshot));
+            foreach (string checkpoint in Directory.GetFiles(Checked(Reports), jobId + "-*.png", SearchOption.TopDirectoryOnly))
+                File.Delete(Checked(checkpoint));
         }
 
         private string DefinitionPath(string name)
@@ -344,6 +375,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Bound(step, "name", 128);
                 Bound(step, "action", 32);
                 ValidateQueryCounts((JObject)step["query_counts"]);
+                List<PlayScenarioStep> stageSteps =
+                    stage == "setup" ? definition.SetupSteps
+                    : stage == "cleanup" ? definition.CleanupSteps
+                    : definition.Steps;
+                ValidateStepObservations(step, stageSteps[(int)step["step_index"]], (string)value["job_id"], (string)value["execution_environment"]);
             }
             foreach (JObject log in logs)
             {
@@ -410,6 +446,92 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (screenshot != null && screenshot != Reports + "/" + (string)value["job_id"] + ".png")
                     throw new ArgumentException("Failure screenshot path does not belong to its report.");
             }
+        }
+
+        private static void ValidateStepObservations(JObject value, PlayScenarioStep definition, string jobId, string environment)
+        {
+            string status = (string)value["status"];
+            if (value["performance"] is JObject performance)
+            {
+                if (definition.Performance == null)
+                    throw new ArgumentException("Performance evidence requires an opted-in definition step.");
+                int frames = PlayScenarioDefinition.Integer(performance, "frame_sample_count", 0, definition.Performance.SampleLimit, -1);
+                int gc = PlayScenarioDefinition.Integer(performance, "gc_sample_count", 0, frames, -1);
+                long observed = (long)performance["observed_frame_count"];
+                if (frames < 0 || gc < 0 || observed < frames || (bool)performance["sample_limit_exceeded"] != (observed > definition.Performance.SampleLimit))
+                    throw new ArgumentException("Performance sample counts are inconsistent.");
+                foreach (string key in new[] { "duration_ms", "frame_time_p95_ms", "gc_allocated_bytes_per_frame_max" })
+                    if (performance[key] != null && performance[key].Type != JTokenType.Null && (double)performance[key] < 0)
+                        throw new ArgumentException("Performance measurements cannot be negative.");
+                if (
+                    (gc == 0)
+                    != (performance["gc_allocated_bytes_per_frame_max"] == null || performance["gc_allocated_bytes_per_frame_max"].Type == JTokenType.Null)
+                )
+                    throw new ArgumentException("GC measurement availability does not match sample counts.");
+                if ((frames == 0) != (performance["frame_time_p95_ms"] == null || performance["frame_time_p95_ms"].Type == JTokenType.Null))
+                    throw new ArgumentException("Frame measurement availability does not match sample counts.");
+                Bound(performance, "error", 1024);
+                if ((bool)performance["passed"])
+                {
+                    PlayScenarioPerformanceOptions options = definition.Performance;
+                    double? frameTime = performance["frame_time_p95_ms"]?.Type == JTokenType.Null ? null : (double?)performance["frame_time_p95_ms"];
+                    long? gcMaximum =
+                        performance["gc_allocated_bytes_per_frame_max"]?.Type == JTokenType.Null
+                            ? null
+                            : (long?)performance["gc_allocated_bytes_per_frame_max"];
+                    if (
+                        (string)performance["error"] != null
+                        || (options.MaxDurationMs.HasValue && (double)performance["duration_ms"] > options.MaxDurationMs)
+                        || (options.MaxFrameTimeP95Ms.HasValue && (!frameTime.HasValue || frameTime > options.MaxFrameTimeP95Ms))
+                        || (
+                            options.MaxGcAllocatedBytesPerFrame.HasValue
+                            && (!gcMaximum.HasValue || gc != frames || gcMaximum > options.MaxGcAllocatedBytesPerFrame)
+                        )
+                        || ((options.MaxFrameTimeP95Ms.HasValue || options.MaxGcAllocatedBytesPerFrame.HasValue) && (bool)performance["sample_limit_exceeded"])
+                    )
+                        throw new ArgumentException("Passing performance evidence is incomplete or exceeds the selected budget.");
+                }
+                if (status == "passed" && !(bool)performance["passed"])
+                    throw new ArgumentException("A passed step cannot contain a failed performance budget.");
+            }
+            else if (definition.Performance != null && status == "passed")
+                throw new ArgumentException("A passed performance step requires measurement evidence.");
+            if (value["screenshot"] is JObject screenshot)
+            {
+                PlayScenarioScreenshotOptions options = definition.Screenshot;
+                if (
+                    options == null
+                    || (string)screenshot["name"] != options.Name
+                    || (int)screenshot["requested_width"] != options.Width
+                    || (int)screenshot["requested_height"] != options.Height
+                )
+                    throw new ArgumentException("Screenshot evidence does not match the opted-in checkpoint.");
+                State((string)screenshot["status"], "pending", "captured", "failed", "unavailable");
+                Bound(screenshot, "error", 1024);
+                string path = (string)screenshot["path"];
+                string hash = (string)screenshot["sha256"];
+                if ((string)screenshot["status"] == "captured")
+                {
+                    string suffix = "-" + (int)value["iteration"] + "-" + (string)value["stage"] + "-" + (int)value["step_index"] + "-" + options.Name + ".png";
+                    bool owned =
+                        environment == "editor"
+                            ? path == jobId + suffix
+                            : path != null && Regex.IsMatch(path, @"\Acheckpoint-[1-9][0-9]{0,3}" + Regex.Escape(suffix) + @"\z");
+                    if (
+                        !owned
+                        || hash == null
+                        || !Regex.IsMatch(hash, @"\A[a-f0-9]{64}\z")
+                        || (int?)screenshot["width"] != options.Width
+                        || (int?)screenshot["height"] != options.Height
+                        || (string)screenshot["error"] != null
+                    )
+                        throw new ArgumentException("Captured screenshot identity, dimensions or hash are invalid.");
+                }
+                else if (path != null || hash != null || status == "passed")
+                    throw new ArgumentException("An unavailable checkpoint cannot claim captured artifact evidence or a passed step.");
+            }
+            else if (definition.Screenshot != null && status == "passed")
+                throw new ArgumentException("A passed screenshot checkpoint requires captured evidence.");
         }
 
         internal static void ValidateIterationResults(JObject value, int repeats)
@@ -689,6 +811,19 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 JToken token = value[pair.Key];
                 if (token == null)
                 {
+                    // Newly optional observation evidence stays absent on legacy reports; required fields remain strict.
+                    if (
+                        (type == typeof(PlayScenarioStepResult) && (pair.Key == "performance" || pair.Key == "screenshot"))
+                        || (
+                            type == typeof(PlayScenarioPerformanceResult)
+                            && (pair.Key == "frame_time_p95_ms" || pair.Key == "gc_allocated_bytes_per_frame_max" || pair.Key == "error")
+                        )
+                        || (
+                            type == typeof(PlayScenarioScreenshotResult)
+                            && (pair.Key == "path" || pair.Key == "sha256" || pair.Key == "width" || pair.Key == "height" || pair.Key == "error")
+                        )
+                    )
+                        continue;
                     // Optional property-backed launch evidence has no legacy default and must not be captured on read.
                     if (type == typeof(PlayScenarioReproduction) && pair.Key == "environment")
                         continue;
@@ -716,6 +851,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     || fieldType == typeof(PlayScenarioFailure)
                     || fieldType == typeof(PlayScenarioReproduction)
                     || fieldType == typeof(PlayScenarioQueryCounts)
+                    || fieldType == typeof(PlayScenarioPerformanceResult)
+                    || fieldType == typeof(PlayScenarioScreenshotResult)
                 )
                 {
                     if (token.Type == JTokenType.Null && fieldType != typeof(PlayScenarioQueryCounts))
@@ -771,6 +908,21 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     {
                         if (token.Type != JTokenType.Boolean)
                             throw new ArgumentException("Invalid report boolean: " + pair.Key);
+                    }
+                    else if (scalarType == typeof(double))
+                    {
+                        if (
+                            (token.Type != JTokenType.Float && token.Type != JTokenType.Integer)
+                            || !double.TryParse(
+                                token.ToString(),
+                                System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                out double finiteNumber
+                            )
+                            || double.IsNaN(finiteNumber)
+                            || double.IsInfinity(finiteNumber)
+                        )
+                            throw new ArgumentException("Invalid finite report number: " + pair.Key);
                     }
                     else if (
                         token.Type != JTokenType.Integer

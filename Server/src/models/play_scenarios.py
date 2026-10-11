@@ -52,6 +52,8 @@ def normalize_native_definition(value: JsonValue) -> JsonValue:
         "stable_for_ms",
         "state_id",
         "state_equals",
+        "performance",
+        "screenshot",
     }
     for field in ("steps", "setup_steps", "cleanup_steps"):
         entries = normalized.get(field)
@@ -185,6 +187,43 @@ def _path_segments(path: str) -> list[str]:
     return segments
 
 
+class PlayScenarioPerformanceOptions(BaseModel):
+    """Opt into duration and selected real-frame budgets; unsupported counters fail explicitly."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    max_duration_ms: Annotated[int, Field(strict=True, ge=0, le=120000)] | None = None
+    max_frame_time_p95_ms: (
+        Annotated[float, Field(strict=True, ge=0, le=120000, allow_inf_nan=False)] | None
+    ) = None
+    max_gc_allocated_bytes_per_frame: (
+        Annotated[int, Field(strict=True, ge=0, le=2147483647)] | None
+    ) = None
+    sample_limit: Annotated[int, Field(strict=True, ge=1, le=4096)] = 4096
+
+    @model_validator(mode="after")
+    def check_omitted_limits(self) -> "PlayScenarioPerformanceOptions":
+        """Explicit null limits are invalid authored configuration."""
+        if any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("Optional performance limits must be omitted rather than null")
+        return self
+
+
+class PlayScenarioScreenshotOptions(BaseModel):
+    """Capture a named composited frame matching an explicit bounded resolution."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    name: ScenarioName
+    width: Annotated[int, Field(strict=True, ge=1, le=4096)]
+    height: Annotated[int, Field(strict=True, ge=1, le=4096)]
+
+    @model_validator(mode="after")
+    def check_pixel_budget(self) -> "PlayScenarioScreenshotOptions":
+        """Match the native eight-megapixel capture bound."""
+        if self.width * self.height > 8388608:
+            raise ValueError("Screenshot dimensions exceed the eight-megapixel budget")
+        return self
+
+
 class ScenarioStep(BaseModel):
     """One bounded active-scene condition or effect; targets are paths, never Unity IDs."""
 
@@ -204,6 +243,8 @@ class ScenarioStep(BaseModel):
     component: Annotated[str, Field(strict=True, min_length=1, max_length=256)] | None = None
     property: PlayScenarioPropertyCondition | None = None
     stable_for_ms: Annotated[int, Field(strict=True, ge=0, le=60000)] | None = None
+    performance: PlayScenarioPerformanceOptions | None = None
+    screenshot: PlayScenarioScreenshotOptions | None = None
 
     @field_validator("state_equals", mode="before")
     @classmethod
@@ -228,7 +269,14 @@ class ScenarioStep(BaseModel):
         """Reject unused selectors, invalid conditions and unsafe scene/object paths."""
         match self.action:
             case "reset_state":
-                if self.model_fields_set - {"name", "action", "timeout_seconds", "reset_ids"}:
+                if self.model_fields_set - {
+                    "name",
+                    "action",
+                    "timeout_seconds",
+                    "reset_ids",
+                    "performance",
+                    "screenshot",
+                }:
                     message = "reset_state accepts only name, action, timeout_seconds and reset_ids"
                     raise ValueError(message)
                 if self.reset_ids is None or len(set(self.reset_ids)) != len(self.reset_ids):
@@ -242,6 +290,8 @@ class ScenarioStep(BaseModel):
                     "state_id",
                     "state_equals",
                     "stable_for_ms",
+                    "performance",
+                    "screenshot",
                 }:
                     raise ValueError(
                         "wait_state accepts only name, action, timeout_seconds, state_id, state_equals and stable_for_ms"
@@ -259,7 +309,13 @@ class ScenarioStep(BaseModel):
         if self.action != "wait_state" and self.model_fields_set & {"state_id", "state_equals"}:
             raise ValueError("state_id and state_equals are only valid for wait_state")
         object_fields = {"count", "active", "component", "property"}
-        optional_fields = object_fields | {"stable_for_ms", "target_id", "click_mode"}
+        optional_fields = object_fields | {
+            "stable_for_ms",
+            "target_id",
+            "click_mode",
+            "performance",
+            "screenshot",
+        }
         authored_fields = self.model_fields_set & optional_fields
         if any(getattr(self, field) is None for field in authored_fields):
             message = "Optional step fields must be omitted rather than null"

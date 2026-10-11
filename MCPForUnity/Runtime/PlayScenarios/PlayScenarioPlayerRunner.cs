@@ -31,6 +31,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private string soakStopStatus;
         private string soakStopError;
         private bool iterationRecorded;
+        private long checkpointBytes;
         private PlayScenarioEnvironment environment;
         private readonly PlayScenarioPlayerPersistence persistence = new PlayScenarioPlayerPersistence();
         private static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -130,8 +131,40 @@ namespace MCPForUnity.Runtime.PlayScenarios
             logs = new PlayScenarioLogBuffer(bundle.Definition.LogPolicy);
             Application.logMessageReceivedThreaded += OnLog;
             subscribed = true;
-            engine = new PlayScenarioEngine(run, new PlayScenarioPlayerHost(bundle.ScenePaths, () => subscribed ? 1 : 0), onEvaluationCompleted: Drain);
+            engine = new PlayScenarioEngine(
+                run,
+                new PlayScenarioPlayerHost(bundle.ScenePaths, () => subscribed ? 1 : 0),
+                onEvaluationCompleted: Drain,
+                stepObserver: new PlayScenarioStepObserver(SaveCheckpoint)
+            );
             engine.EnteredPlayMode();
+        }
+
+        private string SaveCheckpoint(PlayScenarioStepResult step, byte[] png)
+        {
+            PlayScenarioDefinition.ValidateName(step.Screenshot.Name);
+            string filename =
+                "checkpoint-"
+                + (soak?.CurrentIteration ?? 1)
+                + "-"
+                + step.Iteration
+                + "-"
+                + step.Stage
+                + "-"
+                + step.StepIndex
+                + "-"
+                + step.Screenshot.Name
+                + ".png";
+            string path = PlayScenarioPlayerFiles.CheckedAbsolute(Path.Combine(directory, filename));
+            if (png == null || png.Length == 0 || png.Length > 4 * 1024 * 1024 || checkpointBytes + png.Length > 64 * 1024 * 1024)
+                throw new IOException("Checkpoint PNG exceeds the four-MiB image or 64-MiB session artifact budget.");
+            using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                stream.Write(png, 0, png.Length);
+                stream.Flush(true);
+            }
+            checkpointBytes += png.Length;
+            return filename;
         }
 
         private void OnLog(string message, string stack, LogType type) => logs?.Add(Now, type.ToString(), message, stack);

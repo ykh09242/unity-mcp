@@ -9,6 +9,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     public sealed partial class PlayScenarioEngine
     {
         private readonly IPlayScenarioHost _host;
+        private readonly IPlayScenarioStepObserver _stepObserver;
+        private bool _stepReady;
         private readonly Action<PlayScenarioRun, PlayScenarioStep, long> _onFailure;
         private readonly Action _onEvaluationCompleted;
         private readonly IPlayScenarioResourceHost _resources;
@@ -28,7 +30,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             IPlayScenarioHost host,
             Action<PlayScenarioRun, PlayScenarioStep, long> onFailure = null,
             Action onEvaluationCompleted = null,
-            IPlayScenarioResourceHost resources = null
+            IPlayScenarioResourceHost resources = null,
+            IPlayScenarioStepObserver stepObserver = null
         )
         {
             State = state ?? throw new ArgumentNullException(nameof(state));
@@ -36,6 +39,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             _onFailure = onFailure;
             _onEvaluationCompleted = onEvaluationCompleted;
             _resources = resources ?? host as IPlayScenarioResourceHost;
+            _stepObserver = stepObserver ?? new PlayScenarioStepObserver();
         }
 
         public static PlayScenarioRun Create(PlayScenarioDefinition scenario, string jobId, int repeatCount, int timeoutSeconds, long now)
@@ -171,6 +175,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     RequestOutcome("timed_out", error, now, _observationFailure ?? Failure("step_timeout", error));
                 return;
             }
+            if (_stepReady)
+            {
+                CompleteObservedStep(result, step, now);
+                return;
+            }
             if (!ready || now < State.NextPollUnixMs)
                 return;
             BeginIteration(result.Iteration, now);
@@ -181,6 +190,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             {
                 result.Status = "running";
                 result.StartedUnixMs = now;
+                _stepReady = false;
+                _stepObserver.Begin(step, result, now);
                 _observationFailure = null;
                 _resetSnapshot = null;
                 ClearStateProbe();
@@ -226,16 +237,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     if (now - result.StableSinceUnixMs.Value < step.StableForMs.Value)
                         return;
                 }
-                _observationFailure = null;
-                result.Status = "passed";
-                result.FinishedUnixMs = now;
-                Timeline(now, "step_passed", result.Detail, result);
-                _resetSnapshot = null;
-                ClearStateProbe();
-                State.Cursor++;
-                State.NextPollUnixMs = now;
-                Revision++;
-                Advance(result, now);
+                _stepReady = true;
+                CompleteObservedStep(result, step, now);
             }
             catch (Exception exception)
             {
@@ -251,6 +254,39 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 else
                     RequestOutcome("failed", error, now, (exception as PlayScenarioException)?.Failure ?? Failure("action_exception", error));
             }
+        }
+
+        private void CompleteObservedStep(PlayScenarioStepResult result, PlayScenarioStep step, long now)
+        {
+            if (!_stepObserver.Complete(now))
+                return;
+            string error = result.Performance?.Passed == false ? result.Performance.Error : null;
+            string code = "performance_budget_failed";
+            if (error == null && result.Screenshot != null && result.Screenshot.Status != "captured")
+            {
+                error = error ?? result.Screenshot.Error ?? "Screenshot checkpoint was unavailable.";
+                code = "screenshot_checkpoint_failed";
+            }
+            if (error != null)
+            {
+                _stepReady = false;
+                if (State.Phase == "cleaning")
+                    CleanupFailure(error, now, false, Failure(code, error));
+                else
+                    RequestOutcome("failed", error, now, Failure(code, error));
+                return;
+            }
+            _stepReady = false;
+            _observationFailure = null;
+            result.Status = "passed";
+            result.FinishedUnixMs = now;
+            Timeline(now, "step_passed", result.Detail, result);
+            _resetSnapshot = null;
+            ClearStateProbe();
+            State.Cursor++;
+            State.NextPollUnixMs = now;
+            Revision++;
+            Advance(result, now);
         }
 
         private void Advance(PlayScenarioStepResult completed, long now)
@@ -343,6 +379,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (!Running || State.PendingStatus != null)
                 return;
             State.Failure = State.Failure ?? Attribute(failure ?? Failure("action_exception", error));
+            _stepObserver.Abort("Step ended with " + status + ": " + error, now);
+            _stepReady = false;
             State.PendingStatus = status;
             State.PendingError = Bounded(error, 4096);
             Timeline(now, "outcome_requested", status + ": " + State.PendingError);
@@ -402,6 +440,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private void CleanupFailure(string error, long now, bool all, PlayScenarioFailure failure = null, bool timedOut = false)
         {
+            _stepObserver.Abort("Cleanup ended: " + error, now);
+            _stepReady = false;
             failure = Attribute(failure ?? Failure("action_exception", error));
             AddCleanupFailure(failure);
             AppendCleanupError(error);
@@ -785,6 +825,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (!Running)
                 return;
+            _stepObserver.Abort("Run ended with " + status + ".", now);
+            _stepReady = false;
             State.Status = status;
             State.Phase = "finished";
             State.Error = Bounded(error, 4096);
@@ -826,7 +868,14 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             _lastObservation = null;
             try
             {
-                _host.Release();
+                try
+                {
+                    _stepObserver.Dispose();
+                }
+                finally
+                {
+                    _host.Release();
+                }
                 State.RunnerResourcesReleased = true;
             }
             catch (Exception error)

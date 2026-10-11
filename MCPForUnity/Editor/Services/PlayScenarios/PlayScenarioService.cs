@@ -147,7 +147,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 new UnityPlayScenarioHost(state.Scenario.LogPolicy),
                 CaptureFailure,
                 DrainAndApplyErrors,
-                new UnityPlayScenarioResources()
+                new UnityPlayScenarioResources(),
+                new PlayScenarioStepObserver((step, png) => Store.SaveCheckpointScreenshot(state.JobId, step, png), () => !EditorApplication.isPaused)
             );
         }
 

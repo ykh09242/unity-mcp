@@ -53,6 +53,22 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 for (int index = 0; index < steps.Count; index++)
                 {
                     PlayScenarioStep step = steps[index];
+                    if (step.Performance != null)
+                        Add(
+                            stage,
+                            index,
+                            step.Name + " performance",
+                            "deferred",
+                            "Duration and selected complete-frame counters are evaluated only at runtime. Counter availability and sample completeness cannot be certified by preflight."
+                        );
+                    if (step.Screenshot != null)
+                        Add(
+                            stage,
+                            index,
+                            step.Name + " screenshot",
+                            "deferred",
+                            "Composited end-of-frame capture and expected resolution are validated at runtime on a running graphical host; batch/headless capture is unavailable."
+                        );
                     try
                     {
                         if (step.Action == "load_scene" || step.Action == "wait_scene")

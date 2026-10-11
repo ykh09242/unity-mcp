@@ -106,8 +106,107 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     OptionalInteger(card, "Stable duration (ms)", "stepStable" + suffix, step.StableForMs, value => edit(() => step.StableForMs = value));
                 if (step.Action == "wait_object")
                     BuildConditionFields(card, step, suffix, edit);
+                BuildObservationFields(card, step, suffix, edit);
                 stepList.Add(card);
             }
+        }
+
+        private static void BuildObservationFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit)
+        {
+            var performance = new Toggle("Measure step performance") { name = "stepPerformanceEnabled" + index, value = step.Performance != null };
+            var performanceFields = new VisualElement();
+            Action renderPerformance = () =>
+            {
+                performanceFields.Clear();
+                if (step.Performance == null)
+                    return;
+                PlayScenarioPerformanceOptions options = step.Performance;
+                OptionalInteger(
+                    performanceFields,
+                    "Maximum duration (ms)",
+                    "stepMaxDuration" + index,
+                    options.MaxDurationMs,
+                    value => edit(() => options.MaxDurationMs = value)
+                );
+                OptionalInteger(
+                    performanceFields,
+                    "Maximum GC allocation per frame (bytes)",
+                    "stepMaxGc" + index,
+                    options.MaxGcAllocatedBytesPerFrame,
+                    value => edit(() => options.MaxGcAllocatedBytesPerFrame = value)
+                );
+                var frameEnabled = new Toggle("Maximum frame time p95 (ms)")
+                {
+                    name = "stepMaxFrameEnabled" + index,
+                    value = options.MaxFrameTimeP95Ms.HasValue,
+                };
+                var frame = new DoubleField { name = "stepMaxFrame" + index, value = options.MaxFrameTimeP95Ms ?? 16.67 };
+                frame.SetEnabled(frameEnabled.value);
+                frameEnabled.RegisterValueChangedCallback(evt =>
+                {
+                    frame.SetEnabled(evt.newValue);
+                    edit(() => options.MaxFrameTimeP95Ms = evt.newValue ? frame.value : (double?)null);
+                });
+                frame.RegisterValueChangedCallback(evt => edit(() => options.MaxFrameTimeP95Ms = evt.newValue));
+                performanceFields.Add(frameEnabled);
+                performanceFields.Add(frame);
+                var limit = new IntegerField("Maximum frame samples") { name = "stepSampleLimit" + index, value = options.SampleLimit };
+                limit.RegisterValueChangedCallback(evt => edit(() => options.SampleLimit = evt.newValue));
+                performanceFields.Add(limit);
+                performanceFields.Add(
+                    new Label(
+                        "Measures real complete frames while this step runs. Frame p95 uses nearest rank; GC uses GC Allocated In Frame. Missing counters, no complete frames or sample overflow fail selected frame budgets. Duration excludes screenshot capture."
+                    )
+                );
+            };
+            performance.RegisterValueChangedCallback(evt =>
+            {
+                edit(() => step.Performance = evt.newValue ? new PlayScenarioPerformanceOptions() : null);
+                renderPerformance();
+            });
+            renderPerformance();
+            card.Add(performance);
+            card.Add(performanceFields);
+            var screenshot = new Toggle("Capture screenshot after this step") { name = "stepScreenshotEnabled" + index, value = step.Screenshot != null };
+            var screenshotFields = new VisualElement();
+            Action renderScreenshot = () =>
+            {
+                screenshotFields.Clear();
+                if (step.Screenshot == null)
+                    return;
+                PlayScenarioScreenshotOptions options = step.Screenshot;
+                var name = new TextField("Checkpoint name") { name = "stepScreenshotName" + index, value = options.Name };
+                name.RegisterValueChangedCallback(evt => edit(() => options.Name = evt.newValue));
+                var width = new IntegerField("Expected rendered width") { name = "stepScreenshotWidth" + index, value = options.Width };
+                width.RegisterValueChangedCallback(evt => edit(() => options.Width = evt.newValue));
+                var height = new IntegerField("Expected rendered height") { name = "stepScreenshotHeight" + index, value = options.Height };
+                height.RegisterValueChangedCallback(evt => edit(() => options.Height = evt.newValue));
+                screenshotFields.Add(name);
+                screenshotFields.Add(width);
+                screenshotFields.Add(height);
+                screenshotFields.Add(
+                    new Label(
+                        "Captures the composited frame after rendering. Configure Game View or Player resolution to match these dimensions. Capture is unavailable in batch/headless mode; mismatched dimensions or PNGs over 4 MiB fail the checkpoint."
+                    )
+                );
+            };
+            screenshot.RegisterValueChangedCallback(evt =>
+            {
+                edit(() =>
+                    step.Screenshot = evt.newValue
+                        ? new PlayScenarioScreenshotOptions
+                        {
+                            Name = "checkpoint",
+                            Width = 1280,
+                            Height = 720,
+                        }
+                        : null
+                );
+                renderScreenshot();
+            });
+            renderScreenshot();
+            card.Add(screenshot);
+            card.Add(screenshotFields);
         }
 
         private static void BuildStateFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit)
