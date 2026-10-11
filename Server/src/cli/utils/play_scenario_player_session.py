@@ -174,8 +174,14 @@ def _summary_file(
     if len(encoded) > SUMMARY_LIMIT:
         raise PlayerLaunchError("Player session summary exceeds its byte bound")
     temporary = directory / (filename + ".tmp")
-    temporary.write_bytes(encoded + b"\n")
+    if temporary.write_bytes(encoded + b"\n") != len(encoded) + 1:
+        raise OSError("Player session summary write was incomplete")
     temporary.replace(directory / filename)
+
+
+def _write_complete(stream: BinaryIO, encoded: bytes) -> None:
+    if stream.write(encoded) != len(encoded):
+        raise OSError("Player session artifact write was incomplete")
 
 
 def _append_record(stream: BinaryIO, record: dict[str, JsonValue]) -> None:
@@ -183,9 +189,21 @@ def _append_record(stream: BinaryIO, record: dict[str, JsonValue]) -> None:
     encoded = json.dumps(record, ensure_ascii=True, separators=(",", ":")).encode("utf-8") + b"\n"
     if len(encoded) > OUTCOME_LIMIT or stream.tell() + len(encoded) > OUTCOME_FILE_LIMIT:
         raise PlayerLaunchError("Player session journal exceeds its fixed bounds")
-    stream.write(encoded)
-    stream.flush()
-    os.fsync(stream.fileno())
+    offset = stream.tell()
+    try:
+        _write_complete(stream, encoded)
+        stream.flush()
+        os.fsync(stream.fileno())
+    except OSError as exc:
+        # Only remove this failed append; the previously durable prefix is immutable.
+        try:
+            stream.seek(offset)
+            stream.truncate()
+            stream.flush()
+            os.fsync(stream.fileno())
+        except OSError as rollback_error:
+            exc.add_note("Session journal tail rollback failed: " + type(rollback_error).__name__)
+        raise
 
 
 def _compact_failure_text(value: str) -> str:
@@ -239,11 +257,12 @@ def _write_session_junit(summary: dict[str, JsonValue], directory: Path) -> None
         },
     )
     opening = ElementTree.tostring(header, encoding="utf-8").replace(b" />", b">")
+    temporary = directory / "junit.xml.tmp"
     with (
-        (directory / "junit.xml").open("wb") as output,
+        temporary.open("wb") as output,
         (directory / "outcomes.jsonl").open("rb") as inputs,
     ):
-        output.write(b'<?xml version="1.0" encoding="utf-8"?>\n' + opening)
+        _write_complete(output, b'<?xml version="1.0" encoding="utf-8"?>\n' + opening)
         totals = summary.get("iteration_counts", {})
         if totals:
             properties = ElementTree.Element("properties")
@@ -252,7 +271,7 @@ def _write_session_junit(summary: dict[str, JsonValue], directory: Path) -> None
                     ElementTree.SubElement(
                         properties, "property", name=f"iteration.{mode}.{state}", value=str(count)
                     )
-            output.write(ElementTree.tostring(properties, encoding="utf-8"))
+            _write_complete(output, ElementTree.tostring(properties, encoding="utf-8"))
         for _index in range(2000):
             encoded = inputs.readline(OUTCOME_LIMIT + 1)
             if not encoded:
@@ -305,7 +324,7 @@ def _write_session_junit(summary: dict[str, JsonValue], directory: Path) -> None
                 ElementTree.SubElement(case, "error", type="player_child_error").text = _xml_text(
                     str(entry.get("client_error") or entry["status"])
                 )
-            output.write(ElementTree.tostring(case, encoding="utf-8"))
+            _write_complete(output, ElementTree.tostring(case, encoding="utf-8"))
         if inputs.read(1):
             raise PlayerLaunchError("Player session outcome journal exceeds its child bound")
         if incomplete:
@@ -315,8 +334,11 @@ def _write_session_junit(summary: dict[str, JsonValue], directory: Path) -> None
             ElementTree.SubElement(case, "error", type="session_incomplete").text = str(
                 summary["status"]
             )
-            output.write(ElementTree.tostring(case, encoding="utf-8"))
-        output.write(b"</testsuite>")
+            _write_complete(output, ElementTree.tostring(case, encoding="utf-8"))
+        _write_complete(output, b"</testsuite>")
+        output.flush()
+        os.fsync(output.fileno())
+    temporary.replace(directory / "junit.xml")
 
 
 def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonValue], Path, int]:
@@ -373,221 +395,269 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
     deadline = time.monotonic() + options.max_runtime_seconds
     stopped = False
     exit_code = 0
-    _summary_file(summary, directory)
-    _summary_file(summary, directory, "session-start.json")
-    with (
-        (directory / "outcomes.jsonl").open("xb") as journal,
-        (directory / "admissions.jsonl").open("xb") as admissions,
-    ):
-        for mode in modes:
-            while scheduled[mode] < options.iterations and not stopped:
-                remaining = deadline - time.monotonic()
-                if remaining < 1:
-                    summary["status"] = "timed_out"
-                    exit_code = 1
-                    stopped = True
-                    break
-                repeats = min(
-                    options.batch_size if mode == "shared-batches" else 1,
-                    options.iterations - scheduled[mode],
-                )
-                job_id = uuid4().hex
-                child_directory = runs / job_id
-                admission: dict[str, JsonValue] = {
-                    "schema_version": 1,
-                    "session_id": session_id,
-                    "sequence": summary["outcomes_recorded"] + 1,
-                    "mode": mode,
-                    "job_id": job_id,
-                    "repeat_count": repeats,
-                }
-                _append_record(admissions, admission)
-                scheduled[mode] += repeats
-                iteration_totals[mode]["pending"] -= repeats
-                iteration_totals[mode]["unknown"] += repeats
-                summary["active_child"] = admission
-                _summary_file(summary, directory)
-                child_counts = zero_iteration_counts()
-                child_counts["planned"] = child_counts["unknown"] = repeats
-                record: dict[str, JsonValue] = {
-                    "schema_version": 2,
-                    "session_id": session_id,
-                    "sequence": summary["outcomes_recorded"] + 1,
-                    "mode": mode,
-                    "process_scope": "batch",
-                    "job_id": job_id,
-                    "repeat_count": repeats,
-                    "status": "infrastructure_error",
-                    "exit_code": 1,
-                    "native_report_available": False,
-                    "native_report_sha256": None,
-                    "artifact_directory": f"runs/{job_id}",
-                    "started_unix_ms": None,
-                    "finished_unix_ms": None,
-                    "client_error": None,
-                    "process_id": None,
-                    "actual_exit_code": None,
-                    "process_ended": False,
-                    "forced_termination": False,
-                    "process_started_unix_ms": None,
-                    "process_finished_unix_ms": None,
-                    "request_sha256": None,
-                    "iteration_counts": child_counts,
-                    "iteration_results_source": "unavailable",
-                    "failure": None,
-                }
-                expected_native_exit = None
-                try:
-                    outcome = run_player(
-                        PlayerRunOptions(
-                            build_directory=options.build_directory,
-                            output_directory=runs,
-                            repeat_count=repeats,
-                            timeout_seconds=options.timeout_seconds,
-                            source_revision=options.source_revision,
-                            cleanup_wait_seconds=options.cleanup_wait_seconds,
-                            deadline_monotonic=deadline,
-                            expected_build_revision=options.expected_build_revision,
-                            expected_build_id=options.expected_build_id,
-                            require_verified_payload=True,
-                            player_job_id=job_id,
-                        )
+    try:
+        _summary_file(summary, directory)
+        _summary_file(summary, directory, "session-start.json")
+        with (
+            (directory / "outcomes.jsonl").open("xb") as journal,
+            (directory / "admissions.jsonl").open("xb") as admissions,
+        ):
+            for mode in modes:
+                while scheduled[mode] < options.iterations and not stopped:
+                    remaining = deadline - time.monotonic()
+                    if remaining < 1:
+                        summary["status"] = "timed_out"
+                        exit_code = 1
+                        stopped = True
+                        break
+                    repeats = min(
+                        options.batch_size if mode == "shared-batches" else 1,
+                        options.iterations - scheduled[mode],
                     )
-                    child_directory = outcome.directory
-                    expected_native_exit = outcome.report["exit_code"]
-                    record.update(
-                        {
-                            "status": outcome.report["status"],
-                            "exit_code": outcome.exit_code,
-                            "native_report_available": True,
-                            "native_report_sha256": sha256(
-                                (child_directory / "run.json").read_bytes()
-                            ).hexdigest(),
-                            "started_unix_ms": outcome.report.get("started_unix_ms"),
-                            "finished_unix_ms": outcome.report.get("finished_unix_ms"),
-                            "client_error": _compact_failure_text(outcome.client_error)
-                            if outcome.client_error
-                            else (
-                                "player_native_report_export_failed"
-                                if outcome.report.get("report_error")
-                                else None
-                            ),
-                            **{
-                                key: outcome.report["reproduction"].get(key)
-                                for key in (
-                                    "definition_hash",
-                                    "build_id",
-                                    "build_source_revision",
-                                    "payload_hash",
-                                    "payload_verification",
-                                )
-                            },
-                        }
-                    )
-                    child_counts = iteration_counts(outcome.report, repeats)
-                    record["iteration_counts"] = child_counts
-                    record["iteration_results_source"] = (
-                        "native"
-                        if "iteration_results_version" in outcome.report
-                        else "legacy_steps"
-                    )
-                    record["failure"] = _compact_failure(outcome.report)
-                    write_player_artifacts(outcome.report, child_directory, outcome.client_error)
-                    del outcome
-                except KeyboardInterrupt:
-                    record["status"], record["exit_code"], record["client_error"] = (
-                        "cancelled",
-                        130,
-                        "Session interrupted before child admission",
-                    )
-                except (PlayerLaunchError, PlayerPayloadError, OSError, ValueError) as exc:
-                    record["exit_code"] = 1
-                    record["client_error"] = (
-                        type(exc).__name__ + ": player child admission or export failed"
-                    )
-                process: dict[str, JsonValue] = {}
-                try:
-                    encoded_process = _read_small(child_directory / "process.json")
-                    if encoded_process:
-                        receipt = PlayerProcessReceipt.model_validate(encoded_process)
-                        if receipt.job_id != job_id or (
-                            expected_native_exit is not None
-                            and receipt.actual_exit_code != expected_native_exit
-                        ):
-                            raise ValueError("Process receipt does not match the owned child")
-                        process = receipt.model_dump(mode="json")
-                        record.update(receipt.outcome_fields())
-                    elif record["native_report_available"]:
-                        raise ValueError("Process lifetime receipt is missing")
-                except (PlayerLaunchError, OSError, ValueError):
-                    record["exit_code"] = 1
-                    record["client_error"] = (
-                        record["client_error"] or "session_process_evidence_invalid"
-                    )
-
-                diagnostics = _read_small(child_directory / "diagnostics.json")
-                if diagnostics.get("interrupted") is True:
-                    record["exit_code"], record["status"] = 130, "cancelled"
-                elif diagnostics.get("deadline_reached") is True and time.monotonic() >= deadline:
-                    summary["status"] = "timed_out"
-                    stopped = True
-                if process.get("process_id") is not None:
-                    summary["children_started"] += 1
-                if process.get("process_ended") is True:
-                    summary["children_finalized"] += 1
-                failed = record["exit_code"] != 0
-                if failed:
-                    exit_code = 130 if record["exit_code"] == 130 else max(1, exit_code)
-                    counts[
-                        "failures"
-                        if record["status"] == "failed" and not record["client_error"]
-                        else "errors"
-                    ] += 1
-                    if summary["first_failure"] is None:
-                        summary["first_failure"] = dict(record)
-                        pinned = job_id
-                # Resolve only this admitted batch; missing evidence stays unknown.
-                iteration_totals[mode]["unknown"] -= repeats
-                contribution = dict(child_counts)
-                contribution["planned"] = 0
-                iteration_totals[mode] = add_iteration_counts(iteration_totals[mode], contribution)
-                completed[mode] = iteration_totals[mode]["executed"]
-                summary["active_child"] = None
-                # Advance admission once, including a failed child; no retry can erase it.
-                if process.get("process_ended") is not True and child_directory.exists():
-                    stopped = True
-                if summary["outcomes_recorded"] >= 2000:
-                    raise PlayerLaunchError("Player session exceeds its child bound")
-                _append_record(journal, record)
-                summary["outcomes_recorded"] += 1
-                recent.append(record)
-                while len(json.dumps(list(recent), ensure_ascii=True).encode("utf-8")) > 49152:
-                    recent.popleft()
-                if process.get("process_ended") is True:
+                    job_id = uuid4().hex
+                    child_directory = runs / job_id
+                    admission: dict[str, JsonValue] = {
+                        "schema_version": 1,
+                        "session_id": session_id,
+                        "sequence": summary["outcomes_recorded"] + 1,
+                        "mode": mode,
+                        "job_id": job_id,
+                        "repeat_count": repeats,
+                    }
+                    _append_record(admissions, admission)
+                    scheduled[mode] += repeats
+                    iteration_totals[mode]["pending"] -= repeats
+                    iteration_totals[mode]["unknown"] += repeats
+                    summary["active_child"] = admission
+                    _summary_file(summary, directory)
+                    child_counts = zero_iteration_counts()
+                    child_counts["planned"] = child_counts["unknown"] = repeats
+                    record: dict[str, JsonValue] = {
+                        "schema_version": 2,
+                        "session_id": session_id,
+                        "sequence": summary["outcomes_recorded"] + 1,
+                        "mode": mode,
+                        "process_scope": "batch",
+                        "job_id": job_id,
+                        "repeat_count": repeats,
+                        "status": "infrastructure_error",
+                        "exit_code": 1,
+                        "native_report_available": False,
+                        "native_report_sha256": None,
+                        "artifact_directory": f"runs/{job_id}",
+                        "started_unix_ms": None,
+                        "finished_unix_ms": None,
+                        "client_error": None,
+                        "process_id": None,
+                        "actual_exit_code": None,
+                        "process_ended": False,
+                        "forced_termination": False,
+                        "process_started_unix_ms": None,
+                        "process_finished_unix_ms": None,
+                        "request_sha256": None,
+                        "iteration_counts": child_counts,
+                        "iteration_results_source": "unavailable",
+                        "failure": None,
+                    }
+                    expected_native_exit = None
                     try:
-                        _retain(child_directory, kept, pinned, options.retain_reports)
-                    except (PlayerLaunchError, OSError, ValueError):
-                        summary["session_error"] = "session_retention_failed"
-                        stopped, exit_code = True, max(1, exit_code)
-                summary["last_outcomes"] = list(recent)
-                summary["retained_job_ids"] = [entry.name for entry in kept]
-                summary["arms_complete"] = {
-                    arm: _arm_complete(iteration_totals[arm]) for arm in modes
-                }
-                _summary_file(summary, directory)
-                if record["exit_code"] == 130:
-                    summary["status"] = "cancelled"
-                    stopped = True
-                elif failed and options.failure_policy == "stop":
-                    stopped = True
-                if not stopped and scheduled[mode] < options.iterations:
-                    try:
-                        time.sleep(
-                            min(options.interval_seconds, max(0, deadline - time.monotonic()))
+                        outcome = run_player(
+                            PlayerRunOptions(
+                                build_directory=options.build_directory,
+                                output_directory=runs,
+                                repeat_count=repeats,
+                                timeout_seconds=options.timeout_seconds,
+                                source_revision=options.source_revision,
+                                cleanup_wait_seconds=options.cleanup_wait_seconds,
+                                deadline_monotonic=deadline,
+                                expected_build_revision=options.expected_build_revision,
+                                expected_build_id=options.expected_build_id,
+                                require_verified_payload=True,
+                                player_job_id=job_id,
+                            )
                         )
+                        child_directory = outcome.directory
+                        expected_native_exit = outcome.report["exit_code"]
+                        record.update(
+                            {
+                                "status": outcome.report["status"],
+                                "exit_code": outcome.exit_code,
+                                "native_report_available": True,
+                                "native_report_sha256": sha256(
+                                    (child_directory / "run.json").read_bytes()
+                                ).hexdigest(),
+                                "started_unix_ms": outcome.report.get("started_unix_ms"),
+                                "finished_unix_ms": outcome.report.get("finished_unix_ms"),
+                                "client_error": _compact_failure_text(outcome.client_error)
+                                if outcome.client_error
+                                else (
+                                    "player_native_report_export_failed"
+                                    if outcome.report.get("report_error")
+                                    else None
+                                ),
+                                **{
+                                    key: outcome.report["reproduction"].get(key)
+                                    for key in (
+                                        "definition_hash",
+                                        "build_id",
+                                        "build_source_revision",
+                                        "payload_hash",
+                                        "payload_verification",
+                                    )
+                                },
+                            }
+                        )
+                        child_counts = iteration_counts(outcome.report, repeats)
+                        record["iteration_counts"] = child_counts
+                        record["iteration_results_source"] = (
+                            "native"
+                            if "iteration_results_version" in outcome.report
+                            else "legacy_steps"
+                        )
+                        record["failure"] = _compact_failure(outcome.report)
+                        if outcome.report.get("report_error"):
+                            summary["session_error"] = (
+                                summary["session_error"] or "session_child_artifact_failed"
+                            )
+                            stopped = True
+                        write_player_artifacts(
+                            outcome.report, child_directory, outcome.client_error
+                        )
+                        del outcome
                     except KeyboardInterrupt:
+                        record["status"], record["exit_code"], record["client_error"] = (
+                            "cancelled",
+                            130,
+                            "Session interrupted before child admission",
+                        )
+                    except OSError as exc:
+                        record["exit_code"] = 1
+                        record["client_error"] = record["client_error"] or (
+                            type(exc).__name__ + ": player child admission or export failed"
+                        )
+                        summary["session_error"] = (
+                            summary["session_error"] or "session_child_artifact_failed"
+                        )
+                        stopped = True
+                    except (PlayerLaunchError, PlayerPayloadError, ValueError) as exc:
+                        record["exit_code"] = 1
+                        record["client_error"] = record["client_error"] or (
+                            type(exc).__name__ + ": player child admission or export failed"
+                        )
+                        if isinstance(exc.__cause__, OSError):
+                            summary["session_error"] = (
+                                summary["session_error"] or "session_child_artifact_failed"
+                            )
+                            stopped = True
+                    process: dict[str, JsonValue] = {}
+                    try:
+                        encoded_process = _read_small(child_directory / "process.json")
+                        if encoded_process:
+                            receipt = PlayerProcessReceipt.model_validate(encoded_process)
+                            if receipt.job_id != job_id or (
+                                expected_native_exit is not None
+                                and receipt.actual_exit_code != expected_native_exit
+                            ):
+                                raise ValueError("Process receipt does not match the owned child")
+                            process = receipt.model_dump(mode="json")
+                            record.update(receipt.outcome_fields())
+                        elif record["native_report_available"]:
+                            raise ValueError("Process lifetime receipt is missing")
+                    except (PlayerLaunchError, OSError, ValueError):
+                        record["exit_code"] = 1
+                        record["client_error"] = (
+                            record["client_error"] or "session_process_evidence_invalid"
+                        )
+
+                    if process.get("process_id") is not None:
+                        summary["children_started"] += 1
+                    if process.get("process_ended") is True:
+                        summary["children_finalized"] += 1
+                    try:
+                        diagnostics = _read_small(child_directory / "diagnostics.json")
+                    except (PlayerLaunchError, OSError, ValueError):
+                        diagnostics = {}
+                        record["exit_code"] = 1
+                        record["client_error"] = (
+                            record["client_error"] or "session_diagnostics_unavailable"
+                        )
+                        summary["session_error"] = (
+                            summary["session_error"] or "session_diagnostics_unavailable"
+                        )
+                        stopped = True
+                    if diagnostics.get("interrupted") is True:
+                        record["exit_code"], record["status"] = 130, "cancelled"
+                    elif (
+                        diagnostics.get("deadline_reached") is True and time.monotonic() >= deadline
+                    ):
+                        summary["status"] = "timed_out"
+                        stopped = True
+                    failed = record["exit_code"] != 0
+                    if failed:
+                        exit_code = 130 if record["exit_code"] == 130 else max(1, exit_code)
+                        if summary["first_failure"] is None:
+                            summary["first_failure"] = dict(record)
+                            pinned = job_id
+                    # Advance admission once, including a failed child; no retry can erase it.
+                    if process.get("process_ended") is not True and child_directory.exists():
+                        stopped = True
+                    if summary["outcomes_recorded"] >= 2000:
+                        raise PlayerLaunchError("Player session exceeds its child bound")
+                    _append_record(journal, record)
+                    if failed:
+                        counts[
+                            "failures"
+                            if record["status"] == "failed" and not record["client_error"]
+                            else "errors"
+                        ] += 1
+                    # Resolve only a durable outcome; an unsuccessful append stays unknown.
+                    iteration_totals[mode]["unknown"] -= repeats
+                    contribution = dict(child_counts)
+                    contribution["planned"] = 0
+                    iteration_totals[mode] = add_iteration_counts(
+                        iteration_totals[mode], contribution
+                    )
+                    completed[mode] = iteration_totals[mode]["executed"]
+                    summary["active_child"] = None
+                    summary["outcomes_recorded"] += 1
+                    recent.append(record)
+                    while len(json.dumps(list(recent), ensure_ascii=True).encode("utf-8")) > 49152:
+                        recent.popleft()
+                    if process.get("process_ended") is True:
+                        try:
+                            _retain(child_directory, kept, pinned, options.retain_reports)
+                        except (PlayerLaunchError, OSError, ValueError):
+                            summary["session_error"] = (
+                                summary["session_error"] or "session_retention_failed"
+                            )
+                            stopped, exit_code = True, max(1, exit_code)
+                    summary["last_outcomes"] = list(recent)
+                    summary["retained_job_ids"] = [entry.name for entry in kept]
+                    summary["arms_complete"] = {
+                        arm: _arm_complete(iteration_totals[arm]) for arm in modes
+                    }
+                    _summary_file(summary, directory)
+                    if record["exit_code"] == 130:
                         summary["status"] = "cancelled"
-                        exit_code, stopped = 130, True
+                        stopped = True
+                    elif failed and options.failure_policy == "stop":
+                        stopped = True
+                    if not stopped and scheduled[mode] < options.iterations:
+                        try:
+                            time.sleep(
+                                min(options.interval_seconds, max(0, deadline - time.monotonic()))
+                            )
+                        except KeyboardInterrupt:
+                            summary["status"] = "cancelled"
+                            exit_code, stopped = 130, True
+    except (PlayerLaunchError, OSError, ValueError) as exc:
+        summary["session_error"] = summary["session_error"] or (
+            "session_persistence_failed: " + type(exc).__name__
+        )
+        exit_code = max(1, exit_code)
+    except KeyboardInterrupt:
+        summary["status"] = "cancelled"
+        exit_code = 130
     if summary["status"] == "running":
         summary["status"] = (
             "failed"
@@ -601,6 +671,29 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
         mode: _arm_complete(total) for mode, total in iteration_totals.items()
     }
     summary["finished_unix_ms"] = int(time.time() * 1000)
-    _summary_file(summary, directory)
-    _write_session_junit(summary, directory)
+    summary["active_child"] = None
+    try:
+        _summary_file(summary, directory)
+    except (PlayerLaunchError, OSError, ValueError) as exc:
+        summary["session_error"] = summary["session_error"] or (
+            "session_final_checkpoint_failed: " + type(exc).__name__
+        )
+        summary["status"] = "cancelled" if exit_code == 130 else "failed"
+        exit_code = max(1, exit_code)
+    try:
+        _write_session_junit(summary, directory)
+    except (PlayerLaunchError, OSError, ValueError) as exc:
+        summary["session_error"] = summary["session_error"] or (
+            "session_junit_failed: " + type(exc).__name__
+        )
+        summary["status"] = "cancelled" if exit_code == 130 else "failed"
+        exit_code = max(1, exit_code)
+    if summary["session_error"] is not None:
+        # One bounded retry can publish the final failure after a transient disk fault.
+        try:
+            _summary_file(summary, directory)
+        except (PlayerLaunchError, OSError, ValueError) as exc:
+            summary["finalization_error"] = (
+                "session_final_checkpoint_unavailable: " + type(exc).__name__
+            )
     return summary, directory, exit_code
