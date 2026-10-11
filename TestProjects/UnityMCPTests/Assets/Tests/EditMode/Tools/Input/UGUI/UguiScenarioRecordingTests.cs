@@ -99,6 +99,47 @@ namespace MCPForUnityTests.EditMode.Tools.Input
         }
 
         [Test]
+        public void RefreshDeduplicatesButtonsAndReplacesDestroyedTargets()
+        {
+            GameObject root = Object("RecorderRefresh-" + Guid.NewGuid().ToString("N"));
+            GameObject first = Object("First", typeof(RectTransform), typeof(Button));
+            GameObject surviving = Object("Surviving", typeof(RectTransform), typeof(Button));
+            first.transform.SetParent(root.transform);
+            surviving.transform.SetParent(root.transform);
+            EventSystem events = Object("RecorderEventSystem", typeof(EventSystem)).GetComponent<EventSystem>();
+            var observed = new List<PlayScenarioRecordedTarget>();
+            session = new UguiScenarioRecordingBackend().Begin(observed.Add, _ => { });
+            session.Refresh();
+            session.Refresh();
+            Assert.That(first.GetComponents<UguiScenarioRecordingObserver>().Length, Is.EqualTo(1));
+            Assert.That(surviving.GetComponents<UguiScenarioRecordingObserver>().Length, Is.EqualTo(1));
+
+            UnityEngine.Object.DestroyImmediate(first);
+            Assert.DoesNotThrow(() => session.Refresh());
+            GameObject replacement = Object("Replacement", typeof(RectTransform), typeof(Button));
+            replacement.transform.SetParent(root.transform);
+            session.Refresh();
+            session.Refresh();
+            Assert.That(surviving.GetComponents<UguiScenarioRecordingObserver>().Length, Is.EqualTo(1));
+            Assert.That(replacement.GetComponents<UguiScenarioRecordingObserver>().Length, Is.EqualTo(1));
+            var data = new PointerEventData(events) { button = PointerEventData.InputButton.Left, pointerId = -1 };
+            foreach (GameObject target in new[] { surviving, replacement })
+            {
+                ExecuteEvents.Execute(target, data, ExecuteEvents.pointerDownHandler);
+                ExecuteEvents.Execute(target, data, ExecuteEvents.pointerClickHandler);
+            }
+            Assert.That(observed.Count, Is.EqualTo(2));
+            Assert.That(observed[0].Target, Is.EqualTo(root.name + "/Surviving"));
+            Assert.That(observed[1].Target, Is.EqualTo(root.name + "/Replacement"));
+            Assert.That(observed[0].Error, Is.Null);
+            Assert.That(observed[1].Error, Is.Null);
+
+            session.Dispose();
+            Assert.That(surviving.GetComponent<UguiScenarioRecordingObserver>(), Is.Null);
+            Assert.That(replacement.GetComponent<UguiScenarioRecordingObserver>(), Is.Null);
+        }
+
+        [Test]
         public void ProgrammaticCallbacksRightClicksAndNonInteractableButtonsAreNotRecorded()
         {
             GameObject target = Object("FilteredButton-" + Guid.NewGuid().ToString("N"), typeof(RectTransform), typeof(Button));
