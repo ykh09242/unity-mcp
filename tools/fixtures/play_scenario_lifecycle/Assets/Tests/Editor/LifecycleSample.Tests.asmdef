@@ -1,0 +1,23 @@
+{
+  "name": "LifecycleSample.Tests",
+  "references": [
+    "LifecycleSample.Runtime",
+    "LifecycleSample.Editor",
+    "MCPForUnity.Runtime",
+    "MCPForUnity.Editor",
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "nunit.framework.dll",
+    "Newtonsoft.Json.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS"
+  ]
+}

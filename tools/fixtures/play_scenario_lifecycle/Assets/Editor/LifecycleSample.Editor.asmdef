@@ -1,0 +1,15 @@
+{
+  "name": "LifecycleSample.Editor",
+  "references": [
+    "LifecycleSample.Runtime",
+    "MCPForUnity.Editor"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "Newtonsoft.Json.dll"
+  ],
+  "autoReferenced": true
+}

@@ -1,0 +1,8 @@
+{
+  "name": "LifecycleSample.Runtime",
+  "references": [
+    "MCPForUnity.Runtime",
+    "UnityEngine.UI"
+  ],
+  "autoReferenced": true
+}

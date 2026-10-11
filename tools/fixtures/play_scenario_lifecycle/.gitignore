@@ -1,0 +1,14 @@
+Library/
+Temp/
+Logs/
+obj/
+UserSettings/
+Packages/packages-lock.json
+Assets/Generated/
+Assets/Generated.meta
+ProjectSettings/*
+!ProjectSettings/ProjectVersion.txt
+!ProjectSettings/LifecycleSample.json
+*.csproj
+*.sln
+*.slnx

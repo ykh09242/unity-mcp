@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "tests": [
+    {
+      "method": "UnityMcpLifecycleSample.Tests.LifecycleScenarioTests.NormalFailureCancellationRecoverInOnePlaySession",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "succeeded"
+        },
+        {
+          "kind": "run",
+          "status": "timed_out"
+        },
+        {
+          "kind": "run",
+          "status": "succeeded"
+        },
+        {
+          "kind": "run",
+          "status": "cancelled"
+        },
+        {
+          "kind": "run",
+          "status": "succeeded"
+        }
+      ]
+    },
+    {
+      "method": "UnityMcpLifecycleSample.Tests.LifecycleScenarioTests.RetainedOwnerRequiresExplicitReleaseBeforeCleanReentry",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "failed"
+        },
+        {
+          "kind": "run",
+          "status": "succeeded"
+        },
+        {
+          "kind": "run",
+          "status": "succeeded"
+        }
+      ]
+    },
+    {
+      "method": "UnityMcpLifecycleSample.Tests.LifecycleScenarioTests.SceneTeardownReleasesOrRetainsOwnerAccordingToPolicy",
+      "reports": [
+        {
+          "kind": "run",
+          "status": "succeeded"
+        },
+        {
+          "kind": "run",
+          "status": "failed"
+        },
+        {
+          "kind": "run",
+          "status": "succeeded"
+        },
+        {
+          "kind": "run",
+          "status": "succeeded"
+        }
+      ]
+    }
+  ]
+}
