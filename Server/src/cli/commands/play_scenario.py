@@ -17,6 +17,7 @@ from cli.utils.play_scenario_suite import wait_for_suite
 from pydantic import JsonValue, ValidationError
 from cli.utils.play_scenario_query_compare import (
     MAX_COUNT,
+    MAX_STEPS,
     QueryComparisonError,
     compare_reports,
     read_report,
@@ -49,11 +50,18 @@ def play_scenario():
 @click.argument("candidate", type=str)
 @click.option("--max-target-searches-increase", type=click.IntRange(0, MAX_COUNT), required=True)
 @click.option("--max-hierarchy-visits-increase", type=click.IntRange(0, MAX_COUNT), required=True)
+@click.option(
+    "--step-details-limit",
+    type=click.IntRange(1, MAX_STEPS),
+    default=None,
+    help="Include up to N steps in execution order after validating all recorded step counts.",
+)
 def compare_queries(
     baseline: str,
     candidate: str,
     max_target_searches_increase: int,
     max_hierarchy_visits_increase: int,
+    step_details_limit: int | None,
 ):
     """Compare two saved native reports offline; exit 0 within limits, 1 exceeded, 2 invalid."""
     try:
@@ -62,12 +70,16 @@ def compare_queries(
             read_report(Path(candidate), "candidate"),
             max_target_searches_increase=max_target_searches_increase,
             max_hierarchy_visits_increase=max_hierarchy_visits_increase,
+            step_details_limit=step_details_limit,
         )
         exit_code = 0 if result["status"] == "within_budget" else 1
     except QueryComparisonError as exc:
         result = {"schema_version": 1, "status": "not_comparable", "error": str(exc)}
         exit_code = 2
     output_format = get_config().format
+    details = result.get("step_details") if output_format != "json" else None
+    if details is not None:
+        result = {key: value for key, value in result.items() if key != "step_details"}
     if output_format == "table" and "queries" in result:
         click.echo(
             format_output({key: value for key, value in result.items() if key != "queries"}, "text")
@@ -79,6 +91,24 @@ def compare_queries(
         )
     else:
         click.echo(format_output(result, output_format))
+    if details is not None:
+        click.echo("\nstep_details:")
+        click.echo(format_output({key: value for key, value in details.items() if key != "rows"}))
+        # The generic list formatter drops counters and truncates named rows.
+        for row in details["rows"]:
+            click.echo()
+            if output_format == "table":
+                click.echo(
+                    format_output({key: value for key, value in row.items() if key != "queries"})
+                )
+                click.echo(
+                    format_output(
+                        [{"metric": name, **values} for name, values in row["queries"].items()],
+                        "table",
+                    )
+                )
+            else:
+                click.echo(format_output(row))
     raise click.exceptions.Exit(exit_code)
 
 

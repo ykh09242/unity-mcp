@@ -331,6 +331,29 @@ labels, and `queries.target_searches` / `queries.hierarchy_visits`. Each counter
 result contains a bounded `error` and no query decision. Argument syntax errors retain the
 CLI's existing stderr diagnostic and exit 2. Text and table output show both budgets and values.
 
+To locate which recorded steps contributed to the difference, request an optional prefix:
+
+```sh
+unity-mcp --format json play-scenario compare-queries baseline.json candidate.json \
+  --max-target-searches-increase 0 \
+  --max-hierarchy-visits-increase 25 \
+  --step-details-limit 20
+```
+
+`--step-details-limit N` accepts integers from 1 to 640. It adds `step_details` with `total_steps`,
+`shown_steps`, `omitted_steps` and `rows`, in the exact recorded execution order. Each row identifies
+`iteration`, `stage`, `step_index`, `name` and `action`, and includes `queries.target_searches` and
+`queries.hierarchy_visits` with `baseline`, `candidate` and signed `delta`. Text and table output
+also show every selected row's identity and counters, together with the omission count.
+
+Details require valid counters for **every** step in both reports, including rows beyond the
+chosen limit. Their totals must agree with each run's counters using native signed-64 saturating
+addition: `min(9,223,372,036,854,775,807, sum(step counts))`. Missing or malformed step counters,
+inconsistent totals, and incomplete or reordered execution evidence return `not_comparable`.
+All existing admission and compatibility checks still apply. The limit only controls display;
+aggregate budgets and exit codes include all steps, and there are no per-step thresholds.
+Without this option, the original aggregate-only output and admission requirements are unchanged.
+
 Reports must have the same normalized scenario definition, recorded definition hash, exact Unity
 version, execution environment and repeat count. Editor-to-Editor and Player-to-Player comparisons
 are supported. Package version and caller-provided source revision may differ; both are displayed.

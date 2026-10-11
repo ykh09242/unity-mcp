@@ -21,6 +21,8 @@ from cli.utils.play_scenario_iterations import IterationResult, validate_iterati
 
 REPORT_LIMIT: Final = 2097152
 MAX_COUNT: Final = 2**63 - 1
+MAX_STEPS: Final = 640
+QUERY_METRICS: Final = ("target_searches", "hierarchy_visits")
 Count = Annotated[int, Field(strict=True, ge=0, le=MAX_COUNT)]
 EmptyError = Literal[None, ""]
 
@@ -33,6 +35,16 @@ class _Counts(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     target_searches: Count
     hierarchy_visits: Count
+
+
+class _StepQueryCounts(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+    query_counts: _Counts
+
+
+class _StepQueryEvidence(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+    steps: Annotated[list[_StepQueryCounts], Field(strict=True, min_length=1, max_length=MAX_STEPS)]
 
 
 class _Reproduction(BaseModel):
@@ -92,7 +104,7 @@ class _Run(BaseModel):
     resource_checks: Annotated[list[_ResourceCheck], Field(strict=True, max_length=10)]
     query_counts: _Counts
     reproduction: _Reproduction
-    steps: Annotated[list[_Step], Field(strict=True, min_length=1, max_length=640)]
+    steps: Annotated[list[_Step], Field(strict=True, min_length=1, max_length=MAX_STEPS)]
 
     @field_validator("scenario", mode="before")
     @classmethod
@@ -208,14 +220,67 @@ def _identity(run: _Run) -> dict[str, JsonValue]:
     }
 
 
+def _step_counts(raw: dict[str, JsonValue], run: _Run, label: str) -> list[_Counts]:
+    """Validate the whole counter ledger, including rows excluded from display."""
+    try:
+        evidence = _StepQueryEvidence.model_validate(raw)
+    except ValidationError as exc:
+        location = ".".join(str(part) for part in exc.errors(include_input=False)[0]["loc"])
+        raise QueryComparisonError(
+            f"{label} report has invalid or missing {location[:128]}"
+        ) from exc
+    counts = [step.query_counts for step in evidence.steps]
+    for name in QUERY_METRICS:
+        # Native run and step counters accumulate the same deltas with signed-64 saturation.
+        total = min(MAX_COUNT, sum(getattr(count, name) for count in counts))
+        if total != getattr(run.query_counts, name):
+            raise QueryComparisonError(f"{label} report step {name} total differs from run total")
+    return counts
+
+
+def _step_details(
+    steps: list[_Step], left: list[_Counts], right: list[_Counts], limit: int
+) -> dict[str, JsonValue]:
+    rows = []
+    for step, before, after in zip(steps[:limit], left, right):
+        rows.append(
+            {
+                "iteration": step.iteration,
+                "stage": step.stage,
+                "step_index": step.step_index,
+                "name": step.name,
+                "action": step.action,
+                "queries": {
+                    name: {
+                        "baseline": getattr(before, name),
+                        "candidate": getattr(after, name),
+                        "delta": getattr(after, name) - getattr(before, name),
+                    }
+                    for name in QUERY_METRICS
+                },
+            }
+        )
+    return {
+        "total_steps": len(steps),
+        "shown_steps": len(rows),
+        "omitted_steps": len(steps) - len(rows),
+        "rows": rows,
+    }
+
+
 def compare_reports(
     baseline: dict[str, JsonValue],
     candidate: dict[str, JsonValue],
     *,
     max_target_searches_increase: int,
     max_hierarchy_visits_increase: int,
+    step_details_limit: int | None = None,
 ) -> dict[str, JsonValue]:
-    """Compare recorded aggregate counts; a passing budget is not proof of a speedup."""
+    """Compare recorded counts; optional step details do not change aggregate budgets."""
+    if step_details_limit is not None and (
+        type(step_details_limit) is not int or not 1 <= step_details_limit <= MAX_STEPS
+    ):
+        raise QueryComparisonError(f"Step detail limit must be an integer from 1 to {MAX_STEPS}")
     try:
         limits = _Counts(
             target_searches=max_target_searches_increase,
@@ -238,7 +303,7 @@ def compare_reports(
     ):
         raise QueryComparisonError("Reports differ in normalized scenario definition")
     queries = {}
-    for name in ("target_searches", "hierarchy_visits"):
+    for name in QUERY_METRICS:
         before, after = getattr(left.query_counts, name), getattr(right.query_counts, name)
         limit = getattr(limits, name)
         queries[name] = {
@@ -248,7 +313,7 @@ def compare_reports(
             "max_increase": limit,
             "within_budget": after - before <= limit,
         }
-    return {
+    result = {
         "schema_version": 1,
         "status": "within_budget"
         if all(row["within_budget"] for row in queries.values())
@@ -257,6 +322,14 @@ def compare_reports(
         "candidate": _identity(right),
         "queries": queries,
     }
+    if step_details_limit is not None:
+        result["step_details"] = _step_details(
+            left.steps,
+            _step_counts(baseline, left, "baseline"),
+            _step_counts(candidate, right, "candidate"),
+            step_details_limit,
+        )
+    return result
 
 
 def _object(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:

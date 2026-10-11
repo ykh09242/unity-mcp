@@ -117,7 +117,9 @@ def native_report(*, environment="editor", repeat=2, searches=0, visits=0):
     return report
 
 
-def compare_files(tmp_path, baseline, candidate, *, limits=(0, 0), output="json"):
+def compare_files(
+    tmp_path, baseline, candidate, *, limits=(0, 0), output="json", step_details_limit=None
+):
     """Invoke the public command and prove that both supplied files remain unchanged."""
     paths = (tmp_path / "baseline.json", tmp_path / "candidate.json")
     for path, report in zip(paths, (baseline, candidate)):
@@ -135,6 +137,11 @@ def compare_files(tmp_path, baseline, candidate, *, limits=(0, 0), output="json"
             str(limits[0]),
             "--max-hierarchy-visits-increase",
             str(limits[1]),
+            *(
+                []
+                if step_details_limit is None
+                else ["--step-details-limit", str(step_details_limit)]
+            ),
         ],
     )
     assert [path.read_bytes() for path in paths] == before
@@ -819,3 +826,224 @@ def test_cli_defers_all_input_io_to_the_report_loader(tmp_path, monkeypatch):
     )
     assert result.exit_code == 0, result.output
     assert loaded == list(zip(paths, ["baseline", "candidate"]))
+
+
+def counted_report(*, environment="editor", repeat=2, counts=None):
+    """Native evaluation deltas feed the run and step counters with saturating addition."""
+    report = native_report(environment=environment, repeat=repeat)
+    counts = (
+        counts
+        if counts is not None
+        else [(index + 1, (index + 1) * 10) for index in range(len(report["steps"]))]
+    )
+    assert len(counts) == len(report["steps"])
+    for step, (searches, visits) in zip(report["steps"], counts):
+        step["query_counts"] = {"target_searches": searches, "hierarchy_visits": visits}
+    report["query_counts"] = {
+        "target_searches": min(2**63 - 1, sum(pair[0] for pair in counts)),
+        "hierarchy_visits": min(2**63 - 1, sum(pair[1] for pair in counts)),
+    }
+    return report
+
+
+@pytest.mark.parametrize("environment", ["editor", "player"])
+@pytest.mark.parametrize("limit", [1, 2, 6, 640])
+def test_step_details_follow_execution_order_and_report_truncation(tmp_path, environment, limit):
+    baseline = counted_report(environment=environment)
+    candidate = counted_report(
+        environment=environment, counts=[(4, 10), (0, 50), (3, 30), (4, 40), (5, 50), (6, 60)]
+    )
+    result = compare_files(tmp_path, baseline, candidate, limits=(1, 30), step_details_limit=limit)
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data["schema_version"] == 1
+    assert data["status"] == "within_budget"
+    details = data["step_details"]
+    assert details["total_steps"] == 6
+    assert details["shown_steps"] == min(limit, 6)
+    assert details["omitted_steps"] == max(0, 6 - limit)
+    rows = details["rows"]
+    assert [(row["iteration"], row["stage"], row["step_index"]) for row in rows] == [
+        (1, "setup", 0),
+        (1, "main", 0),
+        (1, "cleanup", 0),
+        (2, "setup", 0),
+        (2, "main", 0),
+        (2, "cleanup", 0),
+    ][:limit]
+    assert rows[0] == {
+        "iteration": 1,
+        "stage": "setup",
+        "step_index": 0,
+        "name": "Setup",
+        "action": "load_scene",
+        "queries": {
+            "target_searches": {"baseline": 1, "candidate": 4, "delta": 3},
+            "hierarchy_visits": {"baseline": 10, "candidate": 10, "delta": 0},
+        },
+    }
+    if limit >= 2:
+        assert rows[1]["queries"]["target_searches"] == {"baseline": 2, "candidate": 0, "delta": -2}
+        assert rows[1]["queries"]["hierarchy_visits"]["delta"] == 30
+    without_details = compare_files(tmp_path, baseline, candidate, limits=(1, 30))
+    del data["step_details"]
+    assert data == json.loads(without_details.stdout)
+
+
+@pytest.mark.parametrize("side", ["baseline", "candidate"])
+@pytest.mark.parametrize("metric", ["target_searches", "hierarchy_visits"])
+@pytest.mark.parametrize("value", ["missing", None, False, 0.0, "0", -1, 2**63])
+def test_invalid_hidden_step_counter_cannot_pass(tmp_path, side, metric, value):
+    reports = {"baseline": counted_report(), "candidate": counted_report()}
+    counters = reports[side]["steps"][-1]["query_counts"]
+    if value == "missing":
+        counters.pop(metric)
+    else:
+        counters[metric] = value
+    result = compare_files(
+        tmp_path, reports["baseline"], reports["candidate"], step_details_limit=1
+    )
+    assert result.exit_code == 2, result.output
+    data = json.loads(result.stdout)
+    assert data["status"] == "not_comparable"
+    assert side in data["error"]
+    assert "queries" not in data and "step_details" not in data
+
+
+@pytest.mark.parametrize("side", ["baseline", "candidate"])
+@pytest.mark.parametrize("corruption", ["missing", "null", "extra", "total"])
+def test_step_counter_objects_and_native_totals_are_required_for_details(
+    tmp_path, side, corruption
+):
+    reports = {"baseline": counted_report(), "candidate": counted_report()}
+    report = reports[side]
+    if corruption == "missing":
+        report["steps"][-1].pop("query_counts")
+    elif corruption == "null":
+        report["steps"][-1]["query_counts"] = None
+    elif corruption == "extra":
+        report["steps"][-1]["query_counts"]["unknown"] = 0
+    else:
+        report["query_counts"]["target_searches"] = 0
+    result = compare_files(
+        tmp_path, reports["baseline"], reports["candidate"], step_details_limit=1
+    )
+    assert result.exit_code == 2, result.output
+    assert side in json.loads(result.stdout)["error"]
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ["missing", "reordered", "duplicate", "scenario", "failed_run", "failed_step", "unattempted"],
+)
+def test_details_never_bypass_existing_complete_run_admission(tmp_path, corruption):
+    candidate = counted_report()
+    if corruption == "missing":
+        candidate["steps"].pop()
+    elif corruption == "reordered":
+        candidate["steps"][0], candidate["steps"][1] = candidate["steps"][1], candidate["steps"][0]
+    elif corruption == "duplicate":
+        candidate["steps"][-1] = copy.deepcopy(candidate["steps"][-2])
+    elif corruption == "scenario":
+        candidate["scenario"]["steps"][0]["active"] = True
+    elif corruption == "failed_run":
+        candidate["status"] = "failed"
+    elif corruption == "failed_step":
+        candidate["steps"][-1]["status"] = "failed"
+    else:
+        candidate["iteration_results"][-1].update(status="skipped", started_unix_ms=None)
+    result = compare_files(tmp_path, counted_report(), candidate, step_details_limit=1)
+    assert result.exit_code == 2, result.output
+    assert json.loads(result.stdout)["status"] == "not_comparable"
+
+
+def test_aggregate_regression_outside_displayed_steps_still_fails(tmp_path):
+    baseline = counted_report(counts=[(0, 0)] * 6)
+    candidate = counted_report(counts=[(0, 0)] * 5 + [(1, 0)])
+    result = compare_files(tmp_path, baseline, candidate, step_details_limit=1)
+    assert result.exit_code == 1, result.output
+    data = json.loads(result.stdout)
+    assert data["status"] == "budget_exceeded"
+    assert data["queries"]["target_searches"]["delta"] == 1
+    assert data["step_details"]["rows"][0]["queries"]["target_searches"]["delta"] == 0
+    assert data["step_details"]["omitted_steps"] == 5
+
+
+def test_details_preserve_zero_and_native_saturation(tmp_path):
+    maximum = 2**63 - 1
+    report = counted_report(counts=[(maximum, 0), (maximum, 0)] + [(0, 0)] * 4)
+    result = compare_files(tmp_path, report, copy.deepcopy(report), step_details_limit=6)
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data["queries"]["target_searches"]["baseline"] == maximum
+    assert data["step_details"]["rows"][1]["queries"]["target_searches"]["baseline"] == maximum
+    assert data["step_details"]["rows"][-1]["queries"]["hierarchy_visits"] == {
+        "baseline": 0,
+        "candidate": 0,
+        "delta": 0,
+    }
+
+
+@pytest.mark.parametrize("value", [None, False, {}, "unavailable"])
+def test_default_output_does_not_add_step_counter_requirements(tmp_path, value):
+    report = native_report()
+    old = compare_files(tmp_path, report, copy.deepcopy(report))
+    for step in report["steps"]:
+        step["query_counts"] = value
+    current = compare_files(tmp_path, report, copy.deepcopy(report))
+    assert current.exit_code == old.exit_code == 0
+    assert current.stdout == old.stdout
+    assert "step_details" not in json.loads(current.stdout)
+
+
+@pytest.mark.parametrize("limit", [0, -1, 641, "true", "1.5"])
+def test_cli_rejects_invalid_step_detail_limits_before_loading(tmp_path, monkeypatch, limit):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Invalid detail limit reached the report loader")
+
+    monkeypatch.setattr("cli.commands.play_scenario.read_report", forbidden)
+    result = compare_files(tmp_path, native_report(), native_report(), step_details_limit=limit)
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "--step-details-limit" in result.stderr
+
+
+@pytest.mark.parametrize("limit", [0, -1, 641, True, 1.0, "1"])
+def test_python_api_requires_a_strict_bounded_step_detail_limit(limit):
+    from cli.utils.play_scenario_query_compare import QueryComparisonError, compare_reports
+
+    with pytest.raises(QueryComparisonError):
+        compare_reports(
+            counted_report(),
+            counted_report(),
+            max_target_searches_increase=0,
+            max_hierarchy_visits_increase=0,
+            step_details_limit=limit,
+        )
+
+
+@pytest.mark.parametrize("output", ["text", "table"])
+def test_human_details_keep_every_selected_counter_beyond_generic_list_limits(tmp_path, output):
+    baseline = counted_report(repeat=10, counts=[(index, 10001 + index) for index in range(30)])
+    candidate = counted_report(repeat=10, counts=[(index, 20001 + index) for index in range(30)])
+    result = compare_files(
+        tmp_path, baseline, candidate, limits=(0, 300000), output=output, step_details_limit=30
+    )
+    assert result.exit_code == 0, result.output
+    for index in range(30):
+        assert str(10001 + index) in result.stdout
+        assert str(20001 + index) in result.stdout
+    assert "omitted_steps: 0" in result.stdout
+
+
+def test_step_details_still_open_only_the_two_supplied_files(tmp_path, monkeypatch):
+    actual, opened = os.open, []
+
+    def observed(path, *args, **kwargs):
+        opened.append(Path(path))
+        return actual(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", observed)
+    result = compare_files(tmp_path, counted_report(), counted_report(), step_details_limit=1)
+    assert result.exit_code == 0, result.output
+    assert opened == [tmp_path / "baseline.json", tmp_path / "candidate.json"]
