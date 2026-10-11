@@ -3,9 +3,11 @@ using System.Collections;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Windows.PlayScenarios;
+using Microsoft.Win32.SafeHandles;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor.UIElements;
@@ -231,6 +233,35 @@ namespace MCPForUnityTests.Editor.Windows
             }
             File.WriteAllText(file, new string(' ', 65537));
             Assert.Throws<InvalidDataException>(() => PlayScenarioPlayerSessionEditor.ReadJson(file, 65536));
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(string filename, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+
+        [Test]
+        public void CheckpointReaderSharesDeleteAccessWithAtomicReplacementOwner()
+        {
+            if (Environment.OSVersion.Platform != PlatformID.Win32NT)
+                Assert.Ignore("The deterministic DELETE-access sharing regression requires Windows.");
+            string file = SaveSession();
+            const uint DeleteAccess = 0x00010000;
+            const uint ReadWriteDeleteSharing = 7;
+            const uint OpenExisting = 3;
+            using (SafeFileHandle owner = CreateFileW(file, DeleteAccess, ReadWriteDeleteSharing, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero))
+            {
+                Assert.IsFalse(owner.IsInvalid, "Could not open the owned checkpoint with DELETE access: " + Marshal.GetLastWin32Error());
+                JObject snapshot = null;
+                Assert.DoesNotThrow(
+                    () => snapshot = PlayScenarioPlayerSessionEditor.ReadJson(file, 65536),
+                    "Checkpoint imports must permit their owner's delete/rename access."
+                );
+                Assert.AreEqual(SessionId, (string)snapshot["session_id"]);
+                string temporary = Path.Combine(root, "session.json.tmp");
+                File.WriteAllText(temporary, Session().ToString(), new UTF8Encoding(false));
+                Assert.DoesNotThrow(() => File.Replace(temporary, file, null));
+                Assert.IsFalse(File.Exists(temporary));
+                Assert.AreEqual(SessionId, (string)PlayScenarioPlayerSessionEditor.ReadJson(file, 65536)["session_id"]);
+            }
         }
 
         [Test]

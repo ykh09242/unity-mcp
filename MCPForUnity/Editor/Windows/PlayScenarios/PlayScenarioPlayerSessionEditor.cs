@@ -151,11 +151,13 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private static byte[] ReadBytes(string file, int maximum)
         {
             CheckPath(Path.GetDirectoryName(file), file);
-            using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            // Readers must also allow the owner to atomically replace checkpoints or prune reports.
+            using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
             {
-                if (stream.Length > maximum)
+                long expectedLength = stream.Length;
+                if (expectedLength > maximum)
                     throw new InvalidDataException("Saved artifact exceeds its byte limit.");
-                byte[] bytes = new byte[(int)stream.Length];
+                byte[] bytes = new byte[(int)expectedLength];
                 int offset = 0;
                 while (offset < bytes.Length)
                 {

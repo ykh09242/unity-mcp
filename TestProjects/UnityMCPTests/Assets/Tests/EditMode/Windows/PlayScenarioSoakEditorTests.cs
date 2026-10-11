@@ -259,6 +259,40 @@ namespace MCPForUnityTests.EditMode.Windows
             Assert.IsNull(parent.Q("soakIteration_2"));
         }
 
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        public void JournalImportSharesAccessWithLiveWriterWithoutClaimingIncompleteEvidenceComplete(bool completed, bool truncated)
+        {
+            string file = Save();
+            string journalFile = Path.Combine(root, "iterations.jsonl");
+            if (!completed)
+            {
+                JObject summary = JObject.Parse(File.ReadAllText(file));
+                summary["status"] = "running";
+                summary["finalization_state"] = "running";
+                summary["finished_unix_ms"] = null;
+                summary["journal_complete"] = false;
+                summary["journal_sha256"] = null;
+                Write("soak.json", summary);
+            }
+            if (truncated)
+                File.WriteAllText(journalFile, File.ReadAllText(journalFile).TrimEnd('\n'), new UTF8Encoding(false));
+            using (var writer = new FileStream(journalFile, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+            {
+                PlayScenarioSoakEvidence evidence = null;
+                Assert.DoesNotThrow(() => evidence = PlayScenarioSoakEvidence.Read(file), "An evidence import must share access with its live journal writer.");
+                Assert.AreEqual(truncated ? 1 : 2, evidence.Rows.Count);
+                StringAssert.StartsWith(completed ? "Complete:" : "Incomplete:", evidence.Completeness);
+                if (truncated)
+                    StringAssert.Contains("truncated", evidence.Completeness);
+                writer.Position = writer.Length;
+                byte[] appended = new UTF8Encoding(false).GetBytes("\n");
+                Assert.DoesNotThrow(() => writer.Write(appended, 0, appended.Length));
+                writer.Flush(true);
+            }
+        }
+
         [Test]
         public void MissingFinalReportAndUnfinishedCheckpointStayUnverified()
         {

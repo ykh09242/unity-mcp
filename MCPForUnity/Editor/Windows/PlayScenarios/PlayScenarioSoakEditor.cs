@@ -450,18 +450,19 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
 
         private bool ReadJournal(string file, out string digest, out long bytes)
         {
-            using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
             using (SHA256 hash = SHA256.Create())
             {
-                if (stream.Length > JournalLimit)
-                    throw new InvalidDataException("Soak journal exceeds its byte limit.");
                 long expectedLength = stream.Length;
+                if (expectedLength > JournalLimit)
+                    throw new InvalidDataException("Soak journal exceeds its byte limit.");
                 byte[] buffer = new byte[4096];
                 byte[] line = new byte[RowLimit];
                 int length = 0;
                 bytes = 0;
                 int read;
-                while ((read = stream.Read(buffer, 0, buffer.Length)) != 0)
+                // Observe one bounded snapshot without blocking or chasing the live writer.
+                while (bytes < expectedLength && (read = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, expectedLength - bytes))) != 0)
                 {
                     bytes += read;
                     if (bytes > JournalLimit)
