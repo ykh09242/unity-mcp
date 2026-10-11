@@ -15,6 +15,10 @@ from models.play_scenarios import (
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from cli.utils.play_scenario_player import PlayerFinalReport, REPORT_LIMIT
+from cli.utils.play_scenario_soak_environment import (
+    RecordedEnvironment,
+    ENVIRONMENT_FIELDS as RECORDED_ENVIRONMENT_FIELDS,
+)
 from cli.utils.play_scenario_soak import (
     Digest,
     IDENTITY_FIELDS,
@@ -67,6 +71,7 @@ class _Environment(BaseModel):
     runtime: Label | None = None
     scripting_backend: Label | None = None
     architecture: Label | None = None
+    environment: RecordedEnvironment | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,7 +228,21 @@ def require_compatible(baseline: SavedSoak, candidate: SavedSoak) -> list[str]:
     for field in ENVIRONMENT_FIELDS:
         left, right = getattr(baseline.environment, field), getattr(candidate.environment, field)
         if left is None or right is None:
-            unknown.append(field)
+            if (
+                baseline.environment.environment is None
+                and candidate.environment.environment is None
+            ):
+                unknown.append(field)
         elif left != right:
             raise SoakContractError(f"Incompatible recorded environment: {field}")
+    left_environment = baseline.environment.environment
+    right_environment = candidate.environment.environment
+    if left_environment is not None or right_environment is not None:
+        for field in RECORDED_ENVIRONMENT_FIELDS:
+            left = getattr(left_environment, field) if left_environment is not None else None
+            right = getattr(right_environment, field) if right_environment is not None else None
+            if left is None or right is None:
+                unknown.append(f"environment.{field}")
+            elif left != right:
+                raise SoakContractError(f"Incompatible recorded environment: environment.{field}")
     return unknown

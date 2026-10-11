@@ -16,6 +16,7 @@ from cli.utils.play_scenario_player_session import PlayerSessionOptions, run_pla
 from cli.utils.play_scenario_soak import SoakRequest
 from cli.utils.play_scenario_soak_reports import run_player_soak
 from cli.utils.play_scenario_soak_compare import SoakComparisonError, compare_soak_metrics
+from cli.utils.play_scenario_soak_budget import check_soak_budget
 from cli.utils.play_scenario_suite import wait_for_suite
 from pydantic import JsonValue, ValidationError
 from cli.utils.play_scenario_query_compare import (
@@ -172,6 +173,52 @@ def compare_saved_soak_metrics(baseline_directory: Path, candidate_directory: Pa
             for row in rows:
                 click.echo()
                 click.echo(format_output(row, output_format))
+    raise click.exceptions.Exit(exit_code)
+
+
+@play_scenario.command("check-soak-budget")
+@click.argument("baseline_directory", type=click.Path(file_okay=False, path_type=Path))
+@click.argument("candidate_directory", type=click.Path(file_okay=False, path_type=Path))
+@click.option(
+    "--policy", "policy_path", required=True, type=click.Path(dir_okay=False, path_type=Path)
+)
+def check_saved_soak_budget(
+    baseline_directory: Path, candidate_directory: Path, policy_path: Path
+) -> None:
+    """Gate saved soak regression limits offline: 0 within, 1 exceeded, 2 not comparable.
+
+    Requires complete successful evidence and known matching desktop Player environments.
+    The explicit JSON policy selects metrics and limits. Growth does not establish a leak.
+    """
+    try:
+        budget = check_soak_budget(baseline_directory, candidate_directory, policy_path)
+        result = budget.to_dict()
+        exit_code = {"within_budget": 0, "budget_exceeded": 1, "not_comparable": 2}[budget.status]
+    except SoakComparisonError as exc:
+        result = {
+            "schema_version": 1,
+            "status": "not_comparable",
+            "leak_verdict": False,
+            "error": str(exc),
+        }
+        exit_code = 2
+    output_format = get_config().format
+    if output_format == "json" or "metrics" not in result:
+        click.echo(format_output(result, output_format))
+    else:
+        click.echo(
+            format_output(
+                {
+                    "status": result["status"],
+                    "leak_verdict": False,
+                    "interpretation": result["interpretation"],
+                },
+                "text",
+            )
+        )
+        for metric in result["metrics"]:
+            click.echo()
+            click.echo(format_output(metric, "text"))
     raise click.exceptions.Exit(exit_code)
 
 

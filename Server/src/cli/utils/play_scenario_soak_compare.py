@@ -111,8 +111,8 @@ def _segments(iterations: list[int]) -> list[list[int]]:
     return segments
 
 
-def _statistics(values: dict[int, int], segments: list[list[int]]) -> MetricStatistics:
-    selected = [values[iteration] for segment in segments for iteration in segment]
+def exact_slope(values: dict[int, int], segments: list[list[int]]) -> Fraction | None:
+    """Compute pooled within-segment OLS exactly, without fitting across missing intervals."""
     numerator = Fraction(0)
     denominator = Fraction(0)
     for segment in segments:
@@ -123,13 +123,19 @@ def _statistics(values: dict[int, int], segments: list[list[int]]) -> MetricStat
         ys = [values[iteration] - values[segment[0]] for iteration in segment]
         numerator += Fraction(size * sum(x * y for x, y in zip(xs, ys)) - sum(xs) * sum(ys), size)
         denominator += Fraction(size * sum(x * x for x in xs) - sum(xs) ** 2, size)
+    return numerator / denominator if denominator else None
+
+
+def _statistics(values: dict[int, int], segments: list[list[int]]) -> MetricStatistics:
+    selected = [values[iteration] for segment in segments for iteration in segment]
+    slope = exact_slope(values, segments)
     return MetricStatistics(
         selected[0] if selected else None,
         selected[-1] if selected else None,
         min(selected) if selected else None,
         max(selected) if selected else None,
         selected[-1] - selected[0] if len(selected) >= 2 else None,
-        float(numerator / denominator) if denominator else None,
+        float(slope) if slope is not None else None,
     )
 
 
@@ -139,10 +145,10 @@ def _compare_metric(baseline: SavedSoak, candidate: SavedSoak, metric: str) -> M
     iterations = sorted(left.keys() & right.keys())
     segments = _segments(iterations)
     left_stats, right_stats = _statistics(left, segments), _statistics(right, segments)
+    left_slope, right_slope = exact_slope(left, segments), exact_slope(right, segments)
     slope_delta = (
-        right_stats.slope_per_iteration - left_stats.slope_per_iteration
-        if left_stats.slope_per_iteration is not None
-        and right_stats.slope_per_iteration is not None
+        float(right_slope - left_slope)
+        if left_slope is not None and right_slope is not None
         else None
     )
     return MetricComparison(
