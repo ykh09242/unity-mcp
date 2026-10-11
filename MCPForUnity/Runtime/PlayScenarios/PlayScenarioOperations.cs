@@ -4,6 +4,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Runtime;
+using MCPForUnity.Runtime.PlayScenarios;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -81,6 +82,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         [JsonProperty("source_revision")]
         public string SourceRevision;
+
+        [JsonProperty("environment", NullValueHandling = NullValueHandling.Ignore)]
+        public PlayScenarioEnvironment Environment;
 
         internal static void ValidateSourceRevision(string sourceRevision)
         {

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.PlayScenarios;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -114,6 +115,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             var state = PlayScenarioEngine.Create(definition, jobId ?? Guid.NewGuid().ToString("N"), repeatCount, timeoutSeconds, Now);
             state.Reproduction.UnityVersion = Application.unityVersion;
             state.Reproduction.SourceRevision = sourceRevision;
+            state.Reproduction.Environment = new PlayScenarioEnvironmentCapture().CaptureOnce();
             try
             {
                 state.Reproduction.PackageVersion = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(PlayScenarioService).Assembly)?.version;

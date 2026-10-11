@@ -31,6 +31,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private string soakStopStatus;
         private string soakStopError;
         private bool iterationRecorded;
+        private PlayScenarioEnvironment environment;
         private readonly PlayScenarioPlayerPersistence persistence = new PlayScenarioPlayerPersistence();
         private static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -69,6 +70,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 )
                     throw new IOException("Player run directory contains stale output or cancellation evidence.");
                 request = PlayScenarioPlayerRequest.Parse(PlayScenarioPlayerFiles.Read(requestPath, 4096));
+                environment = new PlayScenarioEnvironmentCapture().CaptureOnce();
                 TextAsset asset = Resources.Load<TextAsset>(PlayScenarioPlayerBundle.ResourceName);
                 if (asset == null)
                     throw new ArgumentException("Embedded Player scenario bundle is missing.");
@@ -85,6 +87,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 run.Reproduction.UnityVersion = Application.unityVersion;
                 run.Reproduction.PackageVersion = bundle.PackageVersion;
                 run.Reproduction.SourceRevision = request.SourceRevision;
+                run.Reproduction.Environment = environment;
                 request.ValidateBundle(bundle);
                 if (request.SchemaVersion == 2 && PlayScenarioPlayerFiles.IsWithin(Path.GetDirectoryName(Application.dataPath), directory))
                     throw new ArgumentException("Version-2 Player requests and reports must be outside the immutable build root.");
@@ -220,6 +223,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                         DefinitionHash = request.DefinitionHash,
                         SourceRevision = request.SourceRevision,
                         UnityVersion = Application.unityVersion,
+                        Environment = environment,
                     },
                 };
             }
@@ -299,6 +303,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             run.Reproduction.UnityVersion = Application.unityVersion;
             run.Reproduction.PackageVersion = bundle.PackageVersion;
             run.Reproduction.SourceRevision = request.SourceRevision;
+            run.Reproduction.Environment = environment;
             StartEngine();
         }
 

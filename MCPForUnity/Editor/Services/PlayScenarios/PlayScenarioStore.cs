@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnity.Runtime.PlayScenarios;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -640,6 +641,42 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }.Contains(key, StringComparer.Ordinal);
         }
 
+        private static void ValidateEnvironment(JObject value)
+        {
+            string[] fields = { "schema_version", "operating_system", "platform", "architecture", "scripting_backend", "build_mode", "runtime_version" };
+            PlayScenarioDefinition.Fields(value, fields);
+            if (value["schema_version"]?.Type != JTokenType.Integer || !long.TryParse(value["schema_version"].ToString(), out long version) || version != 1)
+                throw new ArgumentException("Invalid environment schema version.");
+            int[] limits = { 256, 64, 32, 6, 11, 64 };
+            for (int index = 1; index < fields.Length; index++)
+            {
+                string key = fields[index];
+                JToken token = value[key];
+                if (token == null || (token.Type != JTokenType.String && token.Type != JTokenType.Null))
+                    throw new ArgumentException("Invalid environment field: " + key);
+                if (token.Type == JTokenType.Null)
+                    continue;
+                string text = (string)token;
+                if (string.IsNullOrWhiteSpace(text) || text.Length > limits[index - 1])
+                    throw new ArgumentException("Invalid environment text: " + key);
+                for (int character = 0; character < text.Length; character++)
+                {
+                    if (char.IsControl(text[character]) || char.IsLowSurrogate(text[character]))
+                        throw new ArgumentException("Invalid environment text: " + key);
+                    if (char.IsHighSurrogate(text[character]))
+                    {
+                        if (character + 1 >= text.Length || !char.IsLowSurrogate(text[character + 1]))
+                            throw new ArgumentException("Invalid environment text: " + key);
+                        character++;
+                    }
+                }
+            }
+            if (value["scripting_backend"].Type != JTokenType.Null)
+                State((string)value["scripting_backend"], "mono", "il2cpp");
+            if (value["build_mode"].Type != JTokenType.Null)
+                State((string)value["build_mode"], "editor", "development", "release");
+        }
+
         private static void ValidateShape(JObject value, Type type)
         {
             Dictionary<string, Type> fields = ReportFields[type];
@@ -652,6 +689,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 JToken token = value[pair.Key];
                 if (token == null)
                 {
+                    // Optional property-backed launch evidence has no legacy default and must not be captured on read.
+                    if (type == typeof(PlayScenarioReproduction) && pair.Key == "environment")
+                        continue;
                     if (legacyIterations && (pair.Key == "iteration_results_version" || pair.Key == "iteration_results"))
                         continue;
                     if (!LegacyOptional(type, pair.Key))
@@ -662,6 +702,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Type fieldType = pair.Value;
                 if (fieldType == typeof(PlayScenarioDefinition))
                     continue;
+                if (fieldType == typeof(PlayScenarioEnvironment))
+                {
+                    if (token.Type == JTokenType.Null)
+                        continue;
+                    if (!(token is JObject environment))
+                        throw new ArgumentException("Invalid report environment object.");
+                    ValidateEnvironment(environment);
+                    continue;
+                }
                 if (
                     fieldType == typeof(PlayScenarioFailureDiagnostics)
                     || fieldType == typeof(PlayScenarioFailure)
