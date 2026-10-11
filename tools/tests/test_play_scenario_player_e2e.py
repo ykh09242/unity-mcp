@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_play_scenario_player_evidence as checker
 from player_e2e_artifacts import contained, inventory, verify_bundle, write_json
 from player_e2e_process import Invocation, execute
-from player_e2e_reports import check_progress, check_report
+from player_e2e_reports import check_progress, check_report, check_startup_progress_failure
 from run_play_scenario_player_e2e import initialize
 
 
@@ -70,6 +70,84 @@ def native(tmp_path):
 def test_valid_negative_native_outcome_is_truthful(native):
     directory, bundle, _, process, _ = native
     assert check_report(directory, bundle, process)["status"] == "timed_out"
+
+
+@pytest.fixture
+def startup_failure(native):
+    """Synthetic checker inputs mirror the independently executed native startup case."""
+    from xml.etree import ElementTree
+
+    directory, bundle, request, process, report = native
+    child = directory / "cli-output" / request["job_id"]
+    child.mkdir(parents=True)
+    message = "UnauthorizedAccessException: progress.json.tmp denied"
+    progress_error = "Player progress publication failed: " + message
+    request["repeat_count"] = 3
+    report.update(
+        repeat_count=3,
+        status="failed",
+        phase="finished",
+        exit_code=2,
+        error=message,
+        progress_error=progress_error,
+        report_error=progress_error,
+        failure={"code": "player_progress_failed", "message": progress_error},
+        steps=[],
+        iteration_results_version=1,
+        iteration_results=[
+            {
+                "iteration": index,
+                "status": "skipped",
+                "started_unix_ms": None,
+                "finished_unix_ms": report["finished_unix_ms"],
+            }
+            for index in (1, 2, 3)
+        ],
+    )
+    native_process = {**process, "actual_exit_code": 2, "progress_observations": []}
+    write_json(child / "request.json", request)
+    write_json(child / "run.json", report)
+    write_json(child / "process.json", native_process)
+    write_json(child / "diagnostics.json", {"cleanup_state": "native_finalized"})
+    (directory / "process.log").write_text(json.dumps({"success": False, "data": report}))
+    junit = ElementTree.Element("testsuite")
+    ElementTree.SubElement(junit, "failure").text = message
+    ElementTree.ElementTree(junit).write(child / "junit.xml", encoding="utf-8")
+    return directory, bundle, process, child, report
+
+
+def test_native_startup_failure_is_admitted_with_zero_attempted_repeats(startup_failure):
+    directory, bundle, process, _, _ = startup_failure
+    check_startup_progress_failure(directory, bundle, process)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["pending", "attempted", "unfinished", "missing_error", "cli_rejected", "invalid_junit"],
+)
+def test_startup_checker_rejects_unfinished_or_fabricated_native_evidence(
+    startup_failure, mutation
+):
+    directory, bundle, process, child, report = startup_failure
+    if mutation == "pending":
+        report["iteration_results"][0]["status"] = "pending"
+    elif mutation == "attempted":
+        report["iteration_results"][0]["started_unix_ms"] = 1100
+    elif mutation == "unfinished":
+        report["iteration_results"][0]["finished_unix_ms"] = None
+    elif mutation == "missing_error":
+        report["progress_error"] = None
+    elif mutation == "cli_rejected":
+        (directory / "process.log").write_text("Error: player_report_invalid")
+    else:
+        (child / "junit.xml").write_text("<testsuite>\u0001</testsuite>")
+    (child / "run.json").write_text(json.dumps(report))
+    if mutation != "cli_rejected":
+        (directory / "process.log").write_text(json.dumps({"success": False, "data": report}))
+    from xml.etree import ElementTree
+
+    with pytest.raises((ValueError, ElementTree.ParseError)):
+        check_startup_progress_failure(directory, bundle, process)
 
 
 @pytest.mark.parametrize(

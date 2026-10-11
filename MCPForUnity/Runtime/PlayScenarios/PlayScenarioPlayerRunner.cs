@@ -209,6 +209,12 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     step.Status = "skipped";
                     step.FinishedUnixMs = run.FinishedUnixMs;
                 }
+                if (run.IterationResults != null)
+                    foreach (PlayScenarioIterationResult iteration in run.IterationResults)
+                    {
+                        iteration.Status = "skipped";
+                        iteration.FinishedUnixMs = run.FinishedUnixMs;
+                    }
             }
             Complete(2);
         }

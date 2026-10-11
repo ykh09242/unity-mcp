@@ -8,7 +8,13 @@ import re
 from player_e2e_artifacts import contained, digest, inventory, read_json, verify_bundle
 from player_e2e_cli_evidence import check_cli
 from player_e2e_iterations import check_iteration_case
-from player_e2e_reports import require, check_report, check_progress, check_preflight
+from player_e2e_reports import (
+    require,
+    check_report,
+    check_progress,
+    check_preflight,
+    check_startup_progress_failure,
+)
 
 MANIFEST = Path(__file__).with_name("unity-player-e2e.json")
 
@@ -45,6 +51,8 @@ def check_case(root: Path, case: str, bundle: dict, receipt: dict) -> None:
         check_cli(directory, bundle, process, expected)
         return
     match expected:
+        case "startup-progress-failed":
+            check_startup_progress_failure(directory, bundle, process)
         case "succeeded" | "failed" | "timed_out" | "cancelled":
             report = check_report(directory, bundle, process)
             require(report["status"] == expected, "Unexpected native outcome")

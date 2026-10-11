@@ -16,6 +16,7 @@
     "missing-request": "startup-rejected",
     "stale-output": "startup-rejected",
     "wrong-build": "startup-rejected",
+    "startup-progress-write-failure": "startup-progress-failed",
     "crash": "missing-final",
     "cli-repeat": "cli-succeeded",
     "cli-session": "session-succeeded",

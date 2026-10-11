@@ -140,6 +140,16 @@ def run_case(args: argparse.Namespace, case: str, bundle: dict, builds: tuple[Pa
     (directory / "definition.json").write_text(bundle["definition_json"], encoding="utf-8")
     if case == "stale-output":
         write_json(directory / "run.json", {"stale_witness": True, "job_id": "0" * 32})
+    if case == "startup-progress-write-failure":
+        command = [
+            sys.executable,
+            str(Path(__file__).with_name("player_e2e_startup.py")),
+            str(builds[0]),
+            str(directory / "cli-output"),
+            args.source_revision,
+        ]
+        # The real CLI owns the sole three-repeat native request for this case.
+        (directory / "request.json").unlink()
     if case == "ordinary":
         command = [
             str(builds[1] / "MCPOrdinaryPlayer.exe"),

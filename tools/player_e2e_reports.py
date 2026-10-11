@@ -2,6 +2,8 @@
 
 from pathlib import Path
 import re
+import json
+from xml.etree import ElementTree
 
 from player_e2e_artifacts import read_json
 
@@ -240,4 +242,102 @@ def check_preflight(directory: Path, bundle: dict, process: dict) -> None:
         and len(steps) == expected_steps
         and all(step.get("status") == "skipped" for step in steps),
         "Wrong-build preflight executed scenario steps",
+    )
+
+
+def check_startup_progress_failure(directory: Path, bundle: dict, process: dict) -> None:
+    """Require real CLI admission of a naturally failed, wholly unattempted native startup."""
+    children = list((directory / "cli-output").iterdir())
+    require(len(children) == 1 and children[0].is_dir(), "Startup case requires one native child")
+    child = children[0]
+    request = read_json(child / "request.json", 16384)
+    report = read_json(child / "run.json")
+    native = read_json(child / "process.json", 65536)
+    diagnostics = read_json(child / "diagnostics.json", 65536)
+    output = json.loads((directory / "process.log").read_text(encoding="utf-8"))
+    require(
+        process["actual_exit_code"] == 1
+        and not process["forced_termination"]
+        and output.get("success") is False
+        and output.get("data") == report
+        and diagnostics.get("cleanup_state") == "native_finalized"
+        and diagnostics.get("failure_code") is None,
+        "Real CLI rejected or changed the native startup failure",
+    )
+    require(
+        native.get("actual_exit_code") == report.get("exit_code") == 2
+        and native.get("process_ended") is True
+        and not native.get("forced_termination")
+        and not native.get("progress_observations"),
+        "Startup failure did not exit naturally before the main loop",
+    )
+    require(
+        report.get("job_id") == request.get("job_id") == child.name
+        and report.get("scenario") == bundle.get("definition")
+        and report.get("repeat_count") == request.get("repeat_count") == 3
+        and report.get("timeout_seconds") == request.get("timeout_seconds")
+        and report.get("status") == "failed"
+        and report.get("phase") == "finished"
+        and report.get("finalization_state") == "completed"
+        and report.get("runner_resources_released") is True,
+        "Startup failure identity or finalization differs",
+    )
+    for key in ("build_id", "build_source_revision", "payload_hash", "definition_hash"):
+        require(
+            request.get(key) == bundle.get(key)
+            and report.get("reproduction", {}).get(key) == bundle.get(key),
+            "Startup failure build identity differs: " + key,
+        )
+    require(
+        native["started_unix_ms"]
+        <= report.get("started_unix_ms", 0)
+        <= report.get("finished_unix_ms", 0)
+        <= native["finished_unix_ms"],
+        "Startup failure report lifetime is stale",
+    )
+    ledger = report.get("iteration_results")
+    require(
+        report.get("iteration_results_version") == 1
+        and isinstance(ledger, list)
+        and len(ledger) == 3
+        and [row.get("iteration") for row in ledger] == [1, 2, 3]
+        and all(
+            row.get("status") == "skipped"
+            and row.get("started_unix_ms") is None
+            and row.get("finished_unix_ms") == report["finished_unix_ms"]
+            for row in ledger
+        ),
+        "Startup failure contains unfinished or fabricated attempted iterations",
+    )
+    expected_steps = 3 * sum(
+        len(bundle["definition"].get(field, []))
+        for field in ("setup_steps", "steps", "cleanup_steps")
+    )
+    steps = report.get("steps")
+    require(
+        isinstance(steps, list)
+        and len(steps) == expected_steps
+        and all(
+            step.get("status") == "skipped"
+            and step.get("started_unix_ms") is None
+            and step.get("finished_unix_ms") == report["finished_unix_ms"]
+            for step in steps
+        ),
+        "Startup failure dispatched scenario steps",
+    )
+    error, progress_error = report.get("error"), report.get("progress_error")
+    require(
+        isinstance(error, str)
+        and "progress.json.tmp" in error
+        and isinstance(progress_error, str)
+        and error in progress_error
+        and report.get("report_error") == progress_error
+        and report.get("failure", {}).get("code") == "player_progress_failed"
+        and report.get("failure", {}).get("message") == progress_error,
+        "Original initialization write error was lost",
+    )
+    junit = ElementTree.parse(child / "junit.xml").getroot()
+    require(
+        any(error in (failure.text or "") for failure in junit.iter("failure")),
+        "JUnit did not retain the original initialization error",
     )
