@@ -7,6 +7,7 @@ import re
 
 from player_e2e_artifacts import contained, digest, inventory, read_json, verify_bundle
 from player_e2e_cli_evidence import check_cli
+from player_e2e_budget import check_budget_checks
 from player_e2e_iterations import check_iteration_case
 from player_e2e_soak import check_soak_case
 from player_e2e_imports import CASES as IMPORT_CASES
@@ -17,6 +18,13 @@ from player_e2e_reports import (
     check_progress,
     check_preflight,
     check_startup_progress_failure,
+)
+
+from player_e2e_profiles import (
+    PROFILE_NAMES,
+    get_profile,
+    require_case_names,
+    validate_execution_profile,
 )
 
 MANIFEST = Path(__file__).with_name("unity-player-e2e.json")
@@ -173,13 +181,17 @@ def check_case(root: Path, case: str, bundle: dict, receipt: dict) -> None:
             raise ValueError("Unknown expected case outcome")
 
 
-def check(root: Path, session_id: str, builds: tuple[Path, Path]) -> None:
-    """Require every manifest case, matching fresh session, and unchanged full payloads."""
+def check(
+    root: Path, session_id: str, builds: tuple[Path, Path], profile_name: str = "standard"
+) -> None:
+    """Require the externally selected profile and matching fresh body/payload evidence."""
     session = read_json(root / ".session.json", 16384)
     require(
         session.get("session_id") == session_id and re.fullmatch(r"[0-9a-f]{32}", session_id),
         "Required evidence session mismatch",
     )
+    profile = get_profile(profile_name)
+    window = validate_execution_profile(root, session, profile)
     bundle = verify_bundle(builds[0], session["build_source_revision"])
     require(
         session.get("build_id") == bundle.get("build_id")
@@ -212,15 +224,8 @@ def check(root: Path, session_id: str, builds: tuple[Path, Path]) -> None:
             )
     else:
         require(session.get("build_mode") == "provided", "Unknown build evidence mode")
-    cases = read_json(MANIFEST)["cases"]
-    discovered = set()
-    for path in (root / "cases").iterdir():
-        discovered.add(path.name)
-        require(len(discovered) <= len(cases), "Required case count exceeds manifest")
-    require(
-        discovered == set(cases),
-        "Missing or unknown required case",
-    )
+    cases = profile.cases
+    require_case_names(root / "cases", profile)
     job_ids = set()
     for case in cases:
         directory = contained(root, "cases/" + case)
@@ -232,12 +237,19 @@ def check(root: Path, session_id: str, builds: tuple[Path, Path]) -> None:
         require(
             receipt.get("completed_unix_ms", 0) >= session["started_unix_ms"], "Stale body receipt"
         )
+        require(
+            window.started_unix_ms
+            <= receipt.get("completed_unix_ms", 0)
+            <= window.finished_unix_ms,
+            "Case body falls outside the recorded profile execution",
+        )
         check_case(root, case, bundle, receipt)
         request_path = directory / "request.json"
         if request_path.exists():
             job = read_json(request_path).get("job_id")
             require(job not in job_ids, "Required cases reused a job identity")
             job_ids.add(job)
+    check_budget_checks(root, session_id, window)
 
 
 def main() -> int:
@@ -247,6 +259,7 @@ def main() -> int:
     parser.add_argument("--session-id", required=True)
     parser.add_argument("--build", type=Path)
     parser.add_argument("--ordinary-build", type=Path)
+    parser.add_argument("--profile", choices=PROFILE_NAMES, default="standard")
     args = parser.parse_args()
     try:
         check(
@@ -256,6 +269,7 @@ def main() -> int:
                 args.build or args.root / "builds/scenario",
                 args.ordinary_build or args.root / "builds/ordinary",
             ),
+            args.profile,
         )
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"Player evidence rejected: {exc}")

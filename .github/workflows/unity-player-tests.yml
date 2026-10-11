@@ -3,12 +3,21 @@ name: Windows Mono Player Assurance
 on:
   workflow_dispatch:
     inputs:
+      player_profile:
+        description: "Required Player verification scope. Long includes 1000 same-process iterations."
+        type: choice
+        options: [quick, standard, long]
+        default: standard
       require_player_e2e:
         description: "Fail unless actual Windows Mono Player evidence completes."
         type: boolean
         default: false
   workflow_call:
     inputs:
+      player_profile:
+        type: string
+        required: false
+        default: standard
       require_player_e2e:
         type: boolean
         required: false
@@ -27,6 +36,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  PLAYER_PROFILE: ${{ inputs.player_profile || 'standard' }}
 
 jobs:
   license:
@@ -54,6 +66,12 @@ jobs:
         run: |
           echo 'Actual Windows Mono Player execution is SKIPPED: licensed execution policy or Windows serial prerequisites are unavailable.' >> "$GITHUB_STEP_SUMMARY"
           echo 'A skipped job provides no native Player assurance. Linux ULF availability does not establish Windows serial activation.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Validate requested Player profile
+        run: |
+          case "$PLAYER_PROFILE" in
+            quick|standard|long) ;;
+            *) echo '::error::Unknown Player verification profile.'; exit 1 ;;
+          esac
       - name: Require Windows Player prerequisites
         if: inputs.require_player_e2e
         env:
@@ -66,7 +84,7 @@ jobs:
           fi
 
   player:
-    name: Actual Windows Mono build and Player cases
+    name: Actual Windows Mono build and Player cases (${{ inputs.player_profile || 'standard' }})
     needs: license
     if: needs.license.outputs.unity_ok == 'true'
     runs-on: windows-2022
@@ -96,9 +114,17 @@ jobs:
       - name: Initialize fresh evidence
         id: initialize
         run: |
-          $session = uv run --project Server python tools/run_play_scenario_player_e2e.py --initialize --output .unity-ci/player-evidence
+          $session = uv run --project Server python tools/run_play_scenario_player_e2e.py --initialize --profile $env:PLAYER_PROFILE --output .unity-ci/player-evidence
           if ($LASTEXITCODE -ne 0) { throw 'Fresh evidence initialization failed' }
           "session_id=$session" >> $env:GITHUB_OUTPUT
+      - name: Resolve bounded profile retention
+        id: profile
+        run: |
+          $profileJson = uv run --project Server python tools/player_e2e_profiles.py $env:PLAYER_PROFILE
+          if ($LASTEXITCODE -ne 0) { throw 'Player profile configuration failed' }
+          $profile = $profileJson | ConvertFrom-Json
+          "name=$($profile.name)" >> $env:GITHUB_OUTPUT
+          "retention_days=$($profile.artifact_retention_days)" >> $env:GITHUB_OUTPUT
       - name: Verify and install official pinned Windows Editor
         run: |
           uv run --project Server python tools/unity_windows_ci.py provision $env:UNITY_INSTALL_ROOT
@@ -121,7 +147,7 @@ jobs:
         env:
           SESSION_ID: ${{ steps.initialize.outputs.session_id }}
         run: |
-          uv run --project Server python tools/run_play_scenario_player_e2e.py --editor "$env:UNITY_INSTALL_ROOT\installed\Editor\Unity.exe" --project .unity-ci/player-project/project --output .unity-ci/player-evidence --session-id $env:SESSION_ID --source-revision $env:SOURCE_REVISION
+          uv run --project Server python tools/run_play_scenario_player_e2e.py --editor "$env:UNITY_INSTALL_ROOT\installed\Editor\Unity.exe" --project .unity-ci/player-project/project --output .unity-ci/player-evidence --session-id $env:SESSION_ID --source-revision $env:SOURCE_REVISION --profile $env:PLAYER_PROFILE
           if ($LASTEXITCODE -ne 0) { throw 'Actual Player execution or body assertions failed' }
       - name: Independently check required persisted evidence
         id: evidence
@@ -130,7 +156,7 @@ jobs:
           SESSION_ID: ${{ steps.initialize.outputs.session_id }}
           RUNNER_OUTCOME: ${{ steps.execute.outcome }}
         run: |
-          uv run --project Server python tools/check_play_scenario_player_evidence.py .unity-ci/player-evidence --session-id $env:SESSION_ID
+          uv run --project Server python tools/check_play_scenario_player_evidence.py .unity-ci/player-evidence --session-id $env:SESSION_ID --profile $env:PLAYER_PROFILE
           if ($LASTEXITCODE -ne 0) { throw 'Fresh required Player evidence failed independent verification' }
           if ($env:RUNNER_OUTCOME -ne 'success') { throw 'Actual Player runner did not succeed' }
       - name: Return owned Windows license
@@ -144,10 +170,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: windows-mono-player-evidence
+          name: windows-mono-player-evidence-${{ steps.profile.outputs.name || 'unknown' }}
           include-hidden-files: true
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: ${{ steps.profile.outputs.retention_days || 14 }}
           path: |
             .unity-ci/player-evidence/**
             .unity-ci/player-project/resolved-packages.json

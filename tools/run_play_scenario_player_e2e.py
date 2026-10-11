@@ -12,6 +12,7 @@ from uuid import uuid4
 from check_play_scenario_player_evidence import check, check_case
 from player_e2e_artifacts import digest, inventory, read_json, verify_bundle, write_json
 from player_e2e_process import Invocation, execute
+from player_e2e_budget import run_budget_checks
 from player_e2e_iterations import iteration_command
 from player_e2e_soak import CASES as SOAK_CASES, soak_command
 from player_e2e_imports import (
@@ -21,19 +22,26 @@ from player_e2e_imports import (
     execute_with_imports,
 )
 
+from player_e2e_profiles import PROFILE_NAMES, PlayerProfile, get_profile, require_profile
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Server/src"))
 MANIFEST = Path(__file__).with_name("unity-player-e2e.json")
 BUILDER = "MCPForUnityTests.PlayScenarios.Player.ScenarioPlayerFixtureBuild."
 
 
-def initialize(output: Path) -> str:
+def initialize(output: Path, profile_name: str = "standard") -> str:
     """Initialize only a new evidence root, refusing stale cached evidence."""
+    profile = get_profile(profile_name)
     output.mkdir(parents=True, exist_ok=False)
     nonce = uuid4().hex
     write_json(
         output / "session-start.json",
-        {"session_id": nonce, "started_unix_ms": int(time.time() * 1000)},
+        {
+            "session_id": nonce,
+            "started_unix_ms": int(time.time() * 1000),
+            "profile": profile.evidence(),
+        },
     )
     return nonce
 
@@ -109,7 +117,13 @@ def cli_command(bundle_root: Path, directory: Path, revision: str) -> list[str]:
     ]
 
 
-def run_case(args: argparse.Namespace, case: str, bundle: dict, builds: tuple[Path, Path]) -> None:
+def run_case(
+    args: argparse.Namespace,
+    case: str,
+    bundle: dict,
+    builds: tuple[Path, Path],
+    remaining_seconds: float | None = None,
+) -> None:
     """Write a case receipt only after real process exit and all body evidence assertions."""
     directory = args.output / "cases" / case
     directory.mkdir(parents=True, exist_ok=False)
@@ -238,6 +252,8 @@ def run_case(args: argparse.Namespace, case: str, bundle: dict, builds: tuple[Pa
         environment["MCP_SCENARIO_FIXTURE_MODE"] = fixture_mode
         # The actual CLI creates its own attributed native request.
         (directory / "request.json").unlink()
+    if remaining_seconds is not None:
+        timeout = min(timeout, remaining_seconds)
     invocation = Invocation(
         command,
         directory,
@@ -265,6 +281,47 @@ def run_case(args: argparse.Namespace, case: str, bundle: dict, builds: tuple[Pa
     print(f"Player case passed: {case}", flush=True)
 
 
+def run_profile(
+    args: argparse.Namespace, profile: PlayerProfile, bundle: dict, builds: tuple[Path, Path]
+) -> bool:
+    """Execute the frozen case set and budget gates within one recorded deadline."""
+    failures = []
+    execution_start = time.monotonic()
+    deadline = execution_start + profile.max_execution_seconds
+    execution_started_unix_ms = int(time.time() * 1000)
+    for case in profile.cases:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            failures.append({"case": case, "error": "Profile execution deadline expired"})
+            break
+        try:
+            run_case(args, case, bundle, builds, remaining)
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+            failures.append({"case": case, "error": str(exc)})
+            print(f"Player case failed: {case}: {exc}", flush=True)
+    if not failures:
+        try:
+            run_budget_checks(args.output, args.session_id, deadline=deadline)
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+            failures.append({"case": "budget-checks", "error": str(exc)})
+            print(f"Player budget checks failed: {exc}", flush=True)
+    elapsed = time.monotonic() - execution_start
+    if elapsed > profile.max_execution_seconds:
+        failures.append({"case": None, "error": "Profile execution deadline expired"})
+    write_json(
+        args.output / "results.json",
+        {
+            "session_id": args.session_id,
+            "profile": profile.evidence(),
+            "execution_started_unix_ms": execution_started_unix_ms,
+            "execution_finished_unix_ms": int(time.time() * 1000),
+            "execution_elapsed_seconds": elapsed,
+            "failures": failures,
+        },
+    )
+    return not failures
+
+
 def main() -> int:
     """Reusable local/CI surface; provision and activation remain separate explicit operations."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -276,13 +333,16 @@ def main() -> int:
     parser.add_argument("--project", type=Path)
     parser.add_argument("--build", type=Path)
     parser.add_argument("--ordinary-build", type=Path)
+    parser.add_argument("--profile", choices=PROFILE_NAMES, default="standard")
     args = parser.parse_args()
     args.output = args.output.resolve()
     try:
         if args.initialize:
-            print(initialize(args.output))
+            print(initialize(args.output, args.profile))
             return 0
+        profile = get_profile(args.profile)
         start = read_json(args.output / "session-start.json", 16384)
+        require_profile(start, profile)
         if (
             not args.source_revision
             or len(args.source_revision) > 128
@@ -321,19 +381,9 @@ def main() -> int:
             },
         )
         write_json(args.output / "ordinary-inventory.json", {"files": inventory(builds[1])})
-        failures = []
-        for case in read_json(MANIFEST)["cases"]:
-            try:
-                run_case(args, case, bundle, builds)
-            except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
-                failures.append({"case": case, "error": str(exc)})
-                print(f"Player case failed: {case}: {exc}", flush=True)
-        write_json(
-            args.output / "results.json", {"session_id": args.session_id, "failures": failures}
-        )
-        if failures:
+        if not run_profile(args, profile, bundle, builds):
             return 1
-        check(args.output, args.session_id, builds)
+        check(args.output, args.session_id, builds, args.profile)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
         print(f"Player assurance failed: {exc}")
         return 1

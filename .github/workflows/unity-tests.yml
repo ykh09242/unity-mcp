@@ -3,6 +3,11 @@ name: Unity Tests
 on:
   workflow_dispatch:
     inputs:
+      player_profile:
+        description: "Required standalone Player case profile."
+        type: choice
+        options: [quick, standard, long]
+        default: standard
       require_player_e2e:
         description: "Require actual Windows Mono Player builds and fresh process evidence."
         type: boolean
@@ -24,6 +29,11 @@ on:
       UNITY_SERIAL:
         required: false
     inputs:
+      player_profile:
+        description: "Standalone Player profile: quick, standard or long."
+        type: string
+        required: false
+        default: standard
       require_player_e2e:
         description: "Require actual Windows Mono Player builds and fresh process evidence."
         type: boolean
@@ -127,6 +137,7 @@ jobs:
     uses: ./.github/workflows/unity-player-tests.yml
     with:
       require_player_e2e: ${{ inputs.require_player_e2e || false }}
+      player_profile: ${{ inputs.player_profile || (github.event_name == 'pull_request' && 'quick' || 'standard') }}
       ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.ref }}
     secrets:
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}

@@ -10,6 +10,9 @@ from player_e2e_reports import require
 
 CASES = {
     "soak-100": (100, "success", "stop", 600),
+    "soak-1000": (1000, "success", "stop", 1200),
+    "soak-budget-baseline": (30, "soak-budget-baseline", "stop", 120),
+    "soak-budget-growth": (30, "soak-budget-growth", "stop", 120),
     "soak-late-stop": (20, "soak-late-failure", "stop", 180),
     "soak-late-continue": (20, "soak-late-failure", "continue", 180),
     "soak-cancel": (20, "soak-cancel", "continue", 180),
@@ -241,7 +244,15 @@ def check_soak_case(directory: Path, bundle: dict, invocation: dict, case: str) 
         "Outer soak fabricated engine repeat ledger",
     )
     _check_progress(root, invocation, request, native["process_id"])
-    success = case in {"soak-100", "soak-resources", "soak-unlabeled", "soak-import-overlap"}
+    success = case in {
+        "soak-100",
+        "soak-1000",
+        "soak-budget-baseline",
+        "soak-budget-growth",
+        "soak-resources",
+        "soak-unlabeled",
+        "soak-import-overlap",
+    }
     require(
         (invocation["actual_exit_code"] == native["actual_exit_code"] == 0) == success,
         "Soak exit codes differ from whole-session result",
@@ -296,6 +307,8 @@ def check_soak_case(directory: Path, bundle: dict, invocation: dict, case: str) 
             )
     if case == "soak-resources":
         _check_resources(root, rows, native["process_id"], summary)
+    if case == "soak-budget-growth":
+        _check_growth(root, native["process_id"], requested)
     if case == "soak-unlabeled":
         require(
             summary["build_source_revision"] is None
@@ -303,6 +316,35 @@ def check_soak_case(directory: Path, bundle: dict, invocation: dict, case: str) 
             and all(row["metrics"] == [] for row in rows),
             "Unlabeled optional-diagnostics-disabled Player changed frozen identity or invented samples",
         )
+
+
+def _check_growth(root: Path, pid: int, iterations: int) -> None:
+    """Prove bounded real retained arrays and their actual fixture shutdown release."""
+    witnesses = _rows(root / "fixture-memory-growth.jsonl", 65536, 31, 2048)
+    require(len(witnesses) == iterations + 1, "Growth fixture evidence is incomplete")
+    for index, row in enumerate(witnesses[:-1], 1):
+        require(
+            row.get("process_id") == pid
+            and row.get("iteration") == index
+            and row.get("stage") == "retained"
+            and row.get("retained_arrays") == index
+            and row.get("retained_bytes") == index * 1048576
+            and row.get("allocation_witness") == index * (index + 1) // 2
+            and row.get("allocation_limit") == 30
+            and row.get("allocation_bytes") == 1048576,
+            "Controlled growth is missing or not attributed to actual retained arrays",
+        )
+    final = witnesses[-1]
+    require(
+        final.get("process_id") == pid
+        and final.get("stage") == "released"
+        and final.get("iteration") == iterations
+        and final.get("retained_arrays")
+        == final.get("retained_bytes")
+        == final.get("allocation_witness")
+        == 0,
+        "Controlled growth fixture did not release retained arrays",
+    )
 
 
 def _check_progress(root: Path, invocation: dict, request: dict, pid: int) -> None:

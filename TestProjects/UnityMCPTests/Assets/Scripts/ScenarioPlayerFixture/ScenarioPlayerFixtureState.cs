@@ -23,6 +23,11 @@ namespace MCPForUnityTests.PlayScenarios.Player
         private MemoryStream stream;
         private int resourceIteration;
         private int faultIteration;
+        private const int ManagedGrowthAllocationBytes = 1024 * 1024;
+        private const int ManagedGrowthAllocationLimit = 30;
+        private byte[][] retainedManagedGrowth;
+        private int managedGrowthIteration;
+        private int managedGrowthCount;
         public bool IsResetComplete => true;
 
         private void Awake()
@@ -87,6 +92,68 @@ namespace MCPForUnityTests.PlayScenarios.Player
 
         private static void OnLowMemory() { }
 
+        private void RetainManagedGrowth()
+        {
+            if (managedGrowthIteration == ResetCount || managedGrowthCount >= ManagedGrowthAllocationLimit)
+                return;
+            if (retainedManagedGrowth == null)
+                retainedManagedGrowth = new byte[ManagedGrowthAllocationLimit][];
+            var allocation = new byte[ManagedGrowthAllocationBytes];
+            // Touch every page and keep the allocation rooted in the existing fixture owner across scene loads.
+            byte witness = (byte)(managedGrowthCount + 1);
+            for (int offset = 0; offset < allocation.Length; offset += 4096)
+                allocation[offset] = witness;
+            allocation[allocation.Length - 1] = witness;
+            retainedManagedGrowth[managedGrowthCount++] = allocation;
+            managedGrowthIteration = ResetCount;
+            WriteManagedGrowth("retained");
+            GC.KeepAlive(retainedManagedGrowth);
+        }
+
+        private void WriteManagedGrowth(string stage)
+        {
+            int populated = 0;
+            long bytes = 0;
+            int witness = 0;
+            if (retainedManagedGrowth != null)
+                foreach (byte[] allocation in retainedManagedGrowth)
+                    if (allocation != null)
+                    {
+                        populated++;
+                        bytes += allocation.Length;
+                        witness += allocation[allocation.Length - 1];
+                    }
+            int pid;
+            using (var process = System.Diagnostics.Process.GetCurrentProcess())
+                pid = process.Id;
+            var row = new JObject
+            {
+                ["iteration"] = ResetCount,
+                ["stage"] = stage,
+                ["process_id"] = pid,
+                ["retained_arrays"] = populated,
+                ["retained_bytes"] = bytes,
+                ["allocation_witness"] = witness,
+                ["allocation_limit"] = ManagedGrowthAllocationLimit,
+                ["allocation_bytes"] = ManagedGrowthAllocationBytes,
+            };
+            File.AppendAllText(
+                Path.Combine(RunDirectory(), "fixture-memory-growth.jsonl"),
+                row.ToString(Newtonsoft.Json.Formatting.None) + "\n",
+                new System.Text.UTF8Encoding(false)
+            );
+        }
+
+        private void ReleaseManagedGrowth()
+        {
+            if (retainedManagedGrowth == null)
+                return;
+            Array.Clear(retainedManagedGrowth, 0, retainedManagedGrowth.Length);
+            retainedManagedGrowth = null;
+            managedGrowthCount = 0;
+            WriteManagedGrowth("released");
+        }
+
         private bool CleanupResources()
         {
             if (resourceIteration == ResetCount)
@@ -113,10 +180,13 @@ namespace MCPForUnityTests.PlayScenarios.Player
 
         private void OnDestroy()
         {
+            ReleaseManagedGrowth();
             registration?.Dispose();
             setupRegistration?.Dispose();
             cleanupRegistration?.Dispose();
         }
+
+        private void OnApplicationQuit() => ReleaseManagedGrowth();
 
         private sealed class StageProbe : IPlayScenarioStateProvider
         {
@@ -136,6 +206,8 @@ namespace MCPForUnityTests.PlayScenarios.Player
                 if (stage == "cleanup" && owner.faultIteration != owner.ResetCount)
                 {
                     string mode = ScenarioPlayerFixture.Mode;
+                    if (mode == "soak-budget-growth")
+                        owner.RetainManagedGrowth();
                     string blocker =
                         mode == "soak-mid-io" && owner.ResetCount == 13 ? "iteration-0013.json.tmp"
                         : mode == "soak-final-io" && owner.ResetCount == 3 ? "run.json.tmp"
