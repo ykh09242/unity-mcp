@@ -4,6 +4,12 @@ Use these controls with the standalone workflow in [scenario execution](play-sce
 The Editor and Player share the same condition engine. A built synthetic fixture checks the harness;
 coverage of a real game requires scenarios and state providers integrated with that game.
 
+See [scenario regression evidence](play-scenario-regressions.md) for named immutable soak baselines,
+audited pin changes, step performance and screenshot checkpoints, offline analysis and portable
+HTML reports. `player-run`, `player-soak` and `player-session` accept `--graphical` for rendered
+checkpoint requests; default batch/headless launches report those captures as unavailable. Saved
+analysis and export never replace the original Player outcome or process-exit evidence.
+
 ## Read game state explicitly
 
 Use `wait_state` when readiness belongs to application state rather than a scene object's presence.

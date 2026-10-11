@@ -5,6 +5,11 @@ Unity owns the job, condition waits, step results and bounded diagnostics. `run`
 immediately; `status` reads once. Individual commands never start background polling or replay effects.
 The explicit `suite-run` CLI command waits for its own bounded suite and exports CI reports.
 
+See [scenario regression evidence](play-scenario-regressions.md) for optional step performance
+budgets and named screenshot checkpoints, saved soak baselines, offline flakiness/visual analysis
+and standalone HTML reports. These preserve original native outcomes; offline export is not an
+execution success verdict.
+
 Select the intended Unity instance. If needed, activate the `testing` group with
 `manage_tools(action="activate", group="testing")` after enabling the tool in Unity.
 
