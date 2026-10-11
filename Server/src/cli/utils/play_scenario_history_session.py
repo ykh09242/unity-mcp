@@ -67,10 +67,10 @@ def _read_journal(path: Path, model: type[Model]) -> _Journal[Model]:
     rows = []
     for line in lines:
         raw = _decode(line)
-        if "artifact_directory" in raw and raw["artifact_directory"] not in {
+        if "artifact_directory" in raw and raw["artifact_directory"] not in (
             None,
             "runs/" + str(raw.get("job_id")),
-        }:
+        ):
             raise AnalysisError("Session artifact path leaves its owned child directory")
         rows.append(model.model_validate(raw))
     return _Journal(tuple(rows), None)

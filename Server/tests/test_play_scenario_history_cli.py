@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
 from cli.main import cli
@@ -53,3 +54,38 @@ def test_public_cli_exports_failed_history_without_treating_analysis_as_executio
     assert exported["diagnostic_only"] is True
     assert exported["groups"][0]["parent_status"] == "failed"
     assert exported["groups"][0]["counts"]["failed"] == 2
+
+
+@pytest.mark.parametrize("artifact_directory", [[], {}, ["runs/child"], {"path": "runs/child"}])
+def test_history_cli_rejects_non_string_artifact_paths_and_continues(tmp_path, artifact_directory):
+    # Given one malformed journal and one independent complete history.
+    invalid = _session(tmp_path / "invalid", ("passed",))
+    journal = invalid / "outcomes.jsonl"
+    row = json.loads(journal.read_text())
+    row["artifact_directory"] = artifact_directory
+    journal.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    valid = _session(tmp_path / "valid")
+    output = tmp_path / "analysis.json"
+    # When the public CLI analyzes both selected histories.
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "play-scenario",
+            "analyze-history",
+            str(invalid / "session.json"),
+            str(valid / "session.json"),
+            "--output",
+            str(output),
+        ],
+    )
+    # Then invalid evidence is structured and cannot discard valid history results.
+    assert result.exit_code == 2, result.exception
+    analysis = json.loads(result.output)
+    assert analysis == json.loads(output.read_text())
+    assert analysis["status"] == "incomplete"
+    assert len(analysis["unsupported_inputs"]) == 1
+    assert "artifact path" in analysis["unsupported_inputs"][0]["error"]
+    assert len(analysis["groups"]) == 1
+    assert analysis["groups"][0]["counts"]["failed"] == 2
