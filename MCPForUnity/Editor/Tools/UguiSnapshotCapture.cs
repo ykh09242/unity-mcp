@@ -15,6 +15,7 @@ namespace MCPForUnity.Editor.Tools
             var nodes = new JArray();
             Type graphicType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Graphic");
             Type selectableType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Selectable");
+            Type maskType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Mask");
             foreach (var go in ManageUGUI.Descendants(root, true))
             {
                 if (nodes.Count == limit)
@@ -29,9 +30,9 @@ namespace MCPForUnity.Editor.Tools
                 var graphic = graphicType == null ? null : go.GetComponent(graphicType);
                 var selectable = selectableType == null ? null : go.GetComponent(selectableType);
                 var renderer = go.GetComponent<CanvasRenderer>();
-                float alpha = 1;
-                foreach (var group in go.GetComponentsInParent<CanvasGroup>(true))
-                    alpha *= group.alpha;
+                var mask = graphic == null || maskType == null ? null : go.GetComponent(maskType);
+                // Inherited alpha contains CanvasGroups, separately from the renderer's current alpha and Graphic vertex alpha.
+                float alpha = renderer == null ? GroupAlpha(go.transform) : renderer.GetAlpha() * renderer.GetInheritedAlpha();
                 if (graphic != null)
                 {
                     var color = graphic.GetType().GetProperty("color")?.GetValue(graphic);
@@ -66,7 +67,8 @@ namespace MCPForUnity.Editor.Tools
                     && canvasEnabled
                     && alpha > 0
                     && (!(graphic is Behaviour behaviour) || behaviour.enabled)
-                    && (renderer == null || !renderer.cull);
+                    && (renderer == null || !renderer.cull)
+                    && (mask == null || !Enabled(mask) || (bool)(mask.GetType().GetProperty("showMaskGraphic")?.GetValue(mask) ?? true));
                 nodes.Add(
                     new JObject
                     {
@@ -90,6 +92,25 @@ namespace MCPForUnity.Editor.Tools
                 );
             }
             return nodes;
+        }
+
+        private static float GroupAlpha(Transform target)
+        {
+            float alpha = 1;
+            for (Transform current = target; current != null; current = current.parent)
+            {
+                bool ignoreParents = false;
+                foreach (var group in current.GetComponents<CanvasGroup>())
+                {
+                    if (!group.enabled)
+                        continue;
+                    alpha *= group.alpha;
+                    ignoreParents |= group.ignoreParentGroups;
+                }
+                if (ignoreParents)
+                    break;
+            }
+            return alpha;
         }
 
         private static bool Enabled(Component component) => !(component is Behaviour behaviour) || behaviour.isActiveAndEnabled;
