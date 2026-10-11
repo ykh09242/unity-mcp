@@ -8,6 +8,8 @@ import click
 from cli.commands.play_scenario_analysis import register_analysis_commands
 from cli.commands.play_scenario_baselines import register_baseline_commands
 from cli.commands.play_scenario_reporting import register_reporting_commands
+from cli.commands.play_scenario_regression import register_regression_commands
+from cli.commands.play_scenario_ui import register_ui_commands
 from cli.utils.config import get_config
 from cli.utils.connection import handle_unity_errors, run_command
 from cli.utils.output import format_output
@@ -55,6 +57,8 @@ def play_scenario():
 register_baseline_commands(play_scenario)
 register_analysis_commands(play_scenario)
 register_reporting_commands(play_scenario)
+register_regression_commands(play_scenario)
+register_ui_commands(play_scenario)
 
 
 @play_scenario.command("compare-queries")

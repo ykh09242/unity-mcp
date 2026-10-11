@@ -286,6 +286,8 @@ def register_commands():
         ("cli.commands.gameobject", "gameobject"),
         ("cli.commands.component", "component"),
         ("cli.commands.scene", "scene"),
+        ("cli.commands.scene_edits", "scene_edit"),
+        ("cli.commands.scenario_recording", "scenario_recording"),
         ("cli.commands.asset", "asset"),
         ("cli.commands.asset_gen", "asset_gen"),
         ("cli.commands.blender", "blender"),
