@@ -15,6 +15,7 @@ from cli.utils.play_scenario_player_payload import PlayerPayloadError
 from cli.utils.play_scenario_player_session import PlayerSessionOptions, run_player_session
 from cli.utils.play_scenario_soak import SoakRequest
 from cli.utils.play_scenario_soak_reports import run_player_soak
+from cli.utils.play_scenario_soak_compare import SoakComparisonError, compare_soak_metrics
 from cli.utils.play_scenario_suite import wait_for_suite
 from pydantic import JsonValue, ValidationError
 from cli.utils.play_scenario_query_compare import (
@@ -111,6 +112,66 @@ def compare_queries(
                 )
             else:
                 click.echo(format_output(row))
+    raise click.exceptions.Exit(exit_code)
+
+
+@play_scenario.command("compare-soak-metrics")
+@click.argument("baseline_directory", type=click.Path(file_okay=False, path_type=Path))
+@click.argument("candidate_directory", type=click.Path(file_okay=False, path_type=Path))
+def compare_saved_soak_metrics(baseline_directory: Path, candidate_directory: Path) -> None:
+    """Compare complete saved soak diagnostics offline; 0 computed, 2 insufficient/invalid.
+
+    Managed bytes, allocated bytes and object counts use aligned post-warmup samples.
+    Growth does not establish a leak. No Player is launched and no files are changed.
+    """
+    try:
+        comparison = compare_soak_metrics(baseline_directory, candidate_directory)
+        result = comparison.to_dict()
+        exit_code = 0 if comparison.status == "compared" else 2
+    except SoakComparisonError as exc:
+        result = {
+            "schema_version": 1,
+            "status": "not_comparable",
+            "diagnostic_only": True,
+            "error": str(exc),
+        }
+        exit_code = 2
+    output_format = get_config().format
+    if output_format == "json" or "metrics" not in result:
+        click.echo(format_output(result, output_format))
+    else:
+        click.echo(
+            format_output(
+                {
+                    "status": result["status"],
+                    "diagnostic_only": True,
+                    "environment_unverified": result["environment_unverified"],
+                    "interpretation": result["interpretation"],
+                },
+                "text",
+            )
+        )
+        rows = [
+            {
+                "metric": metric["metric"],
+                "state": metric["state"],
+                "paired_samples": metric["paired_samples"],
+                "baseline_slope": metric["baseline"]["slope_per_iteration"],
+                "candidate_slope": metric["candidate"]["slope_per_iteration"],
+                "slope_delta": metric["slope_delta"],
+                "baseline_net_change": metric["baseline"]["net_change"],
+                "candidate_net_change": metric["candidate"]["net_change"],
+                "net_change_delta": metric["net_change_delta"],
+                "segments": metric["segment_count"],
+            }
+            for metric in result["metrics"]
+        ]
+        if output_format == "table":
+            click.echo(format_output(rows, output_format))
+        else:
+            for row in rows:
+                click.echo()
+                click.echo(format_output(row, output_format))
     raise click.exceptions.Exit(exit_code)
 
 
