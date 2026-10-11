@@ -836,6 +836,14 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
         }
 
-        internal static string Bounded(string value, int maxLength) => value == null || value.Length <= maxLength ? value : value.Substring(0, maxLength);
+        internal static string Bounded(string value, int maxLength)
+        {
+            if (value == null || value.Length <= maxLength)
+                return value;
+            // Keep the UTF-16 prefix valid when a supplementary character crosses the limit.
+            if (maxLength > 0 && char.IsHighSurrogate(value[maxLength - 1]) && char.IsLowSurrogate(value[maxLength]))
+                maxLength--;
+            return value.Substring(0, maxLength);
+        }
     }
 }

@@ -156,6 +156,84 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
             Assert.That(journal.SelectedReport()["iteration_results"][0]["iteration"].Value<int>(), Is.EqualTo(1));
         }
 
+        [TestCase("error", 511)]
+        [TestCase("report_error", 511)]
+        [TestCase("cleanup_error", 511)]
+        [TestCase("error", 510)]
+        [TestCase("report_error", 510)]
+        [TestCase("cleanup_error", 510)]
+        public void UnicodeDiagnosticsRemainPersistableAtCompactJournalBoundary(string field, int prefixLength)
+        {
+            string diagnostic = new string('x', prefixLength) + "\U0001F680tail";
+            string expected = prefixLength == 511 ? new string('x', 511) : new string('x', 510) + "\U0001F680";
+            PlayScenarioRun run = Execute(1, new Host());
+            run.Status = "failed";
+            if (field == "error")
+                run.Error = diagnostic;
+            else if (field == "report_error")
+                run.ReportError = diagnostic;
+            else
+                run.CleanupError = diagnostic;
+            JObject report = Report(run);
+            Assert.DoesNotThrow(() => new System.Text.UTF8Encoding(false, true).GetBytes(report.ToString(Formatting.None)));
+
+            using (PlayScenarioPlayerSoakJournal journal = Journal())
+            {
+                Assert.DoesNotThrow(() => journal.Append(run, report), "Compact diagnostics must not split a valid surrogate pair.");
+                JObject summary = journal.Finish(null, null, true, Start + 2000);
+                JObject row = JObject.Parse(
+                    PlayScenarioPlayerFiles.Read(Path.Combine(directory, "iterations.jsonl"), PlayScenarioPlayerSoakJournal.JournalLimit)
+                );
+                string rowField = field == "cleanup_error" ? field : "error";
+                Assert.That((string)row[rowField], Is.EqualTo(expected));
+                Assert.That(((string)row[rowField]).Length, Is.LessThanOrEqualTo(512));
+                Assert.That((string)journal.SelectedReport()[field], Is.EqualTo(diagnostic));
+                JObject persisted = JObject.Parse(
+                    PlayScenarioPlayerFiles.Read(Path.Combine(directory, "soak.json"), PlayScenarioPlayerSoakJournal.SummaryLimit)
+                );
+                Assert.That((string)persisted["journal_sha256"], Is.EqualTo((string)summary["journal_sha256"]));
+                Assert.That((bool)persisted["journal_complete"], Is.True);
+                Assert.That((int)persisted["attempted_iterations"], Is.EqualTo(1));
+                Assert.That((string)persisted["status"], Is.EqualTo("failed"));
+            }
+        }
+
+        [TestCase(2047)]
+        [TestCase(2046)]
+        public void UnicodeStopErrorRemainsPersistableAtFinalSummaryBoundary(int prefixLength)
+        {
+            string diagnostic = new string('x', prefixLength) + "\U0001F680tail";
+            string expected = prefixLength == 2047 ? new string('x', 2047) : new string('x', 2046) + "\U0001F680";
+            using (PlayScenarioPlayerSoakJournal journal = Journal())
+            {
+                PlayScenarioRun run = Execute(1, new Host());
+                journal.Append(run, Report(run));
+                JObject summary = null;
+                Assert.DoesNotThrow(() => summary = journal.Finish("failed", diagnostic, true, Start + 2000));
+                JObject persisted = JObject.Parse(
+                    PlayScenarioPlayerFiles.Read(Path.Combine(directory, "soak.json"), PlayScenarioPlayerSoakJournal.SummaryLimit)
+                );
+                Assert.That((string)persisted["error"], Is.EqualTo(expected));
+                Assert.That(((string)persisted["error"]).Length, Is.LessThanOrEqualTo(2048));
+                Assert.That((string)persisted["journal_sha256"], Is.EqualTo((string)summary["journal_sha256"]));
+                Assert.That((string)journal.SelectedReport()["status"], Is.EqualTo("succeeded"));
+            }
+        }
+
+        [Test]
+        public void UnicodeEngineErrorRemainsPersistableAtNativeReportBoundary()
+        {
+            PlayScenarioRun run = Execute(1, new Host());
+            var engine = new PlayScenarioEngine(run, new Host());
+            engine.ObserveUnexpectedError(new string('x', 4095) + "\U0001F680tail", Start + 1100);
+            using (PlayScenarioPlayerSoakJournal journal = Journal())
+            {
+                Assert.DoesNotThrow(() => journal.Append(run, Report(run)), "The engine error must remain valid UTF-16 before full report persistence.");
+                journal.Finish(null, null, true, Start + 2000);
+                Assert.That((string)journal.SelectedReport()["error"], Is.EqualTo(new string('x', 4095)));
+            }
+        }
+
         [TestCase("stop", 1)]
         [TestCase("continue", 3)]
         public void FirstActualFailureSurvivesLaterSuccessAndReportPruning(string policy, int expectedRows)
