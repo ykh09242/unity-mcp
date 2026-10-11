@@ -912,3 +912,74 @@ def test_unicode_failure_preview_keeps_session_journal_bounded(
     assert (directory / row["artifact_directory"] / "run.json").read_bytes() == native_bytes[0]
     junit = ElementTree.parse(directory / "junit.xml").getroot()
     assert junit.attrib["failures"] == "1"
+
+
+@pytest.mark.parametrize("character", [chr(0xE9), chr(0x1F4A5), '"'])
+@pytest.mark.parametrize("policy,children", [("stop", 1), ("continue", 2)])
+def test_unicode_progress_error_finalizes_session_and_junit(
+    verified_bundle, child, monkeypatch, character, policy, children
+):
+    from cli.utils import play_scenario_player as player_module
+
+    build, output, _manifest = verified_bundle
+    child[0][0] = "failed"
+    message = "I/O: " + character * 1024
+    assert len(message) == 1029
+    read = player_module._read_json
+    native_bytes = {}
+
+    def with_progress_error(path, limit):
+        report = read(path, limit)
+        if path.name == "run.json":
+            report["progress_error"] = message
+            report["failure"] = {
+                "code": "unexpected_error_log",
+                "message": message,
+                "stage": "main",
+                "iteration": 1,
+                "step_index": 0,
+            }
+            encoded = json.dumps(report, ensure_ascii=False).encode("utf-8")
+            path.write_bytes(encoded)
+            native_bytes[path.parent.name] = encoded
+        return report
+
+    monkeypatch.setattr(player_module, "_read_json", with_progress_error)
+    summary, directory, code = run_player_session(
+        PlayerSessionOptions(
+            build_directory=build,
+            output_directory=output,
+            mode="fresh-process",
+            iterations=2,
+            failure_policy=policy,
+            interval_seconds=0.0,
+        )
+    )
+    assert code == 1 and summary["status"] == "failed"
+    assert summary["outcome_counts"] == {"failures": 0, "errors": children}
+    assert summary["children_started"] == summary["children_finalized"] == children
+    assert summary["active_child"] is None and summary["finished_unix_ms"] is not None
+    assert json.loads((directory / "session.json").read_bytes()) == summary
+    assert len(child[1]) == children and all(process.poll() == 1 for process in child[1])
+    lines = (directory / "outcomes.jsonl").read_bytes().splitlines(keepends=True)
+    assert len(lines) == summary["outcomes_recorded"] == children
+    rows = [json.loads(line) for line in lines]
+    for line, row in zip(lines, rows):
+        assert len(line) <= session_module.OUTCOME_LIMIT
+        assert row["client_error"] and message.startswith(row["client_error"])
+        assert len(json.dumps(row["client_error"], ensure_ascii=True).encode("utf-8")) <= 512
+        assert row["exit_code"] == row["actual_exit_code"] == 1 and row["process_ended"]
+        assert row["native_report_available"]
+        native = native_bytes[row["job_id"]]
+        assert (directory / row["artifact_directory"] / "run.json").read_bytes() == native
+        assert sha256(native).hexdigest() == row["native_report_sha256"]
+        assert json.loads(native)["progress_error"] == message
+        ElementTree.parse(directory / row["artifact_directory"] / "junit.xml")
+    assert summary["first_failure"] == rows[0]
+    assert summary["last_outcomes"] == rows
+    junit = ElementTree.parse(directory / "junit.xml").getroot()
+    # These legacy failed reports contain no iteration starts, so completion stays unknown.
+    assert summary["arms_complete"]["fresh-process"] is False
+    assert junit.attrib["errors"] == str(children + 1)
+    assert len(junit.findall("testcase/error[@type='player_child_error']")) == children
+    assert len(junit.findall("testcase/error[@type='session_incomplete']")) == 1

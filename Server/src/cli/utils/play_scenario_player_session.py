@@ -465,8 +465,9 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
                             ).hexdigest(),
                             "started_unix_ms": outcome.report.get("started_unix_ms"),
                             "finished_unix_ms": outcome.report.get("finished_unix_ms"),
-                            "client_error": outcome.client_error
-                            or (
+                            "client_error": _compact_failure_text(outcome.client_error)
+                            if outcome.client_error
+                            else (
                                 "player_native_report_export_failed"
                                 if outcome.report.get("report_error")
                                 else None
