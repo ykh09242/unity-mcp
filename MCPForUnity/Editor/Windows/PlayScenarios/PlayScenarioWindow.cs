@@ -86,6 +86,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private PlayScenarioHistoryEditor history;
         private PlayScenarioPlayerSessionEditor playerSessionEditor;
         private PlayScenarioSoakEditor playerSoakEditor;
+        private PlayScenarioSoakComparisonEditor playerSoakComparisonEditor;
         private Label preflightResult;
         private TextField nameField;
         private TextField copyNameField;
@@ -103,6 +104,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         internal Func<string> ChoosePlayerBuildFolder;
         internal Func<string> ChoosePlayerSessionFile;
         internal Func<string> ChoosePlayerSoakFile;
+        internal Func<string, string> ChoosePlayerSoakComparisonFile;
         internal Func<string, string, string, string> BuildPlayerBundle;
         internal Func<bool> IsEditorBusy;
         private bool EditorBusy =>
@@ -148,8 +150,10 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         {
             playerSessionEditor?.Dispose();
             playerSoakEditor?.Dispose();
+            playerSoakComparisonEditor?.Dispose();
             playerSessionEditor = null;
             playerSoakEditor = null;
+            playerSoakComparisonEditor = null;
             StopPolling();
             StartRun = null;
             ReadStatus = null;
@@ -159,6 +163,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             ShowDialog = null;
             ChoosePlayerBuildFolder = null;
             ChoosePlayerSessionFile = null;
+            ChoosePlayerSoakComparisonFile = null;
             BuildPlayerBundle = null;
             IsEditorBusy = null;
         }
@@ -294,7 +299,10 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
 
         private void BuildResults(VisualElement columns)
         {
-            var panel = Panel("scenario-results", "Run & results");
+            var container = Panel("scenario-results", "Run & results");
+            var panel = new ScrollView { name = "scenarioResultsScroll" };
+            panel.AddToClassList("scenario-results-scroll");
+            container.Add(panel);
             var repeats = new IntegerField("Repeat count") { name = "repeatCount", value = repeatCount };
             repeats.RegisterValueChangedCallback(evt => repeatCount = evt.newValue);
             panel.Add(repeats);
@@ -337,6 +345,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             history = new PlayScenarioHistoryEditor(panel, Store, () => draft.Name, SetMessage);
             playerSessionEditor?.Dispose();
             playerSoakEditor?.Dispose();
+            playerSoakComparisonEditor?.Dispose();
             playerSessionEditor = new PlayScenarioPlayerSessionEditor(
                 panel,
                 SetMessage,
@@ -347,7 +356,14 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 SetMessage,
                 () => ChoosePlayerSoakFile != null ? ChoosePlayerSoakFile() : EditorUtility.OpenFilePanel("Open Player soak evidence", "", "json")
             );
-            columns.Add(panel);
+            playerSoakComparisonEditor = new PlayScenarioSoakComparisonEditor(
+                panel,
+                side =>
+                    ChoosePlayerSoakComparisonFile != null
+                        ? ChoosePlayerSoakComparisonFile(side)
+                        : EditorUtility.OpenFilePanel("Open " + side.ToLowerInvariant() + " soak evidence", "", "json")
+            );
+            columns.Add(container);
         }
 
         private ScrollView BuildStage(VisualElement parent, string title, string stage)

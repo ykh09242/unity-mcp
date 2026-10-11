@@ -392,6 +392,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         };
         internal JObject Summary;
         internal JObject ClientSummary;
+        internal JObject VerifiedReproduction;
         internal readonly List<JObject> Rows = new List<JObject>();
         private readonly List<long> rowEndBytes = new List<long>();
         internal string Completeness;
@@ -512,6 +513,10 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             }
             if ((string)source["status"] == "succeeded" && ((long?)report["exit_code"] != 0 || (string)report["status"] != "succeeded"))
                 throw new InvalidDataException("Final report cannot establish native soak success.");
+            result.VerifiedReproduction = new JObject();
+            foreach (string field in new[] { "unity_version", "package_version", "environment" })
+                if (reproduction[field] != null)
+                    result.VerifiedReproduction[field] = reproduction[field].DeepClone();
             result.Completeness = "Complete: ordered rows, same PID, identity, counts and SHA256 verified; final checkpoint matches run.json.";
             return result;
         }

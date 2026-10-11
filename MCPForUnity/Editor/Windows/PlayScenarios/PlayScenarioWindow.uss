@@ -119,6 +119,56 @@
     min-height: 0;
 }
 
+.scenario-soak-chart {
+    height: 160px;
+    flex-shrink: 0;
+    background-color: var(--mcp-bg);
+    margin-top: 6px;
+    margin-bottom: 6px;
+}
+
+.scenario-soak-comparison-scroll {
+    max-height: 400px;
+    min-height: 196px;
+    flex-shrink: 0;
+}
+
+.scenario-results-scroll {
+    flex-grow: 1;
+    min-height: 0;
+    min-width: 0;
+}
+
+.scenario-results-scroll #runResults {
+    min-height: 60px;
+    max-height: 220px;
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+
+.scenario-soak-source-state {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-height: 20px;
+}
+
+.scenario-soak-metadata-scroll {
+    height: 140px;
+    min-height: 140px;
+    flex-shrink: 0;
+}
+
+.scenario-soak-comparison {
+    min-height: 24px;
+    flex-shrink: 1;
+}
+
+.scenario-soak-comparison > .unity-foldout__content {
+    min-height: 0;
+    flex-shrink: 1;
+}
+
 .scenario-suite-editor .unity-base-field {
     flex-direction: column;
     align-items: stretch;
