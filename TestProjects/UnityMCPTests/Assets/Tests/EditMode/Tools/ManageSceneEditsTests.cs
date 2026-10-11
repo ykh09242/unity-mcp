@@ -88,6 +88,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(new Vector3(1, 2, 3), go.transform.localPosition);
             Assert.AreEqual(undo, Undo.GetCurrentGroup());
             Assert.AreEqual(dirty, go.scene.isDirty);
+            Assert.AreEqual(JTokenType.Integer, first["data"]["edits"][0]["scene_handle"].Type);
             Assert.AreEqual("m_LocalPosition", first["data"]["edits"][0].Value<string>("property"));
             CollectionAssert.AreEqual(new[] { 1f, 2f, 3f }, first["data"]["edits"][0]["before"].ToObject<float[]>());
         }

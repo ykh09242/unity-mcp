@@ -8,6 +8,7 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace MCPForUnity.Editor.Tools
 {
@@ -28,7 +29,8 @@ namespace MCPForUnity.Editor.Tools
             internal Component Component;
             internal GameObject Target;
             internal Transform Parent;
-            internal int SceneHandle;
+            internal Scene Scene;
+            internal JValue SceneHandle;
             internal string ScenePath;
             internal string TargetPath;
             internal int ComponentIndex;
@@ -177,7 +179,8 @@ namespace MCPForUnity.Editor.Tools
                             Component = component,
                             Target = target,
                             Parent = target.transform.parent,
-                            SceneHandle = target.scene.handle,
+                            Scene = target.scene,
+                            SceneHandle = DescribeSceneHandle(target.scene),
                             ScenePath = target.scene.path,
                             TargetPath = GameObjectLookup.GetGameObjectPath(target),
                             ComponentIndex = index,
@@ -191,7 +194,7 @@ namespace MCPForUnity.Editor.Tools
             return new Plan
             {
                 Edits = prepared
-                    .OrderBy(edit => edit.SceneHandle)
+                    .OrderBy(edit => edit.SceneHandle.Value<decimal>())
                     .ThenBy(edit => edit.TargetPath, StringComparer.Ordinal)
                     .ThenBy(edit => edit.Component.GetInstanceIDCompat())
                     .ThenBy(edit => edit.Property, StringComparer.Ordinal)
@@ -243,7 +246,7 @@ namespace MCPForUnity.Editor.Tools
                 if (
                     edit.Component == null
                     || edit.Component.gameObject != edit.Target
-                    || edit.Target.scene.handle != edit.SceneHandle
+                    || edit.Target.scene != edit.Scene
                     || edit.Target.scene.path != edit.ScenePath
                     || edit.Target.transform.parent != edit.Parent
                     || GameObjectLookup.GetGameObjectPath(edit.Target) != edit.TargetPath
@@ -323,6 +326,15 @@ namespace MCPForUnity.Editor.Tools
         }
 
         private static JArray Describe(Plan plan) => new JArray(plan.Edits.Select(edit => edit.Describe()));
+
+        private static JValue DescribeSceneHandle(Scene scene)
+        {
+#if UNITY_6000_4_OR_NEWER
+            return new JValue(scene.handle.GetRawData());
+#else
+            return new JValue((int)scene.handle);
+#endif
+        }
 
         private static string RequiredString(JObject request, string key)
         {
