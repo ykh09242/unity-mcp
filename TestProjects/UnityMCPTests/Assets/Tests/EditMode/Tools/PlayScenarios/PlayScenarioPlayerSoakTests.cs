@@ -388,6 +388,11 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
                 Assert.Throws<IOException>(() => journal.Append(run, Report(run)));
                 Assert.That(journal.Attempted, Is.Zero);
                 Assert.That(locked.Length, Is.Zero);
+                Assert.That((string)journal.Persistence.Diagnostic["stage"], Is.EqualTo("journal_append"));
+                Assert.That((int)journal.Persistence.Diagnostic["iteration"], Is.EqualTo(1));
+                JObject first = journal.Persistence.Diagnostic;
+                Assert.Throws<IOException>(() => journal.Append(run, Report(run)));
+                Assert.That(JToken.DeepEquals(first, journal.Persistence.Diagnostic), Is.True);
             }
         }
 
@@ -433,6 +438,7 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
             string original = File.ReadAllText(path);
             File.WriteAllText(path, original.Replace("\"process_id\":123", "\"process_id\":124"), new System.Text.UTF8Encoding(false));
             Assert.Throws<IOException>(() => journal.Finish(null, null, true, Start + 2000));
+            Assert.That((string)journal.Persistence.Diagnostic["stage"], Is.EqualTo("journal_verify"));
             Assert.That((string)JObject.Parse(File.ReadAllText(Path.Combine(directory, "soak.json")))["finalization_state"], Is.EqualTo("running"));
         }
 
@@ -443,10 +449,185 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
             File.WriteAllText(Path.Combine(directory, "soak.json.tmp"), "stale");
             PlayScenarioRun run = Execute(1, new Host());
             Assert.Throws<IOException>(() => journal.Append(run, Report(run)));
+            Assert.That((string)journal.Persistence.Diagnostic["stage"], Is.EqualTo("checkpoint_replace"));
+            JObject first = journal.Persistence.Diagnostic;
             Assert.That(journal.Attempted, Is.EqualTo(1));
             Assert.That(journal.CurrentIteration, Is.EqualTo(2));
             Assert.That(File.ReadAllLines(Path.Combine(directory, "iterations.jsonl")).Length, Is.EqualTo(1));
             Assert.Throws<IOException>(() => journal.Finish("failed", "persistence failed", true, Start + 2000));
+            Assert.That(JToken.DeepEquals(first, journal.Persistence.Diagnostic), Is.True);
+            Assert.That((string)JObject.Parse(File.ReadAllText(Path.Combine(directory, "soak.json")))["finalization_state"], Is.EqualTo("running"));
+        }
+
+        [Test]
+        public void IterationReportFailureNeverRetriesAppendOrErasesNativeFailure()
+        {
+            using (PlayScenarioPlayerSoakJournal journal = Journal())
+            {
+                string stale = Path.Combine(directory, "iteration-0001.json.tmp");
+                File.WriteAllText(stale, "foreign evidence");
+                PlayScenarioRun run = Execute(1, new Host { Fail = true });
+                string originalError = run.Error;
+                JObject report = Report(run);
+                JToken failure = report["failure"].DeepClone();
+                Assert.Throws<IOException>(() => journal.Append(run, report));
+                Assert.That((string)journal.Persistence.Diagnostic["stage"], Is.EqualTo("iteration_report"));
+                Assert.That(journal.Attempted, Is.Zero);
+                Assert.That(journal.CurrentIteration, Is.EqualTo(1));
+                File.Delete(stale);
+                Assert.Throws<IOException>(() => journal.Append(run, report));
+                Assert.That(File.Exists(Path.Combine(directory, "iteration-0001.json")), Is.False);
+                Assert.Throws<IOException>(() => journal.Finish("succeeded", null, true, Start + 2000));
+                journal.Persistence.Attach(report);
+                PlayScenarioPlayerFiles.WriteNew(
+                    Path.Combine(directory, "run.json"),
+                    report.ToString(Formatting.None),
+                    PlayScenarioPlayerSoakJournal.ReportLimit
+                );
+                JObject persisted = JObject.Parse(File.ReadAllText(Path.Combine(directory, "run.json")));
+                Assert.That((int)persisted["exit_code"], Is.EqualTo(2));
+                Assert.That((string)persisted["error"], Is.EqualTo(originalError));
+                Assert.That(JToken.DeepEquals(persisted["failure"], failure), Is.True);
+                Assert.That((string)persisted["persistence_error"]["stage"], Is.EqualTo("iteration_report"));
+                Assert.That(new FileInfo(Path.Combine(directory, "iterations.jsonl")).Length, Is.Zero);
+            }
+        }
+
+        [Test]
+        public void InitialCheckpointFailureRemainsAvailableWhenJournalConstructionFails()
+        {
+            Directory.CreateDirectory(Path.Combine(directory, "soak.json"));
+            var persistence = new PlayScenarioPlayerPersistence();
+            Assert.Throws<IOException>(() => new PlayScenarioPlayerSoakJournal(directory, Request(), bundle, 123, Start, persistence));
+            Assert.That((string)persistence.Diagnostic["stage"], Is.EqualTo("checkpoint_replace"));
+            Assert.That(persistence.Diagnostic["iteration"].Type, Is.EqualTo(JTokenType.Null));
+            Assert.That(new FileInfo(Path.Combine(directory, "iterations.jsonl")).Length, Is.Zero);
+            Assert.That(File.Exists(Path.Combine(directory, "soak.json.tmp")), Is.False);
+        }
+
+        [Test]
+        public void InitialJournalFailureIdentifiesStageWithoutCreatingCheckpoint()
+        {
+            Directory.CreateDirectory(Path.Combine(directory, "iterations.jsonl"));
+            var persistence = new PlayScenarioPlayerPersistence();
+            Assert.Throws<UnauthorizedAccessException>(() => new PlayScenarioPlayerSoakJournal(directory, Request(), bundle, 123, Start, persistence));
+            Assert.That((string)persistence.Diagnostic["stage"], Is.EqualTo("journal_append"));
+            Assert.That(File.Exists(Path.Combine(directory, "soak.json")), Is.False);
+        }
+
+        [Test]
+        [Platform("Win")]
+        public void LockedRetentionStopsAfterExactlyTwoDurableRows()
+        {
+            using (PlayScenarioPlayerSoakJournal journal = Journal())
+            {
+                PlayScenarioRun first = Execute(1, new Host());
+                journal.Append(first, Report(first));
+                using (var locked = new FileStream(Path.Combine(directory, "iteration-0001.json"), FileMode.Open, FileAccess.Read, FileShare.None))
+                {
+                    PlayScenarioRun second = Execute(2, new Host());
+                    Assert.Throws<IOException>(() => journal.Append(second, Report(second)));
+                    Assert.That((string)journal.Persistence.Diagnostic["stage"], Is.EqualTo("report_retention"));
+                    Assert.That(journal.Attempted, Is.EqualTo(2));
+                    Assert.That(journal.CurrentIteration, Is.EqualTo(3));
+                    Assert.Throws<IOException>(() => journal.Append(Execute(3, new Host()), Report(second)));
+                    Assert.That(File.ReadAllLines(Path.Combine(directory, "iterations.jsonl")).Length, Is.EqualTo(2));
+                    Assert.Throws<IOException>(() => journal.Finish("succeeded", null, true, Start + 4000));
+                }
+                Assert.That((string)JObject.Parse(File.ReadAllText(Path.Combine(directory, "soak.json")))["finalization_state"], Is.EqualTo("running"));
+            }
+        }
+
+        [Test]
+        public void FinalCheckpointFailureRetainsSuccessfulNativeReportAndIncompleteCheckpoint()
+        {
+            using (PlayScenarioPlayerSoakJournal journal = Journal())
+            {
+                PlayScenarioRun run = Execute(1, new Host());
+                journal.Append(run, Report(run));
+                File.WriteAllText(Path.Combine(directory, "soak.json.tmp"), "foreign temporary evidence");
+                Assert.Throws<IOException>(() => journal.Finish("failed", "primary outcome", true, Start + 2000));
+                Assert.That((string)journal.Persistence.Diagnostic["stage"], Is.EqualTo("checkpoint_replace"));
+                Assert.That(journal.Persistence.Diagnostic["iteration"].Type, Is.EqualTo(JTokenType.Null));
+                Assert.That((string)journal.SelectedReport()["status"], Is.EqualTo("succeeded"));
+                Assert.That(File.ReadAllText(Path.Combine(directory, "soak.json.tmp")), Is.EqualTo("foreign temporary evidence"));
+                Assert.That((string)JObject.Parse(File.ReadAllText(Path.Combine(directory, "soak.json")))["finalization_state"], Is.EqualTo("running"));
+            }
+        }
+
+        [TestCase(511)]
+        [TestCase(510)]
+        public void FirstPersistenceDiagnosticIsBoundedUnicodeAndImmutableAcrossLaterStages(int prefix)
+        {
+            var persistence = new PlayScenarioPlayerPersistence();
+            var original = new IOException(new string('x', prefix) + "\U0001F680tail");
+            Assert.That(
+                Assert.Throws<IOException>(() =>
+                    persistence.Execute(
+                        "journal_append",
+                        2,
+                        () =>
+                        {
+                            throw original;
+                        }
+                    )
+                ),
+                Is.SameAs(original)
+            );
+            JObject first = persistence.Diagnostic;
+            foreach (string stage in new[] { "iteration_report", "report_retention", "checkpoint_replace", "journal_verify", "final_report" })
+                Assert.Throws<IOException>(() =>
+                    persistence.Execute(
+                        stage,
+                        3,
+                        () =>
+                        {
+                            throw new IOException("secondary failure");
+                        }
+                    )
+                );
+            Assert.That(JToken.DeepEquals(first, persistence.Diagnostic), Is.True);
+            first["stage"] = "caller mutation";
+            Assert.That((string)persistence.Diagnostic["stage"], Is.EqualTo("journal_append"));
+            JObject report = Report(Execute(1, new Host()));
+            persistence.Attach(report);
+            string expected = prefix == 511 ? new string('x', 511) : new string('x', 510) + "\U0001F680";
+            Assert.That((string)report["persistence_error"]["error"], Is.EqualTo(expected));
+            Assert.That((string)report["persistence_error"]["exception_type"], Is.EqualTo("IOException"));
+            Assert.DoesNotThrow(() =>
+                PlayScenarioPlayerFiles.WriteNew(
+                    Path.Combine(directory, "run.json"),
+                    report.ToString(Formatting.None),
+                    PlayScenarioPlayerSoakJournal.ReportLimit
+                )
+            );
+            Assert.That((int)JObject.Parse(File.ReadAllText(Path.Combine(directory, "run.json")))["exit_code"], Is.EqualTo(2));
+        }
+
+        [Test]
+        public void OutputBoundsUseUtf8BytesAndDoNotPublishOversizedOrInvalidText()
+        {
+            string path = Path.Combine(directory, "bytes.json");
+            Assert.Throws<IOException>(() => PlayScenarioPlayerFiles.WriteNew(path, "\U0001F680", 3));
+            Assert.That(File.Exists(path), Is.False);
+            Assert.That(File.Exists(path + ".tmp"), Is.False);
+            Assert.DoesNotThrow(() => PlayScenarioPlayerFiles.WriteNew(path, "\U0001F680", 4));
+            Assert.That(new FileInfo(path).Length, Is.EqualTo(4));
+            Assert.Throws<System.Text.EncoderFallbackException>(() => PlayScenarioPlayerFiles.ReplaceExisting(path, "\uD83D", 4));
+            Assert.That(File.ReadAllText(path), Is.EqualTo("\U0001F680"));
+        }
+
+        [Test]
+        public void FinalPublicationFailureKeepsOriginalExceptionAndCleansOwnedTemporary()
+        {
+            string path = Path.Combine(directory, "run.json");
+            Directory.CreateDirectory(path);
+            var persistence = new PlayScenarioPlayerPersistence();
+            Assert.Throws<IOException>(() => persistence.Execute("final_report", null, () => PlayScenarioPlayerFiles.WriteNew(path, "{}", 32)));
+            Assert.That((string)persistence.Diagnostic["stage"], Is.EqualTo("final_report"));
+            Assert.That((string)persistence.Diagnostic["exception_type"], Is.EqualTo("IOException"));
+            Assert.That(File.Exists(path + ".tmp"), Is.False);
+            Assert.That(Directory.Exists(path), Is.True);
         }
 
         private PlayScenarioPlayerRequest Request() => PlayScenarioPlayerRequest.Parse(requestJson.ToString(Formatting.None));

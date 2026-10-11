@@ -31,6 +31,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private string soakStopStatus;
         private string soakStopError;
         private bool iterationRecorded;
+        private readonly PlayScenarioPlayerPersistence persistence = new PlayScenarioPlayerPersistence();
         private static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
@@ -110,7 +111,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                         throw new ArgumentException("Frozen Player scene is absent from the executable: " + path);
                 }
                 if (request.Soak != null)
-                    soak = new PlayScenarioPlayerSoakJournal(directory, request, bundle, processId, run.StartedUnixMs);
+                    soak = new PlayScenarioPlayerSoakJournal(directory, request, bundle, processId, run.StartedUnixMs, persistence);
                 StartEngine();
             }
             catch (Exception error)
@@ -179,21 +180,23 @@ namespace MCPForUnity.Runtime.PlayScenarios
             catch (Exception error)
             {
                 engine.Interrupt("Player runner failed: " + error.GetType().Name + ": " + error.Message, Now);
-                soakStopStatus = "failed";
-                soakStopError = PlayScenarioEngine.Bounded(error.GetType().Name + ": " + error.Message, 2048);
+                soakStopStatus = soakStopStatus ?? "failed";
+                soakStopError = soakStopError ?? PlayScenarioEngine.Bounded(error.GetType().Name + ": " + error.Message, 2048);
                 Complete(2);
             }
         }
 
         private void RecordProgressError(Exception error)
         {
-            progressError = PlayScenarioEngine.Bounded("Player progress publication failed: " + error.GetType().Name + ": " + error.Message, 2048);
+            progressError =
+                progressError ?? PlayScenarioEngine.Bounded("Player progress publication failed: " + error.GetType().Name + ": " + error.Message, 2048);
             if (run == null)
                 return;
             run.ReportError = run.ReportError ?? progressError;
             if (engine == null || !engine.Running)
             {
-                run.Status = "failed";
+                if (run.Status == "running" || run.Status == "succeeded")
+                    run.Status = "failed";
                 run.Error = run.Error ?? progressError;
                 run.Failure = run.Failure ?? new PlayScenarioFailure { Code = "player_progress_failed", Message = progressError };
                 run.FinishedUnixMs = Now;
@@ -224,7 +227,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             {
                 run.Status = "failed";
                 run.Phase = "finished";
-                run.Error = message;
+                run.Error = run.Error ?? message;
                 run.FinishedUnixMs = Now;
                 run.RunnerResourcesReleased = true;
                 run.Failure =
@@ -328,39 +331,77 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 exitCode = PlayScenarioPlayerLogDrain.ExitCode(run);
             try
             {
-                JObject report = Report(exitCode);
+                JObject report = null;
+                persistence.Execute("final_report", soak?.CurrentIteration, () => report = Report(exitCode));
                 if (soak != null)
                 {
-                    if (!iterationRecorded)
+                    try
                     {
-                        soak.Append(run, report);
-                        iterationRecorded = true;
+                        if (!iterationRecorded && !persistence.Failed)
+                        {
+                            int iteration = soak.CurrentIteration;
+                            try
+                            {
+                                soak.Append(run, report);
+                            }
+                            finally
+                            {
+                                iterationRecorded = soak.CurrentIteration > iteration;
+                            }
+                        }
+                        JObject summary = soak.Finish(
+                            exitCode == 2 ? "failed" : soakStopStatus,
+                            soakStopError ?? progressError,
+                            run.RunnerResourcesReleased == true,
+                            Now
+                        );
+                        exitCode =
+                            exitCode == 2 || persistence.Failed ? 2
+                            : (string)summary["status"] == "succeeded" ? 0
+                            : 1;
+                        report["soak"] = summary;
                     }
-                    JObject summary = soak.Finish(
-                        exitCode == 2 ? "failed" : soakStopStatus,
-                        soakStopError ?? progressError,
-                        run.RunnerResourcesReleased == true,
-                        Now
-                    );
+                    catch (Exception error)
+                    {
+                        persistence.Record("journal_verify", null, error);
+                        exitCode = 2;
+                    }
                     if (soak.SelectedReportFile != null)
-                        report = soak.SelectedReport();
-                    exitCode =
-                        exitCode == 2 ? 2
-                        : (string)summary["status"] == "succeeded" ? 0
-                        : 1;
+                    {
+                        try
+                        {
+                            JObject selected = soak.SelectedReport();
+                            selected["soak"] = report["soak"];
+                            report = selected;
+                        }
+                        catch (Exception error)
+                        {
+                            persistence.Record("final_report", null, error);
+                            exitCode = 2;
+                        }
+                    }
                     report["exit_code"] = exitCode;
-                    report["soak"] = summary;
                 }
-                PlayScenarioPlayerFiles.WriteNew(Path.Combine(directory, "run.json"), report.ToString(Formatting.None), 2 * 1024 * 1024);
+                persistence.Attach(report);
+                persistence.Execute(
+                    "final_report",
+                    null,
+                    () => PlayScenarioPlayerFiles.WriteNew(Path.Combine(directory, "run.json"), report.ToString(Formatting.None), 2 * 1024 * 1024)
+                );
             }
             catch (Exception error)
             {
-                Debug.LogError("Player report persistence failed: " + error.GetType().Name + ": " + error.Message);
+                persistence.Record("final_report", null, error);
                 exitCode = 2;
             }
             finally
             {
                 soak?.Dispose();
+                if (persistence.Failed)
+                {
+                    Debug.LogError(persistence.Message);
+                    exitCode = 2;
+                }
             }
             Application.Quit(exitCode);
         }

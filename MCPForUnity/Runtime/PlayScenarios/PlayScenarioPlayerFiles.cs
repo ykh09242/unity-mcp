@@ -44,9 +44,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public static void ReplaceExisting(string path, string json, int limit)
         {
             path = CheckedAbsolute(path);
-            byte[] bytes = Utf8.GetBytes(json);
-            if (bytes.Length == 0 || bytes.Length > limit)
-                throw new IOException("Player output exceeds its bounded size.");
+            byte[] bytes = Encode(json, limit);
             string temporary = CheckedAbsolute(path + ".tmp");
             if (!File.Exists(path) || File.Exists(temporary))
                 throw new IOException("Player diagnostic ownership is unavailable or stale.");
@@ -64,8 +62,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             }
             catch
             {
-                if (created && File.Exists(temporary))
-                    File.Delete(temporary);
+                RemoveTemporary(temporary, created);
                 throw;
             }
         }
@@ -73,16 +70,16 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public static void WriteNew(string path, string json, int limit)
         {
             path = CheckedAbsolute(path);
-            byte[] bytes = Utf8.GetBytes(json);
-            if (bytes.Length == 0 || bytes.Length > limit)
-                throw new IOException("Player output exceeds its bounded size.");
+            byte[] bytes = Encode(json, limit);
             string temporary = CheckedAbsolute(path + ".tmp");
             if (File.Exists(path) || File.Exists(temporary))
                 throw new IOException("Player output already exists; use a fresh run directory.");
+            bool created = false;
             try
             {
                 using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
+                    created = true;
                     stream.Write(bytes, 0, bytes.Length);
                     stream.Flush(true);
                 }
@@ -90,9 +87,30 @@ namespace MCPForUnity.Runtime.PlayScenarios
             }
             catch
             {
-                if (File.Exists(temporary))
-                    File.Delete(temporary);
+                RemoveTemporary(temporary, created);
                 throw;
+            }
+        }
+
+        private static byte[] Encode(string json, int limit)
+        {
+            int length = Utf8.GetByteCount(json);
+            if (length == 0 || length > limit)
+                throw new IOException("Player output exceeds its bounded size.");
+            return Utf8.GetBytes(json);
+        }
+
+        private static void RemoveTemporary(string temporary, bool created)
+        {
+            if (!created)
+                return;
+            try
+            {
+                File.Delete(temporary);
+            }
+            catch
+            {
+                // Cleanup must not replace the original write or publication exception.
             }
         }
     }

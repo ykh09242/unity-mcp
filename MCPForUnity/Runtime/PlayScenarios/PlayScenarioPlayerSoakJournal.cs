@@ -34,6 +34,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private bool disposed;
         private int recorded;
         private int? lastStarted;
+        public PlayScenarioPlayerPersistence Persistence { get; }
         public int Attempted { get; private set; }
         public int? FirstFailure { get; private set; }
         public long StartedUnixMs { get; }
@@ -44,8 +45,16 @@ namespace MCPForUnity.Runtime.PlayScenarios
             : null;
         public int CurrentIteration => recorded + 1;
 
-        public PlayScenarioPlayerSoakJournal(string directory, PlayScenarioPlayerRequest request, PlayScenarioPlayerBundle bundle, int processId, long now)
+        public PlayScenarioPlayerSoakJournal(
+            string directory,
+            PlayScenarioPlayerRequest request,
+            PlayScenarioPlayerBundle bundle,
+            int processId,
+            long now,
+            PlayScenarioPlayerPersistence persistence = null
+        )
         {
+            Persistence = persistence ?? new PlayScenarioPlayerPersistence();
             if (request?.Soak == null || bundle == null || processId <= 0)
                 throw new ArgumentException("A soak journal requires a validated request, bundle and native PID.");
             this.directory = PlayScenarioPlayerFiles.CheckedAbsolute(directory);
@@ -65,14 +74,32 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 ["payload_hash"] = request.PayloadHash,
                 ["process_id"] = processId,
             };
-            if (File.Exists(summaryPath) || File.Exists(summaryPath + ".tmp") || Directory.EnumerateFiles(directory, "iteration-*.json*").Any())
-                throw new IOException("Player soak evidence already exists; use a fresh directory.");
+            Persistence.Execute(
+                "checkpoint_replace",
+                null,
+                () =>
+                {
+                    if (File.Exists(summaryPath) || File.Exists(summaryPath + ".tmp") || Directory.EnumerateFiles(directory, "iteration-*.json*").Any())
+                        throw new IOException("Player soak evidence already exists; use a fresh directory.");
+                }
+            );
             accumulatedHash = SHA256.Create();
             try
             {
-                using (var stream = new FileStream(journalPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
-                    stream.Flush(true);
-                PlayScenarioPlayerFiles.WriteNew(summaryPath, Snapshot("running", null, null, false).ToString(Formatting.None), SummaryLimit);
+                Persistence.Execute(
+                    "journal_append",
+                    null,
+                    () =>
+                    {
+                        using (var stream = new FileStream(journalPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+                            stream.Flush(true);
+                    }
+                );
+                Persistence.Execute(
+                    "checkpoint_replace",
+                    null,
+                    () => PlayScenarioPlayerFiles.WriteNew(summaryPath, Snapshot("running", null, null, false).ToString(Formatting.None), SummaryLimit)
+                );
             }
             catch
             {
@@ -84,6 +111,23 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public bool DeadlineReached(long now) => now >= DeadlineUnixMs;
 
         public bool Append(PlayScenarioRun run, JObject report)
+        {
+            if (Persistence.Failed)
+                throw new IOException("Player soak cannot append after a persistence failure.");
+            bool result = false;
+            try
+            {
+                Persistence.Execute("journal_append", CurrentIteration, () => result = AppendCompleted(run, report));
+            }
+            catch
+            {
+                Dispose();
+                throw;
+            }
+            return result;
+        }
+
+        private bool AppendCompleted(PlayScenarioRun run, JObject report)
         {
             if (completed || disposed || recorded >= options.Iterations || run == null || run.Status == "running" || !run.FinishedUnixMs.HasValue)
                 throw new InvalidOperationException("Only one completed native iteration can be appended in order.");
@@ -115,15 +159,26 @@ namespace MCPForUnity.Runtime.PlayScenarios
             byte[] encoded = Utf8.GetBytes(row.ToString(Formatting.None) + "\n");
             if (encoded.Length > RowLimit || bytes + encoded.Length > JournalLimit)
                 throw new IOException("Player soak journal exceeded its fixed evidence bounds.");
-            PlayScenarioPlayerFiles.WriteNew(Path.Combine(directory, filename), report.ToString(Formatting.None), ReportLimit);
-            using (var stream = new FileStream(PlayScenarioPlayerFiles.CheckedAbsolute(journalPath), FileMode.Open, FileAccess.Write, FileShare.Read))
-            {
-                if (stream.Length != bytes)
-                    throw new IOException("Player soak journal changed outside its owner.");
-                stream.Position = bytes;
-                stream.Write(encoded, 0, encoded.Length);
-                stream.Flush(true);
-            }
+            Persistence.Execute(
+                "iteration_report",
+                iteration,
+                () => PlayScenarioPlayerFiles.WriteNew(Path.Combine(directory, filename), report.ToString(Formatting.None), ReportLimit)
+            );
+            Persistence.Execute(
+                "journal_append",
+                iteration,
+                () =>
+                {
+                    using (var stream = new FileStream(PlayScenarioPlayerFiles.CheckedAbsolute(journalPath), FileMode.Open, FileAccess.Write, FileShare.Read))
+                    {
+                        if (stream.Length != bytes)
+                            throw new IOException("Player soak journal changed outside its owner.");
+                        stream.Position = bytes;
+                        stream.Write(encoded, 0, encoded.Length);
+                        stream.Flush(true);
+                    }
+                }
+            );
             bytes += encoded.Length;
             accumulatedHash.TransformBlock(encoded, 0, encoded.Length, encoded, 0);
             metrics.Observe(boundaryMetrics, iteration);
@@ -142,10 +197,14 @@ namespace MCPForUnity.Runtime.PlayScenarios
             while (retained.Count > options.RetainReports)
             {
                 string remove = retained.First(name => name != SelectedReportFile);
-                File.Delete(PlayScenarioPlayerFiles.CheckedAbsolute(Path.Combine(directory, remove)));
+                Persistence.Execute("report_retention", iteration, () => File.Delete(PlayScenarioPlayerFiles.CheckedAbsolute(Path.Combine(directory, remove))));
                 retained.Remove(remove);
             }
-            PlayScenarioPlayerFiles.ReplaceExisting(summaryPath, Snapshot("running", null, null, false).ToString(Formatting.None), SummaryLimit);
+            Persistence.Execute(
+                "checkpoint_replace",
+                iteration,
+                () => PlayScenarioPlayerFiles.ReplaceExisting(summaryPath, Snapshot("running", null, null, false).ToString(Formatting.None), SummaryLimit)
+            );
             return recorded < options.Iterations
                 && started
                 && (success || (options.FailurePolicy == "continue" && run.Status == "failed"))
@@ -155,19 +214,34 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         public JObject Finish(string stopStatus, string error, bool runnerReleased, long now)
         {
+            if (Persistence.Failed)
+                throw new IOException("Player soak cannot finalize complete evidence after a persistence failure.");
             if (completed || disposed)
                 throw new InvalidOperationException("Player soak evidence was already finalized.");
-            accumulatedHash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-            journalHash = string.Concat(accumulatedHash.Hash.Select(value => value.ToString("x2")));
             try
             {
-                VerifyJournal();
+                Persistence.Execute(
+                    "journal_verify",
+                    null,
+                    () =>
+                    {
+                        accumulatedHash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                        journalHash = string.Concat(accumulatedHash.Hash.Select(value => value.ToString("x2")));
+                        VerifyJournal();
+                    }
+                );
                 released &= runnerReleased;
-                string status = stopStatus ?? (Attempted == options.Iterations && passed == Attempted && released ? "succeeded" : "failed");
+                string status = Persistence.Failed
+                    ? "failed"
+                    : stopStatus ?? (Attempted == options.Iterations && passed == Attempted && released ? "succeeded" : "failed");
                 if (status == "succeeded" && (Attempted != options.Iterations || passed != Attempted || !released))
                     status = "failed";
-                JObject summary = Snapshot(status, error, now, true);
-                PlayScenarioPlayerFiles.ReplaceExisting(summaryPath, summary.ToString(Formatting.None), SummaryLimit);
+                JObject summary = Snapshot(status, error ?? Persistence.Message, now, true);
+                Persistence.Execute(
+                    "checkpoint_replace",
+                    null,
+                    () => PlayScenarioPlayerFiles.ReplaceExisting(summaryPath, summary.ToString(Formatting.None), SummaryLimit)
+                );
                 completed = true;
                 return summary;
             }
@@ -177,7 +251,16 @@ namespace MCPForUnity.Runtime.PlayScenarios
             }
         }
 
-        public JObject SelectedReport() => JObject.Parse(PlayScenarioPlayerFiles.Read(Path.Combine(directory, SelectedReportFile), ReportLimit));
+        public JObject SelectedReport()
+        {
+            JObject report = null;
+            Persistence.Execute(
+                "final_report",
+                FirstFailure ?? lastStarted,
+                () => report = JObject.Parse(PlayScenarioPlayerFiles.Read(Path.Combine(directory, SelectedReportFile), ReportLimit))
+            );
+            return report;
+        }
 
         private JObject Snapshot(string status, string error, long? finished, bool complete)
         {
