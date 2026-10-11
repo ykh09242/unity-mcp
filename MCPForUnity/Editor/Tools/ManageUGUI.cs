@@ -735,7 +735,7 @@ namespace MCPForUnity.Editor.Tools
             TypeOf(name)
             ?? throw new ArgumentException("Required optional component is unavailable: " + name + ". Install/enable the corresponding uGUI or TMP package.");
 
-        private static GameObject Resolve(JToken target, bool includeInactive)
+        internal static GameObject Resolve(JToken target, bool includeInactive)
         {
             if (target == null || (target.Type != JTokenType.String && target.Type != JTokenType.Integer) || string.IsNullOrWhiteSpace(target.ToString()))
                 throw new ArgumentException("target/parent must be a scene GameObject name, hierarchy path or instance ID.");
@@ -791,7 +791,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static IEnumerable<GameObject> Descendants(GameObject root, bool includeInactive)
+        internal static IEnumerable<GameObject> Descendants(GameObject root, bool includeInactive)
         {
             if (!includeInactive && !root.activeInHierarchy)
                 yield break;
