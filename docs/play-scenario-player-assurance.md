@@ -87,7 +87,7 @@ proof that a caller's revision label describes a clean Git tree. Protect the bui
 
 Version-1 bundles remain usable with explicit legacy/unverified provenance. They cannot satisfy a
 version-2 provenance gate. Use `--require-verified-payload` on `player-run` to require version 2;
-`player-session` requires it automatically. Pin admission with `--expected-build-revision` and, when
+`player-session` and `player-soak` require it automatically. Pin admission with `--expected-build-revision` and, when
 needed, `--expected-build-id`. These checks are separate from the caller label `--source-revision`.
 Do not confuse matching scenario-definition hashes with matching binaries.
 
@@ -183,6 +183,62 @@ and JUnit preserve those outcomes. Compact failure text is bounded by its escape
 the retained native report keeps the original message. This bounds runner evidence, not the game's
 own allocations or files.
 
+Storage failures stop further child admission, including under the continue policy. Outcome counters
+advance only after the bounded outcome row is durably appended. Checkpoints and JUnit use sibling
+temporary files and atomic publication; a failed write cannot publish a partial replacement. If the
+output directory becomes unwritable, the command still fails and recovery uses the preserved journal
+prefix. A returned failure cannot guarantee that a terminal file was saved on an unavailable disk.
+
+## Run a long soak in one Player
+
+Use `player-soak` to execute 2-1,000 iterations in one native Player process:
+
+```sh
+unity-mcp --format json play-scenario player-soak <build-directory> \
+  --output-dir reports/player-soak --iterations 100 \
+  --timeout-seconds 300 --max-runtime-seconds 3600 --retain-reports 4 \
+  --expected-build-revision <trusted-build-revision>
+```
+
+Each iteration runs the complete saved setup/main/cleanup sequence using a one-repeat engine. The
+Player PID stays unchanged across iterations; the existing `player-run` limit remains ten. The
+scenario must reset game state explicitly where needed. Scene reloads do not clear static state or
+`DontDestroyOnLoad` objects. `--timeout-seconds` limits each iteration; `--max-runtime-seconds` limits
+the entire soak, followed by bounded cleanup. Defaults are 100 iterations and a one-hour deadline.
+The native soak owns this deadline; the launcher separately allows bounded process startup and
+cleanup time before terminating an unresponsive owned child.
+
+The default `--failure-policy stop` stops after the first failure. `continue` permits later ordinary
+scenario failures to be observed while preserving the first failure and a failing overall result.
+Cancellation, an iteration timeout, the outer deadline, resource-release errors and persistence errors always stop the
+soak. Untouched iterations count as skipped. A recorded engine that never reached its first permitted
+evaluation does not count as attempted or passed.
+
+The owned output directory contains these bounded artifacts:
+
+| File | Evidence |
+| --- | --- |
+| `iterations.jsonl` | At most 1,000 ordered compact rows, each at most 16 KiB, with identity, PID, actual start/finish, outcome, query counts and optional boundary metrics. |
+| `soak.json` | Atomic checkpoint and final aggregate, at most 64 KiB, with explicit `process_scope: same-process`, counts, journal integrity and selected iteration. |
+| `iteration-NNNN.json` | Full native reports, each at most 2 MiB. Retention pins the selected attempted iteration and keeps the newest remaining reports within `--retain-reports` (1-64). |
+| `run.json` | The first failed attempted iteration, otherwise the last attempted iteration, with its original local ledger and the aggregate soak result attached. |
+| `client-soak.json`, `junit.xml` | Launcher assessment and automation result. Missing or inconsistent native evidence remains incomplete and fails the command. |
+
+The aggregate counters distinguish requested, recorded, attempted, passed, failed and skipped.
+`attempted = passed + failed` and `requested = attempted + skipped`; recorded also includes any
+terminal engine that never started evaluation. A later successful selected report cannot override a
+failed aggregate. A successful command requires all requested attempts to pass, matching process and
+build identity, ordered journal counts and SHA-256, completed native finalization, released runner
+resources and a natural zero process exit. A progress heartbeat or running checkpoint cannot prove it.
+
+Enable metrics in the saved scenario before building to observe memory across the whole soak.
+Warmup and increasing-trend counters use global iteration numbers while only the latest ten snapshots
+are retained in the aggregate. Missing measurements break a growth sequence and remain unavailable.
+Growth warnings are diagnostics, not leak assertions, and do not change a successful scenario result.
+Resource assertions still compare explicit registrations at each iteration's existing boundaries.
+No extra sampling runs during polling or report viewing. See the
+[wire contract](play-scenario-soak-contract.md) for exact fields and bounds.
+
 ## Recover an incomplete session snapshot
 
 The launcher writes an immutable `session-start.json` and flushes a bounded `admissions.jsonl` entry
@@ -230,6 +286,13 @@ as unavailable. Recovered snapshots keep their explicit incomplete status and ca
 Importing, paging and filtering use stored snapshots only. They add no scene/provider/status queries,
 file watcher or recurring refresh. Import the snapshot again to see newer persisted results. Version-2
 success claims and complete journal counters must agree; contradictory reports are rejected.
+
+For continuous single-process runs, expand **Imported same-process Player soak** and open
+`soak.json` or `client-soak.json`. **Import soak snapshot** reads the bounded local evidence and shows
+the PID, counters, first failure, retained metrics and journal completeness, with 25 iterations per
+page. Incomplete, missing or contradictory evidence stays explicit. This native snapshot view cannot
+independently establish a natural child exit. Reimport to read newer evidence; paging never rereads
+the Player state or adds file watchers.
 
 ## Require actual Player CI
 

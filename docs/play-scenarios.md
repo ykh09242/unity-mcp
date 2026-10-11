@@ -270,7 +270,9 @@ handleRegistration.Dispose();
 
 Registration does not release the game's resources. Token disposal records the application's
 release claim; it cannot independently prove that a delegate was removed or a third-party handle
-was released. Unregistered resources are outside this assertion. Persistent SO assets are rejected;
+was released. Unregistered resources are outside this assertion. The Editor rejects persistent SO
+assets; in an explicit scenario Player, callers must register runtime clones because the Player has
+no equivalent asset-persistence check. In both environments,
 pre-existing registrations are the baseline, so intentional long-lived resources can be registered
 before the iteration. Thresholds allow a bounded number of new retained resources where intended.
 
@@ -279,13 +281,16 @@ a new retained one. It samples before the first executed step and after cleanup,
 iterations when execution is still available. `resource_checks` records the result; missing observation
 or exceeded limits is an explicit failure. A prior failure remains primary. No global object scan,
 per-poll memory sampling or forced GC is added. There are at most 4,096 active registrations and ten
-iteration checks. SO liveness uses transient native-ID resolution in the Editor; it does not rely
+iteration checks per normal run. SO liveness uses transient native-ID resolution; it does not rely
 only on whether a managed wrapper was collected. Register SOs and capture them on Unity's main thread.
 Reclaiming dead SO entries when token registration reaches capacity also needs the main thread;
 a background registration that cannot reclaim capacity fails explicitly.
-Tracking is Editor-only; Player registration calls do no work and return shared no-op tokens.
+Tracking runs in the Editor and explicit `MCP_FOR_UNITY_PLAY_SCENARIOS` Player builds. Ordinary Player
+registration calls do no work and return shared no-op tokens.
 A registration overflow makes coverage uncertain until the next Play entry; resolve the overflow and
-start a fresh Play session before relying on subsequent resource assertions.
+start a fresh Play session or Player process before relying on subsequent resource assertions.
+Long [same-process soak runs](play-scenario-player-assurance.md#run-a-long-soak-in-one-player) retain
+bounded per-iteration reports while continuing to use the same resource assertion boundaries.
 
 ## Failure classification and reproduction
 

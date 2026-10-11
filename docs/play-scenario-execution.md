@@ -111,7 +111,7 @@ Each `resource_checks` entry includes at most 32 `retained_resources` descriptio
 plus `omitted_resource_count`. Rows contain `id`, `kind`, `owner`, `type_name`, `resource_name`,
 `source_file`, `source_member` and `source_line`. Releasing an old resource cannot hide a new retained
 one. Metadata does not introduce strong resource references. The 4,096-registration cap, sticky
-coverage overflow and Editor-only native SO liveness rules still apply. This is attribution for the
+coverage overflow and native SO liveness rules still apply. This is attribution for the
 explicit tracker, not automatic detection of every leak in the game.
 
 ## Build and run a standalone Player
@@ -158,12 +158,26 @@ accepted as success. Exit zero requires matching job/definition/revision, `execu
 exit zero. Scenario failure exits nonzero; invalid startup or persistence also cannot pass. Keep the
 whole per-run output directory and build provenance when diagnosing CI failures.
 
-The initial Player host supports exact included scenes, hierarchy paths/stable IDs, object count and
+The Player host supports exact included scenes, hierarchy paths/stable IDs, object count and
 activity, exact component presence, explicit read-only state providers, reset steps, query counts/timeline, and optional direct/raycast
-uGUI EventSystem input. It rejects enabled resource assertions, memory metrics, screenshots and all
-serialized-property conditions before execution. No reflected property getter is substituted. These
-capabilities still belong to the Editor host. Windows Mono is the supported build target here; OS
+uGUI EventSystem input. Explicit scenario builds also support registered resource assertions and
+optional boundary memory metrics. Ordinary builds keep resource tracking disabled. Screenshots and
+serialized-property conditions are rejected before Player execution; these capabilities belong to
+the Editor host. No reflected property getter is substituted. Windows Mono is the supported build target here; OS
 input, UI Toolkit, IL2CPP and visual pixel comparison are not claimed.
+
+Player resource registration must receive runtime SO clones, never source assets. The Editor rejects
+persistent assets using Editor APIs; the Player cannot provide that asset-persistence check. Native
+ID resolution still distinguishes destroyed SOs from live native objects whose managed wrappers were
+collected. See [resource registration](play-scenarios.md#assert-registered-resource-release).
+
+Metrics sample after each iteration's cleanup and add no per-poll work. They include managed memory,
+available Unity allocator memory, loaded-scene object counts and runner-owned handles/subscriptions.
+The object count includes inactive objects in loaded scenes; the special `DontDestroyOnLoad` scene
+is outside that count. A scan exceeding 100,000 objects is unavailable. Missing profiler measurements
+remain unavailable, not zero. Neither memory growth nor a flat count proves or disproves a leak.
+Use [same-process soak runs](play-scenario-player-assurance.md#run-a-long-soak-in-one-player) for
+100-1,000 continuous iterations with bounded evidence retention.
 
 Both bundle versions retain exact canonical `definition_json` bytes so .NET and Python hash the same
 input. New version-2 builds also embed a build ID and build-time revision and provide a hashed payload
