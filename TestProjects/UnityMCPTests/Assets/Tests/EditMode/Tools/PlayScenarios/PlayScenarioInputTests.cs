@@ -20,6 +20,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             public int Releases;
             public bool ThrowOnApply;
             public Action DuringApply;
+            public Action DuringRelease;
 
             public object Apply(InputSimulationRequest request)
             {
@@ -35,6 +36,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             {
                 Releases++;
                 LeaseActive = false;
+                DuringRelease?.Invoke();
             }
         }
 
@@ -42,15 +44,27 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         {
             private readonly PlayScenarioInputSession session = new PlayScenarioInputSession();
             public bool WaitForObject;
+            public int Releases;
+            public int CleanupEvaluations;
 
-            public PlayScenarioObservation Evaluate(PlayScenarioStep step, bool first) =>
-                step.Action == "input" ? session.Evaluate(step, first) : new PlayScenarioObservation(!WaitForObject || step.Action != "wait_object", "ready");
+            public PlayScenarioObservation Evaluate(PlayScenarioStep step, bool first)
+            {
+                if (step.Name == "Cleanup")
+                    CleanupEvaluations++;
+                return step.Action == "input"
+                    ? session.Evaluate(step, first)
+                    : new PlayScenarioObservation(!WaitForObject || step.Action != "wait_object", "ready");
+            }
 
             public void MaintainInput() => session.Maintain();
 
             public void ReleaseInput() => session.Release();
 
-            public void Release() => ReleaseInput();
+            public void Release()
+            {
+                Releases++;
+                ReleaseInput();
+            }
         }
 
         private Func<IScenarioInputSimulationBackend> previousFactory;
@@ -197,6 +211,113 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 engine.Interrupt("Play Mode exited.", 1300);
             Assert.That(backend.Releases, Is.EqualTo(1));
             Assert.That(engine.Running, Is.False);
+        }
+
+        [TestCase("cancel", false)]
+        [TestCase("cancel", true)]
+        [TestCase("interrupt", false)]
+        [TestCase("interrupt", true)]
+        public void FailureDuringInputReleaseKeepsItsOriginalOutcome(string callback, bool cleanup)
+        {
+            var definition = Definition();
+            if (cleanup)
+                definition.CleanupSteps.Add(
+                    new PlayScenarioStep
+                    {
+                        Name = "Cleanup",
+                        Action = "wait_object",
+                        Target = "Player",
+                    }
+                );
+            var host = new Host();
+            int captures = 0;
+            var engine = new PlayScenarioEngine(
+                PlayScenarioEngine.Create(definition, new string('a', 32), 1, 30, 1000),
+                host,
+                onFailure: (run, step, now) => captures++
+            );
+            engine.EnteredPlayMode();
+            engine.Tick(1000, true);
+            engine.Tick(1250, true);
+            backend.DuringRelease = () =>
+            {
+                if (callback == "cancel")
+                    engine.Cancel(1300);
+                else
+                    engine.Interrupt("Play Mode exited during release.", 1300);
+            };
+
+            engine.RequestFailure("Original failure.", 1300);
+            for (long now = 1500; now <= 2500 && engine.Running; now += 250)
+                engine.Tick(now, true);
+
+            Assert.That(engine.State.Status, Is.EqualTo("failed"));
+            Assert.That(engine.State.Phase, Is.EqualTo("finished"));
+            Assert.That(engine.State.PendingStatus, Is.EqualTo("failed"));
+            Assert.That(engine.State.PendingError, Is.EqualTo("Original failure."));
+            Assert.That(engine.State.Error, Is.EqualTo("Original failure."));
+            Assert.That(engine.State.Failure.Code, Is.EqualTo("unexpected_log"));
+            Assert.That(engine.State.Failure.Message, Is.EqualTo("Original failure."));
+            Assert.That(engine.State.Steps[1].Detail, Is.EqualTo("Original failure."));
+            Assert.That(host.CleanupEvaluations, Is.EqualTo(cleanup && callback == "cancel" ? 1 : 0));
+            Assert.That(captures, Is.EqualTo(1));
+            Assert.That(host.Releases, Is.EqualTo(1));
+            Assert.That(backend.Releases, Is.EqualTo(1));
+            engine.Cancel(2750);
+            engine.Interrupt("Late interruption.", 2750);
+            engine.Release();
+            Assert.That(host.Releases, Is.EqualTo(1));
+            Assert.That(backend.Releases, Is.EqualTo(1));
+        }
+
+        [TestCase("cancel")]
+        [TestCase("interrupt")]
+        public void CleanupTimeoutDuringInputReleaseKeepsItsOriginalOutcome(string callback)
+        {
+            var definition = Definition();
+            var cleanup = definition.Steps[1];
+            definition.Steps.RemoveAt(1);
+            cleanup.Name = "Cleanup";
+            cleanup.TimeoutSeconds = 1;
+            definition.CleanupSteps.Add(cleanup);
+            var host = new Host();
+            int captures = 0;
+            var engine = new PlayScenarioEngine(
+                PlayScenarioEngine.Create(definition, new string('a', 32), 1, 30, 1000),
+                host,
+                onFailure: (run, step, now) => captures++
+            );
+            engine.EnteredPlayMode();
+            engine.Tick(1000, true);
+            engine.Tick(1250, true);
+            engine.Tick(1500, true);
+            backend.DuringRelease = () =>
+            {
+                if (callback == "cancel")
+                    engine.Cancel(2500);
+                else
+                    engine.Interrupt("Play Mode exited during cleanup release.", 2500);
+            };
+
+            engine.Tick(2500, true);
+
+            Assert.That(engine.State.Status, Is.EqualTo("failed"));
+            Assert.That(engine.State.Phase, Is.EqualTo("finished"));
+            Assert.That(engine.State.PendingStatus, Is.EqualTo("failed"));
+            Assert.That(engine.State.Error, Does.StartWith("Step timed out: Cleanup."));
+            Assert.That(engine.State.PendingError, Is.EqualTo(engine.State.Error));
+            Assert.That(engine.State.Failure.Code, Is.EqualTo("step_timeout"));
+            Assert.That(engine.State.Failure.Message, Is.EqualTo(engine.State.Error));
+            Assert.That(engine.State.CleanupError, Does.Contain("Step timed out: Cleanup."));
+            Assert.That(engine.State.Steps[1].Status, Is.EqualTo("timed_out"));
+            Assert.That(engine.State.Steps[1].Detail, Is.EqualTo(engine.State.Error));
+            Assert.That(engine.State.Steps[1].FinishedUnixMs, Is.EqualTo(2500));
+            Assert.That(engine.State.IterationResults[0].Status, Is.EqualTo("failed"));
+            Assert.That(host.CleanupEvaluations, Is.EqualTo(1));
+            Assert.That(backend.Applies, Is.EqualTo(1));
+            Assert.That(captures, Is.EqualTo(1));
+            Assert.That(host.Releases, Is.EqualTo(1));
+            Assert.That(backend.Releases, Is.EqualTo(1));
         }
 
         [Test]

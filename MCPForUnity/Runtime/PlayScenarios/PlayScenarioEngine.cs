@@ -381,13 +381,16 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (!Running || State.PendingStatus != null)
                 return;
-            (_host as MCPForUnity.Runtime.PlayScenarios.IPlayScenarioInputHost)?.ReleaseInput();
+            // Releasing devices can synchronously cancel or interrupt through input callbacks.
             State.Failure = State.Failure ?? Attribute(failure ?? Failure("action_exception", error));
-            _stepObserver.Abort("Step ended with " + status + ": " + error, now);
-            _stepReady = false;
             State.PendingStatus = status;
             State.PendingError = Bounded(error, 4096);
             Timeline(now, "outcome_requested", status + ": " + State.PendingError);
+            (_host as MCPForUnity.Runtime.PlayScenarios.IPlayScenarioInputHost)?.ReleaseInput();
+            if (!Running)
+                return;
+            _stepObserver.Abort("Step ended with " + status + ": " + error, now);
+            _stepReady = false;
             _resetSnapshot = null;
             if (State.Phase != "cleaning")
                 ClearStateProbe();
@@ -444,9 +447,6 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private void CleanupFailure(string error, long now, bool all, PlayScenarioFailure failure = null, bool timedOut = false)
         {
-            (_host as MCPForUnity.Runtime.PlayScenarios.IPlayScenarioInputHost)?.ReleaseInput();
-            _stepObserver.Abort("Cleanup ended: " + error, now);
-            _stepReady = false;
             failure = Attribute(failure ?? Failure("action_exception", error));
             AddCleanupFailure(failure);
             AppendCleanupError(error);
@@ -456,13 +456,19 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 State.PendingError = Bounded(error, 4096);
                 State.Failure = State.Failure ?? failure;
             }
-            CaptureFailure(now);
             int iteration = State.Steps[State.Cursor].Iteration;
             PlayScenarioStepResult result = State.Steps[State.Cursor];
             result.Status = all || timedOut ? "timed_out" : "failed";
             result.Detail = Bounded(error, 2048);
             result.FinishedUnixMs = now;
             Timeline(now, "cleanup_failed", result.Detail, result);
+            // Preserve the failed step before release callbacks can finalize the run.
+            (_host as MCPForUnity.Runtime.PlayScenarios.IPlayScenarioInputHost)?.ReleaseInput();
+            if (!Running)
+                return;
+            _stepObserver.Abort("Cleanup ended: " + error, now);
+            _stepReady = false;
+            CaptureFailure(now);
             _resetSnapshot = null;
             ClearStateProbe();
             State.Cursor++;
