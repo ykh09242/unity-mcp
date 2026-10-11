@@ -239,6 +239,41 @@ Resource assertions still compare explicit registrations at each iteration's exi
 No extra sampling runs during polling or report viewing. See the
 [wire contract](play-scenario-soak-contract.md) for exact fields and bounds.
 
+On a storage failure, inspect `run.json.persistence_error` when available. It identifies
+the first failed stage, exception type, bounded message and global iteration. The runner
+stops even under `continue`, preserves the original scenario failure, and exits 2. If the
+final report cannot be written, the first cause is logged and saved evidence stays incomplete.
+
+## Compare saved soak metrics
+
+Compare two completed successful same-process soaks without launching or sampling again:
+
+```sh
+unity-mcp --format json play-scenario compare-soak-metrics \
+  reports/baseline/JOB_ID reports/candidate/JOB_ID
+```
+
+Pass the actual job directories containing request, definition, process receipt, native
+checkpoint, journal, final report and client summary. The command verifies their identities,
+hashes, complete counts and natural successful process exit before comparing measurements.
+Definitions, metric options, iteration count, time limits and Unity/package versions must
+match. Build IDs, payload hashes and revision labels remain visible so different builds can
+be compared. Recorded platform/runtime fields must match when present on both sides; absent
+fields appear in `environment_unverified`, not as verified equal environments.
+
+Each metric reports aligned post-warmup sample counts, missing/invalid/unpaired observations,
+first/last/minimum/maximum, observed net change and growth per iteration. Consecutive sample
+segments receive separate intercepts in the trend calculation; gaps are never filled or
+joined into a growth streak. Net change is only the difference between the first and last
+observed values. Segment detail retains the latest 16 segments and reports the omitted count.
+Managed bytes, Unity allocated bytes and scene object counts remain separate measurements.
+
+Schema-1 output has `diagnostic_only: true`. `status: compared` and exit 0 mean that a trend
+comparison was computed for at least one metric, not that a build is leak-free or meets a
+performance budget. Check each metric's state. `insufficient_evidence` and `not_comparable`
+exit 2; missing or invalid evidence is never treated as zero growth. The command does not
+rewrite reports, force GC, query the game or create a new test run.
+
 ## Recover an incomplete session snapshot
 
 The launcher writes an immutable `session-start.json` and flushes a bounded `admissions.jsonl` entry
@@ -287,6 +322,18 @@ Importing, paging and filtering use stored snapshots only. They add no scene/pro
 file watcher or recurring refresh. Import the snapshot again to see newer persisted results. Version-2
 success claims and complete journal counters must agree; contradictory reports are rejected.
 
+Session and soak snapshot imports perform bounded file reads and validation in the background.
+Duplicate requests for the same source coalesce; changing the path cancels the previous request
+and clears its display. Refreshing the same source keeps its last successful snapshot, explicitly
+labeled stale while pending or after a failed refresh. Window close, panel detach and assembly
+reload dispose the importer; a superseded completion cannot update the selected view.
+
+Only identified sharing/locking errors or changes to already observed files receive automatic
+retries, with at most three attempts and a five-second cancellation deadline. Invalid JSON,
+encoding, schema or completed hashes fail immediately. An OS-blocked file read cannot be forcibly
+interrupted, but it cannot deliver a result to a disposed view. Retained detail/log previews are
+still bounded reads on explicit selection; they are not recurring refreshes.
+
 For continuous single-process runs, expand **Imported same-process Player soak** and open
 `soak.json` or `client-soak.json`. **Import soak snapshot** reads the bounded local evidence and shows
 the PID, counters, first failure, retained metrics and journal completeness, with 25 iterations per
@@ -307,3 +354,12 @@ missing final reports or stale/missing case receipts. Default license-free fork 
 The evidence checker validates fresh session identity, real expected positive and negative outcomes,
 report/progress hashes, build provenance and the ordinary no-define Player boundary. Logs and evidence
 are uploaded on failure as well. A compile result alone cannot satisfy this gate.
+
+The maintained cases include 50 successful same-PID iterations while an actual Editor repeatedly
+imports the live journal, plus cancellation during iteration 13 of a 20-iteration request.
+They verify background reads, main-thread delivery, multiple changing prefixes observed before
+Player exit, final snapshot/hash agreement and disposed Editor hooks. The harness owns and reaps
+both processes, including failure paths. Retain the `editor-import` NUnit result, process log,
+markers and receipt alongside native artifacts. Even when supplying prebuilt Players to
+`tools/run_play_scenario_player_e2e.py`, provide `--editor` and a prepared isolated `--project`
+under repository `.tmp` or `.unity-ci` for these actual import cases.

@@ -76,6 +76,20 @@ unstarted engine failure; it cannot prove success. A selected report with status
 succeeded cannot erase a failed soak. Release and report errors always stop
 even under continue policy.
 
+When storage fails, the runner preserves the first cause in an additive, failure-only
+`run.json.persistence_error` object when the final report can still be saved. Its fields
+are `schema_version: 1`, `stage`, `exception_type` (at most 128 UTF-16 units), `error`
+(at most 512 UTF-16 units, without splitting surrogate pairs), and `iteration` (global
+ordinal or null). Stages are `iteration_report`, `journal_append`, `checkpoint_replace`,
+`report_retention`, `journal_verify`, and `final_report`. The original scenario failure
+remains separate. Later cleanup or final-save errors cannot replace the first cause.
+
+A storage failure stops admission and prevents another append attempt, including under
+`continue`. The runner attempts the distinct final report once, but never labels an
+incomplete checkpoint complete to save it. When that final write is also unavailable,
+the process still exits 2 and logs the first bounded persistence cause. Missing final
+evidence remains incomplete; inspect preserved journal rows and the Player log.
+
 Progress schema stays 1. Its launch identity, sequence, main_loop_sequence and
 elapsed_ms are session-wide and monotonic even when engine timestamps reset.
 `iteration` is global during soak. Normal progress retains its existing meaning.

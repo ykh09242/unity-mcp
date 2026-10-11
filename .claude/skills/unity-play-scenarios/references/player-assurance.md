@@ -53,6 +53,28 @@ The append-only outcome journal and bounded summary/JUnit retain outcomes after 
 are pruned. Retention includes logs, requests and progress; do not accumulate raw reports in memory.
 Incomplete comparison arms are incomplete, not equivalent or successful.
 
+## Same-process soaks and saved metrics
+
+Use `player-soak` for 2-1,000 iterations in a single Player PID. Keep the engine's local
+iteration-1 ledger separate from global journal ordinals; skipped or unstarted iterations
+are not attempted. Persistence errors stop even under `continue` and exit 2. Inspect the
+first `persistence_error` stage/type/message/iteration in `run.json`, or the Player log when
+the final file could not be saved. Preserve the original scenario error and incomplete files;
+do not retry an append or relabel unfinished evidence successful.
+
+Use `play-scenario compare-soak-metrics BASELINE_DIRECTORY CANDIDATE_DIRECTORY` for an offline
+comparison of two actual successful job directories. It validates native/process/client proof
+and matching definition, metrics, counts, time limits and Unity/package versions. Build identities
+remain distinct provenance. Missing environment fields are explicitly unverified. Read per-metric
+states and missing/unpaired counts; gaps break trend segments. Exit 0 means at least one comparison
+was computed, not a leak verdict or budget pass. Insufficient/incompatible evidence exits 2. Do not
+launch, query or resample merely to inspect saved metrics unless further execution is in scope.
+
+Editor session/soak imports are manual background snapshots. Repeated same-source clicks coalesce;
+source changes and window lifetimes cancel delivery. A last-good same-source display is labeled
+stale during refresh/failure. Only identified file races receive at most three bounded retries;
+malformed or contradictory evidence fails. Paging adds no reads or game queries.
+
 ## Required built-Player CI
 
 Use Unity Tests `require_player_e2e:true` when actual standalone execution is required. Windows serial
@@ -61,3 +83,6 @@ prerequisites, skipped jobs, stale receipts or absent/mismatched reports fail re
 fork checks retain their explicit skip. Do not change repository variables or secrets implicitly.
 The maintained harness validates real positive/negative native cases and an ordinary no-define Player;
 keep fresh case receipts, hashes, logs and reports on failure. Compile-only checks are separate evidence.
+The maintained concurrent-import cases require an installed Editor and an isolated prepared project,
+including prebuilt-Player runs. Keep their Editor NUnit/process receipts and live-prefix observations;
+reading only a completed journal does not establish concurrent import coverage.
