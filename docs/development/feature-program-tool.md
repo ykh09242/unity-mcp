@@ -174,6 +174,107 @@ and the recovery reason. Changed frozen provenance or conflicting data stays gua
 investigation. A failure before the first guard leaves the original programs
 unchanged and permits a normal retry. An interrupted transition never labels discovery done.
 
+## Reviewed task admission and active membership
+
+After explicit phase adoption and current accepted execution scope, the current director
+may add reviewed work or amend membership of the same active human objective. Neither
+command implicitly adopts a legacy program or changes its criteria. Original report and
+planning bytes, task source sections, attempts, events and evidence remain intact. A new
+report and plan form an immutable supplemental intake; report/plan IDs must match exactly
+and be disjoint from every retained task, including case collisions. New tasks start
+`planned`, unowned, with empty attempts and fresh claim revalidation required.
+
+```shell
+python tools/feature_program.py --program-dir .work/programs/example admission-binding --input evidence/_planning/attempt-1/proposal.json
+python tools/feature_program.py --program-dir .work/programs/example task-admit --input evidence/_planning/attempt-1/intake-1.json
+python tools/feature_program.py --program-dir .work/programs/example objective-membership --input evidence/_planning/attempt-1/membership-1.json
+```
+
+`admission-binding` is read-only: it creates no lock, files or authorization. Supply the
+proposal fields below using the actual current `phase-binding.expected_revision`. The
+result supplies `before_binding`, `after_binding`, complete `units`, exact `membership`
+and the same real pre-state revision. The stable future binding includes supplemental
+source/plan content hashes and current membership revision, while excluding recording
+timestamps, history observations and relocation locators. It still includes all retained
+task definitions and paths; membership exclusion does not remove provenance units.
+
+| Proposal field | Required meaning |
+| --- | --- |
+| `schema_version`, `operation`, `id` | Version 1, `task-admit` or `objective-membership`, and a new portable transaction ID. Committed IDs cannot be reused. |
+| `program_id`, `actor_id`, `objective_id`, `reason`, `expected_revision` | Exact current program, accepted director, active objective, nonblank rationale, and current canonical registry revision. |
+| `source` | For admission: repository-relative `path`, actual byte `sha256`, exact ordered `task_ids`, authored `review_baseline` and safe `reference_base`. Keep complete expected-result and acceptance prose in the existing `### ID. Title` format. |
+| `planning` | For admission: repository-relative frozen `path` and actual byte `sha256`. The supplemental JSON contains exactly `schema_version: 1` and `tasks`; it cannot change workstreams or verification policy. |
+| `intake_authors` | For admission: explicit unique authors, all included among renewed inventory authors so none can self-review. |
+| `membership` | Exact `before` and `after` ID lists plus `added` and `removed` lists matching that delta. Every admitted ID must be newly included. Unknown, empty, duplicate and unchanged membership is rejected. |
+| `category_placements` | When categories are authored: one `{"id": "NEW-1", "category_id": "existing-leaf"}` per added task, compatible with its existing workstream. Otherwise retain workstream-root fallback. |
+| `inventory` | Optional preview convenience: `candidate_path`, actual `candidate_digest`, and explicit `inventory_authors`. Binding output then includes the deterministic `inventory_digest` for future review receipts. Actual receipt and candidate bytes are independently checked at commit. |
+
+Supplemental task metadata declares portable `id`, positive `phase`, existing `workstream`,
+nonempty `candidate_paths`, `depends_on`, `related_to`, `conflict_groups`, valid
+`required_checks`, `next_action`, nonblank `expected_result` and nonempty unique
+`acceptance_criteria`. `planning_note` is optional. Runtime keys and unsupported metadata
+are rejected. Required paths, checks, references and dependency cycles use existing
+validators; report prose remains lossless and its completeness is independently reviewed.
+
+Copy `before_binding` and `after_binding` into a new final receipt beneath
+`evidence/_planning/attempt-1/`. Add nonempty `evidence` referencing the actual independent
+findings and director decision in that directory, and a `renewal` object:
+
+```json
+{
+  "renewal": {
+    "inventory": "evidence/_phases/attempt-1/intake-1-inventory.json",
+    "review": "evidence/_phases/attempt-1/intake-1-review.json",
+    "acceptance": "evidence/_phases/attempt-1/intake-1-acceptance.json"
+  },
+  "evidence": ["evidence/_planning/attempt-1/intake-1-independent-review.md"]
+}
+```
+
+Each new phase receipt uses every field from `after_binding`, complete prospective `units`,
+the same real pre-state `expected_revision`, and `actor_id`/`reason`. Inventory adds the
+candidate path/hash and all authors. Review adds `reviewer_role: "independent"`,
+`verdict: "accepted"`, `unresolved_findings: []`, candidate hash and inventory digest.
+Acceptance adds `acceptance_complete: true`, candidate hash and inventory digest. Existing
+phase independence and evidence rules apply. Do not run standalone future phase commands
+first: the combined operation validates all three against the prospective state in memory,
+records current-time renewal observations, and publishes tasks, membership and gates once.
+These observations do not fabricate earlier persisted gate transitions. A concurrent
+runtime update needs a fresh transaction revision and refreshed final receipt; unchanged
+stable future scope can reuse its real independent review.
+
+Membership-only receipts omit source/planning/intake authors and use the same binding and
+complete-scope renewal. Changes retain goal ID, title, criteria and past major-objective
+history, appending a separate monotonic `membership_revision`/`membership_history` with
+before/after, added/removed IDs and rationale. Excluded work remains recorded and is neither
+done nor retired. New claim/submit operations reject excluded tasks for that amended goal.
+Release owned active/review/blocked work before removal; retained members cannot depend
+on an excluded unfinished prerequisite. Completion binds exact current members. After
+amendment, both the completion receipt and its independent integrated-review artifact
+require the current `membership_revision`, so removal/re-addition cannot revive old
+aggregate acceptance even when the final member IDs match an earlier revision. Missing
+criterion impact remains unknown rather than inferred.
+
+Admission preflights full validation and document budgets, rehashes frozen inputs and
+publishes under the current lock. Failure before the canonical write preserves prior
+registry bytes. A derived-render failure after commit identifies the committed revision
+and requires `render` recovery; retrying the intake must not duplicate it. Check, packet,
+snapshot and relocation resolve each task's actual original or supplemental source. Read
+snapshots report missing/drifted documents explicitly; strict checks and mutations reject
+invalid frozen bytes. Relocation preserves receipt bytes and changes current locators only.
+
+Definition changes require completed relocation/succession publication at both endpoints,
+even when ordinary successor progress is already enabled. Under the lock, bounded discovery
+reads only `SUCCESSION_INCOMPLETE.json` and `RELOCATION_INCOMPLETE.json` from safe repository
+locations, including explicit legacy paths; valid unrelated markers do not block this
+program. Dependency/generated/cache trees, private configuration trees, links/junctions
+and `Assets/Resources/GameData` are excluded. Discovery fails explicitly above 10,000
+directories, 100,000 entries or 8 MiB of marker bytes, or for a corrupt marker that cannot
+identify its endpoints. The diagnostic names the marker or budget condition to inspect;
+do not remove guards to bypass recovery. A completed successor requires matching
+`PREDECESSOR.json`/`SUCCEEDED.json` and absent incomplete guards, without requiring its
+historic registry hash after legitimate progress. Publication is rechecked before commit.
+
 ## State and review
 
 The canonical `backlog.json` stores complete imported task prose, hashes, planning metadata,

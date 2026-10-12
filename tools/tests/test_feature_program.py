@@ -600,6 +600,36 @@ def test_atomic_write_failure_preserves_previous_bytes(
     assert not list(target.parent.glob(".backlog.json.*"))
 
 
+def test_save_preflights_derived_document_budget_before_registry_write(
+    fixture: Fixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given an unchanged canonical registry and oversized generated output.
+    before = fixture.program.path("backlog.json").read_bytes()
+    state = fixture.program.load()
+
+    def oversized(_program: fp.Program, _state: fp.Record) -> dict[str, str]:
+        return {"BOARD.md": "x" * (8 * 1024 * 1024 + 1)}
+
+    monkeypatch.setattr(fp.Program, "views", oversized)
+    # When a save tries to publish beyond the document budget.
+    with pytest.raises(fp.ProgramError, match="Derived document exceeds"):
+        fixture.program.save(state)
+    # Then no canonical state was replaced.
+    assert fixture.program.path("backlog.json").read_bytes() == before
+
+
+def test_save_rejects_oversized_registry_before_publication(fixture: Fixture) -> None:
+    # Given valid existing history and an oversized pending runtime observation.
+    before = fixture.program.path("backlog.json").read_bytes()
+    state = fixture.program.load()
+    fixture.program.event(state, "observation", {"reason": "x" * (8 * 1024 * 1024)})
+    # When a save exceeds the canonical registry byte limit.
+    with pytest.raises(fp.ProgramError, match="Canonical registry exceeds"):
+        fixture.program.save(state)
+    # Then the original bounded registry remains intact.
+    assert fixture.program.path("backlog.json").read_bytes() == before
+
+
 def test_cross_process_lock_contention_cannot_lose_writes(fixture: Fixture) -> None:
     script = (
         "import sys; from pathlib import Path; "

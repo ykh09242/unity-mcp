@@ -17,6 +17,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+from types import ModuleType
 from typing import Final, Literal, TYPE_CHECKING, assert_never
 
 if __package__:
@@ -73,18 +74,19 @@ def planning_binding(state: Record) -> Record:
     require(goal is not None, "Phase gates require a recorded current objective")
     tasks = _tasks(state)
     definitions = _definitions(state)
+    declared: Record = {
+        "tasks": definitions,
+        "workstreams": state.get("workstreams"),
+        "verification_policy_sha256": state.get("verification_policy_sha256"),
+    }
+    if state.get("source_intakes") or goal.get("membership_revision") is not None:
+        declared["categories"] = state.get("categories")
     return {
         "program_id": state["program_id"],
         "objective_id": goal["id"],
         "objective_digest": revision(goal),
-        "task_definition_digest": revision(
-            {
-                "tasks": definitions,
-                "workstreams": state.get("workstreams"),
-                "verification_policy_sha256": state.get("verification_policy_sha256"),
-            }
-        ),
-        "planning_digest": state.get("planning_sha256"),
+        "task_definition_digest": revision(declared),
+        "planning_digest": _planning().planning_digest(state),
         "task_ids": sorted(tasks),
     }
 
@@ -189,12 +191,26 @@ def _verify_planning(program: Program, state: Record, name: str) -> None:
         == state.get("planning_sha256"),
         "Stale frozen planning input digest",
     )
+    _planning().verify_planning(program, state)
 
 
-def guard_execution(program: Program, state: Record, task_id: str, scope: list[str]) -> None:
+def guard_execution(
+    program: Program,
+    state: Record,
+    task_id: str,
+    scope: list[str],
+    *,
+    membership_check: bool = True,
+) -> None:
     """Enforce gates inside claim/submit themselves, including direct API callers."""
     if state.get("phases") is None:
         return
+    goal = coordination._record(state.get("objective"), "objective")
+    if membership_check and goal.get("membership_revision") is not None:
+        require(
+            task_id in coordination._texts(goal.get("task_ids"), "members"),
+            "Task is excluded from amended current objective",
+        )
     program.require_current_location()
     phases = _current(program, state)
     inventory = coordination._record(phases.get("inventory"), "inventory")
@@ -234,31 +250,87 @@ class PhaseInput:
     refs: list[Json]
 
 
+def _planning() -> ModuleType:
+    if __package__:
+        from tools import feature_program_planning
+    else:
+        import feature_program_planning
+    return feature_program_planning
+
+
+def prepare(
+    program: Program, state: Record, command: PhaseCommand, name: str, expected_revision: str
+) -> PhaseInput:
+    """Capture one real bound receipt for standalone or prospective phase transitions."""
+    receipt, refs = program.frozen_json("_phases", 1, name)
+    require(
+        receipt.get("expected_revision") == expected_revision, "Stale expected registry revision"
+    )
+    require(
+        all(receipt.get(key) == value for key, value in planning_binding(state).items()),
+        "Stale objective/task-definition/planning binding",
+    )
+    coordination._text(receipt.get("reason"), "phase reason")
+    coordination._text(receipt.get("actor_id"), "phase actor")
+    require(
+        coordination.current_director_id(state) is not None,
+        "Phase gates require an appointed current director",
+    )
+    if receipt.get("evidence"):
+        refs += program.evidence(
+            "_phases", 1, coordination._texts(receipt["evidence"], "phase evidence")
+        )
+    return PhaseInput(command, name, receipt, refs)
+
+
+def renew(
+    program: Program,
+    state: Record,
+    renewal: Record,
+    expected_revision: str,
+    intake_authors: list[str],
+) -> None:
+    """Validate reviewed future scope without fabricating persisted intermediate states."""
+    for command, key in (
+        ("inventory-freeze", "inventory"),
+        ("candidate-review", "review"),
+        ("execution-accept", "acceptance"),
+    ):
+        name = coordination._relative(renewal.get(key))
+        transition = prepare(program, state, command, name, expected_revision)
+        if key == "inventory":
+            require(
+                set(intake_authors)
+                <= set(
+                    coordination._texts(
+                        transition.receipt.get("inventory_authors"), "inventory authors"
+                    )
+                ),
+                "Renewal must identify all intake authors",
+            )
+        _apply(program, state, transition)
+        coordination._record(state["phases"], "phases")["history"][-1]["transaction"] = (
+            "prospective-renewal"
+        )
+    first = next(iter(_tasks(state)))
+    guard_execution(
+        program,
+        state,
+        first,
+        coordination._texts(_tasks(state)[first]["candidate_paths"], "paths"),
+        membership_check=False,
+    )
+
+
 def apply_command(program: Program, state: Record, args: argparse.Namespace) -> bool:
     """Apply one bound receipt while the caller holds the canonical program lock."""
     if args.command not in COMMANDS:
         return False
     program.require_current_location()
-    receipt, refs = program.frozen_json("_phases", 1, args.input)
-    require(receipt.get("expected_revision") == revision(state), "Stale expected registry revision")
-    current = planning_binding(state)
-    require(
-        all(receipt.get(key) == value for key, value in current.items()),
-        "Stale objective/task-definition/planning binding",
-    )
-    coordination._text(receipt.get("reason"), "phase reason")
-    actor = coordination._text(receipt.get("actor_id"), "phase actor")
-    director = coordination.current_director_id(state)
-    require(director is not None, "Phase gates require an appointed current director")
-    refs += (
-        program.evidence(
-            "_phases", 1, coordination._texts(receipt.get("evidence", []), "phase evidence")
-        )
-        if receipt.get("evidence")
-        else []
-    )
+    transition = prepare(program, state, args.command, args.input, revision(state))
+    receipt, refs = transition.receipt, transition.refs
+    actor = receipt["actor_id"]
     proposal = deepcopy(state)
-    transition = PhaseInput(args.command, args.input, receipt, refs)
     _apply(program, proposal, transition)
     program.event(
         proposal,
@@ -500,7 +572,7 @@ def _succession_contract(state: Record) -> str:
             "program_id": state["program_id"],
             "baseline_head": state["baseline_head"],
             "source": state["source"],
-            "planning_sha256": state["planning_sha256"],
+            "planning_sha256": _planning().planning_digest(state),
             "tasks": _definitions(state),
             "workstreams": state["workstreams"],
             "verification_policy_sha256": state.get("verification_policy_sha256"),

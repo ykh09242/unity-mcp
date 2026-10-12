@@ -20,7 +20,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from typing import Final, Iterator, TypeAlias
+from typing import Callable, Final, Iterator, TypeAlias
 
 # Extensions lazily import core helpers. Reuse this entrypoint module so rejected
 # input has the same ProgramError identity under script, module and imported runs.
@@ -31,10 +31,12 @@ if __name__ == "__main__":
 if __package__:
     import tools.feature_program_coordination as coordination
     import tools.feature_program_phases as phases
+    import tools.feature_program_planning as planning
     import tools.feature_program_questions as questions
 else:
     import feature_program_coordination as coordination
     import feature_program_phases as phases
+    import feature_program_planning as planning
     import feature_program_questions as questions
 
 
@@ -505,32 +507,19 @@ class Program:
         self.validate(state)
         return state
 
-    def validate(self, state: Record, verify_artifacts: bool = True) -> None:
+    def validate(
+        self, state: Record, verify_artifacts: bool = True, *, prospective: bool = False
+    ) -> None:
         budget = ReadBudget() if verify_artifacts else None
         require(state.get("schema_version") == 1, "Unsupported registry")
         string(state.get("program_id"), "program_id")
         communication_language(state.get("communication_language"))
-        report_source = record(state.get("source"), "report source")
-        source_path = safe_path(self.repo, string(report_source.get("path"), "source path"))
-        if verify_artifacts:
-            raw_source = budget.read(source_path, 8 * 1024 * 1024)
-            require(
-                sha(raw_source) == report_source.get("sha256"),
-                "Original report drifted; do not reset progress",
+        try:
+            sections = planning.source_sections(
+                self, state, verify_artifacts, budget, prospective=prospective
             )
-            sections = extract_sections(raw_source)
-        else:
-            sections = {
-                string(record(value, "task").get("id"), "task ID"): record(
-                    record(value, "task").get("source"), "section"
-                )
-                for value in sequence(state.get("tasks"), "tasks")
-            }
-        if "task_ids" in report_source:
-            require(
-                set(strings(report_source["task_ids"], "frozen task IDs")) == set(sections),
-                "Frozen source task identities drifted",
-            )
+        except (planning.PlanningError, coordination.GovernanceError) as exc:
+            raise ProgramError(str(exc)) from exc
         tasks = sequence(state.get("tasks"), "tasks")
         require(len(tasks) <= 2000, "Registry exceeds 2000 tasks")
         by_id = {
@@ -680,6 +669,7 @@ class Program:
             self.verify_refs(coordination.evidence_references(state), budget)
             self.verify_refs(questions.evidence_references(state), budget)
             self.verify_refs(phases.evidence_references(state), budget)
+            self.verify_refs(planning.evidence_references(state), budget)
 
     def verify_terminal(
         self, task: Record, attempt: Record, budget: ReadBudget | None = None
@@ -869,12 +859,7 @@ class Program:
         return state
 
     def check(self, state: Record) -> None:
-        source = record(state["source"], "source")
-        raw = bounded_bytes(
-            safe_path(self.repo, string(source["path"], "source path")), 8 * 1024 * 1024
-        )
-        require(sha(raw) == source["sha256"], "Original report drifted; do not reset progress")
-        sections = extract_sections(raw)
+        sections = planning.source_sections(self, state, True, ReadBudget())
         for value in sequence(state["tasks"], "tasks"):
             task = record(value, "task")
             require(
@@ -1348,7 +1333,7 @@ class Program:
         )
 
     def packet(self, state: Record, task: Record) -> str:
-        source = record(state["source"], "source")
+        source = planning.source_for_task(state, task)
         section = record(task["source"], "section")
         attempt = self.current_attempt(task) if sequence(task["attempts"], "attempts") else None
         metadata = {
@@ -1465,7 +1450,7 @@ class Program:
         result.update({f"tasks/{task['id']}.md": self.packet(state, task) for task in tasks})
         return result
 
-    def save(self, state: Record) -> None:
+    def save(self, state: Record, *, before_publish: Callable[[], None] | None = None) -> None:
         self.require_current_location()
         self.validate(state)
         encoded = canonical(state)
@@ -1473,8 +1458,20 @@ class Program:
             len(encoded) <= 8 * 1024 * 1024,
             "Canonical registry exceeds 8 MiB; existing state preserved",
         )
+        derived = self.views(state)
+        require(
+            all(len(text.encode("utf-8")) <= 8 * 1024 * 1024 for text in derived.values()),
+            "Derived document exceeds 8 MiB; existing state preserved",
+        )
+        if before_publish is not None:
+            before_publish()
         atomic_write(self.path("backlog.json"), encoded)
-        self.render(state)
+        try:
+            self.render(state)
+        except (OSError, ProgramError) as exc:
+            raise ProgramError(
+                f"Registry committed at revision {sha(encoded)}; derived rendering failed. Run render to recover views: {exc}"
+            ) from exc
 
     def render(self, state: Record) -> None:
         for name, text in self.views(state).items():
@@ -1675,34 +1672,23 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
     require(len(tasks) <= 2000, "Snapshot exceeds 2000 tasks")
     try:
         program.validate(state, verify_artifacts=False)
-    except (coordination.GovernanceError, phases.PhaseError, questions.QuestionError) as exc:
+    except (
+        coordination.GovernanceError,
+        phases.PhaseError,
+        planning.PlanningError,
+        questions.QuestionError,
+    ) as exc:
         raise ProgramError(str(exc)) from exc
-    warnings: list[str] = []
-    source = record(state["source"], "source")
-    source_path = safe_path(repo, string(source["path"], "source path"))
-    if not source_path.is_file():
-        warnings.append("Original source is unavailable; displaying frozen recorded prose.")
-    else:
-        require(source_path.stat().st_size <= 8 * 1024 * 1024, "Snapshot source exceeds 8 MiB")
-        source_bytes = bounded_bytes(source_path, 8 * 1024 * 1024)
-        if sha(source_bytes) != source["sha256"]:
-            warnings.append("Original source drifted; displaying frozen recorded prose.")
-        else:
-            frozen_sections = extract_sections(
-                source_bytes, [string(task["id"], "task ID") for task in tasks]
-            )
-            require(
-                all(
-                    task["source"] == frozen_sections[string(task["id"], "task ID")]
-                    for task in tasks
-                ),
-                "Frozen source sections do not match the unchanged original report",
-            )
+    try:
+        warnings = planning.observe_sources(program, state)
+    except planning.PlanningError as exc:
+        raise ProgramError(str(exc)) from exc
     refs: dict[str, str] = {}
     all_refs = (
         list(coordination.evidence_references(state))
         + list(questions.evidence_references(state))
         + phases.evidence_references(state)
+        + planning.evidence_references(state)
     )
     for task in tasks:
         for value in sequence(task["attempts"], "attempts"):
@@ -1747,6 +1733,7 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
     result_tasks: list[Json] = []
     for task in tasks:
         section = record(task["source"], "source section")
+        source = planning.source_for_task(state, task)
         item: Record = {
             key: task[key]
             for key in (
@@ -1772,6 +1759,8 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
                     **section,
                     "path": source["path"],
                     "reference_base": source["reference_base"],
+                    "review_baseline": source["review_baseline"],
+                    "source_intake_id": task.get("source_intake_id"),
                 },
                 "delivery": program.current_delivery(task)
                 if task["status"] == "done"
@@ -1861,6 +1850,8 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
         "tasks": result_tasks,
         **governance,
         "questions": questions.snapshot_questions(state),
+        "source_intakes": state.get("source_intakes", []),
+        "amendments": state.get("amendments", []),
     }
     require(len(canonical(result)) <= 8 * 1024 * 1024, "Snapshot output exceeds 8 MiB")
     return result
@@ -1935,6 +1926,7 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
         )
         old_root = string(marker["source"], "old root")
         new_root = string(marker["destination"], "new root")
+        planning.remap_sources(state, old_root, new_root)
         source = record(state["source"], "source")
         old_source = dict(source)
         for key in ("path", "reference_base"):
@@ -2317,6 +2309,7 @@ def parser() -> argparse.ArgumentParser:
     questions.add_commands(commands)
     coordination.add_commands(commands)
     phases.add_commands(commands)
+    planning.add_commands(commands)
     return result
 
 
@@ -2334,6 +2327,11 @@ def main(argv: list[str] | None = None) -> int:
         program = Program(repo, safe_path(repo, relative_program))
         if args.command == "snapshot":
             print(canonical(read_snapshot(repo, program.directory)).decode(), end="")
+            return 0
+        if args.command == "admission-binding":
+            state = program.load()
+            receipt = read_json(program.path(args.input))
+            print(canonical(planning.preview(program, state, receipt)).decode(), end="")
             return 0
         if args.command == "starter":
             with program.lock():
@@ -2376,6 +2374,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         with program.lock():
             state = program.initialize(args) if args.command == "init" else program.load()
+            if planning.execute(program, state, args):
+                print(f"{args.command}: OK; committed revision {phases.revision(state)}")
+                return 0
             if (
                 phases.apply_command(program, state, args)
                 or questions.apply_command(program, state, args)
@@ -2453,6 +2454,7 @@ def main(argv: list[str] | None = None) -> int:
         ProgramError,
         coordination.GovernanceError,
         phases.PhaseError,
+        planning.PlanningError,
         questions.QuestionError,
         OSError,
     ) as exc:

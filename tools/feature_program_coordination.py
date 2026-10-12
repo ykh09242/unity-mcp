@@ -935,6 +935,7 @@ def objective_contract(state: Record) -> Record | None:
         "completed_at",
         "evidence",
         "integrated_review_ref",
+        "membership_history",
     }
     return {key: deepcopy(value) for key, value in goal.items() if key not in progress}
 
@@ -957,6 +958,7 @@ def _validate_objective(value: Json, task_ids: set[str]) -> None:
             bool(members) and len(members) == len(set(members)) and set(members) <= task_ids,
             "Objective needs explicit unique known task membership",
         )
+        _validate_membership(entry)
         status = _choice(
             entry.get("status"),
             {"active", "director_review", "awaiting_next_goal"},
@@ -983,6 +985,106 @@ def _validate_objective(value: Json, task_ids: set[str]) -> None:
                 in _items(entry["evidence"], "completion evidence"),
                 "Objective completion lacks frozen integrated review",
             )
+
+
+def _validate_membership(goal: Record) -> None:
+    """Reconstruct amendment history instead of trusting redundant current member lists."""
+    if "membership_revision" not in goal:
+        _require("membership_history" not in goal, "Membership history lacks revision")
+        return
+    history = _items(goal.get("membership_history"), "membership history")
+    revision = goal.get("membership_revision")
+    _require(
+        type(revision) is int and revision > 0 and len(history) == revision + 1,
+        "Invalid membership revision history",
+    )
+    previous: list[str] | None = None
+    for number, value in enumerate(history):
+        entry = _record(value, "membership revision")
+        _require(entry.get("revision") == number, "Nonmonotonic membership history")
+        before = _texts(entry.get("before"), "before membership")
+        after = _texts(entry.get("after"), "after membership")
+        _require(
+            bool(after) and len(after) == len(set(after)), "Invalid membership history members"
+        )
+        _require(previous is None or before == previous, "Membership history chain changed")
+        _require(
+            set(_texts(entry.get("added"), "added IDs")) == set(after) - set(before)
+            and set(_texts(entry.get("removed"), "removed IDs")) == set(before) - set(after),
+            "Membership history delta mismatch",
+        )
+        if number == 0:
+            _require(before == after, "Membership baseline must preserve original members")
+        else:
+            _text(entry.get("amendment_id"), "membership amendment ID")
+            _text(entry.get("actor_id"), "membership actor")
+            _text(entry.get("reason"), "membership reason")
+            _timestamp(entry.get("recorded_at"), "membership recording timestamp")
+        previous = after
+    _require(
+        previous == _texts(goal["task_ids"], "current members"),
+        "Current membership differs from revision history",
+    )
+
+
+def amend_membership(state: Record, receipt: Record, admitted: list[str]) -> None:
+    """Amend the same active goal, preserving its human criteria and major history."""
+    goal = _record(state.get("objective"), "objective")
+    membership = _record(receipt.get("membership"), "membership amendment")
+    before = _texts(membership.get("before"), "before members")
+    after = _texts(membership.get("after"), "after members")
+    added = _texts(membership.get("added"), "added members")
+    removed = _texts(membership.get("removed"), "removed members")
+    tasks = _indexed(state["tasks"], "task")
+    _require(before == _texts(goal["task_ids"], "current members"), "Stale objective membership")
+    _require(
+        bool(after) and len(after) == len(set(after)) and set(after) <= set(tasks),
+        "Membership needs exact unique known nonempty IDs",
+    )
+    _require(
+        set(added) == set(after) - set(before) and set(removed) == set(before) - set(after),
+        "Membership delta mismatch",
+    )
+    _require(
+        bool(added or removed) and set(admitted) <= set(added),
+        "Amendment must change membership and include every admitted task",
+    )
+    for task_id in removed:
+        _require(
+            tasks[task_id].get("owner") is None
+            and tasks[task_id].get("status") not in {"active", "blocked", "review"},
+            "Release owned work before removing membership",
+        )
+    for task_id in after:
+        for dependency in _texts(tasks[task_id]["depends_on"], "dependencies"):
+            _require(
+                dependency in after or tasks.get(dependency, {}).get("status") == "done",
+                "Current member depends on excluded unfinished prerequisite",
+            )
+    history = _items(
+        goal.setdefault(
+            "membership_history",
+            [{"revision": 0, "before": before, "after": before, "added": [], "removed": []}],
+        ),
+        "membership history",
+    )
+    revision = goal.get("membership_revision", 0)
+    _require(type(revision) is int and revision >= 0, "Invalid current membership revision")
+    revision += 1
+    history.append(
+        {
+            "revision": revision,
+            "before": before,
+            "after": after,
+            "added": added,
+            "removed": removed,
+            "amendment_id": receipt["id"],
+            "actor_id": receipt["actor_id"],
+            "reason": receipt["reason"],
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    goal.update({"task_ids": after, "membership_revision": revision})
 
 
 def _objective_record(state: Record, receipt: Record) -> None:
@@ -1038,6 +1140,11 @@ def _objective_complete(
         "Only current final director decides objective completion",
     )
     _require(receipt.get("objective_id") == goal.get("id"), "Objective identity mismatch")
+    if "membership_revision" in goal:
+        _require(
+            receipt.get("membership_revision") == goal["membership_revision"],
+            "Completion membership revision is stale",
+        )
     _fresh(program, receipt)
     _text(receipt.get("summary"), "completion decision summary")
     _require(receipt.get("unresolved_findings") == [], "Objective has unresolved findings")
@@ -1178,6 +1285,11 @@ def _integrated_review(
     name = _relative(receipt.get("integrated_review"))
     review, parsed_hash = _load(program, name)
     _require(review.get("objective_id") == goal["id"], "Integrated review objective mismatch")
+    if "membership_revision" in goal:
+        _require(
+            review.get("membership_revision") == goal["membership_revision"],
+            "Integrated review membership revision is stale",
+        )
     _require(
         _fresh(program, review) == _binding_fields(receipt)
         and review["source_head"] == receipt["source_head"]
