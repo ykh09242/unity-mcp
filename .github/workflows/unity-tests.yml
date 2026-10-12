@@ -80,6 +80,7 @@ on:
       - tools/unity_ci.py
       - tools/unity-ci/**
       - tools/unity_ci_packages.py
+      - tools/unity_ci_package_cache.py
       - tools/unity-ci-packages.json
       - tools/unity-optional-tests.json
   # Same-repo PRs get a unity-tests status check on every open / push via this trigger
@@ -118,6 +119,7 @@ on:
       - tools/unity_ci.py
       - tools/unity-ci/**
       - tools/unity_ci_packages.py
+      - tools/unity_ci_package_cache.py
       - tools/unity-ci-packages.json
       - tools/unity-optional-tests.json
 

@@ -176,6 +176,27 @@ def test_matrix_and_package_policy_changes_trigger_unity_validation(name, path):
         assert any(fnmatchcase(path, pattern) for pattern in triggers[event]["paths"])
 
 
+@pytest.mark.parametrize(
+    "name,path",
+    [
+        ("unity-tests.yml", "tools/unity_ci_package_cache.py"),
+        ("unity-tests.yml", "tools/unity-optional-tests.json"),
+        ("python-tests.yml", "tools/unity_ci_package_cache.py"),
+        ("python-tests.yml", "tools/tests/test_unity_ci_packages.py"),
+        ("python-tests.yml", "tools/tests/test_unity_matrix_workflows.py"),
+    ],
+)
+def test_optional_package_inputs_and_contracts_trigger_relevant_validation(name, path):
+    # Given an optional-package helper, reviewed suite policy or its direct contract tests.
+    config = workflow(name)
+    triggers = config.get("on", config.get(True))
+    # When that file alone changes on a push or pull request.
+    for event in ("push", "pull_request"):
+        selected = any(fnmatchcase(path, pattern) for pattern in triggers[event]["paths"])
+        # Then the relevant validation workflow's path filter selects it.
+        assert selected, (name, event, path)
+
+
 def test_licensed_jobs_keep_license_gate_and_isolate_version_caches():
     job = workflow("unity-tests.yml")["jobs"]["testAllModes"]
     assert job["if"] == "needs.license.outputs.unity_ok == 'true'"
