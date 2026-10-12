@@ -448,6 +448,23 @@ def test_remote_publication_marker_blocks_only_related_amendment(
             {fields[0]: "other-endpoint", fields[1]: "discovery" if related else "unrelated"}
         )
     )
+    source = fp.Program(gate.program.repo, path.parent)
+    destination = (
+        gate.program if related else fp.Program(gate.program.repo, gate.program.repo / "unrelated")
+    )
+    marker = {
+        "predecessor_id": "other",
+        "successor_id": "discovery" if related else "unrelated",
+        "program_id": "other",
+    }
+    with source.lock(publication_recovery=True):
+        fp.planning.publication_register(
+            source,
+            "succession" if marker_name == "SUCCESSION_INCOMPLETE.json" else "relocation",
+            marker,
+            destination,
+            legacy_observed=True,
+        )
     before = gate.program.path("backlog.json").read_bytes()
     assert gate.fixture.run("task-admit", "--input", name) == (1 if related else 0)
     if related:
@@ -761,7 +778,7 @@ def test_publication_discovery_does_not_read_excluded_trees(gate: GateFixture, p
     assert gate.fixture.run("task-admit", "--input", name) == 0
 
 
-def test_corrupt_marker_has_actionable_fail_closed_diagnostic(
+def test_unrelated_corrupt_marker_is_not_opened(
     gate: GateFixture, capsys: pytest.CaptureFixture[str]
 ) -> None:
     gate.ready()
@@ -771,23 +788,21 @@ def test_corrupt_marker_has_actionable_fail_closed_diagnostic(
     path.write_text("broken JSON", encoding="utf-8")
     before = gate.program.path("backlog.json").read_bytes()
     capsys.readouterr()
-    assert gate.fixture.run("task-admit", "--input", name) == 1
-    assert "unrelated/RELOCATION_INCOMPLETE.json" in capsys.readouterr().err
-    assert gate.program.path("backlog.json").read_bytes() == before
+    assert gate.fixture.run("task-admit", "--input", name) == 0
+    assert gate.program.path("backlog.json").read_bytes() != before
 
 
-def test_publication_discovery_budget_rejects_without_registry_change(
+def test_publication_ledger_record_budget_rejects_without_registry_change(
     gate: GateFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     gate.ready()
     name, _ = reviewed_input(gate)
     before = gate.program.path("backlog.json").read_bytes()
 
-    def overflow(_root: Path, **kwargs):
-        for _index in range(10001):
-            yield str(gate.program.repo), [], []
-
-    monkeypatch.setattr(fp.planning.os, "walk", overflow)
+    store = fp.planning.PublicationStore(gate.program.repo)
+    ledger = store.load()
+    ledger["active"] = [{}] * 4097
+    store.path("ledger.json").write_bytes(fp.canonical(ledger))
     assert gate.fixture.run("task-admit", "--input", name) == 1
     assert gate.program.path("backlog.json").read_bytes() == before
 
@@ -1018,3 +1033,613 @@ def test_runtime_and_implementation_progress_preserves_new_gate_binding(gate: Ga
     gate.fixture.submit("S03")
     assert fp.phases.planning_binding(gate.program.load()) == bound
     assert gate.fixture.run("check") == 0
+
+
+def publication_decision(gate: GateFixture, fields: fp.Record) -> str:
+    state = gate.program.load()
+    store = fp.planning.PublicationStore(gate.program.repo)
+    receipt: fp.Record = {
+        "schema_version": 1,
+        "program_id": state["program_id"],
+        "actor_id": "director",
+        "expected_revision": fp.phases.revision(state),
+        "ledger_revision": fp.phases.revision(store.load()),
+        "binding": fp.phases.planning_binding(state),
+        "reason": "Explicit synthetic publication reconciliation",
+        "inventory_authors": ["author", "director"],
+        **fields,
+    }
+    digest = (
+        fp.phases.revision(
+            {
+                "inventory": receipt["inventory"],
+                "uninspected_artifacts": receipt.get("uninspected_artifacts", []),
+            }
+        )
+        if "inventory" in receipt
+        else fp.phases.revision(receipt)
+    )
+    receipt["review"] = gate.fixture.write(
+        "evidence/_publications/attempt-1/review.json",
+        {
+            "program_id": state["program_id"],
+            "binding": receipt["binding"],
+            "inventory_digest": digest,
+            "reviewer": "reviewer",
+            "reviewer_role": "independent",
+            "verdict": "accepted",
+            "unresolved_findings": [],
+        },
+    )
+    evidence = "evidence/_publications/attempt-1/inspection.md"
+    gate.program.path(evidence).write_text(
+        "Synthetic actual named-endpoint observations and explicit exclusions.\n", encoding="utf-8"
+    )
+    receipt["evidence"] = [evidence]
+    return gate.fixture.write("evidence/_publications/attempt-1/decision.json", receipt)
+
+
+def test_legacy_tracking_adoption_is_explicit_and_never_recurses(
+    gate: GateFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given an existing untracked accepted registry and unavailable unrelated historical artifacts.
+    gate.ready()
+    gate.program.path(fp.planning.TRACKING).unlink()
+    admission, _ = reviewed_input(gate)
+    assert gate.fixture.run("task-admit", "--input", admission) == 1
+    before = gate.program.path("backlog.json").read_bytes()
+    name = publication_decision(
+        gate,
+        {
+            "inventory": fp.planning.inspect_publication_inventory(
+                gate.program, gate.program.load(), ["discovery"]
+            ),
+            "obsolete_writers_quiesced": True,
+            "uninspected_artifacts": [
+                {
+                    "path": ".omo/unreadable-historical",
+                    "reason": "Not inspected; known unrelated synthetic artifacts",
+                }
+            ],
+        },
+    )
+
+    def no_walk(*args, **kwargs):
+        raise PermissionError("Unrelated historical cache cannot be traversed")
+
+    monkeypatch.setattr(fp.planning.os, "walk", no_walk)
+    # When the current director explicitly adopts the independently reviewed finite inventory.
+    assert gate.fixture.run("publication-adopt", "--input", name) == 0
+    # Then no runtime registry bytes are changed, and admission needs no repository walk.
+    assert gate.program.path("backlog.json").read_bytes() == before
+    assert gate.fixture.run("task-admit", "--input", admission) == 0
+    assert fp.read_json(gate.program.path(fp.planning.TRACKING))["mode"] == "legacy-adopted"
+
+
+@pytest.mark.parametrize(
+    "fault", ["revision", "director", "self-review", "inventory", "quiescence", "related-exclusion"]
+)
+def test_legacy_tracking_adoption_rejects_unverified_scope(gate: GateFixture, fault: str) -> None:
+    gate.ready()
+    gate.program.path(fp.planning.TRACKING).unlink()
+    name = publication_decision(
+        gate,
+        {
+            "inventory": fp.planning.inspect_publication_inventory(
+                gate.program, gate.program.load(), ["discovery"]
+            ),
+            "obsolete_writers_quiesced": True,
+        },
+    )
+    receipt = fp.read_json(gate.program.path(name))
+    if fault == "revision":
+        receipt["expected_revision"] = "0" * 64
+    elif fault == "director":
+        receipt["actor_id"] = "worker"
+    elif fault == "inventory":
+        receipt["inventory"] = {}
+    elif fault == "quiescence":
+        receipt["obsolete_writers_quiesced"] = False
+    elif fault == "related-exclusion":
+        receipt["uninspected_artifacts"] = [
+            {"path": "discovery", "reason": "Invalid related exclusion"}
+        ]
+    else:
+        review = fp.read_json(gate.program.path(receipt["review"]))
+        review["reviewer"] = "director"
+        gate.fixture.write(receipt["review"], review)
+    gate.fixture.write(name, receipt)
+    before = gate.program.path("backlog.json").read_bytes()
+    assert gate.fixture.run("publication-adopt", "--input", name) == 1
+    assert gate.program.path("backlog.json").read_bytes() == before
+    assert not gate.program.path(fp.planning.TRACKING).exists()
+
+
+@pytest.mark.parametrize(
+    "stage", ["registered", "publishing", "receipt", "complete", "completion-receipt"]
+)
+def test_central_succession_crashes_block_both_endpoints_and_recover(
+    gate: GateFixture, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    gate.ready()
+    predecessor = GateFixture(create_program(gate.program.repo, "predecessor"))
+    before = predecessor.program.path("backlog.json").read_bytes()
+    store = fp.planning.PublicationStore(gate.program.repo)
+    original_write = fp.atomic_write
+
+    def interrupted(path: Path, content: bytes) -> None:
+        if path == store.path("ledger.json"):
+            value = json.loads(content)
+            active = value["active"]
+            if (
+                (stage == "registered" and active and active[-1]["stage"] == "registered")
+                or (stage == "publishing" and active and active[-1]["stage"] == "publishing")
+                or (stage == "complete" and not active and value["history"])
+            ):
+                raise OSError("Injected central ledger interruption")
+        if stage == "receipt" and path.name == "registered.json":
+            raise OSError("Injected pre-ledger receipt interruption")
+        if stage == "completion-receipt" and path.name == "completed.json":
+            raise OSError("Injected immutable completion interruption")
+        original_write(path, content)
+
+    args = [
+        "program-succeed",
+        "--successor",
+        "discovery",
+        "--successor-id",
+        "discovery",
+        "--expected-revision",
+        fp.phases.revision(predecessor.program.load()),
+        "--successor-revision",
+        fp.phases.revision(gate.program.load()),
+        "--owner",
+        "leader",
+        "--reason",
+        "Reviewed synthetic succession",
+    ]
+    with monkeypatch.context() as scoped:
+        scoped.setattr(fp, "atomic_write", interrupted)
+        assert predecessor.fixture.run(*args) == 1
+    ledger = store.load()
+    assert predecessor.program.path("backlog.json").read_bytes() == before
+    if stage in {"registered", "receipt"}:
+        assert not ledger["active"]
+        assert not predecessor.program.path("SUCCESSION_INCOMPLETE.json").exists()
+        assert predecessor.fixture.run(*args) == 0
+    else:
+        assert ledger["active"]
+        for endpoint in (gate, predecessor):
+            state = fp.read_json(endpoint.program.path("backlog.json"))
+            with pytest.raises((fp.ProgramError, fp.planning.PlanningError, fp.phases.PhaseError)):
+                fp.planning.require_completed_publication(endpoint.program, state)
+        assert gate.fixture.claim() == 0
+        assert (
+            predecessor.fixture.run(
+                "program-succeed-recover",
+                "--owner",
+                "leader",
+                "--reason",
+                "Finish exact central operation",
+            )
+            == 0
+        )
+        assert not store.load()["active"]
+        assert predecessor.program.path("backlog.json").read_bytes() == before
+
+
+def test_registered_orphan_cancellation_preserves_runtime_progress(gate: GateFixture) -> None:
+    gate.ready()
+    target = fp.Program(gate.program.repo, gate.program.repo / "absent")
+    marker = {
+        "program_id": "discovery",
+        "source": "discovery",
+        "destination": "absent",
+        "original_registry_sha256": fp.sha(gate.program.path("backlog.json").read_bytes()),
+    }
+    with gate.program.lock():
+        identifier = fp.planning.publication_register(gate.program, "relocation", marker, target)
+    assert gate.fixture.claim() == 0
+    before = gate.program.path("backlog.json").read_bytes()
+    name = publication_decision(gate, {"action": "cancel-registration", "operation_id": identifier})
+    assert gate.fixture.run("publication-reconcile", "--input", name) == 0
+    assert gate.program.path("backlog.json").read_bytes() == before
+    assert (
+        fp.planning.PublicationStore(gate.program.repo).load()["history"][-1]["stage"]
+        == "cancelled"
+    )
+
+
+def test_started_publication_cannot_use_registration_cancellation(gate: GateFixture) -> None:
+    gate.ready()
+    target = fp.Program(gate.program.repo, gate.program.repo / "absent")
+    with gate.program.lock():
+        identifier = fp.planning.publication_register(
+            gate.program, "relocation", {"program_id": "discovery"}, target
+        )
+        fp.planning.publication_begin(gate.program, identifier)
+    name = publication_decision(gate, {"action": "cancel-registration", "operation_id": identifier})
+    assert gate.fixture.run("publication-reconcile", "--input", name) == 1
+    assert fp.planning.PublicationStore(gate.program.repo).load()["active"]
+
+
+def test_failed_copy_retry_supersession_preserves_markers_and_allows_new_location(
+    gate: GateFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate.ready()
+    original_write = fp.atomic_write
+    failed = fp.Program(gate.program.repo, gate.program.repo / "failed-copy")
+
+    def interrupted(path: Path, content: bytes) -> None:
+        if path == failed.path("source.md"):
+            raise OSError("Injected copy failure")
+        original_write(path, content)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(fp, "atomic_write", interrupted)
+        assert (
+            gate.fixture.run(
+                "relocate",
+                "--destination",
+                "failed-copy",
+                "--owner",
+                "director",
+                "--reason",
+                "Move synthetic program",
+            )
+            == 1
+        )
+    frozen = failed.path("RELOCATION_INCOMPLETE.json").read_bytes()
+    store = fp.planning.PublicationStore(gate.program.repo)
+    old_id = store.load()["active"][0]["id"]
+    assert (
+        gate.fixture.run(
+            "relocate",
+            "--destination",
+            "moved",
+            "--supersedes",
+            old_id,
+            "--owner",
+            "director",
+            "--reason",
+            "Retry inspected failure to distinct destination",
+        )
+        == 0
+    )
+    from tools.tests.test_feature_program import Fixture
+
+    moved = GateFixture(
+        Fixture(fp.Program(gate.program.repo, gate.program.repo / "moved"), gate.fixture.report)
+    )
+    assert failed.path("RELOCATION_INCOMPLETE.json").read_bytes() == frozen
+    assert not store.load()["active"]
+    admission, _ = reviewed_input(moved)
+    assert moved.fixture.run("task-admit", "--input", admission) == 0
+    failed.path("RELOCATION_INCOMPLETE.json").write_bytes(frozen + b" ")
+    with pytest.raises(fp.planning.PlanningError):
+        fp.planning.require_completed_publication(moved.program, moved.program.load())
+
+
+def fresh_fixture(gate: GateFixture):
+    from tools.tests.test_feature_program import Fixture
+
+    program = fp.Program(gate.program.repo, gate.program.repo / "fresh")
+    program.directory.mkdir()
+    program.path("source.md").write_bytes(gate.fixture.report)
+    program.path("plan.json").write_bytes(gate.program.path("plan.json").read_bytes())
+    program.path("README.md").write_bytes(b"# Authored recovery guide\n")
+    return Fixture(program, gate.fixture.report)
+
+
+def init_arguments() -> list[str]:
+    return [
+        "init",
+        "--report",
+        "fresh/source.md",
+        "--planning",
+        "fresh/plan.json",
+        "--review-baseline",
+        "a" * 40,
+    ]
+
+
+@pytest.mark.parametrize("boundary", ["tracking", "backlog"])
+def test_fresh_init_exact_partial_retry_preserves_authored_bytes(
+    gate: GateFixture, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    fixture = fresh_fixture(gate)
+    before = fixture.program.path("README.md").read_bytes()
+    original = fp.atomic_write
+    failing_name = fp.planning.TRACKING if boundary == "tracking" else "backlog.json"
+
+    def interrupted(path: Path, content: bytes) -> None:
+        if path == fixture.program.path(failing_name):
+            raise OSError("Injected partial initialization")
+        original(path, content)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(fp, "atomic_write", interrupted)
+        assert fixture.run(*init_arguments()) == 1
+    receipt = fixture.program.path("FRESH_INIT.json").read_bytes()
+    assert not fixture.program.path("backlog.json").exists()
+    monkeypatch.setattr(fp, "utc", lambda: "2030-01-01T01:02:03+00:00")
+    assert fixture.run(*init_arguments()) == 0
+    assert fixture.program.path("FRESH_INIT.json").read_bytes() == receipt
+    assert fixture.program.path("README.md").read_bytes() == before
+    assert fixture.program.load()["events"][-1]["timestamp"] == "2030-01-01T01:02:03+00:00"
+
+
+@pytest.mark.parametrize("changed", ["report", "plan", "guide", "runtime"])
+def test_fresh_init_partial_retry_rejects_changed_or_prior_material(
+    gate: GateFixture, monkeypatch: pytest.MonkeyPatch, changed: str
+) -> None:
+    fixture = fresh_fixture(gate)
+    original = fp.atomic_write
+
+    def interrupted(path: Path, content: bytes) -> None:
+        if path == fixture.program.path(fp.planning.TRACKING):
+            raise OSError("Injected initialization boundary")
+        original(path, content)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(fp, "atomic_write", interrupted)
+        assert fixture.run(*init_arguments()) == 1
+    receipt = fixture.program.path("FRESH_INIT.json").read_bytes()
+    name = {
+        "report": "source.md",
+        "plan": "plan.json",
+        "guide": "README.md",
+        "runtime": "CHECKPOINT.md",
+    }[changed]
+    path = fixture.program.path(name)
+    path.write_bytes((path.read_bytes() if path.exists() else b"") + b" ")
+    assert fixture.run(*init_arguments()) == 1
+    assert not fixture.program.path("backlog.json").exists()
+    assert fixture.program.path("FRESH_INIT.json").read_bytes() == receipt
+
+
+def test_absent_target_reservation_cannot_be_initialized_using_equivalent_casing(
+    gate: GateFixture,
+) -> None:
+    target = fp.Program(gate.program.repo, gate.program.repo / "fresh")
+    with gate.program.lock():
+        identifier = fp.planning.publication_register(
+            gate.program, "relocation", {"program_id": "discovery"}, target
+        )
+    fixture = fresh_fixture(gate)
+    assert (
+        fp.main(["--repo", str(gate.program.repo), "--program-dir", "FRESH", *init_arguments()])
+        == 1
+    )
+    assert not fixture.program.path("backlog.json").exists()
+    assert fp.planning.PublicationStore(gate.program.repo).load()["active"][0]["id"] == identifier
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [".work/programs", ".work/programs/.publications", ".work/programs/.publications/nested"],
+)
+def test_reserved_publication_store_overlap_rejects_endpoint(
+    gate: GateFixture, endpoint: str
+) -> None:
+    assert fp.main(["--repo", str(gate.program.repo), "--program-dir", endpoint, "status"]) == 1
+    assert (
+        gate.fixture.run(
+            "relocate",
+            "--destination",
+            endpoint,
+            "--owner",
+            "leader",
+            "--reason",
+            "Invalid reserved destination",
+        )
+        == 1
+    )
+
+
+def test_missing_adopted_ledger_is_not_recreated_by_fresh_init_or_publisher(
+    gate: GateFixture,
+) -> None:
+    store = fp.planning.PublicationStore(gate.program.repo)
+    store.path("ledger.json").unlink()
+    fixture = fresh_fixture(gate)
+    assert fixture.run(*init_arguments()) == 1
+    assert not store.path("ledger.json").exists()
+    with gate.program.lock(), pytest.raises(fp.planning.PlanningError, match="ledger missing"):
+        fp.planning.publication_register(
+            gate.program,
+            "relocation",
+            {"program_id": "discovery"},
+            fp.Program(gate.program.repo, gate.program.repo / "absent"),
+        )
+
+
+def test_unrelated_inaccessible_payload_is_not_opened_but_related_read_fails(
+    gate: GateFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate.ready()
+    first = create_program(gate.program.repo, "unrelated")
+    target = fp.Program(gate.program.repo, gate.program.repo / "elsewhere")
+    with first.program.lock():
+        identifier = fp.planning.publication_register(
+            first.program, "relocation", {"program_id": "unrelated"}, target
+        )
+    store = fp.planning.PublicationStore(gate.program.repo)
+    item = store.active(store.load(), identifier)
+    payload_path = store.path(item["receipt"]["path"])
+    original = fp.bounded_bytes
+
+    def unreadable(path: Path, limit: int = 8 * 1024 * 1024) -> bytes:
+        if path == payload_path:
+            raise PermissionError("Synthetic inaccessible historical payload")
+        return original(path, limit)
+
+    monkeypatch.setattr(fp, "bounded_bytes", unreadable)
+    name, _ = reviewed_input(gate)
+    assert gate.fixture.run("task-admit", "--input", name) == 0
+    with pytest.raises(PermissionError):
+        fp.planning.require_completed_publication(first.program, first.program.load())
+
+
+def test_partial_legacy_adoption_resumes_only_exact_recorded_decision(
+    gate: GateFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate.ready()
+    gate.program.path(fp.planning.TRACKING).unlink()
+    name = publication_decision(
+        gate,
+        {
+            "inventory": fp.planning.inspect_publication_inventory(
+                gate.program, gate.program.load(), ["discovery"]
+            ),
+            "obsolete_writers_quiesced": True,
+        },
+    )
+    original = fp.atomic_write
+
+    def interrupted(path: Path, content: bytes) -> None:
+        if path == gate.program.path(fp.planning.TRACKING):
+            raise OSError("Injected adoption tracking failure")
+        original(path, content)
+
+    before = gate.program.path("backlog.json").read_bytes()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(fp, "atomic_write", interrupted)
+        assert gate.fixture.run("publication-adopt", "--input", name) == 1
+    observation = gate.program.path("evidence/_publications/attempt-1/adopted.json").read_bytes()
+    assert gate.fixture.run("publication-adopt", "--input", name) == 0
+    assert gate.program.path("backlog.json").read_bytes() == before
+    assert (
+        gate.program.path("evidence/_publications/attempt-1/adopted.json").read_bytes()
+        == observation
+    )
+
+
+def test_busy_publication_lock_rejects_before_canonical_state_change(gate: GateFixture) -> None:
+    gate.ready()
+    store = fp.planning.PublicationStore(gate.program.repo)
+    before = gate.program.path("backlog.json").read_bytes()
+    with store.lock():
+        assert (
+            gate.fixture.run(
+                "relocate",
+                "--destination",
+                "busy-target",
+                "--owner",
+                "director",
+                "--reason",
+                "Synthetic busy ledger",
+            )
+            == 1
+        )
+    assert gate.program.path("backlog.json").read_bytes() == before
+    assert not store.load()["active"]
+
+
+def test_oversized_publication_ledger_is_bounded_before_definition_change(
+    gate: GateFixture,
+) -> None:
+    gate.ready()
+    name, _ = reviewed_input(gate)
+    before = gate.program.path("backlog.json").read_bytes()
+    store = fp.planning.PublicationStore(gate.program.repo)
+    raw = store.path("ledger.json").read_bytes()
+    store.path("ledger.json").write_bytes(raw + b" " * (8 * 1024 * 1024))
+    assert gate.fixture.run("task-admit", "--input", name) == 1
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_publication_related_read_budget_rejects_before_mutation(gate: GateFixture) -> None:
+    gate.ready()
+    paths = []
+    for index in range(8):
+        name = f"evidence/_publications/attempt-1/large-{index}.txt"
+        gate.program.path(name).parent.mkdir(parents=True, exist_ok=True)
+        gate.program.path(name).write_bytes(b"x" * (8 * 1024 * 1024))
+        paths.append(name)
+    receipt_name = "evidence/_publications/attempt-1/budget.json"
+    receipt = {
+        "mode": "legacy-adopted",
+        "program_id": "discovery",
+        "ledger_id": fp.planning.PublicationStore(gate.program.repo).load()["ledger_id"],
+        "legacy_endpoints": [],
+        "evidence": [
+            {"path": name, "sha256": fp.sha(gate.program.path(name).read_bytes())} for name in paths
+        ],
+    }
+    gate.fixture.write(receipt_name, receipt)
+    tracking = fp.read_json(gate.program.path(fp.planning.TRACKING))
+    tracking["receipt"] = {
+        "path": receipt_name,
+        "sha256": fp.sha(gate.program.path(receipt_name).read_bytes()),
+    }
+    gate.fixture.write(fp.planning.TRACKING, tracking)
+    before = gate.program.path("backlog.json").read_bytes()
+    with pytest.raises(fp.ProgramError, match="bounded read"):
+        fp.planning.require_completed_publication(gate.program, gate.program.load())
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_registered_cancellation_rejects_changed_marker_inventory(gate: GateFixture) -> None:
+    gate.ready()
+    target = fp.Program(gate.program.repo, gate.program.repo / "other")
+    with gate.program.lock():
+        identifier = fp.planning.publication_register(
+            gate.program, "relocation", {"program_id": "discovery"}, target
+        )
+    target.directory.mkdir()
+    target.path("RELOCATION_INCOMPLETE.json").write_bytes(b"{}")
+    name = publication_decision(gate, {"action": "cancel-registration", "operation_id": identifier})
+    assert gate.fixture.run("publication-reconcile", "--input", name) == 1
+    assert fp.planning.PublicationStore(gate.program.repo).load()["active"]
+
+
+def test_legacy_failed_copy_is_imported_now_with_exact_original_bytes(gate: GateFixture) -> None:
+    gate.ready()
+    gate.program.path(fp.planning.TRACKING).unlink()
+    failed = fp.Program(gate.program.repo, gate.program.repo / "old-copy")
+    failed.directory.mkdir()
+    raw = (
+        fp.canonical({"phase": "copying", "source": "discovery", "destination": "old-copy"})
+        + b" \n"
+    )
+    failed.path("RELOCATION_INCOMPLETE.json").write_bytes(raw)
+    name = publication_decision(
+        gate,
+        {
+            "inventory": fp.planning.inspect_publication_inventory(
+                gate.program, gate.program.load(), ["discovery", "old-copy"]
+            ),
+            "obsolete_writers_quiesced": True,
+        },
+    )
+    before = gate.program.path("backlog.json").read_bytes()
+    assert gate.fixture.run("publication-adopt", "--input", name) == 0
+    store = fp.planning.PublicationStore(gate.program.repo)
+    old = store.load()["active"][0]
+    observed = store.payload(old, fp.ReadBudget(64 * 1024 * 1024))
+    assert old["stage"] == "legacy-observed"
+    assert observed["legacy_observed_at"]
+    assert observed["failed_marker_sha256"] == fp.sha(raw)
+    assert failed.path("RELOCATION_INCOMPLETE.json").read_bytes() == raw
+    assert gate.program.path("backlog.json").read_bytes() == before
+    with pytest.raises(fp.planning.PlanningError, match="recovery/reconciliation"):
+        fp.planning.require_completed_publication(gate.program, gate.program.load())
+    assert (
+        gate.fixture.run(
+            "relocate",
+            "--destination",
+            "replacement",
+            "--supersedes",
+            old["id"],
+            "--owner",
+            "director",
+            "--reason",
+            "Retry explicitly observed legacy failure",
+        )
+        == 0
+    )
+    assert failed.path("RELOCATION_INCOMPLETE.json").read_bytes() == raw
+    failed.path("RELOCATION_INCOMPLETE.json").unlink()
+    with pytest.raises(fp.ProgramError, match="remains guarded"):
+        failed.load()

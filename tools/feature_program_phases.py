@@ -525,6 +525,9 @@ def add_commands(commands: argparse._SubParsersAction[argparse.ArgumentParser]) 
     )
     recover.add_argument("--owner", required=True)
     recover.add_argument("--reason", required=True)
+    recover.add_argument(
+        "--publication-id", help="Exact active operation when recovery is ambiguous"
+    )
 
 
 def succession_guard(program: Program) -> None:
@@ -585,6 +588,7 @@ def _succession_contract(state: Record) -> str:
 class Publication:
     marker: Record
     recovery: bool = False
+    operation_id: str | None = None
 
 
 def _publish(predecessor: Program, successor: Program, publication: Publication) -> None:
@@ -614,12 +618,17 @@ def _publish(predecessor: Program, successor: Program, publication: Publication)
             == marker[key],
             "Succession registry changed; preserve markers and investigate",
         )
+    operation_id = publication.operation_id or _planning().publication_register(
+        predecessor, "succession", marker, successor, legacy_observed=publication.recovery
+    )
+    _planning().publication_begin(predecessor, operation_id)
     atomic_write(predecessor.path("SUCCESSION_INCOMPLETE.json"), encoded)
     atomic_write(successor.path("SUCCESSION_INCOMPLETE.json"), encoded)
     atomic_write(successor.path("PREDECESSOR.json"), encoded)
     atomic_write(predecessor.path("SUCCEEDED.json"), encoded)
     successor.path("SUCCESSION_INCOMPLETE.json").unlink()
     predecessor.path("SUCCESSION_INCOMPLETE.json").unlink()
+    _planning().publication_complete(predecessor, operation_id)
 
 
 def succeed(predecessor: Program, state: Record, args: argparse.Namespace) -> None:
@@ -674,7 +683,14 @@ def recover_succession(predecessor: Program, args: argparse.Namespace) -> None:
         from tools.feature_program import read_json, atomic_write, canonical
     else:
         from feature_program import read_json, atomic_write, canonical
-    marker = read_json(predecessor.path("SUCCESSION_INCOMPLETE.json"), limit=64 * 1024)
+    located = _planning().publication_find(
+        predecessor, "succession", getattr(args, "publication_id", None)
+    )
+    marker = (
+        coordination._record(located[1]["marker"], "succession marker")
+        if located is not None
+        else read_json(predecessor.path("SUCCESSION_INCOMPLETE.json"), limit=64 * 1024)
+    )
     require(marker.get("schema_version") == 1, "Unsupported succession publication receipt")
     for field in ("predecessor", "successor", "predecessor_id", "successor_id", "actor", "reason"):
         coordination._text(marker.get(field), f"succession {field}")
@@ -693,7 +709,7 @@ def recover_succession(predecessor: Program, args: argparse.Namespace) -> None:
         not successor.path("SUCCEEDED.json").exists(),
         "Successor has itself succeeded; investigate incomplete publication",
     )
-    with successor.lock(succession_recovery=True):
+    with successor.lock(publication_recovery=True):
         state = read_json(predecessor.path("backlog.json"))
         target = read_json(successor.path("backlog.json"))
         predecessor.validate(state)
@@ -742,4 +758,23 @@ def recover_succession(predecessor: Program, args: argparse.Namespace) -> None:
                 }
             ),
         )
-        _publish(predecessor, successor, Publication(marker, recovery=True))
+        if (
+            located is not None
+            and not predecessor.path("SUCCESSION_INCOMPLETE.json").exists()
+            and predecessor.path("SUCCEEDED.json").exists()
+        ):
+            _planning().publication_complete(
+                predecessor, coordination._text(located[0]["id"], "publication ID")
+            )
+        else:
+            _publish(
+                predecessor,
+                successor,
+                Publication(
+                    marker,
+                    recovery=True,
+                    operation_id=coordination._text(located[0]["id"], "publication ID")
+                    if located is not None
+                    else None,
+                ),
+            )

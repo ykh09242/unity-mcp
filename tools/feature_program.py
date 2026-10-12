@@ -362,9 +362,15 @@ class Program:
 
     @contextmanager
     def lock(
-        self, relocation_recovery: bool = False, succession_recovery: bool = False
+        self,
+        relocation_recovery: bool = False,
+        succession_recovery: bool = False,
+        publication_recovery: bool = False,
     ) -> Iterator[None]:
-        if succession_recovery:
+        planning.validate_publication_endpoint(self.repo, self.directory)
+        if publication_recovery:
+            pass  # Explicit ledger recovery still verifies exact endpoints under this lock.
+        elif succession_recovery:
             require(
                 not self.path("RELOCATED.json").exists()
                 and not self.path("RELOCATION_INCOMPLETE.json").exists(),
@@ -399,6 +405,11 @@ class Program:
         return safe_path(self.directory, relative)
 
     def require_current_location(self) -> None:
+        try:
+            planning.validate_publication_endpoint(self.repo, self.directory)
+            planning.publication_runtime_guard(self)
+        except planning.PlanningError as exc:
+            raise ProgramError(str(exc)) from exc
         phases.succession_guard(self)
         marker = self.path("RELOCATED.json")
         if marker.exists():
@@ -1903,6 +1914,8 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
             names.append(relative)
     require(len(names) <= 10000, "Relocation exceeds 10000 files")
     target = Program(program.repo, destination)
+    planning.validate_publication_endpoint(program.repo, destination)
+    planning.require_unreserved(target)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.mkdir()  # Exclusive reservation: a concurrent/existing target is never replaced.
     with target.lock():
@@ -1915,6 +1928,19 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
             "destination": destination.relative_to(program.repo).as_posix(),
             "phase": "copying",
         }
+        operation_id = planning.publication_register(
+            program,
+            "relocation",
+            {
+                **marker,
+                "program_id": state["program_id"],
+                "original_registry_sha256": sha(original),
+                "copying_marker": marker,
+            },
+            target,
+            supersedes=getattr(args, "supersedes", None),
+        )
+        planning.publication_begin(program, operation_id)
         atomic_write(target.path("RELOCATION_INCOMPLETE.json"), canonical(marker))
         for name in names:
             content = budget.read(program.path(name), 8 * 1024 * 1024)
@@ -2016,10 +2042,35 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
             ),
         )
         target.path("RELOCATION_INCOMPLETE.json").unlink()
+        planning.publication_complete(program, operation_id, manifest)
 
 
 def recover_relocation(program: Program, args: argparse.Namespace) -> None:
     """Finalize only an already verified publication; never promote an incomplete copy."""
+    located = planning.publication_find(
+        program, "relocation", getattr(args, "publication_id", None)
+    )
+    if not program.path("RELOCATION_INCOMPLETE.json").exists() and located is not None:
+        target_name = string(sequence(located[0]["endpoints"], "endpoints")[1], "destination")
+        require(
+            target_name.casefold()
+            == program.directory.relative_to(program.repo).as_posix().casefold(),
+            "Finalize completed relocation at its exact destination",
+        )
+        state = program.load()
+        require(
+            args.owner == (coordination.current_director_id(state) or "leader"),
+            "Recovery requires current director or legacy leader",
+        )
+        source_program = Program(
+            program.repo,
+            safe_path(
+                program.repo, string(sequence(located[0]["endpoints"], "endpoints")[0], "source")
+            ),
+        )
+        with source_program.lock(publication_recovery=True):
+            planning.publication_complete(program, string(located[0]["id"], "publication ID"))
+        return
     marker = read_json(program.path("RELOCATION_INCOMPLETE.json"))
     require(
         marker.get("phase") == "ready",
@@ -2057,6 +2108,21 @@ def recover_relocation(program: Program, args: argparse.Namespace) -> None:
         args.owner == (coordination.current_director_id(state) or "leader"),
         "Recovery requires current director or legacy leader",
     )
+    if located is None:
+        with source.lock(publication_recovery=True):
+            operation_id = planning.publication_register(
+                source,
+                "relocation",
+                {**marker, "program_id": state["program_id"]},
+                program,
+                legacy_observed=True,
+            )
+            planning.publication_begin(program, operation_id)
+            located = planning.publication_find(program, "relocation", operation_id)
+    require(
+        args.owner == (coordination.current_director_id(state) or "leader"),
+        "Recovery requires current director or legacy leader",
+    )
     for name, content in program.views(state).items():
         require(
             bounded_bytes(program.path(name), 8 * 1024 * 1024) == content.encode("utf-8"),
@@ -2070,7 +2136,7 @@ def recover_relocation(program: Program, args: argparse.Namespace) -> None:
             "Source archive does not match publication",
         )
     else:
-        with source.lock():
+        with source.lock(publication_recovery=True):
             require(
                 sha(bounded_bytes(source.path("backlog.json"), 8 * 1024 * 1024))
                 == marker.get("original_registry_sha256"),
@@ -2104,6 +2170,11 @@ def recover_relocation(program: Program, args: argparse.Namespace) -> None:
                 ),
             )
     program.path("RELOCATION_INCOMPLETE.json").unlink()
+    if located is not None:
+        with source.lock(publication_recovery=True):
+            planning.publication_complete(
+                program, string(located[0]["id"], "publication ID"), marker
+            )
 
 
 def starter(program: Program, args: argparse.Namespace) -> None:
@@ -2263,11 +2334,15 @@ def parser() -> argparse.ArgumentParser:
     move.add_argument("--destination", required=True)
     move.add_argument("--owner", required=True)
     move.add_argument("--reason", required=True)
+    move.add_argument("--supersedes", help="Explicit active failed-copy operation to replace")
     recover = commands.add_parser(
         "relocate-recover", help="Finalize an already verified incomplete publication"
     )
     recover.add_argument("--owner", required=True)
     recover.add_argument("--reason", required=True)
+    recover.add_argument(
+        "--publication-id", help="Exact active operation when recovery is ambiguous"
+    )
     packet = commands.add_parser("packet")
     packet.add_argument("id")
     fingerprint = commands.add_parser("fingerprint")
@@ -2324,6 +2399,7 @@ def main(argv: list[str] | None = None) -> int:
             "Program must be within configured repository",
         )
         relative_program = directory.relative_to(repo).as_posix()
+        planning.validate_publication_endpoint(repo, directory)
         program = Program(repo, safe_path(repo, relative_program))
         if args.command == "snapshot":
             print(canonical(read_snapshot(repo, program.directory)).decode(), end="")
@@ -2339,22 +2415,19 @@ def main(argv: list[str] | None = None) -> int:
             print("starter: OK; synthetic files only, no registry or passing evidence created")
             return 0
         if args.command == "init":
+            planning.require_unreserved(program)
             args.report = args.report or relative_program + "/source/feature-opportunities.md"
             args.planning = args.planning or relative_program + "/planning.json"
         for name in ("owner", "reason", "next_action", "note"):
             if hasattr(args, name):
                 string(getattr(args, name), name)
         if args.command == "relocate-recover":
-            with program.lock(relocation_recovery=True):
+            with program.lock(publication_recovery=True):
                 recover_relocation(program, args)
             print("relocate-recover: OK; explicitly use this destination")
             return 0
         if args.command == "program-succeed-recover":
-            require(
-                program.path("SUCCESSION_INCOMPLETE.json").is_file(),
-                "Succession recovery requires an incomplete predecessor publication",
-            )
-            with program.lock(succession_recovery=True):
+            with program.lock(publication_recovery=True):
                 phases.recover_succession(program, args)
             print("program-succeed-recover: OK; predecessor guarded, use identified successor")
             return 0
@@ -2374,6 +2447,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         with program.lock():
             state = program.initialize(args) if args.command == "init" else program.load()
+            if args.command in {"publication-adopt", "publication-reconcile"}:
+                if args.command == "publication-adopt":
+                    planning.publication_adopt(program, state, args.input)
+                else:
+                    planning.publication_reconcile(program, state, args.input)
+                print(f"{args.command}: OK; explicit publication observation recorded")
+                return 0
             if planning.execute(program, state, args):
                 print(f"{args.command}: OK; committed revision {phases.revision(state)}")
                 return 0
@@ -2387,6 +2467,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             match args.command:
                 case "init":
+                    planning.fresh_init(program, args, state)
                     program.save(state)
                 case "phase-binding":
                     print(canonical(phases.binding(program, state)).decode(), end="")

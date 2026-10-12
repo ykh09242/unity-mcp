@@ -116,7 +116,17 @@ criterion impact remains unknown.
 Before definition changes, finish any related relocation or succession publication at
 both endpoints. An enabled successor may still have predecessor cleanup pending; ordinary
 progress does not authorize changing its frozen recovery contract. Admission reports
-precommit failures without changing the registry. If its canonical transaction committed
+related operations through the bounded central publication ledger rather than scanning
+historical caches. Fresh explicit initialization automatically records verified input
+tracking. Existing untracked programs need a current director's finite endpoint inventory,
+honest uninspected exclusions, obsolete-writer reconciliation and independent review through
+`publication-adopt` before definition amendments; ordinary legacy runtime is preserved.
+An interrupted central operation remains active until explicit verified recovery or the
+two closed reviewed reconciliation actions. A copying-stage failure may be retried to a
+distinct absent destination with its explicit superseded operation ID; the old marker stays
+preserved and guarded, and only proven replacement lineage can proceed.
+
+Admission reports precommit failures without changing the registry. If its canonical transaction committed
 but view rendering failed, recover views with `render` and inspect the recorded transaction
 instead of repeating admission. Supplemental provenance follows tasks through packets,
 snapshots and relocation without changing immutable source or review evidence.
