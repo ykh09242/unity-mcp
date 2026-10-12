@@ -13,7 +13,7 @@ import tempfile
 from typing import Final
 
 ROOT: Final = Path(__file__).resolve().parents[1]
-RUFF_VERSION: Final = "0.16.10"
+RUFF_VERSION: Final = "0.17.0"
 CSHARPIER_VERSION: Final = "1.3.0"
 PYTHON_SUFFIXES: Final = frozenset({".py", ".pyi"})
 CSHARP_SUFFIXES: Final = frozenset({".cs", ".csx"})
@@ -228,7 +228,8 @@ def ruff_command(root: Path) -> tuple[str, ...]:
         if verified := verified_command(root, command, RUFF_VERSION):
             return verified
     raise RuntimeError(
-        "Ruff 0.16.10 is unavailable. Run: uv tool install ruff==0.16.10 (see docs/FORMATTING.md)."
+        f"Ruff {RUFF_VERSION} is unavailable. Run: uv sync --directory Server --locked --extra dev "
+        "(see docs/FORMATTING.md)."
     )
 
 

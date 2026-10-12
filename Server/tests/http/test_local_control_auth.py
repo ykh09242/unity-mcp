@@ -270,3 +270,20 @@ def test_explicit_host_policy_preserves_local_authentication(monkeypatch):
             ).status_code
             == 403
         )
+
+
+@pytest.mark.parametrize(
+    ("configured", "requested", "expected"),
+    [("auto", None, 1800), (45, None, 45), (None, None, None), (None, "auto", 1800), (45, 8, 8)],
+)
+def test_http_session_idle_timeout_reaches_sdk(monkeypatch, configured, requested, expected):
+    import fastmcp
+    from main import UnityMCP
+
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    monkeypatch.setattr(config, "local_auth_token", "test-launch-token")
+    monkeypatch.setattr(fastmcp.settings, "http_session_idle_timeout", configured)
+    app = UnityMCP("session-timeout-regression").http_app(session_idle_timeout=requested)
+    endpoint = next(route.app for route in app.routes if route.path == "/mcp")
+    with TestClient(app):
+        assert endpoint.session_manager.session_idle_timeout == expected

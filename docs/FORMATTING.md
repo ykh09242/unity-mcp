@@ -9,7 +9,7 @@ working-tree changes. Formatting does not replace correctness lint, tests or com
 
 | Language | Formatter / settings | Convention |
 | --- | --- | --- |
-| Python | Ruff **0.16.10**, root `ruff.toml` | Python 3.11 syntax, 100 columns, 4 spaces, double quotes, LF |
+| Python | Ruff **0.17.0**, root `ruff.toml` | Python 3.11 syntax, 100 columns, 4 spaces, double quotes, LF |
 | C# | Local CSharpier **1.3.0**, `.config/dotnet-tools.json`, root `.editorconfig` | 160 columns, 4 spaces, Allman braces, LF; preserve compact comment-only catches |
 | JS / TS / JSX / CSS / HTML / JSON / YAML | Root `.editorconfig`, existing file conventions | 2 spaces, LF; JS uses single quotes and semicolons; JSON uses double quotes |
 | Shell / PowerShell | Root `.editorconfig`, existing file conventions | Shell 2 spaces; PowerShell 4 spaces; LF |
@@ -62,15 +62,17 @@ Run from the repository root with Python 3.11 or newer, Git, uv and a .NET SDK c
 with the pinned CSharpier tool available:
 
 ```sh
-uv tool install ruff==0.16.10
+uv sync --directory Server --locked --extra dev
 dotnet tool restore
-ruff --version
+uv run --directory Server --locked --extra dev ruff --version
 dotnet tool run csharpier -- --version
 ```
 
-An existing project Python environment may instead contain exactly `ruff==0.16.10`.
-The runner tries that environment, then `ruff` on PATH, then uv's cached pinned tool via
-`uv tool run --offline --from ruff==0.16.10 ruff`. It verifies the version before running.
+The server's development dependencies include exactly `ruff==0.17.0`. Run the formatter
+with that environment's Python. The runner tries that environment, then `ruff` on PATH,
+then uv's cached pinned tool via `uv tool run --offline --from ruff==0.17.0 ruff`.
+It verifies the version before running. Standalone users can instead install the exact
+version with `uv tool install ruff==0.17.0`.
 CSharpier is resolved through the repository's local dotnet tool manifest, with its version
 verified too. Checks and writes never fetch packages or restore the dotnet tool; uv may
 prepare its tool environment from the local cache. A missing tool produces a setup error

@@ -39,6 +39,11 @@ Only local `GET /health` is public. MCP, REST and plugin WebSocket requests requ
 
 `UNITY_MCP_LOCAL_AUTH_TOKEN_FILE` changes the server's output/native lookup path; the server still generates a new token. `UNITY_MCP_LOCAL_AUTH_TOKEN` supplies an explicit client token, not a server reuse instruction. See the [full local authentication contract](../website/docs/guides/security.md#local-http-authentication).
 
+FastMCP 4.1 uses the MCP SDK's 30-minute idle timeout for stateful HTTP sessions.
+Clients must initialize a new session after expiry. `FASTMCP_HTTP_SESSION_IDLE_TIMEOUT`
+accepts a positive number of seconds, `auto` for the SDK default, or `none` to disable
+idle expiry. This does not expire the Unity plugin's WebSocket connection or affect stdio.
+
 ## Targeting and tool visibility
 
 Discover `mcpforunity://instances`. Modern sessionless calls use `unity_instance` for tools and `_meta.unity_instance` for resources. Explicit targeting is required for ambiguous local selection and all hosted calls. Legacy stateful clients can persist selection with `set_active_instance`; sessionless requests cannot.

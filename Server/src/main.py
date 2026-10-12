@@ -476,11 +476,10 @@ class UnityMCP(FastMCP):
         )
 
     async def run_stdio_async(self, show_banner=True, log_level=None, stateless=False) -> None:
-        # FastMCP 4.0.11's runner has no public stream injection. This narrow
+        # FastMCP 4.1's runner has no public stream injection. This narrow
         # compatibility adapter preserves its lifecycle and initialization.
         from fastmcp.server.context import reset_transport, set_transport
         from fastmcp.utilities.logging import temporary_log_level
-        from mcp.server.lowlevel.server import NotificationOptions
         from transport.stdio_response_delivery import retained_stdio_server
 
         sdk_server = getattr(self, "_mcp_server", None)
@@ -502,9 +501,7 @@ class UnityMCP(FastMCP):
                         await sdk_server.run(
                             read_stream,
                             write_stream,
-                            sdk_server.create_initialization_options(
-                                notification_options=NotificationOptions(tools_changed=True)
-                            ),
+                            sdk_server.create_initialization_options(),
                         )
         finally:
             reset_transport(token)
@@ -521,7 +518,7 @@ class UnityMCP(FastMCP):
         host_origin_protection: bool | Literal["auto"] | None = None,
         allowed_hosts: list[str] | None = None,
         allowed_origins: list[str] | None = None,
-        session_idle_timeout: float | None = None,
+        session_idle_timeout: float | Literal["auto"] | None = None,
     ) -> "StarletteWithLifespan":
         if config.http_remote_hosted and not config.http_behind_tls_proxy:
             raise ValueError(

@@ -440,6 +440,9 @@ async def test_unity_runner_real_subprocess_preserves_sdk_wire_and_stray_print_d
         )
         initialized = json.loads(await asyncio.wait_for(process.stdout.readline(), 15))
         assert initialized["id"] == 1 and "result" in initialized
+        capabilities = initialized["result"]["capabilities"]
+        for catalog in ("tools", "resources", "prompts"):
+            assert capabilities[catalog]["listChanged"] is True
         await send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         await send(
             {

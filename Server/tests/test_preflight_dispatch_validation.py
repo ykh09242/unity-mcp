@@ -175,7 +175,7 @@ def test_argument_guard_preserves_aliases_and_runs_callbacks_only_in_sdk(tmp_pat
     run_dispatch_scenario(
         """
         import asyncio, sys
-        from enum import Enum
+        from enum import Enum, EnumType
         from typing import Annotated
         from typing_extensions import TypeAliasType
         sys.path.insert(0, "src")
@@ -263,6 +263,36 @@ def test_argument_guard_preserves_aliases_and_runs_callbacks_only_in_sdk(tmp_pat
                 assert result.structured_content == {"value": "first"}
             assert callbacks == ["enum_missing"]
             callbacks.clear()
+            class RecordingEnumType(EnumType):
+                def __call__(cls, value):
+                    callbacks.append("enum_constructor")
+                    return super().__call__("first" if value == "compat" else value)
+            class ConstructorEnum(Enum, metaclass=RecordingEnumType):
+                FIRST = "first"
+            @server.tool
+            async def constructor_fixture(value: ConstructorEnum) -> dict:
+                return {"value": value.value}
+            constructor_tool = await server.get_tool("constructor_fixture")
+            validate_tool_arguments(constructor_tool, {"value": "compat"})
+            assert callbacks == []
+            async with Client(server) as client:
+                result = await client.call_tool("constructor_fixture", {"value": "compat"})
+                assert result.structured_content == {"value": "first"}
+            assert callbacks == ["enum_constructor"]
+            callbacks.clear()
+            class PlainEnum(Enum):
+                FIRST = "first"
+            @server.tool
+            async def plain_enum_fixture(value: PlainEnum) -> dict:
+                return {"value": value.value}
+            plain_enum_tool = await server.get_tool("plain_enum_fixture")
+            validate_tool_arguments(plain_enum_tool, {"value": "first"})
+            try:
+                validate_tool_arguments(plain_enum_tool, {"value": "invalid"})
+            except Exception as error:
+                assert "value: enum" in str(error), error
+            else:
+                raise AssertionError("Invalid ordinary enum accepted by argument guard")
             Alias = TypeAliasType("Alias", Annotated[StrictInt, AfterValidator(after)])
             @server.tool
             async def alias_fixture(values: list[Alias], backup: Alias) -> dict:

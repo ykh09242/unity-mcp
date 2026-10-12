@@ -1,5 +1,6 @@
 """Check SDK argument structure before instance discovery, without running a tool."""
 
+from enum import Enum, EnumType
 from functools import lru_cache
 from typing import Any, Callable
 
@@ -26,7 +27,15 @@ def _structural_schema(value: Any) -> Any:
     if (
         kind in ("function-before", "function-wrap", "function-plain", "model", "dataclass")
         or (kind == "tagged-union" and callable(value.get("discriminator")))
-        or (kind == "enum" and callable(value.get("missing")))
+        or (
+            kind == "enum"
+            and (
+                callable(value.get("missing"))
+                # Pydantic 2.14 invokes the enum class without a `missing` schema entry.
+                or getattr(value["cls"]._missing_, "__func__", None) is not Enum._missing_.__func__
+                or type(value["cls"]).__call__ is not EnumType.__call__
+            )
+        )
     ):
         # These may deliberately accept a different raw type or construct objects.
         # Leave them to the SDK so custom validators/constructors execute once.
