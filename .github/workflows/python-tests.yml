@@ -226,7 +226,7 @@ jobs:
           name: pytest-timing-${{ matrix.python-version }}-${{ matrix.suite }}
           path: .tmp/test-timings/*.json
           include-hidden-files: true
-          retention-days: 7
+          retention-days: ${{ job.status == 'success' && 7 || 30 }}
 
       - name: Upload test results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -238,6 +238,7 @@ jobs:
             Server/test-results-http.xml
             Server/coverage.xml
             Server/htmlcov/
+          retention-days: ${{ job.status == 'success' && 7 || 30 }}
 
   performance_report:
     name: Python timing report
