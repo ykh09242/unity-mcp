@@ -17,6 +17,43 @@ namespace MCPForUnityTests.EditMode.Tools
     {
         private sealed class SnapshotWindow : EditorWindow { }
 
+        private sealed class ToolkitPanel : IDisposable
+        {
+            private readonly PanelSettings settings;
+            private readonly SnapshotWindow window;
+            internal readonly UIDocument Document;
+            internal readonly VisualElement Host;
+            internal readonly VisualElement Tree;
+
+            internal ToolkitPanel(GameObject root)
+            {
+                settings = ScriptableObject.CreateInstance<PanelSettings>();
+                Document = root.AddComponent<UIDocument>();
+                Document.panelSettings = settings;
+                Tree = Document.rootVisualElement;
+                Assert.That(Tree, Is.Not.Null);
+                Tree.style.width = 320;
+                Tree.style.height = 200;
+                Tree.Clear();
+                Host = new VisualElement { name = "DocumentHost" };
+                Host.style.width = 360;
+                Host.style.height = 240;
+                Host.Add(Tree);
+                window = ScriptableObject.CreateInstance<SnapshotWindow>();
+                window.position = new Rect(0, 0, 400, 300);
+                window.Show();
+                window.rootVisualElement.Add(Host);
+            }
+
+            public void Dispose()
+            {
+                window.Close();
+                if (window != null)
+                    UnityEngine.Object.DestroyImmediate(window);
+                UnityEngine.Object.DestroyImmediate(settings);
+            }
+        }
+
         private readonly List<GameObject> roots = new List<GameObject>();
         private string name;
 
@@ -345,6 +382,160 @@ namespace MCPForUnityTests.EditMode.Tools
                 if (window != null)
                     UnityEngine.Object.DestroyImmediate(window);
                 UnityEngine.Object.DestroyImmediate(settings);
+            }
+        }
+
+        private static JArray ToolkitNodes(GameObject root)
+        {
+            var response = Capture(root, framework: "uitoolkit");
+            Assert.That(response["success"].Value<bool>(), Is.True, response.ToString());
+            return (JArray)response["data"]["nodes"];
+        }
+
+        [UnityTest]
+        public IEnumerator ToolkitChildExplicitVisibilityOverridesHiddenParentInSnapshot()
+        {
+            var root = Root();
+            using (var panel = new ToolkitPanel(root))
+            {
+                var parent = new VisualElement { name = "HiddenParent" };
+                parent.style.width = 200;
+                parent.style.height = 100;
+                parent.style.visibility = Visibility.Hidden;
+                var child = new Label("Visible override") { name = "VisibilityOverride" };
+                child.style.width = 160;
+                child.style.height = 40;
+                child.style.visibility = Visibility.Visible;
+                parent.Add(child);
+                panel.Tree.Add(parent);
+                for (int i = 0; i < 8; i++)
+                    yield return null;
+                Assert.That(HasLayout(child), Is.True, "Attached child layout must settle before checking inherited visibility.");
+                Assert.That(panel.Document.rootVisualElement, Is.SameAs(panel.Tree));
+                Assert.That(parent.resolvedStyle.visibility, Is.EqualTo(Visibility.Hidden));
+                Assert.That(
+                    child.resolvedStyle.visibility,
+                    Is.EqualTo(Visibility.Visible),
+                    "Native styles allow an explicit visible child under a hidden parent."
+                );
+                var baseline = ToolkitNodes(root);
+                child.style.visibility = Visibility.Hidden;
+                for (int i = 0; i < 8; i++)
+                    yield return null;
+                Assert.That(child.resolvedStyle.visibility, Is.EqualTo(Visibility.Hidden));
+                var boundsBefore = child.worldBound;
+                string rootBefore = EditorJsonUtility.ToJson(root.GetComponent<RectTransform>());
+
+                var candidate = ToolkitNodes(root);
+
+                Assert.That(baseline[1]["visible"].Value<bool>(), Is.False);
+                Assert.That(baseline[2]["visible"].Value<bool>(), Is.True, "The child must use its own native resolved visibility.");
+                Assert.That(candidate[2]["visible"].Value<bool>(), Is.False);
+                Assert.That(JToken.DeepEquals(baseline[2]["geometry"], candidate[2]["geometry"]), Is.True);
+                Assert.That(JToken.DeepEquals(baseline, candidate), Is.False, "Toggling the explicit child visibility must change comparable evidence.");
+                Assert.That(child.worldBound, Is.EqualTo(boundsBefore));
+                Assert.That(child.style.visibility.value, Is.EqualTo(Visibility.Hidden));
+                Assert.That(parent.style.visibility.value, Is.EqualTo(Visibility.Hidden));
+                Assert.That(EditorJsonUtility.ToJson(root.GetComponent<RectTransform>()), Is.EqualTo(rootBefore));
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ToolkitDisplayNoneAncestorSuppressesExplicitVisibleDescendantInSnapshot()
+        {
+            var root = Root();
+            using (var panel = new ToolkitPanel(root))
+            {
+                var parent = new VisualElement { name = "DisplayParent" };
+                parent.style.width = 200;
+                parent.style.height = 100;
+                var child = new Label("Display control") { name = "DisplayChild" };
+                child.style.width = 160;
+                child.style.height = 40;
+                child.style.visibility = Visibility.Visible;
+                parent.Add(child);
+                panel.Tree.Add(parent);
+                for (int i = 0; i < 8; i++)
+                    yield return null;
+                Assert.That(HasLayout(child), Is.True);
+                var baseline = ToolkitNodes(root);
+                parent.style.display = DisplayStyle.None;
+                for (int i = 0; i < 8; i++)
+                    yield return null;
+                Assert.That(HasLayout(panel.Tree), Is.True, "The captured document retains layout while its child branch is removed from display.");
+                Assert.That(parent.resolvedStyle.display, Is.EqualTo(DisplayStyle.None));
+                Assert.That(child.resolvedStyle.visibility, Is.EqualTo(Visibility.Visible));
+
+                var candidate = ToolkitNodes(root);
+
+                Assert.That(baseline[2]["visible"].Value<bool>(), Is.True);
+                Assert.That(candidate[1]["visible"].Value<bool>(), Is.False);
+                Assert.That(
+                    candidate[2]["visible"].Value<bool>(),
+                    Is.False,
+                    "An explicit visibility override cannot restore an ancestor's display:none branch."
+                );
+                Assert.That(parent.style.display.value, Is.EqualTo(DisplayStyle.None));
+                Assert.That(child.style.visibility.value, Is.EqualTo(Visibility.Visible));
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ToolkitDocumentSnapshotIncludesSurroundingAncestorOpacity()
+        {
+            var root = Root();
+            using (var panel = new ToolkitPanel(root))
+            {
+                panel.Tree.style.opacity = 0.5f;
+                var child = new Label("Opacity control") { name = "OpacityChild" };
+                child.style.width = 160;
+                child.style.height = 40;
+                child.style.opacity = 0.5f;
+                panel.Tree.Add(child);
+                for (int i = 0; i < 8; i++)
+                    yield return null;
+                Assert.That(HasLayout(panel.Tree) && HasLayout(child), Is.True);
+                Assert.That(panel.Document.rootVisualElement, Is.SameAs(panel.Tree));
+                // UIDocument can reattach its root beneath the native panel root during an update.
+                var ancestor = panel.Tree.parent;
+                Assert.That(ancestor, Is.Not.Null);
+                Assert.That(ancestor.panel, Is.SameAs(panel.Tree.panel));
+                ancestor.style.opacity = 0.5f;
+                for (int i = 0; i < 8; i++)
+                    yield return null;
+                Assert.That(panel.Tree.parent, Is.SameAs(ancestor), "The real panel ancestor must remain attached before baseline capture.");
+                Assert.That(ancestor.resolvedStyle.opacity, Is.EqualTo(0.5f));
+                Assert.That(
+                    panel.Tree.resolvedStyle.opacity,
+                    Is.EqualTo(0.5f),
+                    "Opacity remains local in resolved styles and must be composed through ancestors."
+                );
+                var baseline = ToolkitNodes(root);
+                ancestor.style.opacity = 0;
+                for (int i = 0; i < 8; i++)
+                    yield return null;
+                Assert.That(panel.Tree.parent, Is.SameAs(ancestor), "The same panel ancestor must contribute opacity after the toggle.");
+                Assert.That(ancestor.resolvedStyle.opacity, Is.EqualTo(0));
+                var boundsBefore = child.worldBound;
+                string rootBefore = EditorJsonUtility.ToJson(root.GetComponent<RectTransform>());
+
+                var candidate = ToolkitNodes(root);
+
+                Assert.That(baseline[0]["alpha"].Value<float>(), Is.EqualTo(0.25f).Within(0.00001f));
+                Assert.That(baseline[1]["alpha"].Value<float>(), Is.EqualTo(0.125f).Within(0.00001f));
+                Assert.That(baseline[0]["visible"].Value<bool>() && baseline[1]["visible"].Value<bool>(), Is.True);
+                for (int i = 0; i < candidate.Count; i++)
+                {
+                    Assert.That(candidate[i]["alpha"].Value<float>(), Is.EqualTo(0));
+                    Assert.That(candidate[i]["visible"].Value<bool>(), Is.False);
+                    Assert.That(JToken.DeepEquals(baseline[i]["geometry"], candidate[i]["geometry"]), Is.True);
+                }
+                Assert.That(JToken.DeepEquals(baseline, candidate), Is.False);
+                Assert.That(child.worldBound, Is.EqualTo(boundsBefore));
+                Assert.That(ancestor.style.opacity.value, Is.EqualTo(0));
+                Assert.That(panel.Tree.style.opacity.value, Is.EqualTo(0.5f));
+                Assert.That(child.style.opacity.value, Is.EqualTo(0.5f));
+                Assert.That(EditorJsonUtility.ToJson(root.GetComponent<RectTransform>()), Is.EqualTo(rootBefore));
             }
         }
 

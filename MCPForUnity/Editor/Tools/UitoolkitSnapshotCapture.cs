@@ -16,7 +16,7 @@ namespace MCPForUnity.Editor.Tools
             public string Identity;
             public int NextChild;
             public float Alpha;
-            public bool Visible;
+            public bool Displayed;
         }
 
         internal static JArray Capture(GameObject go, int limit)
@@ -26,17 +26,27 @@ namespace MCPForUnity.Editor.Tools
             var root = ui.Root;
             if (root == null || root.panel == null || !(root.worldBound.width > 0) || !(root.worldBound.height > 0))
                 throw new ArgumentException("UI Toolkit live panel/layout is unavailable; build the visual tree before capture.");
+            float inheritedAlpha = 1;
+            bool inheritedDisplay = true;
+            int ancestorDepth = 0;
+            for (var ancestor = root.parent; ancestor != null; ancestor = ancestor.parent)
+            {
+                if (ancestorDepth++ == 128)
+                    throw new ArgumentException("Snapshot overflow: document ancestor chain exceeds the depth bound.");
+                inheritedAlpha *= ancestor.resolvedStyle.opacity;
+                inheritedDisplay &= ancestor.resolvedStyle.display != DisplayStyle.None;
+            }
             string identity = CaptureUISnapshot.Identity(go);
             var nodes = new JArray();
             var stack = new Stack<Frame>();
-            Add(root, identity, null, go.activeInHierarchy && Enabled(ui.Component), 1, nodes);
+            Add(root, identity, null, go.activeInHierarchy && Enabled(ui.Component), inheritedAlpha, nodes, inheritedDisplay);
             stack.Push(
                 new Frame
                 {
                     Element = root,
                     Identity = identity,
-                    Alpha = root.resolvedStyle.opacity,
-                    Visible = Eligible(root),
+                    Alpha = inheritedAlpha * root.resolvedStyle.opacity,
+                    Displayed = inheritedDisplay && root.resolvedStyle.display != DisplayStyle.None,
                 }
             );
             while (stack.Count > 0)
@@ -60,14 +70,14 @@ namespace MCPForUnity.Editor.Tools
                 string childIdentity = parent.Identity + "/" + segment;
                 if (childIdentity.Length > 4096)
                     throw new ArgumentException("Visual element identity exceeds 4096 characters.");
-                Add(child, childIdentity, parent.Identity, go.activeInHierarchy && Enabled(ui.Component), parent.Alpha, nodes, parent.Visible);
+                Add(child, childIdentity, parent.Identity, go.activeInHierarchy && Enabled(ui.Component), parent.Alpha, nodes, parent.Displayed);
                 stack.Push(
                     new Frame
                     {
                         Element = child,
                         Identity = childIdentity,
                         Alpha = parent.Alpha * child.resolvedStyle.opacity,
-                        Visible = parent.Visible && Eligible(child),
+                        Displayed = parent.Displayed && child.resolvedStyle.display != DisplayStyle.None,
                     }
                 );
             }
@@ -87,15 +97,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static bool Enabled(Component component) => !(component is Behaviour behaviour) || behaviour.isActiveAndEnabled;
 
-        private static void Add(
-            VisualElement element,
-            string identity,
-            string parent,
-            bool active,
-            float inheritedAlpha,
-            JArray nodes,
-            bool inheritedVisibility = true
-        )
+        private static void Add(VisualElement element, string identity, string parent, bool active, float inheritedAlpha, JArray nodes, bool inheritedDisplay)
         {
             string text = element is TextElement textElement ? textElement.text : null;
             var classes = element.GetClasses().OrderBy(value => value, StringComparer.Ordinal).ToArray();
@@ -115,8 +117,7 @@ namespace MCPForUnity.Editor.Tools
                     ["classes"] = new JArray(classes),
                     ["text"] = text,
                     ["active"] = active,
-                    ["visible"] =
-                        active && inheritedVisibility && Eligible(element) && alpha > 0 && element.worldBound.width > 0 && element.worldBound.height > 0,
+                    ["visible"] = active && inheritedDisplay && Eligible(element) && alpha > 0 && element.worldBound.width > 0 && element.worldBound.height > 0,
                     ["interactable"] = active && element.enabledInHierarchy,
                     ["renderer_culled"] = null,
                     ["alpha"] = alpha,
