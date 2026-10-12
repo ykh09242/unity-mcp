@@ -18,7 +18,7 @@ on:
       max_parallel:
         description: "Maximum concurrent compiler jobs for a measured comparison."
         type: choice
-        default: "2"
+        default: "3"
         options: ["2", "3"]
   push:
     # Beta's release gates need a Unity license; this independent check also
@@ -89,7 +89,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: ${{ inputs.max_parallel == '3' && 3 || 2 }}
+      max-parallel: ${{ inputs.max_parallel == '2' && 2 || 3 }}
       matrix:
         unity: ${{ fromJson(needs.matrix.outputs.versions) }}
     steps:
