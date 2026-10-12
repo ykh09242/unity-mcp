@@ -34,7 +34,11 @@ python tools/feature_program.py --program-dir .work/programs/example starter --p
 
 Replace the example objective and criterion with the human's actual decision. Complete the
 generated source, plan and role instructions before initialization; starter files are not
-passing evidence. Use the same `--program-dir` for every subsequent command. A new major
+passing evidence. An uninitialized starter has no `backlog.json`; `status`, `check` and
+`packet` require explicit initialization. Initialization and rendering preserve an authored
+`README.md` byte for byte; the starter refuses to overwrite existing material. Generated
+boards, checkpoints and task packets describe initialized work. Use the same `--program-dir`
+for every subsequent command. A new major
 objective with a different task set uses another directory, preserving the completed program.
 
 ```sh
@@ -83,6 +87,92 @@ An incomplete copy cannot be activated. Preserve its diagnostic records, inspect
 and retry from the still-authoritative source to another absent destination. Never remove
 markers or overwrite a destination to bypass verification. Stop and investigate source drift;
 copying an active registry by hand can create divergent histories.
+
+## Optional inventory and execution gates
+
+Existing programs retain their original claim/submit behavior until an appointed current
+director explicitly runs `phase-adopt`. Adoption is recorded at the current time. Real earlier
+inventory/review/acceptance documents may be referenced as evidence, but adoption does not
+invent historical enforcement or claim that implementation was previously gated by this tool.
+The gate implementation itself can be built under an already authorized human review.
+
+The sequence is adoption, inventory freeze, independent candidate review, then director
+execution acceptance. Obtain current binding values before preparing each mutation:
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example phase-binding
+python tools/feature_program.py --program-dir .work/programs/example phase-adopt --input evidence/_phases/attempt-1/adopt.json
+python tools/feature_program.py --program-dir .work/programs/example inventory-freeze --input evidence/_phases/attempt-1/freeze.json
+python tools/feature_program.py --program-dir .work/programs/example candidate-review --input evidence/_phases/attempt-1/review.json
+python tools/feature_program.py --program-dir .work/programs/example execution-accept --input evidence/_phases/attempt-1/accept.json
+```
+
+Each JSON receipt copies `program_id`, `objective_id`, `objective_digest`,
+`task_definition_digest`, `planning_digest`, `task_ids` and `expected_revision` from the latest
+`phase-binding` result and supplies nonblank `actor_id` and `reason`. `expected_revision` is
+the SHA256 of canonical registry JSON, checked under the mutation lock; it is a transaction
+revision token, not a lasting approval identity. Obtain it again after every registry mutation.
+Receipts and optional `evidence` paths must use unique immutable filenames beneath
+`evidence/_phases/attempt-1/`. Every successful transition retains the receipt and its hashes.
+
+| Command | Additional receipt fields |
+| --- | --- |
+| `phase-adopt` | Current director `actor_id`, `acknowledged: true`. For an older registry without `planning_path`, provide the repository-relative path to the original frozen planning input as `planning_path`. |
+| `inventory-freeze` | Current director `actor_id`, `candidate_path` beneath the phase evidence directory, its byte SHA256 as `candidate_digest`, explicit unique `inventory_authors`, and exact `units: [{"id": "EXAMPLE-1", "scope": ["path/to/source.py"]}]`. |
+| `candidate-review` | Independent reviewer `actor_id`, `reviewer_role: "independent"`, current `inventory_digest`, `candidate_digest` and `units` from `phase-binding`, `verdict: "accepted"` or `"rejected"`, and `unresolved_findings`. Accepted reviews require an empty findings list. |
+| `execution-accept` | Current director `actor_id`, current `inventory_digest`, `candidate_digest` and `units` from `phase-binding`, and `acceptance_complete: true`. A current accepted independent candidate review is required. |
+
+The reviewer must differ from the director, freezing actor and every declared inventory
+author. These identities are recorded local facts, not authentication or native-agent liveness
+proof. Every current declared task must appear exactly once in `units`, with its complete
+declared `candidate_paths`. Claims may use a file inside an accepted directory, but cannot
+claim an ancestor or another unit's paths. Claim and submit enforce the same acceptance from
+their core methods; adopting with existing claims holds their submission until acceptance.
+
+Bindings cover frozen candidate/planning bytes, lossless task definitions, declared paths,
+dependencies, checks and the current objective identity, criteria and task membership.
+Consequential definition or accepted-scope changes require a new freeze, independent review
+and acceptance. A rejected or repeated review clears acceptance. Existing implementation
+source revalidation, submission and review freshness checks remain separate. Implementation
+edits, lifecycle progress, actors, checkpoints, events, evidence and runtime next actions do
+not invalidate a current planning approval. Frozen evidence still must retain its exact bytes.
+
+## Discovery-to-execution succession
+
+Use explicit succession when a discovery program has no current claims and all its tasks
+are planned, and a different execution program is already initialized. Released historical
+attempts remain intact. This operation identifies a successor; it does not copy/reset work,
+complete discovery tasks or grant delivery authority. Obtain each program's canonical revision
+token (`phase-binding` where an objective is recorded, or SHA256 of canonical `backlog.json`).
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/discovery program-succeed --successor .work/programs/execution --successor-id execution-program --expected-revision <discovery-revision> --successor-revision <execution-revision> --owner director-example --reason "Continue the approved scope in the initialized execution program"
+```
+
+Both program locks and frozen provenance are checked before publication. The successor must
+have its stated distinct program identity and repository-relative path; self, overlapping,
+linked, nested/ambiguous or uninitialized targets and stale revisions are rejected. The
+predecessor's original registry, source, attempts and prior event bytes stay unchanged.
+`SUCCEEDED.json` and `PREDECESSOR.json` record exact identities, paths, revisions and reason.
+Normal predecessor registry reads/writes reject the archive and name the explicit successor; ordinary
+successor progress remains allowed after publication.
+
+Publication guards the predecessor first. An interruption after that guard leaves an explicit
+`SUCCESSION_INCOMPLETE.json`; the predecessor stays blocked and a guarded successor cannot
+execute. Do not remove markers or reactivate discovery. Recover at the predecessor:
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/discovery program-succeed-recover --owner director-example --reason "Finish the unchanged interrupted publication"
+```
+
+Recovery locks both programs, verifies exact predecessor bytes, identities, frozen successor
+source/task/planning provenance and existing markers, then finishes the same publication.
+If the successor was still writable before its guard or was already activated when the final
+predecessor cleanup failed, verified runtime progress remains intact; recovery does not reset
+its registry to the initial revision. `SUCCESSION_RECOVERY.json` records that observed revision
+and the recovery reason. Changed frozen provenance or conflicting data stays guarded for
+investigation. A failure before the first guard leaves the original programs
+unchanged and permits a normal retry. An interrupted transition never labels discovery done.
 
 ## State and review
 

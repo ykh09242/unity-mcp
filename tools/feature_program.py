@@ -22,11 +22,19 @@ import sys
 import tempfile
 from typing import Final, Iterator, TypeAlias
 
+# Extensions lazily import core helpers. Reuse this entrypoint module so rejected
+# input has the same ProgramError identity under script, module and imported runs.
+if __name__ == "__main__":
+    core_module = f"{__package__}.feature_program" if __package__ else "feature_program"
+    sys.modules.setdefault(core_module, sys.modules[__name__])
+
 if __package__:
     import tools.feature_program_coordination as coordination
+    import tools.feature_program_phases as phases
     import tools.feature_program_questions as questions
 else:
     import feature_program_coordination as coordination
+    import feature_program_phases as phases
     import feature_program_questions as questions
 
 
@@ -351,8 +359,16 @@ class Program:
     directory: Path
 
     @contextmanager
-    def lock(self, relocation_recovery: bool = False) -> Iterator[None]:
-        if relocation_recovery:
+    def lock(
+        self, relocation_recovery: bool = False, succession_recovery: bool = False
+    ) -> Iterator[None]:
+        if succession_recovery:
+            require(
+                not self.path("RELOCATED.json").exists()
+                and not self.path("RELOCATION_INCOMPLETE.json").exists(),
+                "Succession recovery cannot bypass relocation guards",
+            )
+        elif relocation_recovery:
             require(
                 self.path("RELOCATION_INCOMPLETE.json").is_file()
                 and not self.path("RELOCATED.json").exists(),
@@ -381,6 +397,7 @@ class Program:
         return safe_path(self.directory, relative)
 
     def require_current_location(self) -> None:
+        phases.succession_guard(self)
         marker = self.path("RELOCATED.json")
         if marker.exists():
             destination = read_json(marker, limit=64 * 1024).get("destination")
@@ -658,9 +675,11 @@ class Program:
         record(state.get("source"), "report source")
         questions.validate_questions(state)
         coordination.validate_governance(state)
+        phases.validate(state)
         if verify_artifacts:
             self.verify_refs(coordination.evidence_references(state), budget)
             self.verify_refs(questions.evidence_references(state), budget)
+            self.verify_refs(phases.evidence_references(state), budget)
 
     def verify_terminal(
         self, task: Record, attempt: Record, budget: ReadBudget | None = None
@@ -812,6 +831,7 @@ class Program:
                 "task_ids": list(sections),
             },
             "planning_sha256": sha(planning_budget.read(planning_path, 8 * 1024 * 1024)),
+            "planning_path": safe_relative(args.planning),
             "workstreams": plan.get("workstreams"),
             "tasks": tasks,
             "events": [],
@@ -879,6 +899,8 @@ class Program:
             )
 
     def claim(self, state: Record, args: argparse.Namespace) -> None:
+        self.require_current_location()
+        phases.guard_execution(self, state, args.id, args.scope)
         task = self.task(state, args.id)
         coordination.validate_claim_transfer(state, args.id, args.owner)
         require(
@@ -1021,12 +1043,14 @@ class Program:
         )
 
     def submit(self, state: Record, args: argparse.Namespace) -> None:
+        self.require_current_location()
         task = self.task(state, args.id)
         require(
             task["status"] == "active" and task["owner"] == args.owner,
             "Submit requires active owner",
         )
         attempt = self.current_attempt(task)
+        phases.guard_execution(self, state, args.id, strings(attempt["scope"], "scope"))
         number = attempt["number"]
         require(type(number) is int, "Invalid attempt number")
         self.verify_refs(sequence(attempt["evidence"], "evidence"))
@@ -1651,7 +1675,7 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
     require(len(tasks) <= 2000, "Snapshot exceeds 2000 tasks")
     try:
         program.validate(state, verify_artifacts=False)
-    except (coordination.GovernanceError, questions.QuestionError) as exc:
+    except (coordination.GovernanceError, phases.PhaseError, questions.QuestionError) as exc:
         raise ProgramError(str(exc)) from exc
     warnings: list[str] = []
     source = record(state["source"], "source")
@@ -1675,8 +1699,10 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
                 "Frozen source sections do not match the unchanged original report",
             )
     refs: dict[str, str] = {}
-    all_refs = list(coordination.evidence_references(state)) + list(
-        questions.evidence_references(state)
+    all_refs = (
+        list(coordination.evidence_references(state))
+        + list(questions.evidence_references(state))
+        + phases.evidence_references(state)
     )
     for task in tasks:
         for value in sequence(task["attempts"], "attempts"):
@@ -1915,6 +1941,16 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
             value = string(source[key], key)
             if value == old_root or value.startswith(old_root + "/"):
                 source[key] = new_root + value[len(old_root) :]
+        if state.get("planning_path") is not None:
+            planning_path = string(state["planning_path"], "planning path")
+            if planning_path.startswith(old_root + "/"):
+                state["planning_path"] = new_root + planning_path[len(old_root) :]
+        contract = state.get("phases")
+        if contract is not None:
+            phase_metadata = record(contract, "phases")
+            planning_path = string(phase_metadata["planning_path"], "phase planning path")
+            if planning_path.startswith(old_root + "/"):
+                phase_metadata["planning_path"] = new_root + planning_path[len(old_root) :]
         program.event(
             state,
             "relocate",
@@ -2160,6 +2196,14 @@ def starter(program: Program, args: argparse.Namespace) -> None:
         files[name] += (
             "\nUse the program's recorded communication_language for user questions, options and explanations across recovery and handoffs. Missing/null means unknown; never infer the language from a browser locale. Preserve original source and user replies. Change the recorded language only after an explicit human language change. Maintained documentation remains English; scripts, tests and UI may contain the authorized user language.\n"
         )
+    files["README.md"] += (
+        "\nThis guide was created with an uninitialized starter. If backlog.json is absent, "
+        "explicitly initialize before using status, check or packet. If backlog.json is present, "
+        "inspect actual status/check results and do not repeat initialization. Initialization preserves "
+        "this guide and any authored replacement; generated BOARD.md, CHECKPOINT.md and task "
+        "packets describe initialized work. Resume from the selected program's actual registry "
+        "and location guards, not from these examples.\n"
+    )
     for name in ("DIRECTOR.md", "SUBDIRECTOR.md", "WORKER.md"):
         files[name] += (
             "\nInspect related_to, dependencies and the current owner/contact registry. Communicate directly with peers for bounded API, data and dependency agreements while preserving owned-file boundaries. Persist consequential agreements/blockers as task notes/evidence before relying on them and record counterpart acknowledgement. Escalate cross-scope or goal conflicts to the sub-director/final director. If the native runtime cannot address a peer, relay through the director; never invent delivery or acknowledgement. This tool does not send messages or launch agents.\n"
@@ -2272,6 +2316,7 @@ def parser() -> argparse.ArgumentParser:
     checkpoint.add_argument("--team-state", default=".work/handoffs/current.json")
     questions.add_commands(commands)
     coordination.add_commands(commands)
+    phases.add_commands(commands)
     return result
 
 
@@ -2306,6 +2351,15 @@ def main(argv: list[str] | None = None) -> int:
                 recover_relocation(program, args)
             print("relocate-recover: OK; explicitly use this destination")
             return 0
+        if args.command == "program-succeed-recover":
+            require(
+                program.path("SUCCESSION_INCOMPLETE.json").is_file(),
+                "Succession recovery requires an incomplete predecessor publication",
+            )
+            with program.lock(succession_recovery=True):
+                phases.recover_succession(program, args)
+            print("program-succeed-recover: OK; predecessor guarded, use identified successor")
+            return 0
         if args.command == "fingerprint":
             snapshot = program.source_snapshot([safe_relative(path) for path in args.scope])
             print(
@@ -2322,8 +2376,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         with program.lock():
             state = program.initialize(args) if args.command == "init" else program.load()
-            if questions.apply_command(program, state, args) or coordination.apply_command(
-                program, state, args
+            if (
+                phases.apply_command(program, state, args)
+                or questions.apply_command(program, state, args)
+                or coordination.apply_command(program, state, args)
             ):
                 program.save(state)
                 print(f"{args.command}: OK")
@@ -2331,6 +2387,11 @@ def main(argv: list[str] | None = None) -> int:
             match args.command:
                 case "init":
                     program.save(state)
+                case "phase-binding":
+                    print(canonical(phases.binding(program, state)).decode(), end="")
+                    return 0
+                case "program-succeed":
+                    phases.succeed(program, state, args)
                 case "relocate":
                     relocate(program, state, args)
                 case "check":
@@ -2388,7 +2449,13 @@ def main(argv: list[str] | None = None) -> int:
                     raise ProgramError(f"Unknown command: {other}")
             print(f"{args.command}: OK")
         return 0
-    except (ProgramError, coordination.GovernanceError, questions.QuestionError, OSError) as exc:
+    except (
+        ProgramError,
+        coordination.GovernanceError,
+        phases.PhaseError,
+        questions.QuestionError,
+        OSError,
+    ) as exc:
         print(f"feature-program: {exc}", file=sys.stderr)
         return 1
 
