@@ -142,7 +142,7 @@ async def main():
             if case == "replacement":
                 await asyncio.wait({command}, timeout=.2)
             else:
-                await asyncio.sleep(.3)
+                await asyncio.wait({command, owner.ping_task}, timeout=.3)
             # Then cleanup precedes blocked close and releases the existing command.
             assert command.done(), "Heartbeat failure must release pending public commands"
             assert command.result()["success"] is False and command.result()["hint"] == "retry"

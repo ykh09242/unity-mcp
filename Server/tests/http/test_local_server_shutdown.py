@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 import httpx
+from fastmcp import FastMCP
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 import uvicorn
@@ -24,10 +25,19 @@ BODY = {"instance_token": "owned-test-launch"}
 PATH = "/api/server/shutdown"
 
 
-@pytest.fixture
-def managed(monkeypatch):
+@pytest.fixture(scope="module")
+def managed_server() -> FastMCP:
     from main import create_mcp_server
 
+    # Reuse invariant registrations; each case still owns its application and hub state.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(config, "http_remote_hosted", False)
+        patch.setattr(config, "local_auth_token", HEADERS["X-Unity-MCP-Token"])
+        return create_mcp_server(False, managed_instance_token=BODY["instance_token"])
+
+
+@pytest.fixture
+def managed(monkeypatch, managed_server):
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "local_auth_token", HEADERS["X-Unity-MCP-Token"])
     for name in ("_connections", "_pending", "_ping_tasks", "_last_pong", "_admitted"):
@@ -36,7 +46,7 @@ def managed(monkeypatch):
     monkeypatch.setattr(PluginHub, "_shutdown_requested", False)
     for name in ("_registry", "_lock", "_loop", "_mcp"):
         monkeypatch.setattr(PluginHub, name, None)
-    app = create_mcp_server(False, managed_instance_token=BODY["instance_token"]).http_app()
+    app = managed_server.http_app()
 
     @asynccontextmanager
     async def lifespan(_app):
