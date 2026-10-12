@@ -277,7 +277,7 @@ def named_step(job_name, name):
     )
 
 
-def test_optional_preparation_uses_complete_editor_image_without_license_or_slim_cache():
+def test_optional_preparation_validates_immutable_inputs_without_license_or_slim_cache():
     job = workflow("unity-tests.yml")["jobs"]["optionalPackageInputs"]
     assert job["needs"] == ["matrix"]
     assert "if" not in job
@@ -287,16 +287,31 @@ def test_optional_preparation_uses_complete_editor_image_without_license_or_slim
         == "${{ fromJson(needs.matrix.outputs.optional_versions) }}"
     )
     preparation = named_step("optionalPackageInputs", "Prepare optional integration packages")
-    assert preparation["env"]["UNITY_IMAGE"] == "${{ steps.editor.outputs.image }}"
-    assert '--image "$UNITY_IMAGE"' in preparation["run"]
-    assert '--output ".unity-ci/optional-$UNITY_VERSION" --include-optional' in preparation["run"]
+    assert 'unity_ci_package_cache.py prepare "$UNITY_VERSION"' in preparation["run"]
+    assert '--output ".unity-ci/optional-$UNITY_VERSION"' in preparation["run"]
+    assert "if" not in preparation
     assert "--unity-data" not in preparation["run"]
     for step in job["steps"]:
         assert "UNITY_LICENSE" not in str(step)
         assert "unity_compile_cache" not in str(step)
         assert not step.get("uses", "").startswith("game-ci/unity-test-runner@")
-    editor = named_step("optionalPackageInputs", "Prepare Unity Editor image")
-    assert 'prepare "$UNITY_VERSION" --purpose tests' in editor["run"]
+    key = named_step("optionalPackageInputs", "Identify optional dependency inputs")
+    assert 'unity_ci_package_cache.py identity "$UNITY_VERSION"' in key["run"]
+    restore = named_step("optionalPackageInputs", "Restore optional dependency inputs")
+    save = named_step("optionalPackageInputs", "Save validated optional dependency inputs")
+    assert restore["uses"].startswith("actions/cache/restore@")
+    assert save["uses"].startswith("actions/cache/save@")
+    assert "restore-keys" not in restore["with"]
+    assert restore["with"] == save["with"]
+    assert restore["with"]["path"] == "${{ steps.package-cache-key.outputs.cache_path }}"
+    assert restore["with"]["key"] == "${{ steps.package-cache-key.outputs.cache_key }}"
+    assert "github.event_name == 'push'" in save["if"]
+    assert "github.ref == 'refs/heads/beta'" in save["if"]
+    assert "github.ref == 'refs/heads/main'" in save["if"]
+    assert "inputs.ref == '' || inputs.ref == github.sha" in save["if"]
+    assert "steps.packages.outputs.cache_populated == 'true'" in save["if"]
+    assert not save.get("continue-on-error", False)
+    assert job["steps"].index(restore) < job["steps"].index(preparation) < job["steps"].index(save)
 
 
 def test_optional_project_transfer_requires_the_same_opt_in_as_license_detection():

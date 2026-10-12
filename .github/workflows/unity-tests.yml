@@ -282,24 +282,42 @@ jobs:
           ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.ref }}
           persist-credentials: false
 
-      # The small compiler cache intentionally excludes graphics package sources.
-      # Read the complete BuiltInPackages from the matching Editor image instead.
-      - name: Prepare Unity Editor image
-        id: editor
+      # Cache only immutable public dependencies, never prepared product/test sources.
+      - name: Identify optional dependency inputs
+        id: package-cache-key
         env:
           UNITY_VERSION: ${{ matrix.unity.version }}
-        run: python3 tools/unity_ci.py prepare "$UNITY_VERSION" --purpose tests
+        run: python3 tools/unity_ci_package_cache.py identity "$UNITY_VERSION"
 
+      - name: Restore optional dependency inputs
+        id: package-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.package-cache-key.outputs.cache_path }}
+          key: ${{ steps.package-cache-key.outputs.cache_key }}
+
+      # Both cache paths validate identities, minimum Editor versions and dependency closure.
+      # A cold path reads complete BuiltInPackages from the matching digest-pinned Editor.
       - name: Prepare optional integration packages
         id: packages
         env:
           UNITY_VERSION: ${{ matrix.unity.version }}
-          UNITY_IMAGE: ${{ steps.editor.outputs.image }}
         run: |
           set -euo pipefail
-          python3 tools/unity_ci_packages.py prepare \
-            --unity-version "$UNITY_VERSION" --image "$UNITY_IMAGE" \
-            --output ".unity-ci/optional-$UNITY_VERSION" --include-optional
+          python3 tools/unity_ci_package_cache.py prepare "$UNITY_VERSION" \
+            --output ".unity-ci/optional-$UNITY_VERSION"
+
+      # PRs can read trusted caches; only validated current-source branch pushes populate them.
+      - name: Save validated optional dependency inputs
+        if: >-
+          github.event_name == 'push' &&
+          (github.ref == 'refs/heads/beta' || github.ref == 'refs/heads/main') &&
+          (inputs.ref == '' || inputs.ref == github.sha) &&
+          steps.packages.outputs.cache_populated == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.package-cache-key.outputs.cache_path }}
+          key: ${{ steps.package-cache-key.outputs.cache_key }}
 
       # Retain dependency evidence even when no licensed job can consume the project.
       - name: Upload optional package resolution
@@ -335,8 +353,11 @@ jobs:
           retention-days: 7
 
       - name: Report package preparation scope
+        env:
+          CACHE_POPULATED: ${{ steps.packages.outputs.cache_populated }}
         run: |
           echo "Optional package pins, minimum Editor versions and dependency closure validated. Native execution is reported by the separate licensed integration jobs." >> "$GITHUB_STEP_SUMMARY"
+          echo "Optional dependency cache populated: $CACHE_POPULATED. Current product/test source staged on every run." >> "$GITHUB_STEP_SUMMARY"
 
   optionalIntegrations:
     name: Optional ${{ matrix.suite.id }} on Unity ${{ matrix.unity.version }}

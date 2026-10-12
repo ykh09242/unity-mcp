@@ -183,6 +183,7 @@ def extract_package(content: bytes, destination: Path) -> None:
                     raise PreparationError(f"Missing package archive content: {member.name}")
                 with stream, target.open("xb") as output:
                     shutil.copyfileobj(stream, output)
+                target.chmod(member.mode & 0o777)
 
 
 def _read_registry_bytes(url: str, identity: str) -> bytes:
@@ -620,6 +621,7 @@ def prepare(
     repo: Path = ROOT,
     profiles_path: Path = PROFILES,
     registry_cache: Path | None = None,
+    registry_integrity: dict[str, str] | None = None,
     include_optional: bool = False,
 ) -> Preparation:
     major, minor, _ = unity_numbers(unity_version)
@@ -709,6 +711,7 @@ def prepare(
                             unity_version,
                             "registry-cache",
                             expected=version,
+                            archive_sha256=(registry_integrity or {}).get(f"{name}@{version}"),
                         )
                     else:
                         sha256 = fetch_registry_package(name, version, destination)

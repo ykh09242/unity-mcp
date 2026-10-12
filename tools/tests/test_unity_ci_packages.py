@@ -3,10 +3,12 @@
 import importlib.util
 import io
 import json
+import hashlib
 from pathlib import Path
 import sys
 import subprocess
 import shutil
+import stat
 import tarfile
 
 import pytest
@@ -194,6 +196,362 @@ TMP_ASSETS = (
     "Assets/TextMesh Pro/Fonts/LiberationSans.ttf",
     "Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF.asset",
 )
+
+
+@pytest.fixture
+def dependency_cache(environment, monkeypatch):
+    """Keep the actual filesystem/preparer and substitute only Docker and registry I/O."""
+    monkeypatch.setitem(sys.modules, "unity_ci_packages", packages)
+    for name in ("unity_ci", "unity_ci_package_cache"):
+        spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / f"{name}.py")
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    helper = sys.modules["unity_ci_package_cache"]
+    repo, data, registry, profiles = environment
+    monkeypatch.setattr(helper, "ROOT", repo)
+    add_optional_profile(environment)
+    manifest = repo / "versions.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "defaultVersion": "6000.0.69f1",
+                "previewBaseImage": "unityci/base:ubuntu-3.2.2@sha256:" + "a" * 64,
+                "versions": [
+                    {
+                        "id": "6000.0.69f1",
+                        "role": "lts",
+                        "channel": "lts",
+                        "image": "unityci/editor:ubuntu-6000.0.69f1-base-3@sha256:" + "b" * 64,
+                        "testImage": "unityci/editor:ubuntu-6000.0.69f1-linux-il2cpp-3@sha256:"
+                        + "c" * 64,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    for relative in helper.LOGIC_INPUTS:
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / relative, target)
+    calls = []
+
+    def copy_image(image, destination, *, unity_version=None):
+        calls.append(("editor", image, unity_version))
+        shutil.copytree(data / "Resources", destination / "Resources")
+        return destination
+
+    def download(name, version, destination):
+        calls.append(("registry", name, version))
+        source = registry / f"{name}@{version}"
+        shutil.copytree(source, destination)
+        return hashlib.sha256(f"archive:{name}@{version}".encode()).hexdigest()
+
+    monkeypatch.setattr(packages, "copy_image_packages", copy_image)
+    monkeypatch.setattr(packages, "fetch_registry_package", download)
+    request = helper.CacheRequest("6000.0.69f1", repo, manifest, profiles)
+    return helper, request, calls
+
+
+def test_optional_dependency_cache_warm_run_matches_cold_and_stages_current_source(
+    dependency_cache,
+):
+    # Given a validated cold cache and current source edits after its creation.
+    helper, request, calls = dependency_cache
+    cold = helper.prepare(request, request.repo / ".unity-ci/cold")
+    report = (request.repo / cold.preparation.resolution_report).read_bytes()
+    original_calls = list(calls)
+    source = request.repo / "MCPForUnity/Runtime/Fixture.cs"
+    source.write_text("class ChangedAfterCache {}", encoding="utf-8")
+    asset = request.repo / "TestProjects/UnityMCPTests/Assets/Fixture.cs"
+    asset.write_text("class ChangedTestAfterCache {}", encoding="utf-8")
+    # When the same inputs prepare another isolated project.
+    warm = helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then cached immutable dependencies replace network/Docker work, with full fresh staging.
+    assert cold.populated is True and warm.populated is False
+    assert calls == original_calls
+    assert (request.repo / warm.preparation.resolution_report).read_bytes() == report
+    assert (
+        request.repo / ".unity-ci/warm/package/Runtime/Fixture.cs"
+    ).read_bytes() == source.read_bytes()
+    assert (
+        request.repo / ".unity-ci/warm/project/Assets/Fixture.cs"
+    ).read_bytes() == asset.read_bytes()
+    receipt = json.loads((helper.destination(request) / "receipt.json").read_text(encoding="utf-8"))
+    assert receipt["archiveSha256"]
+    assert all(
+        item["integrity"]["archiveSha256"]
+        for item in json.loads(report)["packages"]
+        if item["source"] == "registry-cache"
+    )
+    assert {path.name for path in helper.destination(request).iterdir()} == {
+        "Data",
+        "Registry",
+        "receipt.json",
+    }
+
+
+@pytest.mark.parametrize("damage", ["content", "missing", "extra", "receipt", "mode"])
+def test_optional_dependency_cache_rejects_corrupt_restore_before_staging(dependency_cache, damage):
+    # Given a successful cache whose restored inventory has been corrupted.
+    helper, request, calls = dependency_cache
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    directory = helper.destination(request)
+    target = directory / "Registry/com.unity.editorcoroutines@1.1.0/Editor/Fixture.cs"
+    if damage == "content":
+        target.write_text("corrupt", encoding="utf-8")
+    elif damage == "missing":
+        target.unlink()
+    elif damage == "extra":
+        (directory / "Registry/unexpected.txt").write_text("extra", encoding="utf-8")
+    elif damage == "receipt":
+        (directory / "receipt.json").write_text("{}", encoding="utf-8")
+    else:
+        target.chmod(stat.S_IMODE(target.stat().st_mode) ^ stat.S_IWUSR)
+    original_calls = list(calls)
+    # When preparation consumes the corrupted cache.
+    with pytest.raises(packages.PreparationError, match="Invalid optional dependency cache"):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then it fails closed without network work or a prepared project.
+    assert calls == original_calls
+    assert not (request.repo / ".unity-ci/warm").exists()
+
+
+@pytest.mark.parametrize("input_name", ["manifest", "profiles", "logic", "package", "project"])
+def test_optional_dependency_cache_key_changes_with_immutable_inputs(dependency_cache, input_name):
+    # Given the identity for reviewed dependency/preparation inputs.
+    helper, request, _ = dependency_cache
+    original = helper.identity(request)
+    paths = {
+        "manifest": request.manifest_path,
+        "profiles": request.profiles_path,
+        "logic": request.repo / "tools/unity_ci_packages.py",
+        "package": request.repo / "MCPForUnity/package.json",
+        "project": request.repo / "TestProjects/UnityMCPTests/Packages/manifest.json",
+    }
+    # When one immutable input changes (JSON whitespace remains parseable).
+    with paths[input_name].open("a", encoding="utf-8") as output:
+        output.write("\n")
+    changed = helper.identity(request)
+    # Then the cache key changes and no source tree is included in the cache key.
+    assert changed.cache_key != original.cache_key
+
+
+def test_optional_dependency_cache_warm_path_still_checks_dependency_closure(dependency_cache):
+    # Given a cache with individually valid packages but incompatible transitive versions.
+    helper, request, _ = dependency_cache
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    directory = helper.destination(request)
+    metadata = (
+        directory / "Data/Resources/PackageManager/BuiltInPackages/com.unity.ugui/package.json"
+    )
+    document = json.loads(metadata.read_text(encoding="utf-8"))
+    document["dependencies"]["com.unity.modules.ui"] = "9.0.0"
+    metadata.write_text(json.dumps(document), encoding="utf-8")
+    receipt_path = directory / "receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["files"] = helper.inventory(directory)
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    # When a restored cache with matching hashes is used.
+    with pytest.raises(packages.PreparationError, match="requires com.unity.modules.ui"):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then semantic validation runs even on a cache hit.
+    assert not (request.repo / ".unity-ci/warm").exists()
+
+
+@pytest.mark.parametrize("damage", ["identity", "minimum", "archive"])
+def test_optional_dependency_cache_warm_path_checks_package_metadata(dependency_cache, damage):
+    # Given a hash-consistent cache with invalid package or archive provenance metadata.
+    helper, request, _ = dependency_cache
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    directory = helper.destination(request)
+    metadata = directory / "Registry/com.unity.ai.navigation@2.0.9/package.json"
+    document = json.loads(metadata.read_text(encoding="utf-8"))
+    if damage == "identity":
+        document["version"] = "2.0.8"
+    elif damage == "minimum":
+        document["unity"] = "7000.0"
+    metadata.write_text(json.dumps(document), encoding="utf-8")
+    receipt_path = directory / "receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["files"] = helper.inventory(directory)
+    if damage == "archive":
+        receipt["archiveSha256"].pop("com.unity.ai.navigation@2.0.9")
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    # When the matching hash inventory is consumed on a warm path.
+    with pytest.raises(packages.PreparationError):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then metadata compatibility and provenance still prevent a successful preparation.
+    assert not (request.repo / ".unity-ci/warm").exists()
+
+
+@pytest.mark.parametrize("excluded", [".env.local", "GameData"])
+def test_optional_dependency_cache_rejects_excluded_input_before_hashing(
+    dependency_cache, excluded
+):
+    # Given a valid cache restore with an excluded extra input.
+    helper, request, _ = dependency_cache
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    target = helper.destination(request) / "Registry" / excluded
+    target.mkdir() if excluded == "GameData" else target.write_bytes(b"excluded fixture")
+    # When it is inventoried for warm preparation.
+    with pytest.raises(packages.PreparationError, match="Excluded input"):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then source staging has not occurred.
+    assert not (request.repo / ".unity-ci/warm").exists()
+
+
+def test_optional_dependency_cache_rejects_linked_input(dependency_cache, tmp_path):
+    # Given a valid cache restored with a symbolic link to an external fixture.
+    helper, request, _ = dependency_cache
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    target = helper.destination(request) / "Registry/external"
+    try:
+        target.symlink_to(tmp_path, target_is_directory=True)
+    except OSError:
+        pytest.skip("Symbolic link creation is unavailable on this host")
+    # When preparation inventories the cache.
+    with pytest.raises(packages.PreparationError, match="Linked optional dependency input"):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then no linked data is copied into the prepared output.
+    assert not (request.repo / ".unity-ci/warm").exists()
+
+
+def test_optional_dependency_cache_cli_cold_warm_reports_outputs(
+    dependency_cache, monkeypatch, capsys
+):
+    # Given the actual CLI parser, a hermetic dependency provider and GitHub output surface.
+    helper, request, calls = dependency_cache
+    monkeypatch.setattr(helper, "ROOT", request.repo)
+    outputs = request.repo / "github-output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    common = ["--manifest", str(request.manifest_path), "--profiles", str(request.profiles_path)]
+    assert helper.main(["identity", request.version, *common]) == 0
+    assert "cache_key=unity-ci-optional-v1-" in outputs.read_text(encoding="utf-8")
+    assert (
+        helper.main(
+            ["prepare", request.version, *common, "--output", str(request.repo / ".unity-ci/cold")]
+        )
+        == 0
+    )
+    cold = json.loads(capsys.readouterr().out.splitlines()[-1])
+    original_calls = list(calls)
+    # When the CLI prepares a second isolated output from warm inputs.
+    status = helper.main(
+        ["prepare", request.version, *common, "--output", str(request.repo / ".unity-ci/warm")]
+    )
+    warm = json.loads(capsys.readouterr().out.splitlines()[-1])
+    # Then downstream paths are valid and the cache status observes the actual path used.
+    assert status == 0 and calls == original_calls
+    assert cold["cache_populated"] == "true" and warm["cache_populated"] == "false"
+    for key in ("project_path", "resolution_report", "refs"):
+        assert (request.repo / warm[key]).exists()
+        assert f"{key}={warm[key]}" in outputs.read_text(encoding="utf-8")
+
+
+def test_optional_dependency_cache_refuses_prepared_source_inside_cache(dependency_cache):
+    # Given the controlled dependency cache destination.
+    helper, request, calls = dependency_cache
+    # When a caller requests prepared source inside that destination.
+    with pytest.raises(packages.PreparationError, match="separate from dependency cache"):
+        helper.prepare(request, helper.destination(request) / "project")
+    # Then no dependency download or source staging occurs.
+    assert calls == []
+    assert not helper.destination(request).exists()
+
+
+@pytest.mark.parametrize("extension", [".key", ".pem", ".pfx", ".p12", ".PEM"])
+def test_optional_dependency_cache_never_opens_excluded_file(
+    dependency_cache, monkeypatch, extension
+):
+    # Given a cache restore with an excluded fixture and an observer for file opens.
+    helper, request, _ = dependency_cache
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    fixture = (
+        helper.destination(request)
+        / "Data/Resources/PackageManager/BuiltInPackages"
+        / f"fixture{extension}"
+    )
+    fixture.write_bytes(b"synthetic excluded fixture")
+    original_open = Path.open
+    opened = []
+
+    def observe(path, *args, **kwargs):
+        if path == fixture:
+            opened.append(path)
+            pytest.fail("Excluded fixture must be rejected before it is opened")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", observe)
+    # When warm preparation inventories the restored input.
+    with pytest.raises(packages.PreparationError, match="Excluded input"):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then the sensitive-shaped file was never read and no output was staged.
+    assert opened == []
+    assert not (request.repo / ".unity-ci/warm").exists()
+
+
+@pytest.mark.parametrize("replacement", [None, [], "invalid", 42, {"archiveSha256": []}])
+def test_optional_dependency_cache_rejects_malformed_receipt_types(dependency_cache, replacement):
+    # Given a valid cache whose restored receipt has a malformed JSON shape.
+    helper, request, _ = dependency_cache
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    receipt = helper.destination(request) / "receipt.json"
+    receipt.write_text(json.dumps(replacement), encoding="utf-8")
+    # When the cache crosses the receipt boundary.
+    with pytest.raises(packages.PreparationError, match="Invalid optional dependency cache"):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then invalid types fail closed through the normal diagnostic.
+    assert not (request.repo / ".unity-ci/warm").exists()
+
+
+def test_optional_dependency_cache_refuses_other_repository(dependency_cache, tmp_path):
+    # Given a request naming an unrelated checkout.
+    helper, request, calls = dependency_cache
+    other = tmp_path / "unrelated"
+    attempted = helper.CacheRequest(
+        request.version, other, request.manifest_path, request.profiles_path
+    )
+    # When the request tries to identify/populate its dependency cache.
+    with pytest.raises(packages.PreparationError, match="current repository"):
+        helper.prepare(attempted, other / ".unity-ci/project")
+    # Then it fails before reads or writes in that other checkout.
+    assert calls == []
+    assert not other.exists()
+
+
+def test_optional_dependency_cache_rejects_archive_list_with_expected_keys(dependency_cache):
+    # Given a valid receipt with archive provenance incorrectly shaped as a list of exact keys.
+    helper, request, _ = dependency_cache
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    path = helper.destination(request) / "receipt.json"
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    receipt["archiveSha256"] = list(receipt["archiveSha256"])
+    path.write_text(json.dumps(receipt), encoding="utf-8")
+    # When the restored receipt crosses the cache boundary.
+    with pytest.raises(
+        packages.PreparationError, match="Missing exact registry archive provenance"
+    ):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then it produces the normal fail-closed diagnostic instead of leaking AttributeError.
+    assert not (request.repo / ".unity-ci/warm").exists()
+
+
+def test_optional_dependency_cache_cold_failure_does_not_publish_cache(dependency_cache):
+    # Given an exact registry package incompatible with the selected Editor.
+    helper, request, _ = dependency_cache
+    source = request.repo.parent / "cache/com.unity.ai.navigation@2.0.9/package.json"
+    metadata = json.loads(source.read_text(encoding="utf-8"))
+    metadata["unity"] = "7000.0"
+    source.write_text(json.dumps(metadata), encoding="utf-8")
+    # When cold dependency inputs are downloaded and validated.
+    with pytest.raises(packages.PreparationError, match="requires Unity"):
+        helper.prepare(request, request.repo / ".unity-ci/cold")
+    # Then a failed preparation never publishes reusable inputs or a prepared project.
+    assert not helper.destination(request).exists()
+    assert not (request.repo / ".unity-ci/cold").exists()
 
 
 def make_tmp_archive(
@@ -1307,6 +1665,24 @@ def test_registry_archive_nonportable_paths_fail_before_writing(
     with pytest.raises(packages.PreparationError):
         packages.extract_package(content, destination)
     assert not destination.exists()
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows does not preserve POSIX executable bits"
+)
+def test_registry_archive_preserves_executable_mode_without_special_bits(tmp_path: Path) -> None:
+    # Given an official package archive with an executable tool and special permission bits.
+    content = io.BytesIO()
+    with tarfile.open(fileobj=content, mode="w:gz") as archive:
+        entry = tarfile.TarInfo("package/tool")
+        entry.size = len(b"tool")
+        entry.mode = 0o4755
+        archive.addfile(entry, io.BytesIO(b"tool"))
+    # When the registry package is materialized for CI.
+    destination = tmp_path / "destination"
+    packages.extract_package(content.getvalue(), destination)
+    # Then the ordinary executable mode is preserved and special bits are stripped.
+    assert stat.S_IMODE((destination / "tool").stat().st_mode) == 0o755
 
 
 def test_registry_archive_accepts_nested_files_and_existing_owned_directories(
