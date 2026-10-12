@@ -1366,6 +1366,19 @@ class Program:
             )
         }
         metadata["deliveries"] = task.get("deliveries", [])
+        metadata["planning_note"] = task.get("planning_note")
+        metadata["execution_priority"] = record(
+            state.get("execution_priorities", {}), "priorities"
+        ).get(task["id"])
+        metadata["planning_mutations"] = [
+            value
+            for value in sequence(state.get("amendments", []), "amendments")
+            if record(value, "amendment").get("operation") in planning.PLANNED_COMMANDS
+            and any(
+                record(change, "change")["id"] == task["id"]
+                for change in sequence(record(value, "amendment")["changes"], "changes")
+            )
+        ]
         metadata["communication_language"] = state.get("communication_language")
         return (
             f"# Task {task['id']}: {section['title']}\n\n"
@@ -1492,8 +1505,15 @@ class Program:
         tasks = [record(value, "task") for value in sequence(state["tasks"], "tasks")]
         active = [task for task in tasks if task["status"] in OWNED_STATES]
         candidates: list[Json] = []
-        for task in sorted(tasks, key=lambda item: item["phase"]):
+        for task in planning.task_order(state):
             if task["status"] != "planned":
+                continue
+            goal = state.get("objective")
+            if (
+                goal is not None
+                and record(goal, "objective").get("membership_revision") is not None
+                and task["id"] not in strings(record(goal, "objective")["task_ids"], "members")
+            ):
                 continue
             blocked = [
                 dependency
@@ -1511,6 +1531,9 @@ class Program:
                 {
                     "id": task["id"],
                     "phase": task["phase"],
+                    "execution_priority": record(
+                        state.get("execution_priorities", {}), "priorities"
+                    ).get(task["id"]),
                     "workstream": task["workstream"],
                     "unmet_dependencies": blocked,
                     "scope_conflicts": collisions,
@@ -1863,6 +1886,7 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
         "questions": questions.snapshot_questions(state),
         "source_intakes": state.get("source_intakes", []),
         "amendments": state.get("amendments", []),
+        "execution_priorities": state.get("execution_priorities"),
     }
     require(len(canonical(result)) <= 8 * 1024 * 1024, "Snapshot output exceeds 8 MiB")
     return result

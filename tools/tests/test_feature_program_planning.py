@@ -17,6 +17,59 @@ from tools.tests.test_feature_program_phases import GateFixture, create_program,
 from tools.tests.test_feature_program import fp
 
 
+def planned_input(gate: GateFixture, operation: str = "task-plan") -> fp.Record:
+    state = gate.program.load()
+    return {
+        "schema_version": 1,
+        "operation": operation,
+        "id": "planned-edit",
+        "program_id": state["program_id"],
+        "objective_id": "goal",
+        "actor_id": "director",
+        "expected_revision": fp.phases.revision(state),
+        "reason": "Make the explicit planned action current",
+        "changes": [
+            {
+                "id": "S01",
+                "before": {"next_action": gate.program.task(state, "S01")["next_action"]},
+                "after": {"next_action": "Inspect the current implementation"},
+            }
+        ],
+    }
+
+
+def test_planned_next_action_preserves_binding_and_membership(gate: GateFixture) -> None:
+    # Given an accepted baseline and an explicit before/after runtime action.
+    gate.ready()
+    before = gate.program.load()
+    data = planned_input(gate)
+    # When the proposal is constructed without publication.
+    future = fp.planning.construct(gate.program, before, data)
+    # Then only the action and immutable amendment change, not scope or membership.
+    assert future.before_binding == future.after_binding
+    assert future.state["objective"] == before["objective"]
+    assert (
+        gate.program.task(future.state, "S01")["next_action"]
+        == "Inspect the current implementation"
+    )
+
+
+def test_priority_preserves_binding_and_orders_ready_tasks(gate: GateFixture) -> None:
+    # Given an accepted baseline and a lower explicit priority for the second task.
+    gate.ready()
+    before = gate.program.load()
+    data = planned_input(gate, "task-prioritize")
+    data["changes"] = [{"id": "S02", "before": None, "after": -1}]
+    # When the proposal is built.
+    future = fp.planning.construct(gate.program, before, data)
+    # Then priority is independent of scope and affects the actual ready consumer.
+    assert future.before_binding == future.after_binding
+    assert [task["id"] for task in gate.program.status(future.state, True)["candidates"]] == [
+        "S02",
+        "S01",
+    ]
+
+
 def proposal(gate: GateFixture) -> fp.Record:
     program = gate.program
     name = "source/admissions/intake/report.md"
@@ -147,6 +200,499 @@ def reviewed_input(gate: GateFixture, data: fp.Record | None = None) -> tuple[st
     data.update({"renewal": renewal, "evidence": [evidence]})
     name = gate.fixture.write(f"evidence/_planning/attempt-1/{label}.json", data)
     return name, data
+
+
+def runtime_input(gate: GateFixture, data: fp.Record) -> str:
+    result = fp.planning.preview(gate.program, gate.program.load(), data)
+    data.update(
+        {"before_binding": result["before_binding"], "after_binding": result["after_binding"]}
+    )
+    evidence = f"evidence/_planning/attempt-1/{data['id']}-rationale.md"
+    gate.program.path(evidence).parent.mkdir(parents=True, exist_ok=True)
+    gate.program.path(evidence).write_text(
+        "Synthetic director rationale for this exact planning change.\n", encoding="utf-8"
+    )
+    data["evidence"] = [evidence]
+    return gate.fixture.write(f"evidence/_planning/attempt-1/{data['id']}.json", data)
+
+
+def test_standalone_planned_cli_preserves_source_history_and_acceptance(gate: GateFixture) -> None:
+    # Given released history and an accepted contract.
+    gate.ready()
+    assert gate.fixture.claim() == 0
+    assert (
+        gate.fixture.run(
+            "release",
+            "S01",
+            "--owner",
+            "worker",
+            "--reason",
+            "Preserve history",
+            "--next-action",
+            "Revalidate",
+        )
+        == 0
+    )
+    before = gate.program.load()
+    files = {
+        path: path.read_bytes()
+        for path in gate.program.directory.rglob("*")
+        if path.is_file() and ("evidence" in path.parts or path.name in {"source.md", "plan.json"})
+    }
+    data = planned_input(gate)
+    expected_changes = deepcopy(data["changes"])
+    name = runtime_input(gate, data)
+    command = [
+        sys.executable,
+        "-B",
+        fp.__file__,
+        "--repo",
+        str(gate.program.repo),
+        "--program-dir",
+        "discovery",
+        "task-plan",
+        "--input",
+        name,
+    ]
+    # When the actual standalone command publishes and the same receipt is retried.
+    success = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert success.returncode == 0, success.stderr
+    current_bytes = gate.program.path("backlog.json").read_bytes()
+    retry = subprocess.run(command, capture_output=True, text=True, check=False)
+    # Then one immutable patch is committed, accepted phases/membership/history remain exact.
+    assert retry.returncode == 1 and "already committed" in retry.stderr
+    assert gate.program.path("backlog.json").read_bytes() == current_bytes
+    current = gate.program.load()
+    assert current["objective"] == before["objective"]
+    assert current["phases"] == before["phases"]
+    assert (
+        gate.program.task(current, "S01")["attempts"]
+        == gate.program.task(before, "S01")["attempts"]
+    )
+    assert all(path.read_bytes() == raw for path, raw in files.items())
+    assert current["amendments"][-1]["changes"] == expected_changes
+    assert gate.fixture.claim(number=2) == 0
+    assert gate.fixture.run("check") == 0
+
+
+def test_reviewed_planned_batch_renews_exact_scope_without_membership(gate: GateFixture) -> None:
+    # Given two explicit consequential metadata patches.
+    gate.ready()
+    before = gate.program.load()
+    data = planned_input(gate)
+    data["changes"] = [
+        {
+            "id": "S01",
+            "before": {"candidate_paths": ["src/S01.py"], "planning_note": "Synthetic only"},
+            "after": {
+                "candidate_paths": ["src/S01.py", "src/new.py"],
+                "planning_note": "Inspect expanded paths",
+            },
+        },
+        {
+            "id": "S02",
+            "before": {"depends_on": [], "phase": 1},
+            "after": {"depends_on": ["S01"], "phase": 2},
+        },
+    ]
+    name, _ = reviewed_input(gate, data)
+    # When the independently reviewed future contract commits.
+    assert gate.fixture.run("task-plan", "--input", name) == 0
+    # Then scope is current, old phase history/member/source records are unchanged.
+    current = gate.program.load()
+    assert current["objective"] == before["objective"]
+    assert "source_intakes" not in current
+    assert (
+        fp.record(current["phases"], "phases")["history"][:-3]
+        == fp.record(before["phases"], "phases")["history"]
+    )
+    assert fp.phases.planning_binding(current) == data["after_binding"]
+    assert gate.program.status(current, True)["candidates"][0]["id"] == "S01"
+    assert gate.fixture.run("check") == 0
+
+
+@pytest.mark.parametrize("value", [True, False, 1.5, -(2**31) - 1, 2**31, "1"])
+def test_invalid_priority_rejects_without_registry_change(
+    gate: GateFixture, value: fp.Json
+) -> None:
+    gate.ready()
+    data = planned_input(gate, "task-prioritize")
+    data["changes"] = [{"id": "S02", "before": None, "after": value}]
+    name = gate.fixture.write("evidence/_planning/attempt-1/invalid-priority.json", data)
+    before = gate.program.path("backlog.json").read_bytes()
+    assert gate.fixture.run("task-prioritize", "--input", name) == 1
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("value", [-(2**31), 0, 2**31 - 1, None])
+def test_priority_boundaries_and_claimed_history_remain_valid(
+    gate: GateFixture, value: fp.Json
+) -> None:
+    gate.ready()
+    data = planned_input(gate, "task-prioritize")
+    data["changes"] = [{"id": "S02", "before": None, "after": value}]
+    name = runtime_input(gate, data)
+    assert gate.fixture.run("task-prioritize", "--input", name) == 0
+    state = gate.program.load()
+    assert fp.record(state["execution_priorities"], "priorities").get("S02") == value
+    assert gate.fixture.claim("S02") == 0
+    assert gate.fixture.run("check") == 0
+
+
+def test_priority_removal_keeps_activation_and_unspecified_distinct_from_zero(
+    gate: GateFixture,
+) -> None:
+    gate.ready()
+    data = planned_input(gate, "task-prioritize")
+    data["changes"] = [{"id": "S02", "before": None, "after": 0}]
+    assert gate.fixture.run("task-prioritize", "--input", runtime_input(gate, data)) == 0
+    explicit = gate.program.load()
+    data = planned_input(gate, "task-prioritize")
+    data["id"] = "priority-remove"
+    data["changes"] = [{"id": "S02", "before": 0, "after": None}]
+    assert gate.fixture.run("task-prioritize", "--input", runtime_input(gate, data)) == 0
+    current = gate.program.load()
+    assert explicit["execution_priorities"] == {"S02": 0}
+    assert current["execution_priorities"] == {}
+    assert current["amendments"][-1]["priority_before"] == {"S02": 0}
+    assert current["amendments"][-1]["priority_after"] == {}
+    assert gate.fixture.run("check") == 0
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "revision",
+        "actor",
+        "objective",
+        "unknown",
+        "before",
+        "field",
+        "path",
+        "private",
+        "cycle",
+        "related",
+        "check",
+        "phase",
+        "duplicate",
+        "membership",
+        "workstream",
+    ],
+)
+def test_invalid_planned_amendment_preserves_registry(gate: GateFixture, fault: str) -> None:
+    gate.ready()
+    data = planned_input(gate)
+    change = fp.record(fp.sequence(data["changes"], "changes")[0], "change")
+    if fault == "revision":
+        data["expected_revision"] = "0" * 64
+    elif fault == "actor":
+        data["actor_id"] = "reviewer"
+    elif fault == "objective":
+        data["objective_id"] = "old"
+    elif fault == "unknown":
+        change["id"] = "unknown"
+    elif fault == "before":
+        change["before"] = {"next_action": "outdated"}
+    elif fault == "field":
+        change.update({"before": {"status": "planned"}, "after": {"status": "done"}})
+    elif fault in {"path", "private"}:
+        change.update(
+            {
+                "before": {"candidate_paths": ["src/S01.py"]},
+                "after": {
+                    "candidate_paths": ["../outside.py" if fault == "path" else ".work/private.py"]
+                },
+            }
+        )
+    elif fault == "cycle":
+        data["changes"] = [
+            {"id": "S01", "before": {"depends_on": []}, "after": {"depends_on": ["S02"]}},
+            {"id": "S02", "before": {"depends_on": []}, "after": {"depends_on": ["S01"]}},
+        ]
+    elif fault == "related":
+        change.update({"before": {"related_to": []}, "after": {"related_to": ["unknown"]}})
+    elif fault == "check":
+        change.update(
+            {
+                "before": {"required_checks": ["acceptance", "scoped_tests", "format_lint"]},
+                "after": {"required_checks": ["unknown"]},
+            }
+        )
+    elif fault == "phase":
+        change.update({"before": {"phase": 1}, "after": {"phase": True}})
+    elif fault == "duplicate":
+        data["changes"] = [change, deepcopy(change)]
+    elif fault == "membership":
+        data["membership"] = {"after": ["S01"]}
+    else:
+        change.update({"before": {"workstream": "delivery"}, "after": {"workstream": "unknown"}})
+    name = gate.fixture.write("evidence/_planning/attempt-1/rejected-plan.json", data)
+    before = gate.program.path("backlog.json").read_bytes()
+    assert gate.fixture.run("task-plan", "--input", name) == 1
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("operation", ["task-plan", "task-prioritize"])
+@pytest.mark.parametrize("status", ["active", "review", "blocked", "done", "excluded", "disposed"])
+def test_ineligible_planning_targets_reject_in_pure_proposal(
+    gate: GateFixture, operation: str, status: str
+) -> None:
+    gate.ready()
+    data = planned_input(gate, operation)
+    if operation == "task-prioritize":
+        data["changes"] = [{"id": "S01", "before": None, "after": -1}]
+    state = gate.program.load()
+    task = gate.program.task(state, "S01")
+    if status == "excluded":
+        fp.record(state["objective"], "objective")["task_ids"] = ["S02"]
+    elif status == "disposed":
+        task["disposition"] = "retired"
+    else:
+        task["status"] = status
+        task["owner"] = "worker" if status in {"active", "review", "blocked"} else None
+    data["expected_revision"] = fp.phases.revision(state)
+    with pytest.raises((fp.planning.PlanningError, fp.phases.PhaseError)):
+        fp.planning.construct(gate.program, state, data)
+
+
+def test_priority_remains_valid_through_real_completion(gate: GateFixture) -> None:
+    gate.ready()
+    data = planned_input(gate, "task-prioritize")
+    data["changes"] = [{"id": "S01", "before": None, "after": -4}]
+    assert gate.fixture.run("task-prioritize", "--input", runtime_input(gate, data)) == 0
+    assert gate.fixture.claim() == 0
+    assert gate.fixture.submit()
+    review = gate.fixture.review()
+    assert gate.fixture.run("complete", "S01", "--review", review) == 0
+    assert gate.program.load()["execution_priorities"] == {"S01": -4}
+    assert gate.fixture.run("check") == 0
+
+
+def test_priority_cannot_bypass_dependency_readiness(gate: GateFixture) -> None:
+    state = gate.program.load()
+    gate.program.task(state, "S02")["depends_on"] = ["S01"]
+    gate.program.save(state)
+    gate.ready()
+    data = planned_input(gate, "task-prioritize")
+    data["changes"] = [{"id": "S02", "before": None, "after": -(2**31)}]
+    assert gate.fixture.run("task-prioritize", "--input", runtime_input(gate, data)) == 0
+    current = gate.program.load()
+    assert current["amendments"][-1]["order_after"] == ["S02", "S01"]
+    assert current["amendments"][-1]["ready_before"] == ["S01"]
+    assert current["amendments"][-1]["ready_after"] == ["S01"]
+    assert [
+        task["id"] for task in gate.program.status(gate.program.load(), True)["candidates"]
+    ] == ["S01"]
+    before = gate.program.path("backlog.json").read_bytes()
+    assert gate.fixture.claim("S02") == 1
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_planned_scope_collision_with_owned_peer_rejects(gate: GateFixture) -> None:
+    gate.ready()
+    assert gate.fixture.claim("S02") == 0
+    data = planned_input(gate)
+    data["changes"] = [
+        {
+            "id": "S01",
+            "before": {"candidate_paths": ["src/S01.py"]},
+            "after": {"candidate_paths": ["src/S02.py"]},
+        }
+    ]
+    before = gate.program.path("backlog.json").read_bytes()
+    name = gate.fixture.write("evidence/_planning/attempt-1/colliding.json", data)
+    assert gate.fixture.run("task-plan", "--input", name) == 1
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_planned_workstream_cannot_rewrite_existing_category(gate: GateFixture) -> None:
+    state = gate.program.load()
+    fp.sequence(state["workstreams"], "streams").append(
+        {"id": "other", "name": "Other existing root"}
+    )
+    state["categories"] = [
+        {"id": "leaf", "parent_id": "delivery", "title": "Authored leaf", "task_ids": ["S01"]}
+    ]
+    gate.program.save(state)
+    gate.ready()
+    data = planned_input(gate)
+    data["changes"] = [
+        {"id": "S01", "before": {"workstream": "delivery"}, "after": {"workstream": "other"}}
+    ]
+    before = gate.program.path("backlog.json").read_bytes()
+    with pytest.raises(fp.coordination.GovernanceError, match="Category/workstream mismatch"):
+        fp.planning.construct(gate.program, gate.program.load(), data)
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("fault", ["metadata", "priority", "history"])
+def test_effective_planning_drift_is_detected(gate: GateFixture, fault: str) -> None:
+    gate.ready()
+    data = planned_input(gate, "task-prioritize" if fault == "priority" else "task-plan")
+    if fault == "priority":
+        data["changes"] = [{"id": "S02", "before": None, "after": -1}]
+    else:
+        data["changes"] = [
+            {
+                "id": "S01",
+                "before": {"planning_note": "Synthetic only"},
+                "after": {"planning_note": "Explicit updated note"},
+            }
+        ]
+    name = runtime_input(gate, data) if fault == "priority" else reviewed_input(gate, data)[0]
+    assert gate.fixture.run(str(data["operation"]), "--input", name) == 0
+    state = gate.program.load()
+    if fault == "metadata":
+        gate.program.task(state, "S01")["planning_note"] = "Unrecorded edit"
+    elif fault == "priority":
+        state["execution_priorities"] = {"S02": -2}
+    else:
+        state["amendments"][-1]["changes"][0]["after"] = {"planning_note": "Altered history"}
+    gate.program.path("backlog.json").write_bytes(fp.canonical(state))
+    assert gate.fixture.run("check") == 1
+
+
+@pytest.mark.parametrize("stage", ["atomic", "render", "precommit", "publication", "corrupt"])
+def test_planned_publication_failures_preserve_or_report_committed_state(
+    gate: GateFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    stage: str,
+) -> None:
+    gate.ready()
+    name = runtime_input(gate, planned_input(gate))
+    before = gate.program.path("backlog.json").read_bytes()
+    original_write = fp.atomic_write
+    original_views = fp.Program.views
+
+    def fail_write(path: Path, content: bytes) -> None:
+        if path == gate.program.path("backlog.json"):
+            raise OSError("Injected planned atomic failure")
+        original_write(path, content)
+
+    def fail_render(program: fp.Program, state: fp.Record) -> None:
+        raise OSError("Injected planned render failure")
+
+    def changing_views(program: fp.Program, state: fp.Record) -> dict[str, str]:
+        views = original_views(program, state)
+        if stage == "precommit":
+            program.path(name).write_text("{}", encoding="utf-8")
+        else:
+            fp.planning.PublicationStore(program.repo).path("ledger.json").write_text(
+                "{}", encoding="utf-8"
+            )
+        return views
+
+    if stage == "publication":
+        marker: fp.Record = {
+            "program_id": "discovery",
+            "destination": "pending",
+            "reason": "Synthetic pending copy",
+        }
+        with gate.program.lock(publication_recovery=True):
+            fp.planning.publication_register(
+                gate.program,
+                "relocation",
+                marker,
+                fp.Program(gate.program.repo, gate.program.repo / "pending"),
+            )
+    capsys.readouterr()
+    with monkeypatch.context() as scoped:
+        if stage == "atomic":
+            scoped.setattr(fp, "atomic_write", fail_write)
+        elif stage == "render":
+            scoped.setattr(fp.Program, "render", fail_render)
+        elif stage in {"precommit", "corrupt"}:
+            scoped.setattr(fp.Program, "views", changing_views)
+        assert gate.fixture.run("task-plan", "--input", name) == 1
+    if stage == "render":
+        assert "Registry committed at revision" in capsys.readouterr().err
+        assert gate.program.path("backlog.json").read_bytes() != before
+        assert gate.fixture.run("task-plan", "--input", name) == 1
+        assert gate.fixture.run("render") == 0
+        assert gate.fixture.run("check") == 0
+    else:
+        assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_planned_metadata_requires_independent_renewal(gate: GateFixture) -> None:
+    gate.ready()
+    data = planned_input(gate)
+    data["changes"] = [
+        {
+            "id": "S01",
+            "before": {"planning_note": "Synthetic only"},
+            "after": {"planning_note": "New stable definition"},
+        }
+    ]
+    result = fp.planning.preview(gate.program, gate.program.load(), data)
+    assert result["renewal_required"] is True
+    name = runtime_input(gate, data)
+    before = gate.program.path("backlog.json").read_bytes()
+    assert gate.fixture.run("task-plan", "--input", name) == 1
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_priority_of_conflicting_planned_task_does_not_grant_readiness(gate: GateFixture) -> None:
+    state = gate.program.load()
+    for value in state["tasks"]:
+        fp.record(value, "task")["conflict_groups"] = ["shared"]
+    gate.program.save(state)
+    gate.ready()
+    assert gate.fixture.claim() == 0
+    data = planned_input(gate, "task-prioritize")
+    data["changes"] = [{"id": "S02", "before": None, "after": -20}]
+    assert gate.fixture.run("task-prioritize", "--input", runtime_input(gate, data)) == 0
+    assert gate.program.status(gate.program.load(), True)["candidates"] == []
+    before = gate.program.path("backlog.json").read_bytes()
+    assert gate.fixture.claim("S02", owner="other-worker") == 1
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_admitted_task_planning_preserves_supplemental_provenance(gate: GateFixture) -> None:
+    gate.ready()
+    name, _ = reviewed_input(gate)
+    assert gate.fixture.run("task-admit", "--input", name) == 0
+    before = gate.program.load()
+    source = gate.program.path("source/admissions/intake/report.md").read_bytes()
+    plan = gate.program.path("source/admissions/intake/plan.json").read_bytes()
+    data = planned_input(gate)
+    data["id"] = "admitted-plan"
+    data["changes"] = [
+        {
+            "id": "S03",
+            "before": {"next_action": "Revalidate new implementation"},
+            "after": {"next_action": "Inspect admitted source"},
+        }
+    ]
+    assert gate.fixture.run("task-plan", "--input", runtime_input(gate, data)) == 0
+    current = gate.program.load()
+    assert current["source_intakes"] == before["source_intakes"]
+    assert current["objective"] == before["objective"]
+    assert gate.program.task(current, "S03")["source"] == gate.program.task(before, "S03")["source"]
+    assert gate.program.path("source/admissions/intake/report.md").read_bytes() == source
+    assert gate.program.path("source/admissions/intake/plan.json").read_bytes() == plan
+    assert gate.fixture.run("check") == 0
+
+
+def test_planned_scope_rejects_self_review_without_commit(gate: GateFixture) -> None:
+    gate.ready()
+    data = planned_input(gate)
+    data["changes"] = [
+        {
+            "id": "S01",
+            "before": {"planning_note": "Synthetic only"},
+            "after": {"planning_note": "Reviewed future definition"},
+        }
+    ]
+    name, data = reviewed_input(gate, data)
+    review_name = data["renewal"]["review"]
+    review = fp.read_json(gate.program.path(review_name))
+    review["actor_id"] = "director"
+    gate.program.path(review_name).write_bytes(fp.canonical(review))
+    before = gate.program.path("backlog.json").read_bytes()
+    assert gate.fixture.run("task-plan", "--input", name) == 1
+    assert gate.program.path("backlog.json").read_bytes() == before
 
 
 def test_reviewed_admission_preserves_original_records_and_allows_fresh_claim(

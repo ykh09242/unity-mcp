@@ -86,6 +86,23 @@ class GateFixture:
         assert self.accept() == 0
 
 
+def test_stable_binding_excludes_priority_history_but_includes_planned_metadata(
+    gate: GateFixture,
+) -> None:
+    # Given actual accepted task definitions.
+    gate.ready()
+    state = gate.program.load()
+    original = phases.planning_binding(state)
+    # When only ordering/history and runtime action are observed.
+    state["execution_priorities"] = {"S01": -10}
+    state["amendments"] = [{"recorded_at": "2026-10-13T00:00:00+00:00"}]
+    gate.program.task(state, "S01")["next_action"] = "Observe progress"
+    # Then stable scope remains equal, but authored metadata still changes it.
+    assert phases.planning_binding(state) == original
+    gate.program.task(state, "S01")["planning_note"] = "New explicit scope rationale"
+    assert phases.planning_binding(state) != original
+
+
 def create_program(repo: Path, name: str) -> Fixture:
     program = fp.Program(repo, repo / name)
     program.directory.mkdir(parents=True)
