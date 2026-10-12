@@ -176,12 +176,24 @@ def test_cli_failure_always_stops_the_reader(
     released = Event()
     monkeypatch.setattr(ImportEditor, "validate", lambda self: None)
     invocation = Invocation(["owned-cli"], tmp_path)
+    published_before_complete = []
+    original_dump = json.dump
+
+    def observe_publication(value, stream, **options):
+        if Path(stream.name).name in {"ready.json", "ready.json.tmp"}:
+            published_before_complete.append((Path(stream.name).parent / "ready.json").exists())
+        return original_dump(value, stream, **options)
+
+    monkeypatch.setattr(json, "dump", observe_publication)
 
     def fake_execute(current: Invocation) -> dict[str, int]:
         if current is invocation:
             raise ImportE2EError("injected CLI failure")
         nonce = read_json(current.directory / "config.json")["nonce"]
-        write_json(current.directory / "ready.json", {"nonce": nonce})
+        # Match the native publisher: existence signals a complete, closed payload.
+        temporary = current.directory / "ready.json.tmp"
+        write_json(temporary, {"nonce": nonce})
+        temporary.rename(current.directory / "ready.json")
         try:
             assert current.stop_requested.wait(5)
             return {"actual_exit_code": 1}
@@ -192,3 +204,4 @@ def test_cli_failure_always_stops_the_reader(
     with pytest.raises(RuntimeError, match="injected CLI failure"):
         execute_with_imports(invocation, ImportEditor(Path(sys.executable), tmp_path))
     assert released.is_set()
+    assert published_before_complete == [False], "Readiness exposed an unfinished JSON payload"
