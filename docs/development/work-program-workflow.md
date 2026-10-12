@@ -131,6 +131,12 @@ Use a PR for each independently verifiable work unit; combine only closely coupl
 Keep existing commit conventions and stage explicit public paths. Review the complete
 public diff for private records before pushing.
 
+In this repository, validate work branches through pull-request CI, including additional
+pushes to an open PR. Automatic push checks run after integration into `beta`; Python and
+Unity validation retain their existing reusable entry points. A work branch without an
+open PR has no automatic push validation. Use a supported manual workflow when an earlier
+check is needed. Keep path filters and test requirements intact when avoiding duplicate runs.
+
 Verify applicable GitHub Actions against the current PR head and relevant merge revision.
 Inspect actual execution, not only the green summary: missing or unexpectedly skipped
 required tests block acceptance. After fixes, re-review and verify the new revision.

@@ -49,41 +49,7 @@ on:
         type: string
         required: false
         default: ""
-  push:
-    # Exclude beta and main: those branches re-trigger this workflow via
-    # workflow_call from beta-release.yml / release.yml. Without the exclusion,
-    # a push to beta that touches MCPForUnity/** fires this workflow twice
-    # for the same SHA, and GitHub's auto-generated concurrency group
-    # (`unity-tests-refs/heads/beta`) cancels the older run with the noisy
-    # "higher priority waiting request" annotation.
-    branches-ignore: [beta, main]
-    paths:
-      - TestProjects/UnityMCPTests/**
-      - MCPForUnity/Editor/**
-      - MCPForUnity/Runtime/**
-      - .github/workflows/unity-tests.yml
-      - .github/workflows/unity-player-tests.yml
-      - tools/*player*e2e*
-      - tools/unity_windows_ci.py
-      - tools/check_unity_test_results.py
-      - tools/check_play_scenario_evidence.py
-      - Server/src/cli/main.py
-      - Server/pyproject.toml
-      - Server/uv.lock
-      - Server/src/cli/commands/play_scenario.py
-      - Server/src/cli/utils/play_scenario_player*.py
-      - Server/src/cli/utils/play_scenario_soak*.py
-      - Server/src/cli/utils/play_scenario_reports.py
-      - Server/src/models/play_scenarios.py
-      - tools/unity-native-e2e-tests.json
-      - tools/unity-versions.json
-      - tools/unity_ci.py
-      - tools/unity-ci/**
-      - tools/unity_ci_packages.py
-      - tools/unity_ci_package_cache.py
-      - tools/unity-ci-packages.json
-      - tools/unity-optional-tests.json
-  # Same-repo PRs get a unity-tests status check on every open / push via this trigger
+  # Same-repo PRs get a unity-tests status check when opened or updated via this trigger
   # (mirrors python-tests.yml). Fork PRs ALSO fire this trigger but run in the fork's
   # context without secrets — the `license` gate job writes unity_ok=false and the test
   # job is skipped by its job-level `if:`, so the merge box shows "Skipped" rather than a
@@ -92,8 +58,8 @@ on:
   # There is deliberately no pull_request_target trigger here. Running fork-authored
   # C# through game-ci/unity-test-runner with UNITY_* secrets in scope is the classic
   # "pwn request" shape — an [InitializeOnLoad] script in the PR is enough to read
-  # them. To test a fork PR, review the diff and push its branch into this repo; the
-  # push trigger above then runs the full suite in a genuinely trusted context.
+  # them. To test a fork PR, review the diff and invoke the existing workflow_dispatch
+  # workflow on a reviewed trusted ref in this repository.
   pull_request:
     branches: [main, beta]
     paths:
@@ -123,9 +89,7 @@ on:
       - tools/unity-ci-packages.json
       - tools/unity-optional-tests.json
 
-# Dedup runs for the same branch across push / pull_request / workflow_call.
-# Same-repo PRs would otherwise fire both push (on the branch SHA) AND pull_request (on the PR);
-# concurrency keeps only the newer in-flight run per branch.
+# Cancel obsolete in-flight validation for the same PR or trusted manual/reusable ref.
 permissions:
   contents: read
 
@@ -233,7 +197,7 @@ jobs:
             echo
             echo "GitHub withholds repository secrets from workflow runs triggered by a fork's pull request."
             echo "To get real signal, a maintainer must run the suite against this code from a trusted context -"
-            echo "push the reviewed fork branch into this repo and the \`push\` trigger runs the full suite."
+            echo "run the existing \`workflow_dispatch\` workflow on a reviewed trusted ref in this repository."
             echo
             echo "The separate license-free compile matrix and \`Run Python Tests\` DO run on fork PRs."
             echo "Optional package preparation also runs without a license; it validates dependencies, not optional C# execution."

@@ -2,6 +2,7 @@ name: Workflow validation
 
 on:
   push:
+    branches: [beta]
     paths:
       - .github/workflows/**
       - .github/actions/**

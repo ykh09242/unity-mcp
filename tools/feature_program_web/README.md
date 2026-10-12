@@ -70,6 +70,8 @@ Vite writes `generated/index.html`, `generated/app.js` and `generated/style.css`
 these from source; never hand-edit them. Keep the Python server's static allowlist aligned
 with any intentional new asset. The web workflow checks formatting, types, behavior tests
 and a reproducible build, including unexpected new generated files.
+Work branches run this validation when a pull request is opened or updated. Direct pushes
+run it only on beta; manual workflow execution remains available.
 
 Run server checks from the repository root:
 

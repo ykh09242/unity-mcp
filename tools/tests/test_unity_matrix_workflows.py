@@ -179,6 +179,7 @@ def test_compilation_uses_cached_data_with_small_pinned_runtime_image():
 def test_compiler_input_and_order_changes_trigger_compilation(path):
     config = workflow("compile-check.yml")
     triggers = config.get("on", config.get(True))
+    assert triggers["push"]["branches"] == ["beta"]
     for event in ("push", "pull_request"):
         assert any(fnmatchcase(path, pattern) for pattern in triggers[event]["paths"])
 
@@ -199,8 +200,13 @@ def test_matrix_and_package_policy_changes_trigger_unity_validation(name, path):
     config = workflow(name)
     triggers = config.get("on", config.get(True))
     assert "workflow_dispatch" in triggers
-    for event in ("push", "pull_request"):
-        assert any(fnmatchcase(path, pattern) for pattern in triggers[event]["paths"])
+    assert any(fnmatchcase(path, pattern) for pattern in triggers["pull_request"]["paths"])
+    integration = workflow(
+        "compile-check.yml" if name == "compile-check.yml" else "fork-beta-tools.yml"
+    )
+    push = integration.get("on", integration.get(True))["push"]
+    assert push["branches"] == ["beta"]
+    assert any(fnmatchcase(path, pattern) for pattern in push["paths"])
 
 
 @pytest.mark.parametrize(
@@ -217,11 +223,18 @@ def test_optional_package_inputs_and_contracts_trigger_relevant_validation(name,
     # Given an optional-package helper, reviewed suite policy or its direct contract tests.
     config = workflow(name)
     triggers = config.get("on", config.get(True))
-    # When that file alone changes on a push or pull request.
-    for event in ("push", "pull_request"):
-        selected = any(fnmatchcase(path, pattern) for pattern in triggers[event]["paths"])
-        # Then the relevant validation workflow's path filter selects it.
-        assert selected, (name, event, path)
+    # When that file alone changes in a pull request.
+    assert any(fnmatchcase(path, pattern) for pattern in triggers["pull_request"]["paths"]), (
+        name,
+        path,
+    )
+    # Beta integration retains the direct compiler or the existing reusable caller.
+    integration = workflow(
+        "compile-check.yml" if name == "compile-check.yml" else "fork-beta-tools.yml"
+    )
+    push = integration.get("on", integration.get(True))["push"]
+    assert push["branches"] == ["beta"]
+    assert any(fnmatchcase(path, pattern) for pattern in push["paths"])
 
 
 def test_licensed_jobs_keep_license_gate_and_isolate_version_caches():
