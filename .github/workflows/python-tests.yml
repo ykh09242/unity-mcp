@@ -105,7 +105,6 @@ jobs:
       # redecorating it, deprecated in Python 3.15. Disable only its optional
       # beartype instrumentation; keep application validation and -W error.
       PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python-version == '3.15' && 'true' || 'false' }}
-      UNITY_MCP_LOG_DIR: ${{ runner.temp }}/unity-mcp-test-logs
     strategy:
       fail-fast: false
       matrix:
@@ -160,6 +159,8 @@ jobs:
 
       - name: Run tests with coverage
         if: matrix.suite == 'server' && matrix.python-version == '3.14'
+        env:
+          UNITY_MCP_LOG_DIR: ${{ runner.temp }}/unity-mcp-test-logs
         run: |
           cd Server
           # File groups keep module fixtures together; bound workers on shared runners.
@@ -167,6 +168,8 @@ jobs:
 
       - name: Run server tests
         if: matrix.suite == 'server' && matrix.python-version != '3.14'
+        env:
+          UNITY_MCP_LOG_DIR: ${{ runner.temp }}/unity-mcp-test-logs
         run: |
           cd Server
           uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --junitxml=test-results.xml --durations=20

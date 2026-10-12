@@ -352,11 +352,13 @@ def test_python_suites_are_disjoint_and_keep_structured_results() -> None:
 def test_server_workers_preserve_file_fixtures_and_fail_on_crashes() -> None:
     job = workflow("python-tests.yml")["jobs"]["test"]
     steps = {step["name"]: step for step in job["steps"]}
+    # The runner context exists in step env, but is invalid in job env.
+    assert all("runner." not in str(value) for value in job["env"].values())
     for name in ("Run tests with coverage", "Run server tests"):
         command = steps[name]["run"]
         assert "-n 2 --dist=loadfile --max-worker-restart=0" in command
+        assert steps[name]["env"]["UNITY_MCP_LOG_DIR"].startswith("${{ runner.temp }}/")
     assert job["timeout-minutes"] == 20
-    assert job["env"]["UNITY_MCP_LOG_DIR"].startswith("${{ runner.temp }}/")
     assert "Server/test-results-http.xml" in steps["Upload test results"]["with"]["path"]
 
 
