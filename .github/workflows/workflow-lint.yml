@@ -1,0 +1,36 @@
+name: Workflow validation
+
+on:
+  push:
+    paths:
+      - .github/workflows/**
+      - .github/actions/**
+      - .github/actionlint.yaml
+      - tools/check_workflows.py
+      - tools/tests/test_check_workflows.py
+  pull_request:
+    paths:
+      - .github/workflows/**
+      - .github/actions/**
+      - .github/actionlint.yaml
+      - tools/check_workflows.py
+      - tools/tests/test_check_workflows.py
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow-lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate every workflow with pinned actionlint
+        run: python3 tools/check_workflows.py --download
