@@ -91,6 +91,57 @@ Use the uploaded JUnit reports and job-step timings for future comparisons. Do n
 outer HTTP wrapper duration and its child report when computing total elapsed time. Timing
 varies with runner load; preserve test counts, outcomes, coverage and isolation when comparing.
 
+The compile harness also repeated each assembly's source inventory three times. It now
+captures one sorted inventory and counts sources/references while writing the response file.
+Three-run Windows medians fell from 2.650 to 1.620 seconds for a legacy fixture and 3.854 to
+2.465 seconds for Unity 7; all 36 normalized response files were unchanged. Fixture setup was
+only about 0.018 seconds, so mutable fixture directories remain isolated per case. These are
+local shell measurements, not a prediction of Linux runner or full-pipeline improvement.
+
+### Timing trends
+
+Each Python matrix job turns its existing JUnit report into a compact JSON snapshot.
+The warning-only `Python timing report` job downloads those small snapshots and compares
+them with up to five recent successful runs of the same workflow, branch and event.
+It never reruns tests or downloads historical coverage/HTML artifacts. Its read-only
+Actions permission is granted only to that job and the reusable-workflow callers.
+
+Comparisons require identical Python minor, runner OS/architecture, worker count, coverage
+mode and test/skip inventory, including the nested HTTP inventory. At least three matching
+samples are required. A suite warns only when it is both 25% and 10 seconds slower than
+the median; the five slowest modules use 25% and 5 seconds. Module durations sum testcase
+setup/call/teardown and are not wall time when workers overlap. Nested HTTP is displayed
+separately without adding its wrapper time twice. Job summaries show the slowest modules
+and cases. Missing, expired or unreadable history reports current measurements without
+blocking the test gate. Timing snapshots are retained for seven days and combined reports
+for 30 days under `python-test-timings`.
+
+For offline inspection from the repository root:
+
+```sh
+python tools/ci_test_performance.py snapshot --junit Server/test-results.xml --python 3.15 --suite tools --output .tmp/test-timings/3.15-tools.json
+python tools/ci_test_performance.py report --current .tmp/test-timings --output .tmp/performance-report
+```
+
+### Workflow validation
+
+The independent `Workflow validation` workflow checks every workflow on relevant pushes
+and pull requests. Run the same gate locally with Python 3.11 or newer:
+
+```sh
+python tools/check_workflows.py --download
+python tools/check_workflows.py
+```
+
+The first command downloads actionlint 1.7.12 only when its archive is absent. Every run
+verifies a committed SHA-256 checksum and recreates the executable in a temporary directory;
+subsequent runs work offline. The archive stays in `.tmp/actionlint/`. Optional workflow
+paths restrict local checks. No globally installed actionlint is used. Native workflow,
+expression and reusable-workflow checks are enabled; optional ShellCheck/Pyflakes integrations
+are disabled consistently across local and CI hosts. Python correctness lint remains separate.
+The existing configuration adds only the verified Ubuntu runner label missing from this
+actionlint release. See [actionlint usage](https://github.com/rhysd/actionlint/blob/v1.7.12/docs/usage.md).
+
 ## Unity
 
 [`unity-versions.json`](../../tools/unity-versions.json) is the authoritative matrix consumed by
@@ -264,3 +315,39 @@ repository and plugin glob configuration remain inputs to review.
 - [GitHub matrix jobs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations)
 - [Pinned setup-uv inputs](https://github.com/astral-sh/setup-uv/blob/c18668ad3cf93ea998bef934396af7bb5c839dc7/action.yml)
 - [Node 26.10 command-line options](https://github.com/nodejs/node/blob/v26.10.0/doc/api/cli.md)
+
+## Optional dependency input cache
+
+`optionalPackageInputs` restores immutable dependency inputs independently of the license
+policy. The cache contains complete `BuiltInPackages` from the version-matching,
+digest-pinned test Editor image, exact official-registry package trees, and an integrity
+receipt. It contains no prepared product package, test project, Unity `Library`, credentials
+or GameData. Both paths call the normal package preparer and freshly copy the current
+product/test sources, preserving Unity metadata and registry executable file modes.
+
+The exact key includes the Unity version and image digest, version/package profiles,
+product/project package manifests, and all preparation scripts plus the Editor Dockerfile.
+Source-body changes reuse dependencies while still staging the changed source. There are
+no broad restore keys. A restored receipt must match the expected input identity and the
+complete file/directory inventory, including SHA256 hashes and modes. Archive SHA256
+provenance remains in `resolved-packages.json`. Package identity, minimum Editor versions,
+transitive dependency closure and required reference/resource inputs are checked every run.
+A warm cache never skips the preparation job or turns native integration tests into a pass.
+
+The workflow uses the separately pinned `actions/cache/restore` and `actions/cache/save`
+actions. PRs and manual runs restore/read; saves require a successful preparation during a
+`beta`/`main` push with the current triggering source. Cache entries are immutable. A corrupt,
+partial or mismatched restore fails closed with its exact key in the error; delete that exact
+Actions cache entry and rerun, or change the cache schema after changing its contract. For
+local recovery remove only `.unity-ci/optional-inputs/VERSION`, never source directories.
+
+```sh
+python tools/unity_ci_package_cache.py identity 6000.0.84f1
+python tools/unity_ci_package_cache.py prepare 6000.0.84f1 --output .unity-ci/optional-6000.0.84f1
+```
+
+The output directory must be new and isolated. A cold run needs Docker and registry access;
+a warm run hashes restored inputs and prepares source without pulling an Editor image or
+downloading packages. Neither path launches the Unity Editor. See the
+[GitHub dependency caching reference](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching)
+for branch access and immutable cache behavior.
