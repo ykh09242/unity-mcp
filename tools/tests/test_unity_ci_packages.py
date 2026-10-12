@@ -295,6 +295,200 @@ def test_optional_dependency_cache_warm_run_matches_cold_and_stages_current_sour
     }
 
 
+def test_optional_dependency_cache_omits_unused_editor_packages_and_preserves_full_closure(
+    dependency_cache,
+):
+    # Given a large unrelated Editor package and complete required package/resource inputs.
+    helper, request, calls = dependency_cache
+    source = request.repo.parent / "editor-data/Resources/PackageManager/BuiltInPackages"
+    unused = make_package(source, "com.unity.unused.large", "1.0.0")
+    payload = unused / "large-publisher-resource.bin"
+    payload.write_bytes(b"unused publisher input" * 65536)
+    archive = make_tmp_archive(source, folder=True)
+    profile = json.loads(request.profiles_path.read_text(encoding="utf-8"))
+    profile["optionalProfiles"]["unity-six-lts"]["essentialResources"] = ["textmeshpro"]
+    request.profiles_path.write_text(json.dumps(profile), encoding="utf-8")
+    extra = source / "com.unity.ugui/Resources/retained.asset"
+    extra.parent.mkdir()
+    extra.write_bytes(b"complete package resource")
+    (extra.parent / "retained.asset.meta").write_bytes(b"guid: retained-package-resource")
+    (extra.parent / "empty-directory").mkdir()
+    original_ugui = helper.inventory(source / "com.unity.ugui")
+    # When a cold cache is prepared and consumed by a warm run.
+    cold = helper.prepare(request, request.repo / ".unity-ci/cold")
+    original_calls = list(calls)
+    warm = helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then only the validated closure is cached and all required package contents survive.
+    directory = helper.destination(request)
+    builtin = directory / "Data/Resources/PackageManager/BuiltInPackages"
+    assert not (builtin / unused.name).exists()
+    assert {path.name for path in directory.parent.iterdir()} == {request.version}
+    receipt = json.loads((directory / "receipt.json").read_text(encoding="utf-8"))
+    assert set(receipt["editorPackages"]) == {path.name for path in builtin.iterdir()}
+    assert {
+        "com.unity.modules.ui",
+        "com.unity.modules.imgui",
+        "com.unity.modules.jsonserialize",
+    } <= set(receipt["editorPackages"])
+    assert helper.inventory(builtin / "com.unity.ugui") == original_ugui
+    assert (
+        builtin / "com.unity.ugui/Package Resources" / archive.name
+    ).read_bytes() == archive.read_bytes()
+    assert (
+        sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
+        < payload.stat().st_size
+    )
+    assert (request.repo / cold.preparation.resolution_report).read_bytes() == (
+        request.repo / warm.preparation.resolution_report
+    ).read_bytes()
+    for relative in TMP_ASSETS:
+        assert (request.repo / ".unity-ci/warm/project" / relative).read_bytes() == (
+            request.repo / ".unity-ci/cold/project" / relative
+        ).read_bytes()
+        assert (request.repo / ".unity-ci/warm/project" / f"{relative}.meta").read_bytes() == (
+            request.repo / ".unity-ci/cold/project" / f"{relative}.meta"
+        ).read_bytes()
+    assert calls == original_calls
+
+
+@pytest.mark.parametrize("damage", ["missing-package", "altered-metadata", "missing-resource"])
+def test_optional_dependency_cache_rejects_damaged_required_editor_inputs(dependency_cache, damage):
+    # Given a sparse cache with the complete TMP essential-resource and transitive-module inputs.
+    helper, request, _ = dependency_cache
+    source = request.repo.parent / "editor-data/Resources/PackageManager/BuiltInPackages"
+    make_tmp_archive(source)
+    config = json.loads(request.profiles_path.read_text(encoding="utf-8"))
+    config["optionalProfiles"]["unity-six-lts"]["essentialResources"] = ["textmeshpro"]
+    request.profiles_path.write_text(json.dumps(config), encoding="utf-8")
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    directory = helper.destination(request)
+    builtin = directory / "Data/Resources/PackageManager/BuiltInPackages"
+    if damage == "missing-package":
+        (builtin / "com.unity.modules.ui").rename(directory.parent / "removed-editor-package")
+    elif damage == "altered-metadata":
+        (builtin / "com.unity.modules.ui/package.json").write_text("{}", encoding="utf-8")
+    else:
+        (builtin / "com.unity.ugui/Package Resources/TMP Essential Resources.unitypackage").unlink()
+    # When restored required data differs from the exact published receipt.
+    with pytest.raises(packages.PreparationError, match="size, mode or SHA256 mismatch"):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then a partial sparse cache cannot stage a warm output.
+    assert not (request.repo / ".unity-ci/warm").exists()
+
+
+def test_optional_dependency_cache_rejects_hash_consistent_missing_transitive_module(
+    dependency_cache,
+):
+    # Given an internally hash-consistent sparse cache whose transitive UI module was omitted.
+    helper, request, _ = dependency_cache
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    directory = helper.destination(request)
+    module = directory / "Data/Resources/PackageManager/BuiltInPackages/com.unity.modules.ui"
+    module.rename(directory.parent / "removed-editor-module")
+    receipt_path = directory / "receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["editorPackages"].remove(module.name)
+    receipt["files"] = helper.inventory(directory)
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    # When warm preparation revalidates the real dependency closure.
+    with pytest.raises(packages.PreparationError, match="Required package metadata not found"):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then matching hashes cannot replace the required transitive package.
+    assert not (request.repo / ".unity-ci/warm").exists()
+
+
+def test_optional_dependency_cache_rejects_hash_consistent_missing_essential_resource(
+    dependency_cache,
+):
+    # Given a sparse cache with its TMP essentials removed and its file inventory refreshed.
+    helper, request, _ = dependency_cache
+    source = request.repo.parent / "editor-data/Resources/PackageManager/BuiltInPackages"
+    make_tmp_archive(source)
+    config = json.loads(request.profiles_path.read_text(encoding="utf-8"))
+    config["optionalProfiles"]["unity-six-lts"]["essentialResources"] = ["textmeshpro"]
+    request.profiles_path.write_text(json.dumps(config), encoding="utf-8")
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    directory = helper.destination(request)
+    (
+        directory
+        / "Data/Resources/PackageManager/BuiltInPackages/com.unity.ugui/Package Resources/TMP Essential Resources.unitypackage"
+    ).unlink()
+    receipt_path = directory / "receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["files"] = helper.inventory(directory)
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    # When warm preparation validates required package/resource contents.
+    with pytest.raises(packages.PreparationError, match="TMP Essential Resources archive missing"):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then package identity and matching hashes alone cannot omit reviewed resources.
+    assert not (request.repo / ".unity-ci/warm").exists()
+
+
+def test_optional_dependency_cache_rejects_hash_consistent_unrelated_editor_package(
+    dependency_cache,
+):
+    # Given a restored cache and receipt with a complete but unrelated extra Editor package.
+    helper, request, _ = dependency_cache
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    directory = helper.destination(request)
+    builtin = directory / "Data/Resources/PackageManager/BuiltInPackages"
+    extra = make_package(builtin, "com.unity.unrelated", "1.0.0")
+    receipt_path = directory / "receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["editorPackages"].append(extra.name)
+    receipt["files"] = helper.inventory(directory)
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    # When preparation compares the cache membership with the current validated closure.
+    with pytest.raises(packages.PreparationError, match="do not match current dependency closure"):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then self-consistent unrelated cache data still cannot produce a successful warm result.
+
+
+@pytest.mark.parametrize(
+    "editor_inventory",
+    [None, [], {}, "invalid", ["../external"], ["com.unity.ugui", "com.unity.ugui"]],
+)
+def test_optional_dependency_cache_rejects_invalid_editor_membership(
+    dependency_cache, editor_inventory
+):
+    # Given a restored cache whose exact Editor membership receipt is malformed.
+    helper, request, _ = dependency_cache
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    path = helper.destination(request) / "receipt.json"
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    receipt["editorPackages"] = editor_inventory
+    path.write_text(json.dumps(receipt), encoding="utf-8")
+    # When restored input membership crosses the cache boundary.
+    with pytest.raises(packages.PreparationError, match="Invalid exact Editor package inventory"):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then no malformed membership drives filesystem operations or output staging.
+    assert not (request.repo / ".unity-ci/warm").exists()
+
+
+def test_optional_dependency_cache_profile_change_invalidates_published_sparse_cache(
+    dependency_cache,
+):
+    # Given a validated sparse cache and a reviewed package pin update.
+    helper, request, calls = dependency_cache
+    helper.prepare(request, request.repo / ".unity-ci/cold")
+    original = helper.identity(request).cache_key
+    config = json.loads(request.profiles_path.read_text(encoding="utf-8"))
+    config["optionalProfiles"]["unity-six-lts"]["packages"]["com.unity.ai.navigation"][
+        "version"
+    ] = "2.0.10"
+    request.profiles_path.write_text(json.dumps(config), encoding="utf-8")
+    original_calls = list(calls)
+    # When the updated profile tries to reuse the prior cache directory.
+    with pytest.raises(
+        packages.PreparationError, match="Optional dependency input identity changed"
+    ):
+        helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then the exact key and cache validation reject stale dependency selectors.
+    assert helper.identity(request).cache_key != original
+    assert calls == original_calls
+    assert not (request.repo / ".unity-ci/warm").exists()
+
+
 @pytest.mark.skipif(os.name != "posix", reason="GNU tar permission/umask semantics require POSIX")
 @pytest.mark.parametrize(
     "preserve_permissions", [False, True], ids=["default-umask", "workflow-options"]
@@ -524,7 +718,7 @@ def test_optional_dependency_cache_cli_cold_warm_reports_outputs(
     monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
     common = ["--manifest", str(request.manifest_path), "--profiles", str(request.profiles_path)]
     assert helper.main(["identity", request.version, *common]) == 0
-    assert "cache_key=unity-ci-optional-v1-" in outputs.read_text(encoding="utf-8")
+    assert "cache_key=unity-ci-optional-v2-" in outputs.read_text(encoding="utf-8")
     assert (
         helper.main(
             ["prepare", request.version, *common, "--output", str(request.repo / ".unity-ci/cold")]

@@ -19,7 +19,7 @@ import unity_ci_packages as packages
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA = 1
+SCHEMA = 2
 BUILTINS = Path("Resources/PackageManager/BuiltInPackages")
 LOGIC_INPUTS = (
     "tools/unity_ci_package_cache.py",
@@ -169,6 +169,43 @@ def inventory(directory: Path) -> dict[str, InputRecord]:
     return records
 
 
+def _package_names(value: list[str]) -> tuple[str, ...]:
+    """Parse the exact Editor package membership before it is used for filesystem operations."""
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(
+            not isinstance(name, str) or not packages.PACKAGE_NAME.fullmatch(name) for name in value
+        )
+        or len(set(value)) != len(value)
+    ):
+        raise packages.PreparationError("Invalid exact Editor package inventory")
+    return tuple(sorted(value))
+
+
+def _editor_packages(report_path: Path) -> tuple[str, ...]:
+    report = packages.read_json(report_path)
+    return _package_names(
+        [package["name"] for package in report["packages"] if package["source"] == "editor"]
+    )
+
+
+def _compact_editor_inputs(directory: Path, editor_packages: tuple[str, ...]) -> None:
+    """Move complete validated packages inside owned staging; leave other image inputs unpublished."""
+    data = directory / "Data"
+    full = directory.parent / "full-editor-inputs"
+    if _linked(data) or any(
+        _linked(data / BUILTINS / name) or not (data / BUILTINS / name).is_dir()
+        for name in editor_packages
+    ):
+        raise packages.PreparationError("Required Editor package directory missing or linked")
+    data.rename(full)
+    builtin = data / BUILTINS
+    builtin.mkdir(parents=True)
+    for name in editor_packages:
+        (full / BUILTINS / name).rename(builtin / name)
+
+
 def _validate(directory: Path, details: CacheIdentity) -> dict[str, str]:
     try:
         if {path.name for path in directory.iterdir()} != {"Data", "Registry", "receipt.json"}:
@@ -203,6 +240,11 @@ def _validate(directory: Path, details: CacheIdentity) -> dict[str, str]:
         ):
             if {path.name for path in parent.iterdir()} != {expected_child}:
                 raise packages.PreparationError("Unexpected Editor data inventory")
+        editor_packages = _package_names(receipt["editorPackages"])
+        if {path.name for path in (data / BUILTINS).iterdir()} != set(editor_packages):
+            raise packages.PreparationError(
+                "Editor package inventory does not match validated closure"
+            )
         return archives
     except (OSError, ValueError, KeyError, TypeError, packages.PreparationError) as exc:
         raise packages.PreparationError(
@@ -241,7 +283,13 @@ def prepare(request: CacheRequest, output: Path) -> CachePreparation:
             "Optional dependency cache: validated warm inputs; staging current source",
             file=sys.stderr,
         )
-        return CachePreparation(_prepare_project(request, target, output, archives), False)
+        result = _prepare_project(request, target, output, archives)
+        editor_packages = _editor_packages(request.repo / result.resolution_report)
+        if {path.name for path in (target / "Data" / BUILTINS).iterdir()} != set(editor_packages):
+            raise packages.PreparationError(
+                "Cached Editor packages do not match current dependency closure"
+            )
+        return CachePreparation(result, False)
     target.parent.mkdir(parents=True, exist_ok=True)
     print(
         "Optional dependency cache: cold inputs; preparing pinned Editor and registry packages",
@@ -263,12 +311,15 @@ def prepare(request: CacheRequest, output: Path) -> CachePreparation:
             for name, version in details.registries
         }
         result = _prepare_project(request, staging, output, archives)
+        editor_packages = _editor_packages(request.repo / result.resolution_report)
+        _compact_editor_inputs(staging, editor_packages)
         (staging / "receipt.json").write_text(
             json.dumps(
                 {
                     "cacheKey": details.cache_key,
                     "provenance": details.provenance,
                     "archiveSha256": archives,
+                    "editorPackages": editor_packages,
                     "files": inventory(staging),
                 },
                 sort_keys=True,
