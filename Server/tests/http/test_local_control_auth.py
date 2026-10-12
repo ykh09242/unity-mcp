@@ -14,10 +14,19 @@ from transport.charge_ledger import ChargeLedger
 from transport.plugin_registry import PluginRegistry
 
 
-@pytest.fixture
-def local_client(monkeypatch):
+@pytest.fixture(scope="module")
+def local_server():
     from main import create_mcp_server
 
+    # Tool schemas are invariant here; each test still owns a fresh ASGI app and session.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(config, "http_remote_hosted", False)
+        patch.setattr(config, "local_auth_token", "test-launch-token")
+        return create_mcp_server(False)
+
+
+@pytest.fixture
+def local_client(monkeypatch, local_server):
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "local_auth_token", "test-launch-token")
     for name in (
@@ -31,7 +40,7 @@ def local_client(monkeypatch):
         monkeypatch.setattr(PluginHub, name, ChargeLedger() if name == "_retained_results" else {})
     for name in ("_registry", "_lock", "_loop", "_mcp"):
         monkeypatch.setattr(PluginHub, name, None)
-    app = create_mcp_server(False).http_app()
+    app = local_server.http_app()
 
     @asynccontextmanager
     async def lifespan(app):

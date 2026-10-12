@@ -10,8 +10,21 @@ from fastmcp.server.middleware import Middleware
 from services.tools import register_all_tools
 
 
+@pytest.fixture(scope="module")
+def texture_server():
+    class UnityState(Middleware):
+        async def on_call_tool(self, context, call_next):
+            await context.fastmcp_context.set_state("unity_instance", "Texture@fixture")
+            return await call_next(context)
+
+    server = FastMCP("texture-budgets")
+    server.add_middleware(UnityState())
+    register_all_tools(server)
+    return server
+
+
 @pytest_asyncio.fixture
-async def texture_sdk(monkeypatch):
+async def texture_sdk(monkeypatch, texture_server):
     texture = importlib.import_module("services.tools.manage_texture")
     calls = []
 
@@ -24,17 +37,10 @@ async def texture_sdk(monkeypatch):
         assert instance == "Texture@fixture" and command == "manage_texture"
         return {"success": True}
 
-    class UnityState(Middleware):
-        async def on_call_tool(self, context, call_next):
-            await context.fastmcp_context.set_state("unity_instance", "Texture@fixture")
-            return await call_next(context)
-
     monkeypatch.setattr(texture, "preflight", preflight)
     monkeypatch.setattr(texture, "send_with_unity_instance", send)
-    server = FastMCP("texture-budgets")
-    server.add_middleware(UnityState())
-    register_all_tools(server)
-    async with Client(server) as client:
+    # Reuse registered schemas, but never a client, call ledger or patched dependency.
+    async with Client(texture_server) as client:
         yield client, calls
 
 
