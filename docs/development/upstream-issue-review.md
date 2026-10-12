@@ -95,8 +95,8 @@ return a structured error. Existing strict integer parsing remains in force.
 
 Use [Testing and Evidence](../../website/docs/contributing/testing.md) for the distinction
 between source contracts, reference compilation and native Editor execution. Detailed
-run artifacts for this task live under `reports/CS-20261007-upstream-runtime/` and the
-task handoff; those local outputs are not shipped as product source.
+run artifacts should be retained privately with their environment and verification
+metadata; local artifact locations and task handoffs are not published as product source.
 
 Windows Unity 6000.0.69f1 exercised the new prefab, input, Game View, readiness and
 recording paths. Recording QA uses the public start/status/stop flow in a non-batch
