@@ -457,3 +457,14 @@ def test_invalid_stage_data_preserves_valid_test_report(timing, tmp_path, monkey
     )
     assert "Stage timings are unavailable" in (output / "report.md").read_text(encoding="utf-8")
     assert performance.read_bundle((output / "timings.json").read_bytes()) == [timing]
+
+
+@pytest.mark.parametrize("count", [0, 1, 2, 3, 7])
+def test_module_report_shows_its_own_bounded_sample_count(timing, count):
+    history = [[copy.deepcopy(timing)] for _ in range(count)]
+    timing["inventory"] = "a" * 64
+    report, warnings = performance.render_report([timing], history, [])
+    baseline = "15.00s" if count >= performance.MIN_SAMPLES else "-"
+    assert f"| tests.slow | 15.00s | {baseline} | {min(count, performance.MAX_SAMPLES)} |" in report
+    assert "| 0 | Collecting baseline" in report
+    assert not warnings

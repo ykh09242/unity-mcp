@@ -415,8 +415,8 @@ def render_report(
                 "",
                 "Module values sum testcase durations, including setup/teardown; parallel sums are not wall time.",
                 "",
-                "| Slow module | Current | Baseline |",
-                "| --- | ---: | ---: |",
+                "| Slow module | Current | Baseline | Samples |",
+                "| --- | ---: | ---: | ---: |",
             ]
         )
         for name, elapsed in sorted(
@@ -431,7 +431,7 @@ def render_report(
             module_base, module_slower = regression(elapsed, samples, 5)
             text = f"{module_base:.2f}s" if module_base is not None else "-"
             details.append(
-                f"| {markdown(name)} | {elapsed:.2f}s | {text}{' (slower)' if module_slower else ''} |"
+                f"| {markdown(name)} | {elapsed:.2f}s | {text}{' (slower)' if module_slower else ''} | {len(samples)} |"
             )
             if module_slower:
                 warnings.append(
