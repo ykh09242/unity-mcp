@@ -462,8 +462,23 @@ def test_interrupted_succession_is_explicit_and_recoverable(
         assert target.claim() == 0
         successor_bytes = target.program.path("backlog.json").read_bytes()
     if stage == "predecessor-guard":
-        assert gate.fixture.run("status") == 0  # Nothing was published; no false completion.
-        assert gate.fixture.run(*succession_arguments(gate, target)) == 0
+        assert gate.fixture.run("status") == 1  # Central publishing record guards the predecessor.
+        frozen = fp.read_json(gate.program.path("backlog.json"))
+        with pytest.raises(fp.ProgramError, match="Succession publication incomplete"):
+            gate.program.claim(frozen, argparse.Namespace(id="S01", scope=["src/S01.py"]))
+        with pytest.raises(fp.ProgramError, match="Succession publication incomplete"):
+            gate.program.save(frozen)
+        assert gate.fixture.claim() == 1
+        assert (
+            gate.fixture.run(
+                "program-succeed-recover",
+                "--owner",
+                "director",
+                "--reason",
+                "Recover registered publication",
+            )
+            == 0
+        )
     else:
         assert gate.fixture.run("status") == 1
         assert "Succession publication incomplete" in capsys.readouterr().err

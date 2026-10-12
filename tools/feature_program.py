@@ -20,7 +20,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from typing import Final, Iterator, TypeAlias
+from typing import Callable, Final, Iterator, TypeAlias
 
 # Extensions lazily import core helpers. Reuse this entrypoint module so rejected
 # input has the same ProgramError identity under script, module and imported runs.
@@ -31,10 +31,12 @@ if __name__ == "__main__":
 if __package__:
     import tools.feature_program_coordination as coordination
     import tools.feature_program_phases as phases
+    import tools.feature_program_planning as planning
     import tools.feature_program_questions as questions
 else:
     import feature_program_coordination as coordination
     import feature_program_phases as phases
+    import feature_program_planning as planning
     import feature_program_questions as questions
 
 
@@ -360,9 +362,15 @@ class Program:
 
     @contextmanager
     def lock(
-        self, relocation_recovery: bool = False, succession_recovery: bool = False
+        self,
+        relocation_recovery: bool = False,
+        succession_recovery: bool = False,
+        publication_recovery: bool = False,
     ) -> Iterator[None]:
-        if succession_recovery:
+        planning.validate_publication_endpoint(self.repo, self.directory)
+        if publication_recovery:
+            pass  # Explicit ledger recovery still verifies exact endpoints under this lock.
+        elif succession_recovery:
             require(
                 not self.path("RELOCATED.json").exists()
                 and not self.path("RELOCATION_INCOMPLETE.json").exists(),
@@ -397,6 +405,11 @@ class Program:
         return safe_path(self.directory, relative)
 
     def require_current_location(self) -> None:
+        try:
+            planning.validate_publication_endpoint(self.repo, self.directory)
+            planning.publication_runtime_guard(self)
+        except planning.PlanningError as exc:
+            raise ProgramError(str(exc)) from exc
         phases.succession_guard(self)
         marker = self.path("RELOCATED.json")
         if marker.exists():
@@ -505,32 +518,19 @@ class Program:
         self.validate(state)
         return state
 
-    def validate(self, state: Record, verify_artifacts: bool = True) -> None:
+    def validate(
+        self, state: Record, verify_artifacts: bool = True, *, prospective: bool = False
+    ) -> None:
         budget = ReadBudget() if verify_artifacts else None
         require(state.get("schema_version") == 1, "Unsupported registry")
         string(state.get("program_id"), "program_id")
         communication_language(state.get("communication_language"))
-        report_source = record(state.get("source"), "report source")
-        source_path = safe_path(self.repo, string(report_source.get("path"), "source path"))
-        if verify_artifacts:
-            raw_source = budget.read(source_path, 8 * 1024 * 1024)
-            require(
-                sha(raw_source) == report_source.get("sha256"),
-                "Original report drifted; do not reset progress",
+        try:
+            sections = planning.source_sections(
+                self, state, verify_artifacts, budget, prospective=prospective
             )
-            sections = extract_sections(raw_source)
-        else:
-            sections = {
-                string(record(value, "task").get("id"), "task ID"): record(
-                    record(value, "task").get("source"), "section"
-                )
-                for value in sequence(state.get("tasks"), "tasks")
-            }
-        if "task_ids" in report_source:
-            require(
-                set(strings(report_source["task_ids"], "frozen task IDs")) == set(sections),
-                "Frozen source task identities drifted",
-            )
+        except (planning.PlanningError, coordination.GovernanceError) as exc:
+            raise ProgramError(str(exc)) from exc
         tasks = sequence(state.get("tasks"), "tasks")
         require(len(tasks) <= 2000, "Registry exceeds 2000 tasks")
         by_id = {
@@ -680,6 +680,7 @@ class Program:
             self.verify_refs(coordination.evidence_references(state), budget)
             self.verify_refs(questions.evidence_references(state), budget)
             self.verify_refs(phases.evidence_references(state), budget)
+            self.verify_refs(planning.evidence_references(state), budget)
 
     def verify_terminal(
         self, task: Record, attempt: Record, budget: ReadBudget | None = None
@@ -869,12 +870,7 @@ class Program:
         return state
 
     def check(self, state: Record) -> None:
-        source = record(state["source"], "source")
-        raw = bounded_bytes(
-            safe_path(self.repo, string(source["path"], "source path")), 8 * 1024 * 1024
-        )
-        require(sha(raw) == source["sha256"], "Original report drifted; do not reset progress")
-        sections = extract_sections(raw)
+        sections = planning.source_sections(self, state, True, ReadBudget())
         for value in sequence(state["tasks"], "tasks"):
             task = record(value, "task")
             require(
@@ -1348,7 +1344,7 @@ class Program:
         )
 
     def packet(self, state: Record, task: Record) -> str:
-        source = record(state["source"], "source")
+        source = planning.source_for_task(state, task)
         section = record(task["source"], "section")
         attempt = self.current_attempt(task) if sequence(task["attempts"], "attempts") else None
         metadata = {
@@ -1465,7 +1461,7 @@ class Program:
         result.update({f"tasks/{task['id']}.md": self.packet(state, task) for task in tasks})
         return result
 
-    def save(self, state: Record) -> None:
+    def save(self, state: Record, *, before_publish: Callable[[], None] | None = None) -> None:
         self.require_current_location()
         self.validate(state)
         encoded = canonical(state)
@@ -1473,8 +1469,20 @@ class Program:
             len(encoded) <= 8 * 1024 * 1024,
             "Canonical registry exceeds 8 MiB; existing state preserved",
         )
+        derived = self.views(state)
+        require(
+            all(len(text.encode("utf-8")) <= 8 * 1024 * 1024 for text in derived.values()),
+            "Derived document exceeds 8 MiB; existing state preserved",
+        )
+        if before_publish is not None:
+            before_publish()
         atomic_write(self.path("backlog.json"), encoded)
-        self.render(state)
+        try:
+            self.render(state)
+        except (OSError, ProgramError) as exc:
+            raise ProgramError(
+                f"Registry committed at revision {sha(encoded)}; derived rendering failed. Run render to recover views: {exc}"
+            ) from exc
 
     def render(self, state: Record) -> None:
         for name, text in self.views(state).items():
@@ -1675,34 +1683,23 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
     require(len(tasks) <= 2000, "Snapshot exceeds 2000 tasks")
     try:
         program.validate(state, verify_artifacts=False)
-    except (coordination.GovernanceError, phases.PhaseError, questions.QuestionError) as exc:
+    except (
+        coordination.GovernanceError,
+        phases.PhaseError,
+        planning.PlanningError,
+        questions.QuestionError,
+    ) as exc:
         raise ProgramError(str(exc)) from exc
-    warnings: list[str] = []
-    source = record(state["source"], "source")
-    source_path = safe_path(repo, string(source["path"], "source path"))
-    if not source_path.is_file():
-        warnings.append("Original source is unavailable; displaying frozen recorded prose.")
-    else:
-        require(source_path.stat().st_size <= 8 * 1024 * 1024, "Snapshot source exceeds 8 MiB")
-        source_bytes = bounded_bytes(source_path, 8 * 1024 * 1024)
-        if sha(source_bytes) != source["sha256"]:
-            warnings.append("Original source drifted; displaying frozen recorded prose.")
-        else:
-            frozen_sections = extract_sections(
-                source_bytes, [string(task["id"], "task ID") for task in tasks]
-            )
-            require(
-                all(
-                    task["source"] == frozen_sections[string(task["id"], "task ID")]
-                    for task in tasks
-                ),
-                "Frozen source sections do not match the unchanged original report",
-            )
+    try:
+        warnings = planning.observe_sources(program, state)
+    except planning.PlanningError as exc:
+        raise ProgramError(str(exc)) from exc
     refs: dict[str, str] = {}
     all_refs = (
         list(coordination.evidence_references(state))
         + list(questions.evidence_references(state))
         + phases.evidence_references(state)
+        + planning.evidence_references(state)
     )
     for task in tasks:
         for value in sequence(task["attempts"], "attempts"):
@@ -1747,6 +1744,7 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
     result_tasks: list[Json] = []
     for task in tasks:
         section = record(task["source"], "source section")
+        source = planning.source_for_task(state, task)
         item: Record = {
             key: task[key]
             for key in (
@@ -1772,6 +1770,8 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
                     **section,
                     "path": source["path"],
                     "reference_base": source["reference_base"],
+                    "review_baseline": source["review_baseline"],
+                    "source_intake_id": task.get("source_intake_id"),
                 },
                 "delivery": program.current_delivery(task)
                 if task["status"] == "done"
@@ -1861,6 +1861,8 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
         "tasks": result_tasks,
         **governance,
         "questions": questions.snapshot_questions(state),
+        "source_intakes": state.get("source_intakes", []),
+        "amendments": state.get("amendments", []),
     }
     require(len(canonical(result)) <= 8 * 1024 * 1024, "Snapshot output exceeds 8 MiB")
     return result
@@ -1912,6 +1914,8 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
             names.append(relative)
     require(len(names) <= 10000, "Relocation exceeds 10000 files")
     target = Program(program.repo, destination)
+    planning.validate_publication_endpoint(program.repo, destination)
+    planning.require_unreserved(target)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.mkdir()  # Exclusive reservation: a concurrent/existing target is never replaced.
     with target.lock():
@@ -1924,6 +1928,19 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
             "destination": destination.relative_to(program.repo).as_posix(),
             "phase": "copying",
         }
+        operation_id = planning.publication_register(
+            program,
+            "relocation",
+            {
+                **marker,
+                "program_id": state["program_id"],
+                "original_registry_sha256": sha(original),
+                "copying_marker": marker,
+            },
+            target,
+            supersedes=getattr(args, "supersedes", None),
+        )
+        planning.publication_begin(program, operation_id)
         atomic_write(target.path("RELOCATION_INCOMPLETE.json"), canonical(marker))
         for name in names:
             content = budget.read(program.path(name), 8 * 1024 * 1024)
@@ -1935,6 +1952,7 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
         )
         old_root = string(marker["source"], "old root")
         new_root = string(marker["destination"], "new root")
+        planning.remap_sources(state, old_root, new_root)
         source = record(state["source"], "source")
         old_source = dict(source)
         for key in ("path", "reference_base"):
@@ -2024,10 +2042,35 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
             ),
         )
         target.path("RELOCATION_INCOMPLETE.json").unlink()
+        planning.publication_complete(program, operation_id, manifest)
 
 
 def recover_relocation(program: Program, args: argparse.Namespace) -> None:
     """Finalize only an already verified publication; never promote an incomplete copy."""
+    located = planning.publication_find(
+        program, "relocation", getattr(args, "publication_id", None)
+    )
+    if not program.path("RELOCATION_INCOMPLETE.json").exists() and located is not None:
+        target_name = string(sequence(located[0]["endpoints"], "endpoints")[1], "destination")
+        require(
+            target_name.casefold()
+            == program.directory.relative_to(program.repo).as_posix().casefold(),
+            "Finalize completed relocation at its exact destination",
+        )
+        state = program.load()
+        require(
+            args.owner == (coordination.current_director_id(state) or "leader"),
+            "Recovery requires current director or legacy leader",
+        )
+        source_program = Program(
+            program.repo,
+            safe_path(
+                program.repo, string(sequence(located[0]["endpoints"], "endpoints")[0], "source")
+            ),
+        )
+        with source_program.lock(publication_recovery=True):
+            planning.publication_complete(program, string(located[0]["id"], "publication ID"))
+        return
     marker = read_json(program.path("RELOCATION_INCOMPLETE.json"))
     require(
         marker.get("phase") == "ready",
@@ -2065,6 +2108,21 @@ def recover_relocation(program: Program, args: argparse.Namespace) -> None:
         args.owner == (coordination.current_director_id(state) or "leader"),
         "Recovery requires current director or legacy leader",
     )
+    if located is None:
+        with source.lock(publication_recovery=True):
+            operation_id = planning.publication_register(
+                source,
+                "relocation",
+                {**marker, "program_id": state["program_id"]},
+                program,
+                legacy_observed=True,
+            )
+            planning.publication_begin(program, operation_id)
+            located = planning.publication_find(program, "relocation", operation_id)
+    require(
+        args.owner == (coordination.current_director_id(state) or "leader"),
+        "Recovery requires current director or legacy leader",
+    )
     for name, content in program.views(state).items():
         require(
             bounded_bytes(program.path(name), 8 * 1024 * 1024) == content.encode("utf-8"),
@@ -2078,7 +2136,7 @@ def recover_relocation(program: Program, args: argparse.Namespace) -> None:
             "Source archive does not match publication",
         )
     else:
-        with source.lock():
+        with source.lock(publication_recovery=True):
             require(
                 sha(bounded_bytes(source.path("backlog.json"), 8 * 1024 * 1024))
                 == marker.get("original_registry_sha256"),
@@ -2112,6 +2170,11 @@ def recover_relocation(program: Program, args: argparse.Namespace) -> None:
                 ),
             )
     program.path("RELOCATION_INCOMPLETE.json").unlink()
+    if located is not None:
+        with source.lock(publication_recovery=True):
+            planning.publication_complete(
+                program, string(located[0]["id"], "publication ID"), marker
+            )
 
 
 def starter(program: Program, args: argparse.Namespace) -> None:
@@ -2271,11 +2334,15 @@ def parser() -> argparse.ArgumentParser:
     move.add_argument("--destination", required=True)
     move.add_argument("--owner", required=True)
     move.add_argument("--reason", required=True)
+    move.add_argument("--supersedes", help="Explicit active failed-copy operation to replace")
     recover = commands.add_parser(
         "relocate-recover", help="Finalize an already verified incomplete publication"
     )
     recover.add_argument("--owner", required=True)
     recover.add_argument("--reason", required=True)
+    recover.add_argument(
+        "--publication-id", help="Exact active operation when recovery is ambiguous"
+    )
     packet = commands.add_parser("packet")
     packet.add_argument("id")
     fingerprint = commands.add_parser("fingerprint")
@@ -2317,6 +2384,7 @@ def parser() -> argparse.ArgumentParser:
     questions.add_commands(commands)
     coordination.add_commands(commands)
     phases.add_commands(commands)
+    planning.add_commands(commands)
     return result
 
 
@@ -2331,9 +2399,15 @@ def main(argv: list[str] | None = None) -> int:
             "Program must be within configured repository",
         )
         relative_program = directory.relative_to(repo).as_posix()
+        planning.validate_publication_endpoint(repo, directory)
         program = Program(repo, safe_path(repo, relative_program))
         if args.command == "snapshot":
             print(canonical(read_snapshot(repo, program.directory)).decode(), end="")
+            return 0
+        if args.command == "admission-binding":
+            state = program.load()
+            receipt = read_json(program.path(args.input))
+            print(canonical(planning.preview(program, state, receipt)).decode(), end="")
             return 0
         if args.command == "starter":
             with program.lock():
@@ -2341,22 +2415,19 @@ def main(argv: list[str] | None = None) -> int:
             print("starter: OK; synthetic files only, no registry or passing evidence created")
             return 0
         if args.command == "init":
+            planning.require_unreserved(program)
             args.report = args.report or relative_program + "/source/feature-opportunities.md"
             args.planning = args.planning or relative_program + "/planning.json"
         for name in ("owner", "reason", "next_action", "note"):
             if hasattr(args, name):
                 string(getattr(args, name), name)
         if args.command == "relocate-recover":
-            with program.lock(relocation_recovery=True):
+            with program.lock(publication_recovery=True):
                 recover_relocation(program, args)
             print("relocate-recover: OK; explicitly use this destination")
             return 0
         if args.command == "program-succeed-recover":
-            require(
-                program.path("SUCCESSION_INCOMPLETE.json").is_file(),
-                "Succession recovery requires an incomplete predecessor publication",
-            )
-            with program.lock(succession_recovery=True):
+            with program.lock(publication_recovery=True):
                 phases.recover_succession(program, args)
             print("program-succeed-recover: OK; predecessor guarded, use identified successor")
             return 0
@@ -2376,6 +2447,16 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         with program.lock():
             state = program.initialize(args) if args.command == "init" else program.load()
+            if args.command in {"publication-adopt", "publication-reconcile"}:
+                if args.command == "publication-adopt":
+                    planning.publication_adopt(program, state, args.input)
+                else:
+                    planning.publication_reconcile(program, state, args.input)
+                print(f"{args.command}: OK; explicit publication observation recorded")
+                return 0
+            if planning.execute(program, state, args):
+                print(f"{args.command}: OK; committed revision {phases.revision(state)}")
+                return 0
             if (
                 phases.apply_command(program, state, args)
                 or questions.apply_command(program, state, args)
@@ -2386,6 +2467,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             match args.command:
                 case "init":
+                    planning.fresh_init(program, args, state)
                     program.save(state)
                 case "phase-binding":
                     print(canonical(phases.binding(program, state)).decode(), end="")
@@ -2453,6 +2535,7 @@ def main(argv: list[str] | None = None) -> int:
         ProgramError,
         coordination.GovernanceError,
         phases.PhaseError,
+        planning.PlanningError,
         questions.QuestionError,
         OSError,
     ) as exc:

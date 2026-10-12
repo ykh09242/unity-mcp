@@ -171,8 +171,216 @@ If the successor was still writable before its guard or was already activated wh
 predecessor cleanup failed, verified runtime progress remains intact; recovery does not reset
 its registry to the initial revision. `SUCCESSION_RECOVERY.json` records that observed revision
 and the recovery reason. Changed frozen provenance or conflicting data stays guarded for
-investigation. A failure before the first guard leaves the original programs
-unchanged and permits a normal retry. An interrupted transition never labels discovery done.
+investigation. A failure before central registration leaves the original programs
+unchanged and permits a normal retry. A durable registered or publishing entry instead
+requires exact recovery or its permitted explicit reconciliation, even when no local guard
+exists yet. Registered cancellation is available only before publishing begins and with
+unchanged endpoint marker inventory. An interrupted transition never labels discovery done.
+
+## Reviewed task admission and active membership
+
+After explicit phase adoption and current accepted execution scope, the current director
+may add reviewed work or amend membership of the same active human objective. Neither
+command implicitly adopts a legacy program or changes its criteria. Original report and
+planning bytes, task source sections, attempts, events and evidence remain intact. A new
+report and plan form an immutable supplemental intake; report/plan IDs must match exactly
+and be disjoint from every retained task, including case collisions. New tasks start
+`planned`, unowned, with empty attempts and fresh claim revalidation required.
+
+```shell
+python tools/feature_program.py --program-dir .work/programs/example admission-binding --input evidence/_planning/attempt-1/proposal.json
+python tools/feature_program.py --program-dir .work/programs/example task-admit --input evidence/_planning/attempt-1/intake-1.json
+python tools/feature_program.py --program-dir .work/programs/example objective-membership --input evidence/_planning/attempt-1/membership-1.json
+```
+
+`admission-binding` is read-only: it creates no lock, files or authorization. Supply the
+proposal fields below using the actual current `phase-binding.expected_revision`. The
+result supplies `before_binding`, `after_binding`, complete `units`, exact `membership`
+and the same real pre-state revision. The stable future binding includes supplemental
+source/plan content hashes and current membership revision, while excluding recording
+timestamps, history observations and relocation locators. It still includes all retained
+task definitions and paths; membership exclusion does not remove provenance units.
+
+| Proposal field | Required meaning |
+| --- | --- |
+| `schema_version`, `operation`, `id` | Version 1, `task-admit` or `objective-membership`, and a new portable transaction ID. Committed IDs cannot be reused. |
+| `program_id`, `actor_id`, `objective_id`, `reason`, `expected_revision` | Exact current program, accepted director, active objective, nonblank rationale, and current canonical registry revision. |
+| `source` | For admission: repository-relative `path`, actual byte `sha256`, exact ordered `task_ids`, authored `review_baseline` and safe `reference_base`. Keep complete expected-result and acceptance prose in the existing `### ID. Title` format. |
+| `planning` | For admission: repository-relative frozen `path` and actual byte `sha256`. The supplemental JSON contains exactly `schema_version: 1` and `tasks`; it cannot change workstreams or verification policy. |
+| `intake_authors` | For admission: explicit unique authors, all included among renewed inventory authors so none can self-review. |
+| `membership` | Exact `before` and `after` ID lists plus `added` and `removed` lists matching that delta. Every admitted ID must be newly included. Unknown, empty, duplicate and unchanged membership is rejected. |
+| `category_placements` | When categories are authored: one `{"id": "NEW-1", "category_id": "existing-leaf"}` per added task, compatible with its existing workstream. Otherwise retain workstream-root fallback. |
+| `inventory` | Optional preview convenience: `candidate_path`, actual `candidate_digest`, and explicit `inventory_authors`. Binding output then includes the deterministic `inventory_digest` for future review receipts. Actual receipt and candidate bytes are independently checked at commit. |
+
+Supplemental task metadata declares portable `id`, positive `phase`, existing `workstream`,
+nonempty `candidate_paths`, `depends_on`, `related_to`, `conflict_groups`, valid
+`required_checks`, `next_action`, nonblank `expected_result` and nonempty unique
+`acceptance_criteria`. `planning_note` is optional. Runtime keys and unsupported metadata
+are rejected. Required paths, checks, references and dependency cycles use existing
+validators; report prose remains lossless and its completeness is independently reviewed.
+
+Copy `before_binding` and `after_binding` into a new final receipt beneath
+`evidence/_planning/attempt-1/`. Add nonempty `evidence` referencing the actual independent
+findings and director decision in that directory, and a `renewal` object:
+
+```json
+{
+  "renewal": {
+    "inventory": "evidence/_phases/attempt-1/intake-1-inventory.json",
+    "review": "evidence/_phases/attempt-1/intake-1-review.json",
+    "acceptance": "evidence/_phases/attempt-1/intake-1-acceptance.json"
+  },
+  "evidence": ["evidence/_planning/attempt-1/intake-1-independent-review.md"]
+}
+```
+
+Each new phase receipt uses every field from `after_binding`, complete prospective `units`,
+the same real pre-state `expected_revision`, and `actor_id`/`reason`. Inventory adds the
+candidate path/hash and all authors. Review adds `reviewer_role: "independent"`,
+`verdict: "accepted"`, `unresolved_findings: []`, candidate hash and inventory digest.
+Acceptance adds `acceptance_complete: true`, candidate hash and inventory digest. Existing
+phase independence and evidence rules apply. Do not run standalone future phase commands
+first: the combined operation validates all three against the prospective state in memory,
+records current-time renewal observations, and publishes tasks, membership and gates once.
+These observations do not fabricate earlier persisted gate transitions. A concurrent
+runtime update needs a fresh transaction revision and refreshed final receipt; unchanged
+stable future scope can reuse its real independent review.
+
+Membership-only receipts omit source/planning/intake authors and use the same binding and
+complete-scope renewal. Changes retain goal ID, title, criteria and past major-objective
+history, appending a separate monotonic `membership_revision`/`membership_history` with
+before/after, added/removed IDs and rationale. Excluded work remains recorded and is neither
+done nor retired. New claim/submit operations reject excluded tasks for that amended goal.
+Release owned active/review/blocked work before removal; retained members cannot depend
+on an excluded unfinished prerequisite. Completion binds exact current members. After
+amendment, both the completion receipt and its independent integrated-review artifact
+require the current `membership_revision`, so removal/re-addition cannot revive old
+aggregate acceptance even when the final member IDs match an earlier revision. Missing
+criterion impact remains unknown rather than inferred.
+
+Admission preflights full validation and document budgets, rehashes frozen inputs and
+publishes under the current lock. Failure before the canonical write preserves prior
+registry bytes. A derived-render failure after commit identifies the committed revision
+and requires `render` recovery; retrying the intake must not duplicate it. Check, packet,
+snapshot and relocation resolve each task's actual original or supplemental source. Read
+snapshots report missing/drifted documents explicitly; strict checks and mutations reject
+invalid frozen bytes. Relocation preserves receipt bytes and changes current locators only.
+
+Definition changes require completed relocation/succession publication at both endpoints,
+even when ordinary successor progress is already enabled. The controlled repository store
+`.work/programs/.publications` contains one atomic `ledger.json`, its immutable identity,
+and immutable operation receipts. Every new succession and relocation registers both
+endpoint paths and program identities under both endpoint locks before publishing any
+endpoint marker. It durably enters `publishing` before the first marker. A publishing
+succession guards its predecessor even if the first local marker write fails. Registered
+and publishing operations block related definition changes; the successor's ordinary
+progress still follows its existing local guards. Registration also reserves an absent
+destination against initialization. Program endpoints cannot overlap the reserved store.
+
+The guard reads the bounded ledger and only positively related operation receipts and
+local/backlink/relocation-alias/explicit legacy inventory endpoints. It never traverses
+the repository or opens unrelated operation payloads. Unreadable historical caches
+therefore need no filesystem or ACL changes. Related unreadable, missing, linked,
+conflicting or malformed material fails closed. The ledger has at most 4096 total active
+and historical summaries; each ledger/document is limited to 8 MiB, and related reads
+share a 64 MiB budget. Capacity errors occur before endpoint publication and require
+inspection; there is no rollover or automatic deletion. A busy nonblocking ledger lock
+requires retry; never steal it. Missing or changed adopted store identity requires
+restoring the original storage, never silently creating another ledger.
+
+### Fresh tracking and reviewed legacy adoption
+
+Explicit `init` automatically tracks a genuinely fresh target. The permitted layout is
+the supplied report and planning file plus root starter Markdown files: `README.md`,
+`DIRECTOR.md`, `SUBDIRECTOR.md`, `WORKER.md`, `REVIEW.md`, `EVIDENCE.md`, `DECISIONS.md`,
+`DESIGN.md`, `PRIORITY.md`, `ACTORS.md`, `RESPONSIBILITIES.md`, `MODEL-POLICY.md`,
+`STAFFING.md`, `DELIVERY.md` and `QUESTIONS.md`. Their bytes are preserved and frozen in
+`FRESH_INIT.json`; unrelated directories, runtime files, prior publication markers or
+an existing backlog prevent fresh initialization. A custom README is preserved.
+Tracking is written before the backlog. If interrupted, repeat the exact explicit init
+only while no backlog exists and every report, planning, baseline, reference, program,
+definition and starter-file binding is unchanged. The original receipt remains immutable;
+the successful registry records its actual initialization observation time. Once the
+backlog exists, inspect/check/render it rather than repeating init.
+
+Existing untracked registries retain ordinary runtime behavior but need explicit reviewed
+`publication-adopt` before admission or membership changes. The director supplies a new
+receipt under `evidence/_publications/attempt-1/`:
+
+```json
+{
+  "schema_version": 1,
+  "program_id": "example",
+  "actor_id": "director",
+  "expected_revision": "CURRENT_REGISTRY_DIGEST",
+  "ledger_revision": "CURRENT_LEDGER_DIGEST_OR_NULL_IF_ABSENT",
+  "binding": {"program_id": "example", "objective_id": "goal", "objective_digest": "DIGEST", "task_definition_digest": "DIGEST", "planning_digest": "DIGEST", "task_ids": ["TASK-1"]},
+  "reason": "Actual endpoint inspection and obsolete writer reconciliation",
+  "inventory": {".work/programs/example": {}},
+  "uninspected_artifacts": [{"path": ".omo/historical-cache", "reason": "Not inspected; unrelated historical artifact"}],
+  "obsolete_writers_quiesced": true,
+  "inventory_authors": ["director", "inventory-author"],
+  "review": "evidence/_publications/attempt-1/inventory-review.json",
+  "evidence": ["evidence/_publications/attempt-1/actual-inspection.md"]
+}
+```
+
+`inventory` maps each finite inspected repository-relative endpoint to actual byte hashes
+of existing `SUCCESSION_INCOMPLETE.json`, `RELOCATION_INCOMPLETE.json`, `SUCCEEDED.json`,
+`PREDECESSOR.json` and `RELOCATED.json`. Empty objects mean those named files were absent
+at that inspected endpoint. Include the current program, all recorded relocation aliases,
+and transitive endpoints named by those markers. `inspect_publication_inventory` is the
+read-only Python helper for that finite closure. It does not certify filesystem-wide
+absence. Mandatory endpoints cannot appear among uninspected exclusions. The director
+must actually reconcile obsolete concurrent writers; their old code cannot participate
+in central registration.
+
+The independent review contains exact `program_id`, `binding`, `inventory_digest`,
+`reviewer`, `reviewer_role: "independent"`, `verdict: "accepted"` and empty
+`unresolved_findings`. Its reviewer is neither the director nor any inventory author.
+`inventory_digest` is the canonical digest of `{"inventory": ..., "uninspected_artifacts": ...}`.
+An existing scope review beneath `evidence/_phases/attempt-1/` can be reused if it explicitly
+covers that exact inventory; a separate review is not required merely for its filename.
+Adoption requires already adopted/current accepted phases and real evidence. It freezes
+the decision, inspected/excluded observations and references in `adopted.json`, then writes
+`PUBLICATION_TRACKING.json`, without changing backlog bytes. Old pending markers become
+`legacy-observed` records at the current observation time; their original bytes remain
+unchanged. A failed final tracking write can resume only the exact frozen decision against
+its recorded published ledger revision. Earlier failures require inspecting the retained
+observations and refreshing stale explicit review/revision inputs.
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example publication-adopt --input evidence/_publications/attempt-1/adoption.json
+```
+
+### Publication recovery and failed-copy retry
+
+Use `program-succeed-recover` at the predecessor or `relocate-recover` at the destination;
+both accept `--publication-id ID` when the active relation is ambiguous. Recovery can
+finalize central history after all local markers were cleaned up, without demanding the
+successor's historical registry hash after permitted runtime progress. Matching canonical
+completion receipts and absent incomplete guards must be proved before an active entry
+becomes historical. Immutable observations precede the final ledger write, so interrupted
+finalization can reuse that evidence. Unreferenced pre-registration receipts are retained;
+they do not assert publication or completion.
+
+An inspected copying-stage failure cannot be promoted by relocation recovery. Retry to a
+distinct absent destination with `relocate --supersedes FAILED_OPERATION_ID`. The exact
+old copying marker remains preserved and its destination remains guarded. A positively
+verified replacement and old supersession become historical in one atomic ledger update.
+Only that replacement/current alias lineage can proceed with definition changes; missing,
+changed or unreadable old copying bytes invalidate the exemption.
+
+`publication-reconcile --input RECEIPT` has only two reviewed actions: `cancel-registration`
+for a durable registered operation with unchanged pre-publication marker inventory at both
+endpoints, or `supersede-failed-copy` for an exact copying-stage marker and a distinct already
+completed replacement. The receipt uses the adoption authority/binding/revision/reason,
+authors/review/evidence fields plus `action`, `operation_id` and, for supersession,
+`replacement_id`. Its review digest covers all receipt fields except `review` and `evidence`.
+Cancellation observes current runtime registry progress honestly and never cancels a
+publishing operation. No reconciliation deletes markers, overwrites destinations, silently
+reopens a predecessor or discards an unverified active publication. Publication is reread
+under the selected-program lock before a definition transaction commits.
 
 ## State and review
 

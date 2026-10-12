@@ -96,6 +96,41 @@ initialized execution program, use the supported
 has no current claims. Preserve historical bytes and exact identities; a guarded incomplete
 publication must be recovered explicitly and does not mean discovery completed.
 
+After adopting and accepting the phase contract, use
+[reviewed admission or membership amendment](feature-program-tool.md#reviewed-task-admission-and-active-membership)
+for authorized new work. Freeze an additive report/plan with exact disjoint IDs and
+complete owned paths, results and checks. Request the read-only prospective binding,
+independently review its complete future inventory, and accept that exact scope before
+the one locked transaction. Do not add unreviewed tasks to make future review possible,
+silently adopt a legacy program, or rewrite the original source and past attempts.
+
+Keep active membership revisions separate from past major objectives. Excluding unowned
+eligible work retains its source and lineage while preventing new execution for that
+amended goal; it does not mark the work done or retired. Preserve human criteria and
+record exact added/removed IDs and rationale. Required unfinished prerequisites cannot
+be excluded from retained work. Aggregate completion needs exact current membership and
+a fresh integrated review. After amendment, both artifacts must identify the current
+membership revision; matching older member IDs does not restore an old review. Unknown
+criterion impact remains unknown.
+
+Before definition changes, finish any related relocation or succession publication at
+both endpoints. An enabled successor may still have predecessor cleanup pending; ordinary
+progress does not authorize changing its frozen recovery contract. Admission reports
+related operations through the bounded central publication ledger rather than scanning
+historical caches. Fresh explicit initialization automatically records verified input
+tracking. Existing untracked programs need a current director's finite endpoint inventory,
+honest uninspected exclusions, obsolete-writer reconciliation and independent review through
+`publication-adopt` before definition amendments; ordinary legacy runtime is preserved.
+An interrupted central operation remains active until explicit verified recovery or the
+two closed reviewed reconciliation actions. A copying-stage failure may be retried to a
+distinct absent destination with its explicit superseded operation ID; the old marker stays
+preserved and guarded, and only proven replacement lineage can proceed.
+
+Admission reports precommit failures without changing the registry. If its canonical transaction committed
+but view rendering failed, recover views with `render` and inspect the recorded transaction
+instead of repeating admission. Supplemental provenance follows tasks through packets,
+snapshots and relocation without changing immutable source or review evidence.
+
 At task admission, meaningful implementation milestones, assumption or scope changes,
 recovery, review and merge, compare the actual source and evidence with the objective.
 Check that the task still serves a success criterion, stays within ownership and has not

@@ -628,6 +628,98 @@ def test_objective_completion_rejects_missing_acceptance(
     assert state == before
 
 
+@pytest.mark.parametrize(
+    "review_state", ["current", "old-membership", "old-membership-aba", "old-source"]
+)
+def test_amended_membership_requires_current_independent_aggregate_review(
+    program: SyntheticProgram, state: governance.Record, review_state: str
+) -> None:
+    # Given a completed current member and an explicitly excluded unfinished historical task.
+    appoint(program, state)
+    goal(state)
+    state["tasks"][0]["depends_on"] = []
+    state["tasks"].append(
+        {
+            "id": "TASK-X",
+            "workstream": "engineering",
+            "status": "planned",
+            "owner": None,
+            "depends_on": [],
+            "attempts": [],
+        }
+    )
+    state["objective"]["task_ids"].append("TASK-X")
+    governance.amend_membership(
+        state,
+        {
+            "id": "remove-x",
+            "actor_id": "director-old",
+            "reason": "Independently reviewed exclusion",
+            "membership": {
+                "before": ["TASK-A", "TASK-X"],
+                "after": ["TASK-A"],
+                "added": [],
+                "removed": ["TASK-X"],
+            },
+        },
+        [],
+    )
+    if review_state == "old-membership-aba":
+        for identifier, before_members, after_members, added, removed in (
+            ("readd-x", ["TASK-A"], ["TASK-A", "TASK-X"], ["TASK-X"], []),
+            ("remove-x-again", ["TASK-A", "TASK-X"], ["TASK-A"], [], ["TASK-X"]),
+        ):
+            governance.amend_membership(
+                state,
+                {
+                    "id": identifier,
+                    "actor_id": "director-old",
+                    "reason": "Reviewed subsequent membership change",
+                    "membership": {
+                        "before": before_members,
+                        "after": after_members,
+                        "added": added,
+                        "removed": removed,
+                    },
+                },
+                [],
+            )
+    receipt = completion(program)
+    receipt["membership_revision"] = state["objective"]["membership_revision"]
+    review_name = receipt["integrated_review"]
+    review = json.loads(program.path(review_name).read_text(encoding="utf-8"))
+    review["membership_revision"] = 0 if review_state == "old-membership" else 1
+    program.receipt(review_name, review)
+    if review_state == "old-source":
+        (program.repo / "src/tool.py").write_text("VALUE = 2\n", encoding="utf-8")
+        receipt.update(program.binding())
+    before = deepcopy(state)
+    # When the current director presents aggregate acceptance for this membership revision.
+    if review_state == "current":
+        run(
+            program,
+            state,
+            "objective-complete",
+            receipt,
+            "evidence/_coordination/attempt-1/current.json",
+        )
+        # Then only current members must be complete; exclusion preserves unfinished history.
+        assert state["objective"]["status"] == "awaiting_next_goal"
+        assert state["tasks"] == before["tasks"]
+        program.verify_refs(governance.evidence_references(state))
+    else:
+        with pytest.raises(governance.GovernanceError):
+            run(
+                program,
+                state,
+                "objective-complete",
+                receipt,
+                "evidence/_coordination/attempt-1/stale.json",
+            )
+        # Then a stale aggregate review cannot change objective acceptance.
+        assert state == before
+
+
 def test_completed_objective_awaits_user_and_preserves_previous_cycle(
     program: SyntheticProgram, state: governance.Record
 ) -> None:
