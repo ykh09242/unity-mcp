@@ -171,7 +171,13 @@ def test_fork_beta_tools_pushes_select_reusable_python_validation(path: str) -> 
     assert selected
     config = workflow(wrapper.name)
     assert config["permissions"] == {"contents": "read"}
-    assert list(config["jobs"]) == ["changes", "python_tests", "unity_tests", "validation"]
+    assert list(config["jobs"]) == [
+        "changes",
+        "python_tests",
+        "unity_tests",
+        "performance_report",
+        "validation",
+    ]
     job = config["jobs"]["python_tests"]
     assert job["if"] == "github.repository != 'CoplayDev/unity-mcp'"
     assert job["uses"] == "./.github/workflows/python-tests.yml"
@@ -450,8 +456,9 @@ def test_python_dependency_cache_does_not_mask_cold_bootstrap() -> None:
 
 def test_timing_reporting_cannot_replace_or_fail_the_python_test_gate() -> None:
     jobs = workflow("python-tests.yml")["jobs"]
-    report = jobs["performance_report"]
-    assert report["needs"] == ["test"]
+    report = workflow("python-performance.yml")["jobs"]["report"]
+    assert jobs["performance_report"]["needs"] == ["test"]
+    assert jobs["performance_report"]["uses"] == "./.github/workflows/python-performance.yml"
     assert report["continue-on-error"] is True
     assert report["permissions"] == {"contents": "read", "actions": "read"}
     assert "continue-on-error" not in jobs["test"]
@@ -468,6 +475,60 @@ def test_timing_reporting_cannot_replace_or_fail_the_python_test_gate() -> None:
     for name in ("fork-beta-tools.yml", "beta-release.yml", "release.yml"):
         caller = workflow(name)["jobs"]["python_tests"]
         assert caller["permissions"] == {"contents": "read", "actions": "read"}
+
+
+def test_fork_timing_reports_are_outside_the_required_dependency_path() -> None:
+    jobs = workflow("fork-beta-tools.yml")["jobs"]
+    assert jobs["python_tests"]["with"]["defer_performance_report"] is True
+    report = jobs["performance_report"]
+    assert report["needs"] == ["python_tests", "unity_tests"]
+    assert report["if"] == (
+        "always() && !cancelled() && github.repository != 'CoplayDev/unity-mcp'"
+    )
+    assert report["uses"] == "./.github/workflows/python-performance.yml"
+    assert report["with"]["include_ci_stages"] is True
+    assert report["permissions"] == {"contents": "read", "actions": "read"}
+    gate = jobs["validation"]
+    assert gate["needs"] == ["changes", "python_tests", "unity_tests"]
+    assert gate["permissions"] == {"contents": "read"}
+    assert not any("ci_test_performance.py" in step.get("run", "") for step in gate["steps"])
+
+
+def test_standalone_and_release_callers_keep_the_shared_timing_report() -> None:
+    config = workflow("python-tests.yml")
+    triggers = config.get("on", config.get(True))
+    option = triggers["workflow_call"]["inputs"]["defer_performance_report"]
+    assert option["type"] == "boolean" and option["default"] is False
+    report = config["jobs"]["performance_report"]
+    assert report["if"] == "always() && !cancelled() && !inputs.defer_performance_report"
+    assert report["uses"] == "./.github/workflows/python-performance.yml"
+    for name in ("release.yml", "beta-release.yml"):
+        assert "defer_performance_report" not in workflow(name)["jobs"]["python_tests"].get(
+            "with", {}
+        )
+
+
+def test_shared_report_is_observational_and_keeps_stages_after_snapshot_failure() -> None:
+    config = workflow("python-performance.yml")
+    triggers = config.get("on", config.get(True))
+    assert set(triggers) == {"workflow_call"}
+    report = config["jobs"]["report"]
+    assert report["continue-on-error"] is True
+    assert report["permissions"] == {"contents": "read", "actions": "read"}
+    assert report["steps"][0]["with"]["ref"] == "${{ inputs.ref || github.sha }}"
+    stages = next(
+        step for step in report["steps"] if step.get("name") == "Record completed CI stages"
+    )
+    assert stages["if"] == "always() && inputs.include_ci_stages"
+    assert stages["continue-on-error"] is True
+    uploads = {
+        step["with"]["name"]: step
+        for step in report["steps"]
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    }
+    assert set(uploads) == {"python-test-timings", "ci-stage-timings"}
+    assert uploads["ci-stage-timings"]["if"] == "always() && inputs.include_ci_stages"
+    assert all(step["with"]["retention-days"] == 30 for step in uploads.values())
 
 
 @pytest.mark.parametrize(
