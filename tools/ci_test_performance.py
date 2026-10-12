@@ -174,6 +174,7 @@ def snapshot(
         telemetry = ci_worker_timing.read_worker_timings(worker_timings)
         result["workerTimings"] = telemetry
         result["context"]["distribution"] = telemetry["distribution"]
+        result["context"]["ordering"] = telemetry["ordering"]
     return result
 
 
@@ -192,6 +193,7 @@ def validate_snapshot(value: dict) -> dict:
         telemetry = ci_worker_timing.validate_worker_timings(value["workerTimings"])
         if (
             value["context"].get("distribution") != telemetry["distribution"]
+            or value["context"].get("ordering", "unrecorded") != telemetry["ordering"]
             or max(1, value["context"]["workers"]) != telemetry["expectedWorkers"]
             or telemetry["complete"]
             and sum(worker["testCount"] for worker in telemetry["workers"]) != value["tests"]

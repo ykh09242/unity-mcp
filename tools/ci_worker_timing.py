@@ -30,6 +30,7 @@ class WorkerTiming(TypedDict):
 class WorkerReport(TypedDict):
     schema: int
     distribution: str
+    ordering: str
     expectedWorkers: int
     complete: bool
     elapsedSeconds: float
@@ -51,6 +52,12 @@ def validate_worker_timings(value: dict) -> WorkerReport:
         or len(value["workers"]) > value["expectedWorkers"]
     ):
         raise WorkerTimingError("Invalid worker timing report")
+    ordering = value.get("ordering", "unrecorded")
+    if not isinstance(ordering, str) or (
+        ordering not in {"unrecorded", "case-count", "collection"}
+        and not re.fullmatch(r"first-file:[A-Za-z0-9_./-]{1,200}", ordering)
+    ):
+        raise WorkerTimingError("Invalid worker file ordering")
     elapsed = _seconds(value.get("elapsedSeconds"))
     workers = []
     for entry in value["workers"]:
@@ -109,6 +116,7 @@ def validate_worker_timings(value: dict) -> WorkerReport:
     return {
         "schema": 1,
         "distribution": value["distribution"],
+        "ordering": ordering,
         "expectedWorkers": value["expectedWorkers"],
         "complete": value["complete"],
         "elapsedSeconds": elapsed,
@@ -134,7 +142,8 @@ def render_worker_timings(value: WorkerReport) -> str:
         "",
         "### Pytest worker phases",
         "",
-        f"Distribution: `{value['distribution']}`; complete: `{value['complete']}`. "
+        f"Distribution: `{value['distribution']}`; ordering: `{value.get('ordering', 'unrecorded')}`; "
+        f"complete: `{value['complete']}`. "
         "Collection includes imports. Other time includes scheduling waits and framework overhead; "
         "it is not a pure CPU-idle measurement. Finish gap is measured against the last testcase "
         "on any worker, using the same host's monotonic clock. Nested subprocesses are already "

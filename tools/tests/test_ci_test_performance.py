@@ -821,6 +821,26 @@ def test_optional_worker_snapshot_ingestion_retains_compact_metrics(timing, tmp_
     # Then serial worker count and distribution remain compatible with the suite.
     assert performance.validate_snapshot(result)["workerTimings"]["complete"] is True
     assert result["context"]["distribution"] == "no"
+    assert result["context"]["ordering"] == "unrecorded"
+
+    # Changing the ordering policy starts a separate baseline without losing legacy reports.
+    observed = worker_payload()
+    observed["ordering"] = "collection"
+    path.write_text(json.dumps(observed), encoding="utf-8")
+    current = performance.snapshot(
+        junit,
+        python="3.15",
+        suite="tools",
+        runner="Linux-X64",
+        workers=0,
+        coverage=False,
+        worker_timings=path,
+    )
+    assert performance.validate_snapshot(current)["context"]["ordering"] == "collection"
+    assert not performance.comparable(current, result)
+    assert not performance.module_comparable(current, result, "unknown")
+    report, _ = performance.render_report([current], [[result]], [])
+    assert "ordering: `collection`" in report
 
 
 def test_incomplete_worker_metadata_remains_explicit_in_report(timing):
@@ -834,7 +854,7 @@ def test_incomplete_worker_metadata_remains_explicit_in_report(timing):
     assert "incomplete" in report.lower()
 
 
-@pytest.mark.parametrize("change", ["count", "workers", "distribution"])
+@pytest.mark.parametrize("change", ["count", "workers", "distribution", "ordering"])
 def test_worker_metadata_must_match_snapshot_selection(timing, change):
     # Given telemetry that claims a different test count, scheduler or worker count.
     timing["workerTimings"] = worker_payload()
@@ -843,8 +863,10 @@ def test_worker_metadata_must_match_snapshot_selection(timing, change):
         timing["workerTimings"]["workers"][0]["testCount"] = 4
     elif change == "workers":
         timing["context"]["workers"] = 2
-    else:
+    elif change == "distribution":
         timing["context"]["distribution"] = "loadfile"
+    else:
+        timing["context"]["ordering"] = "first-file:test_http_security.py"
     # When validating the snapshot, then mismatched optional metadata is rejected.
     with pytest.raises(ValueError, match="worker timing distribution"):
         performance.validate_snapshot(timing)

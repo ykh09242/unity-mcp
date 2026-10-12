@@ -175,8 +175,8 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/tools
         run: |
           cd Server
-          # File groups keep module fixtures together; bound workers on shared runners.
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20 --cov --cov-report=xml --cov-report=html --cov-report=term
+          # Start the measured long HTTP child early; keep complete files on two workers.
+          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20 --cov --cov-report=xml --cov-report=html --cov-report=term
 
       - name: Run server tests
         if: matrix.suite == 'server' && matrix.python-version != '3.14'
@@ -185,7 +185,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/tools
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
+          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Run local harness unit tests (hermetic, no Unity)
         if: matrix.suite == 'tools'

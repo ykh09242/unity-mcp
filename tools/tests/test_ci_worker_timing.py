@@ -92,6 +92,14 @@ def test_duplicate_workers_are_rejected():
         validate_worker_timings(raw)
 
 
+@pytest.mark.parametrize("ordering", [False, "first-file:<script>", "first-file:" + "x" * 201])
+def test_invalid_file_ordering_is_rejected(ordering):
+    raw = sample()
+    raw["ordering"] = ordering
+    with pytest.raises(ValueError, match="ordering"):
+        validate_worker_timings(raw)
+
+
 @pytest.mark.parametrize("workers", [0, 2])
 def test_real_worker_plugin_preserves_failures_skips_and_file_isolation(tmp_path, workers):
     (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
@@ -152,6 +160,7 @@ def test_real_worker_plugin_preserves_failures_skips_and_file_isolation(tmp_path
     assert sum(case.find("failure") is not None for case in cases) == 1
     assert sum(case.find("skipped") is not None for case in cases) == 1
     report = read_worker_timings(output)
+    assert report["ordering"] == ("case-count" if workers else "collection")
     assert report["complete"] is False
     assert len(report["workers"]) == (workers or 1)
     assert sum(worker["testCount"] for worker in report["workers"]) == 7

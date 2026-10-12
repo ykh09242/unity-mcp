@@ -117,9 +117,19 @@ class WorkerTimings:
                     if value.get(field) is not None:
                         value[field] = max(0.0, value[field] - self.started)
         count = getattr(self.config.option, "numprocesses", 0) or 1
+        distribution = getattr(self.config.option, "dist", "no")
+        ordering = (
+            "case-count"
+            if distribution == "loadfile" and getattr(self.config.option, "loadscopereorder", True)
+            else "collection"
+        )
+        first_file = self.config.getoption("ci_first_file", default=None)
+        if first_file:
+            ordering = f"first-file:{first_file}"
         payload = {
             "schema": 1,
-            "distribution": getattr(self.config.option, "dist", "no"),
+            "distribution": distribution,
+            "ordering": ordering,
             "expectedWorkers": count,
             "complete": self.complete and len(self.workers) == count and exitstatus == 0,
             "elapsedSeconds": finished - self.started,
