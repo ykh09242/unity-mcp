@@ -33,6 +33,158 @@ def bundle(entries):
     return json.dumps({"schema": performance.SCHEMA, "snapshots": entries}).encode()
 
 
+@pytest.fixture
+def environment():
+    return {
+        "os": "ubuntu-24.04",
+        "imageOS": "ubuntu24",
+        "imageVersion": "20261005.1.0",
+        "python": "3.15.0",
+        "dotnetSdk": "10.0.100",
+    }
+
+
+def test_environment_observes_os_release_python_patch_and_bounded_sdk(monkeypatch):
+    monkeypatch.setattr(performance.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        performance.platform,
+        "freedesktop_os_release",
+        lambda: {"ID": "ubuntu", "VERSION_ID": "26.04"},
+    )
+    monkeypatch.setattr(performance.platform, "python_version", lambda: "3.15.1")
+    monkeypatch.setenv("ImageOS", "ubuntu26")
+    monkeypatch.setenv("ImageVersion", "20261012.2.0")
+
+    def command(args, **options):
+        assert args == ["dotnet", "--version"]
+        assert options == {"capture_output": True, "text": True, "timeout": 5, "check": False}
+        return subprocess.CompletedProcess(args, 0, "10.0.101\n", "")
+
+    monkeypatch.setattr(performance.subprocess, "run", command)
+    assert performance.execution_environment() == {
+        "os": "ubuntu-26.04",
+        "imageOS": "ubuntu26",
+        "imageVersion": "20261012.2.0",
+        "python": "3.15.1",
+        "dotnetSdk": "10.0.101",
+    }
+
+
+@pytest.mark.parametrize("failure", [OSError("missing"), subprocess.TimeoutExpired("dotnet", 5)])
+def test_missing_environment_sources_do_not_hide_test_timings(monkeypatch, failure):
+    monkeypatch.setattr(performance.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(performance.platform, "freedesktop_os_release", lambda: {})
+
+    def command(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(performance.subprocess, "run", command)
+    result = performance.execution_environment()
+    assert result["os"] == "Linux-unknown"
+    assert result["dotnetSdk"] == "unavailable"
+
+
+def test_snapshot_records_environment_and_separates_os_baselines(tmp_path, environment):
+    junit = tmp_path / "report.xml"
+    junit.write_text(
+        '<testsuite time="10"><testcase name="case" time="9"/></testsuite>', encoding="utf-8"
+    )
+    options = {
+        "python": "3.15",
+        "suite": "server",
+        "runner": "Linux-X64",
+        "workers": 2,
+        "coverage": False,
+    }
+    legacy = performance.snapshot(junit, **options)
+    current = performance.snapshot(junit, **options, environment=environment)
+    candidate = performance.snapshot(
+        junit, **options, environment={**environment, "os": "ubuntu-26.04"}
+    )
+    assert performance.read_bundle(bundle([current])) == [current]
+    assert not performance.comparable(current, legacy)
+    assert not performance.comparable(current, candidate)
+    assert not performance.module_comparable(current, candidate, "unknown")
+    updated = performance.snapshot(
+        junit,
+        **options,
+        environment={
+            **environment,
+            "imageVersion": "new",
+            "python": "3.15.1",
+            "dotnetSdk": "10.0.101",
+        },
+    )
+    assert performance.comparable(current, updated)
+    assert performance.module_comparable(current, updated, "unknown")
+    report, _ = performance.render_report([current], [], [])
+    assert "ubuntu-24.04 | ubuntu24 | 20261005.1.0 | 3.15.0 | 10.0.100" in report
+
+
+@pytest.mark.parametrize("value", [None, [], {}, {"os": "ubuntu-26.04"}])
+def test_malformed_environment_is_rejected(timing, value):
+    timing["environment"] = value
+    with pytest.raises(ValueError, match="execution environment"):
+        performance.read_bundle(bundle([timing]))
+
+
+def test_csharp_junit_phases_are_observations_not_extra_elapsed(tmp_path):
+    junit = tmp_path / "report.xml"
+    junit.write_text(
+        '<testsuite time="20"><testcase classname="tests.csharp" name="roundtrip" time="19">'
+        '<properties><property name="csharp_sdk_version" value="10.0.100"/>'
+        '<property name="csharp_target_framework" value="net10.0"/>'
+        '<property name="csharp_sdk_discovery_seconds" value="1"/>'
+        '<property name="csharp_compile_seconds" value="15"/>'
+        '<property name="csharp_execution_seconds" value="0.5"/>'
+        '<property name="csharp_execution_seconds" value="1.5"/>'
+        '<property name="unrelated_property" value="ignored"/>'
+        "</properties></testcase></testsuite>",
+        encoding="utf-8",
+    )
+    result = performance.snapshot(
+        junit, python="3.15", suite="server", runner="Linux-X64", workers=2, coverage=False
+    )
+    assert result["elapsed"] == 20
+    assert result["modules"] == {"tests.csharp": 19}
+    assert len(result["csharpPhases"]) == 4
+    assert performance.read_bundle(bundle([result])) == [result]
+    report, warnings = performance.render_report([result], [], [])
+    assert not warnings
+    assert "| compile | 1 | 15.000s | 15.000s |" in report
+    assert "| execution | 2 | 2.000s | 1.500s |" in report
+    assert "Selected SDK: 10.0.100; target: net10.0." in report
+
+
+@pytest.mark.parametrize("duration", ["NaN", "inf", "-1"])
+def test_invalid_csharp_phase_duration_is_rejected(tmp_path, duration):
+    junit = tmp_path / "report.xml"
+    junit.write_text(
+        '<testsuite time="20"><testcase name="case" time="19"><properties>'
+        f'<property name="csharp_compile_seconds" value="{duration}"/>'
+        "</properties></testcase></testsuite>",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="finite nonnegative"):
+        performance.junit_summary(junit)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("csharpPhases", {}),
+        ("csharpPhases", [{"case": "test", "phase": "unknown", "seconds": 1}]),
+        ("csharpPhases", [{"case": "test", "phase": "compile", "seconds": True}]),
+        ("csharpRuntime", []),
+        ("csharpRuntime", {"csharp_sdk_version": 10}),
+    ],
+)
+def test_invalid_csharp_history_metadata_is_rejected(timing, field, value):
+    timing[field] = value
+    with pytest.raises(ValueError):
+        performance.read_bundle(bundle([timing]))
+
+
 def test_snapshot_keeps_wall_time_distinct_from_summed_test_time(timing):
     assert timing["elapsed"] == 20
     assert timing["tests"] == 3

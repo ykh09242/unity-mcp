@@ -9,6 +9,7 @@ import json
 import math
 import os
 from pathlib import Path
+import platform
 import re
 from statistics import median
 import subprocess
@@ -22,6 +23,39 @@ ARTIFACT = "python-test-timings"
 MAX_REPORT_BYTES = 2 * 1024 * 1024
 MIN_SAMPLES = 3
 MAX_SAMPLES = 5
+CSHARP_PHASES = ("sdk_discovery", "compile", "execution")
+
+
+def execution_environment() -> dict:
+    """Capture versions, without machine identities or an unbounded SDK command."""
+    system = platform.system()
+    if system == "Linux":
+        try:
+            release = platform.freedesktop_os_release()
+            os_version = f"{release['ID']}-{release['VERSION_ID']}"
+        except (OSError, KeyError):
+            os_version = "Linux-unknown"
+    elif system == "Darwin":
+        os_version = f"macOS-{platform.mac_ver()[0]}"
+    else:
+        os_version = f"{system}-{platform.release()}"
+    sdk = "unavailable"
+    try:
+        result = subprocess.run(
+            ["dotnet", "--version"], capture_output=True, text=True, timeout=5, check=False
+        )
+        lines = result.stdout.strip().splitlines()
+        if result.returncode == 0 and lines and re.fullmatch(r"[\w.+-]{1,100}", lines[-1]):
+            sdk = lines[-1]
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {
+        "os": os_version,
+        "imageOS": os.environ.get("ImageOS", "unavailable"),
+        "imageVersion": os.environ.get("ImageVersion", "unavailable"),
+        "python": platform.python_version(),
+        "dotnetSdk": sdk,
+    }
 
 
 def seconds(value) -> float:
@@ -48,6 +82,7 @@ def junit_summary(path: Path) -> dict:
     module_identities = defaultdict(list)
     identities = []
     slowest = []
+    csharp_phases, csharp_runtime = [], {}
     for case in cases:
         name, module = case.attrib["name"], case.attrib.get("classname", "unknown")
         elapsed = seconds(float(case.attrib["time"]))
@@ -58,7 +93,23 @@ def junit_summary(path: Path) -> dict:
         module_identities[module].append((name, outcome))
         modules[module] += elapsed
         slowest.append({"name": f"{module}::{name}", "seconds": elapsed})
-    return {
+        for prop in case.findall("properties/property"):
+            prop_name = prop.get("name", "")
+            for phase in CSHARP_PHASES:
+                if prop_name == f"csharp_{phase}_seconds":
+                    csharp_phases.append(
+                        {
+                            "case": f"{module}::{name}",
+                            "phase": phase,
+                            "seconds": seconds(float(prop.attrib["value"])),
+                        }
+                    )
+            if prop_name in {"csharp_sdk_version", "csharp_target_framework"}:
+                value = prop.attrib["value"]
+                if prop_name in csharp_runtime and csharp_runtime[prop_name] != value:
+                    raise ValueError("Inconsistent C# runtime metadata")
+                csharp_runtime[prop_name] = value
+    result = {
         "elapsed": sum(seconds(float(suite.attrib["time"])) for suite in suites),
         "tests": len(cases),
         "skipped": sum(outcome == "skipped" for _, _, outcome in identities),
@@ -74,6 +125,11 @@ def junit_summary(path: Path) -> dict:
         },
         "slowest": sorted(slowest, key=lambda item: item["seconds"], reverse=True)[:10],
     }
+    if csharp_phases:
+        result["csharpPhases"] = csharp_phases
+    if csharp_runtime:
+        result["csharpRuntime"] = csharp_runtime
+    return result
 
 
 def snapshot(
@@ -85,6 +141,7 @@ def snapshot(
     workers: int,
     coverage: bool,
     nested: Path | None = None,
+    environment: dict | None = None,
 ) -> dict:
     result = {
         "schema": SCHEMA,
@@ -98,6 +155,11 @@ def snapshot(
         },
         **junit_summary(junit),
     }
+    if environment is not None:
+        result["environment"] = environment
+        # Image builds and patch updates remain visible without continually resetting history.
+        # An OS release change starts a new baseline; legacy reports never guess their OS.
+        result["context"]["os"] = environment["os"]
     if nested is not None and nested.is_file():
         # The wrapper already includes this time; retain detail without adding it twice.
         result["nestedHttp"] = junit_summary(nested)
@@ -115,6 +177,18 @@ def validate_snapshot(value: dict) -> dict:
         raise ValueError("Invalid timing snapshot identity")
     if value["id"] != f"{value['context']['python']}-{value['context']['suite']}":
         raise ValueError("Inconsistent timing snapshot identity")
+    if "environment" in value:
+        environment = value["environment"]
+        if (
+            not isinstance(environment, dict)
+            or set(environment) != {"os", "imageOS", "imageVersion", "python", "dotnetSdk"}
+            or any(
+                not isinstance(item, str) or not 0 < len(item) <= 200
+                for item in environment.values()
+            )
+            or environment["os"] != value["context"].get("os")
+        ):
+            raise ValueError("Invalid execution environment")
     summaries = [value, value["nestedHttp"]] if "nestedHttp" in value else [value]
     for summary in summaries:
         if not isinstance(summary, dict) or not re.fullmatch(r"[a-f0-9]{64}", summary["inventory"]):
@@ -147,6 +221,29 @@ def validate_snapshot(value: dict) -> dict:
             if not isinstance(case, dict) or not isinstance(case["name"], str):
                 raise ValueError("Invalid testcase timing")
             seconds(case["seconds"])
+        if "csharpPhases" in summary:
+            phases = summary["csharpPhases"]
+            if not isinstance(phases, list) or len(phases) > 100:
+                raise ValueError("Invalid C# timing phases")
+            for phase in phases:
+                if (
+                    not isinstance(phase, dict)
+                    or not isinstance(phase.get("case"), str)
+                    or phase.get("phase") not in CSHARP_PHASES
+                ):
+                    raise ValueError("Invalid C# timing phase")
+                seconds(phase["seconds"])
+        if "csharpRuntime" in summary:
+            runtime = summary["csharpRuntime"]
+            if (
+                not isinstance(runtime, dict)
+                or not runtime.keys() <= {"csharp_sdk_version", "csharp_target_framework"}
+                or any(
+                    not isinstance(item, str) or not 0 < len(item) <= 200
+                    for item in runtime.values()
+                )
+            ):
+                raise ValueError("Invalid C# runtime metadata")
     return value
 
 
@@ -379,8 +476,10 @@ def render_report(
         "# Python test performance",
         "",
         "Warning-only observations from existing JUnit reports; no extra test runs.",
-        "Comparable history requires the same workflow, branch, event, Python minor, runner, workers, coverage and test/skip inventory.",
+        "Comparable history requires the same workflow, branch, event, Python minor, runner, OS release, workers, coverage and test/skip inventory.",
         "Unchanged modules retain their own baseline when another module changes; legacy artifacts require a matching whole suite.",
+        "OS releases start separate baselines; older reports without OS metadata are not mixed with observed environments.",
+        "Image builds and Python/.NET patch versions are recorded below; their updates do not reset baselines.",
         "Baselines use the median of up to five successful runs, with at least three samples.",
         "",
         "| Suite | Tests | Elapsed | Baseline | Samples | Status |",
@@ -415,6 +514,25 @@ def render_report(
                 "",
                 "Module values sum testcase durations, including setup/teardown; parallel sums are not wall time.",
                 "",
+            ]
+        )
+        environment = entry.get("environment")
+        if environment:
+            details.extend(
+                [
+                    "| OS | Runner image | Image build | Python | Default .NET SDK |",
+                    "| --- | --- | --- | --- | --- |",
+                    "| "
+                    + " | ".join(
+                        markdown(environment[field])
+                        for field in ("os", "imageOS", "imageVersion", "python", "dotnetSdk")
+                    )
+                    + " |",
+                    "",
+                ]
+            )
+        details.extend(
+            [
                 "| Slow module | Current | Baseline | Samples |",
                 "| --- | ---: | ---: | ---: |",
             ]
@@ -448,6 +566,28 @@ def render_report(
                     f"Nested HTTP: {nested['tests']} cases, {nested['elapsed']:.2f}s; already included in its wrapper.",
                 ]
             )
+        if entry.get("csharpPhases"):
+            runtime = entry.get("csharpRuntime", {})
+            details.extend(
+                [
+                    "",
+                    "C# subprocess phases are already included in testcase durations; compilation is shared once per module.",
+                    f"Selected SDK: {markdown(runtime.get('csharp_sdk_version', 'unavailable'))}; target: {markdown(runtime.get('csharp_target_framework', 'unavailable'))}.",
+                    "",
+                    "| C# phase | Calls | Total | Longest |",
+                    "| --- | ---: | ---: | ---: |",
+                ]
+            )
+            for phase in CSHARP_PHASES:
+                samples = [
+                    sample["seconds"]
+                    for sample in entry["csharpPhases"]
+                    if sample["phase"] == phase
+                ]
+                if samples:
+                    details.append(
+                        f"| {phase} | {len(samples)} | {sum(samples):.3f}s | {max(samples):.3f}s |"
+                    )
         details.extend(["", "</details>"])
     lines.extend(["", *notes, *details, ""])
     return "\n".join(lines), sorted(set(warnings))
@@ -488,6 +628,7 @@ def main(argv: list[str] | None = None) -> int:
             workers=args.workers,
             coverage=args.coverage,
             nested=args.nested_junit,
+            environment=execution_environment(),
         )
         validate_snapshot(result)
         args.output.parent.mkdir(parents=True, exist_ok=True)
