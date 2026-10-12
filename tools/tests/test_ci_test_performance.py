@@ -246,3 +246,214 @@ def test_real_report_cli_returns_success_for_detected_regression(timing, tmp_pat
     )
     assert result.returncode == 0, result.stderr
     assert "::warning::3.15-tools" in result.stdout
+
+
+def test_unchanged_module_retains_baseline_when_another_module_changes(timing):
+    history = [[copy.deepcopy(timing)] for _ in range(3)]
+    timing["inventory"] = "a" * 64
+    timing["moduleInventories"]["tests.other"] = "b" * 64
+    timing["modules"]["tests.slow"] = 25
+    report, warnings = performance.render_report([timing], history, [])
+    assert "Collecting baseline" in report
+    assert "| tests.slow | 25.00s | 15.00s (slower) |" in report
+    assert len(warnings) == 1
+
+
+@pytest.mark.parametrize("change", ["inventory", "context", "failed", "nested"])
+def test_module_baseline_excludes_changed_workload_or_context(timing, change):
+    previous = copy.deepcopy(timing)
+    if change == "inventory":
+        previous["moduleInventories"]["tests.slow"] = "a" * 64
+    elif change == "context":
+        previous["context"]["workers"] = 2
+    elif change == "failed":
+        previous["successful"] = False
+    else:
+        previous["nestedHttp"] = {"inventory": "a" * 64}
+    assert not performance.module_comparable(timing, previous, "tests.slow")
+
+
+def test_legacy_module_baseline_requires_the_entire_suite_to_match(timing):
+    previous = copy.deepcopy(timing)
+    del previous["moduleInventories"]
+    assert performance.module_comparable(timing, previous, "tests.slow")
+    previous["inventory"] = "a" * 64
+    assert not performance.module_comparable(timing, previous, "tests.slow")
+
+
+@pytest.mark.parametrize("value", [None, [], {}, {"tests.slow": "bad"}])
+def test_malformed_module_inventory_is_rejected(timing, value):
+    timing["moduleInventories"] = value
+    with pytest.raises(ValueError, match="module inventory"):
+        performance.read_bundle(bundle([timing]))
+
+
+def test_module_inventory_tracks_case_names_and_outcomes(tmp_path):
+    path = tmp_path / "report.xml"
+    summaries = []
+    for name, outcome in [("one", ""), ("two", ""), ("two", "<skipped/>")]:
+        path.write_text(
+            f'<testsuite time="1"><testcase classname="module" name="{name}" time="1">'
+            f"{outcome}</testcase></testsuite>",
+            encoding="utf-8",
+        )
+        summaries.append(performance.junit_summary(path))
+    assert len({value["moduleInventories"]["module"] for value in summaries}) == 3
+
+
+def test_stages_paginate_and_keep_only_completed_measurements(monkeypatch):
+    step = {
+        "name": "Run Pylint",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-12T01:00:00Z",
+        "completed_at": "2026-10-12T01:00:42Z",
+    }
+    jobs = [{"name": f"job {i}", "steps": []} for i in range(100)]
+    jobs[0]["steps"] = [step, {**step, "status": "in_progress"}, {**step, "conclusion": "skipped"}]
+    calls = []
+
+    def api(endpoint):
+        calls.append(endpoint)
+        page = (
+            jobs
+            if endpoint.endswith("page=1")
+            else [
+                {
+                    "name": "compile|<job>",
+                    "steps": [{**step, "name": "Compile", "conclusion": "failure"}],
+                }
+            ]
+        )
+        return json.dumps({"total_count": 101, "jobs": page}).encode()
+
+    monkeypatch.setattr(performance, "github_api", api)
+    stages = performance.github_stages("owner/repo", 20)
+    assert len(calls) == 2 and len(stages) == 2
+    assert stages[0]["seconds"] == 42
+    assert stages[1]["conclusion"] == "failure"
+    report = performance.render_stages(stages)
+    assert "compile&#124;&lt;job&gt;" in report and "42.00s" in report
+
+
+@pytest.mark.parametrize("end", ["2026-10-12T00:00:00Z", "2026-10-12T01:00:42", "bad"])
+def test_invalid_stage_timestamps_are_rejected(monkeypatch, end):
+    payload = {
+        "total_count": 1,
+        "jobs": [
+            {
+                "name": "job",
+                "steps": [
+                    {
+                        "name": "Compile",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "started_at": "2026-10-12T01:00:00Z",
+                        "completed_at": end,
+                    }
+                ],
+            }
+        ],
+    }
+    monkeypatch.setattr(performance, "github_api", lambda endpoint: json.dumps(payload).encode())
+    with pytest.raises(ValueError):
+        performance.github_stages("owner/repo", 20)
+
+
+def test_stage_outage_is_observational_and_still_writes_report(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.setattr(
+        performance, "github_api", lambda endpoint: (_ for _ in ()).throw(ValueError("outage"))
+    )
+    assert (
+        performance.main(
+            ["stages", "--repository", "owner/repo", "--run-id", "20", "--output", str(tmp_path)]
+        )
+        == 0
+    )
+    assert "Stage timings are unavailable" in (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert json.loads((tmp_path / "timings.json").read_text(encoding="utf-8"))["stages"] == []
+
+
+@pytest.mark.parametrize("wrapper", ["test_http_security", "tests.test_http_security.TestHTTP"])
+def test_changed_nested_http_only_invalidates_identified_wrapper(timing, wrapper):
+    timing["modules"][wrapper] = 10
+    timing["moduleInventories"][wrapper] = "c" * 64
+    timing["nestedHttp"] = {"inventory": "a" * 64}
+    previous = copy.deepcopy(timing)
+    previous["nestedHttp"]["inventory"] = "b" * 64
+    assert performance.module_comparable(timing, previous, "tests.slow")
+    assert not performance.module_comparable(timing, previous, wrapper)
+    del previous["modules"][wrapper]
+    assert not performance.module_comparable(timing, previous, "tests.slow")
+
+
+@pytest.mark.parametrize(
+    "name", ["Restore optional dependency inputs", "Save validated optional dependency inputs"]
+)
+def test_optional_input_cache_steps_are_reported(monkeypatch, name):
+    response = {
+        "total_count": 1,
+        "jobs": [
+            {
+                "name": "optional",
+                "steps": [
+                    {
+                        "name": name,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "started_at": "2026-10-12T01:00:00Z",
+                        "completed_at": "2026-10-12T01:00:19Z",
+                    }
+                ],
+            }
+        ],
+    }
+    monkeypatch.setattr(performance, "github_api", lambda endpoint: json.dumps(response).encode())
+    assert performance.github_stages("owner/repo", 20)[0]["seconds"] == 19
+
+
+@pytest.mark.parametrize("timestamp", [None, True, 123, [], {}])
+def test_invalid_stage_data_preserves_valid_test_report(timing, tmp_path, monkeypatch, timestamp):
+    current = tmp_path / "current"
+    current.mkdir()
+    (current / "tools.json").write_text(json.dumps(timing), encoding="utf-8")
+    response = {
+        "total_count": 1,
+        "jobs": [
+            {
+                "name": "job",
+                "steps": [
+                    {
+                        "name": "Compile",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "started_at": "2026-10-12T01:00:00Z",
+                        "completed_at": timestamp,
+                    }
+                ],
+            }
+        ],
+    }
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.setattr(performance, "github_api", lambda endpoint: json.dumps(response).encode())
+    monkeypatch.setattr(performance, "github_history", lambda *args: ([], []))
+    output = tmp_path / "output"
+    assert (
+        performance.main(
+            [
+                "report",
+                "--current",
+                str(current),
+                "--repository",
+                "owner/repo",
+                "--run-id",
+                "20",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    assert "Stage timings are unavailable" in (output / "report.md").read_text(encoding="utf-8")
+    assert performance.read_bundle((output / "timings.json").read_bytes()) == [timing]

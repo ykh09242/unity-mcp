@@ -2,6 +2,7 @@
 
 import argparse
 from collections import defaultdict
+from datetime import datetime
 import hashlib
 import io
 import json
@@ -44,6 +45,7 @@ def junit_summary(path: Path) -> dict:
     if not cases or not suites:
         raise ValueError("JUnit report contains no test cases")
     modules = defaultdict(float)
+    module_identities = defaultdict(list)
     identities = []
     slowest = []
     for case in cases:
@@ -53,6 +55,7 @@ def junit_summary(path: Path) -> dict:
             (tag for tag in ("error", "failure", "skipped") if case.find(tag) is not None), "passed"
         )
         identities.append((module, name, outcome))
+        module_identities[module].append((name, outcome))
         modules[module] += elapsed
         slowest.append({"name": f"{module}::{name}", "seconds": elapsed})
     return {
@@ -65,6 +68,10 @@ def junit_summary(path: Path) -> dict:
         ),
         "inventory": hashlib.sha256(json.dumps(sorted(identities)).encode()).hexdigest(),
         "modules": dict(sorted(modules.items())),
+        "moduleInventories": {
+            module: hashlib.sha256(json.dumps(sorted(cases)).encode()).hexdigest()
+            for module, cases in sorted(module_identities.items())
+        },
         "slowest": sorted(slowest, key=lambda item: item["seconds"], reverse=True)[:10],
     }
 
@@ -125,6 +132,17 @@ def validate_snapshot(value: dict) -> dict:
         seconds(summary["elapsed"])
         for duration in summary["modules"].values():
             seconds(duration)
+        if "moduleInventories" in summary:
+            inventories = summary["moduleInventories"]
+            if (
+                not isinstance(inventories, dict)
+                or inventories.keys() != summary["modules"].keys()
+                or any(
+                    not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value)
+                    for value in inventories.values()
+                )
+            ):
+                raise ValueError("Invalid timing module inventory")
         for case in summary["slowest"]:
             if not isinstance(case, dict) or not isinstance(case["name"], str):
                 raise ValueError("Invalid testcase timing")
@@ -238,6 +256,98 @@ def comparable(current: dict, previous: dict) -> bool:
     )
 
 
+def module_comparable(current: dict, previous: dict, name: str) -> bool:
+    if (
+        not current["successful"]
+        or not previous["successful"]
+        or current["context"] != previous["context"]
+        or name not in previous["modules"]
+    ):
+        return False
+    if current.get("nestedHttp", {}).get("inventory") != previous.get("nestedHttp", {}).get(
+        "inventory"
+    ):
+        # Preserve unrelated modules only when the enclosing HTTP wrapper is identifiable.
+        wrapper = "test_http_security"
+        if wrapper in name.split(".") or not all(
+            any(wrapper in module.split(".") for module in value["modules"])
+            for value in (current, previous)
+        ):
+            return False
+    if "moduleInventories" not in current or "moduleInventories" not in previous:
+        return comparable(current, previous)
+    return current["moduleInventories"][name] == previous["moduleInventories"][name]
+
+
+def github_stages(repository: str, run_id: int) -> list[dict]:
+    """Observe completed steps from this run without waiting for unfinished jobs."""
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", repository) or run_id <= 0:
+        raise ValueError("Invalid GitHub repository or run ID")
+    stages = []
+    for page in range(1, 4):
+        query = urlencode({"filter": "latest", "per_page": 100, "page": page})
+        response = json.loads(github_api(f"repos/{repository}/actions/runs/{run_id}/jobs?{query}"))
+        count = response["total_count"]
+        if type(count) is not int or not 0 <= count <= 300:
+            raise ValueError("Stage job inventory exceeds size limit")
+        for job in response["jobs"]:
+            for step in job.get("steps", []):
+                name = step["name"]
+                if (
+                    step["status"] != "completed"
+                    or step["conclusion"] not in {"success", "failure", "cancelled", "timed_out"}
+                    or not any(
+                        word in name.lower()
+                        for word in (
+                            "pylint",
+                            "cache",
+                            "compile",
+                            "prepare",
+                            "optional dependency inputs",
+                        )
+                    )
+                ):
+                    continue
+                if not all(
+                    isinstance(step[field], str) for field in ("started_at", "completed_at")
+                ):
+                    raise ValueError("Stage timestamps require ISO strings")
+                start = datetime.fromisoformat(step["started_at"].replace("Z", "+00:00"))
+                end = datetime.fromisoformat(step["completed_at"].replace("Z", "+00:00"))
+                if start.tzinfo is None or end.tzinfo is None:
+                    raise ValueError("Stage timestamps require timezone offsets")
+                stages.append(
+                    {
+                        "job": job["name"],
+                        "name": name,
+                        "seconds": seconds((end - start).total_seconds()),
+                        "conclusion": step["conclusion"],
+                    }
+                )
+        if page * 100 >= count:
+            return stages
+    raise ValueError("Stage job inventory exceeds page limit")
+
+
+def render_stages(stages: list[dict]) -> str:
+    lines = [
+        "",
+        "## CI stage timings",
+        "",
+        "Completed Pylint, cache, preparation and compile steps from this workflow run. "
+        "Durations have one-second API precision and are observations, not regression gates.",
+        "",
+        "| Job | Step | Duration | Result |",
+        "| --- | --- | ---: | --- |",
+    ]
+    for stage in stages:
+        lines.append(
+            f"| {markdown(stage['job'])} | {markdown(stage['name'])} | "
+            f"{stage['seconds']:.2f}s | {markdown(stage['conclusion'])} |"
+        )
+    return "\n".join([*lines, ""])
+
+
 def regression(
     current: float, samples: list[float], minimum_seconds: float
 ) -> tuple[float | None, bool]:
@@ -270,6 +380,7 @@ def render_report(
         "",
         "Warning-only observations from existing JUnit reports; no extra test runs.",
         "Comparable history requires the same workflow, branch, event, Python minor, runner, workers, coverage and test/skip inventory.",
+        "Unchanged modules retain their own baseline when another module changes; legacy artifacts require a matching whole suite.",
         "Baselines use the median of up to five successful runs, with at least three samples.",
         "",
         "| Suite | Tests | Elapsed | Baseline | Samples | Status |",
@@ -311,7 +422,12 @@ def render_report(
         for name, elapsed in sorted(
             entry["modules"].items(), key=lambda pair: pair[1], reverse=True
         )[:5]:
-            samples = [value["modules"][name] for value in prior if name in value["modules"]]
+            samples = [
+                value["modules"][name]
+                for run in history
+                for value in run
+                if value["id"] == entry["id"] and module_comparable(entry, value, name)
+            ][:MAX_SAMPLES]
             module_base, module_slower = regression(elapsed, samples, 5)
             text = f"{module_base:.2f}s" if module_base is not None else "-"
             details.append(
@@ -358,6 +474,10 @@ def main(argv: list[str] | None = None) -> int:
     report.add_argument("--repository")
     report.add_argument("--run-id", type=int)
     report.add_argument("--output", type=Path, required=True)
+    stages = commands.add_parser("stages")
+    stages.add_argument("--repository", required=True)
+    stages.add_argument("--run-id", type=int, required=True)
+    stages.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.command == "snapshot":
         result = snapshot(
@@ -373,22 +493,33 @@ def main(argv: list[str] | None = None) -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
         return 0
-    current = [
-        validate_snapshot(json.loads(path.read_bytes()))
-        for path in sorted(args.current.glob("*.json"))
-    ]
-    if not current or len({entry["id"] for entry in current}) != len(current):
-        raise ValueError("Missing or duplicate current timing snapshots")
-    history = [read_bundle(path.read_bytes()) for path in args.history]
-    notes = []
-    if args.repository:
+    current, history, notes, stage_timings = [], [], [], []
+    if args.command == "report":
+        current = [
+            validate_snapshot(json.loads(path.read_bytes()))
+            for path in sorted(args.current.glob("*.json"))
+        ]
+        if not current or len({entry["id"] for entry in current}) != len(current):
+            raise ValueError("Missing or duplicate current timing snapshots")
+        history = [read_bundle(path.read_bytes()) for path in args.history]
+    if args.repository and args.command == "report":
         try:
             history, notes = github_history(args.repository, args.run_id)
         except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
             notes.append(
                 "GitHub timing history is unavailable; reporting current measurements only."
             )
-    output, warnings = render_report(current, history, notes)
+    if args.repository:
+        try:
+            stage_timings = github_stages(args.repository, args.run_id)
+        except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+            notes.append("Stage timings are unavailable; test and compile gates are unaffected.")
+    if args.command == "report":
+        output, warnings = render_report(current, history, notes)
+    else:
+        output, warnings = "\n".join(notes) + "\n", []
+    if args.repository:
+        output += render_stages(stage_timings)
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "timings.json").write_text(
         json.dumps(
@@ -397,6 +528,7 @@ def main(argv: list[str] | None = None) -> int:
                 "runId": args.run_id,
                 "repository": args.repository,
                 "snapshots": current,
+                "stages": stage_timings,
             },
             sort_keys=True,
         )
