@@ -226,17 +226,18 @@ platform_defines() {
 }
 
 # --------------------------------------------------------------- references ----
-# Resolve one manifest line (DATA/… LIBCACHE/… EXTRA/…) to an absolute path.
+# Resolve in the caller's shell; ordinary manifest entries need no subshell.
 resolve_ref() {
+  resolved_ref=
   case "$1" in
-    DATA/*)     echo "$UNITY_DATA/${1#DATA/}" ;;
-    EXTRA/*)    echo "$EXTRA_REFS/${1#EXTRA/}" ;;
-    COMPILED/*) echo "$OUT/$platform/${1#COMPILED/}" ;;
+    DATA/*)     resolved_ref="$UNITY_DATA/${1#DATA/}" ;;
+    EXTRA/*)    resolved_ref="$EXTRA_REFS/${1#EXTRA/}" ;;
+    COMPILED/*) resolved_ref="$OUT/$platform/${1#COMPILED/}" ;;
     LIBCACHE/*)
       if [ -n "$TEST_FRAMEWORK_SOURCE" ] && [[ "$1" == *TestRunner.dll ]]; then
-        echo "$OUT/$platform/${1#LIBCACHE/}"
+        resolved_ref="$OUT/$platform/${1#LIBCACHE/}"
       else
-        find "$LIBCACHE" -path '*/ScriptAssemblies/*' -name "${1#LIBCACHE/}" 2>/dev/null | head -1
+        resolved_ref=$(find "$LIBCACHE" -path '*/ScriptAssemblies/*' -name "${1#LIBCACHE/}" 2>/dev/null | head -1)
       fi ;;
   esac
 }
@@ -257,6 +258,24 @@ assembly_sources() {
   fi
 }
 
+# Source trees and asmdef ownership are fixed inputs for one invocation. Reuse
+# their sorted inventories across assembly variants/platforms, never across runs.
+# Indexed arrays also support Bash versions without associative arrays.
+source_directories=()
+source_inventories=()
+load_assembly_sources() {
+  local srcdir="$1" index
+  for index in "${!source_directories[@]}"; do
+    if [ "${source_directories[$index]}" = "$srcdir" ]; then
+      assembly_source_list="${source_inventories[$index]}"
+      return 0
+    fi
+  done
+  assembly_source_list=$(assembly_sources "$srcdir") || return 1
+  source_directories+=("$srcdir")
+  source_inventories+=("$assembly_source_list")
+}
+
 # ------------------------------------------------------------------ compile ----
 # Output assembly names must be exactly MCPForUnity.Runtime / MCPForUnity.Editor:
 # MCPForUnity/Runtime/AssemblyInfo.cs grants InternalsVisibleTo by assembly NAME, so a
@@ -272,9 +291,13 @@ compile() {
   case "$ver_major.$ver_minor:$name" in
     7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:MCPForUnity.Input.InputSystem.Runtime|*:TestAsmdef) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
   esac
-  [ -d "$srcdir" ] && sources=$(assembly_sources "$srcdir") && [ -n "$sources" ] || {
+  [ -d "$srcdir" ] && load_assembly_sources "$srcdir" && [ -n "$assembly_source_list" ] || {
     echo "::error::assembly sources not found: $srcdir" >&2; return 1;
   }
+  sources=$assembly_source_list
+  while IFS= read -r f; do
+    [ -f "$f" ] || { echo "::error::assembly source not found: $f" >&2; return 1; }
+  done <<< "$sources"
   for required in "$bcl" "$manifest"; do
     [ -f "$required" ] || { echo "::error::reference manifest not found: $required" >&2; return 1; }
   done
@@ -337,7 +360,8 @@ compile() {
         case "$name:$entry" in
           UnityEngine.TestRunner:LIBCACHE/*TestRunner.dll|UnityEditor.TestRunner:LIBCACHE/*TestRunner.dll|Unity.EditorCoroutines.Editor:LIBCACHE/*TestRunner.dll|UnityEngine.UI:LIBCACHE/*TestRunner.dll|UnityEditor.UI:LIBCACHE/*TestRunner.dll|UnityEngine.UI:COMPILED/*|UnityEditor.UI:COMPILED/*) continue ;;
         esac
-        local p; p=$(resolve_ref "$entry")
+        resolve_ref "$entry"
+        local p="$resolved_ref"
         if [ -n "$p" ] && [ -f "$p" ]; then echo "-r:\"$p\""; nrefs=$((nrefs+1))
         else echo "::error::required reference not found: $entry" >&2; missing=$((missing+1)); fi
       done < "$reference_manifest"

@@ -486,6 +486,105 @@ def test_existing_reference_is_preserved_in_both_compilations(harness: CompileHa
         )
 
 
+@pytest.mark.parametrize("entry", ["UNKNOWN/Core.dll", "LIBCACHE/Missing after valid.dll"])
+def test_unresolved_reference_cannot_reuse_previous_manifest_entry(
+    harness: CompileHarness, entry: str
+) -> None:
+    manifest = harness.repo / "tools/compile-refs/2021.3/Runtime.txt"
+    manifest.write_text(f"DATA/Managed/Core.dll\n{entry}\n", encoding="utf-8")
+    result = harness.run("2021.3.45f2")
+    assert result.returncode != 0
+    assert f"required reference not found: {entry}" in result.stderr
+    assert not harness.calls.exists()
+
+
+def test_caller_resolved_references_preserve_crlf_spaces_and_platform_outputs(
+    harness: CompileHarness,
+) -> None:
+    template = (
+        harness.data / "Resources/PackageManager/ProjectTemplates/libcache/owned/ScriptAssemblies"
+    )
+    template.mkdir(parents=True)
+    references = (
+        ("DATA/Managed/Extra reference.dll", harness.data / "Managed/Extra reference.dll"),
+        ("EXTRA/Extra library.dll", harness.extra / "Extra library.dll"),
+        ("LIBCACHE/Template library.dll", template / "Template library.dll"),
+    )
+    for _, path in references:
+        path.touch()
+    profile = harness.repo / "tools/compile-refs/2021.3"
+    content = "DATA/Managed/Core.dll\r\n" + "".join(f"{entry}\r\n" for entry, _ in references)
+    (profile / "Runtime.txt").write_bytes(content.encode())
+    (profile / "Editor.txt").write_bytes(
+        (content + "COMPILED/MCPForUnity.Runtime.dll\r\n").encode()
+    )
+    (harness.repo / "tools/compile-defines.txt").write_bytes(b"UNITY_EDITOR\r\nOWNED_FLAG\r\n")
+    result = harness.run("2021.3.45f2", "win osx linux")
+    assert result.returncode == 0, result.stdout + result.stderr
+    for platform in ("win", "osx", "linux"):
+        for assembly in ("Runtime", "Editor"):
+            response = (harness.output / platform / f"MCPForUnity.{assembly}.rsp").read_text()
+            assert "-define:OWNED_FLAG\n" in response
+            for _, path in references:
+                assert f'-r:"{path.as_posix()}"' in response
+            if assembly == "Editor":
+                assert (
+                    f'-r:"{harness.output.as_posix()}/{platform}/MCPForUnity.Runtime.dll"'
+                    in response
+                )
+    assert len(harness.calls.read_text().splitlines()) == 15
+
+
+def test_source_inventory_is_refreshed_between_invocations_with_nested_ownership(
+    harness: CompileHarness,
+) -> None:
+    assert harness.run("2021.3.45f2").returncode == 0
+    source = harness.repo / "MCPForUnity/Runtime"
+    (source / "Fixture.cs").unlink()
+    (source / "Added source.cs").write_text("class Added {}", encoding="utf-8")
+    nested = source / "Nested assembly"
+    nested.mkdir()
+    (nested / "Other.asmdef").write_text('{"name":"Other"}', encoding="utf-8")
+    (nested / "Excluded.cs").write_text("#error Not owned", encoding="utf-8")
+    result = harness.run("2021.3.45f2")
+    assert result.returncode == 0, result.stdout + result.stderr
+    response = (harness.output / "linux/MCPForUnity.Runtime.rsp").read_text()
+    assert f'"{source.as_posix()}/Added source.cs"' in response
+    assert "Fixture.cs" not in response and "Excluded.cs" not in response
+    assert len(harness.calls.read_text().splitlines()) == 10
+
+
+@pytest.mark.parametrize("disappearing", ["reference", "source"])
+def test_disappearing_compile_inputs_fail_closed_after_first_platform(
+    harness: CompileHarness, disappearing: str
+) -> None:
+    source = harness.repo / "MCPForUnity/Runtime/Extra source.cs"
+    source.write_text("class Additional {}", encoding="utf-8")
+    target = (
+        "$UNITY_DATA/Managed/Core.dll"
+        if disappearing == "reference"
+        else "$REPO/MCPForUnity/Runtime/Extra source.cs"
+    )
+    compiler = harness.data / "NetCoreRuntime/dotnet"
+    compiler.write_text(
+        compiler.read_text(encoding="utf-8").replace(
+            'touch "$output"',
+            f'touch "$output"; if [[ "$output" == */win/MCPForUnity.Runtime.dll ]]; then rm "{target}"; fi',
+        ),
+        encoding="utf-8",
+    )
+    result = harness.run("2021.3.45f2", "win linux")
+    assert result.returncode != 0
+    expected = (
+        "required reference not found:"
+        if disappearing == "reference"
+        else "assembly source not found:"
+    )
+    assert expected in result.stderr
+    assert not (harness.output / "linux/MCPForUnity.Runtime.dll").exists()
+    assert len(harness.calls.read_text().splitlines()) == (1 if disappearing == "reference" else 5)
+
+
 @pytest.mark.parametrize("name", ["Runtime", "Editor"])
 def test_portable_manifests_do_not_require_removed_or_optional_modules(name: str) -> None:
     references = set(
