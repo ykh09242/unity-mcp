@@ -1,0 +1,483 @@
+"""Isolated HTTP/process checks for the local read-only dashboard."""
+
+from __future__ import annotations
+
+from contextlib import closing, contextmanager
+from hashlib import sha256
+from http.client import HTTPConnection
+import json
+from pathlib import Path
+import subprocess
+import sys
+from threading import Thread
+
+import pytest
+
+TOOLS = Path(__file__).resolve().parents[1]
+if str(TOOLS) not in sys.path:
+    sys.path.insert(0, str(TOOLS))
+
+import feature_program_web as web  # noqa: E402
+
+fp = web.feature_program
+
+
+@contextmanager
+def running(server):
+    """Own a short-lived real HTTP service, including deterministic shutdown."""
+    with server:
+        thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+        thread.start()
+        try:
+            yield server
+        finally:
+            server.shutdown()
+            thread.join(timeout=3)
+            assert not thread.is_alive()
+
+
+def request(server, path="/api/snapshot", method="GET", headers=None):
+    """Perform an actual loopback HTTP request and return its observable response."""
+    with closing(HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)) as connection:
+        connection.request(method, path, headers=headers or {})
+        response = connection.getresponse()
+        return response.status, dict(response.getheaders()), response.read()
+
+
+@pytest.fixture
+def program(tmp_path, monkeypatch):
+    """Create a small synthetic program without Git or private repository state."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "source.md").write_text(
+        "# Synthetic work\n\n### A1. Import parser\nAcceptance: preserve wrapped prose.\n"
+        "\n### B2. Review flow\nAcceptance: inspect evidence.\n",
+        encoding="utf-8",
+    )
+    plan = {
+        "schema_version": 1,
+        "program_id": "synthetic-atlas",
+        "baseline_head": "a" * 40,
+        "workstreams": [
+            {"id": "platform", "name": "Platform", "default_agent": "worker", "focus": "Tests"}
+        ],
+        "tasks": [
+            {
+                "id": task_id,
+                "workstream": "platform",
+                "phase": 1,
+                "depends_on": [],
+                "related_to": [],
+                "conflict_groups": [],
+                "candidate_paths": [f"src/{task_id}.py"],
+                "required_checks": ["acceptance", "scoped_tests", "format_lint"],
+                "next_action": "Inspect synthetic source",
+                "planning_note": "Synthetic only",
+            }
+            for task_id in ["A1", "B2"]
+        ],
+    }
+    (repo / "plan.json").write_bytes(fp.canonical(plan))
+    monkeypatch.setattr(fp, "git", lambda *_args: "a" * 40)
+    assert (
+        fp.main(
+            [
+                "--repo",
+                str(repo),
+                "--program-dir",
+                "program",
+                "init",
+                "--report",
+                "source.md",
+                "--planning",
+                "plan.json",
+                "--review-baseline",
+                "b" * 40,
+            ]
+        )
+        == 0
+    )
+    return repo
+
+
+def fingerprints(repo):
+    return {
+        path.relative_to(repo).as_posix(): sha256(path.read_bytes()).hexdigest()
+        for path in repo.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_snapshot_reads_real_program_without_any_mutation(program, monkeypatch):
+    before = fingerprints(program)
+    monkeypatch.setattr(fp, "git", lambda *_args: pytest.fail("Snapshot must not execute Git"))
+    monkeypatch.setattr(
+        fp.Program, "lock", lambda *_args: pytest.fail("Snapshot must not acquire locks")
+    )
+    with running(web.create_server(program, Path("program"), port=0)) as server:
+        status, headers, body = request(server)
+    data = json.loads(body)
+    assert status == 200
+    assert data["snapshot_version"] == 1
+    assert data["program_id"] == "synthetic-atlas"
+    assert len(data["tasks"]) == 2
+    assert "preserve wrapped prose" in data["tasks"][0]["source"]["text"]
+    assert headers["Cache-Control"] == "no-store"
+    assert fingerprints(program) == before
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/../backlog.json",
+        "/%2e%2e/backlog.json",
+        "/api/snapshot?path=source.md",
+        "/evidence/A1/file.txt",
+        "/DESIGN.md",
+        "/favicon.ico",
+        "//api/snapshot",
+        "/app.js/extra",
+        "/style.css?x=1",
+        "/.env",
+        "/%61pi/snapshot",
+    ],
+)
+def test_unlisted_routes_cannot_read_files(path):
+    with running(
+        web.DashboardServer("127.0.0.1", 0, lambda: pytest.fail("Must not read snapshot"))
+    ) as server:
+        status, _headers, _body = request(server, path)
+    assert status == 404
+
+
+@pytest.mark.parametrize(
+    "method", ["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT"]
+)
+def test_methods_cannot_write_or_read_snapshot(method):
+    with running(
+        web.DashboardServer("127.0.0.1", 0, lambda: pytest.fail("Must not read snapshot"))
+    ) as server:
+        status, _headers, body = request(server, method=method)
+    assert status == 405
+    assert b"Read-only" in body
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Host": "attacker.example:8765"},
+        {"Origin": "https://attacker.example"},
+        {"Origin": "null"},
+        {"Referer": "http://localhost:1/"},
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "same-site"},
+    ],
+)
+def test_cross_origin_and_dns_rebinding_requests_are_denied(headers):
+    with running(
+        web.DashboardServer("127.0.0.1", 0, lambda: pytest.fail("Must not read snapshot"))
+    ) as server:
+        status, response_headers, _body = request(server, headers=headers)
+    assert status == 403
+    assert "Access-Control-Allow-Origin" not in response_headers
+
+
+def test_same_origin_requests_are_allowed_and_hardened():
+    with running(web.DashboardServer("127.0.0.1", 0, lambda: {"tasks": []})) as server:
+        status, headers, body = request(
+            server, headers={"Origin": server.url.rstrip("/"), "Sec-Fetch-Site": "same-origin"}
+        )
+    assert status == 200
+    assert json.loads(body) == {"tasks": []}
+    assert "default-src 'none'" in headers["Content-Security-Policy"]
+    assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
+    assert headers["Cross-Origin-Resource-Policy"] == "same-origin"
+    assert headers["Referrer-Policy"] == "no-referrer"
+    assert headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_duplicate_host_header_is_denied():
+    with running(
+        web.DashboardServer("127.0.0.1", 0, lambda: pytest.fail("Must not read snapshot"))
+    ) as server:
+        with closing(
+            HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+        ) as connection:
+            connection.putrequest("GET", "/api/snapshot")
+            connection.putheader("Host", "attacker.example")
+            connection.endheaders()
+            response = connection.getresponse()
+            status = response.status
+            response.read()
+    assert status == 403
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.0.1", "example.org", "127.0.0.2"])
+def test_remote_binding_is_rejected(host):
+    with pytest.raises(ValueError, match="loopback"):
+        web.DashboardServer(host, 0, lambda: {})
+
+
+def test_snapshot_errors_do_not_disclose_private_paths():
+    def unavailable():
+        raise OSError("private/path/credentials.txt")
+
+    with running(web.DashboardServer("127.0.0.1", 0, unavailable)) as server:
+        status, _headers, body = request(server)
+    assert status == 503
+    assert b"private" not in body
+
+
+@pytest.mark.parametrize("route", ["/", "/app.js", "/style.css"])
+def test_packaged_assets_and_head_are_available(route):
+    with running(
+        web.DashboardServer("127.0.0.1", 0, lambda: pytest.fail("Must not read snapshot"))
+    ) as server:
+        status, headers, body = request(server, route)
+        head_status, head_headers, head_body = request(server, route, method="HEAD")
+    assert status == head_status == 200
+    assert body
+    assert not head_body
+    assert headers["Content-Length"] == head_headers["Content-Length"]
+
+
+def test_http_refresh_observes_latest_files_and_recovers_from_errors(tmp_path):
+    path = tmp_path / "record.json"
+    path.write_text('{"revision":"one"}', encoding="utf-8")
+    with running(
+        web.DashboardServer("127.0.0.1", 0, lambda: json.loads(path.read_text()))
+    ) as server:
+        first = json.loads(request(server)[2])
+        path.write_text("invalid", encoding="utf-8")
+        failed = request(server)[0]
+        path.write_text('{"revision":"two"}', encoding="utf-8")
+        second = json.loads(request(server)[2])
+    assert first["revision"] == "one"
+    assert failed == 503
+    assert second["revision"] == "two"
+
+
+def test_real_process_launch_is_loopback_read_only(program):
+    before = fingerprints(program)
+    command = [
+        sys.executable,
+        str(TOOLS / "feature_program_web.py"),
+        "--repo",
+        str(program),
+        "--program-dir",
+        "program",
+        "--port",
+        "0",
+    ]
+    with subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    ) as process:
+        try:
+            assert process.stdout is not None
+            line = process.stdout.readline().strip()
+            url = line.removeprefix("Local work-program dashboard: ")
+            assert url.startswith("http://127.0.0.1:")
+            port = int(url.split(":")[2].rstrip("/"))
+            with closing(HTTPConnection("127.0.0.1", port, timeout=5)) as connection:
+                connection.request("GET", "/api/snapshot")
+                response = connection.getresponse()
+                assert response.status == 200
+                assert json.loads(response.read())["program_id"] == "synthetic-atlas"
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+    assert fingerprints(program) == before
+
+
+def post_answer(
+    server, payload=None, extra_headers=None, raw_body=None, route="/api/questions/answer"
+):
+    """Send a real same-origin response with the scoped session token."""
+    body = (
+        raw_body
+        if raw_body is not None
+        else json.dumps(
+            payload
+            or {
+                "question_id": "Q1",
+                "version": 1,
+                "answer": "Use scoped verification",
+                "submission_id": "synthetic-one",
+            }
+        ).encode()
+    )
+    headers = {
+        "Origin": server.url.rstrip("/"),
+        "Content-Type": "application/json",
+        "X-Work-Program-Nonce": server.nonce,
+    }
+    headers.update(extra_headers or {})
+    with closing(HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)) as connection:
+        connection.request("POST", route, body=body, headers=headers)
+        response = connection.getresponse()
+        return response.status, dict(response.getheaders()), response.read()
+
+
+def test_same_origin_nonce_session_exposes_only_configured_response_capability():
+    with running(web.DashboardServer("127.0.0.1", 0, lambda: {})) as server:
+        disabled = json.loads(request(server, "/api/session")[2])
+    calls = []
+    with running(
+        web.DashboardServer(
+            "127.0.0.1", 0, lambda: {}, lambda *args: calls.append(args) or {"status": "answered"}
+        )
+    ) as server:
+        enabled = json.loads(request(server, "/api/session")[2])
+        code, headers, body = post_answer(server)
+    assert disabled == {"nonce": None, "responses_enabled": False}
+    assert enabled["responses_enabled"] is True
+    assert len(enabled["nonce"]) >= 32
+    assert code == 200
+    assert json.loads(body)["status"] == "answered"
+    assert calls == [("Q1", 1, "Use scoped verification", "synthetic-one")]
+    assert headers["Cache-Control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Origin": "null"},
+        {"Origin": "http://attacker.example"},
+        {"Origin": ""},
+        {"X-Work-Program-Nonce": ""},
+        {"X-Work-Program-Nonce": "wrong"},
+        {"X-Work-Program-Nonce": "\u00e9"},
+        {"Sec-Fetch-Site": "cross-site"},
+    ],
+)
+def test_answer_requires_exact_origin_and_nonce_before_provider_call(headers):
+    with running(
+        web.DashboardServer(
+            "127.0.0.1", 0, lambda: {}, lambda *_args: pytest.fail("Must not save response")
+        )
+    ) as server:
+        code, _headers, _body = post_answer(server, extra_headers=headers)
+    assert code == 403
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"question_id": "Q1", "version": True, "answer": "Yes", "submission_id": "one"},
+        {"question_id": "Q1", "version": 0, "answer": "Yes", "submission_id": "one"},
+        {"question_id": "Q1", "version": 1, "answer": " ", "submission_id": "one"},
+        {"question_id": "Q1", "version": 1, "answer": "a" * 4001, "submission_id": "one"},
+        {
+            "question_id": "Q1",
+            "version": 1,
+            "answer": "Yes",
+            "submission_id": "one",
+            "status": "done",
+        },
+    ],
+)
+def test_answer_rejects_invalid_or_extra_fields(payload):
+    with running(
+        web.DashboardServer(
+            "127.0.0.1", 0, lambda: {}, lambda *_args: pytest.fail("Must not save response")
+        )
+    ) as server:
+        code, _headers, _body = post_answer(server, raw_body=json.dumps(payload).encode())
+    assert code == 400
+
+
+@pytest.mark.parametrize(
+    "headers,body,expected",
+    [
+        ({"Content-Type": "text/plain"}, b"{}", 415),
+        ({"Content-Length": "40000"}, b"{}", 413),
+        ({"Transfer-Encoding": "chunked"}, b"{}", 411),
+        ({}, b'{"version":1,"version":2}', 400),
+    ],
+)
+def test_answer_bounds_transport_and_duplicate_keys(headers, body, expected):
+    with running(
+        web.DashboardServer(
+            "127.0.0.1", 0, lambda: {}, lambda *_args: pytest.fail("Must not save response")
+        )
+    ) as server:
+        code, _headers, _body = post_answer(server, extra_headers=headers, raw_body=body)
+    assert code == expected
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "/api/questions/answer?extra=1",
+        "//api/questions/answer",
+        "/api/status",
+        "/api/questions/new",
+    ],
+)
+def test_enabled_responses_do_not_authorize_other_mutation_routes(route):
+    with running(
+        web.DashboardServer(
+            "127.0.0.1", 0, lambda: {}, lambda *_args: pytest.fail("Must not save response")
+        )
+    ) as server:
+        code, _headers, _body = post_answer(server, route=route)
+    assert code == 405
+
+
+def test_answer_conflicts_return_409_without_private_error_disclosure():
+    def conflict(*_args):
+        error = fp.ProgramError("private/file/question.json")
+        error.code = "conflict"
+        raise error
+
+    with running(web.DashboardServer("127.0.0.1", 0, lambda: {}, conflict)) as server:
+        code, _headers, body = post_answer(server)
+    assert code == 409
+    assert b"private" not in body
+
+
+def test_answer_adapter_is_bound_to_one_configured_program(program, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        web.feature_program_questions,
+        "record_answer",
+        lambda *args: calls.append(args) or {"status": "answered"},
+    )
+    before = fingerprints(program)
+    with running(web.create_server(program, Path("program"), port=0)) as server:
+        code, _headers, _body = post_answer(server)
+    assert code == 200
+    assert calls == [
+        (
+            program.resolve(),
+            (program / "program").resolve(),
+            "Q1",
+            1,
+            "Use scoped verification",
+            "synthetic-one",
+        )
+    ]
+    assert fingerprints(program) == before
+
+
+def test_valid_long_question_ids_reach_the_scoped_provider():
+    calls = []
+    payload = {
+        "question_id": "Q" * 128,
+        "version": 1,
+        "answer": "Keep scope bounded",
+        "submission_id": "long-question-id",
+    }
+    with running(
+        web.DashboardServer(
+            "127.0.0.1", 0, lambda: {}, lambda *args: calls.append(args) or {"status": "answered"}
+        )
+    ) as server:
+        code, _headers, _body = post_answer(server, payload=payload)
+    assert code == 200
+    assert calls[0][0] == "Q" * 128
