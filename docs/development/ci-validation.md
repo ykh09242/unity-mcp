@@ -30,16 +30,17 @@ native jobs for an account that also has company entitlements.
 
 ## Python
 
-[`python-tests.yml`](../../.github/workflows/python-tests.yml) runs both complete suites on
+[`python-tests.yml`](../../.github/workflows/python-tests.yml) defaults to both complete suites on
 Python 3.11, 3.12, 3.13, 3.14 and 3.15. Minor-version selectors allow the available patch release to
 advance without editing every workflow. The server and tool suites use separate matrix jobs,
 so tool tests do not wait for the longer server suite.
 
-- Pylint runs once, in the Python 3.15 tools job. Its runner uses one process on 3.15
-  until dill supports the interpreter's code-object changes.
-- Server jobs use two pytest-xdist workers with `--dist=loadfile`. Each file stays in one
+- Pylint runs once, in the Python 3.15 tools job. Its two independent source groups run
+  concurrently with isolated import roots and complete, ordered diagnostics. Each group
+  retains `--jobs=1` on 3.15 until dill supports the interpreter's code-object changes.
+- Server and tool jobs use two pytest-xdist workers with `--dist=loadfile`. Each file stays in one
   worker so module fixtures remain together. Worker crashes fail without automatic restarts;
-  the job has a 20-minute limit. Tool jobs retain their serial execution.
+  the job has a 20-minute limit. Mutable fixtures remain isolated per test.
 - Workers select separate rotating-log directories before importing the application. Child
   processes inherit that worker directory unless their fixture supplies its own directory.
 - The complete Python 3.14 server suite collects coverage. Other versions run the same tests
@@ -63,6 +64,7 @@ To inspect local test durations, run from `Server/`:
 uv run --python 3.14 --locked --extra dev pytest tests/ -q -W error --tb=short --durations=20
 uv run --python 3.14 --locked --extra dev pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --durations=20
 uv run --python 3.14 --locked --extra dev python -m pytest ../tools/tests/ -q -W error --tb=short --durations=20
+uv run --python 3.14 --locked --extra dev python -m pytest ../tools/tests/ -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --durations=20
 ```
 
 Keep test-node selection and failure behavior intact when optimizing. Deadline tests can use a
@@ -70,6 +72,28 @@ controlled clock at the tested module's boundary while preserving the configured
 refusal assertions. Do not shorten production timeouts to accelerate tests. Local runs remain
 serial unless workers are explicitly requested; avoid `-n auto` for these subprocess-heavy
 tests. The HTTP subprocess runs serially to avoid nested worker pools.
+
+### Conservative fork-beta selection
+
+The fork-beta caller checks the complete push range with `tools/ci_scope.py`. Only
+modifications entirely within its exact tooling/reporting allowlist select `tools-only`:
+all tool tests on all five Python minors plus Pylint. That profile omits server tests,
+bootstrap and the reusable Unity workflow. It does not filter individual test cases.
+Product changes, shared fixtures, dependencies, CI definitions, unknown or mixed paths,
+file additions/deletions/renames, missing history and unverifiable ranges select `full`.
+Reduced validation also requires a completed successful fork-beta push run for the exact
+previous commit. Pending, failed, cancelled or unavailable predecessor results fall back
+to full validation, so a newer tooling push cannot cancel and bypass product verification.
+The existing push trigger also includes CustomTools and tool-reference documentation,
+which are consumed by server regression tests. Unrelated documentation-only pushes
+retain the existing workflow path filters.
+
+`Selected validation` always evaluates after classification and both reusable callers.
+It requires every selected caller to succeed and permits a skipped Unity caller only for
+the recognized `tools-only` profile. Failed classification, cancellation and unexpected
+skips fail this gate. Manual runs, pull requests, release callers and unspecified reusable
+inputs retain full validation. The independent license-free compile workflow retains its
+existing path/matrix policy. No branch-protection settings are changed automatically.
 
 ### Performance investigation (2026-10-12)
 
@@ -104,22 +128,34 @@ Each Python matrix job turns its existing JUnit report into a compact JSON snaps
 The warning-only `Python timing report` job downloads those small snapshots and compares
 them with up to five recent successful runs of the same workflow, branch and event.
 It never reruns tests or downloads historical coverage/HTML artifacts. Its read-only
-Actions permission is granted only to that job and the reusable-workflow callers.
+Actions permission is granted only to classification/reporting jobs, the aggregate job that
+reports stages, and the reusable-workflow callers.
 
 Comparisons require identical Python minor, runner OS/architecture, worker count, coverage
 mode and test/skip inventory, including the nested HTTP inventory. At least three matching
-samples are required. A suite warns only when it is both 25% and 10 seconds slower than
-the median; the five slowest modules use 25% and 5 seconds. Module durations sum testcase
+samples are required. New snapshots also fingerprint each module's cases and outcomes, so
+unchanged modules retain their baseline when another module changes. Legacy snapshots
+without these fingerprints require a matching whole suite. Nested HTTP workload changes
+invalidate its wrapper's baseline; when the wrapper cannot be identified, all enclosing-suite
+module baselines are conservatively invalidated. A suite warns only when it is both 25% and
+10 seconds slower than the median; the five slowest modules use 25% and 5 seconds. Module durations sum testcase
 setup/call/teardown and are not wall time when workers overlap. Nested HTTP is displayed
 separately without adding its wrapper time twice. Job summaries show the slowest modules
 and cases. Missing, expired or unreadable history reports current measurements without
 blocking the test gate. Timing snapshots are retained for seven days and combined reports
 for 30 days under `python-test-timings`.
 
+The report also records completed Pylint, cache and preparation steps from the current
+workflow's read-only Jobs API. The fork aggregate records stages after both callers finish;
+the independent compile workflow has a small warning-only report after its compile matrix.
+Their `ci-stage-timings` and `compile-stage-timings` JSON/Markdown artifacts last 30 days.
+Stage observations have one-second API precision, include result status and do not compare
+unlike cold/warm paths or gate tests. API outages never turn a failed selected check green.
+
 For offline inspection from the repository root:
 
 ```sh
-python tools/ci_test_performance.py snapshot --junit Server/test-results.xml --python 3.15 --suite tools --output .tmp/test-timings/3.15-tools.json
+python tools/ci_test_performance.py snapshot --junit Server/test-results.xml --python 3.15 --suite tools --workers 2 --output .tmp/test-timings/3.15-tools.json
 python tools/ci_test_performance.py report --current .tmp/test-timings --output .tmp/performance-report
 ```
 
@@ -313,17 +349,24 @@ repository and plugin glob configuration remain inputs to review.
 - [Unity alpha releases](https://unity.com/releases/editor/alpha)
 - [Unity October 2026 CoreCLR update](https://discussions.unity.com/t/coreclr-scripting-and-net-update-october-2026/1738338)
 - [GitHub matrix jobs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations)
+- [GitHub workflow runs API](https://docs.github.com/en/rest/actions/workflow-runs?apiVersion=2022-11-28)
+- [GitHub workflow jobs API](https://docs.github.com/en/rest/actions/workflow-jobs?apiVersion=2022-11-28)
 - [Pinned setup-uv inputs](https://github.com/astral-sh/setup-uv/blob/c18668ad3cf93ea998bef934396af7bb5c839dc7/action.yml)
 - [Node 26.10 command-line options](https://github.com/nodejs/node/blob/v26.10.0/doc/api/cli.md)
 
 ## Optional dependency input cache
 
 `optionalPackageInputs` restores immutable dependency inputs independently of the license
-policy. The cache contains complete `BuiltInPackages` from the version-matching,
-digest-pinned test Editor image, exact official-registry package trees, and an integrity
+policy. The cache contains complete Editor package directories from the validated optional
+dependency closure, including transitive modules, from the version-matching, digest-pinned
+test Editor image. It also retains exact official-registry package trees and an integrity
 receipt. It contains no prepared product package, test project, Unity `Library`, credentials
 or GameData. Both paths call the normal package preparer and freshly copy the current
 product/test sources, preserving Unity metadata and registry executable file modes.
+Cold preparation reads the complete stopped-image inputs first to establish the closure,
+then publishes only the selected directories; resources, metadata and empty directories
+inside each selected package are preserved. Receipt schema 2 records exact Editor package
+membership and invalidates older full-image cache keys.
 
 The exact key includes the Unity version and image digest, version/package profiles,
 product/project package manifests, and all preparation scripts plus the Editor Dockerfile.
@@ -333,6 +376,7 @@ complete file/directory inventory, including SHA256 hashes and modes. Archive SH
 provenance remains in `resolved-packages.json`. Package identity, minimum Editor versions,
 transitive dependency closure and required reference/resource inputs are checked every run.
 A warm cache never skips the preparation job or turns native integration tests into a pass.
+The freshly resolved Editor closure must also agree exactly with the receipt's membership.
 
 The workflow uses the separately pinned `actions/cache/restore` and `actions/cache/save`
 actions. Restore sets `TAR_OPTIONS=--same-permissions` so GNU tar preserves the publisher
