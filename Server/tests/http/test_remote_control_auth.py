@@ -10,10 +10,11 @@ from starlette.websockets import WebSocketDisconnect
 
 from core.config import config
 from services.api_key_service import ApiKeyService, ValidationResult
+from tests.http.prepared_tool_registration import prepared_tool_factory
 
 
 @pytest.fixture
-def remote_app(monkeypatch):
+def remote_app(monkeypatch, prepared_tool_factory):
     from main import create_mcp_server
 
     monkeypatch.setattr(config, "http_remote_hosted", True)
@@ -32,7 +33,11 @@ def remote_app(monkeypatch):
     monkeypatch.setattr(
         ApiKeyService, "_instance", SimpleNamespace(validate=validator, aclose=AsyncMock())
     )
-    server = create_mcp_server(False)
+    from fastmcp.tools.base import Tool
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Tool, "from_function", prepared_tool_factory)
+        server = create_mcp_server(False)
 
     @server.resource("test://identity")
     async def identity(ctx: Context) -> str:

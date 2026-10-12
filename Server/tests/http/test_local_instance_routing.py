@@ -11,10 +11,11 @@ from main import create_mcp_server
 from services.custom_tool_service import CustomToolService
 from transport.models import SessionDetails, SessionList
 from transport.plugin_hub import PluginHub
+from tests.http.prepared_tool_registration import prepared_tool_factory
 
 
 @pytest.fixture
-def routing_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def routing_client(monkeypatch: pytest.MonkeyPatch, prepared_tool_factory) -> TestClient:
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "local_auth_token", "routing-test-token")
     sessions = SessionList(
@@ -27,9 +28,12 @@ def routing_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     )
     monkeypatch.setattr(PluginHub, "get_sessions", AsyncMock(return_value=sessions))
     monkeypatch.setattr(main, "resolve_project_id_for_unity_instance", lambda instance: instance)
-    return TestClient(
-        create_mcp_server(False).http_app(), headers={"X-Unity-MCP-Token": "routing-test-token"}
-    )
+    from fastmcp.tools.base import Tool
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Tool, "from_function", prepared_tool_factory)
+        server = create_mcp_server(False)
+    return TestClient(server.http_app(), headers={"X-Unity-MCP-Token": "routing-test-token"})
 
 
 @pytest.mark.parametrize(

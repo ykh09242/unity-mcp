@@ -16,6 +16,7 @@ from services.api_key_service import ApiKeyService, ValidationResult
 from transport.models import SessionDetails, SessionList
 from transport.plugin_hub import PluginHub
 from transport.request_body_limit_middleware import RequestBodyLimitMiddleware
+from tests.http.prepared_tool_registration import prepared_tool_factory
 
 
 LIMIT = 256
@@ -205,7 +206,7 @@ def test_started_response_is_never_replaced_and_cancellation_propagates():
 
 
 @pytest.fixture(params=[False, True], ids=["local", "remote"])
-def public_app(request, monkeypatch):
+def public_app(request, monkeypatch, prepared_tool_factory):
     import main
 
     remote = request.param
@@ -226,7 +227,12 @@ def public_app(request, monkeypatch):
         (b"content-type", b"application/json"),
         (b"accept", b"application/json, text/event-stream"),
     ]
-    app = main.create_mcp_server(False).http_app(json_response=True, stateless_http=True)
+    from fastmcp.tools.base import Tool
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Tool, "from_function", prepared_tool_factory)
+        server = main.create_mcp_server(False)
+    app = server.http_app(json_response=True, stateless_http=True)
     return app, headers, remote
 
 
