@@ -1896,6 +1896,67 @@ def test_relocation_rejects_busy_and_nested_active_programs(small_program: Fixtu
     assert not (small_program.program.repo / ".work/programs/moved").exists()
 
 
+@pytest.mark.parametrize("customize", [False, True])
+def test_initialization_preserves_custom_readme_and_starter_is_uninitialized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, customize: bool
+) -> None:
+    repo = tmp_path / "repository"
+    repo.mkdir()
+    monkeypatch.setattr(fp, "git", lambda *_args: HEAD)
+    program = fp.Program(repo, repo / "program")
+    sample = Fixture(program, b"")
+    assert (
+        sample.run(
+            "starter",
+            "--program-id",
+            "example",
+            "--objective",
+            "Agreed objective",
+            "--criterion",
+            "Verify behavior",
+            "--task",
+            "TASK-1",
+        )
+        == 0
+    )
+    assert not program.path("backlog.json").exists()
+    assert "uninitialized starter" in program.path("README.md").read_text(encoding="utf-8")
+    authored = program.path("README.md").read_bytes()
+    if customize:
+        authored = b"# Authored recovery\r\n\r\nKeep these exact bytes and my links.\r\n"
+        program.path("README.md").write_bytes(authored)
+    assert (
+        sample.run(
+            "init",
+            "--report",
+            "program/source/feature-opportunities.md",
+            "--planning",
+            "program/planning.json",
+            "--review-baseline",
+            HEAD,
+        )
+        == 0
+    )
+    assert program.path("README.md").read_bytes() == authored
+    if not customize:
+        assert b"If backlog.json is present" in authored
+    assert sample.run("render") == 0
+    assert program.path("README.md").read_bytes() == authored
+    assert (
+        sample.run(
+            "starter",
+            "--program-id",
+            "example",
+            "--objective",
+            "Agreed objective",
+            "--criterion",
+            "Verify behavior",
+        )
+        == 1
+    )
+    assert program.path("README.md").read_bytes() == authored
+
+
 @pytest.mark.parametrize("change", ["rewrite", "add"])
 def test_source_tree_drift_during_copy_never_archives_original(
     small_program: Fixture, monkeypatch: pytest.MonkeyPatch, change: str

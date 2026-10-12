@@ -920,6 +920,25 @@ def current_director_id(state: Record) -> str | None:
     )
 
 
+def objective_contract(state: Record) -> Record | None:
+    """Return declared objective identity and criteria, excluding runtime progress."""
+    value = state.get("objective")
+    if value is None:
+        return None
+    goal = _record(value, "objective")
+    progress = {
+        "status",
+        "next_action_owner",
+        "next_action",
+        "history",
+        "completion",
+        "completed_at",
+        "evidence",
+        "integrated_review_ref",
+    }
+    return {key: deepcopy(value) for key, value in goal.items() if key not in progress}
+
+
 def _validate_objective(value: Json, task_ids: set[str]) -> None:
     if value is None:
         return

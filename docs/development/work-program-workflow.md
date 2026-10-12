@@ -77,6 +77,25 @@ for decisions that another worker or future session must rely on.
 
 ## Direction and repeated review
 
+For programs that explicitly adopt planning gates, freeze the complete candidate inventory
+and exact declared task/path contract, obtain an independent candidate review, then record
+the current final director's execution acceptance before claims or submissions. See the
+[gate receipt contract](feature-program-tool.md#optional-inventory-and-execution-gates).
+Keep the planning approval bound to candidate/task-definition/planning digests and the
+current objective; use the registry revision token only to protect each mutation transaction.
+Implementation progress, staffing, checkpoints and evidence records do not invalidate that
+approval. Consequential scope or definition changes require renewed applicable independent
+review. Current implementation source checks remain a separate obligation.
+
+Legacy programs keep their behavior until explicit adoption. Record real existing review
+evidence honestly at adoption time without backdating enforcement. A synthetic starter is
+uninitialized material; inspect the actual registry and location guards after initialization.
+Keep authored recovery instructions intact. When a discovery plan is superseded by a distinct
+initialized execution program, use the supported
+[succession operation](feature-program-tool.md#discovery-to-execution-succession) once discovery
+has no current claims. Preserve historical bytes and exact identities; a guarded incomplete
+publication must be recovered explicitly and does not mean discovery completed.
+
 At task admission, meaningful implementation milestones, assumption or scope changes,
 recovery, review and merge, compare the actual source and evidence with the objective.
 Check that the task still serves a success criterion, stays within ownership and has not

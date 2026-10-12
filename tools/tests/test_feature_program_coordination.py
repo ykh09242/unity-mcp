@@ -956,6 +956,34 @@ def test_objective_requires_explicit_known_unique_membership(
     # Then no arbitrary task set is inferred.
 
 
+def test_objective_contract_excludes_progress_but_retains_declared_criteria() -> None:
+    state: governance.Record = {
+        "objective": {
+            "id": "goal",
+            "title": "Agreed outcome",
+            "criteria": ["Verify behavior"],
+            "task_ids": ["TASK-A"],
+            "supplied_by": "user",
+            "status": "active",
+            "next_action_owner": "director",
+            "history": [],
+        }
+    }
+    before = governance.objective_contract(state)
+    goal = governance._record(state["objective"], "objective")
+    goal.update(
+        {
+            "status": "awaiting_next_goal",
+            "next_action_owner": "user",
+            "history": [{"status": "active"}],
+        }
+    )
+    assert governance.objective_contract(state) == before
+    goal["criteria"] = ["Another acceptance criterion"]
+    assert governance.objective_contract(state) != before
+    assert governance.objective_contract({}) is None
+
+
 def test_current_director_identity_is_unknown_for_legacy_state(state: governance.Record) -> None:
     # Given no recorded director authority.
     # When a question adapter checks current leadership.
