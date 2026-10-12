@@ -50,15 +50,24 @@ def test_every_unity_job_uses_the_full_validated_manifest(name, job_name, comman
     assert "${{ matrix.unity.channel }}" in job["name"]
 
 
-def test_compile_order_helper_is_available_without_increasing_concurrency():
-    jobs = workflow("compile-check.yml")["jobs"]
+def test_compile_order_helper_keeps_bounded_concurrency_and_complete_targets():
+    config = workflow("compile-check.yml")
+    jobs = config["jobs"]
     checkout = next(step for step in jobs["matrix"]["steps"] if "uses" in step)
     assert set(checkout["with"]["sparse-checkout"].splitlines()) == {
         "tools/unity-versions.json",
         "tools/unity_ci.py",
         "tools/compile_matrix.py",
     }
-    assert jobs["compile"]["strategy"]["max-parallel"] == 2
+    triggers = config.get("on", config.get(True))
+    parallel = triggers["workflow_dispatch"]["inputs"]["max_parallel"]
+    assert parallel["type"] == "choice"
+    assert parallel["options"] == ["2", "3"]
+    # Both reviewed defaults bound arbitrary dispatch input and preserve the push default.
+    assert (parallel["default"], jobs["compile"]["strategy"]["max-parallel"]) in {
+        ("2", "${{ inputs.max_parallel == '3' && 3 || 2 }}"),
+        ("3", "${{ inputs.max_parallel == '2' && 2 || 3 }}"),
+    }
     assert "win/osx/linux" in jobs["compile"]["name"]
 
 
