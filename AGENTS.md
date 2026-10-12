@@ -4,8 +4,8 @@ Read the ancestor workspace guidance and any guide on the target file's ancestor
 
 ## Language
 
-- Write repository source, comments, documentation, UI text, and skills in English.
-- Keep literal Hangul out of authored text. Preserve Unicode regression test values with Unicode escape sequences instead of removing their coverage.
+- Write repository documentation and skills in English; keep literal Hangul out of documentation.
+- Scripts, tests and UI strings may contain literal Korean, including translations and Unicode regression fixtures. Unicode escapes are optional; preserve the intended text and test coverage.
 
 ## Formatting
 
@@ -21,4 +21,4 @@ Use the existing Python environment and relevant checks. `tools/lint_python.py` 
 
 ## Feature program coordination
 
-Use [the feature program tool guide](docs/development/feature-program-tool.md) for durable task coordination. When a local `.omo/feature-program/README.md` exists, follow its recovery protocol before resuming that program. Keep personal plans, source reports, agent/session information and execution evidence in the ignored local program directory; never force-add them. Use the program tool for state changes, and keep transient status out of this guide.
+Use [the feature program tool guide](docs/development/feature-program-tool.md) and [the directing workflow](docs/development/work-program-workflow.md) for durable task coordination. Select the intended program under the ignored `.work/programs/` directory and follow its recovery entrypoint before resuming. Keep session handoffs under `.work/handoffs/`. Explicit legacy program paths remain supported; follow relocation markers instead of creating a second active copy. Keep personal plans, source reports, agent/session information and execution evidence in the ignored local program directory; never force-add them. Use the program tool for state changes, and keep transient status out of this guide.
