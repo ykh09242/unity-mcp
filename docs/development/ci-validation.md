@@ -143,20 +143,53 @@ Use the uploaded JUnit reports and job-step timings for future comparisons. Do n
 outer HTTP wrapper duration and its child report when computing total elapsed time. Timing
 varies with runner load; preserve test counts, outcomes, coverage and isolation when comparing.
 
-The compile harness also repeated each assembly's source inventory three times. It now
-captures one sorted inventory and counts sources/references while writing the response file.
+The first compile harness optimization replaced three source enumerations per assembly
+compilation with one and counted sources/references while writing the response file.
 Three-run Windows medians fell from 2.650 to 1.620 seconds for a legacy fixture and 3.854 to
 2.465 seconds for Unity 7; all 36 normalized response files were unchanged. Fixture setup was
 only about 0.018 seconds, so mutable fixture directories remain isolated per case. These are
 local shell measurements, not a prediction of Linux runner or full-pipeline improvement.
 
+A further profile found repeated inventories across platforms and a shell subprocess for
+each ordinary manifest reference. Source inventories now live for one script invocation,
+and ordinary references resolve in the calling shell. Source membership and asmdef ownership
+are fixed inputs during that invocation; subsequent invocations enumerate them afresh.
+Each compile still checks listed source and reference files, invokes Roslyn and checks its
+output. The same two legacy/Unity 7 fixture cases fell from a 9.723-second median to 7.487
+seconds across three serial Windows/Python 3.15 runs per revision (23% less elapsed time).
+All 36 normalized response files and ordered compiler calls matched; all 190 existing
+compile cases remain alongside six new regressions. These synthetic harness timings are
+separate from real Linux compiler and workflow measurements.
+
 The compile matrix starts newer Editor versions first through `tools/compile_matrix.py`,
 which uses the same complete manifest validation. Recent warm runs put the longest jobs
 at the newer end of the matrix; starting them earlier reduces the expected final tail.
-All versions and Windows, macOS and Linux defines remain covered, with at most two jobs
+All versions and Windows, macOS and Linux defines remain covered, with at most three jobs
 running concurrently. Scheduling code is separate from the hashed compiler preparation
 scripts, so an ordering-only change does not invalidate compiler inputs. Runner scheduling
 and cache state still affect the actual elapsed time.
+
+The three-job default follows four sequential manual runs on commit
+`f5e9e04a90fc2690905e02c2f302e9b62b2469b0`, using Ubuntu 26.04 image
+`20260927.149.1`. Other validation runs had finished before this comparison. The order
+was two, three, three, two to check execution-order effects. Every run passed all seven
+versions with seven identical warm SDK cache keys and the same 258 ordered compiler calls,
+source/reference counts and outputs across Windows, macOS and Linux defines.
+
+| Run | Concurrent jobs | Compiler span | Summed compiler job time |
+| --- | ---: | ---: | ---: |
+| [2 A](https://github.com/ykh09242/unity-mcp/actions/runs/38246196973) | 2 | 286 s | 495 s |
+| [3 A](https://github.com/ykh09242/unity-mcp/actions/runs/38246817070) | 3 | 232 s | 551 s |
+| [3 B](https://github.com/ykh09242/unity-mcp/actions/runs/38247340289) | 3 | 219 s | 517 s |
+| [2 B](https://github.com/ykh09242/unity-mcp/actions/runs/38247841508) | 2 | 292 s | 533 s |
+
+Compiler span measures the first compiler job's start through the last one's completion.
+The median fell from 289 to 225.5 seconds (22%); observed whole-workflow latency fell from
+311 to 249 seconds (20%). Summed compiler job time rose from a median of 514 to 534 seconds
+(4%). This small sample supports the shorter completion time, not a compute or billing
+saving. Manual dispatch accepts only two or three concurrent jobs for future comparisons;
+ordinary push/PR runs and unspecified or unrecognized input use three. Failure gates,
+cancel-in-progress behavior and the complete compile matrix remain unchanged.
 
 ### Timing trends
 
@@ -183,8 +216,11 @@ module baselines are conservatively invalidated. A suite warns only when it is b
 setup/call/teardown and are not wall time when workers overlap. Nested HTTP is displayed
 separately without adding its wrapper time twice. Job summaries show the slowest modules
 and cases. Missing, expired or unreadable history reports current measurements without
-blocking the test gate. Timing snapshots are retained for seven days and combined reports
-for 30 days under `python-test-timings`.
+blocking the test gate. At upload time, successful Python jobs retain their JUnit reports,
+XML/HTML coverage and individual timing snapshots for seven days; failed or cancelled jobs
+retain available artifacts for 30 days. Compiler package-resolution artifacts follow the
+same policy. Combined performance and stage reports remain available for 30 days, including
+`python-test-timings`, so routine artifact expiry does not shorten the timing baseline.
 
 Snapshots also record the actual OS release, `ImageOS`, `ImageVersion`, Python patch
 version and default .NET SDK. OS release changes start a fresh baseline; older snapshots
@@ -414,6 +450,7 @@ repository and plugin glob configuration remain inputs to review.
 - [GitHub matrix jobs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations)
 - [GitHub workflow runs API](https://docs.github.com/en/rest/actions/workflow-runs?apiVersion=2022-11-28)
 - [GitHub workflow jobs API](https://docs.github.com/en/rest/actions/workflow-jobs?apiVersion=2022-11-28)
+- [GitHub workflow artifact retention](https://docs.github.com/en/enterprise-cloud%40latest/actions/tutorials/store-and-share-data)
 - [Pinned setup-uv inputs](https://github.com/astral-sh/setup-uv/blob/c18668ad3cf93ea998bef934396af7bb5c839dc7/action.yml)
 - [Node 26.10 command-line options](https://github.com/nodejs/node/blob/v26.10.0/doc/api/cli.md)
 
