@@ -464,6 +464,9 @@ def test_missing_required_reference_fails_before_invoking_compiler(
 
 
 def test_existing_reference_is_preserved_in_both_compilations(harness: CompileHarness) -> None:
+    (harness.repo / "MCPForUnity/Runtime/Extra source.cs").write_text(
+        "class ExtraFixture {}\n", encoding="utf-8"
+    )
     result = harness.run("6000.0.75f1")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "::warning::" not in result.stderr + result.stdout
@@ -471,6 +474,16 @@ def test_existing_reference_is_preserved_in_both_compilations(harness: CompileHa
         rsp = (harness.output / "linux" / f"MCPForUnity.{assembly}.rsp").read_text(encoding="utf-8")
         assert '/Managed/Core.dll"' in rsp
         assert '/Fixture.cs"' in rsp
+    runtime = (harness.output / "linux/MCPForUnity.Runtime.rsp").read_text(encoding="utf-8")
+    assert '/Extra source.cs"' in runtime
+    for response_path in harness.calls.read_text(encoding="utf-8").splitlines():
+        response = Path(response_path)
+        lines = response.read_text(encoding="utf-8").splitlines()
+        sources = sum(line.startswith('"') for line in lines)
+        references = sum(line.startswith("-r:") for line in lines)
+        assert f"--- {response.stem} [linux] : {sources} sources, {references} refs ---" in (
+            result.stdout
+        )
 
 
 @pytest.mark.parametrize("name", ["Runtime", "Editor"])

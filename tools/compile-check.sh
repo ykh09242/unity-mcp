@@ -265,14 +265,14 @@ compile() {
   local name="$1" srcdir="$2" platform="$3" manifest="$4"; shift 4
   local dir="$OUT/$platform"; mkdir -p "$dir"
   local rsp="$dir/$name.rsp"
-  local missing=0 nrefs=0
+  local missing=0 nrefs=0 nsrc=0 sources
   local bcl="$REFS_ROOT/BCL/Editor.txt"
   # Initial Unity 7 uses CoreCLR with the .NET Standard 2.1 scripting API surface,
   # including Editor assemblies. The bundled .NET 10 SDK does not widen that surface.
   case "$ver_major.$ver_minor:$name" in
     7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:MCPForUnity.Input.InputSystem.Runtime|*:TestAsmdef) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
   esac
-  [ -d "$srcdir" ] && [ -n "$(assembly_sources "$srcdir")" ] || {
+  [ -d "$srcdir" ] && sources=$(assembly_sources "$srcdir") && [ -n "$sources" ] || {
     echo "::error::assembly sources not found: $srcdir" >&2; return 1;
   }
   for required in "$bcl" "$manifest"; do
@@ -343,10 +343,10 @@ compile() {
       done < "$reference_manifest"
     done
     for r in "$@"; do
-      if [ -f "$r" ]; then echo "-r:\"$r\""
+      if [ -f "$r" ]; then echo "-r:\"$r\""; nrefs=$((nrefs+1))
       else echo "::error::required assembly reference not found: $r" >&2; missing=$((missing+1)); fi
     done
-    assembly_sources "$srcdir" | while read -r f; do echo "\"$f\""; done
+    while read -r f; do echo "\"$f\""; nsrc=$((nsrc+1)); done <<< "$sources"
   } > "$rsp"
 
   if [ "$missing" -ne 0 ]; then
@@ -354,8 +354,7 @@ compile() {
     return 1
   fi
 
-  local nsrc; nsrc=$(assembly_sources "$srcdir" | wc -l)
-  echo "--- $name [$platform] : $nsrc sources, $(grep -c '^-r:' "$rsp") refs ---"
+  echo "--- $name [$platform] : $nsrc sources, $nrefs refs ---"
   "$DOTNET" "$CSC" "@$rsp" 2>&1 | grep -vE '^(Microsoft \(R\)|Copyright)' | sed '/^$/d'
   local rc=${PIPESTATUS[0]}
   if [ "$rc" -ne 0 ] || [ ! -f "$dir/$name.dll" ]; then
