@@ -31,6 +31,9 @@ jobs:
   python_tests:
     name: Python and hermetic tool tests
     if: github.repository != 'CoplayDev/unity-mcp'
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/python-tests.yml
 
   unity_tests:

@@ -367,8 +367,8 @@ def test_python_dependency_cache_does_not_mask_cold_bootstrap() -> None:
     jobs = workflow("python-tests.yml")["jobs"]
     # When: the setup action cache policy is read for both job families.
     installs = {
-        name: next(step["with"] for step in job["steps"] if step["name"] == "Install uv")
-        for name, job in jobs.items()
+        name: next(step["with"] for step in jobs[name]["steps"] if step.get("name") == "Install uv")
+        for name in ("server_bootstrap", "test")
     }
     # Then: only unit jobs cache pinned dependencies, separated by Python minor.
     assert installs["server_bootstrap"]["enable-cache"] is False
@@ -380,6 +380,28 @@ def test_python_dependency_cache_does_not_mask_cold_bootstrap() -> None:
         "Server/uv.lock",
     }
     assert cache["save-cache"] == "${{ matrix.suite == 'tools' }}"
+
+
+def test_timing_reporting_cannot_replace_or_fail_the_python_test_gate() -> None:
+    jobs = workflow("python-tests.yml")["jobs"]
+    report = jobs["performance_report"]
+    assert report["needs"] == ["test"]
+    assert report["continue-on-error"] is True
+    assert report["permissions"] == {"contents": "read", "actions": "read"}
+    assert "continue-on-error" not in jobs["test"]
+    assert not any(step.get("name") == "Install uv" for step in report["steps"])
+    timing_uploads = [
+        step["with"]
+        for job in (jobs["test"], report)
+        for step in job["steps"]
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+        and step["with"]["name"].startswith(("pytest-timing-", "python-test-timings"))
+    ]
+    assert len(timing_uploads) == 2
+    assert all(upload["include-hidden-files"] is True for upload in timing_uploads)
+    for name in ("fork-beta-tools.yml", "beta-release.yml", "release.yml"):
+        caller = workflow(name)["jobs"]["python_tests"]
+        assert caller["permissions"] == {"contents": "read", "actions": "read"}
 
 
 @pytest.mark.parametrize(

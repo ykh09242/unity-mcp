@@ -35,6 +35,9 @@ jobs:
 
   python_tests:
     name: Python tests gate
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/python-tests.yml
     with:
       ref: beta

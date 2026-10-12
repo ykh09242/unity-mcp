@@ -192,6 +192,32 @@ jobs:
           name: python-coverage-${{ matrix.python-version }}
           fail_ci_if_error: false
 
+      - name: Capture compact timing snapshot
+        if: always()
+        continue-on-error: true
+        env:
+          TIMING_PYTHON: ${{ matrix.python-version }}
+          TIMING_SUITE: ${{ matrix.suite }}
+        run: |
+          cd Server
+          options=()
+          if [ "$TIMING_SUITE" = server ]; then options+=(--workers 2); fi
+          if [ "$TIMING_SUITE" = server ] && [ "$TIMING_PYTHON" = 3.14 ]; then options+=(--coverage); fi
+          uv run --python "$TIMING_PYTHON" --locked --extra dev python ../tools/ci_test_performance.py snapshot \
+            --junit test-results.xml --nested-junit test-results-http.xml \
+            --python "$TIMING_PYTHON" --suite "$TIMING_SUITE" "${options[@]}" \
+            --output "../.tmp/test-timings/$TIMING_PYTHON-$TIMING_SUITE.json"
+
+      - name: Upload compact timing snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        continue-on-error: true
+        with:
+          name: pytest-timing-${{ matrix.python-version }}-${{ matrix.suite }}
+          path: .tmp/test-timings/*.json
+          include-hidden-files: true
+          retention-days: 7
+
       - name: Upload test results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -202,3 +228,37 @@ jobs:
             Server/test-results-http.xml
             Server/coverage.xml
             Server/htmlcov/
+
+  performance_report:
+    name: Python timing report
+    needs: [test]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: pytest-timing-*
+          path: .tmp/test-timings
+          merge-multiple: true
+      - name: Compare recent successful runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/ci_test_performance.py report --current .tmp/test-timings \
+            --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" \
+            --output .tmp/performance-report
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-test-timings
+          path: .tmp/performance-report/
+          include-hidden-files: true
+          retention-days: 30
