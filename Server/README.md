@@ -2,6 +2,16 @@
 
 Python MCP server for the [Unity Editor plugin](../MCPForUnity/README.md). The GitHub-distributed package is `ykh09242-unity-mcp-server`; executable names remain `mcp-for-unity` (server) and `unity-mcp` (local HTTP CLI). Python **3.11+**, FastMCP 4 and MCP SDK 2 are required.
 
+CI runs the server and repository-tool suites on Python **3.11 through 3.15**.
+Use uv **0.13.0 or newer** when installing Python 3.15 so the stable interpreter is available.
+
+Python 3.15 checks currently set `PY_KEY_VALUE_DISABLE_BEARTYPE=true`: the upstream
+`py-key-value-aio` 0.4.6 protocol annotation triggers Python 3.15's new deprecation
+warning during its optional runtime instrumentation. This leaves application
+validation and warnings-as-errors enabled. Use the same setting when testing with
+warnings-as-errors on 3.15 until an upstream fix is released. The lint runner uses
+one worker on 3.15 because dill 0.4.1 still references the removed `co_lnotab` attribute.
+
 Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` server baseline. The pinned source commit selects the implementation, not the version label alone. No fork PyPI distribution or prebuilt Docker image is advertised.
 
 ## Choose your task

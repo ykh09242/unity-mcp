@@ -66,7 +66,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          version: "0.12.22"
+          version: "0.13.0"
           python-version: "3.11"
           enable-cache: false
 
@@ -99,11 +99,16 @@ jobs:
   test:
     name: Run Python ${{ matrix.suite }} tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    env:
+      # py-key-value-aio 0.4.6 inherits a runtime-checkable protocol without
+      # redecorating it, deprecated in Python 3.15. Disable only its optional
+      # beartype instrumentation; keep application validation and -W error.
+      PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python-version == '3.15' && 'true' || 'false' }}
     strategy:
       fail-fast: false
       matrix:
         # Run both complete suites on every supported minor, without serializing them.
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         suite: [server, tools]
     steps:
       - name: Checkout repository
@@ -115,7 +120,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          version: "0.12.22"
+          version: "0.13.0"
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-suffix: python-${{ matrix.python-version }}
@@ -146,7 +151,7 @@ jobs:
 
       - name: Run Pylint
         # Keep static analysis off the longer server-test path and run it once.
-        if: matrix.suite == 'tools' && matrix.python-version == '3.14'
+        if: matrix.suite == 'tools' && matrix.python-version == '3.15'
         run: |
           cd Server
           uv run --python "${{ matrix.python-version }}" --locked --extra dev python ../tools/lint_python.py

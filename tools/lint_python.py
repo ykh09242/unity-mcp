@@ -21,6 +21,9 @@ def main() -> int:
         (SERVER, ("src", "tests", "__init__.py")),
         (ROOT, ("tools", "mcp_source.py", ".github/scripts")),
     )
+    # dill 0.4.1 still serializes co_lnotab, removed in Python 3.15.
+    # Serial linting preserves every check without patching the serializer.
+    parallel_options = ["--jobs=1"] if sys.version_info >= (3, 15) else []
     for directory, targets in groups:
         print(f"Pylint ({directory.name}): {', '.join(targets)}", flush=True)
         result = subprocess.run(
@@ -30,6 +33,7 @@ def main() -> int:
                 "pylint",
                 f"--rcfile={SERVER / 'pyproject.toml'}",
                 f"--source-roots={directory},{SERVER / 'src'}",
+                *parallel_options,
                 *targets,
             ],
             cwd=directory,

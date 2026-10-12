@@ -263,7 +263,7 @@ def test_python_lint_is_a_blocking_step_with_locked_dependencies() -> None:
     # Then: diagnostics cannot be ignored and CI uses the committed dependency lock.
     assert not lint.get("continue-on-error", False)
     assert "--locked --extra dev" in lint["run"]
-    assert lint["if"] == "matrix.suite == 'tools' && matrix.python-version == '3.14'"
+    assert lint["if"] == "matrix.suite == 'tools' && matrix.python-version == '3.15'"
 
 
 @pytest.mark.parametrize(
@@ -302,7 +302,7 @@ def test_python_validation_runs_both_suites_on_every_supported_minor() -> None:
     steps = {step["name"]: step for step in job["steps"]}
     # Then: every environment is explicitly selected and uploads cannot collide.
     assert job["strategy"]["fail-fast"] is False
-    assert matrix["python-version"] == ["3.11", "3.12", "3.13", "3.14"]
+    assert matrix["python-version"] == ["3.11", "3.12", "3.13", "3.14", "3.15"]
     assert matrix["suite"] == ["server", "tools"]
     assert "exclude" not in matrix
     assert "needs" not in job
