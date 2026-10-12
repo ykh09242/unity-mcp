@@ -23,7 +23,7 @@ on:
   push:
     # Beta's release gates need a Unity license; this independent check also
     # compiles fork beta pushes where licensed tests are skipped.
-    branches-ignore: [main]
+    branches: [beta]
     paths: &paths
       - MCPForUnity/Editor/**
       - MCPForUnity/Runtime/**

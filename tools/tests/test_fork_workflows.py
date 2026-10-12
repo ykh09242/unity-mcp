@@ -123,7 +123,10 @@ def push_selects(workflow_name: str, branch: str, path: str) -> bool:
     """Evaluate the simple positive path and branch filters used by these workflows."""
     config = workflow(workflow_name)
     # PyYAML's YAML 1.1 loader treats GitHub's unquoted `on` as a boolean key.
-    push = config.get("on", config.get(True))["push"]
+    triggers = config.get("on", config.get(True))
+    if "push" not in triggers:
+        return False
+    push = triggers["push"]
     if "branches" in push and not any(fnmatchcase(branch, pattern) for pattern in push["branches"]):
         return False
     if any(fnmatchcase(branch, pattern) for pattern in push.get("branches-ignore", [])):
@@ -223,10 +226,11 @@ def test_fork_beta_profile_and_test_changes_select_exactly_one_unity_caller(path
         "mcp_source.py",
     ],
 )
-def test_ci_policy_changes_select_python_push_and_pull_request_validation(path: str) -> None:
-    assert push_selects("python-tests.yml", "feature-policy", path)
+def test_ci_policy_changes_select_python_pr_validation_without_work_push(path: str) -> None:
+    assert not push_selects("python-tests.yml", "feature-policy", path)
     config = workflow("python-tests.yml")
     triggers = config.get("on", config.get(True))
+    assert "push" not in triggers
     assert any(fnmatchcase(path, pattern) for pattern in triggers["pull_request"]["paths"])
 
 

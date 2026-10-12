@@ -1,4 +1,4 @@
-"""Durable, offline coordination for the reviewed Unity MCP feature program.
+"""Durable, offline coordination for local work programs.
 
 Run with Server/.venv/Scripts/python.exe tools/feature_program.py --help.
 The registry is deliberately mutable: every transition appends its durable history.
@@ -7,12 +7,13 @@ The registry is deliberately mutable: every transition appends its durable histo
 from __future__ import annotations
 
 import argparse
-from collections import Counter
+from collections import Counter, deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -21,25 +22,22 @@ import sys
 import tempfile
 from typing import Final, Iterator, TypeAlias
 
+if __package__:
+    import tools.feature_program_coordination as coordination
+    import tools.feature_program_questions as questions
+else:
+    import feature_program_coordination as coordination
+    import feature_program_questions as questions
+
 
 Json: TypeAlias = str | int | float | bool | None | list["Json"] | dict[str, "Json"]
 Record: TypeAlias = dict[str, Json]
 ROOT: Final = Path(__file__).resolve().parents[1]
-DEFAULT_PROGRAM: Final = ".omo/feature-program"
+DEFAULT_PROGRAM: Final = ".work/programs/default"
 REPORT: Final = DEFAULT_PROGRAM + "/source/feature-opportunities.md"
-EXPECTED_IDS: Final = tuple(
-    f"{prefix}{index:02d}"
-    for prefix, count in (
-        ("S", 15),
-        ("E", 17),
-        ("V", 17),
-        ("Q", 16),
-        ("P", 15),
-        ("DX", 16),
-        ("N", 15),
-    )
-    for index in range(1, count + 1)
-    if (prefix, index) != ("DX", 11)
+TASK_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+DEVICE_NAMES: Final = frozenset({"con", "prn", "aux", "nul"}) | frozenset(
+    f"{prefix}{number}" for prefix in ("com", "lpt") for number in range(1, 10)
 )
 CHECKS: Final = frozenset(
     {
@@ -58,6 +56,7 @@ OWNED_STATES: Final = frozenset({"active", "blocked", "review"})
 SKIP_DIRS: Final = frozenset(
     {
         ".git",
+        ".work",
         ".codegraph",
         ".venv",
         "venv",
@@ -108,7 +107,12 @@ def sha(data: bytes) -> str:
 
 
 def canonical(value: Json) -> bytes:
-    return (json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True) + "\n").encode()
+    try:
+        return (
+            json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True, allow_nan=False) + "\n"
+        ).encode()
+    except (ValueError, RecursionError) as exc:
+        raise ProgramError(f"Invalid canonical JSON: {exc}") from exc
 
 
 def digest(value: Json) -> str:
@@ -119,9 +123,52 @@ def utc() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def communication_language(value: Json) -> str | None:
+    """Validate a portable BCP 47-shaped tag without guessing a language."""
+    if value is None:
+        return None
+    require(
+        isinstance(value, str)
+        and len(value) <= 63
+        and re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*", value) is not None,
+        "communication_language must be a portable language tag or null",
+    )
+    return value
+
+
+def portable_task_id(value: str) -> bool:
+    """Task identifiers also become filenames, including on Windows."""
+    return (
+        TASK_ID.fullmatch(value) is not None
+        and not value.endswith(".")
+        and value.split(".", 1)[0].casefold() not in DEVICE_NAMES
+    )
+
+
+def check_policy(state: Record) -> tuple[set[str], set[str]]:
+    catalog = set(strings(state.get("check_catalog", sorted(CHECKS)), "check_catalog"))
+    default_minimum = (
+        ["acceptance"]
+        if "check_catalog" in state
+        else ["acceptance", "scoped_tests", "format_lint"]
+    )
+    minimum = set(strings(state.get("minimum_checks", default_minimum), "minimum_checks"))
+    require(
+        bool(catalog)
+        and "acceptance" in minimum
+        and minimum <= catalog
+        and all(TASK_ID.fullmatch(name) for name in catalog),
+        "Invalid verification catalog/minimum",
+    )
+    return catalog, minimum
+
+
 def safe_relative(name: str) -> str:
     """Reject sensitive or escaping paths before checking any filesystem contents."""
     require("\\" not in name, "Use repository-relative forward-slash paths")
+    require(
+        all(ord(character) >= 32 for character in name), "Control characters are invalid in paths"
+    )
     path = PurePosixPath(name)
     parts = tuple(part.casefold() for part in path.parts)
     require(bool(parts) and not path.is_absolute(), f"Relative path required: {name}")
@@ -163,7 +210,43 @@ def safe_path(root: Path, name: str) -> Path:
     return path
 
 
-def read_json(path: Path) -> Record:
+def bounded_bytes(path: Path, limit: int) -> bytes:
+    """Bound allocations even if a regular file grows between metadata and reading."""
+    with path.open("rb") as stream:
+        content = stream.read(limit + 1)
+    require(len(content) <= limit, f"File exceeds bounded read: {path.name}")
+    return content
+
+
+@dataclass(slots=True)
+class ReadBudget:
+    """One validation read ledger; mutation tracks actual bytes and avoids repeated I/O."""
+
+    remaining: int = 72 * 1024 * 1024
+    cached: dict[Path, bytes] | None = None
+
+    def read(self, path: Path, limit: int) -> bytes:
+        if self.cached is None:
+            self.cached = {}
+        if path in self.cached:
+            content = self.cached[path]
+            require(len(content) <= limit, f"File exceeds bounded read: {path.name}")
+            return content
+        content = bounded_bytes(path, min(limit, self.remaining))
+        self.remaining -= len(content)
+        self.cached[path] = content
+        return content
+
+
+def read_json(path: Path, limit: int = 8 * 1024 * 1024, budget: ReadBudget | None = None) -> Record:
+    def finite_json(value: str) -> None:
+        raise ProgramError(f"Nonfinite JSON constant rejected: {value}")
+
+    def finite_float(value: str) -> float:
+        parsed = float(value)
+        require(math.isfinite(parsed), f"Nonfinite JSON number rejected: {value}")
+        return parsed
+
     def unique(pairs: list[tuple[str, Json]]) -> Record:
         result: Record = {}
         for key, value in pairs:
@@ -172,10 +255,26 @@ def read_json(path: Path) -> Record:
         return result
 
     try:
-        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique)
-    except (UnicodeError, json.JSONDecodeError) as exc:
+        value = json.loads(
+            (budget.read(path, limit) if budget is not None else bounded_bytes(path, limit)).decode(
+                "utf-8"
+            ),
+            object_pairs_hook=unique,
+            parse_constant=finite_json,
+            parse_float=finite_float,
+        )
+    except (UnicodeError, ValueError, RecursionError) as exc:
         raise ProgramError(f"Invalid JSON in {path.name}: {exc}") from exc
     return record(value, path.name)
+
+
+def read_json_frozen(
+    path: Path, limit: int = 1024 * 1024, budget: ReadBudget | None = None
+) -> tuple[Record, str]:
+    """Return parsed metadata and the digest of exactly the same bounded bytes."""
+    budget = budget if budget is not None else ReadBudget(limit)
+    content = budget.read(path, limit)
+    return read_json(path, limit=limit, budget=budget), sha(content)
 
 
 def atomic_write(path: Path, data: bytes) -> None:
@@ -197,16 +296,22 @@ def atomic_write(path: Path, data: bytes) -> None:
             temporary.unlink()
 
 
-def extract_sections(data: bytes) -> Record:
+def extract_sections(data: bytes, expected_ids: list[str] | None = None) -> Record:
     """Keep complete original feature sections, including exact newline bytes."""
-    text = data.decode("utf-8")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeError as exc:
+        raise ProgramError("Source must be valid UTF-8") from exc
     headings = list(re.finditer(r"(?m)^#{1,3} [^\r\n]+", text))
     sections: Record = {}
     for index, heading in enumerate(headings):
-        match = re.fullmatch(r"### ((?:DX|S|E|V|Q|P|N)\d{2})\. (.+)", heading[0].rstrip("\r"))
+        match = re.fullmatch(
+            r"### ([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\. (.+)", heading[0].rstrip("\r")
+        )
         if not match:
             continue
         task_id, title = match.groups()
+        require(portable_task_id(task_id), f"Task ID is not portable: {task_id}")
         require(task_id not in sections, f"Duplicate report ID: {task_id}")
         end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
         section = text[heading.start() : end]
@@ -216,10 +321,16 @@ def extract_sections(data: bytes) -> Record:
             "sha256": sha(section.encode("utf-8")),
             "line": text.count("\n", 0, heading.start()) + 1,
         }
+    require(bool(sections), "Source must contain at least one task section: ### ID. Title")
     require(
-        set(sections) == set(EXPECTED_IDS),
-        "Report must contain the exact 110 reviewed IDs (DX11 absent)",
+        len(sections) == len({name.casefold() for name in sections}),
+        "Source task IDs collide on portable filesystems",
     )
+    if expected_ids is not None:
+        require(
+            set(sections) == set(expected_ids),
+            "Source and plan must contain the exact same unique task IDs",
+        )
     return sections
 
 
@@ -240,7 +351,15 @@ class Program:
     directory: Path
 
     @contextmanager
-    def lock(self) -> Iterator[None]:
+    def lock(self, relocation_recovery: bool = False) -> Iterator[None]:
+        if relocation_recovery:
+            require(
+                self.path("RELOCATION_INCOMPLETE.json").is_file()
+                and not self.path("RELOCATED.json").exists(),
+                "Recovery requires an incomplete destination",
+            )
+        else:
+            self.require_current_location()
         self.directory.mkdir(parents=True, exist_ok=True)
         path = safe_path(self.directory, ".feature-program.lock")
         try:
@@ -261,10 +380,44 @@ class Program:
     def path(self, relative: str) -> Path:
         return safe_path(self.directory, relative)
 
+    def require_current_location(self) -> None:
+        marker = self.path("RELOCATED.json")
+        if marker.exists():
+            destination = read_json(marker, limit=64 * 1024).get("destination")
+            raise ProgramError(f"Program archived after relocation; explicitly use {destination}")
+        require(
+            not self.path("RELOCATION_INCOMPLETE.json").exists(),
+            "Relocation publication incomplete; inspect its recovery receipt",
+        )
+
+    def current_head(self) -> str:
+        return git(self.repo, ["rev-parse", "HEAD"])
+
+    def source_digest(self, scope: list[str]) -> str:
+        return digest(self.source_snapshot(scope))
+
+    def pending_questions(
+        self, state: Record, objective_id: str, task_ids: list[str]
+    ) -> list[Record]:
+        return questions.pending_questions(state, objective_id, task_ids)
+
     def source_snapshot(self, scopes: list[str]) -> Record:
         require(bool(scopes), "At least one explicit scope is required")
         snapshot: Record = {}
+        total_bytes = 0
+
+        def fingerprint_file(path: Path) -> str:
+            nonlocal total_bytes
+            require(len(snapshot) < 10000, "Explicit source scope exceeds fingerprint budget")
+            content = bounded_bytes(path, 128 * 1024 * 1024 - total_bytes)
+            total_bytes += len(content)
+            return sha(content)
+
         for scope in sorted(scopes):
+            require(
+                not any(part.casefold() == ".work" for part in PurePosixPath(scope).parts),
+                "Private .work paths cannot be source scopes",
+            )
             path = safe_path(self.repo, scope)
             require(
                 path != self.repo and not self.directory.is_relative_to(path),
@@ -273,7 +426,7 @@ class Program:
             if not path.exists():
                 snapshot[scope] = "missing"
             elif path.is_file():
-                snapshot[scope] = sha(path.read_bytes())
+                snapshot[scope] = fingerprint_file(path)
             else:
                 snapshot[scope + "/"] = "directory"
                 for folder, dirs, files in os.walk(path, followlinks=False):
@@ -292,7 +445,7 @@ class Program:
                         except ProgramError:
                             continue
                         require(candidate.is_file(), f"Not a regular scoped file: {relative}")
-                        snapshot[relative] = sha(candidate.read_bytes())
+                        snapshot[relative] = fingerprint_file(candidate)
         return snapshot
 
     def evidence(self, task_id: str, attempt: int, names: list[str]) -> list[Json]:
@@ -304,34 +457,75 @@ class Program:
             path = self.path(name)
             require(path.is_file() and path.stat().st_size > 0, f"Missing/empty evidence: {name}")
             require(path.stat().st_size <= 8 * 1024 * 1024, f"Evidence exceeds 8 MiB: {name}")
-            result.append({"path": name, "sha256": sha(path.read_bytes())})
+            result.append({"path": name, "sha256": sha(bounded_bytes(path, 8 * 1024 * 1024))})
         return result
 
-    def verify_refs(self, refs: list[Json]) -> None:
+    def frozen_json(self, task_id: str, attempt: int, name: str) -> tuple[Record, list[Json]]:
+        """Parse exactly the captured bytes whose digest is admitted as evidence."""
+        metadata, parsed_sha = read_json_frozen(self.path(name), limit=8 * 1024 * 1024)
+        refs = self.evidence(task_id, attempt, [name])
+        require(
+            record(refs[0], "receipt reference")["sha256"] == parsed_sha,
+            "Receipt changed while freezing",
+        )
+        return metadata, refs
+
+    def verify_refs(self, refs: list[Json], budget: ReadBudget | None = None) -> None:
+        budget = budget if budget is not None else ReadBudget(64 * 1024 * 1024)
         for value in refs:
             ref = record(value, "evidence reference")
             name = string(ref.get("path"), "evidence path")
             path = self.path(name)
             require(path.is_file(), f"Missing frozen evidence: {name}")
-            require(sha(path.read_bytes()) == ref.get("sha256"), f"Frozen evidence changed: {name}")
+            require(
+                sha(budget.read(path, 8 * 1024 * 1024)) == ref.get("sha256"),
+                f"Frozen evidence changed: {name}",
+            )
 
     def load(self) -> Record:
+        self.require_current_location()
         state = read_json(self.path("backlog.json"))
         self.validate(state)
         return state
 
-    def validate(self, state: Record) -> None:
-        require(
-            state.get("schema_version") == 1 and state.get("program_id") == "unity-mcp-110",
-            "Unsupported registry",
-        )
+    def validate(self, state: Record, verify_artifacts: bool = True) -> None:
+        budget = ReadBudget() if verify_artifacts else None
+        require(state.get("schema_version") == 1, "Unsupported registry")
+        string(state.get("program_id"), "program_id")
+        communication_language(state.get("communication_language"))
+        report_source = record(state.get("source"), "report source")
+        source_path = safe_path(self.repo, string(report_source.get("path"), "source path"))
+        if verify_artifacts:
+            raw_source = budget.read(source_path, 8 * 1024 * 1024)
+            require(
+                sha(raw_source) == report_source.get("sha256"),
+                "Original report drifted; do not reset progress",
+            )
+            sections = extract_sections(raw_source)
+        else:
+            sections = {
+                string(record(value, "task").get("id"), "task ID"): record(
+                    record(value, "task").get("source"), "section"
+                )
+                for value in sequence(state.get("tasks"), "tasks")
+            }
+        if "task_ids" in report_source:
+            require(
+                set(strings(report_source["task_ids"], "frozen task IDs")) == set(sections),
+                "Frozen source task identities drifted",
+            )
         tasks = sequence(state.get("tasks"), "tasks")
+        require(len(tasks) <= 2000, "Registry exceeds 2000 tasks")
         by_id = {
             string(record(task, "task").get("id"), "task ID"): record(task, "task")
             for task in tasks
         }
         require(
-            len(by_id) == len(tasks) and set(by_id) == set(EXPECTED_IDS),
+            bool(tasks)
+            and len(by_id) == len(tasks)
+            and set(by_id) == set(sections)
+            and len(by_id) == len({name.casefold() for name in by_id})
+            and all(portable_task_id(name) for name in by_id),
             "Registry must contain exact unique reviewed IDs",
         )
         streams = sequence(state.get("workstreams"), "workstreams")
@@ -341,16 +535,24 @@ class Program:
         require(len(stream_ids) == len(set(stream_ids)), "Duplicate workstream")
         owners: set[str] = set()
         active: list[Record] = []
+        check_catalog, minimum_checks = check_policy(state)
+        policy_digest = digest(
+            {"check_catalog": sorted(check_catalog), "minimum_checks": sorted(minimum_checks)}
+        )
+        require(
+            state.get("verification_policy_sha256") is None
+            or state.get("verification_policy_sha256") == policy_digest,
+            "Frozen verification policy changed",
+        )
         for task_id, task in by_id.items():
             require(task.get("workstream") in stream_ids, f"Unknown workstream: {task_id}")
             require(
-                type(task.get("phase")) is int and task["phase"] in (1, 2, 3, 4),
+                type(task.get("phase")) is int and task["phase"] > 0,
                 f"Invalid phase: {task_id}",
             )
             required = strings(task.get("required_checks"), "required_checks")
             require(
-                set(required) <= CHECKS
-                and {"acceptance", "scoped_tests", "format_lint"} <= set(required),
+                set(required) <= check_catalog and minimum_checks <= set(required),
                 f"Invalid required checks: {task_id}",
             )
             for key in ("depends_on", "related_to", "conflict_groups", "candidate_paths"):
@@ -364,8 +566,12 @@ class Program:
                     for path in values:
                         safe_relative(path)
             string(task.get("next_action"), "next_action")
-            require(task.get("status") in STATES, f"Invalid status: {task_id}")
+            require(
+                isinstance(task.get("status"), str) and task.get("status") in STATES,
+                f"Invalid status: {task_id}",
+            )
             source = record(task.get("source"), "source section")
+            require(source == sections[task_id], f"Lossless source mismatch: {task_id}")
             require(
                 sha(string(source.get("text"), "source text").encode()) == source.get("sha256"),
                 f"Source section changed: {task_id}",
@@ -373,6 +579,7 @@ class Program:
             attempts = sequence(task.get("attempts"), "attempts")
             for number, value in enumerate(attempts, 1):
                 attempt = record(value, "attempt")
+                communication_language(attempt.get("communication_language"))
                 require(attempt.get("number") == number, f"Invalid attempt sequence: {task_id}")
                 string(attempt.get("owner"), "attempt owner")
                 for scope in strings(attempt.get("scope"), "scope"):
@@ -398,8 +605,10 @@ class Program:
                         ),
                         "Invalid evidence hash",
                     )
-                if attempt.get("status") == "done":
-                    self.verify_terminal(task, attempt)
+                if verify_artifacts:
+                    self.verify_refs(sequence(attempt.get("evidence"), "attempt evidence"), budget)
+                if attempt.get("status") == "done" and verify_artifacts:
+                    self.verify_terminal(task, attempt, budget)
             if task["status"] in OWNED_STATES:
                 owner = string(task.get("owner"), "owner")
                 require(owner not in owners, f"Owner already has an active task: {owner}")
@@ -421,21 +630,24 @@ class Program:
                         self.current_attempt(task).get("status") == "done",
                         "Done task lacks completed latest attempt",
                     )
-        visiting: set[str] = set()
-        visited: set[str] = set()
-
-        def visit(task_id: str) -> None:
-            require(task_id not in visiting, f"Dependency cycle at {task_id}")
-            if task_id in visited:
-                return
-            visiting.add(task_id)
-            for dependency in strings(by_id[task_id]["depends_on"], "depends_on"):
-                visit(dependency)
-            visiting.remove(task_id)
-            visited.add(task_id)
-
-        for task_id in by_id:
-            visit(task_id)
+        dependency_counts = {
+            task_id: len(strings(task["depends_on"], "depends_on"))
+            for task_id, task in by_id.items()
+        }
+        dependents: dict[str, list[str]] = {task_id: [] for task_id in by_id}
+        for task_id, task in by_id.items():
+            for dependency in strings(task["depends_on"], "depends_on"):
+                dependents[dependency].append(task_id)
+        ready = deque(task_id for task_id, count in dependency_counts.items() if count == 0)
+        visited = 0
+        while ready:
+            task_id = ready.popleft()
+            visited += 1
+            for dependent in dependents[task_id]:
+                dependency_counts[dependent] -= 1
+                if dependency_counts[dependent] == 0:
+                    ready.append(dependent)
+        require(visited == len(by_id), "Dependency cycle detected")
         for index, left in enumerate(active):
             for right in active[index + 1 :]:
                 require(
@@ -444,11 +656,19 @@ class Program:
                 )
         sequence(state.get("events"), "events")
         record(state.get("source"), "report source")
+        questions.validate_questions(state)
+        coordination.validate_governance(state)
+        if verify_artifacts:
+            self.verify_refs(coordination.evidence_references(state), budget)
+            self.verify_refs(questions.evidence_references(state), budget)
 
-    def verify_terminal(self, task: Record, attempt: Record) -> None:
+    def verify_terminal(
+        self, task: Record, attempt: Record, budget: ReadBudget | None = None
+    ) -> None:
         """Terminal code is historical; its frozen acceptance records remain mandatory."""
         require(attempt.get("status") == "done", "Done task lacks completed attempt")
-        self.verify_refs(sequence(attempt.get("evidence"), "evidence"))
+        budget = budget if budget is not None else ReadBudget()
+        self.verify_refs(sequence(attempt.get("evidence"), "evidence"), budget)
         submission = record(attempt.get("submission"), "completed submission")
         require(
             digest(record(submission.get("source_snapshot"), "submitted source snapshot"))
@@ -462,8 +682,8 @@ class Program:
             and review_ref in sequence(attempt["evidence"], "evidence"),
             "Terminal records lack frozen evidence",
         )
-        receipt = read_json(self.path(string(receipt_ref["path"], "receipt path")))
-        review = read_json(self.path(string(review_ref["path"], "review path")))
+        receipt = read_json(self.path(string(receipt_ref["path"], "receipt path")), budget=budget)
+        review = read_json(self.path(string(review_ref["path"], "review path")), budget=budget)
         for artifact in (receipt, review):
             require(
                 artifact.get("task_id") == task["id"]
@@ -534,29 +754,36 @@ class Program:
         return sorted(set(reasons))
 
     def task(self, state: Record, task_id: str) -> Record:
-        require(task_id in EXPECTED_IDS, f"Unknown task: {task_id}")
-        return next(
-            record(task, "task")
-            for task in sequence(state["tasks"], "tasks")
-            if record(task, "task")["id"] == task_id
-        )
+        for value in sequence(state["tasks"], "tasks"):
+            task = record(value, "task")
+            if task["id"] == task_id:
+                return task
+        raise ProgramError(f"Unknown task: {task_id}")
 
     def event(self, state: Record, action: str, detail: Record) -> None:
         sequence(state["events"], "events").append({"action": action, "timestamp": utc(), **detail})
 
     def initialize(self, args: argparse.Namespace) -> Record:
+        self.require_current_location()
         require(
             not self.path("backlog.json").exists(),
             "Registry already exists; initialization never resets progress",
         )
         source_path = safe_path(self.repo, args.report)
-        raw = source_path.read_bytes()
-        sections = extract_sections(raw)
-        plan = read_json(safe_path(self.repo, args.planning))
+        raw = bounded_bytes(source_path, 8 * 1024 * 1024)
+        planning_path = safe_path(self.repo, args.planning)
+        planning_budget = ReadBudget()
+        plan = read_json(planning_path, budget=planning_budget)
+        require(plan.get("schema_version") == 1, "Unsupported planning input")
+        plan_ids = [
+            string(record(value, "planning task").get("id"), "task ID")
+            for value in sequence(plan.get("tasks"), "planning tasks")
+        ]
         require(
-            plan.get("schema_version") == 1 and plan.get("program_id") == "unity-mcp-110",
-            "Unsupported planning input",
+            bool(plan_ids) and len(plan_ids) == len(set(plan_ids)),
+            "Planning tasks must be nonempty and unique",
         )
+        sections = extract_sections(raw, plan_ids)
         tasks: list[Json] = []
         for value in sequence(plan.get("tasks"), "planning tasks"):
             task = dict(record(value, "planning task"))
@@ -574,7 +801,7 @@ class Program:
             tasks.append(task)
         state: Record = {
             "schema_version": 1,
-            "program_id": "unity-mcp-110",
+            "program_id": string(plan.get("program_id"), "program_id"),
             "baseline_head": string(plan.get("baseline_head"), "baseline_head"),
             "initialized_head": git(self.repo, ["rev-parse", "HEAD"]),
             "source": {
@@ -582,13 +809,31 @@ class Program:
                 "sha256": sha(raw),
                 "review_baseline": args.review_baseline,
                 "reference_base": safe_relative(args.reference_base),
+                "task_ids": list(sections),
             },
-            "planning_sha256": sha(safe_path(self.repo, args.planning).read_bytes()),
+            "planning_sha256": sha(planning_budget.read(planning_path, 8 * 1024 * 1024)),
             "workstreams": plan.get("workstreams"),
             "tasks": tasks,
             "events": [],
             "checkpoint": None,
         }
+        for key in (
+            "categories",
+            "actors",
+            "handoffs",
+            "director",
+            "responsibilities",
+            "objective",
+            "check_catalog",
+            "minimum_checks",
+            "communication_language",
+        ):
+            if key in plan:
+                state[key] = plan[key]
+        catalog, minimum = check_policy(state)
+        state["verification_policy_sha256"] = digest(
+            {"check_catalog": sorted(catalog), "minimum_checks": sorted(minimum)}
+        )
         self.validate(state)
         self.event(
             state,
@@ -605,7 +850,9 @@ class Program:
 
     def check(self, state: Record) -> None:
         source = record(state["source"], "source")
-        raw = safe_path(self.repo, string(source["path"], "source path")).read_bytes()
+        raw = bounded_bytes(
+            safe_path(self.repo, string(source["path"], "source path")), 8 * 1024 * 1024
+        )
         require(sha(raw) == source["sha256"], "Original report drifted; do not reset progress")
         sections = extract_sections(raw)
         for value in sequence(state["tasks"], "tasks"):
@@ -627,12 +874,13 @@ class Program:
         for name, data in self.views(state).items():
             path = self.path(name)
             require(
-                path.is_file() and path.read_bytes() == data.encode("utf-8"),
+                path.is_file() and bounded_bytes(path, 8 * 1024 * 1024) == data.encode("utf-8"),
                 f"Derived view drift: {name}; use render",
             )
 
     def claim(self, state: Record, args: argparse.Namespace) -> None:
         task = self.task(state, args.id)
+        coordination.validate_claim_transfer(state, args.id, args.owner)
         require(
             task["status"] == "planned",
             "Claim requires planned state; release existing ownership first",
@@ -646,8 +894,7 @@ class Program:
         require(len(scope) == len(args.scope), "Duplicate scope")
         baseline = self.source_snapshot(scope)
         head = git(self.repo, ["rev-parse", "HEAD"])
-        evidence = self.evidence(args.id, attempt_number, [args.revalidation])
-        validation = read_json(self.path(args.revalidation))
+        validation, evidence = self.frozen_json(args.id, attempt_number, args.revalidation)
         require(
             validation.get("task_id") == args.id and validation.get("attempt") == attempt_number,
             "Revalidation identity mismatch",
@@ -691,6 +938,10 @@ class Program:
             "review": None,
             "next_action": args.next_action,
         }
+        attempt["assignment"] = coordination.assignment_metadata(state, args.owner)
+        attempt["communication_language"] = communication_language(
+            state.get("communication_language")
+        )
         sequence(task["attempts"], "attempts").append(attempt)
         task.update({"status": "active", "owner": args.owner, "next_action": args.next_action})
         self.event(
@@ -779,8 +1030,7 @@ class Program:
         number = attempt["number"]
         require(type(number) is int, "Invalid attempt number")
         self.verify_refs(sequence(attempt["evidence"], "evidence"))
-        receipt_refs = self.evidence(args.id, number, [args.receipt])
-        receipt = read_json(self.path(args.receipt))
+        receipt, receipt_refs = self.frozen_json(args.id, number, args.receipt)
         require(
             receipt.get("task_id") == args.id and receipt.get("attempt") == number,
             "Receipt identity mismatch",
@@ -809,7 +1059,10 @@ class Program:
         for value in sequence(receipt.get("checks"), "checks"):
             check = record(value, "check")
             check_id = string(check.get("id"), "check ID")
-            require(check_id in CHECKS and check_id not in passed, "Unknown/duplicate check ID")
+            require(
+                check_id in check_policy(state)[0] and check_id not in passed,
+                "Unknown/duplicate check ID",
+            )
             require(check.get("status") == "passed", f"Check did not pass: {check_id}")
             string(check.get("command"), "executed command")
             kind = string(check.get("execution_kind"), "execution_kind")
@@ -896,8 +1149,7 @@ class Program:
         submission = self.verify_submission(attempt)
         number = attempt["number"]
         require(type(number) is int, "Invalid attempt number")
-        refs = self.evidence(args.id, number, [args.review])
-        review = read_json(self.path(args.review))
+        review, refs = self.frozen_json(args.id, number, args.review)
         require(
             review.get("task_id") == args.id and review.get("attempt") == number,
             "Review identity mismatch",
@@ -970,8 +1222,7 @@ class Program:
         number = attempt["number"]
         require(type(number) is int, "Invalid attempt number")
         self.verify_refs(sequence(attempt["evidence"], "evidence"))
-        refs = self.evidence(args.id, number, [args.receipt])
-        receipt = read_json(self.path(args.receipt))
+        receipt, refs = self.frozen_json(args.id, number, args.receipt)
         require(
             receipt.get("task_id") == args.id and receipt.get("attempt") == number,
             "Delivery identity mismatch",
@@ -1095,6 +1346,7 @@ class Program:
             )
         }
         metadata["deliveries"] = task.get("deliveries", [])
+        metadata["communication_language"] = state.get("communication_language")
         return (
             f"# Task {task['id']}: {section['title']}\n\n"
             "This packet is sufficient to recover the assigned task without chat history.\n"
@@ -1102,6 +1354,9 @@ class Program:
             "Inspect actual Git state and native agent liveness; saved owners are not live-agent proof.\n"
             "Preserve other work. Revalidate current source before each new claim. Do not run Unity,\n"
             "install packages, deploy or publish unless the task/session authorizes that action.\n\n"
+            "Use the recorded communication_language for user questions, options and explanations.\n"
+            "A missing language is unknown: preserve explicit session language without inferring one.\n"
+            "Change it only after an explicit human language change; preserve source and replies.\n\n"
             f"Repository: `{self.repo.as_posix()}`\nProgram: `{self.directory.relative_to(self.repo).as_posix()}`\n"
             f"Original source: `{source['path']}:{section['line']}`\n"
             f"Original relative evidence reference base: `{source['reference_base']}`\n"
@@ -1115,14 +1370,14 @@ class Program:
         )
 
     def views(self, state: Record) -> dict[str, str]:
-        tasks = [self.task(state, task_id) for task_id in EXPECTED_IDS]
+        tasks = [record(value, "task") for value in sequence(state["tasks"], "tasks")]
         counts = Counter(string(task["status"], "status") for task in tasks)
         board = [
-            "# Unity MCP feature program",
+            f"# Work program: {state['program_id']}",
             "",
             "Derived from backlog.json; update state through tools/feature_program.py.",
             "",
-            "All 110 reviewed items are retained. Planned work requires current-source revalidation.",
+            f"All {len(tasks)} reviewed items are retained. Planned work requires current-source revalidation.",
             "Done means reviewed implementation; delivery and remote CI remain separate recorded evidence.",
             "",
             "| State | Count |",
@@ -1187,8 +1442,14 @@ class Program:
         return result
 
     def save(self, state: Record) -> None:
+        self.require_current_location()
         self.validate(state)
-        atomic_write(self.path("backlog.json"), canonical(state))
+        encoded = canonical(state)
+        require(
+            len(encoded) <= 8 * 1024 * 1024,
+            "Canonical registry exceeds 8 MiB; existing state preserved",
+        )
+        atomic_write(self.path("backlog.json"), encoded)
         self.render(state)
 
     def render(self, state: Record) -> None:
@@ -1199,9 +1460,7 @@ class Program:
         tasks = [record(value, "task") for value in sequence(state["tasks"], "tasks")]
         active = [task for task in tasks if task["status"] in OWNED_STATES]
         candidates: list[Json] = []
-        for task in sorted(
-            tasks, key=lambda item: (item["phase"], EXPECTED_IDS.index(string(item["id"], "ID")))
-        ):
+        for task in sorted(tasks, key=lambda item: item["phase"]):
             if task["status"] != "planned":
                 continue
             blocked = [
@@ -1362,16 +1621,590 @@ class Program:
                 raise ProgramError(f"Unknown template: {other}")
 
 
+def read_snapshot(repo: Path, program_dir: Path) -> Record:
+    """Return bounded recorded state for a local UI, without locks, Git or writes.
+
+    Integrity warnings keep recorded context visible when artifacts drift. Structural
+    errors reject the snapshot. No evidence contents or source file bytes are served.
+    """
+    repo = repo.absolute()
+    directory = program_dir.absolute() if program_dir.is_absolute() else repo / program_dir
+    require(
+        directory.is_relative_to(repo) and directory != repo,
+        "Program must be within configured repository",
+    )
+    program = Program(repo, safe_path(repo, directory.relative_to(repo).as_posix()))
+    program.require_current_location()
+    backlog = program.path("backlog.json")
+    require(
+        backlog.is_file() and backlog.stat().st_size <= 8 * 1024 * 1024,
+        "Snapshot registry missing or exceeds 8 MiB",
+    )
+    initial = bounded_bytes(backlog, 8 * 1024 * 1024)
+    registry_budget = ReadBudget(cached={backlog: initial})
+    state = read_json(backlog, budget=registry_budget)
+    require(
+        sha(bounded_bytes(backlog, 8 * 1024 * 1024)) == sha(initial),
+        "Registry changed during snapshot; refresh",
+    )
+    tasks = [record(value, "task") for value in sequence(state.get("tasks"), "tasks")]
+    require(len(tasks) <= 2000, "Snapshot exceeds 2000 tasks")
+    try:
+        program.validate(state, verify_artifacts=False)
+    except (coordination.GovernanceError, questions.QuestionError) as exc:
+        raise ProgramError(str(exc)) from exc
+    warnings: list[str] = []
+    source = record(state["source"], "source")
+    source_path = safe_path(repo, string(source["path"], "source path"))
+    if not source_path.is_file():
+        warnings.append("Original source is unavailable; displaying frozen recorded prose.")
+    else:
+        require(source_path.stat().st_size <= 8 * 1024 * 1024, "Snapshot source exceeds 8 MiB")
+        source_bytes = bounded_bytes(source_path, 8 * 1024 * 1024)
+        if sha(source_bytes) != source["sha256"]:
+            warnings.append("Original source drifted; displaying frozen recorded prose.")
+        else:
+            frozen_sections = extract_sections(
+                source_bytes, [string(task["id"], "task ID") for task in tasks]
+            )
+            require(
+                all(
+                    task["source"] == frozen_sections[string(task["id"], "task ID")]
+                    for task in tasks
+                ),
+                "Frozen source sections do not match the unchanged original report",
+            )
+    refs: dict[str, str] = {}
+    all_refs = list(coordination.evidence_references(state)) + list(
+        questions.evidence_references(state)
+    )
+    for task in tasks:
+        for value in sequence(task["attempts"], "attempts"):
+            all_refs += sequence(record(value, "attempt")["evidence"], "evidence")
+        if task["status"] == "review":
+            attempt = program.current_attempt(task)
+            try:
+                submission = record(attempt["submission"], "submission")
+                snapshot = program.source_snapshot(strings(attempt["scope"], "scope"))
+                if digest(snapshot) != submission["source_digest"]:
+                    warnings.append(f"Pending submitted source changed: {task['id']}")
+            except (ProgramError, OSError):
+                warnings.append(f"Pending submitted source could not be verified: {task['id']}")
+    for value in all_refs:
+        ref = record(value, "evidence reference")
+        name = string(ref["path"], "evidence path")
+        expected = string(ref["sha256"], "evidence hash")
+        if name in refs and refs[name] != expected:
+            warnings.append(f"Conflicting frozen evidence hashes: {name}")
+        refs[name] = expected
+    require(len(refs) <= 2000, "Snapshot exceeds 2000 evidence files")
+    evidence_budget = ReadBudget(64 * 1024 * 1024)
+    for name, expected in refs.items():
+        path = program.path(name)
+        if not path.is_file():
+            warnings.append(f"Frozen evidence unavailable: {name}")
+            continue
+        content = evidence_budget.read(path, 8 * 1024 * 1024)
+        if sha(content) != expected:
+            warnings.append(f"Frozen evidence changed: {name}")
+    try:
+        for name, text in program.views(state).items():
+            path = program.path(name)
+            if (
+                not path.is_file()
+                or path.stat().st_size > 8 * 1024 * 1024
+                or bounded_bytes(path, 8 * 1024 * 1024) != text.encode("utf-8")
+            ):
+                warnings.append(f"Derived view drift: {name}; director may run render.")
+    except OSError:
+        warnings.append("Derived views unavailable; recorded registry remains readable.")
+    result_tasks: list[Json] = []
+    for task in tasks:
+        section = record(task["source"], "source section")
+        item: Record = {
+            key: task[key]
+            for key in (
+                "id",
+                "workstream",
+                "phase",
+                "status",
+                "owner",
+                "depends_on",
+                "related_to",
+                "conflict_groups",
+                "candidate_paths",
+                "required_checks",
+                "next_action",
+                "notes",
+            )
+        }
+        item.update(
+            {
+                "title": string(section["title"], "title"),
+                "planning_note": task.get("planning_note", ""),
+                "source": {
+                    **section,
+                    "path": source["path"],
+                    "reference_base": source["reference_base"],
+                },
+                "delivery": program.current_delivery(task)
+                if task["status"] == "done"
+                else {"status": "unrecorded", "remote_verified_by_tool": False},
+                "attempts": [],
+            }
+        )
+        for value in sequence(task["attempts"], "attempts"):
+            attempt = record(value, "attempt")
+            history: Record = {
+                key: content
+                for key, content in attempt.items()
+                if key not in {"baseline", "submission", "rounds"}
+            }
+            if "assignment" not in history:
+                unknown = coordination.assignment_metadata(
+                    {}, string(attempt["owner"], "attempt owner")
+                )
+                unknown.update({"actor_revision": None, "role": "unknown", "recorded_at": None})
+                history["assignment"] = unknown
+            rounds: list[Json] = []
+            for round_value in sequence(attempt.get("rounds", []), "rounds"):
+                submission = record(round_value, "round")
+                summary: Record = {
+                    key: content for key, content in submission.items() if key != "source_snapshot"
+                }
+                for kind in ("receipt", "review"):
+                    artifact = submission.get(kind)
+                    if artifact is None:
+                        continue
+                    ref = record(artifact, kind)
+                    path = program.path(string(ref["path"], "artifact path"))
+                    if path.is_file() and path.stat().st_size <= 1024 * 1024:
+                        captured = evidence_budget.read(path, 1024 * 1024)
+                        if sha(captured) == ref["sha256"]:
+                            metadata, parsed_sha = read_json_frozen(path, budget=evidence_budget)
+                            require(
+                                parsed_sha == ref["sha256"], "Captured artifact digest mismatch"
+                            )
+                            summary[kind + "_record"] = metadata
+                rounds.append(summary)
+            history["rounds"] = rounds
+            sequence(item["attempts"], "attempts").append(history)
+        result_tasks.append(item)
+    governance = coordination.snapshot_metadata(state)
+    categories = sequence(governance.get("categories", []), "categories")
+    for value in result_tasks:
+        task = record(value, "task")
+        task["category_id"] = next(
+            (
+                record(category, "category")["id"]
+                for category in categories
+                if task["id"]
+                in sequence(record(category, "category").get("task_ids", []), "category task_ids")
+            ),
+            task["workstream"],
+        )
+    require(
+        sha(bounded_bytes(backlog, 8 * 1024 * 1024)) == sha(initial),
+        "Registry changed during snapshot; refresh",
+    )
+    result: Record = {
+        "snapshot_version": 1,
+        "revision": sha(initial),
+        "generated_at": utc(),
+        "program_id": state["program_id"],
+        "total_tasks": len(tasks),
+        "counts": {
+            status: sum(task["status"] == status for task in tasks) for status in sorted(STATES)
+        },
+        "workstreams": state["workstreams"],
+        "communication_language": state.get("communication_language"),
+        "check_catalog": sorted(check_policy(state)[0]),
+        "minimum_checks": sorted(check_policy(state)[1]),
+        "bounds": {
+            "max_tasks": 2000,
+            "max_evidence_files": 2000,
+            "max_document_bytes": 8 * 1024 * 1024,
+            "max_evidence_bytes": 64 * 1024 * 1024,
+            "truncated": False,
+        },
+        "integrity": {
+            "status": "stale" if warnings else "fresh",
+            "warnings": sorted(set(warnings)),
+        },
+        "checkpoint": state.get("checkpoint"),
+        "tasks": result_tasks,
+        **governance,
+        "questions": questions.snapshot_questions(state),
+    }
+    require(len(canonical(result)) <= 8 * 1024 * 1024, "Snapshot output exceeds 8 MiB")
+    return result
+
+
+def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
+    """Publish a verified recovery copy; archive the old location without deleting it."""
+    director = coordination.current_director_id(state)
+    require(
+        args.owner == (director or "leader"),
+        "Relocation requires current director or legacy leader",
+    )
+    requested = Path(args.destination)
+    destination = requested.absolute() if requested.is_absolute() else program.repo / requested
+    require(
+        destination.is_relative_to(program.repo) and destination != program.repo,
+        "Destination must stay within repository",
+    )
+    destination = safe_path(program.repo, destination.relative_to(program.repo).as_posix())
+    require(
+        not destination.is_relative_to(program.directory)
+        and not program.directory.is_relative_to(destination),
+        "Relocation roots must not overlap",
+    )
+    require(not destination.exists(), "Relocation destination already exists; no overwrite")
+    original = bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024)
+    backup_path = f"recovery/relocations/{sha(original)}/original-backlog.json"
+    manifest_path = f"recovery/relocations/{sha(original)}/manifest.json"
+    files: dict[str, str] = {}
+    budget = ReadBudget(256 * 1024 * 1024)
+    # Preflight before creating a destination or reading any excluded path.
+    names: list[str] = []
+    for folder, dirs, filenames in os.walk(program.directory):
+        relative_folder = Path(folder).relative_to(program.directory)
+        for name in dirs:
+            safe_path(program.directory, (relative_folder / name).as_posix())
+        for name in sorted(filenames):
+            relative = (relative_folder / name).as_posix()
+            path = program.path(relative)
+            if name == ".feature-program.lock":
+                require(relative == name, "Nested program is busy")
+                continue
+            if name == "backlog.json" and relative != name:
+                require(
+                    path.with_name("RELOCATED.json").is_file(),
+                    "Relocate active nested programs separately first",
+                )
+            require(path.is_file(), "Relocation accepts regular files only")
+            names.append(relative)
+    require(len(names) <= 10000, "Relocation exceeds 10000 files")
+    target = Program(program.repo, destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.mkdir()  # Exclusive reservation: a concurrent/existing target is never replaced.
+    with target.lock():
+        require(
+            sorted(item.name for item in destination.iterdir()) == [".feature-program.lock"],
+            "Destination acquired content before reservation; no overwrite",
+        )
+        marker: Record = {
+            "source": program.directory.relative_to(program.repo).as_posix(),
+            "destination": destination.relative_to(program.repo).as_posix(),
+            "phase": "copying",
+        }
+        atomic_write(target.path("RELOCATION_INCOMPLETE.json"), canonical(marker))
+        for name in names:
+            content = budget.read(program.path(name), 8 * 1024 * 1024)
+            files[name] = sha(content)
+            atomic_write(target.path(name), content)
+        require(
+            sha(bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024)) == sha(original),
+            "Source registry changed during relocation",
+        )
+        old_root = string(marker["source"], "old root")
+        new_root = string(marker["destination"], "new root")
+        source = record(state["source"], "source")
+        old_source = dict(source)
+        for key in ("path", "reference_base"):
+            value = string(source[key], key)
+            if value == old_root or value.startswith(old_root + "/"):
+                source[key] = new_root + value[len(old_root) :]
+        program.event(
+            state,
+            "relocate",
+            {
+                "actor": args.owner,
+                "reason": args.reason,
+                "source_directory": old_root,
+                "destination_directory": new_root,
+                "original_registry_sha256": sha(original),
+                "previous_source": old_source,
+            },
+        )
+        target.validate(state)
+        encoded = canonical(state)
+        require(len(encoded) <= 8 * 1024 * 1024, "Canonical registry exceeds 8 MiB")
+        derived = target.views(state)
+        for name, content in files.items():
+            require(
+                sha(bounded_bytes(target.path(name), 8 * 1024 * 1024)) == content,
+                f"Copied artifact changed: {name}",
+            )
+        require(
+            not target.path(backup_path).exists() and not target.path(manifest_path).exists(),
+            "Recovery archive collision",
+        )
+        atomic_write(target.path(backup_path), original)
+        atomic_write(target.path("backlog.json"), encoded)
+        for name, content in derived.items():
+            atomic_write(target.path(name), content.encode("utf-8"))
+        target.validate(read_json(target.path("backlog.json")))
+        manifest: Record = {
+            **marker,
+            "phase": "ready",
+            "backup_path": backup_path,
+            "manifest_path": manifest_path,
+            "original_registry_sha256": sha(original),
+            "registry_sha256": sha(encoded),
+            "files": {
+                name: value
+                for name, value in files.items()
+                if name != "backlog.json" and name not in derived
+            },
+            "source_files": files,
+        }
+        atomic_write(target.path(manifest_path), canonical(manifest))
+        atomic_write(target.path("RELOCATION_INCOMPLETE.json"), canonical(manifest))
+        # Immediately before archival, detect external writes even during publication.
+        fresh_names = sorted(
+            path.relative_to(program.directory).as_posix()
+            for path in program.directory.rglob("*")
+            if path.is_file() and path.name != ".feature-program.lock"
+        )
+        require(fresh_names == sorted(names), "Source inventory changed during relocation")
+        fresh_budget = ReadBudget(256 * 1024 * 1024)
+        for name, expected in files.items():
+            require(
+                sha(fresh_budget.read(program.path(name), 8 * 1024 * 1024)) == expected,
+                f"Source artifact changed during relocation: {name}",
+            )
+        target.validate(read_json(target.path("backlog.json")))
+        copied_budget = ReadBudget(256 * 1024 * 1024)
+        for name, expected in record(manifest["files"], "copy manifest").items():
+            require(
+                sha(copied_budget.read(target.path(name), 8 * 1024 * 1024)) == expected,
+                f"Copied artifact changed before archival: {name}",
+            )
+        atomic_write(
+            program.path("RELOCATED.json"),
+            canonical(
+                {"destination": new_root, "registry_sha256": sha(encoded), "recorded_at": utc()}
+            ),
+        )
+        target.path("RELOCATION_INCOMPLETE.json").unlink()
+
+
+def recover_relocation(program: Program, args: argparse.Namespace) -> None:
+    """Finalize only an already verified publication; never promote an incomplete copy."""
+    marker = read_json(program.path("RELOCATION_INCOMPLETE.json"))
+    require(
+        marker.get("phase") == "ready",
+        "Copy never reached verified publication; original remains authoritative",
+    )
+    require(
+        marker.get("destination") == program.directory.relative_to(program.repo).as_posix(),
+        "Recovery destination mismatch",
+    )
+    source = Program(
+        program.repo, safe_path(program.repo, string(marker.get("source"), "source directory"))
+    )
+    require(
+        sha(bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024))
+        == marker.get("registry_sha256"),
+        "Published registry changed",
+    )
+    require(
+        sha(
+            bounded_bytes(
+                program.path(string(marker.get("backup_path"), "backup path")), 8 * 1024 * 1024
+            )
+        )
+        == marker.get("original_registry_sha256"),
+        "Recovery backup changed",
+    )
+    for name, expected in record(marker.get("files"), "copy manifest").items():
+        require(
+            sha(bounded_bytes(program.path(name), 8 * 1024 * 1024)) == expected,
+            f"Recovery artifact changed: {name}",
+        )
+    state = read_json(program.path("backlog.json"))
+    program.validate(state)
+    require(
+        args.owner == (coordination.current_director_id(state) or "leader"),
+        "Recovery requires current director or legacy leader",
+    )
+    for name, content in program.views(state).items():
+        require(
+            bounded_bytes(program.path(name), 8 * 1024 * 1024) == content.encode("utf-8"),
+            "Recovery views changed",
+        )
+    if source.path("RELOCATED.json").exists():
+        archive = read_json(source.path("RELOCATED.json"), limit=64 * 1024)
+        require(
+            archive.get("destination") == marker["destination"]
+            and archive.get("registry_sha256") == marker.get("registry_sha256"),
+            "Source archive does not match publication",
+        )
+    else:
+        with source.lock():
+            require(
+                sha(bounded_bytes(source.path("backlog.json"), 8 * 1024 * 1024))
+                == marker.get("original_registry_sha256"),
+                "Original source changed; recovery cannot archive it",
+            )
+            source.load()
+            source_files = record(marker.get("source_files"), "source manifest")
+            require(
+                sorted(
+                    path.relative_to(source.directory).as_posix()
+                    for path in source.directory.rglob("*")
+                    if path.is_file() and path.name != ".feature-program.lock"
+                )
+                == sorted(source_files),
+                "Original inventory changed; recovery cannot archive it",
+            )
+            for name, expected in source_files.items():
+                require(
+                    sha(bounded_bytes(source.path(name), 8 * 1024 * 1024)) == expected,
+                    f"Original artifact changed: {name}",
+                )
+            atomic_write(
+                source.path("RELOCATED.json"),
+                canonical(
+                    {
+                        "destination": marker["destination"],
+                        "registry_sha256": marker["registry_sha256"],
+                        "recorded_at": utc(),
+                        "recovery_reason": args.reason,
+                    }
+                ),
+            )
+    program.path("RELOCATION_INCOMPLETE.json").unlink()
+
+
+def starter(program: Program, args: argparse.Namespace) -> None:
+    """Create synthetic local starting material; never initialize progress or evidence."""
+    task_ids = args.task or ["TASK-1", "TASK-2"]
+    require(
+        bool(task_ids)
+        and len(task_ids) == len({name.casefold() for name in task_ids})
+        and all(portable_task_id(name) for name in task_ids),
+        "Starter IDs must be portable unique identifiers",
+    )
+    string(args.program_id, "program_id")
+    objective = string(args.objective, "human objective")
+    criteria = [string(value, "human objective criterion") for value in args.criterion]
+    require(bool(criteria), "Human objective needs explicit completion criteria")
+    report = "# Synthetic work-program source\n\nReplace the examples with the approved scope before initialization.\n\n"
+    for task_id in task_ids:
+        report += f"### {task_id}. Replace this synthetic task\n\n- Goal: describe a bounded authorized outcome.\n- Existing evidence: inspect current source; do not assume an old suggestion is a bug.\n- Proposed change: replace this example with the approved delta.\n- Acceptance: record every criterion and actual verification required.\n\n"
+    head = program.current_head()
+    plan: Record = {
+        "schema_version": 1,
+        "program_id": args.program_id,
+        "baseline_head": head,
+        "objective": {
+            "id": "objective-1",
+            "title": objective,
+            "criteria": criteria,
+            "task_ids": list(task_ids),
+            "status": "active",
+            "supplied_by": "user",
+            "decision_owner": "director",
+            "next_action_owner": "director",
+            "history": [],
+        },
+        "workstreams": [
+            {
+                "id": "delivery",
+                "name": "Delivery",
+                "default_agent": "worker",
+                "focus": "Replace with approved bounded focus",
+            }
+        ],
+        "tasks": [
+            {
+                "id": task_id,
+                "workstream": "delivery",
+                "phase": index + 1,
+                "depends_on": [],
+                "related_to": [],
+                "conflict_groups": [],
+                "candidate_paths": [],
+                "required_checks": ["acceptance", "scoped_tests", "format_lint"],
+                "next_action": "Replace synthetic scope and revalidate current source before claiming",
+                "planning_note": "Example only; no completed work or evidence",
+            }
+            for index, task_id in enumerate(task_ids)
+        ],
+    }
+    if args.language is not None:
+        plan["communication_language"] = communication_language(args.language)
+    files = {
+        "source/feature-opportunities.md": report,
+        "planning.json": canonical(plan).decode(),
+        "README.md": "# Local work-program recovery\n\nRead DIRECTOR.md, DECISIONS.md and CHECKPOINT.md if present. Inspect actual Git state and recorded claims before changing anything. Never infer a live worker or completion from a saved name. Keep all real plans, source, state and evidence local/ignored.\n\nThe generated source/plan are synthetic examples: replace them, review the complete scope, and explicitly initialize with tools/feature_program.py init --review-baseline CURRENT_REVIEWED_SHA. For a custom --program-dir, supply its repository-relative --report and --planning paths. No backlog or passing evidence is created by starter. Use status/check/packet and bounded revalidation before each claim.\n",
+        "DIRECTOR.md": "# Final director contract\n\nThe human supplies the major objective and completion criteria. The final director decomposes it and decides task purposes, methods, priority, scope, conflicts, acceptance, assignments and authorized delivery within that objective. Check current user authority before Git/PR/CI/merge actions; authority is not granted by this template. Create, reuse, replace or retire workers/sub-directors according to independent work, capability, ownership, cost and observed availability; do not enforce a fixed staff count. Record reasons, exact verified launch settings or inherited/unknown values, and evidence. Native agent creation happens outside this tool. A saved address is not live-agent proof.\n\nSub-directors audit bounded areas, continuity, blockers and requirements. Multiple sub-directors may report to the final director; hierarchy does not grant merge authority or promote them automatically. Consult their durable record after compaction. Verify claims, complete acceptance, source hashes and actual latest-revision CI before accepting delivery. Repeated review must bind changed bytes.\n\nWhen the final director accepts the entire objective against its explicit criteria/evidence, record that verdict and assign next-goal setting to the human. Wait in awaiting_next_goal; do not invent or autonomously start another major objective. Start the next preserved cycle only after an explicit human goal arrives.\n",
+        "SUBDIRECTOR.md": "# Bounded oversight and continuity\n\nAudit assigned areas and report goal/criteria drift, ownership conflicts, stale evidence and unrecorded decisions to the final director. Multiple sub-directors may oversee independent areas; only the appointed final director arbitrates conflicts and authorized integration. Inspect actual diffs/evidence against the goal, not only worker self-reports. Review at claim/start, meaningful milestones, changed assumptions/scope, final review/merge and recovery.\n\nUse note/block/rework/release/handoff to record drift, correction and fresh source validation. Routine methods can be corrected within the approved objective. If the director is uncertain about a material objective, acceptance or scope conflict, ask the human a focused question with options/tradeoffs and block only dependent work. Never infer consent from elapsed time. Preserve the reply and latest decision pointers before resuming.\n",
+        "WORKER.md": "# Worker assignment and evidence\n\nRead the task packet and current decisions. Own only the explicit claimed paths and attempt evidence; preserve others' edits. Revalidate complete acceptance at actual HEAD and scoped digest before claim. Capture executed commands/outcomes honestly. Compilation and native execution are distinct. Block only affected work. Submit immutable execution receipts for review; never mark done from a chat message.\n\nBefore replacement, preserve outgoing goal, constraints, HEAD, scope/digest, changed paths, evidence, decisions, unresolved findings and next action. The director records explicit release; the incoming worker acknowledges the handoff and freshly revalidates before claiming a new attempt. Timeout alone never authorizes takeover.\n",
+        "REVIEW.md": "# Repeated review contract\n\nCompare the entire original acceptance against the exact submitted receipt/source hashes and real evidence. Record accepted or rejected review with precise findings. Leader/self review needs an honest reason, never a claim of independence. Rework retains frozen rounds and uses unique filenames for new evidence. Completed attempts remain historical; regressions require a reasoned leader reopening and new revalidation. Caller-recorded CI is distinct from verified remote observations and merge.\n",
+        "EVIDENCE.md": "# Evidence protocol\n\nEvidence belongs under evidence/TASK/attempt-N/ and becomes immutable when admitted. Use template TASK --kind revalidation|execution|review|delivery for failing-safe JSON skeletons. Replace every placeholder with actual facts; absent, skipped or unavailable verification never means passed. Native checks cannot be replaced by compilation. Do not store credentials, raw user data, private configuration contents or huge logs.\n",
+        "DECISIONS.md": "# Local program decisions\n\nNo execution, staffing or delivery authorization is implied by these synthetic starter files. Record current human authorization, affected tasks, rationale and consequences before applying new direction. Keep temporary status in backlog/checkpoints.\n",
+        "DESIGN.md": "# Program invariants\n\nCanonical backlog.json is the only runtime status store. Source/plan task sets match exactly; source sections remain lossless. Hard dependencies are acyclic; claims require fresh source/evidence and serialize scopes/conflict groups. Requirements are not silently waived. The tool records facts, does not execute tests, native apps, agents or GitHub automation. Derived views can be recovered through render without resetting history.\n",
+        "DELIVERY.md": "# Reviewed delivery and branch cleanup\n\nThe final director checks the complete reviewed source, actual latest-revision PR/CI and current human merge authority before integration. Record reviewed completion, caller-recorded CI, verified remote observations, push, merge and cleanup as separate facts. Unexpected skipped, missing, failed or canceled required checks prevent verified delivery. No Git action is performed by this registry or dashboard.\n\nAfter confirmed merge and target inclusion, inspect whether the work branch is unchanged, has no active checkout/worktree and no dependent PR. Only then use authorized normal local/remote branch deletion and record done/deferred evidence. Never delete an unmerged/default/protected/target/advanced branch, never force deletion, and preserve PR/commit/CI/evidence history. Deferred cleanup does not erase completed work.\n",
+        "QUESTIONS.md": "# Human questions and recorded replies\n\nThe director issues a focused question when the major goal, acceptance or material scope is uncertain. Include options/tradeoffs and identify dependent work. The human can answer through the configured local question inbox; this is the dashboard's narrow write exception. A saved answer is not automatically applied.\n\nPreserve issued -> answered -> acknowledged -> applied states, exact question/version and answer receipt. The director inspects the recorded reply, acknowledges it, records the resulting decision and applies only authorized follow-up. Do not interpret a timeout as consent or automatically wake/recreate a stopped director. After recovery, inspect unanswered or unacknowledged questions before dependent work resumes.\n",
+    }
+    files["DIRECTOR.md"] += (
+        "\n## Launch settings and integrated acceptance\n\nChoose supported model/reasoning combinations according to complexity, consequence, independent review, speed and cost. Preserve more specific human choices. Announce actual launch settings before launching and record the reason/provenance; inherited unverified settings stay unknown. Running agents do not change configuration when a saved actor record changes. Use an acknowledged handoff and a new launch when a change is required. Freeze assignment-time settings for history.\n\nBefore goal completion, require a fresh independent integrated review of all goal criteria and aggregate member-task scope, bound to the exact current source digest. Preserve its accepted artifact and evidence under the coordination evidence directory. A prior review or per-task success alone does not establish complete goal acceptance.\n"
+    )
+    files["SUBDIRECTOR.md"] += (
+        "\nAudit launch-setting rationale and provenance and immutable assignment history. Do not claim a running role was reconfigured from a metadata edit. Surface missing independent integrated acceptance to the final director.\n"
+    )
+    for name in ("README.md", "DIRECTOR.md", "SUBDIRECTOR.md", "WORKER.md", "QUESTIONS.md"):
+        files[name] += (
+            "\nUse the program's recorded communication_language for user questions, options and explanations across recovery and handoffs. Missing/null means unknown; never infer the language from a browser locale. Preserve original source and user replies. Change the recorded language only after an explicit human language change. Maintained documentation remains English; scripts, tests and UI may contain the authorized user language.\n"
+        )
+    for name in ("DIRECTOR.md", "SUBDIRECTOR.md", "WORKER.md"):
+        files[name] += (
+            "\nInspect related_to, dependencies and the current owner/contact registry. Communicate directly with peers for bounded API, data and dependency agreements while preserving owned-file boundaries. Persist consequential agreements/blockers as task notes/evidence before relying on them and record counterpart acknowledgement. Escalate cross-scope or goal conflicts to the sub-director/final director. If the native runtime cannot address a peer, relay through the director; never invent delivery or acknowledgement. This tool does not send messages or launch agents.\n"
+        )
+    require(
+        not program.path("backlog.json").exists()
+        and all(not program.path(name).exists() for name in files),
+        "Starter refuses to overwrite existing program material",
+    )
+    for name, text in files.items():
+        atomic_write(program.path(name), text.encode("utf-8"))
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--repo", type=Path, default=ROOT)
     result.add_argument(
-        "--program-dir", default=DEFAULT_PROGRAM, help="Repository-relative program directory"
+        "--program-dir",
+        default=DEFAULT_PROGRAM,
+        help="Program directory inside the repository (relative or absolute)",
     )
     commands = result.add_subparsers(dest="command", required=True)
+    start = commands.add_parser(
+        "starter", help="Create synthetic local source/plan and recovery instructions"
+    )
+    start.add_argument("--program-id", required=True)
+    start.add_argument(
+        "--language", help="Explicit user communication language tag; absent is unknown"
+    )
+    start.add_argument("--objective", required=True, help="Explicit human-supplied major objective")
+    start.add_argument(
+        "--criterion",
+        action="append",
+        required=True,
+        help="Human objective completion criterion; repeat",
+    )
+    start.add_argument(
+        "--task", action="append", help="Portable task ID; repeat for multiple synthetic examples"
+    )
+    commands.add_parser(
+        "snapshot", help="Print bounded read-only dashboard JSON; never creates a lock"
+    )
     init = commands.add_parser("init")
-    init.add_argument("--report", default=REPORT)
-    init.add_argument("--planning", default=DEFAULT_PROGRAM + "/planning.json")
+    init.add_argument("--report")
+    init.add_argument("--planning")
     init.add_argument(
         "--review-baseline", required=True, help="Original report reviewed commit SHA"
     )
@@ -1382,44 +2215,63 @@ def parser() -> argparse.ArgumentParser:
     )
     for name in ("check", "status", "next", "render"):
         commands.add_parser(name)
+    language = commands.add_parser(
+        "language", help="Record an explicit human communication language"
+    )
+    language.add_argument("--value", required=True)
+    language.add_argument("--owner", required=True)
+    language.add_argument("--reason", required=True)
+    move = commands.add_parser(
+        "relocate", help="Verify a recovery copy and archive the original program"
+    )
+    move.add_argument("--destination", required=True)
+    move.add_argument("--owner", required=True)
+    move.add_argument("--reason", required=True)
+    recover = commands.add_parser(
+        "relocate-recover", help="Finalize an already verified incomplete publication"
+    )
+    recover.add_argument("--owner", required=True)
+    recover.add_argument("--reason", required=True)
     packet = commands.add_parser("packet")
-    packet.add_argument("id", choices=EXPECTED_IDS)
+    packet.add_argument("id")
     fingerprint = commands.add_parser("fingerprint")
     fingerprint.add_argument("--scope", action="append", required=True)
     template = commands.add_parser("template")
-    template.add_argument("id", choices=EXPECTED_IDS)
+    template.add_argument("id")
     template.add_argument(
         "--kind", choices=("revalidation", "execution", "review", "delivery"), required=True
     )
     template.add_argument("--scope", action="append")
     claim = commands.add_parser("claim")
-    claim.add_argument("id", choices=EXPECTED_IDS)
+    claim.add_argument("id")
     claim.add_argument("--owner", required=True)
     claim.add_argument("--scope", action="append", required=True)
     claim.add_argument("--next-action", required=True)
     claim.add_argument("--revalidation", required=True, help="Program-relative evidence JSON")
     for name in ("note", "block", "release", "reopen"):
         command = commands.add_parser(name)
-        command.add_argument("id", choices=EXPECTED_IDS)
+        command.add_argument("id")
         command.add_argument("--owner", required=True, help="Current owner or leader")
         command.add_argument("--reason", required=True)
         command.add_argument("--next-action", required=True)
         command.add_argument("--evidence", action="append", default=[])
     submit = commands.add_parser("submit")
-    submit.add_argument("id", choices=EXPECTED_IDS)
+    submit.add_argument("id")
     submit.add_argument("--owner", required=True)
     submit.add_argument("--receipt", required=True)
     for name in ("complete", "rework"):
         review = commands.add_parser(name)
-        review.add_argument("id", choices=EXPECTED_IDS)
+        review.add_argument("id")
         review.add_argument("--review", required=True)
     delivery = commands.add_parser("delivery")
-    delivery.add_argument("id", choices=EXPECTED_IDS)
+    delivery.add_argument("id")
     delivery.add_argument("--receipt", required=True)
     checkpoint = commands.add_parser("checkpoint")
     checkpoint.add_argument("--note", required=True)
     checkpoint.add_argument("--next-action", required=True)
-    checkpoint.add_argument("--team-state", default=".omo/teams/team-e58decd2/team.json")
+    checkpoint.add_argument("--team-state", default=".work/handoffs/current.json")
+    questions.add_commands(commands)
+    coordination.add_commands(commands)
     return result
 
 
@@ -1427,10 +2279,33 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         repo = args.repo.absolute()
-        program = Program(repo, safe_path(repo, args.program_dir))
+        requested = Path(args.program_dir)
+        directory = requested.absolute() if requested.is_absolute() else repo / requested
+        require(
+            directory.is_relative_to(repo) and directory != repo,
+            "Program must be within configured repository",
+        )
+        relative_program = directory.relative_to(repo).as_posix()
+        program = Program(repo, safe_path(repo, relative_program))
+        if args.command == "snapshot":
+            print(canonical(read_snapshot(repo, program.directory)).decode(), end="")
+            return 0
+        if args.command == "starter":
+            with program.lock():
+                starter(program, args)
+            print("starter: OK; synthetic files only, no registry or passing evidence created")
+            return 0
+        if args.command == "init":
+            args.report = args.report or relative_program + "/source/feature-opportunities.md"
+            args.planning = args.planning or relative_program + "/planning.json"
         for name in ("owner", "reason", "next_action", "note"):
             if hasattr(args, name):
                 string(getattr(args, name), name)
+        if args.command == "relocate-recover":
+            with program.lock(relocation_recovery=True):
+                recover_relocation(program, args)
+            print("relocate-recover: OK; explicitly use this destination")
+            return 0
         if args.command == "fingerprint":
             snapshot = program.source_snapshot([safe_relative(path) for path in args.scope])
             print(
@@ -1447,9 +2322,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         with program.lock():
             state = program.initialize(args) if args.command == "init" else program.load()
+            if questions.apply_command(program, state, args) or coordination.apply_command(
+                program, state, args
+            ):
+                program.save(state)
+                print(f"{args.command}: OK")
+                return 0
             match args.command:
                 case "init":
                     program.save(state)
+                case "relocate":
+                    relocate(program, state, args)
                 case "check":
                     program.check(state)
                 case "status" | "next":
@@ -1465,6 +2348,26 @@ def main(argv: list[str] | None = None) -> int:
                     program.render(state)
                 case "claim":
                     program.claim(state, args)
+                    program.save(state)
+                case "language":
+                    value = communication_language(args.value)
+                    director = coordination.current_director_id(state)
+                    require(
+                        args.owner == (director or "leader"),
+                        "Language changes require the current director (or legacy leader)",
+                    )
+                    previous = state.get("communication_language")
+                    state["communication_language"] = value
+                    program.event(
+                        state,
+                        "language",
+                        {
+                            "actor": args.owner,
+                            "previous_language": previous,
+                            "communication_language": value,
+                            "reason": args.reason,
+                        },
+                    )
                     program.save(state)
                 case "note" | "block" | "release" | "reopen":
                     program.transition(state, args)
@@ -1485,7 +2388,7 @@ def main(argv: list[str] | None = None) -> int:
                     raise ProgramError(f"Unknown command: {other}")
             print(f"{args.command}: OK")
         return 0
-    except (ProgramError, OSError) as exc:
+    except (ProgramError, coordination.GovernanceError, questions.QuestionError, OSError) as exc:
         print(f"feature-program: {exc}", file=sys.stderr)
         return 1
 
