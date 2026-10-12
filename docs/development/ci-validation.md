@@ -28,6 +28,20 @@ and provide usable license credentials as described below. A manual workflow dis
 also respects this variable. Review the Personal-only activation limits before enabling
 native jobs for an account that also has company entitlements.
 
+## Runner images
+
+All GitHub-hosted Linux jobs use `ubuntu-26.04` explicitly, including validation,
+reporting and publication workflows. Windows and macOS bootstrap coverage remains.
+Pinning the reviewed OS release keeps future `ubuntu-latest` migrations from changing
+the execution environment silently; it does not freeze the image's weekly software updates.
+There is no separate Ubuntu selector or duplicate candidate matrix. Existing publication
+and licensed Unity execution conditions still control whether those jobs may run.
+
+GitHub announced the `ubuntu-latest` migration for October 19 through November 19, 2026.
+See the [runner image announcement](https://github.com/actions/runner-images/issues/14748)
+and [Ubuntu 26.04 image inventory](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Readme.md).
+The pinned actionlint release accepts the GA label through `.github/actionlint.yaml`.
+
 ## Python
 
 [`python-tests.yml`](../../.github/workflows/python-tests.yml) defaults to both complete suites on
@@ -158,7 +172,7 @@ reusable-workflow callers.
 Direct Python workflow runs and release callers retain the default report after the Python
 matrix. Report failures remain observational in both paths.
 
-Comparisons require identical Python minor, runner OS/architecture, worker count, coverage
+Comparisons require identical Python minor, runner OS/architecture and OS release, worker count, coverage
 mode and test/skip inventory, including the nested HTTP inventory. At least three matching
 samples are required. New snapshots also fingerprint each module's cases and outcomes, so
 unchanged modules retain their baseline when another module changes. Legacy snapshots
@@ -172,6 +186,23 @@ and cases. Missing, expired or unreadable history reports current measurements w
 blocking the test gate. Timing snapshots are retained for seven days and combined reports
 for 30 days under `python-test-timings`.
 
+Snapshots also record the actual OS release, `ImageOS`, `ImageVersion`, Python patch
+version and default .NET SDK. OS release changes start a fresh baseline; older snapshots
+without OS metadata are not assumed compatible. Weekly image builds and Python/.NET
+patch changes remain visible in the report without continually resetting history.
+SDK discovery for this metadata is bounded to five seconds and reports unavailable
+information explicitly, without failing the test gate.
+
+The large-result interoperability tests attach SDK discovery, direct C# compilation and
+child execution durations to JUnit. The report shows their call counts, totals and maxima,
+plus the SDK/framework actually selected by the fixture, which can differ from the default
+.NET SDK. Compilation remains once per module; all real C# writer and WebSocket cases
+remain. Phase durations are already part of testcase time and are never added to suite
+elapsed time. Failed subprocess phases retain their measurements; SDK enumeration now
+has the same 30-second timeout as compilation. A past 15.145-second first-case spike did
+not reproduce locally, so these measurements support diagnosis without claiming a cause
+or an unmeasured speedup.
+
 The report also records completed Pylint, cache and preparation steps from the current
 workflow's read-only Jobs API. The fork report records stages after both callers finish,
 even when its timing comparison or snapshot download fails. The independent compile
@@ -181,6 +212,10 @@ Stage observations have one-second API precision, include result status and do n
 unlike cold/warm paths or gate tests. API outages never turn a failed selected check green.
 
 For offline inspection from the repository root:
+
+Create snapshots on the test host with the same Python interpreter that ran the tests.
+For downloaded CI evidence, inspect the saved timing snapshot/report directly rather than
+attaching the local machine's environment to historical JUnit results.
 
 ```sh
 python tools/ci_test_performance.py snapshot --junit Server/test-results.xml --python 3.15 --suite tools --workers 2 --output .tmp/test-timings/3.15-tools.json
@@ -430,3 +465,31 @@ a warm run hashes restored inputs and prepares source without pulling an Editor 
 downloading packages. Neither path launches the Unity Editor. See the
 [GitHub dependency caching reference](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching)
 for branch access and immutable cache behavior.
+
+### Cache retention
+
+Run `tools/ci_cache_retention.py` from an up-to-date checkout after CI finishes when
+repository cache usage grows. Its default is a read-only JSON plan. Only recognized
+Unity compiler and optional-input cache namespaces on the selected branch are eligible.
+The tool derives current keys from the same validated manifests and identity helpers as
+CI, preserves the current and immediately preceding distinct key for each active Unity
+version, and leaves unknown namespaces, future schemas and other refs untouched. If a
+current key has not been published, the entire version group is preserved. Newer,
+unconfirmed generations are also preserved. Older generations and retired Unity versions
+must be at least 24 hours old and unused for at least 24 hours before they qualify.
+
+```sh
+python tools/ci_cache_retention.py --repository ykh09242/unity-mcp --ref refs/heads/beta --output .tmp/ci-cache-plan.json
+# Inspect candidate IDs, keys, sizes and preservation reasons before applying.
+python tools/ci_cache_retention.py --repository ykh09242/unity-mcp --ref refs/heads/beta --apply-plan .tmp/ci-cache-plan.json
+```
+
+The repository must match the checkout's explicit GitHub `origin`, not `gh`'s implicit
+repository, which can resolve to the upstream of a fork. The selected branch and local
+HEAD must match the live origin ref, and cache identity inputs must be tracked and clean.
+Apply accepts a reviewed plan no older than one hour, rechecks full paginated cache and
+active-workflow inventories, and deletes only still-eligible exact IDs. These checks repeat
+before each deletion. Incomplete API responses, source drift, active runs and changed
+candidate metadata stop deletion; partial progress is reported per deleted ID so a new
+plan can be generated. Current/previous caches are protected independently of their age.
+This on-demand tool does not change GitHub's repository-wide cache quota or eviction rules.
