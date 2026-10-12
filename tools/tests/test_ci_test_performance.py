@@ -292,6 +292,7 @@ def test_github_history_filters_runs_and_reads_only_small_named_member(timing, m
     current = {
         "id": 20,
         "workflow_id": 2,
+        "run_attempt": 1,
         "head_branch": "beta",
         "event": "push",
         "conclusion": "success",
@@ -620,3 +621,361 @@ def test_module_report_shows_its_own_bounded_sample_count(timing, count):
     assert f"| tests.slow | 15.00s | {baseline} | {min(count, performance.MAX_SAMPLES)} |" in report
     assert "| 0 | Collecting baseline" in report
     assert not warnings
+
+
+def workload_fixture(timing):
+    snapshots, jobs = [], []
+    for index, minor in enumerate(range(11, 16)):
+        entry = copy.deepcopy(timing)
+        entry["id"] = f"3.{minor}-tools"
+        entry["context"]["python"] = f"3.{minor}"
+        snapshots.append(entry)
+        jobs.append(
+            {
+                "name": f"Run Python tools tests (3.{minor})",
+                "id": index + 1,
+                "run_attempt": 1,
+                "status": "completed",
+                "conclusion": "success",
+                "labels": ["ubuntu-26.04"],
+                "steps": [],
+                "started_at": "2026-10-12T00:00:00Z",
+                "completed_at": "2026-10-12T00:01:40Z",
+            }
+        )
+    return snapshots, jobs
+
+
+def test_report_cli_shares_api_inventory_and_keeps_active_report_outside_workload(
+    timing, tmp_path, monkeypatch
+):
+    # Given complete snapshots/jobs and a reporting job still running.
+    snapshots, jobs = workload_fixture(timing)
+    jobs.append({"name": "Python timing report", "status": "in_progress", "steps": []})
+    current = tmp_path / "current"
+    current.mkdir()
+    for entry in snapshots:
+        (current / f"{entry['id']}.json").write_text(json.dumps(entry), encoding="utf-8")
+    calls = []
+
+    def api(endpoint):
+        calls.append(endpoint)
+        if endpoint.endswith("/runs/20"):
+            return json.dumps(
+                {
+                    "id": 20,
+                    "workflow_id": 2,
+                    "run_attempt": 1,
+                    "event": "push",
+                    "head_branch": "beta",
+                }
+            ).encode()
+        if "/workflows/2/runs?" in endpoint:
+            return b'{"workflow_runs":[]}'
+        if "/runs/20/jobs?" in endpoint:
+            return json.dumps({"total_count": len(jobs), "jobs": jobs}).encode()
+        pytest.fail(f"Unexpected request: {endpoint}")
+
+    monkeypatch.setattr(performance, "github_api", api)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    output = tmp_path / "output"
+    # When executing the real report CLI path.
+    status = performance.main(
+        [
+            "report",
+            "--current",
+            str(current),
+            "--repository",
+            "owner/repo",
+            "--run-id",
+            "20",
+            "--workload",
+            "python",
+            "--output",
+            str(output),
+        ]
+    )
+    # Then the existing bundle/report retain tests and stages plus workload metrics.
+    record = json.loads((output / "timings.json").read_bytes())
+    report = (output / "report.md").read_text(encoding="utf-8")
+    assert status == 0 and len(calls) == 3
+    assert len(record["snapshots"]) == 5 and record["stages"] == []
+    assert record["workload"]["elapsedSpanSeconds"] == 100
+    assert record["workload"]["summedJobSeconds"] == 500
+    assert record["workload"]["peakConcurrency"] == 5
+    assert "CI stage timings" in report and "Completed CI workload" in report
+    assert "telemetry is unavailable" in report
+
+
+@pytest.mark.parametrize("metric", [None, "valid", "malformed", "wrong-run", "stale-attempt"])
+def test_workload_history_reuses_existing_archive_and_skips_legacy_or_invalid_metrics(
+    timing, monkeypatch, metric
+):
+    # Given one previous valid test bundle with optional workload metrics.
+    snapshots, jobs = workload_fixture(timing)
+    current = {
+        "id": 20,
+        "workflow_id": 2,
+        "run_attempt": 1,
+        "event": "push",
+        "head_branch": "beta",
+        "conclusion": "success",
+    }
+    previous = {**current, "id": 19}
+    report = {"schema": performance.SCHEMA, "snapshots": snapshots}
+    if metric is not None:
+        report["workload"] = performance.ci_job_performance.observe(
+            jobs, previous, ("python", snapshots)
+        ).record()
+        if metric == "malformed":
+            report["workload"]["elapsedSpanSeconds"] = math.inf
+        elif metric == "wrong-run":
+            report["workload"]["runId"] = 18
+        elif metric == "stale-attempt":
+            previous["run_attempt"] = 2
+    content = io.BytesIO()
+    with zipfile.ZipFile(content, "w") as archive:
+        archive.writestr("timings.json", json.dumps(report))
+    calls = []
+
+    def api(endpoint):
+        calls.append(endpoint)
+        if "/workflows/2/runs?" in endpoint:
+            return json.dumps({"workflow_runs": [previous]}).encode()
+        if "/runs/19/artifacts?" in endpoint:
+            return json.dumps(
+                {
+                    "artifacts": [
+                        {
+                            "id": 31,
+                            "name": performance.ARTIFACT,
+                            "expired": False,
+                            "size_in_bytes": len(content.getvalue()),
+                        }
+                    ]
+                }
+            ).encode()
+        if endpoint.endswith("/artifacts/31/zip"):
+            return content.getvalue()
+        pytest.fail(f"Unexpected request: {endpoint}")
+
+    monkeypatch.setattr(performance, "github_api", api)
+    observed = []
+    request = performance.ci_job_performance.WorkloadHistory("python", current, observed)
+    # When loading bounded history through its existing archive reader.
+    history, notes = performance.github_history("owner/repo", 20, request)
+    # Then malformed/legacy workload fields do not erase valid test timing history.
+    assert history == [snapshots] and len(calls) == 3
+    assert len(observed) == (1 if metric == "valid" else 0)
+    assert any("Skipped invalid workload" in note for note in notes) == (
+        metric in {"malformed", "wrong-run", "stale-attempt"}
+    )
+
+
+def worker_payload(complete=True):
+    return {
+        "schema": 1,
+        "distribution": "no",
+        "expectedWorkers": 1,
+        "complete": complete,
+        "elapsedSeconds": 20,
+        "workers": [
+            {
+                "id": "main",
+                "testCount": 3,
+                "elapsedSeconds": 20,
+                "collectionSeconds": 1,
+                "protocolSeconds": 15,
+                "setupSeconds": 2,
+                "callSeconds": 12,
+                "teardownSeconds": 1,
+                "firstTestSeconds": 1,
+                "lastTestSeconds": 16,
+                "finishedSeconds": 20,
+            }
+        ]
+        if complete
+        else [],
+    }
+
+
+def test_optional_worker_snapshot_ingestion_retains_compact_metrics(timing, tmp_path):
+    # Given a bounded optional worker report.
+    path = tmp_path / "worker.json"
+    path.write_text(json.dumps(worker_payload()), encoding="utf-8")
+    junit = tmp_path / "junit.xml"
+    junit.write_text(
+        '<testsuite time="20"><testcase name="one" time="8"/><testcase name="two" time="7"/><testcase name="skip" time="0"><skipped/></testcase></testsuite>',
+        encoding="utf-8",
+    )
+    # When capturing the standard snapshot with its optional telemetry path.
+    result = performance.snapshot(
+        junit,
+        python="3.15",
+        suite="tools",
+        runner="Linux-X64",
+        workers=0,
+        coverage=False,
+        worker_timings=path,
+    )
+    # Then serial worker count and distribution remain compatible with the suite.
+    assert performance.validate_snapshot(result)["workerTimings"]["complete"] is True
+    assert result["context"]["distribution"] == "no"
+
+
+def test_incomplete_worker_metadata_remains_explicit_in_report(timing):
+    # Given valid JUnit timing but incomplete optional worker observations.
+    timing["workerTimings"] = worker_payload(False)
+    timing["context"]["distribution"] = "no"
+    performance.validate_snapshot(timing)
+    # When rendering the report.
+    report, _ = performance.render_report([timing], [], [])
+    # Then incomplete telemetry is identified without claiming worker coverage.
+    assert "incomplete" in report.lower()
+
+
+@pytest.mark.parametrize("change", ["count", "workers", "distribution"])
+def test_worker_metadata_must_match_snapshot_selection(timing, change):
+    # Given telemetry that claims a different test count, scheduler or worker count.
+    timing["workerTimings"] = worker_payload()
+    timing["context"]["distribution"] = "no"
+    if change == "count":
+        timing["workerTimings"]["workers"][0]["testCount"] = 4
+    elif change == "workers":
+        timing["context"]["workers"] = 2
+    else:
+        timing["context"]["distribution"] = "loadfile"
+    # When validating the snapshot, then mismatched optional metadata is rejected.
+    with pytest.raises(ValueError, match="worker timing distribution"):
+        performance.validate_snapshot(timing)
+
+
+def test_compile_stages_cli_loads_matching_artifact_and_records_same_workload_metrics(
+    tmp_path, monkeypatch
+):
+    # Given all manifest rows and a preceding compile-only bundle.
+    names, _ = performance.ci_job_performance.selection("compile", [])
+    jobs = [
+        {
+            "name": name,
+            "id": index + 1,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "labels": ["ubuntu-26.04"],
+            "steps": [
+                {
+                    "name": "Compile",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "started_at": "2026-10-12T00:00:10Z",
+                    "completed_at": "2026-10-12T00:01:40Z",
+                }
+            ],
+            "started_at": "2026-10-12T00:00:00Z",
+            "completed_at": "2026-10-12T00:01:40Z",
+        }
+        for index, name in enumerate(sorted(names))
+    ]
+    run = {
+        "id": 20,
+        "workflow_id": 2,
+        "run_attempt": 1,
+        "event": "push",
+        "head_branch": "beta",
+        "conclusion": "success",
+    }
+    previous = {**run, "id": 19}
+    record = {
+        "schema": 1,
+        "snapshots": [],
+        "workload": performance.ci_job_performance.observe(
+            jobs, previous, ("compile", [])
+        ).record(),
+    }
+    content = io.BytesIO()
+    with zipfile.ZipFile(content, "w") as archive:
+        archive.writestr("timings.json", json.dumps(record))
+    calls = []
+
+    def api(endpoint):
+        calls.append(endpoint)
+        if endpoint.endswith("/runs/20"):
+            return json.dumps(run).encode()
+        if "/workflows/2/runs?" in endpoint:
+            return json.dumps({"workflow_runs": [previous]}).encode()
+        if "/runs/19/artifacts?" in endpoint:
+            assert "name=compile-stage-timings" in endpoint
+            return json.dumps(
+                {
+                    "artifacts": [
+                        {
+                            "id": 31,
+                            "name": "compile-stage-timings",
+                            "expired": False,
+                            "size_in_bytes": len(content.getvalue()),
+                        }
+                    ]
+                }
+            ).encode()
+        if endpoint.endswith("/artifacts/31/zip"):
+            return content.getvalue()
+        if "/runs/20/jobs?" in endpoint:
+            return json.dumps({"total_count": len(jobs), "jobs": jobs}).encode()
+        pytest.fail(f"Unexpected request: {endpoint}")
+
+    monkeypatch.setattr(performance, "github_api", api)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    # When running the real compile stage reporting command.
+    status = performance.main(
+        [
+            "stages",
+            "--repository",
+            "owner/repo",
+            "--run-id",
+            "20",
+            "--workload",
+            "compile",
+            "--output",
+            str(tmp_path),
+        ]
+    )
+    # Then the same workload metrics appear alongside completed compile steps.
+    saved = json.loads((tmp_path / "timings.json").read_bytes())
+    report = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert status == 0 and len(calls) == 5
+    assert saved["snapshots"] == [] and len(saved["stages"]) == len(names)
+    assert saved["workload"]["summedJobSeconds"] == len(names) * 100
+    assert saved["workload"]["elapsedSpanSeconds"] == 100
+    assert "Completed CI workload" in report and "Collecting baseline" in report
+
+
+@pytest.mark.parametrize("payload", [b"[]", b"{", b'{"schema":1,"snapshots":[]}'])
+def test_malformed_or_legacy_local_histories_keep_report_warning_only(
+    timing, tmp_path, monkeypatch, payload
+):
+    # Given valid current snapshots and malformed or legacy optional history.
+    current = tmp_path / "current"
+    current.mkdir()
+    (current / "tools.json").write_text(json.dumps(timing), encoding="utf-8")
+    history = tmp_path / "history.json"
+    history.write_bytes(payload)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    output = tmp_path / "output"
+    # When producing a local report with workload history enabled.
+    status = performance.main(
+        [
+            "report",
+            "--current",
+            str(current),
+            "--history",
+            str(history),
+            "--workload",
+            "python",
+            "--output",
+            str(output),
+        ]
+    )
+    # Then invalid histories cannot turn the observational report into a failed gate.
+    assert status == 0
+    assert performance.read_bundle((output / "timings.json").read_bytes()) == [timing]

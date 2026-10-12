@@ -228,9 +228,10 @@ jobs:
       - name: Record completed CI stages
         env:
           GH_TOKEN: ${{ github.token }}
+          CI_WORKLOAD_MAX_PARALLEL: ${{ inputs.max_parallel == '2' && 2 || 3 }}
         run: |
           python3 tools/ci_test_performance.py stages --repository "$GITHUB_REPOSITORY" \
-            --run-id "$GITHUB_RUN_ID" --output .tmp/compile-stage-timings
+            --run-id "$GITHUB_RUN_ID" --workload compile --output .tmp/compile-stage-timings
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: compile-stage-timings

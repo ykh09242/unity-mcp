@@ -172,24 +172,28 @@ jobs:
         if: matrix.suite == 'server' && matrix.python-version == '3.14'
         env:
           UNITY_MCP_LOG_DIR: ${{ runner.temp }}/unity-mcp-test-logs
+          PYTHONPATH: ${{ github.workspace }}/tools
         run: |
           cd Server
           # File groups keep module fixtures together; bound workers on shared runners.
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --junitxml=test-results.xml --durations=20 --cov --cov-report=xml --cov-report=html --cov-report=term
+          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20 --cov --cov-report=xml --cov-report=html --cov-report=term
 
       - name: Run server tests
         if: matrix.suite == 'server' && matrix.python-version != '3.14'
         env:
           UNITY_MCP_LOG_DIR: ${{ runner.temp }}/unity-mcp-test-logs
+          PYTHONPATH: ${{ github.workspace }}/tools
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --junitxml=test-results.xml --durations=20
+          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Run local harness unit tests (hermetic, no Unity)
         if: matrix.suite == 'tools'
+        env:
+          PYTHONPATH: ${{ github.workspace }}/tools
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --junitxml=test-results.xml --durations=20
+          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -215,6 +219,7 @@ jobs:
           if [ "$TIMING_SUITE" = server ] && [ "$TIMING_PYTHON" = 3.14 ]; then options+=(--coverage); fi
           uv run --python "$TIMING_PYTHON" --locked --extra dev python ../tools/ci_test_performance.py snapshot \
             --junit test-results.xml --nested-junit test-results-http.xml \
+            --worker-timings test-worker-timings.json \
             --python "$TIMING_PYTHON" --suite "$TIMING_SUITE" "${options[@]}" \
             --output "../.tmp/test-timings/$TIMING_PYTHON-$TIMING_SUITE.json"
 
@@ -236,6 +241,7 @@ jobs:
           path: |
             Server/test-results.xml
             Server/test-results-http.xml
+            Server/test-worker-timings.json
             Server/coverage.xml
             Server/htmlcov/
           retention-days: ${{ job.status == 'success' && 7 || 30 }}

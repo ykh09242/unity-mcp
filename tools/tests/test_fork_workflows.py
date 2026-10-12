@@ -388,6 +388,40 @@ def test_tools_workers_and_timing_context_agree() -> None:
     assert "options=(--workers 2)" in steps["Capture compact timing snapshot"]["run"]
 
 
+def test_worker_observations_share_the_capture_and_artifact_path() -> None:
+    steps = {step["name"]: step for step in workflow("python-tests.yml")["jobs"]["test"]["steps"]}
+    for name in (
+        "Run tests with coverage",
+        "Run server tests",
+        "Run local harness unit tests (hermetic, no Unity)",
+    ):
+        step = steps[name]
+        assert "-p pytest_ci_timing --ci-timing-output=test-worker-timings.json" in step["run"]
+        assert step["env"]["PYTHONPATH"] == "${{ github.workspace }}/tools"
+    assert (
+        "--worker-timings test-worker-timings.json"
+        in steps["Capture compact timing snapshot"]["run"]
+    )
+    assert (
+        "Server/test-worker-timings.json"
+        in steps["Upload test results"]["with"]["path"].splitlines()
+    )
+
+
+def test_workload_reports_select_explicit_python_and_compile_cohorts() -> None:
+    report = workflow("python-performance.yml")["jobs"]["report"]
+    compare = next(
+        step for step in report["steps"] if step.get("name") == "Compare recent successful runs"
+    )
+    assert "--workload python" in compare["run"]
+    compile_report = workflow("compile-check.yml")["jobs"]["performance_report"]
+    assert "--workload compile" in compile_report["steps"][1]["run"]
+    assert (
+        compile_report["steps"][1]["env"]["CI_WORKLOAD_MAX_PARALLEL"]
+        == workflow("compile-check.yml")["jobs"]["compile"]["strategy"]["max-parallel"]
+    )
+
+
 def test_scope_selection_has_an_always_evaluated_blocking_gate() -> None:
     jobs = workflow("fork-beta-tools.yml")["jobs"]
     changes = jobs["changes"]
