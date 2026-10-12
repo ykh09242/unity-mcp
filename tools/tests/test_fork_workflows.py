@@ -50,7 +50,10 @@ def test_forks_keep_python_and_unity_validation() -> None:
     # When: each entry point's reusable workflow and repository condition are read.
     definitions = (unity, python)
     # Then: forks retain both kinds of validation without passing new secrets.
-    assert unity["if"] == "github.repository != 'CoplayDev/unity-mcp'"
+    assert (
+        unity["if"]
+        == "github.repository != 'CoplayDev/unity-mcp' && needs.changes.outputs.profile == 'full'"
+    )
     assert python["if"] == "github.repository != 'CoplayDev/unity-mcp'"
     assert all(job["uses"].startswith("./.github/workflows/") for job in definitions)
     assert "secrets" not in python
@@ -77,6 +80,8 @@ def test_beta_python_release_gate_excludes_duplicate_fork_runs() -> None:
         "Server/uv.lock",
         "MCPForUnity/Editor/Tools/ReadConsole.cs",
         "MCPForUnity/package.json",
+        "CustomTools/RoslynRuntimeCompilation/Tool.cs",
+        "website/docs/reference/tools/tool.md",
     ],
 )
 def test_fork_beta_product_changes_select_python_validation(path: str) -> None:
@@ -166,7 +171,7 @@ def test_fork_beta_tools_pushes_select_reusable_python_validation(path: str) -> 
     assert selected
     config = workflow(wrapper.name)
     assert config["permissions"] == {"contents": "read"}
-    assert list(config["jobs"]) == ["python_tests", "unity_tests"]
+    assert list(config["jobs"]) == ["changes", "python_tests", "unity_tests", "validation"]
     job = config["jobs"]["python_tests"]
     assert job["if"] == "github.repository != 'CoplayDev/unity-mcp'"
     assert job["uses"] == "./.github/workflows/python-tests.yml"
@@ -187,7 +192,10 @@ def test_fork_beta_profile_and_test_changes_select_exactly_one_unity_caller(path
     fork = workflow("fork-beta-tools.yml")["jobs"]["unity_tests"]
     upstream = workflow("beta-release.yml")["jobs"]["unity_tests"]
     assert fork["uses"] == upstream["uses"] == "./.github/workflows/unity-tests.yml"
-    assert fork["if"] == "github.repository != 'CoplayDev/unity-mcp'"
+    assert (
+        fork["if"]
+        == "github.repository != 'CoplayDev/unity-mcp' && needs.changes.outputs.profile == 'full'"
+    )
     assert upstream["if"] == f"{UPSTREAM_ONLY} && github.actor != 'github-actions[bot]'"
     selected = []
     for name, job in (("fork-beta-tools.yml", fork), ("beta-release.yml", upstream)):
@@ -303,7 +311,10 @@ def test_python_validation_runs_both_suites_on_every_supported_minor() -> None:
     # Then: every environment is explicitly selected and uploads cannot collide.
     assert job["strategy"]["fail-fast"] is False
     assert matrix["python-version"] == ["3.11", "3.12", "3.13", "3.14", "3.15"]
-    assert matrix["suite"] == ["server", "tools"]
+    assert (
+        matrix["suite"]
+        == "${{ fromJSON(inputs.validation_profile == 'tools-only' && '[\"tools\"]' || '[\"server\",\"tools\"]') }}"
+    )
     assert "exclude" not in matrix
     assert "needs" not in job
     assert "${{ matrix.python-version }}" in job["name"]
@@ -360,6 +371,61 @@ def test_server_workers_preserve_file_fixtures_and_fail_on_crashes() -> None:
         assert steps[name]["env"]["UNITY_MCP_LOG_DIR"].startswith("${{ runner.temp }}/")
     assert job["timeout-minutes"] == 20
     assert "Server/test-results-http.xml" in steps["Upload test results"]["with"]["path"]
+
+
+def test_tools_workers_and_timing_context_agree() -> None:
+    steps = {step["name"]: step for step in workflow("python-tests.yml")["jobs"]["test"]["steps"]}
+    assert (
+        "-n 2 --dist=loadfile --max-worker-restart=0"
+        in steps["Run local harness unit tests (hermetic, no Unity)"]["run"]
+    )
+    assert "options=(--workers 2)" in steps["Capture compact timing snapshot"]["run"]
+
+
+def test_scope_selection_has_an_always_evaluated_blocking_gate() -> None:
+    jobs = workflow("fork-beta-tools.yml")["jobs"]
+    changes = jobs["changes"]
+    assert changes["steps"][0]["with"]["fetch-depth"] == 0
+    assert changes["outputs"]["profile"] == "${{ steps.scope.outputs.profile }}"
+    assert changes["steps"][1]["run"] == "python3 tools/ci_scope.py select"
+    for name in ("python_tests", "unity_tests"):
+        assert jobs[name]["needs"] == ["changes"]
+    assert (
+        jobs["python_tests"]["with"]["validation_profile"] == "${{ needs.changes.outputs.profile }}"
+    )
+    gate = jobs["validation"]
+    assert gate["needs"] == ["changes", "python_tests", "unity_tests"]
+    assert gate["if"] == "always() && github.repository != 'CoplayDev/unity-mcp'"
+    assert not gate.get("continue-on-error", False)
+    check = next(step for step in gate["steps"] if step.get("name") == "Require selected checks")
+    assert not check.get("continue-on-error", False)
+    assert "tools/ci_scope.py check" in check["run"]
+    assert check["env"] == {
+        "PROFILE": "${{ needs.changes.outputs.profile }}",
+        "CLASSIFICATION": "${{ needs.changes.result }}",
+        "PYTHON_RESULT": "${{ needs.python_tests.result }}",
+        "UNITY_RESULT": "${{ needs.unity_tests.result }}",
+    }
+
+
+def test_default_manual_and_release_validation_remains_full() -> None:
+    config = workflow("python-tests.yml")
+    triggers = config.get("on", config.get(True))
+    assert triggers["workflow_call"]["inputs"]["validation_profile"]["default"] == "full"
+    assert triggers["workflow_dispatch"] == {}
+    assert config["jobs"]["server_bootstrap"]["if"] == "inputs.validation_profile != 'tools-only'"
+    for name in ("release.yml", "beta-release.yml"):
+        assert "validation_profile" not in workflow(name)["jobs"]["python_tests"].get("with", {})
+
+
+def test_compile_stage_reporting_is_read_only_and_observational() -> None:
+    jobs = workflow("compile-check.yml")["jobs"]
+    report = jobs["performance_report"]
+    assert report["needs"] == ["compile"]
+    assert report["continue-on-error"] is True
+    assert report["permissions"] == {"contents": "read", "actions": "read"}
+    assert not jobs["compile"].get("continue-on-error", False)
+    assert "tools/ci_test_performance.py stages" in report["steps"][1]["run"]
 
 
 def test_python_dependency_cache_does_not_mask_cold_bootstrap() -> None:

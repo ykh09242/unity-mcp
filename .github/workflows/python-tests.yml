@@ -39,6 +39,11 @@ on:
         type: string
         required: false
         default: ""
+      validation_profile:
+        description: "Full validation by default; tools-only is reserved for verified fork tooling changes."
+        type: string
+        required: false
+        default: full
 
 permissions:
   contents: read
@@ -46,6 +51,7 @@ permissions:
 jobs:
   server_bootstrap:
     name: Server Bootstrap (${{ matrix.os }})
+    if: inputs.validation_profile != 'tools-only'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
@@ -108,9 +114,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Run both complete suites on every supported minor, without serializing them.
+        # Unknown/default profiles retain both complete suites on every supported minor.
         python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
-        suite: [server, tools]
+        suite: ${{ fromJSON(inputs.validation_profile == 'tools-only' && '["tools"]' || '["server","tools"]') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -178,7 +184,7 @@ jobs:
         if: matrix.suite == 'tools'
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -q -W error --tb=short --junitxml=test-results.xml --durations=20
+          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -200,8 +206,7 @@ jobs:
           TIMING_SUITE: ${{ matrix.suite }}
         run: |
           cd Server
-          options=()
-          if [ "$TIMING_SUITE" = server ]; then options+=(--workers 2); fi
+          options=(--workers 2)
           if [ "$TIMING_SUITE" = server ] && [ "$TIMING_PYTHON" = 3.14 ]; then options+=(--coverage); fi
           uv run --python "$TIMING_PYTHON" --locked --extra dev python ../tools/ci_test_performance.py snapshot \
             --junit test-results.xml --nested-junit test-results-http.xml \

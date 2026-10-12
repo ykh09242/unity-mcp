@@ -199,3 +199,30 @@ jobs:
               echo "See the Compile step log for the exact errors and the platform each belongs to."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  performance_report:
+    name: Compile timing report
+    needs: [compile]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Record completed CI stages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/ci_test_performance.py stages --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID" --output .tmp/compile-stage-timings
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compile-stage-timings
+          path: .tmp/compile-stage-timings/
+          include-hidden-files: true
+          retention-days: 30

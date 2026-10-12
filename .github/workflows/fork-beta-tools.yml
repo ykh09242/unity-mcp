@@ -9,6 +9,8 @@ on:
     paths:
       - Server/**
       - MCPForUnity/**
+      - CustomTools/**
+      - website/docs/reference/tools/**
       - TestProjects/UnityMCPTests/**
       - tools/**
       - manifest.json
@@ -28,20 +30,85 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Select validation scope
+    if: github.repository != 'CoplayDev/unity-mcp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      profile: ${{ steps.scope.outputs.profile }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Pushes can contain multiple commits; inspect the complete before/after range.
+          fetch-depth: 0
+      - name: Classify changed paths
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci_scope.py select
+
   python_tests:
     name: Python and hermetic tool tests
+    needs: [changes]
     if: github.repository != 'CoplayDev/unity-mcp'
     permissions:
       contents: read
       actions: read
     uses: ./.github/workflows/python-tests.yml
+    with:
+      validation_profile: ${{ needs.changes.outputs.profile }}
 
   unity_tests:
     name: Unity and optional integration tests
-    if: github.repository != 'CoplayDev/unity-mcp'
+    needs: [changes]
+    if: github.repository != 'CoplayDev/unity-mcp' && needs.changes.outputs.profile == 'full'
     uses: ./.github/workflows/unity-tests.yml
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
       UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
       UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+
+  validation:
+    name: Selected validation
+    needs: [changes, python_tests, unity_tests]
+    if: always() && github.repository != 'CoplayDev/unity-mcp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require selected checks
+        env:
+          PROFILE: ${{ needs.changes.outputs.profile }}
+          CLASSIFICATION: ${{ needs.changes.result }}
+          PYTHON_RESULT: ${{ needs.python_tests.result }}
+          UNITY_RESULT: ${{ needs.unity_tests.result }}
+        run: |
+          python3 tools/ci_scope.py check --profile "$PROFILE" --classification "$CLASSIFICATION" \
+            --python "$PYTHON_RESULT" --unity "$UNITY_RESULT"
+      - name: Record completed CI stages
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/ci_test_performance.py stages --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID" --output .tmp/ci-stage-timings
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        continue-on-error: true
+        with:
+          name: ci-stage-timings
+          path: .tmp/ci-stage-timings/
+          include-hidden-files: true
+          retention-days: 30
