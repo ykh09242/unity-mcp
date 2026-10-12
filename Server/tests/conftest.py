@@ -18,6 +18,18 @@ if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
 
+def pytest_configure(config):
+    """Separate rotating logs before parallel workers import application modules."""
+    worker = getattr(config, "workerinput", None)
+    if worker is None:
+        return
+    log_root = Path(
+        os.environ.get("UNITY_MCP_LOG_DIR")
+        or Path(__file__).resolve().parents[2] / ".tmp" / "pytest-worker-logs"
+    )
+    os.environ["UNITY_MCP_LOG_DIR"] = str(log_root / worker["testrunuid"] / worker["workerid"])
+
+
 def _safe_reset_telemetry() -> None:
     """Safely reset telemetry, distinguishing import errors from reset failures."""
     try:

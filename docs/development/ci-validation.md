@@ -11,7 +11,7 @@ Editor tests by themselves. Keep the repository Actions variable
 
 | Check | What runs without a license |
 | --- | --- |
-| Python 3.11–3.14 | Server and repository tool test suites, plus correctness lint |
+| Python 3.11–3.15 | Server and repository tool test suites, plus correctness lint |
 | Windows, Linux and macOS bootstrap | Cold/offline server bootstrap checks |
 | Unity version matrix | Runtime, Editor and test assembly compilation for Windows, macOS and Linux defines |
 | Optional packages | Pinned Cinemachine, ProBuilder and graphics dependency preparation and integrity checks |
@@ -31,33 +31,65 @@ native jobs for an account that also has company entitlements.
 ## Python
 
 [`python-tests.yml`](../../.github/workflows/python-tests.yml) runs both complete suites on
-Python 3.11, 3.12, 3.13 and 3.14. Minor-version selectors allow the available patch release to
+Python 3.11, 3.12, 3.13, 3.14 and 3.15. Minor-version selectors allow the available patch release to
 advance without editing every workflow. The server and tool suites use separate matrix jobs,
 so tool tests do not wait for the longer server suite.
 
-- Pylint runs once, in the Python 3.14 tools job.
+- Pylint runs once, in the Python 3.15 tools job. Its runner uses one process on 3.15
+  until dill supports the interpreter's code-object changes.
+- Server jobs use two pytest-xdist workers with `--dist=loadfile`. Each file stays in one
+  worker so module fixtures remain together. Worker crashes fail without automatic restarts;
+  the job has a 20-minute limit. Tool jobs retain their serial execution.
+- Workers select separate rotating-log directories before importing the application. Child
+  processes inherit that worker directory unless their fixture supplies its own directory.
 - The complete Python 3.14 server suite collects coverage. Other versions run the same tests
   without duplicate coverage collection. Existing subprocess coverage boundaries are unchanged.
 - Every suite treats warnings as errors, reports its 20 slowest tests, and uploads JUnit results.
   Artifact names include both the Python minor and suite, preventing parallel uploads colliding.
+  The isolated HTTP child suite writes `test-results-http.xml` alongside the outer report so
+  its individual cases and durations are visible. Its process isolation and warning policy remain.
 - Dependency caching is keyed by the Python minor and the server manifest/lock. Only the tools
   job saves a cache for each minor. Jobs still install from the committed lock.
 - The Windows, Linux and macOS cold/offline bootstrap checks retain separate empty cache
   directories. Candidate server startup is also checked once on every Python minor with an
   independent dependency resolution, rather than relying on the locked test environment.
+- Python 3.15 sets `PY_KEY_VALUE_DISABLE_BEARTYPE=true` for py-key-value-aio's optional
+  instrumentation while its inherited runtime-checkable protocol is incompatible with
+  warnings-as-errors. Application validation and the warning policy remain enabled.
 
 To inspect local test durations, run from `Server/`:
 
 ```sh
 uv run --python 3.14 --locked --extra dev pytest tests/ -q -W error --tb=short --durations=20
+uv run --python 3.14 --locked --extra dev pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --durations=20
 uv run --python 3.14 --locked --extra dev python -m pytest ../tools/tests/ -q -W error --tb=short --durations=20
 ```
 
 Keep test-node selection and failure behavior intact when optimizing. Deadline tests can use a
 controlled clock at the tested module's boundary while preserving the configured budget and
-refusal assertions. Do not shorten production timeouts to accelerate tests. Worker-level
-parallelism needs separate verification: SDK subprocesses and import-time rotating log files
-have different isolation requirements from independent CI jobs.
+refusal assertions. Do not shorten production timeouts to accelerate tests. Local runs remain
+serial unless workers are explicitly requested; avoid `-n auto` for these subprocess-heavy
+tests. The HTTP subprocess runs serially to avoid nested worker pools.
+
+### Performance investigation (2026-10-12)
+
+The [baseline CI run](https://github.com/ykh09242/unity-mcp/actions/runs/38207027373)
+spent 461.31 seconds in the Python 3.15 server suite and 85.43 seconds in the tool suite.
+The server's 183 cases lasting between one and two seconds accounted for 238.67 seconds;
+many exercise the real SDK in fresh processes to avoid legacy module stubs. Dependency
+installation was a much smaller part of the critical path. Two bounded workers overlap these
+isolated tests without dropping cases or supported interpreters.
+
+Profiling the isolated HTTP suite found 149 complete tool registrations, largely repeated
+schema construction. Local-control authentication and texture-budget fixtures now reuse
+their invariant registered server per module while creating new ASGI apps/clients, call
+ledgers and patched dependencies per case. On Windows/Python 3.15, these same 70 tests took
+13.65 seconds before and 2.86 seconds after the fixture change (79% less elapsed time).
+These local measurements are separate from CI timing and exclude profiler overhead.
+
+Use the uploaded JUnit reports and job-step timings for future comparisons. Do not sum the
+outer HTTP wrapper duration and its child report when computing total elapsed time. Timing
+varies with runner load; preserve test counts, outcomes, coverage and isolation when comparing.
 
 ## Unity
 

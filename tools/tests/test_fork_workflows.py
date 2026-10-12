@@ -349,6 +349,17 @@ def test_python_suites_are_disjoint_and_keep_structured_results() -> None:
     assert '"$GITHUB_WORKSPACE/tools/tests/"' in tools["run"]
 
 
+def test_server_workers_preserve_file_fixtures_and_fail_on_crashes() -> None:
+    job = workflow("python-tests.yml")["jobs"]["test"]
+    steps = {step["name"]: step for step in job["steps"]}
+    for name in ("Run tests with coverage", "Run server tests"):
+        command = steps[name]["run"]
+        assert "-n 2 --dist=loadfile --max-worker-restart=0" in command
+    assert job["timeout-minutes"] == 20
+    assert job["env"]["UNITY_MCP_LOG_DIR"].startswith("${{ runner.temp }}/")
+    assert "Server/test-results-http.xml" in steps["Upload test results"]["with"]["path"]
+
+
 def test_python_dependency_cache_does_not_mask_cold_bootstrap() -> None:
     # Given: unit jobs may reuse dependency wheels, but bootstrap proves fresh/offline startup.
     jobs = workflow("python-tests.yml")["jobs"]

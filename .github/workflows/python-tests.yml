@@ -99,11 +99,13 @@ jobs:
   test:
     name: Run Python ${{ matrix.suite }} tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       # py-key-value-aio 0.4.6 inherits a runtime-checkable protocol without
       # redecorating it, deprecated in Python 3.15. Disable only its optional
       # beartype instrumentation; keep application validation and -W error.
       PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python-version == '3.15' && 'true' || 'false' }}
+      UNITY_MCP_LOG_DIR: ${{ runner.temp }}/unity-mcp-test-logs
     strategy:
       fail-fast: false
       matrix:
@@ -160,13 +162,14 @@ jobs:
         if: matrix.suite == 'server' && matrix.python-version == '3.14'
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -q -W error --tb=short --junitxml=test-results.xml --durations=20 --cov --cov-report=xml --cov-report=html --cov-report=term
+          # File groups keep module fixtures together; bound workers on shared runners.
+          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --junitxml=test-results.xml --durations=20 --cov --cov-report=xml --cov-report=html --cov-report=term
 
       - name: Run server tests
         if: matrix.suite == 'server' && matrix.python-version != '3.14'
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -q -W error --tb=short --junitxml=test-results.xml --durations=20
+          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Run local harness unit tests (hermetic, no Unity)
         if: matrix.suite == 'tools'
@@ -193,5 +196,6 @@ jobs:
           name: pytest-results-${{ matrix.python-version }}-${{ matrix.suite }}
           path: |
             Server/test-results.xml
+            Server/test-results-http.xml
             Server/coverage.xml
             Server/htmlcov/
