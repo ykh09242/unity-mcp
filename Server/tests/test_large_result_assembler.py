@@ -2,10 +2,15 @@
 
 import base64
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+from time import perf_counter
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -71,25 +76,45 @@ def started(size=THRESHOLD_BYTES):
 
 
 @pytest.fixture(scope="module")
-def csharp_harness(tmp_path_factory):
-    dotnet = shutil.which("dotnet")
-    if dotnet is None:
-        pytest.skip("dotnet required for actual C# writer framing roundtrip")
+def csharp_setup_properties() -> list[tuple[str, str]]:
+    """Hold module preparation measurements until its first consuming test reports."""
+    return []
+
+
+@contextmanager
+def csharp_phase(properties: list[tuple[str, str]], name: str) -> Iterator[None]:
+    """Preserve phase durations in JUnit even when a child fails or times out."""
+    began = perf_counter()
+    try:
+        yield
+    finally:
+        properties.append((name, str(perf_counter() - began)))
+
+
+@pytest.fixture(scope="module")
+def compiled_csharp_harness(tmp_path_factory, csharp_setup_properties):
     root = Path(__file__).resolve().parents[2]
-    sdk_listing = subprocess.run(
-        [dotnet, "--list-sdks"], check=True, capture_output=True, text=True
-    ).stdout.splitlines()
-    if not sdk_listing:
-        pytest.skip("dotnet SDK required to compile actual C# writer")
-    sdk_version, sdk_parent = sdk_listing[-1].split(" [", 1)
-    compiler = Path(sdk_parent.rstrip("]")) / sdk_version / "Roslyn/bincore/csc.dll"
-    framework_root = Path(dotnet).resolve().parent
-    ref_root = framework_root / "packs/Microsoft.NETCore.App.Ref"
-    ref_version = sorted(
-        ref_root.iterdir(), key=lambda item: tuple(map(int, item.name.split(".")))
-    )[-1]
-    target_framework = next((ref_version / "ref").iterdir())
-    runtime_version = ref_version.name
+    with csharp_phase(csharp_setup_properties, "csharp_sdk_discovery_seconds"):
+        dotnet = shutil.which("dotnet")
+        if dotnet is None:
+            pytest.skip("dotnet required for actual C# writer framing roundtrip")
+        sdk_listing = subprocess.run(
+            [dotnet, "--list-sdks"], check=True, capture_output=True, text=True, timeout=30
+        ).stdout.splitlines()
+        if not sdk_listing:
+            pytest.skip("dotnet SDK required to compile actual C# writer")
+        sdk_version, sdk_parent = sdk_listing[-1].split(" [", 1)
+        compiler = Path(sdk_parent.rstrip("]")) / sdk_version / "Roslyn/bincore/csc.dll"
+        framework_root = Path(dotnet).resolve().parent
+        ref_root = framework_root / "packs/Microsoft.NETCore.App.Ref"
+        ref_version = sorted(
+            ref_root.iterdir(), key=lambda item: tuple(map(int, item.name.split(".")))
+        )[-1]
+        target_framework = next((ref_version / "ref").iterdir())
+        runtime_version = ref_version.name
+    csharp_setup_properties.extend(
+        [("csharp_sdk_version", sdk_version), ("csharp_target_framework", target_framework.name)]
+    )
     work = tmp_path_factory.mktemp("large-result-csharp")
     dll = work / "LargeResultHarness.dll"
     arguments = [
@@ -109,8 +134,9 @@ def csharp_harness(tmp_path_factory):
             str(root / "tools/tests/fixtures/large_result/LargeResultHarness.cs"),
         ]
     )
-    built = subprocess.run(arguments, capture_output=True, text=True, timeout=30)
-    assert built.returncode == 0, built.stdout + built.stderr
+    with csharp_phase(csharp_setup_properties, "csharp_compile_seconds"):
+        built = subprocess.run(arguments, capture_output=True, text=True, timeout=30)
+        assert built.returncode == 0, built.stdout + built.stderr
     dll.with_suffix(".runtimeconfig.json").write_text(
         json.dumps(
             {
@@ -125,16 +151,28 @@ def csharp_harness(tmp_path_factory):
     return dotnet, dll
 
 
+@pytest.fixture
+def csharp_harness(request, csharp_setup_properties):
+    # Direct item properties survive xdist and avoid record_property's xunit2 warning.
+    try:
+        dotnet, dll = request.getfixturevalue("compiled_csharp_harness")
+    finally:
+        request.node.user_properties.extend(csharp_setup_properties)
+        csharp_setup_properties.clear()
+    return dotnet, dll, request.node.user_properties
+
+
 def run_writer(harness, tmp_path, payload, mode):
     path = tmp_path / "synthetic-result.bin"
     path.write_bytes(payload)
-    execution = subprocess.run(
-        [harness[0], str(harness[1]), str(path), mode, COMMAND_ID],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=True,
-    )
+    with csharp_phase(harness[2], "csharp_execution_seconds"):
+        execution = subprocess.run(
+            [harness[0], str(harness[1]), str(path), mode, COMMAND_ID],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
     return [
         (kind, base64.b64decode(encoded))
         for line in execution.stdout.splitlines()
@@ -174,6 +212,68 @@ def test_csharp_large_result_reconstructs_identical_json_with_control_interleavi
     assert sum(budget.reservations.values()) == len(payload)
     assembler.discard(OWNER, COMMAND_ID)
     assert budget.reservations == {}
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [subprocess.TimeoutExpired("owned-child", 30), subprocess.CalledProcessError(7, "owned-child")],
+)
+def test_csharp_phase_reports_elapsed_when_child_fails(monkeypatch, failure):
+    readings = iter([10.0, 10.25])
+    monkeypatch.setattr(sys.modules[__name__], "perf_counter", lambda: next(readings))
+    properties = []
+    with pytest.raises(type(failure)) as raised:
+        with csharp_phase(properties, "csharp_execution_seconds"):
+            raise failure
+    assert raised.value is failure
+    assert properties == [("csharp_execution_seconds", "0.25")]
+
+
+def test_csharp_phase_preserves_prior_properties_after_success(monkeypatch):
+    readings = iter([10.0, 10.5])
+    monkeypatch.setattr(sys.modules[__name__], "perf_counter", lambda: next(readings))
+    properties = [("csharp_sdk_version", "owned-sdk")]
+    with csharp_phase(properties, "csharp_compile_seconds"):
+        pass
+    assert properties == [("csharp_sdk_version", "owned-sdk"), ("csharp_compile_seconds", "0.5")]
+
+
+def test_csharp_sdk_discovery_timeout_is_bounded_and_reported(monkeypatch, tmp_path_factory):
+    monkeypatch.setattr(shutil, "which", lambda _name: "owned-dotnet")
+
+    def stalled_listing(command, *, timeout, **_options):
+        assert command == ["owned-dotnet", "--list-sdks"]
+        assert timeout == 30
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(subprocess, "run", stalled_listing)
+    properties = []
+    with pytest.raises(subprocess.TimeoutExpired):
+        compiled_csharp_harness.__wrapped__(tmp_path_factory, properties)
+    assert len(properties) == 1
+    assert properties[0][0] == "csharp_sdk_discovery_seconds"
+    assert float(properties[0][1]) >= 0
+
+
+def test_csharp_failed_preparation_attaches_timings_only_to_first_consumer():
+    properties = [("csharp_sdk_discovery_seconds", "0.1")]
+    item_properties = []
+    failure = subprocess.TimeoutExpired("owned-discovery", 30)
+
+    def unavailable_fixture(_name):
+        raise failure
+
+    request = SimpleNamespace(
+        node=SimpleNamespace(user_properties=item_properties), getfixturevalue=unavailable_fixture
+    )
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        csharp_harness.__wrapped__(request, properties)
+    assert raised.value is failure
+    assert item_properties == [("csharp_sdk_discovery_seconds", "0.1")]
+    assert properties == []
+    with pytest.raises(subprocess.TimeoutExpired):
+        csharp_harness.__wrapped__(request, properties)
+    assert item_properties == [("csharp_sdk_discovery_seconds", "0.1")]
 
 
 @pytest.mark.parametrize(
@@ -375,25 +475,26 @@ async def test_real_csharp_websocket_messages_reconstruct_with_control_between_c
         handler, "127.0.0.1", 0, compression=None, max_size=MAX_FRAME_BYTES, close_timeout=2
     ) as server:
         port = server.sockets[0].getsockname()[1]
-        process = await asyncio.create_subprocess_exec(
-            csharp_harness[0],
-            str(csharp_harness[1]),
-            str(path),
-            "interleave",
-            COMMAND_ID,
-            f"ws://127.0.0.1:{port}",
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
-        try:
-            complete = await asyncio.wait_for(received, 15)
-            _, stderr = await asyncio.wait_for(process.communicate(), 15)
-            assert process.returncode == 0, stderr.decode()
-        finally:
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
-            assembler.discard_owner(OWNER)
+        with csharp_phase(csharp_harness[2], "csharp_execution_seconds"):
+            process = await asyncio.create_subprocess_exec(
+                csharp_harness[0],
+                str(csharp_harness[1]),
+                str(path),
+                "interleave",
+                COMMAND_ID,
+                f"ws://127.0.0.1:{port}",
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                complete = await asyncio.wait_for(received, 15)
+                _, stderr = await asyncio.wait_for(process.communicate(), 15)
+                assert process.returncode == 0, stderr.decode()
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+                assembler.discard_owner(OWNER)
     assert complete.payload == payload
     assert message_kinds[:4] == ["result_start", "B", "pong", "B"]
     assert budget.reservations == {}
