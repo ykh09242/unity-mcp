@@ -37,7 +37,7 @@ jobs:
 
   update_unity_beta_version:
     name: Update Unity package to beta version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [unity_tests, python_tests]
     # Fork synchronization must not create or auto-merge release PRs.
     # Also avoid a version-bump loop when this workflow's own PR merges.
@@ -167,7 +167,7 @@ jobs:
 
   publish_pypi_prerelease:
     name: Publish beta to PyPI (pre-release)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [unity_tests, python_tests]
     # Only the upstream repository owns this PyPI publishing identity.
     if: github.repository == 'CoplayDev/unity-mcp' && github.actor != 'github-actions[bot]'

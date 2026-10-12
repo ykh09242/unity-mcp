@@ -33,7 +33,7 @@ jobs:
   changes:
     name: Select validation scope
     if: github.repository != 'CoplayDev/unity-mcp'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -90,7 +90,7 @@ jobs:
     name: Selected validation
     needs: [changes, python_tests, unity_tests]
     if: always() && github.repository != 'CoplayDev/unity-mcp'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: read

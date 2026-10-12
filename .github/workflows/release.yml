@@ -45,7 +45,7 @@ jobs:
   bump:
     if: github.repository == 'CoplayDev/unity-mcp'
     name: Bump version, tag, and create release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [unity_tests, python_tests]
     permissions:
       contents: write
@@ -332,7 +332,7 @@ jobs:
     name: Merge main back into beta via PR
     needs:
       - bump
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -475,7 +475,7 @@ jobs:
     name: Dispatch release-notes sync
     needs:
       - bump
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # The bump job creates the release with GITHUB_TOKEN, and events made with that token
     # start no workflows, so sync-releases.yml never sees `release: published`.
     # workflow_dispatch is exempt from that rule.
@@ -493,7 +493,7 @@ jobs:
     name: Publish Docker image
     needs:
       - bump
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -521,7 +521,7 @@ jobs:
     name: Publish Python distribution to PyPI
     needs:
       - bump
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment:
       name: pypi
       url: https://pypi.org/p/mcpforunityserver
@@ -559,7 +559,7 @@ jobs:
     name: Generate and publish MCPB bundle
     needs:
       - bump
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:

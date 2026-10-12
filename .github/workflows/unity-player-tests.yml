@@ -43,7 +43,7 @@ env:
 jobs:
   license:
     name: Check Windows Player execution policy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions: {}
     outputs:
       unity_ok: ${{ steps.detect.outputs.unity_ok || 'false' }}
@@ -184,7 +184,7 @@ jobs:
     name: Required actual Windows Mono Player assurance
     needs: [license, player]
     if: always() && inputs.require_player_e2e
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions: {}
     steps:
       - name: Require actual licensed execution and evidence

@@ -16,7 +16,7 @@ jobs:
   license-free:
     name: Report skipped live Unity suite
     if: vars.UNITY_RUN_LICENSED_TESTS != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions: {}
     steps:
       - name: Report license-free validation

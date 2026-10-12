@@ -37,7 +37,7 @@ jobs:
     # call. A job skipped by a job-level `if:` reports "Skipped" in the merge box instead.
     # Branch protection treats a skipped required check as satisfied, so merges are not blocked.
     name: Check Unity runtime test policy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions: {}
     outputs:
       unity_ok: ${{ steps.detect.outputs.unity_ok || 'false' }}

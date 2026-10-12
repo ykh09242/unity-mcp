@@ -148,7 +148,7 @@ jobs:
 
   matrix:
     name: Compute Unity version matrix
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     outputs:
@@ -187,7 +187,7 @@ jobs:
     # what a reviewer actually reads. Branch protection still treats a skipped required
     # check as satisfied, so this does not block merges.
     name: Check Unity runtime test policy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions: {}
     outputs:
       unity_ok: ${{ steps.detect.outputs.unity_ok || 'false' }}
@@ -254,7 +254,7 @@ jobs:
     name: Required native scenario E2E
     needs: [license, testAllModes]
     if: always() && inputs.require_native_e2e
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions: {}
     steps:
       - name: Require prerequisites and native evidence execution to succeed
@@ -271,7 +271,7 @@ jobs:
   optionalPackageInputs:
     name: Prepare optional packages for Unity ${{ matrix.unity.version }}
     needs: [matrix]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -368,7 +368,7 @@ jobs:
     name: Optional ${{ matrix.suite.id }} on Unity ${{ matrix.unity.version }}
     needs: [matrix, license, optionalPackageInputs]
     if: needs.license.outputs.unity_ok == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -464,7 +464,7 @@ jobs:
     name: Test ${{ matrix.unity.channel }} Unity ${{ matrix.unity.version }} (${{ matrix.testMode }})
     needs: [matrix, license]
     if: needs.license.outputs.unity_ok == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     permissions:
       contents: read

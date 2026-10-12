@@ -14,7 +14,7 @@ jobs:
   j1:
     if: github.repository == 'CoplayDev/unity-mcp'
     name: github-repo-stats
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: run-ghrs
         # Pin the maintained RELEASE branch; its last versioned tag predates it.

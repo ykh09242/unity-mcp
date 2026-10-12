@@ -56,7 +56,7 @@ concurrency:
 jobs:
   matrix:
     name: Compute Unity compile matrix
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       versions: ${{ steps.set.outputs.versions }}
     steps:
@@ -79,7 +79,7 @@ jobs:
   compile:
     name: Compile ${{ matrix.unity.channel }} Unity ${{ matrix.unity.version }} (win/osx/linux)
     needs: [matrix]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -208,7 +208,7 @@ jobs:
     name: Compile timing report
     needs: [compile]
     if: always() && !cancelled()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     continue-on-error: true
     permissions:

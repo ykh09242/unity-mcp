@@ -245,7 +245,7 @@ def test_server_bootstrap_covers_default_windows_paths_and_offline_cache() -> No
     job = workflow("python-tests.yml")["jobs"]["server_bootstrap"]
     assert set(job["strategy"]["matrix"]["os"]) == {
         "windows-latest",
-        "ubuntu-latest",
+        "ubuntu-26.04",
         "macos-latest",
     }
     assert job["timeout-minutes"] <= 10
