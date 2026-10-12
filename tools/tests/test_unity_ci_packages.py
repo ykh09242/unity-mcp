@@ -620,12 +620,219 @@ def test_optional_dependency_cache_key_changes_with_immutable_inputs(dependency_
         "package": request.repo / "MCPForUnity/package.json",
         "project": request.repo / "TestProjects/UnityMCPTests/Packages/manifest.json",
     }
-    # When one immutable input changes (JSON whitespace remains parseable).
-    with paths[input_name].open("a", encoding="utf-8") as output:
-        output.write("\n")
+    # When one selected immutable input changes semantically.
+    path = paths[input_name]
+    if input_name == "logic":
+        with path.open("a", encoding="utf-8") as output:
+            output.write("\n")
+    else:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if input_name == "manifest":
+            document["versions"][0]["testImage"] = (
+                document["versions"][0]["testImage"].split("@sha256:")[0] + "@sha256:" + "d" * 64
+            )
+        elif input_name == "profiles":
+            document["profiles"]["modern"]["packages"]["com.unity.editorcoroutines"]["version"] = (
+                "1.1.1"
+            )
+        elif input_name == "package":
+            document["version"] = "1.0.1"
+        else:
+            document["dependencies"]["com.unity.modules.audio"] = "1.0.0"
+        path.write_text(json.dumps(document), encoding="utf-8")
     changed = helper.identity(request)
     # Then the cache key changes and no source tree is included in the cache key.
     assert changed.cache_key != original.cache_key
+
+
+@pytest.mark.parametrize("input_name", ["manifest", "profiles", "package", "project"])
+def test_optional_dependency_cache_json_formatting_keeps_identity(dependency_cache, input_name):
+    # Given validated dependency inputs and their exact cache identity.
+    helper, request, _ = dependency_cache
+    original = helper.identity(request)
+    paths = {
+        "manifest": request.manifest_path,
+        "profiles": request.profiles_path,
+        "package": request.repo / "MCPForUnity/package.json",
+        "project": request.repo / "TestProjects/UnityMCPTests/Packages/manifest.json",
+    }
+    document = json.loads(paths[input_name].read_text(encoding="utf-8"))
+    # When only JSON whitespace and object property ordering change.
+    paths[input_name].write_text(
+        json.dumps(document, indent=4, sort_keys=True) + "\n\n", encoding="utf-8"
+    )
+    # Then semantically identical inputs reuse both the key and receipt provenance.
+    assert helper.identity(request) == original
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["version", "base-profile", "optional-profile", "default-version", "metadata", "preview-base"],
+)
+def test_optional_dependency_cache_unrelated_reviewed_inputs_keep_identity(
+    dependency_cache, change
+):
+    # Given an additional valid Unity row and profiles that do not select the requested family.
+    helper, request, _ = dependency_cache
+    manifest = json.loads(request.manifest_path.read_text(encoding="utf-8"))
+    selected = manifest["versions"][0]
+    other = {
+        **selected,
+        "id": "6000.3.25f1",
+        "image": selected["image"].replace(request.version, "6000.3.25f1"),
+        "testImage": selected["testImage"].replace(request.version, "6000.3.25f1"),
+    }
+    manifest["versions"].append(other)
+    config = json.loads(request.profiles_path.read_text(encoding="utf-8"))
+    config["profiles"]["other-base"] = {
+        "unityFamilies": ["2022.3"],
+        "packages": {"com.unity.test-framework": {"source": "registry", "version": "1.4.6"}},
+    }
+    config["optionalProfiles"]["other-optional"] = {
+        "unityFamilies": ["6000.3"],
+        "packages": {"com.unity.cinemachine": {"source": "registry", "version": "3.1.7"}},
+    }
+    request.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    request.profiles_path.write_text(json.dumps(config), encoding="utf-8")
+    original = helper.identity(request)
+    # When one unrelated reviewed configuration value changes.
+    if change == "version":
+        other["testImage"] = other["testImage"].split("@sha256:")[0] + "@sha256:" + "e" * 64
+    elif change == "base-profile":
+        config["profiles"]["other-base"]["packages"]["com.unity.test-framework"]["version"] = (
+            "1.4.7"
+        )
+    elif change == "optional-profile":
+        config["optionalProfiles"]["other-optional"]["packages"]["com.unity.cinemachine"][
+            "version"
+        ] = "3.1.8"
+    elif change == "default-version":
+        manifest["defaultVersion"] = other["id"]
+    elif change == "metadata":
+        manifest["$comment"] = "Updated review metadata"
+        config["$comment"] = "Updated review metadata"
+    else:
+        manifest["previewBaseImage"] = (
+            manifest["previewBaseImage"].split("@sha256:")[0] + "@sha256:" + "f" * 64
+        )
+    request.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    request.profiles_path.write_text(json.dumps(config), encoding="utf-8")
+    # Then unrelated changes do not invalidate selected immutable dependency inputs.
+    assert helper.identity(request) == original
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "base-pin",
+        "optional-pin",
+        "editor-source",
+        "required-module",
+        "testables",
+        "essential-resources",
+        "input-handler",
+        "profile-name",
+        "base-selector",
+    ],
+)
+def test_optional_dependency_cache_selected_profile_inputs_invalidate(dependency_cache, change):
+    # Given the selected reviewed profiles and shared dependency selectors.
+    helper, request, _ = dependency_cache
+    original = helper.identity(request)
+    config = json.loads(request.profiles_path.read_text(encoding="utf-8"))
+    base = config["profiles"]["modern"]
+    optional = config["optionalProfiles"]["unity-six-lts"]
+    # When a relevant reviewed selector, pin, profile identity or preparation setting changes.
+    if change == "base-pin":
+        base["packages"]["com.unity.editorcoroutines"]["version"] = "1.1.1"
+    elif change == "optional-pin":
+        optional["packages"]["com.unity.ai.navigation"]["version"] = "2.0.10"
+    elif change == "editor-source":
+        base["packages"]["com.unity.ugui"] = {"source": "registry", "version": "2.0.0"}
+    elif change == "required-module":
+        config["requiredModules"].append("com.unity.modules.audio")
+    elif change == "testables":
+        optional["testables"].append("com.unity.ugui")
+    elif change == "essential-resources":
+        optional["essentialResources"] = ["textmeshpro"]
+    elif change == "input-handler":
+        optional["activeInputHandler"] = 1
+    elif change == "profile-name":
+        config["profiles"]["reviewed-modern"] = config["profiles"].pop("modern")
+    else:
+        base["unityMajors"].append(7000)
+    request.profiles_path.write_text(json.dumps(config), encoding="utf-8")
+    # Then selected dependency/policy changes cannot reuse the previous identity.
+    assert helper.identity(request).cache_key != original.cache_key
+
+
+def test_optional_dependency_cache_invalid_unrelated_version_still_fails_validation(
+    dependency_cache,
+):
+    # Given a selected valid Editor and an invalid unrelated row in the same manifest.
+    helper, request, calls = dependency_cache
+    manifest = json.loads(request.manifest_path.read_text(encoding="utf-8"))
+    selected = manifest["versions"][0]
+    manifest["versions"].append(
+        {
+            **selected,
+            "id": "6000.3.25f1",
+            "image": "unpinned-image",
+            "testImage": selected["testImage"].replace(request.version, "6000.3.25f1"),
+        }
+    )
+    request.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    # When identity selection loads and validates the complete manifest.
+    with pytest.raises(ValueError, match="digest pin"):
+        helper.identity(request)
+    # Then narrowing the fingerprint never bypasses configuration validation.
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "group,selected", [("profiles", "modern"), ("optionalProfiles", "unity-six-lts")]
+)
+def test_optional_dependency_cache_ambiguous_matching_profile_still_rejected(
+    dependency_cache, group, selected
+):
+    # Given a duplicated reviewed profile that also matches the selected Editor family.
+    helper, request, calls = dependency_cache
+    config = json.loads(request.profiles_path.read_text(encoding="utf-8"))
+    config[group]["duplicate-match"] = config[group][selected]
+    request.profiles_path.write_text(json.dumps(config), encoding="utf-8")
+    # When selecting immutable cache inputs from ambiguous configuration.
+    with pytest.raises(packages.PreparationError, match="Exactly one reviewed base and optional"):
+        helper.identity(request)
+    # Then no arbitrary profile selection or provider work occurs.
+    assert calls == []
+
+
+def test_optional_dependency_cache_unrelated_edits_reuse_warm_inputs_and_stage_current_source(
+    dependency_cache,
+):
+    # Given a validated cold cache followed by unrelated configuration edits and source changes.
+    helper, request, calls = dependency_cache
+    cold = helper.prepare(request, request.repo / ".unity-ci/cold")
+    cold_report = (request.repo / cold.preparation.resolution_report).read_bytes()
+    original_calls = list(calls)
+    config = json.loads(request.profiles_path.read_text(encoding="utf-8"))
+    config["profiles"]["unrelated"] = {"unityFamilies": ["2022.3"], "packages": {}}
+    request.profiles_path.write_text(json.dumps(config, indent=4, sort_keys=True), encoding="utf-8")
+    manifest = json.loads(request.manifest_path.read_text(encoding="utf-8"))
+    manifest["$comment"] = "Unrelated editor review metadata"
+    request.manifest_path.write_text(
+        json.dumps(manifest, indent=4, sort_keys=True), encoding="utf-8"
+    )
+    source = request.repo / "MCPForUnity/Runtime/Fixture.cs"
+    source.write_text("class FreshAfterUnrelatedConfig {}", encoding="utf-8")
+    # When a warm run uses unchanged selected immutable inputs.
+    warm = helper.prepare(request, request.repo / ".unity-ci/warm")
+    # Then no providers run and the current source is still staged with the same dependency report.
+    assert warm.populated is False and calls == original_calls
+    assert (request.repo / warm.preparation.resolution_report).read_bytes() == cold_report
+    assert (
+        request.repo / ".unity-ci/warm/package/Runtime/Fixture.cs"
+    ).read_bytes() == source.read_bytes()
 
 
 def test_optional_dependency_cache_warm_path_still_checks_dependency_closure(dependency_cache):

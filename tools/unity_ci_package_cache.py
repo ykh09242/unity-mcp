@@ -85,7 +85,7 @@ def destination(request: CacheRequest) -> Path:
 
 
 def identity(request: CacheRequest) -> CacheIdentity:
-    """Include every dependency selector and preparation implementation, excluding source bodies."""
+    """Fingerprint selected dependency inputs and preparation logic, excluding source bodies."""
     destination(request)
     manifest = unity_ci.load_manifest(request.manifest_path)
     row = next((item for item in manifest.versions if item.id == request.version), None)
@@ -94,15 +94,17 @@ def identity(request: CacheRequest) -> CacheIdentity:
     config = packages.read_json(request.profiles_path)
     major, minor, _ = packages.unity_numbers(request.version)
     profiles = [
-        profile
-        for profile in config["profiles"].values()
+        (name, profile)
+        for name, profile in config["profiles"].items()
         if f"{major}.{minor}" in profile.get("unityFamilies", [])
         or major in profile.get("unityMajors", [])
     ]
     optional = packages.optional_matches(config, request.version)
     if config.get("schemaVersion") != 1 or len(profiles) != 1 or len(optional) != 1:
         raise packages.PreparationError("Exactly one reviewed base and optional profile required")
-    specs = {**profiles[0]["packages"], **optional[0][1]["packages"]}
+    profile_name, profile = profiles[0]
+    optional_name, optional_profile = optional[0]
+    specs = {**profile["packages"], **optional_profile["packages"]}
     registries = []
     for name, spec in sorted(specs.items()):
         if not packages.PACKAGE_NAME.fullmatch(name):
@@ -112,10 +114,26 @@ def identity(request: CacheRequest) -> CacheIdentity:
             registries.append((name, spec["version"]))
     hashes = {
         relative: hashlib.sha256((request.repo / relative).read_bytes()).hexdigest()
-        for relative in (*LOGIC_INPUTS, *MANIFEST_INPUTS)
+        for relative in LOGIC_INPUTS
     }
-    hashes["versionManifest"] = hashlib.sha256(request.manifest_path.read_bytes()).hexdigest()
-    hashes["profiles"] = hashlib.sha256(request.profiles_path.read_bytes()).hexdigest()
+    documents = {
+        relative: packages.read_json(request.repo / relative) for relative in MANIFEST_INPUTS
+    }
+    documents["versionManifest"] = asdict(row)
+    documents["profiles"] = {
+        "schemaVersion": config["schemaVersion"],
+        "requiredModules": config["requiredModules"],
+        "profiles": {profile_name: profile},
+        "optionalProfiles": {optional_name: optional_profile},
+    }
+    hashes.update(
+        {
+            name: hashlib.sha256(
+                json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            for name, document in documents.items()
+        }
+    )
     provenance = json.dumps(
         {
             "schema": SCHEMA,
