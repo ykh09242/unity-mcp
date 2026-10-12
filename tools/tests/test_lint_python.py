@@ -3,8 +3,11 @@
 from pathlib import Path
 import subprocess
 import sys
+import threading
 
 import pytest
+
+from tools import lint_python
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -93,3 +96,52 @@ def test_lint_fails_on_selected_correctness_warnings(lint_project):
     # Then: warnings selected by policy block CI as well as errors.
     assert result.returncode != 0
     assert "dangerous-default-value" in result.stdout
+
+
+@pytest.mark.parametrize("codes", [(0, 0), (0, 1), (1, 0), (1, 1)])
+def test_both_lint_groups_overlap_and_retain_all_diagnostics(monkeypatch, capsys, codes):
+    ready = threading.Barrier(2)
+
+    def complete(command, **options):
+        directory = options["cwd"]
+        assert command[:3] == [sys.executable, "-m", "pylint"]
+        assert options["check"] is False
+        if sys.version_info >= (3, 15):
+            assert "--jobs=1" in command
+        ready.wait(timeout=2)
+        index = int(directory == lint_python.ROOT)
+        return subprocess.CompletedProcess(
+            command,
+            codes[index],
+            stdout=f"{directory.name}: stdout diagnostic\n",
+            stderr=f"{directory.name}: stderr diagnostic\n",
+        )
+
+    monkeypatch.setattr(lint_python.subprocess, "run", complete)
+    assert lint_python.main() == int(any(codes))
+    output = capsys.readouterr()
+    for directory in (lint_python.SERVER, lint_python.ROOT):
+        assert f"{directory.name}: stdout diagnostic" in output.out
+        assert f"{directory.name}: stderr diagnostic" in output.err
+    for stream in (output.out, output.err):
+        assert stream.index(f"{lint_python.SERVER.name}: ") < stream.index(
+            f"{lint_python.ROOT.name}: "
+        )
+
+
+@pytest.mark.parametrize("failed_directory", [lint_python.SERVER, lint_python.ROOT])
+def test_lint_launch_error_still_reports_other_group(monkeypatch, capsys, failed_directory):
+    def complete(command, **options):
+        directory = options["cwd"]
+        if directory == failed_directory:
+            raise OSError("fixture launch failed")
+        return subprocess.CompletedProcess(
+            command, 0, stdout="other group completed\n", stderr="other group diagnostic\n"
+        )
+
+    monkeypatch.setattr(lint_python.subprocess, "run", complete)
+    assert lint_python.main() == 1
+    output = capsys.readouterr()
+    assert "other group completed" in output.out
+    assert "other group diagnostic" in output.err
+    assert "fixture launch failed" in output.err
