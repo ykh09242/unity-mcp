@@ -94,7 +94,8 @@ def run_regression(source: Path, output: Path) -> RegressionResult:
             policy = load_visual_policy(profile_path(source, visual.policy))
             # Admit the reference screenshot before launching, and bind its bytes again at use.
             baseline = profile_path(source, visual.baseline_report)
-            pair_visual_reports((baseline, baseline), visual.checkpoint, policy)
+            reference = pair_visual_reports((baseline, baseline), visual.checkpoint, policy)
+            compare_visual(reference, policy)
             visual_policies.append(policy)
             visual_references.append(sha256(read_bytes(baseline, 16 * 1024 * 1024)).hexdigest())
             write_new(output / f"visual-policy-{index}.json", policy.model_dump_json().encode())
