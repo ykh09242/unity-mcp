@@ -54,6 +54,96 @@ def test_planned_next_action_preserves_binding_and_membership(gate: GateFixture)
     )
 
 
+@pytest.mark.parametrize("before_phase", [True, 1.0])
+def test_cli_rejects_wrong_json_type_in_previous_metadata(
+    gate: GateFixture, before_phase: fp.Json
+) -> None:
+    # Given valid independently renewed phase metadata and a wrong-type previous value.
+    gate.ready()
+    data = planned_input(gate)
+    data["changes"] = [{"id": "S01", "before": {"phase": 1}, "after": {"phase": 2}}]
+    name, data = reviewed_input(gate, data)
+    data["changes"][0]["before"]["phase"] = before_phase
+    gate.program.path(name).write_bytes(fp.canonical(data))
+    before = gate.program.path("backlog.json").read_bytes()
+    command = [
+        sys.executable,
+        "-B",
+        fp.__file__,
+        "--repo",
+        str(gate.program.repo),
+        "--program-dir",
+        "discovery",
+        "task-plan",
+        "--input",
+        name,
+    ]
+    # When the actual standalone CLI receives the incorrect previous JSON type.
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    after = gate.program.path("backlog.json").read_bytes()
+    print(
+        json.dumps(
+            {
+                "command": command,
+                "before_phase": before_phase,
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "canonical_before_sha256": fp.sha(before),
+                "canonical_after_sha256": fp.sha(after),
+            },
+            sort_keys=True,
+        )
+    )
+    # Then it rejects the complete transaction without changing canonical bytes.
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "Stale before metadata" in result.stderr
+    assert after == before
+
+
+@pytest.mark.parametrize("wrong_type", [True, 1.0])
+@pytest.mark.parametrize("seam", ["receipt", "chain", "effective", "priority"])
+def test_mutation_replay_rejects_json_type_drift(
+    gate: GateFixture, seam: str, wrong_type: fp.Json
+) -> None:
+    # Given a valid proposal with explicit integer fields retained in its history.
+    gate.ready()
+    data = planned_input(gate, "task-prioritize" if seam == "priority" else "task-plan")
+    data["changes"] = (
+        [{"id": "S01", "before": None, "after": 1}]
+        if seam == "priority"
+        else [
+            {
+                "id": "S01",
+                "before": {"phase": 1, "planning_note": "Synthetic only"},
+                "after": {"phase": 1, "planning_note": "Explicit updated planning"},
+            }
+        ]
+    )
+    future = fp.planning.construct(gate.program, gate.program.load(), data)
+    state = future.state
+    event = state["amendments"][-1]
+    if seam == "receipt":
+        event["receipt"]["changes"][0]["after"]["phase"] = wrong_type
+    elif seam == "chain":
+        second = deepcopy(event)
+        second["id"] = "second"
+        second["receipt"]["id"] = "second"
+        patch = [{"id": "S01", "before": {"phase": wrong_type}, "after": {"phase": 2}}]
+        second["changes"] = deepcopy(patch)
+        second["receipt"]["changes"] = deepcopy(patch)
+        state["amendments"].append(second)
+        gate.program.task(state, "S01")["phase"] = 2
+    elif seam == "effective":
+        gate.program.task(state, "S01")["phase"] = wrong_type
+    else:
+        state["execution_priorities"] = {"S01": wrong_type}
+    # When exact replay integrity is validated.
+    # Then equal numeric Python values with distinct JSON types are rejected.
+    with pytest.raises(fp.planning.PlanningError):
+        fp.planning.validate_mutations(state)
+
+
 def test_priority_preserves_binding_and_orders_ready_tasks(gate: GateFixture) -> None:
     # Given an accepted baseline and a lower explicit priority for the second task.
     gate.ready()

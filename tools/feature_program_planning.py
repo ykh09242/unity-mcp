@@ -188,6 +188,11 @@ def _priority(value: Json) -> None:
     )
 
 
+def _same_json(left: Json, right: Json) -> bool:
+    """Compare canonical JSON values without Python's bool/int/float coercion."""
+    return _core().canonical(left) == _core().canonical(right)
+
+
 def task_order(state: Record) -> list[Record]:
     """Keep legacy ties until explicit activation, then use deterministic priority ties."""
     tasks = list(coordination._indexed(state["tasks"], "task").values())
@@ -210,9 +215,12 @@ def validate_mutations(state: Record) -> None:
         if event.get("operation") not in PLANNED_COMMANDS:
             continue
         receipt = coordination._record(event.get("receipt"), "planning receipt")
-        require(event.get("changes") == receipt.get("changes"), "Planning history/receipt mismatch")
         require(
-            event.get("priority_before") == (priorities if activated else None),
+            _same_json(event.get("changes"), receipt.get("changes")),
+            "Planning history/receipt mismatch",
+        )
+        require(
+            _same_json(event.get("priority_before"), priorities if activated else None),
             "Priority history before-state mismatch",
         )
         changes = coordination._indexed(event.get("changes"), "planning change")
@@ -222,7 +230,10 @@ def validate_mutations(state: Record) -> None:
             if event["operation"] == "task-prioritize":
                 _priority(change.get("before"))
                 _priority(change.get("after"))
-                require(priorities.get(identifier) == change["before"], "Priority history mismatch")
+                require(
+                    _same_json(priorities.get(identifier), change["before"]),
+                    "Priority history mismatch",
+                )
                 if change["after"] is None:
                     priorities.pop(identifier, None)
                 else:
@@ -238,20 +249,22 @@ def validate_mutations(state: Record) -> None:
                 for name, current in after.items():
                     key = (identifier, name)
                     if key in latest and name != "next_action":
-                        require(latest[key] == before[name], "Planning history chain mismatch")
+                        require(
+                            _same_json(latest[key], before[name]), "Planning history chain mismatch"
+                        )
                     latest[key] = current
         require(
-            event.get("priority_after") == (priorities if activated else None),
+            _same_json(event.get("priority_after"), priorities if activated else None),
             "Priority history after-state mismatch",
         )
     require(
-        state.get("execution_priorities") == (priorities if activated else None),
+        _same_json(state.get("execution_priorities"), priorities if activated else None),
         "Effective priority differs from immutable planning history",
     )
     for (identifier, name), value in latest.items():
         if name != "next_action":
             require(
-                tasks[identifier].get(name) == value,
+                _same_json(tasks[identifier].get(name), value),
                 "Effective metadata differs from planning history",
             )
 
@@ -284,7 +297,9 @@ def _amend_planned(program: Program, proposal: Record, receipt: Record) -> None:
         if receipt["operation"] == "task-prioritize":
             _priority(change["before"])
             _priority(change["after"])
-            require(priorities.get(identifier) == change["before"], "Stale before priority")
+            require(
+                _same_json(priorities.get(identifier), change["before"]), "Stale before priority"
+            )
             if change["after"] is None:
                 priorities.pop(identifier, None)
             else:
@@ -297,10 +312,10 @@ def _amend_planned(program: Program, proposal: Record, receipt: Record) -> None:
                 "Only explicit whitelisted planned fields may change",
             )
             require(
-                all(task.get(name) == value for name, value in before.items()),
+                all(_same_json(task.get(name), value) for name, value in before.items()),
                 "Stale before metadata",
             )
-            require(before != after, "Planning metadata must actually change")
+            require(not _same_json(before, after), "Planning metadata must actually change")
             for name in (
                 "candidate_paths",
                 "depends_on",
@@ -326,7 +341,7 @@ def _amend_planned(program: Program, proposal: Record, receipt: Record) -> None:
     if receipt["operation"] == "task-prioritize":
         require(
             "execution_priorities" not in proposal
-            or priorities != proposal["execution_priorities"],
+            or not _same_json(priorities, proposal["execution_priorities"]),
             "Priority must actually change",
         )
         proposal["execution_priorities"] = priorities
