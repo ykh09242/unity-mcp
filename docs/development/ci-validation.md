@@ -55,6 +55,11 @@ so tool tests do not wait for the longer server suite.
 - Server and tool jobs use two pytest-xdist workers with `--dist=loadfile`. Each file stays in one
   worker so module fixtures remain together. Worker crashes fail without automatic restarts;
   the job has a 20-minute limit. Mutable fixtures remain isolated per test.
+- Server jobs start the measured long HTTP wrapper first with `pytest_ci_schedule` and
+  `--no-loadscope-reorder --ci-first-file=test_http_security.py`. Other file groups retain
+  xdist's stable descending case-count order; order within each file is unchanged.
+  The plugin is opt-in, requires active `loadfile` workers, and rejects a missing exact
+  file selection. Tool jobs keep their default ordering.
 - Workers select separate rotating-log directories before importing the application. Child
   processes inherit that worker directory unless their fixture supplies its own directory.
 - The complete Python 3.14 server suite collects coverage. Other versions run the same tests
@@ -138,6 +143,46 @@ Across three serial Windows/Python 3.15 runs, the same 29 shutdown/heartbeat cas
 from a 16.19-second median to 11.12 seconds (31% less elapsed time). Request-body and
 admission-lock timeout assertions retain their original budgets, and heartbeat subprocess
 isolation is unchanged. Tests that mutate registrations must construct their own server.
+
+A third profile isolated repeated SDK schema parsing in remote-authentication,
+instance-routing and request-body fixtures. These modules now prepare private tool
+descriptor templates once and deep-copy matching descriptors into every fresh production
+server. The factory matches declaration identity, registration options and supported
+wrapper/signature/annotation state; changed or unfamiliar state uses the real SDK parser.
+Production registration loops, resource registration, visibility, providers, apps, clients
+and session managers remain independent. Public catalog, mutation-isolation and
+changed-wrapper regressions verify this boundary.
+
+On Windows/Python 3.14, the same 65 original cases took a median 15.108 seconds before
+and 7.598 seconds after across three serial samples per state (49.71% less elapsed time).
+The profile retained 59 server constructions and 60 app constructions while SDK parsing
+fell from 3,363 to 570 calls. Both Python 3.14 and 3.15 retain all 515 HTTP cases and add
+three regressions. These local timings exclude profiler overhead and do not predict the
+full CI speedup. Removing a preflight child import showed no repeatable benefit, so that
+experiment was reverted and its subprocess boundaries remain intact.
+
+With that fixture optimization already present, the
+[case-count control](https://github.com/ykh09242/unity-mcp/actions/runs/38271938238) and
+[HTTP-first run](https://github.com/ykh09242/unity-mcp/actions/runs/38274998388) both passed
+on Ubuntu 26.04 with two `loadfile` workers. Every server row retained the same 7,593
+outer cases, including 24 expected skips, and 518 passing HTTP cases. Starting the long
+HTTP wrapper first reduced the gap between the workers' final test completions:
+
+| Python | Case-count finish gap | HTTP-first finish gap |
+| --- | ---: | ---: |
+| 3.11 | 32.060 s | 0.679 s |
+| 3.12 | 26.370 s | 0.023 s |
+| 3.13 | 24.693 s | 0.267 s |
+| 3.14 | 26.682 s | 0.071 s |
+| 3.15 | 20.814 s | 1.937 s |
+
+The wrapper began 6.7-9.9 seconds after startup, instead of 164-234 seconds, and was
+the first file executed on its worker in every row. The selected ten-job Python workload
+span was 308 versus 291 seconds, with summed job time of 1,780 versus 1,728 seconds and
+peak concurrency of ten in both runs. All original tool cases and outcomes remained;
+the final run added ten scheduling/report regressions. These individual CI observations
+support the reduced worker tail, but runner variation and changed tool inventories mean
+they are not a controlled estimate of overall runtime or compute savings.
 
 Use the uploaded JUnit reports and job-step timings for future comparisons. Do not sum the
 outer HTTP wrapper duration and its child report when computing total elapsed time. Timing
@@ -229,6 +274,25 @@ patch changes remain visible in the report without continually resetting history
 SDK discovery for this metadata is bounded to five seconds and reports unavailable
 information explicitly, without failing the test gate.
 
+CI also opts into `tools/pytest_ci_timing.py` for same-host worker observations. Its raw
+`test-worker-timings.json` accompanies JUnit artifacts; compact worker summaries are retained
+in the combined report. Collection includes module imports. Setup, call and teardown are
+measured independently, and remaining worker time includes scheduling waits and framework
+overhead rather than claiming pure CPU idle time. The finish gap compares the last testcase
+on each worker with the last testcase on any worker. Per-file protocol spans in the raw
+artifact support scheduling investigations without changing case order or file grouping.
+The HTTP child remains serial and its time is already included in the wrapper's protocol.
+
+The plugin is inactive without `--ci-timing-output`. It preserves test failures, collection
+errors and abrupt worker failures; incomplete observations are explicitly marked. Output
+write failures cannot change the test exit status. Distribution and file-ordering policy
+are part of the comparison context, so unknown or changed policies start a separate
+baseline. To capture locally from `Server/`, with the existing environment:
+
+```sh
+PYTHONPATH=../tools uv run --python 3.14 --locked --extra dev pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error
+```
+
 The large-result interoperability tests attach SDK discovery, direct C# compilation and
 child execution durations to JUnit. The report shows their call counts, totals and maxima,
 plus the SDK/framework actually selected by the fixture, which can differ from the default
@@ -246,6 +310,23 @@ workflow has a small warning-only report after its compile matrix.
 Their `ci-stage-timings` and `compile-stage-timings` JSON/Markdown artifacts last 30 days.
 Stage observations have one-second API precision, include result status and do not compare
 unlike cold/warm paths or gate tests. API outages never turn a failed selected check green.
+
+The existing combined reports additionally select the complete Python matrix or compiler
+matrix as an explicit workload. Workload span is the first selected job's start through
+the last selected job's completion; summed job-seconds include each selected job's setup
+and post steps. Average and peak concurrency use overlapping job intervals. These metrics
+exclude gates, reporting and unrelated jobs, and are neither full workflow latency nor
+billed minutes. The report retains exact selected job IDs, timestamps, attempts, exclusions
+and platform labels. Missing jobs, mixed attempts and incomplete cohorts are not compared.
+
+Workload history reuses the bounded artifact lookup. Comparisons require matching workflow,
+branch, event, job/platform inventory and workload selection; Python selection includes test
+and nested HTTP inventories. Compiler history also matches the configured concurrency
+reported by the workflow. An unknown policy is displayed without a baseline, since measured
+peak concurrency cannot establish the intended limit. Legacy records without workload
+metrics are skipped. A warning requires two consecutive comparable increases against at
+least three earlier successful samples: 25% and 10 seconds for workload span, or 25% and
+30 seconds for summed job time. All such warnings remain outside the validation gate.
 
 For offline inspection from the repository root:
 
