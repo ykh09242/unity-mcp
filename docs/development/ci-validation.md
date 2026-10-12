@@ -95,6 +95,11 @@ skips fail this gate. Manual runs, pull requests, release callers and unspecifie
 inputs retain full validation. The independent license-free compile workflow retains its
 existing path/matrix policy. No branch-protection settings are changed automatically.
 
+The advisory performance report runs alongside `Selected validation` after the selected
+test callers finish. The gate does not wait for artifact downloads, timing comparisons or
+stage reporting. The overall workflow still waits for the report, and conservative
+predecessor validation continues to require a completed successful workflow run.
+
 ### Performance investigation (2026-10-12)
 
 The [baseline CI run](https://github.com/ykh09242/unity-mcp/actions/runs/38207027373)
@@ -111,6 +116,15 @@ ledgers and patched dependencies per case. On Windows/Python 3.15, these same 70
 13.65 seconds before and 2.86 seconds after the fixture change (79% less elapsed time).
 These local measurements are separate from CI timing and exclude profiler overhead.
 
+A follow-up profile found 24 server registrations in the shutdown module. Reusing its
+invariant registration reduces this to three while retaining 24 fresh applications and
+per-case clients, owners and hub state. Heartbeat failure cases now await actual command
+and heartbeat completion with the original deadline instead of always sleeping until it.
+Across three serial Windows/Python 3.15 runs, the same 29 shutdown/heartbeat cases fell
+from a 16.19-second median to 11.12 seconds (31% less elapsed time). Request-body and
+admission-lock timeout assertions retain their original budgets, and heartbeat subprocess
+isolation is unchanged. Tests that mutate registrations must construct their own server.
+
 Use the uploaded JUnit reports and job-step timings for future comparisons. Do not sum the
 outer HTTP wrapper duration and its child report when computing total elapsed time. Timing
 varies with runner load; preserve test counts, outcomes, coverage and isolation when comparing.
@@ -122,14 +136,27 @@ Three-run Windows medians fell from 2.650 to 1.620 seconds for a legacy fixture 
 only about 0.018 seconds, so mutable fixture directories remain isolated per case. These are
 local shell measurements, not a prediction of Linux runner or full-pipeline improvement.
 
+The compile matrix starts newer Editor versions first through `tools/compile_matrix.py`,
+which uses the same complete manifest validation. Recent warm runs put the longest jobs
+at the newer end of the matrix; starting them earlier reduces the expected final tail.
+All versions and Windows, macOS and Linux defines remain covered, with at most two jobs
+running concurrently. Scheduling code is separate from the hashed compiler preparation
+scripts, so an ordering-only change does not invalidate compiler inputs. Runner scheduling
+and cache state still affect the actual elapsed time.
+
 ### Timing trends
 
 Each Python matrix job turns its existing JUnit report into a compact JSON snapshot.
 The warning-only `Python timing report` job downloads those small snapshots and compares
 them with up to five recent successful runs of the same workflow, branch and event.
 It never reruns tests or downloads historical coverage/HTML artifacts. Its read-only
-Actions permission is granted only to classification/reporting jobs, the aggregate job that
-reports stages, and the reusable-workflow callers.
+Actions permission is granted only to classification/reporting jobs and the
+reusable-workflow callers.
+
+`python-performance.yml` contains the shared report job. The fork-beta caller opts into
+`defer_performance_report` and invokes it outside the required test dependency path.
+Direct Python workflow runs and release callers retain the default report after the Python
+matrix. Report failures remain observational in both paths.
 
 Comparisons require identical Python minor, runner OS/architecture, worker count, coverage
 mode and test/skip inventory, including the nested HTTP inventory. At least three matching
@@ -146,8 +173,9 @@ blocking the test gate. Timing snapshots are retained for seven days and combine
 for 30 days under `python-test-timings`.
 
 The report also records completed Pylint, cache and preparation steps from the current
-workflow's read-only Jobs API. The fork aggregate records stages after both callers finish;
-the independent compile workflow has a small warning-only report after its compile matrix.
+workflow's read-only Jobs API. The fork report records stages after both callers finish,
+even when its timing comparison or snapshot download fails. The independent compile
+workflow has a small warning-only report after its compile matrix.
 Their `ci-stage-timings` and `compile-stage-timings` JSON/Markdown artifacts last 30 days.
 Stage observations have one-second API precision, include result status and do not compare
 unlike cold/warm paths or gate tests. API outages never turn a failed selected check green.
@@ -368,8 +396,13 @@ then publishes only the selected directories; resources, metadata and empty dire
 inside each selected package are preserved. Receipt schema 2 records exact Editor package
 membership and invalidates older full-image cache keys.
 
-The exact key includes the Unity version and image digest, version/package profiles,
-product/project package manifests, and all preparation scripts plus the Editor Dockerfile.
+The exact key includes the selected validated Unity row and matching base/optional package
+profiles, shared schema/module requirements, product/project package manifests, and all
+preparation scripts plus the Editor Dockerfile. JSON inputs are hashed canonically, so
+whitespace and object-key order do not invalidate dependencies. Changes to unrelated Unity
+rows or package profiles also preserve the selected key; invalid manifest data and ambiguous
+profile matches still fail validation. Relevant package pins, image digests, resource
+requirements or preparation-script bytes continue to invalidate the key.
 Source-body changes reuse dependencies while still staging the changed source. There are
 no broad restore keys. A restored receipt must match the expected input identity and the
 complete file/directory inventory, including SHA256 hashes and modes. Archive SHA256
