@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import hashlib
+import os
 from pathlib import Path
 import sys
 import subprocess
@@ -12,6 +13,7 @@ import stat
 import tarfile
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -291,6 +293,99 @@ def test_optional_dependency_cache_warm_run_matches_cold_and_stages_current_sour
         "Registry",
         "receipt.json",
     }
+
+
+@pytest.mark.skipif(os.name != "posix", reason="GNU tar permission/umask semantics require POSIX")
+@pytest.mark.parametrize(
+    "preserve_permissions", [False, True], ids=["default-umask", "workflow-options"]
+)
+def test_optional_dependency_cache_survives_gnu_tar_roundtrip(
+    dependency_cache, preserve_permissions
+):
+    # Given a validated cold cache containing publisher file and directory modes.
+    if getattr(os, "geteuid", lambda: 0)() == 0:
+        pytest.skip("The cache runner uses unprivileged GNU tar extraction")
+    tar = shutil.which("tar")
+    shell = shutil.which("sh")
+    assert tar and shell, "GNU tar and a POSIX shell are required on the Linux CI runner"
+    version = subprocess.run([tar, "--version"], check=True, capture_output=True, text=True)
+    if "GNU tar" not in version.stdout:
+        pytest.skip("The Actions Linux cache uses GNU tar")
+    helper, request, calls = dependency_cache
+    provider = request.repo.parent / "editor-data/Resources/PackageManager/BuiltInPackages"
+    executable = provider / "com.unity.ext.nunit/helper.sh"
+    executable.write_bytes(b"#!/bin/sh\nexit 0\n")
+    executable.chmod(0o777)
+    writable = provider / "com.unity.test-framework/UnityEditor.TestRunner/Fixture.cs"
+    writable.chmod(0o666)
+    writable.parent.chmod(0o777)
+    cold = helper.prepare(request, request.repo / ".unity-ci/cold")
+    report = (request.repo / cold.preparation.resolution_report).read_bytes()
+    directory = helper.destination(request)
+    relative = "Data/Resources/PackageManager/BuiltInPackages"
+    archived_executable = directory / relative / "com.unity.ext.nunit/helper.sh"
+    archived_writable = (
+        directory / relative / "com.unity.test-framework/UnityEditor.TestRunner/Fixture.cs"
+    )
+    archive = directory.parent / "cache.tar"
+    subprocess.run(
+        [tar, "--posix", "-cf", str(archive), "-P", "-C", str(directory.parent), directory.name],
+        check=True,
+    )
+    directory.rename(directory.with_name("original-inputs"))
+    environment = {key: value for key, value in os.environ.items() if key != "TAR_OPTIONS"}
+    if preserve_permissions:
+        config = yaml.safe_load(
+            (ROOT / ".github/workflows/unity-tests.yml").read_text(encoding="utf-8")
+        )
+        restore = next(
+            step
+            for step in config["jobs"]["optionalPackageInputs"]["steps"]
+            if step.get("id") == "package-cache"
+        )
+        environment["TAR_OPTIONS"] = restore["env"]["TAR_OPTIONS"]
+    # When the action's tar extraction shape runs as an unprivileged user with umask 022.
+    subprocess.run(
+        [
+            shell,
+            "-c",
+            'umask 022; exec "$1" -xf "$2" -P -C "$3"',
+            "cache-restore",
+            tar,
+            str(archive),
+            str(directory.parent),
+        ],
+        env=environment,
+        check=True,
+    )
+    # Then preserving permissions makes a real restored cache valid without weakening its receipt.
+    assert stat.S_IMODE(archived_executable.stat().st_mode) == (
+        0o777 if preserve_permissions else 0o755
+    )
+    assert stat.S_IMODE(archived_writable.stat().st_mode) == (
+        0o666 if preserve_permissions else 0o644
+    )
+    assert stat.S_IMODE(archived_writable.parent.stat().st_mode) == (
+        0o777 if preserve_permissions else 0o755
+    )
+    original_calls = list(calls)
+    if preserve_permissions:
+        warm = helper.prepare(request, request.repo / ".unity-ci/warm")
+        assert warm.populated is False
+        assert (request.repo / warm.preparation.resolution_report).read_bytes() == report
+        assert (
+            stat.S_IMODE(
+                (request.repo / ".unity-ci/warm/packages/com.unity.ext.nunit/helper.sh")
+                .stat()
+                .st_mode
+            )
+            == 0o777
+        )
+    else:
+        with pytest.raises(packages.PreparationError, match="size, mode or SHA256 mismatch"):
+            helper.prepare(request, request.repo / ".unity-ci/warm")
+        assert not (request.repo / ".unity-ci/warm").exists()
+    assert calls == original_calls
 
 
 @pytest.mark.parametrize("damage", ["content", "missing", "extra", "receipt", "mode"])

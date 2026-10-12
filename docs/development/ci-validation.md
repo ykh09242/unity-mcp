@@ -335,7 +335,9 @@ transitive dependency closure and required reference/resource inputs are checked
 A warm cache never skips the preparation job or turns native integration tests into a pass.
 
 The workflow uses the separately pinned `actions/cache/restore` and `actions/cache/save`
-actions. PRs and manual runs restore/read; saves require a successful preparation during a
+actions. Restore sets `TAR_OPTIONS=--same-permissions` so GNU tar preserves the publisher
+modes required by the exact integrity receipt instead of subtracting the runner umask.
+PRs and manual runs restore/read; saves require a successful preparation during a
 `beta`/`main` push with the current triggering source. Cache entries are immutable. A corrupt,
 partial or mismatched restore fails closed with its exact key in the error; delete that exact
 Actions cache entry and rerun, or change the cache schema after changing its contract. For

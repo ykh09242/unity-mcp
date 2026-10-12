@@ -294,6 +294,9 @@ jobs:
       - name: Restore optional dependency inputs
         id: package-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        # GNU tar otherwise subtracts the runner umask from publisher modes in the receipt.
+        env:
+          TAR_OPTIONS: --same-permissions
         with:
           path: ${{ steps.package-cache-key.outputs.cache_path }}
           key: ${{ steps.package-cache-key.outputs.cache_key }}

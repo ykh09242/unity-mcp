@@ -321,6 +321,7 @@ def test_optional_preparation_validates_immutable_inputs_without_license_or_slim
     restore = named_step("optionalPackageInputs", "Restore optional dependency inputs")
     save = named_step("optionalPackageInputs", "Save validated optional dependency inputs")
     assert restore["uses"].startswith("actions/cache/restore@")
+    assert restore["env"]["TAR_OPTIONS"] == "--same-permissions"
     assert save["uses"].startswith("actions/cache/save@")
     assert "restore-keys" not in restore["with"]
     assert restore["with"] == save["with"]
