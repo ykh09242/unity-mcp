@@ -25,6 +25,7 @@ on:
       - CustomTools/RoslynRuntimeCompilation/**/*.cs
       - TestProjects/UnityMCPTests/**
       - tools/compile-check.sh
+      - tools/compile_matrix.py
       - tools/compile-defines.txt
       - tools/compile-refs/**
       - tools/unity-versions.json
@@ -35,6 +36,7 @@ on:
       - tools/unity_ci_packages.py
       - tools/unity-ci-packages.json
       - tools/tests/test_compile_check.py
+      - tools/tests/test_compile_matrix.py
       - tools/tests/test_unity_compile_cache.py
       - tools/tests/test_unity_compile_cache_diagnostics.py
       - tools/tests/test_unity_ci_packages.py
@@ -63,13 +65,15 @@ jobs:
           sparse-checkout: |
             tools/unity-versions.json
             tools/unity_ci.py
+            tools/compile_matrix.py
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Select all supported Unity channels
         id: set
         run: |
           set -euo pipefail
-          versions=$(python3 tools/unity_ci.py matrix)
+          # Newer Editors were the longest tail in measured warm runs.
+          versions=$(python3 tools/compile_matrix.py)
           echo "versions=$versions" >> "$GITHUB_OUTPUT"
 
   compile:

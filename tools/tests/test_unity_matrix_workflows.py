@@ -27,17 +27,17 @@ def workflow(name):
 
 
 @pytest.mark.parametrize(
-    "name,job_name",
+    "name,job_name,command_text",
     [
-        ("compile-check.yml", "compile"),
-        ("unity-tests.yml", "testAllModes"),
+        ("compile-check.yml", "compile", "python3 tools/compile_matrix.py"),
+        ("unity-tests.yml", "testAllModes", "python3 tools/unity_ci.py matrix"),
     ],
 )
-def test_every_unity_job_uses_the_full_validated_manifest(name, job_name):
+def test_every_unity_job_uses_the_full_validated_manifest(name, job_name, command_text):
     jobs = workflow(name)["jobs"]
     matrix = jobs["matrix"]
     command = next(step["run"] for step in matrix["steps"] if step.get("id") == "set")
-    assert "python3 tools/unity_ci.py matrix" in command
+    assert command_text in command
     assert "defaultVersion" not in command
     assert "FULL_MATRIX_LABEL" not in command
     assert matrix["outputs"]["versions"] == "${{ steps.set.outputs.versions }}"
@@ -48,6 +48,18 @@ def test_every_unity_job_uses_the_full_validated_manifest(name, job_name):
     assert job.get("continue-on-error", False) is False
     assert "${{ matrix.unity.version }}" in job["name"]
     assert "${{ matrix.unity.channel }}" in job["name"]
+
+
+def test_compile_order_helper_is_available_without_increasing_concurrency():
+    jobs = workflow("compile-check.yml")["jobs"]
+    checkout = next(step for step in jobs["matrix"]["steps"] if "uses" in step)
+    assert set(checkout["with"]["sparse-checkout"].splitlines()) == {
+        "tools/unity-versions.json",
+        "tools/unity_ci.py",
+        "tools/compile_matrix.py",
+    }
+    assert jobs["compile"]["strategy"]["max-parallel"] == 2
+    assert "win/osx/linux" in jobs["compile"]["name"]
 
 
 def test_licensed_tests_prepare_the_selected_immutable_editor_image():
@@ -147,9 +159,15 @@ def test_compilation_uses_cached_data_with_small_pinned_runtime_image():
 
 
 @pytest.mark.parametrize(
-    "path", ["tools/unity_compile_cache.py", "tools/unity_compile_cache_diagnostics.py"]
+    "path",
+    [
+        "tools/unity_compile_cache.py",
+        "tools/unity_compile_cache_diagnostics.py",
+        "tools/compile_matrix.py",
+        "tools/tests/test_compile_matrix.py",
+    ],
 )
-def test_sdk_extractor_changes_trigger_compilation(path):
+def test_compiler_input_and_order_changes_trigger_compilation(path):
     config = workflow("compile-check.yml")
     triggers = config.get("on", config.get(True))
     for event in ("push", "pull_request"):
