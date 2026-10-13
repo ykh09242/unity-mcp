@@ -8,6 +8,8 @@ import { useSnapshot } from './useSnapshot';
 import type { SnapshotLoader } from './useSnapshot';
 import { QuestionForm, useSession } from './questions';
 import type { AnswerSaver, SessionLoader } from './questions';
+import { firstWorkPage, pageSize, pageSizes, taskPage, taskPageIndex } from './paging';
+import type { WorkFocusRequest, WorkPage } from './paging';
 
 type Route = {
   readonly view: 'overview' | 'work' | 'team' | 'task' | 'question';
@@ -379,19 +381,52 @@ function TaskList({
   filters,
   onChange,
   selected,
+  paging,
+  onPage,
+  onOpenTask,
+  focusRequest,
+  onFocusHandled,
+  onRevealTask,
 }: {
   readonly snapshot: Snapshot;
   readonly filters: Filters;
   readonly onChange: (filters: Filters) => void;
   readonly selected: string | null;
+  readonly paging: WorkPage;
+  readonly onPage: (page: WorkPage) => void;
+  readonly onOpenTask: (id: string) => void;
+  readonly focusRequest: WorkFocusRequest | null;
+  readonly onFocusHandled: (token: number) => void;
+  readonly onRevealTask: (id: string) => void;
 }) {
   const i18n = useI18n();
   const index = snapshotIndex(snapshot);
   const sorted = useMemo(() => selectTasks(snapshot, filters), [snapshot, filters]);
+  const page = useMemo(() => taskPage(sorted, paging), [sorted, paging]);
   const selectedRef = useRef<HTMLAnchorElement>(null);
+  const sizeRef = useRef<HTMLSelectElement>(null);
+  const focusedRow = useRef<string | null>(null);
   useEffect(() => {
-    if (selected) selectedRef.current?.focus({ preventScroll: true });
-  }, [selected]);
+    if (page.index !== paging.index) onPage({ ...paging, index: page.index });
+    if (focusRequest) {
+      const target = focusRequest.taskId ? selectedRef.current : null;
+      (target || sizeRef.current)?.focus({ preventScroll: true });
+      onFocusHandled(focusRequest.token);
+    } else if (
+      focusedRow.current &&
+      !page.tasks.some((task) => task.id === focusedRow.current) &&
+      document.activeElement === document.body
+    ) {
+      sizeRef.current?.focus({ preventScroll: true });
+    }
+  }, [page, paging, onPage, focusRequest, onFocusHandled]);
+  const selectedPage = selected ? taskPageIndex(sorted, selected, paging.size) : null;
+  const controls = [
+    ['First page', 0],
+    ['Previous page', page.index - 1],
+    ['Next page', page.index + 1],
+    ['Last page', page.count - 1],
+  ] as const;
   const select = (
     key: keyof Filters,
     title: string,
@@ -423,7 +458,16 @@ function TaskList({
   const owners = [...index.tasksByOwner.keys()].filter(Boolean).sort();
   const workstreams = records(snapshot.workstreams);
   return (
-    <>
+    <div
+      className="work-ledger"
+      onFocusCapture={(event) => {
+        const target = event.target;
+        focusedRow.current =
+          target instanceof HTMLElement
+            ? target.closest<HTMLAnchorElement>('.task-button')?.dataset.taskId || null
+            : null;
+      }}
+    >
       <form className="filters" role="search" onSubmit={(event) => event.preventDefault()}>
         <label className="search">
           {i18n.t('Search tasks')}
@@ -481,18 +525,82 @@ function TaskList({
           {i18n.t('Clear filters')}
         </button>
       </div>
+      <nav className="paging" aria-label={i18n.t('Work pages')}>
+        <label>
+          {i18n.t('Tasks per page')}
+          <select
+            ref={sizeRef}
+            value={paging.size}
+            onChange={(event) => onPage({ index: 0, size: pageSize(event.target.value) })}
+          >
+            {pageSizes.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="paging-actions">
+          {controls.map(([label, target]) => (
+            <button
+              key={label}
+              type="button"
+              aria-disabled={
+                !page.count || target < 0 || target >= page.count || target === page.index
+              }
+              onClick={() => {
+                if (page.count && target >= 0 && target < page.count && target !== page.index)
+                  onPage({ ...paging, index: target });
+              }}
+            >
+              {i18n.t(String(label))}
+            </button>
+          ))}
+        </div>
+        <p className="paging-range" role="status" aria-live="polite" aria-atomic="true">
+          {i18n.t('Showing {start}–{end} of {matching} matching tasks · Page {page} of {pages}', {
+            start: page.start,
+            end: page.end,
+            matching: page.matching,
+            page: page.count ? page.index + 1 : 0,
+            pages: page.count,
+          })}
+        </p>
+      </nav>
+      {selected && selectedPage !== page.index && (
+        <p className="selection-context">
+          {i18n.t(
+            !index.tasks.has(selected)
+              ? 'Selected task {id} is no longer available.'
+              : selectedPage === null
+                ? 'Selected task {id} does not match these filters.'
+                : 'Selected task {id} is on another page.',
+            { id: selected },
+          )}
+          {selectedPage !== null && (
+            <button type="button" onClick={() => onRevealTask(selected)}>
+              {i18n.t('Show selected task')}
+            </button>
+          )}
+        </p>
+      )}
       <div className="row-labels" aria-hidden="true">
         <span>{i18n.t('Task / category')}</span>
         <span>{i18n.t('Status')}</span>
         <span>{i18n.t('Owner')}</span>
       </div>
       <div className="task-list" aria-label={i18n.t('Work')}>
-        {sorted.map((task) => (
+        {page.tasks.map((task) => (
           <a
             key={task.id}
             href={`#task/${encodeURIComponent(task.id)}`}
             className={`task-button ${selected === task.id ? 'selected' : ''}`}
             ref={task.id === selected ? selectedRef : undefined}
+            data-task-id={task.id}
+            onClick={(event) => {
+              if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey)
+                onOpenTask(task.id);
+            }}
           >
             <span>
               <span className="task-title">{task.title}</span>
@@ -518,7 +626,7 @@ function TaskList({
           </p>
         )}
       </div>
-    </>
+    </div>
   );
 }
 function Delivery({ value }: { readonly value?: Json }) {
@@ -1029,18 +1137,50 @@ function Dashboard({
   const session = useSession(sessionLoader);
   const [route, setRoute] = useState<Route>(routeFromHash);
   const [filters, setFilters] = useState<Filters>(emptyFilters);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(route.taskId || null);
+  const [paging, setPaging] = useState<WorkPage>(firstWorkPage);
+  const [focusRequest, setFocusRequest] = useState<WorkFocusRequest | null>(null);
+  const focusToken = useRef(0);
+  const listOrigin = useRef<{ readonly taskId: string; readonly page: WorkPage } | null>(null);
+  const currentRoute = useRef(route);
+  const previousProgram = useRef<string | null>(null);
   const main = useRef<HTMLElement>(null);
   const initialized = useRef(false);
   useEffect(() => {
     const changed = () => {
       const next = routeFromHash();
+      const previous = currentRoute.current;
+      currentRoute.current = next;
       setRoute(next);
-      if (next.taskId) setSelected(next.taskId);
+      if (next.taskId) {
+        setSelected(next.taskId);
+        if (listOrigin.current?.taskId !== next.taskId) listOrigin.current = null;
+      } else if (next.view === 'work' && previous.view === 'task') {
+        const taskId = previous.taskId || selected;
+        const origin = listOrigin.current;
+        if (snapshot && taskId && origin?.taskId === taskId) {
+          const results = selectTasks(snapshot, filters);
+          const index = taskPageIndex(results, taskId, origin.page.size);
+          setPaging({ ...origin.page, index: index ?? origin.page.index });
+        }
+        setFocusRequest({ token: ++focusToken.current, taskId: taskId || null });
+        listOrigin.current = null;
+      }
     };
     window.addEventListener('hashchange', changed);
     return () => window.removeEventListener('hashchange', changed);
-  }, []);
+  }, [snapshot, filters, selected]);
+  useEffect(() => {
+    if (!snapshot) return;
+    if (previousProgram.current && previousProgram.current !== snapshot.program_id) {
+      setFilters(emptyFilters);
+      setPaging(firstWorkPage);
+      setSelected(null);
+      setFocusRequest(null);
+      listOrigin.current = null;
+    }
+    previousProgram.current = snapshot.program_id;
+  }, [snapshot?.program_id]);
   useEffect(() => {
     if (initialized.current && !(route.view === 'work' && selected))
       main.current?.focus({ preventScroll: false });
@@ -1048,9 +1188,32 @@ function Dashboard({
   }, [route.view, route.taskId, route.questionId, selected]);
   const integrity = record(snapshot?.integrity);
   const stale = integrity.status === 'stale';
-  const selectCategory = useCallback(
-    (category: string) => setFilters((previous) => ({ ...previous, category })),
-    [],
+  const selectCategory = useCallback((category: string) => {
+    setFilters((previous) => ({ ...previous, category }));
+    setPaging((previous) => ({ ...previous, index: 0 }));
+  }, []);
+  const changeFilters = useCallback((next: Filters) => {
+    setFilters(next);
+    setPaging((previous) => ({ ...previous, index: 0 }));
+  }, []);
+  const openTask = useCallback(
+    (taskId: string) => {
+      listOrigin.current = { taskId, page: paging };
+    },
+    [paging],
+  );
+  const focusHandled = useCallback((token: number) => {
+    setFocusRequest((previous) => (previous?.token === token ? null : previous));
+  }, []);
+  const revealTask = useCallback(
+    (taskId: string) => {
+      if (!snapshot) return;
+      const index = taskPageIndex(selectTasks(snapshot, filters), taskId, paging.size);
+      if (index === null) return;
+      setPaging({ ...paging, index });
+      setFocusRequest({ token: ++focusToken.current, taskId });
+    },
+    [snapshot, filters, paging],
   );
   const freshness = error
     ? i18n.t('Unavailable')
@@ -1104,8 +1267,14 @@ function Dashboard({
           <TaskList
             snapshot={snapshot}
             filters={filters}
-            onChange={setFilters}
+            onChange={changeFilters}
             selected={selected}
+            paging={paging}
+            onPage={setPaging}
+            onOpenTask={openTask}
+            focusRequest={focusRequest}
+            onFocusHandled={focusHandled}
+            onRevealTask={revealTask}
           />
         </>
       );
@@ -1139,7 +1308,23 @@ function Dashboard({
       );
     }
     return content;
-  }, [snapshot, error, route, filters, selected, session, answerSaver, refresh, i18n]);
+  }, [
+    snapshot,
+    error,
+    route,
+    filters,
+    selected,
+    paging,
+    focusRequest,
+    changeFilters,
+    openTask,
+    focusHandled,
+    revealTask,
+    session,
+    answerSaver,
+    refresh,
+    i18n,
+  ]);
   return (
     <>
       <a
