@@ -30,11 +30,13 @@ if __name__ == "__main__":
     sys.modules.setdefault(core_module, sys.modules[__name__])
 
 if __package__:
+    import tools.feature_program_coverage as coverage
     import tools.feature_program_coordination as coordination
     import tools.feature_program_phases as phases
     import tools.feature_program_planning as planning
     import tools.feature_program_questions as questions
 else:
+    import feature_program_coverage as coverage
     import feature_program_coordination as coordination
     import feature_program_phases as phases
     import feature_program_planning as planning
@@ -432,15 +434,16 @@ class Program:
     ) -> list[Record]:
         return questions.pending_questions(state, objective_id, task_ids)
 
-    def source_snapshot(self, scopes: list[str]) -> Record:
+    def source_snapshot(self, scopes: list[str], budget: ReadBudget | None = None) -> Record:
         require(bool(scopes), "At least one explicit scope is required")
         snapshot: Record = {}
         total_bytes = 0
+        reader = budget if budget is not None else ReadBudget(128 * 1024 * 1024)
 
         def fingerprint_file(path: Path) -> str:
             nonlocal total_bytes
             require(len(snapshot) < 10000, "Explicit source scope exceeds fingerprint budget")
-            content = bounded_bytes(path, 128 * 1024 * 1024 - total_bytes)
+            content = reader.read(path, 128 * 1024 * 1024 - total_bytes)
             total_bytes += len(content)
             return sha(content)
 
@@ -678,11 +681,13 @@ class Program:
         questions.validate_questions(state)
         coordination.validate_governance(state)
         phases.validate(state)
+        coverage.validate(state)
         if verify_artifacts:
             self.verify_refs(coordination.evidence_references(state), budget)
             self.verify_refs(questions.evidence_references(state), budget)
             self.verify_refs(phases.evidence_references(state), budget)
             self.verify_refs(planning.evidence_references(state), budget)
+            coverage.verify_history(self, state, budget)
 
     def verify_terminal(
         self, task: Record, attempt: Record, budget: ReadBudget | None = None
@@ -1434,6 +1439,16 @@ class Program:
         state.update(proposed)
 
     def submit(self, state: Record, args: argparse.Namespace) -> None:
+        proposal = self.prepare_submit(state, args, observed_head=self.current_head())
+        state.clear()
+        state.update(proposal)
+
+    def prepare_submit(
+        self, state: Record, args: argparse.Namespace, *, observed_head: str
+    ) -> Record:
+        """Validate a real submission on detached state without locks, files or publication."""
+        state = deepcopy(state)
+        require(bool(re.fullmatch(r"[a-f0-9]{40}", observed_head)), "Invalid observed current HEAD")
         self.require_current_location()
         task = self.task(state, args.id)
         require(
@@ -1446,6 +1461,7 @@ class Program:
         require(type(number) is int, "Invalid attempt number")
         self.verify_refs(sequence(attempt["evidence"], "evidence"))
         receipt, receipt_refs = self.frozen_json(args.id, number, args.receipt)
+        coverage.validate_receipt_refs(self, state, receipt, args.id)
         require(
             receipt.get("task_id") == args.id and receipt.get("attempt") == number,
             "Receipt identity mismatch",
@@ -1506,7 +1522,7 @@ class Program:
             "source_digest": digest(snapshot),
             "source_snapshot": snapshot,
             "evidence": refs,
-            "submitted_head": git(self.repo, ["rev-parse", "HEAD"]),
+            "submitted_head": observed_head,
             "round": len(sequence(attempt["rounds"], "rounds")) + 1,
             "review": None,
         }
@@ -1533,6 +1549,7 @@ class Program:
                 "receipt": receipt_refs[0],
             },
         )
+        return state
 
     def verify_submission(self, attempt: Record) -> Record:
         submission = record(attempt.get("submission"), "submission")
@@ -1558,6 +1575,16 @@ class Program:
         )
 
     def review(self, state: Record, args: argparse.Namespace) -> None:
+        observed_head = self.current_head() if args.command == "complete" else None
+        proposal = self.prepare_review(state, args, observed_head=observed_head)
+        state.clear()
+        state.update(proposal)
+
+    def prepare_review(
+        self, state: Record, args: argparse.Namespace, *, observed_head: str | None
+    ) -> Record:
+        """Prepare actual review validation without publishing or changing caller state."""
+        state = deepcopy(state)
         self.require_current_location()
         self.verify_refs(coordination.evidence_references(state))
         task = self.task(state, args.id)
@@ -1567,6 +1594,7 @@ class Program:
         number = attempt["number"]
         require(type(number) is int, "Invalid attempt number")
         review, refs = self.frozen_json(args.id, number, args.review)
+        coverage.validate_receipt_refs(self, state, review, args.id)
         require(
             review.get("task_id") == args.id and review.get("attempt") == number,
             "Review identity mismatch",
@@ -1579,6 +1607,11 @@ class Program:
             "Review must bind the exact submitted receipt/source",
         )
         if verdict == "accepted":
+            require(
+                isinstance(observed_head, str)
+                and bool(re.fullmatch(r"[a-f0-9]{40}", observed_head)),
+                "Invalid observed current HEAD",
+            )
             require(
                 review.get("acceptance_complete") is True
                 and review.get("unresolved_findings") == [],
@@ -1606,7 +1639,7 @@ class Program:
                 {
                     "status": "done",
                     "review": refs[0],
-                    "completed_head": git(self.repo, ["rev-parse", "HEAD"]),
+                    "completed_head": observed_head,
                 }
             )
             task.update(
@@ -1632,6 +1665,7 @@ class Program:
                 "source_digest": submission["source_digest"],
             },
         )
+        return state
 
     def delivery(self, state: Record, args: argparse.Namespace) -> None:
         task = self.task(state, args.id)
@@ -1872,7 +1906,8 @@ class Program:
         result.update({f"tasks/{task['id']}.md": self.packet(state, task) for task in tasks})
         return result
 
-    def save(self, state: Record, *, before_publish: Callable[[], None] | None = None) -> None:
+    def prepare_save(self, state: Record) -> bytes:
+        """Share actual publication preflight without creating or changing any files."""
         self.require_current_location()
         self.validate(state)
         encoded = canonical(state)
@@ -1885,8 +1920,16 @@ class Program:
             all(len(text.encode("utf-8")) <= 8 * 1024 * 1024 for text in derived.values()),
             "Derived document exceeds 8 MiB; existing state preserved",
         )
+        return encoded
+
+    def save(self, state: Record, *, before_publish: Callable[[], None] | None = None) -> None:
+        self.require_current_location()
+        reliance_guard = coverage.publication_guard(self, state)
+        encoded = self.prepare_save(state)
         if before_publish is not None:
             before_publish()
+        if reliance_guard is not None:
+            reliance_guard()
         atomic_write(self.path("backlog.json"), encoded)
         try:
             self.render(state)
@@ -2132,6 +2175,7 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
         + list(questions.evidence_references(state))
         + phases.evidence_references(state)
         + planning.evidence_references(state)
+        + coverage.evidence_references(state)
     )
     for task in tasks:
         for value in sequence(task["attempts"], "attempts"):
@@ -2296,6 +2340,7 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
         "source_intakes": state.get("source_intakes", []),
         "amendments": state.get("amendments", []),
         "execution_priorities": state.get("execution_priorities"),
+        "coverage": coverage.projection(program, state, evidence_budget),
     }
     require(len(canonical(result)) <= 8 * 1024 * 1024, "Snapshot output exceeds 8 MiB")
     return result
@@ -2832,6 +2877,7 @@ def parser() -> argparse.ArgumentParser:
     coordination.add_commands(commands)
     phases.add_commands(commands)
     planning.add_commands(commands)
+    coverage.add_commands(commands)
     return result
 
 
@@ -2850,6 +2896,45 @@ def main(argv: list[str] | None = None) -> int:
         program = Program(repo, safe_path(repo, relative_program))
         if args.command == "snapshot":
             print(canonical(read_snapshot(repo, program.directory)).decode(), end="")
+            return 0
+        if args.command in {"coverage", "coverage-binding"}:
+            initial = bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024)
+            state = read_json(
+                program.path("backlog.json"),
+                budget=ReadBudget(cached={program.path("backlog.json"): initial}),
+            )
+            program.require_current_location()
+            if args.command == "coverage-binding":
+                result = coverage.bind_input(program, state, read_json(program.path(args.input)))
+            else:
+                result = coverage.projection(program, state)
+                observed_head = None
+                metadata_error: Record | None = None
+                if (
+                    args.operation in {"submit", "complete", "objective-complete"}
+                    and args.input is not None
+                ):
+                    try:
+                        observed_head = program.current_head()
+                    except (ProgramError, OSError) as exc:
+                        metadata_error = {
+                            "operation": args.operation,
+                            "status": "not_assessed",
+                            "reasons": [str(exc)],
+                            "failure_type": type(exc).__name__,
+                            "limitations": [
+                                "Current Git metadata could not be observed; no baseline substitution."
+                            ],
+                        }
+                result["diagnostics"] = metadata_error or coverage.diagnostics(
+                    program, state, args, observed_head=observed_head
+                )
+            require(
+                bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024) == initial,
+                "Registry changed during coverage observation; refresh",
+            )
+            require(len(canonical(result)) <= 8 * 1024 * 1024, "Coverage output exceeds 8 MiB")
+            print(canonical(result).decode(), end="")
             return 0
         if args.command == "admission-binding":
             state = program.load()
@@ -2894,6 +2979,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         with program.lock():
             state = program.initialize(args) if args.command == "init" else program.load()
+            if args.command == "coverage-record":
+                coverage.record(program, state, args.input)
+                print(f"coverage-record: OK; committed revision {phases.revision(state)}")
+                return 0
             if args.command in {"publication-adopt", "publication-reconcile"}:
                 if args.command == "publication-adopt":
                     planning.publication_adopt(program, state, args.input)

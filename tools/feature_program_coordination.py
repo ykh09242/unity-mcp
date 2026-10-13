@@ -544,9 +544,15 @@ def _load(program: ProgramAccess, name: str) -> tuple[Record, str]:
         raise GovernanceError(str(exc)) from exc
 
 
-def _fresh(program: ProgramAccess, receipt: Record) -> list[str]:
+def _fresh(
+    program: ProgramAccess, receipt: Record, *, observed_head: str | None = None
+) -> list[str]:
     scope = _binding_fields(receipt)
-    _require(receipt["source_head"] == program.current_head(), "Stale source HEAD")
+    _require(
+        receipt["source_head"]
+        == (observed_head if observed_head is not None else program.current_head()),
+        "Stale source HEAD",
+    )
     _require(receipt["source_digest"] == program.source_digest(scope), "Stale scoped source digest")
     return scope
 
@@ -1173,8 +1179,17 @@ def _objective_record(state: Record, receipt: Record) -> None:
 
 
 def _objective_complete(
-    program: ProgramAccess, state: Record, receipt: Record, name: str, parsed_hash: str
+    program: ProgramAccess,
+    state: Record,
+    receipt: Record,
+    name: str,
+    parsed_hash: str,
+    observed_head: str,
 ) -> None:
+    if __package__:
+        from tools import feature_program_coverage as coverage
+    else:
+        import feature_program_coverage as coverage
     goal = _record(state.get("objective"), "current objective")
     _require(
         goal.get("status") in {"active", "director_review"},
@@ -1191,7 +1206,7 @@ def _objective_complete(
             receipt.get("membership_revision") == goal["membership_revision"],
             "Completion membership revision is stale",
         )
-    _fresh(program, receipt)
+    _fresh(program, receipt, observed_head=observed_head)
     _text(receipt.get("summary"), "completion decision summary")
     _require(receipt.get("unresolved_findings") == [], "Objective has unresolved findings")
     results = [
@@ -1311,7 +1326,8 @@ def _objective_complete(
         "Criterion evidence must be frozen by completion",
     )
     refs = _freeze(program, receipt, name, parsed_hash=parsed_hash)
-    review_refs = _integrated_review(program, goal, receipt, implementers)
+    refs += coverage.validate_receipt_refs(program, state, receipt)
+    review_refs = _integrated_review(program, state, goal, receipt, implementers, observed_head)
     goal.update(
         {
             "status": "awaiting_next_goal",
@@ -1325,7 +1341,12 @@ def _objective_complete(
 
 
 def _integrated_review(
-    program: ProgramAccess, goal: Record, receipt: Record, implementers: set[str]
+    program: ProgramAccess,
+    state: Record,
+    goal: Record,
+    receipt: Record,
+    implementers: set[str],
+    observed_head: str,
 ) -> list[Json]:
     """Freeze an independent review of the actual integrated bytes, not old task hashes."""
     name = _relative(receipt.get("integrated_review"))
@@ -1337,7 +1358,7 @@ def _integrated_review(
             "Integrated review membership revision is stale",
         )
     _require(
-        _fresh(program, review) == _binding_fields(receipt)
+        _fresh(program, review, observed_head=observed_head) == _binding_fields(receipt)
         and review["source_head"] == receipt["source_head"]
         and review["source_digest"] == receipt["source_digest"],
         "Integrated review scope/source mismatch",
@@ -1361,7 +1382,29 @@ def _integrated_review(
         and set(criteria) == set(_texts(goal["criteria"], "goal criteria")),
         "Integrated review must assess complete goal criteria",
     )
-    return _freeze(program, review, name, parsed_hash=parsed_hash)
+    if __package__:
+        from tools import feature_program_coverage as coverage
+    else:
+        import feature_program_coverage as coverage
+    return _freeze(program, review, name, parsed_hash=parsed_hash) + coverage.validate_receipt_refs(
+        program, state, review
+    )
+
+
+def prepare_objective_completion(
+    program: ProgramAccess,
+    state: Record,
+    receipt: Record,
+    name: str,
+    parsed_hash: str,
+    *,
+    observed_head: str,
+) -> Record:
+    """Prepare the real aggregate acceptance on detached state, with no publication."""
+    proposal = deepcopy(state)
+    _require(bool(re.fullmatch(r"[a-f0-9]{40}", observed_head)), "Invalid observed current HEAD")
+    _objective_complete(program, proposal, receipt, name, parsed_hash, observed_head)
+    return proposal
 
 
 def apply_command(program: ProgramAccess, state: Record, args: argparse.Namespace) -> bool:
@@ -1387,7 +1430,14 @@ def apply_command(program: ProgramAccess, state: Record, args: argparse.Namespac
         case "objective-record":
             _objective_record(proposal, receipt)
         case "objective-complete":
-            _objective_complete(program, proposal, receipt, args.input, parsed_hash)
+            proposal = prepare_objective_completion(
+                program,
+                proposal,
+                receipt,
+                args.input,
+                parsed_hash,
+                observed_head=program.current_head(),
+            )
         case _:
             raise GovernanceError("Unsupported coordination command")
     validate_governance(proposal)

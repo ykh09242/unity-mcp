@@ -121,6 +121,66 @@ def source_for_task(state: Record, task: Record) -> Record:
     return coordination._record(sources[identifier]["source"], "supplemental source")
 
 
+def coverage_source_identity(
+    program: Program, state: Record, source: Record, budget: ReadBudget
+) -> Record:
+    """Coverage-only identity through exact, archived relocation provenance."""
+    core = _core()
+    result = deepcopy(source)
+    if not _same_json(source, state["source"]):
+        return result  # Delivered relocation does not rewrite supplemental source locators.
+    relocated = program.path("RELOCATED_FROM.json").exists()
+    matched = False
+    destinations: set[str] = set()
+    for value in reversed(coordination._items(state.get("events", []), "events")):
+        event = coordination._record(value, "event")
+        if event.get("action") != "relocate":
+            continue
+        previous = coordination._record(event.get("previous_source"), "relocation source")
+        old = coordination._relative(event.get("source_directory"))
+        new = coordination._relative(event.get("destination_directory"))
+        require(
+            new.casefold() not in destinations and old.casefold() != new.casefold(),
+            "Ambiguous coverage relocation lineage",
+        )
+        destinations.add(new.casefold())
+        transformed = deepcopy(previous)
+        for key in ("path", "reference_base"):
+            path = coordination._relative(previous.get(key))
+            if path == old or path.startswith(old + "/"):
+                transformed[key] = new + path[len(old) :]
+        if _same_json(transformed, result):
+            original_hash = _hash(
+                event.get("original_registry_sha256"), "relocation original registry hash"
+            )
+            base = f"recovery/relocations/{original_hash}"
+            archived = budget.read(program.path(base + "/original-backlog.json"), 8 * 1024 * 1024)
+            require(core.sha(archived) == original_hash, "Coverage relocation archive changed")
+            archived_state = core.read_json(
+                program.path(base + "/original-backlog.json"), budget=budget
+            )
+            require(
+                _same_json(archived_state.get("source"), previous)
+                and archived_state.get("program_id") == state["program_id"],
+                "Coverage relocation source lineage mismatch",
+            )
+            manifest = core.read_json(program.path(base + "/manifest.json"), budget=budget)
+            require(
+                manifest.get("source") == old
+                and manifest.get("destination") == new
+                and manifest.get("original_registry_sha256") == original_hash,
+                "Coverage relocation manifest lineage mismatch",
+            )
+            matched = True
+            result = deepcopy(previous)
+        elif any(str(result.get(key)).startswith(new + "/") for key in ("path", "reference_base")):
+            raise PlanningError(
+                "Coverage relocation lineage does not match current source locators"
+            )
+    require(not relocated or matched, "Coverage relocation has no proven source lineage")
+    return result
+
+
 def descriptors(state: Record) -> list[Record]:
     return [
         coordination._record(state["source"], "original source"),
@@ -236,6 +296,15 @@ def _eligible(state: Record, identifier: str) -> Record:
     return task
 
 
+def task_definition(task: Record) -> Record:
+    """Share effective definition identity without treating runtime history as planning."""
+    return {
+        key: deepcopy(value)
+        for key, value in task.items()
+        if key not in phases.TASK_PROGRESS_FIELDS
+    }
+
+
 def predecessor_binding(program: Program, state: Record, identifier: str) -> Record:
     """Bind the stable selected definition and its actual resolved frozen section."""
     core = _core()
@@ -248,11 +317,7 @@ def predecessor_binding(program: Program, state: Record, identifier: str) -> Rec
         identifier in sections and _same_json(sections[identifier], task["source"]),
         "Predecessor source-section mismatch",
     )
-    definition = {
-        key: deepcopy(value)
-        for key, value in task.items()
-        if key not in phases.TASK_PROGRESS_FIELDS
-    }
+    definition = task_definition(task)
     return {
         "definition_digest": core.digest(definition),
         "source": deepcopy(source),

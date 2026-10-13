@@ -2076,6 +2076,7 @@ def test_amended_objective_completion_rejects_old_membership_revision(gate: Gate
             {"actor_id": "director", "objective_id": "goal", "membership_revision": 0},
             "unused.json",
             "0" * 64,
+            observed_head=gate.program.current_head(),
         )
 
 

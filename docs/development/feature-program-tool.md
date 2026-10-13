@@ -599,6 +599,115 @@ New `reviewer_role: "leader"` reviews also require this current director/legacy 
 reason. A self-review must use that honest role; the label alone grants no authority. Historical
 review receipts and staffing snapshots are preserved without replaying today's authority over them.
 
+## Explicit criterion coverage and acceptance diagnostics
+
+Coverage annotations are optional, append-only records outside objective and task definitions.
+They map original objective criteria to explicitly authored task/path/evidence contributors.
+Recording a link changes no criterion, membership, candidate approval, check result or review.
+Legacy absence and omitted criteria remain unknown. Only a current explicit zero-contributor
+declaration with a nonblank reason means uncovered; task completion and prose never imply coverage.
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example coverage-binding --input evidence/_coverage/attempt-1/draft.json
+python tools/feature_program.py --program-dir .work/programs/example coverage-record --input evidence/_coverage/attempt-1/coverage-1.json
+python tools/feature_program.py --program-dir .work/programs/example coverage
+```
+
+Author a draft with `schema_version: 1`, `operation: "coverage-record"`, a unique portable `id`,
+current accepted director `actor_id`, actual `reason`, `links` and optional `uncovered` rows.
+Each link has `criterion: {ordinal, text_sha256}`, `task_id`, `scope_kind`, nonempty unique `paths`
+and nonempty `evidence: [{path, sha256}]`. Ordinals are the original zero-based objective array
+indices; text hashes bind exact UTF-8 criterion bytes, with no normalization or new criterion IDs.
+The current task must be an objective member. Multiple tasks may contribute to one criterion;
+one task may contribute to several criteria. Duplicate contributor pairs and conflicting
+contributor/uncovered declarations reject.
+
+`scope_kind: "candidate"` refers to declared candidate scope, with no attempt or round assertion.
+It is planning intent even if the task later becomes owned. `scope_kind: "attempt"` additionally
+requires the exact current integer `attempt`; optional integer `round` must name the latest actual
+submission round. Paths must be safely contained in the applicable candidate or claimed scope.
+Attempt evidence must remain in that task/attempt directory. Candidate evidence must be inside
+the selected program's evidence directory. No artifact is created by binding or projection reads.
+
+Optional `records` on a link contain `{kind, receipt: {path, sha256}}`, where kind is execution,
+review, finding or delivery. These name actual JSON records of the same task/applicable attempt.
+Captured check/findings/verdict facts are displayed as recorded observations, not new execution
+or criterion acceptance. Missing facts stay unknown; a linked failed check differs from an absent
+check. Recorded task acceptance is verified through the existing terminal validator and explicitly
+identified as historical. Recorded objective criterion results retain their immutable completion
+origin; current source freshness and unassessed HEAD remain separate.
+
+`coverage-binding` prints the actual `expected_revision`, `objective_binding`, bound `links` and
+bound `uncovered` rows for the supplied draft. Copy these exact fields into a new immutable input
+under `evidence/_coverage/attempt-1/`. Binding requires real evidence; it does not fill passing
+placeholders. Objective binding preserves exact criteria and current membership revision (or
+legacy member IDs). Links bind effective task definitions, frozen report/section provenance,
+applicable scope bytes and attempt/round identity. Uncovered declarations also bind the current
+definition/source inventory. The revision token protects recording; subsequent unrelated notes,
+actor observations and runtime actions do not invalidate unchanged stable bindings.
+
+Current source/definition/member/attempt/round/evidence drift remains explicit. Old annotations
+are retained and cannot silently attach to another attempt or to an exclude/re-add membership
+revision. Completed relocation keeps content identity only through exact archived source lineage;
+current locators are still safely read and hashed. Missing, changed or ambiguous provenance is
+stale/unavailable, never a basename or generic alias fallback. Current independent review and
+director acceptance remain necessary for consequential planning changes; annotation progress
+alone does not renew phase gates.
+
+New execution, review, structured finding, objective-completion and integrated-review inputs
+may declare reliance with the same optional envelope:
+
+```json
+{
+  "coverage_refs": [
+    {
+      "receipt": {
+        "path": "evidence/_coverage/attempt-1/coverage-1.json",
+        "sha256": "EXACT_RECORDED_RECEIPT_HASH"
+      },
+      "criteria": [{"ordinal": 0, "text_sha256": "EXACT_ORIGINAL_CRITERION_TEXT_HASH"}]
+    }
+  ]
+}
+```
+
+Each row needs nonempty known criteria, exact current annotation/hash and no duplicate/conflicting
+references. Task inputs must link that applicable task. Absence or an empty array declares no
+reliance and preserves legacy behavior; prose is never interpreted as a reference. The shared
+authoritative validator rejects explicit invalid/stale reliance. An execution/review input freezes
+its exact envelope; annotation artifacts stay globally frozen without weakening task/attempt
+evidence-prefix rules. Previously recorded inputs and reviews remain unchanged. Newly declared
+reliance is checked against the actual pre-state and rechecked after derived preparation, directly
+before publication; a submission's new round must not retroactively change that pre-state.
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example coverage --operation submit --task TASK-1 --owner worker-example --input evidence/TASK-1/attempt-1/execution-1.json
+python tools/feature_program.py --program-dir .work/programs/example coverage --operation complete --task TASK-1 --input evidence/TASK-1/attempt-1/review-1.json
+python tools/feature_program.py --program-dir .work/programs/example coverage --operation objective-complete --input evidence/_coordination/attempt-1/completion-1.json
+```
+
+Diagnostics support submit, complete, rework and objective-complete. They reuse the real detached
+semantic preparation, authoritative validation and publication preflight; they never call save,
+lock, render, mkdir, ledger publication or provider operations. Explicit CLI operation diagnostics
+may acquire actual read-only Git HEAD outside those pure validators. Missing/unavailable metadata
+is `not_assessed`, with no baseline substitution. Structured results identify the actual first
+failure reason/type, what was checked and limitations. Missing required next actions come from
+the existing validator; intentionally unassigned planned tasks do not receive speculative owner
+errors. Without an actual operation/input, execution is not_assessed and structural validation
+is reported separately. CLI read success means an observation was printed, not that its supplied
+operation passed or became authorized.
+
+Integrated acceptance still requires exact criterion evidence, current membership, terminal member
+reviews, separate delivery/CI, no unresolved relevant questions/transfers, and an integrated reviewer
+independent of the director and every member implementer. Coverage links supply none of those facts.
+The shared snapshot adds detached `coverage` metadata with linkage, knowledge, freshness, captured
+results, historical acceptance origins and explicit integrated-review prerequisites. Snapshot and
+projection remain Git/lock/write-free; unavailable facts are not passing facts. Existing 8 MiB
+registry/output and per-document limits, 2000 snapshot evidence references, 64 MiB artifact reads
+and 128 MiB scoped-source reads remain enforced. Observation caches are request-local, never a
+registry-revision-only freshness cache. Precommit failures publish no annotation; committed render
+failures report recovery through render and inspection rather than reusing a recorded ID.
+
 ## People, categories and objectives
 
 Governance is optional for an existing registry. Each command below reads one UTF-8 JSON
