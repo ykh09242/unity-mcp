@@ -9,8 +9,9 @@ from __future__ import annotations
 import argparse
 from collections import Counter, deque
 from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -31,6 +32,7 @@ if __name__ == "__main__":
 
 if __package__:
     import tools.feature_program_authoring as authoring
+    import tools.feature_program_brief as brief
     import tools.feature_program_coverage as coverage
     import tools.feature_program_coordination as coordination
     import tools.feature_program_phases as phases
@@ -38,6 +40,7 @@ if __package__:
     import tools.feature_program_questions as questions
 else:
     import feature_program_authoring as authoring
+    import feature_program_brief as brief
     import feature_program_coverage as coverage
     import feature_program_coordination as coordination
     import feature_program_phases as phases
@@ -259,6 +262,37 @@ class ReadBudget:
         self.remaining -= len(content)
         self.cached[path] = content
         return content
+
+
+@dataclass(slots=True)
+class _SourceObservations:
+    facts: dict[tuple[Path, Path, tuple[str, ...]], Record] = field(default_factory=dict)
+    mismatched: bool = False
+
+    def observe(self, program: Program, scopes: list[str], snapshot: Record) -> None:
+        key = (program.repo, program.directory, tuple(sorted(scopes)))
+        if key in self.facts and self.facts[key] != snapshot:
+            self.mismatched = True
+            raise ProgramError("Observed source changed during snapshot; refresh")
+        self.facts.setdefault(key, dict(snapshot))
+
+    def verify(self) -> None:
+        require(not self.mismatched, "Observed source changed during snapshot; refresh")
+        token = _source_observations.set(None)
+        try:
+            reader = ReadBudget(128 * 1024 * 1024)
+            for (repo, directory, scopes), captured in self.facts.items():
+                require(
+                    Program(repo, directory).source_snapshot(list(scopes), reader) == captured,
+                    "Observed source changed during snapshot; refresh",
+                )
+        finally:
+            _source_observations.reset(token)
+
+
+_source_observations: ContextVar[_SourceObservations | None] = ContextVar(
+    "feature_program_source_observations", default=None
+)
 
 
 def read_json(path: Path, limit: int = 8 * 1024 * 1024, budget: ReadBudget | None = None) -> Record:
@@ -490,6 +524,9 @@ class Program:
                             continue
                         require(candidate.is_file(), f"Not a regular scoped file: {relative}")
                         snapshot[relative] = fingerprint_file(candidate)
+        observer = _source_observations.get()
+        if observer is not None:
+            observer.observe(self, scopes, snapshot)
         return snapshot
 
     def evidence(self, task_id: str, attempt: int, names: list[str]) -> list[Json]:
@@ -2256,6 +2293,31 @@ class Program:
 
 
 def read_snapshot(repo: Path, program_dir: Path) -> Record:
+    return _read_projection(repo, program_dir)
+
+
+def read_brief(repo: Path, program_dir: Path, task_id: str | None = None) -> Record:
+    return _read_projection(repo, program_dir, brief_only=True, task_id=task_id)
+
+
+def _read_projection(
+    repo: Path, program_dir: Path, *, brief_only: bool = False, task_id: str | None = None
+) -> Record:
+    observations = _SourceObservations()
+    token = _source_observations.set(observations)
+    try:
+        return _capture_projection(repo, program_dir, observations, brief_only, task_id)
+    finally:
+        _source_observations.reset(token)
+
+
+def _capture_projection(
+    repo: Path,
+    program_dir: Path,
+    source_observations: _SourceObservations,
+    brief_only: bool,
+    task_id: str | None,
+) -> Record:
     """Return bounded recorded state for a local UI, without locks, Git or writes.
 
     Integrity warnings keep recorded context visible when artifacts drift. Structural
@@ -2292,11 +2354,38 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
         questions.QuestionError,
     ) as exc:
         raise ProgramError(str(exc)) from exc
+    # Capture source identities separately from their recorded hashes: an already
+    # drifted source must not change again while its advisory projection is built.
+    source_inputs = ReadBudget(64 * 1024 * 1024)
+    unavailable_sources: set[Path] = set()
+    source_names = {str(item["path"]) for item in planning.descriptors(state)}
+    if state.get("planning_path"):
+        source_names.add(str(state["planning_path"]))
+    source_names.update(str(item["planning"]["path"]) for item in planning.intakes(state).values())
+    for name in sorted(source_names):
+        path = safe_path(repo, name)
+        if path.is_file():
+            source_inputs.read(path, 8 * 1024 * 1024)
+        else:
+            unavailable_sources.add(path)
     try:
         warnings = planning.observe_sources(program, state)
     except planning.PlanningError as exc:
         raise ProgramError(str(exc)) from exc
     refs: dict[str, str] = {}
+    observations: dict = {"submissions": {}, "blocks": {}, "recovery": [], "publication": []}
+    publication_inputs = ReadBudget(64 * 1024 * 1024)
+    absent_publication: set[Path] = set()
+    for name in sorted(planning.PUBLICATION_MARKERS | {planning.TRACKING}):
+        path = program.path(name)
+        if path.is_file():
+            raw = publication_inputs.read(path, 8 * 1024 * 1024)
+            observations["publication"].append(
+                {"path": name, "sha256": sha(raw), "status": "observed"}
+            )
+        else:
+            absent_publication.add(path)
+    review_sources = ReadBudget(128 * 1024 * 1024)
     all_refs = (
         list(coordination.evidence_references(state))
         + list(questions.evidence_references(state))
@@ -2308,15 +2397,46 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
     for task in tasks:
         for value in sequence(task["attempts"], "attempts"):
             all_refs += sequence(record(value, "attempt")["evidence"], "evidence")
-        if task["status"] == "review":
+        review_origin = task["status"] == "review"
+        if task["status"] == "blocked":
+            try:
+                binding = program.block_binding(state, task)
+                observations["blocks"][task["id"]] = {"status": "observed", **binding}
+                review_origin = binding["origin"] == "review"
+            except (ProgramError, OSError) as exc:
+                observations["blocks"][task["id"]] = {"status": "not_assessed", "reason": str(exc)}
+        if review_origin:
             attempt = program.current_attempt(task)
             try:
                 submission = record(attempt["submission"], "submission")
-                snapshot = program.source_snapshot(strings(attempt["scope"], "scope"))
+                scope = strings(attempt["scope"], "scope")
+                snapshot = program.source_snapshot(scope, review_sources)
                 if digest(snapshot) != submission["source_digest"]:
                     warnings.append(f"Pending submitted source changed: {task['id']}")
+                    observations["submissions"][task["id"]] = {
+                        "status": "stale",
+                        "reason": "Pending submitted source changed",
+                        "recorded_digest": submission["source_digest"],
+                        "observed_digest": digest(snapshot),
+                        "next_action": (
+                            "Resolve the recorded block through resume; changed source requires "
+                            "rework and a new submission."
+                            if task["status"] == "blocked"
+                            else "Rework and submit the changed source for a new review."
+                        ),
+                    }
+                else:
+                    observations["submissions"][task["id"]] = {
+                        "status": "observed",
+                        "recorded_digest": submission["source_digest"],
+                        "observed_digest": digest(snapshot),
+                    }
             except (ProgramError, OSError):
                 warnings.append(f"Pending submitted source could not be verified: {task['id']}")
+                observations["submissions"][task["id"]] = {
+                    "status": "not_assessed",
+                    "reason": "Pending submitted source could not be verified",
+                }
     for value in all_refs:
         ref = record(value, "evidence reference")
         name = string(ref["path"], "evidence path")
@@ -2326,10 +2446,12 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
         refs[name] = expected
     require(len(refs) <= 2000, "Snapshot exceeds 2000 evidence files")
     evidence_budget = ReadBudget(64 * 1024 * 1024)
+    unavailable_evidence: set[Path] = set()
     for name, expected in refs.items():
         path = program.path(name)
         if not path.is_file():
             warnings.append(f"Frozen evidence unavailable: {name}")
+            unavailable_evidence.add(path)
             continue
         content = evidence_budget.read(path, 8 * 1024 * 1024)
         if sha(content) != expected:
@@ -2466,12 +2588,65 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
         "execution_priorities": state.get("execution_priorities"),
         "coverage": coverage.projection(program, state, evidence_budget),
     }
+    lock = program.path(".feature-program.lock")
+    lock_before: bytes | None = None
+    lock_unavailable: str | None = None
+    if lock.exists():
+        try:
+            lock_before = bounded_bytes(lock, 64 * 1024)
+            read_json(lock, limit=64 * 1024, budget=ReadBudget(cached={lock: lock_before}))
+            lock_status = "present"
+        except (ProgramError, OSError) as exc:
+            lock_status = "unavailable"
+            lock_unavailable = str(exc)
+        observations["recovery"].append(
+            {
+                "path": ".feature-program.lock",
+                "status": lock_status,
+                "reason": "Recorded lock exists; liveness and takeover are unknown"
+                if lock_status == "present"
+                else "Lock metadata unavailable: " + str(lock_unavailable),
+            }
+        )
+    projection = brief.project(program, state, result, observations)
+    result["brief"] = projection["program"]
+    for item in result_tasks:
+        record(item, "task")["readiness"] = projection["tasks"][record(item, "task")["id"]][
+            "readiness"
+        ]
     require(len(canonical(result)) <= 8 * 1024 * 1024, "Snapshot output exceeds 8 MiB")
+    output = (
+        (brief.selected(projection, task_id) if task_id is not None else projection["program"])
+        if brief_only
+        else result
+    )
+    for budget in (source_inputs, evidence_budget, publication_inputs):
+        for path, captured in (budget.cached or {}).items():
+            require(
+                path.is_file() and bounded_bytes(path, 8 * 1024 * 1024) == captured,
+                "Observed source/evidence changed during snapshot; refresh",
+            )
+    require(
+        not any(
+            path.is_file()
+            for path in unavailable_sources | unavailable_evidence | absent_publication
+        ),
+        "Unavailable source/evidence appeared during snapshot; refresh",
+    )
+    source_observations.verify()
+    if lock_before is not None:
+        require(
+            lock.is_file() and bounded_bytes(lock, 64 * 1024) == lock_before,
+            "Lock changed during snapshot; refresh",
+        )
+    elif lock_unavailable is None:
+        require(not lock.exists(), "Lock appeared during snapshot; refresh")
+    program.require_current_location()
     require(
         sha(bounded_bytes(backlog, 8 * 1024 * 1024)) == sha(initial),
         "Registry changed during snapshot; refresh",
     )
-    return result
+    return output
 
 
 def prepare_relocation(
@@ -3021,6 +3196,8 @@ def parser() -> argparse.ArgumentParser:
     planning.add_commands(commands)
     coverage.add_commands(commands)
     authoring.add_commands(commands)
+    brief_command = commands.add_parser("brief", help="Bounded advisory program or task context")
+    brief_command.add_argument("--task")
     return result
 
 
@@ -3042,6 +3219,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "snapshot":
             print(canonical(read_snapshot(repo, program.directory)).decode(), end="")
+            return 0
+        if args.command == "brief":
+            # The bound covers emitted bytes, including on Windows: text-mode
+            # newline translation would otherwise expand the canonical LF output.
+            sys.stdout.buffer.write(canonical(read_brief(repo, program.directory, args.task)))
             return 0
         if args.command in {"coverage", "coverage-binding"}:
             initial = bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024)
