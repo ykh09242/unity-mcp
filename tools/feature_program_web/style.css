@@ -710,6 +710,7 @@ progress::-moz-progress-bar {
   margin-block-start: var(--s4);
 }
 .question-heading h2,
+.question-form p,
 .question-form .prose,
 .question-form dd,
 .question-why,
