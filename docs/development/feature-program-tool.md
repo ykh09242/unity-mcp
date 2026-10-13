@@ -1078,3 +1078,72 @@ source observation as a current review. Changed source calls for resolving the b
 through the guarded resume operation, rework and a new submission; the brief does not
 execute those steps. Ambiguous legacy origins stay explicitly unassessed. Historical
 completed, released or rejected submissions do not gain a new freshness prerequisite.
+
+## Reviewed session-language presentation
+
+Presentation text is optional, reviewed display data. It does not change source sections,
+objectives, criteria, actors, issued questions, saved answers, task acceptance or delivery facts.
+The optional top-level `presentation` ledger keeps immutable input and independent-review
+references. Content uses the exact recorded `communication_language`; a dashboard UI-language
+preference does not select a different content catalog. Missing language stays unknown.
+
+Use `presentation-inventory` to enumerate all supported typed targets and their exact original
+values, source bindings and locators. `--locale TAG` inspects another exact tag without changing
+the program. Targets include goals and criteria, workstreams and categories, task titles and
+human narrative, current and historical reasons, question wording and options, actor aliases,
+and already referenced receipt summaries. The inventory identifies all 22 field families,
+including static UI copy and protected original-only data. It does not read arbitrary target
+paths or hydrate unrelated evidence files. Technical evidence, commands, IDs, paths, model
+values and saved answers remain original. Unsegmentable mixed markup stays original-only.
+
+Start with `scaffold --operation presentation-record`. Fill its input with a unique portable
+`id`, current director `actor_id`, exact `program_id` and `locale`, nonempty `authors` and
+`reason`, and between 1 and 256 operations. Copy each operation's `target` from the inventory;
+do not invent JSON paths. Each operation uses `action: set`, a mode and expected `supersedes`:
+
+- `translated` supplies reviewed `text` for a human-content target.
+- `original` confirms the original already uses the recorded language and stores no text copy.
+- `alias` supplies an actor display label while preserving the original actor ID and role.
+- `action: withdraw` names the superseded entry and supplies neither mode nor replacement text.
+
+`presentation-binding --input DRAFT` returns resolved `operations`, `expected_revision`,
+`observed_registry_sha256` and `review_payload_sha256`. Copy only the first two into the input.
+The observed hash identifies the exact read; it is not an input property. The review digest
+binds all authored content and source fingerprints, excluding the review reference itself and
+the transaction revision. A later unrelated revision requires rebinding; an unchanged payload
+can retain its actual independent review. This command performs no review or publication.
+
+The independent review JSON has exactly `schema_version: 1`,
+`operation: presentation-review`, `program_id`, `locale`, `payload_sha256`, `reviewer_id`,
+`reviewer_role: independent`, `verdict: accepted`, `unresolved_findings: []` and a nonempty
+`summary`. The reviewer must differ from the director and all authors. These are recorded
+review claims, not identity authentication or automated language-quality assessment. Never
+write an accepted review for work that has not actually been reviewed.
+
+Freeze the input and review under `evidence/_presentation/attempt-1/`. The input's `review`
+is the exact `{path, sha256}` of that review. Run `preview --request REQUEST` with the argv
+`["presentation-record", "--input", "INPUT"]` before recording when useful. Preview calls
+the same detached preparation and final output preflight as the mutation, without locks,
+Git, writes or external operations. Only the current acknowledged director may execute
+`presentation-record --input INPUT`. Publication rechecks raw registry identity, current
+authority and language, original bindings, supersession, and frozen input/review bytes.
+
+`snapshot.presentation` supplies the selected locale, revision, coverage counts by kind and
+current/historical period, and latest entries keyed by the canonical typed-target hash. An
+entry is `current`, `stale`, `unavailable` or `withdrawn`; only a current translated/alias entry
+contains usable text. Original mode points back to the original. Missing targets are counted
+without adding a warning object for every row. Unavailable original receipts and orphaned
+entries are explicit. A newer stale or withdrawn entry never revives an older translation.
+The full inventory provides missing-target detail without a sampling cap. Partial coverage
+is not complete translation, and successful recording is not UI or human-language acceptance.
+Presentation transaction inputs, reviews and their own publication audit events are technical
+original-only records, counted separately by `technical_records`. Recording a catalog does not
+create a fresh human-content target for its own audit reason. Other authored history remains
+eligible, so a fully reviewed catalog can reach complete coverage without recursive translation.
+
+Each input and review is limited to 1 MiB of encoded JSON. Limits are 65,536 Unicode code
+points for narrative, 512 for short titles, 500 for options and 128 for actor aliases. Code
+spans, fenced code and Markdown link destinations inside eligible prose must remain exact.
+Existing 8 MiB registry/output and aggregate snapshot budgets are unchanged; essential
+overflow fails explicitly. Large catalogs can use separately reviewed batches. Reads retain
+the ordinary source/evidence/registry consistency guards and never acquire a program lock.
