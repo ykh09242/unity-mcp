@@ -55,22 +55,43 @@ async function hash(value: string) {
   });
 }
 describe('validated navigation context', () => {
-  it('returns from readable evidence to the selected task with its explicit work context', async () => {
-    await hash('#task/T111?scope=current&category=child&status=active&page=1&size=25&task=T111');
-    render(<App loader={async () => fixture()} />);
-    await screen.findByRole('heading', { name: 'Task 111' });
-    await hash('#evidence/evidence%2Fone.md');
-    await screen.findByRole('heading', { name: 'Evidence record' });
-    const back = screen.getByRole('link', { name: 'Back to task' });
-    const destination = parseNavigation(back.getAttribute('href') || '', fixture());
-    expect(destination.route).toEqual({ view: 'task', taskId: 'T111', full: false });
-    expect(destination.scope).toBe('current');
-    expect(destination.filters.category).toBe('child');
-    expect(destination.filters.status).toBe('active');
-    expect(destination.paging.size).toBe(25);
-    expect(destination.selected).toBe('T111');
-    expect(document.querySelectorAll('pre.source')).toHaveLength(0);
-  });
+  it.each(['settled', 'first snapshot commit'] as const)(
+    'returns from readable evidence to the selected task with its explicit work context: %s',
+    async (timing) => {
+      await hash('#task/T111?scope=current&category=child&status=active&page=1&size=25&task=T111');
+      // Exercise the startup boundary without relying on CI timing or a sleep.
+      const observer = new MutationObserver(() => {
+        if (!document.querySelector('.detail-heading h2')) return;
+        observer.disconnect();
+        window.history.pushState(null, '', '#evidence/evidence%2Fone.md');
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+      });
+      try {
+        if (timing === 'first snapshot commit')
+          observer.observe(document.body, { childList: true, subtree: true });
+        render(<App loader={async () => fixture()} />);
+        if (timing === 'settled') {
+          await screen.findByRole('heading', { name: 'Task 111' });
+          await hash('#evidence/evidence%2Fone.md');
+        }
+        await screen.findByRole('heading', { name: 'Evidence record' });
+      } finally {
+        observer.disconnect();
+      }
+      const back = screen.getByRole('link', { name: 'Back to task' });
+      const destination = parseNavigation(back.getAttribute('href') || '', fixture());
+      expect(destination.route).toEqual({ view: 'task', taskId: 'T111', full: false });
+      expect(destination.scope).toBe('current');
+      expect(destination.filters.category).toBe('child');
+      expect(destination.filters.status).toBe('active');
+      expect(destination.paging.size).toBe(25);
+      expect(destination.selected).toBe('T111');
+      expect(document.querySelectorAll('pre.source')).toHaveLength(0);
+      await userEvent.click(back);
+      await screen.findByRole('heading', { name: 'Task 111' });
+      expect(parseNavigation(window.location.hash, fixture())).toEqual(destination);
+    },
+  );
   it('shows identical evidence references once and preserves differing supplied metadata', async () => {
     const reference = { path: 'evidence/one.md', sha256: 'abc', label: 'Verification source' };
     const snapshot = {
