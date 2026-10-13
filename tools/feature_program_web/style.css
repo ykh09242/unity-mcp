@@ -919,6 +919,9 @@ summary {
   .task-button {
     grid-template-columns: minmax(0, 1fr) 112px;
   }
+  .task-meta {
+    word-break: keep-all;
+  }
   .task-owner {
     grid-column: 1 / -1;
   }
