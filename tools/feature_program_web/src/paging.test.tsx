@@ -148,7 +148,7 @@ describe('paging interaction context', () => {
     const user = userEvent.setup();
     await work();
     await user.click(screen.getByRole('button', { name: 'Next page' }));
-    await user.click(screen.getByRole('link', { name: /Task 51T051/ }));
+    await user.click(screen.getByRole('link', { name: /T051 Task 51/ }));
     await navigate('#task/T051');
     await user.click(screen.getByRole('link', { name: 'Back to work' }));
     await navigate('#work');
@@ -214,7 +214,7 @@ describe('paging interaction context', () => {
     const loader = vi.fn().mockResolvedValue(original);
     await work(loader);
     await user.click(screen.getByRole('button', { name: 'Next page' }));
-    await user.click(screen.getByRole('link', { name: /Task 51T051/ }));
+    await user.click(screen.getByRole('link', { name: /T051 Task 51/ }));
     await navigate('#task/T051');
     loader.mockResolvedValue({
       ...original,
@@ -243,7 +243,7 @@ describe('paging interaction context', () => {
     const loader = vi.fn().mockResolvedValue(original);
     await work(loader);
     await user.click(screen.getByRole('button', { name: 'Next page' }));
-    await user.click(screen.getByRole('link', { name: /Task 51T051/ }));
+    await user.click(screen.getByRole('link', { name: /T051 Task 51/ }));
     await navigate('#task/T051');
     await user.click(screen.getByRole('link', { name: 'Back to work' }));
     await navigate('#work');
@@ -263,13 +263,13 @@ describe('paging interaction context', () => {
     window.location.hash = '#task/missing';
     render(<App loader={async () => fixture(0)} />);
     await screen.findByRole('heading', { name: '작업을 볼 수 없음' });
-    await user.click(screen.getByRole('link', { name: '작업 목록으로' }));
+    await user.click(screen.getByRole('link', { name: '목록으로' }));
     await navigate('#work');
     expect(rows()).toHaveLength(0);
     expect(screen.getByRole('button', { name: '다음 페이지' }).getAttribute('aria-disabled')).toBe(
       'true',
     );
     expect(document.activeElement).toBe(screen.getByLabelText('페이지당 작업 수'));
-    expect(screen.getByText('선택한 작업 missing을(를) 더 이상 사용할 수 없습니다.')).toBeDefined();
+    expect(screen.getByText('더 이상 사용할 수 없는 작업: missing')).toBeDefined();
   });
 });

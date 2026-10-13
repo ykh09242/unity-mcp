@@ -143,7 +143,7 @@ describe('work program user outcomes', () => {
     await user.click(screen.getByRole('button', { name: 'Parser, 0 of 2 reviewed' }));
     await user.selectOptions(screen.getByLabelText('Status'), 'active');
     expect(screen.getByText('1 of 2 tasks')).toBeDefined();
-    await user.click(screen.getByRole('link', { name: /Preserve parser contextA1/ }));
+    await user.click(screen.getByRole('link', { name: /A1 Preserve parser context/ }));
     await navigate('#task/A1');
     expect(screen.getByRole('heading', { name: 'Preserve parser context' })).toBeDefined();
     expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeDefined();
@@ -353,7 +353,7 @@ describe('work program user outcomes', () => {
       expect(notes.textContent).toContain('2026');
       expect(within(notes).getByText('Unknown', { exact: true })).toBeDefined();
       expect(within(notes).getByText('Accepted', { exact: true })).toBeDefined();
-      expect(within(notes).getByText(locale === 'ko' ? '다음 행동' : 'Next action')).toBeDefined();
+      expect(within(notes).getByText(locale === 'ko' ? '다음 할 일' : 'Next action')).toBeDefined();
       expect(within(notes).getByText('Keep this legacy note unchanged.')).toBeDefined();
       expect(
         within(notes).getAllByText(
