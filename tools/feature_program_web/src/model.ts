@@ -95,7 +95,7 @@ export function parseSnapshot(value: unknown): Snapshot {
     tasks,
   };
 }
-function semanticValueEqual(left: Json | undefined, right: Json | undefined): boolean {
+export function semanticValueEqual(left: Json | undefined, right: Json | undefined): boolean {
   if (left === right) return true;
   if (Array.isArray(left))
     return (

@@ -1,9 +1,22 @@
 import { LanguageProvider, language, useI18n } from './i18n';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { categoryTasks, items, ownerOf, record, records, safeUrl, string } from './model';
+import {
+  categoryTasks,
+  items,
+  ownerOf,
+  record,
+  records,
+  safeUrl,
+  semanticValueEqual,
+  string,
+} from './model';
 import type { Json, JsonRecord, Snapshot } from './model';
 import { snapshotIndex } from './selectors';
+import { IconButton, IconLink } from './icons';
+import { DependencyNeighborhood, Workload } from './relate-ui';
+import { hasActionGlance, workloadHref } from './relate';
+import { CoordinationNotes, GoalCoordination, ReadinessContext } from './readiness-ui';
 import { useSnapshot } from './useSnapshot';
 import type { SnapshotLoader } from './useSnapshot';
 import { QuestionForm, useSession } from './questions';
@@ -429,10 +442,10 @@ function TaskList({
   }, [page, paging, onPage, focusRequest, onFocusHandled]);
   const selectedPage = selected ? taskPageIndex(sorted, selected, paging.size) : null;
   const controls = [
-    ['First page', 0],
-    ['Previous page', page.index - 1],
-    ['Next page', page.index + 1],
-    ['Last page', page.count - 1],
+    ['First page', 0, 'first'],
+    ['Previous page', page.index - 1, 'previous'],
+    ['Next page', page.index + 1, 'next'],
+    ['Last page', page.count - 1, 'last'],
   ] as const;
   const select = (
     key: keyof Filters,
@@ -526,6 +539,13 @@ function TaskList({
         </details>
       </form>
       <div className="active-filters" aria-label={i18n.t('Active filters')}>
+        {Object.entries(filters).some(([key, value]) => key !== 'sort' && Boolean(value)) && (
+          <IconButton
+            icon="clear"
+            label={i18n.t('Clear filters')}
+            onClick={() => onChange(emptyFilters)}
+          />
+        )}
         {Object.entries(filters)
           .filter(([key, value]) => key !== 'sort' && Boolean(value))
           .map(([key, value]) => (
@@ -541,16 +561,17 @@ function TaskList({
                         ? 'Status'
                         : 'Workstream',
               )}
-              : {key === 'status' ? i18n.statusLabel(value) : value} ×
+              :{' '}
+              {key === 'status'
+                ? i18n.statusLabel(value)
+                : key === 'owner' && value === '__unassigned'
+                  ? i18n.t('Unassigned')
+                  : value}{' '}
+              ×
             </button>
           ))}
       </div>
       <div className="ledger-summary">
-        <div className="list-heading">
-          <button type="button" onClick={() => onChange(emptyFilters)}>
-            {i18n.t('Clear filters')}
-          </button>
-        </div>
         <nav className="paging" aria-label={i18n.t('Work pages')}>
           <label>
             {i18n.t('Tasks per page')}
@@ -567,10 +588,11 @@ function TaskList({
             </select>
           </label>
           <div className="paging-actions">
-            {controls.map(([label, target]) => (
-              <button
+            {controls.map(([label, target, icon]) => (
+              <IconButton
                 key={label}
-                type="button"
+                icon={icon}
+                label={i18n.t(label)}
                 aria-disabled={
                   !page.count || target < 0 || target >= page.count || target === page.index
                 }
@@ -578,19 +600,31 @@ function TaskList({
                   if (page.count && target >= 0 && target < page.count && target !== page.index)
                     onPage({ ...paging, index: target });
                 }}
-              >
-                {i18n.t(String(label))}
-              </button>
+              />
             ))}
           </div>
           <p className="paging-range" role="status" aria-live="polite" aria-atomic="true">
-            {i18n.t('Showing {start}–{end} of {matching} matching tasks · Page {page} of {pages}', {
-              start: page.start,
-              end: page.end,
-              matching: page.matching,
-              page: page.count ? page.index + 1 : 0,
-              pages: page.count,
-            })}
+            <span aria-hidden="true">
+              {i18n.t('{start}–{end} / {matching} tasks · {page} / {pages} pages', {
+                start: page.start,
+                end: page.end,
+                matching: page.matching,
+                page: page.count ? page.index + 1 : 0,
+                pages: page.count,
+              })}
+            </span>
+            <span className="sr-only">
+              {i18n.t(
+                'Showing {start}–{end} of {matching} matching tasks · Page {page} of {pages}',
+                {
+                  start: page.start,
+                  end: page.end,
+                  matching: page.matching,
+                  page: page.count ? page.index + 1 : 0,
+                  pages: page.count,
+                },
+              )}
+            </span>
           </p>
         </nav>
         {selected && selectedPage !== page.index && (
@@ -660,14 +694,22 @@ function TaskList({
                       <> · {i18n.display(task.workstream)}</>
                     )}
                   </span>
-                  <span className="task-next-action">
-                    <span className="sr-only">{i18n.t('Next action')} · </span>
-                    {i18n.display(task.next_action, 'No next action recorded')}
-                  </span>
+                  {hasActionGlance(task) && (
+                    <span className="task-next-action">
+                      <span className="sr-only">{i18n.t('Next action')} · </span>
+                      {i18n.display(task.next_action, 'No next action recorded')}
+                    </span>
+                  )}
                 </span>
                 <Status value={task.status} />
                 {preferences.columns.includes('owner') && (
-                  <span className="task-owner">{ownerOf(task) || i18n.t('Unassigned')}</span>
+                  <span className="task-owner">
+                    {task.status === 'done' && !ownerOf(task) ? (
+                      <span aria-label={i18n.t('No current owner')}>—</span>
+                    ) : (
+                      ownerOf(task) || i18n.t('Unassigned')
+                    )}
+                  </span>
                 )}
               </a>
             ))}
@@ -760,104 +802,6 @@ function Handoff({ handoff }: { readonly handoff: JsonRecord }) {
     </article>
   );
 }
-function TaskRelations({
-  snapshot,
-  references,
-  title,
-  explanation,
-}: {
-  readonly snapshot: Snapshot;
-  readonly references: Json | undefined;
-  readonly title: string;
-  readonly explanation: string;
-}) {
-  const i18n = useI18n();
-  const ids = [...new Set(items(references).map(string).filter(Boolean))];
-  return (
-    <div className="task-relations">
-      <h4>{i18n.t(title)}</h4>
-      <p className="muted">{i18n.t(explanation)}</p>
-      {ids.length ? (
-        <ul>
-          {ids.map((id) => {
-            const peer = snapshotIndex(snapshot).tasks.get(id);
-            const owner = peer && ownerOf(peer);
-            return (
-              <li key={id}>
-                {peer ? (
-                  <a href={`#task/${encodeURIComponent(id)}`}>
-                    {id} · {peer.title}
-                  </a>
-                ) : (
-                  <span>
-                    {id} · {i18n.t('Task unavailable')}
-                  </span>
-                )}
-                <p className="muted">
-                  {owner
-                    ? i18n.t('Current recorded owner / contact: {owner}', { owner })
-                    : i18n.t('No owner or contact recorded')}
-                </p>
-              </li>
-            );
-          })}
-        </ul>
-      ) : (
-        <p className="muted">{i18n.t('None recorded')}</p>
-      )}
-    </div>
-  );
-}
-function TaskNotes({ value }: { readonly value: Json | undefined }) {
-  const i18n = useI18n();
-  const notes = Array.isArray(value) ? value : value === null || value === undefined ? [] : [value];
-  if (!notes.length) return <p className="muted">{i18n.t('No notes recorded')}</p>;
-  return (
-    <>
-      <h4>{i18n.t('Task notes')}</h4>
-      <ul className="task-notes" aria-label={i18n.t('Task notes')}>
-        {notes.map((note, index) => {
-          if (typeof note === 'string')
-            return (
-              <li key={index}>
-                <Prose value={note} />
-              </li>
-            );
-          const entry = record(note);
-          const readable = ['actor', 'timestamp', 'reason', 'next_action'].some((key) =>
-            string(entry[key]),
-          );
-          return (
-            <li key={index}>
-              {readable ? (
-                <>
-                  <p className="muted">
-                    {i18n.date(entry.timestamp)} ·{' '}
-                    {i18n.t('Recorded actor: {actor}', {
-                      actor: i18n.display(string(entry.actor), 'Unknown'),
-                    })}
-                  </p>
-                  <Prose value={string(entry.reason)} fallback="No readable reason recorded" />
-                  <Fields
-                    values={[['Next action', string(entry.next_action) || i18n.t('Not recorded')]]}
-                  />
-                </>
-              ) : (
-                <p className="muted">
-                  {i18n.t('Unrecognized note format. Inspect the original record.')}
-                </p>
-              )}
-              <details>
-                <summary>{i18n.t('Original note record')}</summary>
-                <pre className="source">{JSON.stringify(note, null, 2)}</pre>
-              </details>
-            </li>
-          );
-        })}
-      </ul>
-    </>
-  );
-}
 function TaskDetail({
   snapshot,
   taskId,
@@ -908,23 +852,29 @@ function TaskDetail({
   return (
     <>
       <nav className="detail-actions" aria-label={i18n.t('Task navigation')}>
-        <a className="back-link" href={returnHref} onClick={returnClick}>
-          {i18n.t('Back to work')}
-        </a>
+        <IconLink
+          icon="back"
+          label={i18n.t('Back to work')}
+          className="back-link"
+          href={returnHref}
+          onClick={returnClick}
+        />
         {fullHref && (
-          <a className="full-detail-link" href={fullHref} aria-label={i18n.t('Open full detail')}>
-            {i18n.t('Full screen')}
-          </a>
+          <IconLink
+            icon="expand"
+            label={i18n.t('Open full detail')}
+            className="full-detail-link"
+            href={fullHref}
+          />
         )}
         {fullHref && (
-          <a
+          <IconLink
+            icon="close"
+            label={i18n.t('Close detail')}
             className="close-detail"
             href={returnHref}
-            aria-label={i18n.t('Close detail')}
             onClick={returnClick}
-          >
-            <span aria-hidden="true">×</span>
-          </a>
+          />
         )}
       </nav>
       <div className="page-heading detail-heading">
@@ -937,12 +887,25 @@ function TaskDetail({
       <div className="task-detail-grid">
         <div>
           <Section title={i18n.t('Next action')}>
-            <Fields
-              values={[
-                ['Owner', ownerOf(task) || i18n.t('Unassigned')],
-                ['Next action', task.next_action],
-              ]}
-            />
+            <dl className="fields">
+              <div>
+                <dt>{i18n.t('Owner')}</dt>
+                <dd>
+                  <a
+                    href={workloadHref('all', ownerOf(task))}
+                    aria-label={i18n.t('Assignments for {owner}', {
+                      owner: ownerOf(task) || i18n.t('Unassigned'),
+                    })}
+                  >
+                    {ownerOf(task) || i18n.t('Unassigned')}
+                  </a>
+                </dd>
+              </div>
+              <div>
+                <dt>{i18n.t('Next action')}</dt>
+                <dd>{i18n.display(task.next_action)}</dd>
+              </div>
+            </dl>
             <div className="expected-result-summary">
               <h3>{i18n.t('Expected result')}</h3>
               <Prose
@@ -981,21 +944,12 @@ function TaskDetail({
               <pre className="source">{i18n.display(source)}</pre>
             </details>
           </Section>
-          <Section title={i18n.t('Dependencies and verification')}>
+          <DependencyNeighborhood snapshot={snapshot} task={task} />
+          <ReadinessContext snapshot={snapshot} task={task} />
+          <CoordinationNotes task={task} />
+          <Section title={i18n.t('Required checks')}>
             <details>
-              <summary>{i18n.t('Dependencies and verification')}</summary>
-              <TaskRelations
-                snapshot={snapshot}
-                references={task.depends_on}
-                title="Hard dependencies"
-                explanation="Required before this task can proceed."
-              />
-              <TaskRelations
-                snapshot={snapshot}
-                references={task.related_to}
-                title="Related tasks · advisory"
-                explanation="Coordinate with these owners; this relation does not block the task."
-              />
+              <summary>{i18n.t('Required checks')}</summary>
               <Prose value={task.required_checks} fallback="No required checks recorded" />
             </details>
           </Section>
@@ -1015,7 +969,6 @@ function TaskDetail({
               ) : (
                 <p className="muted">{i18n.t('No attempts recorded.')}</p>
               )}
-              <TaskNotes value={task.notes} />
             </details>
           </Section>
         </div>
@@ -1065,7 +1018,13 @@ function TaskDetail({
     </>
   );
 }
-function Team({ snapshot }: { readonly snapshot: Snapshot }) {
+function Team({
+  snapshot,
+  context,
+}: {
+  readonly snapshot: Snapshot;
+  readonly context: WorkContext;
+}) {
   const i18n = useI18n();
   const index = snapshotIndex(snapshot);
   const actors = [...index.actors.values()];
@@ -1127,65 +1086,69 @@ function Team({ snapshot }: { readonly snapshot: Snapshot }) {
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">{i18n.t('Responsibility and continuity')}</p>
           <h2>{i18n.t('Team')}</h2>
         </div>
         <span className="muted">
           {actors.length} {i18n.t('saved personnel records')}
         </span>
       </div>
-      <p className="intro">
-        {i18n.t(
-          'Management relationships and assignments are recorded by the director. This page does not poll live agent sessions.',
-        )}
-      </p>
-      <p className="muted">
-        {i18n.t('Program communication language')}:{' '}
-        {snapshot.communication_language === 'ko'
-          ? '한국어'
-          : snapshot.communication_language === 'en'
-            ? 'English'
-            : i18n.t('Not recorded')}
-        {' · '}
-        {i18n.t(
-          'Program communication language applies to director-authored questions; original content is not translated.',
-        )}
-      </p>
-      <Section title={i18n.t('Final director')}>
-        <Fields
-          values={[
-            ['Appointed actor', director.actor_id],
-            ['Acknowledged', i18n.date(director.acknowledged_at)],
-            [
-              'Merge target',
-              record(director.authority).merge_target || i18n.t('No merge authority recorded'),
-            ],
-          ]}
-        />
-        <details>
-          <summary>{i18n.t('Authority and responsibility')}</summary>
-          <Prose value={items(responsibilities.director).map((item) => i18n.t(string(item)))} />
-          <pre className="source">{i18n.display(director)}</pre>
-        </details>
-      </Section>
-      <Section title={i18n.t('Management hierarchy')}>
-        {actors.length ? (
-          walk(null, new Set())
-        ) : (
-          <p className="empty">
-            {i18n.t(
-              'No personnel metadata recorded. A task owner string alone does not establish a live agent.',
-            )}
-          </p>
-        )}
-      </Section>
-      <Section title={i18n.t('Personnel handoffs')}>
-        {handoffs.length ? (
-          handoffs.map((handoff) => <Handoff key={string(handoff.id)} handoff={handoff} />)
-        ) : (
-          <p className="muted">{i18n.t('No personnel handoffs recorded.')}</p>
-        )}
-      </Section>
+      <Workload snapshot={snapshot} context={context} />
+      <GoalCoordination snapshot={snapshot} />
+      <details className="team-context">
+        <summary>{i18n.t('Team records and responsibilities')}</summary>
+        <p className="intro">
+          {i18n.t(
+            'Management relationships and assignments are recorded by the director. This page does not poll live agent sessions.',
+          )}
+        </p>
+        <p className="muted">
+          {i18n.t('Program communication language')}:{' '}
+          {snapshot.communication_language === 'ko'
+            ? '한국어'
+            : snapshot.communication_language === 'en'
+              ? 'English'
+              : i18n.t('Not recorded')}
+          {' · '}
+          {i18n.t(
+            'Program communication language applies to director-authored questions; original content is not translated.',
+          )}
+        </p>
+        <Section title={i18n.t('Final director')}>
+          <Fields
+            values={[
+              ['Appointed actor', director.actor_id],
+              ['Acknowledged', i18n.date(director.acknowledged_at)],
+              [
+                'Merge target',
+                record(director.authority).merge_target || i18n.t('No merge authority recorded'),
+              ],
+            ]}
+          />
+          <details>
+            <summary>{i18n.t('Authority and responsibility')}</summary>
+            <Prose value={items(responsibilities.director).map((item) => i18n.t(string(item)))} />
+            <pre className="source">{i18n.display(director)}</pre>
+          </details>
+        </Section>
+        <Section title={i18n.t('Management hierarchy')}>
+          {actors.length ? (
+            walk(null, new Set())
+          ) : (
+            <p className="empty">
+              {i18n.t(
+                'No personnel metadata recorded. A task owner string alone does not establish a live agent.',
+              )}
+            </p>
+          )}
+        </Section>
+        <Section title={i18n.t('Personnel handoffs')}>
+          {handoffs.length ? (
+            handoffs.map((handoff) => <Handoff key={string(handoff.id)} handoff={handoff} />)
+          ) : (
+            <p className="muted">{i18n.t('No personnel handoffs recorded.')}</p>
+          )}
+        </Section>
+      </details>
     </>
   );
 }
@@ -1635,7 +1598,7 @@ function Dashboard({
           />
         </>
       );
-    else if (route.view === 'team') content = <Team snapshot={snapshot} />;
+    else if (route.view === 'team') content = <Team snapshot={snapshot} context={navigation} />;
     else if (route.view === 'task')
       content = (
         <TaskDetail
@@ -1653,7 +1616,11 @@ function Dashboard({
       );
     else if (route.view === 'questions') content = <Questions snapshot={snapshot} />;
     else if (route.view === 'evidence') {
-      const references = snapshotIndex(snapshot).evidenceByPath.get(route.evidencePath || '');
+      const supplied = snapshotIndex(snapshot).evidenceByPath.get(route.evidencePath || '');
+      const references = supplied?.filter(
+        (reference, index) =>
+          supplied.findIndex((other) => semanticValueEqual(reference, other)) === index,
+      );
       content = (
         <>
           <a href={navigationHash({ view: 'work' }, navigation)}>{i18n.t('Back to work')}</a>
@@ -1766,9 +1733,12 @@ function Dashboard({
             </select>
           </label>
           <span role="status">{freshness}</span>
-          <button type="button" disabled={busy} onClick={() => void refresh()}>
-            {i18n.t('Refresh')}
-          </button>
+          <IconButton
+            icon="refresh"
+            label={i18n.t('Refresh')}
+            disabled={busy}
+            onClick={() => void refresh()}
+          />
         </div>
       </header>
       {(error || stale) && (

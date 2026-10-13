@@ -284,7 +284,7 @@ describe('work program user outcomes', () => {
     await navigate('#team');
     expect(screen.getByText('model-v2')).toBeDefined();
   });
-  it('links dependency and advisory peers with their current recorded contact and honest unknowns', async () => {
+  it('links dependency and advisory peers with current ownership and honest unknowns', async () => {
     const original = fixture();
     render(
       <App
@@ -300,16 +300,41 @@ describe('work program user outcomes', () => {
     );
     await screen.findByText('Where the work stands');
     await navigate('#task/A1');
-    expect(screen.getByText('Hard dependencies')).toBeDefined();
+    expect(screen.getByText('Depends on')).toBeDefined();
     expect(screen.getByText('Related tasks · advisory')).toBeDefined();
-    expect(screen.getAllByText('Current recorded owner / contact: peer_worker')).toHaveLength(2);
-    expect(screen.getByText('No owner or contact recorded')).toBeDefined();
+    await userEvent.click(screen.getByText('Related tasks · advisory'));
+    expect(screen.getAllByRole('link', { name: 'Assignments for peer_worker' })).toHaveLength(2);
     expect(screen.getByText('missing · Task unavailable')).toBeDefined();
-    const peerLinks = screen.getAllByRole('link', { name: 'A2 · Review evidence' });
+    const peerLinks = screen.getAllByRole('link', { name: 'A2 Review evidence' });
     expect(peerLinks[0]?.getAttribute('href')).toBe('#task/A2');
     await userEvent.setup().click(peerLinks[0]!);
     await navigate('#task/A2');
     expect(screen.getByRole('heading', { name: 'Review evidence' })).toBeDefined();
+  });
+  it('keeps bespoke completed next actions in the ledger and exact generic completion text in detail', async () => {
+    const standard = 'Reviewed complete; delivery/CI is tracked separately.';
+    const custom = 'Archive the verified checkout tomorrow.';
+    render(
+      <App
+        loader={async () => ({
+          ...fixture(),
+          tasks: fixture().tasks.map((task, index) => ({
+            ...task,
+            status: 'done',
+            owner: null,
+            next_action: index ? custom : standard,
+          })),
+        })}
+      />,
+    );
+    await screen.findByText('Where the work stands');
+    await navigate('#work');
+    const ledger = document.querySelector('.task-list')! as HTMLElement;
+    expect(within(ledger).queryByText(standard)).toBeNull();
+    expect(within(ledger).getByText(custom)).toBeDefined();
+    expect(within(ledger).getAllByLabelText('No current owner')).toHaveLength(2);
+    await navigate('#task/A1');
+    expect(screen.getByText(standard)).toBeDefined();
   });
   it.each(['en', 'ko'] as const)(
     'shows readable task notes and preserves malformed legacy records in %s',
@@ -346,6 +371,9 @@ describe('work program user outcomes', () => {
         name: locale === 'ko' ? '현재 작업 상태' : 'Where the work stands',
       });
       await navigate('#task/A1');
+      await userEvent.click(
+        screen.getByText(locale === 'ko' ? '협업 메모' : 'Authored coordination notes'),
+      );
       const notes = screen.getByRole('list', {
         name: locale === 'ko' ? '작업 메모' : 'Task notes',
       });
@@ -363,11 +391,12 @@ describe('work program user outcomes', () => {
         ),
       ).toHaveLength(2);
       const originalRecords = notes.querySelectorAll('details');
-      expect(originalRecords).toHaveLength(3);
+      expect(originalRecords).toHaveLength(4);
       expect([...originalRecords].every((detail) => !detail.hasAttribute('open'))).toBe(true);
-      expect(originalRecords[0]?.textContent).toContain('Keep additional fields');
-      expect(originalRecords[1]?.textContent).toContain('Preserve the nested record');
-      expect(originalRecords[2]?.textContent).toContain('"reason": 17');
+      for (const detail of originalRecords) await userEvent.click(detail.querySelector('summary')!);
+      expect(notes.textContent).toContain('Keep additional fields');
+      expect(notes.textContent).toContain('Preserve the nested record');
+      expect(notes.textContent).toContain('"reason": 17');
     },
   );
 });
