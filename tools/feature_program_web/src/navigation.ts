@@ -1,3 +1,5 @@
+import { defaultQuestions, questionStages } from './question-state';
+import type { QuestionContext } from './question-state';
 import { items, record, records, string } from './model';
 import type { Snapshot, Task } from './model';
 import { firstWorkPage, pageSize } from './paging';
@@ -18,6 +20,7 @@ export type WorkContext = {
   readonly filters: TaskFilters;
   readonly paging: WorkPage;
   readonly selected: string | null;
+  readonly questions?: QuestionContext;
 };
 export type Navigation = WorkContext & {
   readonly route: Route;
@@ -40,6 +43,7 @@ export const defaultContext: WorkContext = {
 };
 const statuses = ['planned', 'active', 'blocked', 'review', 'done'] as const;
 const sorts = ['id', 'title', 'status', 'owner', 'phase'] as const;
+const questionKeys = ['qview', 'qstate', 'qsearch', 'qgoal', 'qtask', 'qselected'] as const;
 const keys = [
   'scope',
   'status',
@@ -71,7 +75,11 @@ export function parseNavigation(
     else throw error;
   }
   for (const key of parameters.keys())
-    if (!keys.some((value) => value === key) || parameters.getAll(key).length > 1) issues.push(key);
+    if (
+      ![...keys, ...questionKeys].some((value) => value === key) ||
+      parameters.getAll(key).length > 1
+    )
+      issues.push(key);
   if (/%(?![0-9a-f]{2})/i.test(source)) issues.push('encoding');
   let route: Route = { view: 'overview' };
   if (['work', 'team', 'overview', 'questions'].includes(path)) {
@@ -161,7 +169,39 @@ export function parseNavigation(
   if (!pageValid) issues.push('page');
   const requestedSize = value('size', String(base.paging.size));
   if (!['25', '50', '100'].includes(requestedSize)) issues.push('size');
+  const hasQuestions = questionKeys.some((key) => parameters.has(key));
+  const previousQuestions = hasQuestions ? defaultQuestions : fallback.questions;
+  const questionValue = (key: string, previous = '') => value(key, previous);
+  const requestedQuestionView = questionValue('qview', previousQuestions?.view || 'current');
+  const questionView = validate(
+    'qview',
+    requestedQuestionView,
+    (candidate) => ['current', 'history', 'all'].includes(candidate),
+    'current',
+  );
+  const questionState = validate(
+    'qstate',
+    questionValue('qstate', previousQuestions?.state),
+    (candidate) => questionStages.some((stage) => stage === candidate),
+  );
+  const questions =
+    hasQuestions || previousQuestions
+      ? {
+          view:
+            questionView === 'history'
+              ? ('history' as const)
+              : questionView === 'all'
+                ? ('all' as const)
+                : ('current' as const),
+          state: questionState,
+          search: questionValue('qsearch', previousQuestions?.search).slice(0, 300),
+          goal: questionValue('qgoal', previousQuestions?.goal),
+          task: questionValue('qtask', previousQuestions?.task),
+          selected: route.questionId || questionValue('qselected', previousQuestions?.selected),
+        }
+      : undefined;
   return {
+    ...(questions ? { questions } : {}),
     route,
     scope,
     filters,
@@ -185,6 +225,18 @@ export function navigationHash(route: Route, context: WorkContext): string {
   params.set('size', String(context.paging.size));
   if (context.selected) params.set('task', context.selected);
   if (route.full) params.set('full', '1');
+  if (context.questions) {
+    const q = context.questions;
+    params.set('qview', q.view);
+    for (const [key, value] of Object.entries({
+      qstate: q.state,
+      qsearch: q.search,
+      qgoal: q.goal,
+      qtask: q.task,
+      qselected: route.questionId || q.selected,
+    }))
+      if (value) params.set(key, value);
+  }
   return '#' + path + '?' + params.toString();
 }
 export function goalTaskIds(snapshot: Snapshot): ReadonlySet<string> | null {
