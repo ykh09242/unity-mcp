@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter, deque
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -624,6 +625,7 @@ class Program:
                     )
                 if verify_artifacts:
                     self.verify_refs(sequence(attempt.get("evidence"), "attempt evidence"), budget)
+                self.validate_resolution_history(state, task_id, attempt, budget)
                 if attempt.get("status") == "done" and verify_artifacts:
                     self.verify_terminal(task, attempt, budget)
             if task["status"] in OWNED_STATES:
@@ -972,12 +974,15 @@ class Program:
                 "new_state": "active",
                 "reason": "Current source revalidated",
                 "attempt": attempt_number,
+                "scope": scope,
                 "source_digest": digest(baseline),
                 "evidence": evidence,
             },
         )
 
     def transition(self, state: Record, args: argparse.Namespace) -> None:
+        self.require_current_location()
+        self.verify_refs(coordination.evidence_references(state))
         task = self.task(state, args.id)
         require(
             task["status"] != "done" or args.command in {"note", "reopen"},
@@ -985,15 +990,20 @@ class Program:
         )
         previous = task["status"]
         if args.command == "reopen":
-            require(
-                previous == "done" and args.owner == "leader",
-                "Reopen requires reviewed completion and explicit leader actor",
-            )
+            require(previous == "done", "Reopen requires reviewed completion")
+            coordination.require_task_authority(state, args.owner)
             task["status"] = "planned"
         if previous in OWNED_STATES:
-            require(
-                args.owner == task["owner"] or args.owner == "leader",
-                "Only owner/leader may update a claim",
+            coordination.require_task_authority(state, args.owner, string(task["owner"], "owner"))
+        block_origin: Record | None = None
+        if args.command == "block":
+            block_origin = (
+                self.block_binding(state, task)
+                if previous == "blocked"
+                else {
+                    "origin": previous,
+                    "origin_event_index": len(sequence(state["events"], "events")),
+                }
             )
         if args.command in {"block", "release"}:
             require(previous in OWNED_STATES, "Block/release requires an owned task")
@@ -1035,8 +1045,393 @@ class Program:
                 "new_state": task["status"],
                 "reason": args.reason,
                 "next_action": args.next_action,
+                **(
+                    {"attempt": self.current_attempt(task)["number"]}
+                    if previous in OWNED_STATES
+                    else {}
+                ),
             },
         )
+        if block_origin is not None:
+            event_index = len(sequence(state["events"], "events")) - 1
+            sequence(self.current_attempt(task).setdefault("blocks", []), "blocks").append(
+                {
+                    "origin": block_origin["origin"],
+                    "origin_event_index": block_origin["origin_event_index"],
+                    "event_index": event_index,
+                    "event_digest": digest(sequence(state["events"], "events")[event_index]),
+                }
+            )
+
+    def block_binding(self, state: Record, task: Record) -> Record:
+        """Prove block origin from the exact current-attempt event chain, including legacy data."""
+        attempt = self.current_attempt(task)
+        events = sequence(state["events"], "events")
+        claims = [
+            index
+            for index, value in enumerate(events)
+            if record(value, "event").get("action") == "claim"
+            and record(value, "event").get("id") == task["id"]
+            and canonical(record(value, "event").get("attempt")) == canonical(attempt["number"])
+        ]
+        recovery = "Ambiguous block origin; use supported release and fresh claim"
+        require(len(claims) == 1, recovery)
+        claim = record(events[claims[0]], "claim event")
+        require(
+            claim.get("actor") == attempt["owner"] == task["owner"]
+            and claim.get("previous_state") == "planned"
+            and claim.get("new_state") == "active",
+            recovery,
+        )
+        if "scope" in claim:
+            claimed_scope = strings(claim["scope"], "original claim scope")
+        else:
+            claim_refs = sequence(claim.get("evidence"), "original claim evidence")
+            require(bool(claim_refs), "Legacy claim scope unavailable; release and fresh claim")
+            self.verify_refs(claim_refs)
+            validation = read_json(
+                self.path(
+                    string(record(claim_refs[0], "claim reference")["path"], "claim evidence path")
+                )
+            )
+            require(
+                canonical(validation.get("attempt")) == canonical(attempt["number"])
+                and validation.get("task_id") == task["id"]
+                and validation.get("source_digest") == attempt["baseline_digest"]
+                and validation.get("head") == attempt["claimed_head"],
+                "Legacy claim scope proof is ambiguous; release and fresh claim",
+            )
+            claimed_scope = strings(validation.get("scope"), "original claim scope")
+        require(
+            canonical(claimed_scope) == canonical(strings(attempt["scope"], "scope")),
+            "Claimed scope changed; release and fresh claim",
+        )
+        status: Json = "active"
+        origin: Json = None
+        first: Json = None
+        latest: int | None = None
+        for index in range(claims[0] + 1, len(events)):
+            event = record(events[index], "event")
+            if event.get("id") != task["id"] or event.get("previous_state") is None:
+                continue
+            require(event.get("previous_state") == status, recovery)
+            if "attempt" in event:
+                require(canonical(event["attempt"]) == canonical(attempt["number"]), recovery)
+            if event.get("action") == "block":
+                require(
+                    status in {"active", "review", "blocked"}
+                    and event.get("new_state") == "blocked",
+                    recovery,
+                )
+                if status != "blocked":
+                    origin, first = status, index
+                latest = index
+            status = string(event.get("new_state"), "event state")
+            require(status in STATES, recovery)
+        require(
+            status == task["status"] == "blocked"
+            and origin in {"active", "review"}
+            and latest is not None,
+            recovery,
+        )
+        binding: Record = {
+            "origin": origin,
+            "origin_event_index": first,
+            "block": {"event_index": latest, "event_digest": digest(events[latest])},
+        }
+        if "blocks" in attempt:
+            blocks = sequence(attempt["blocks"], "blocks")
+            require(bool(blocks), recovery)
+            stored = record(blocks[-1], "block observation")
+            require(
+                canonical(stored)
+                == canonical(
+                    {
+                        **record(binding["block"], "block"),
+                        "origin": origin,
+                        "origin_event_index": first,
+                    }
+                ),
+                recovery,
+            )
+        return binding
+
+    def validate_resolution_history(
+        self, state: Record, task_id: str, attempt: Record, budget: ReadBudget | None
+    ) -> None:
+        """Check recorded observations against retained events without present-day authority replay."""
+        events = sequence(state.get("events"), "events")
+        for value in sequence(attempt.get("blocks", []), "blocks"):
+            block = record(value, "block observation")
+            index, first = block.get("event_index"), block.get("origin_event_index")
+            require(
+                type(index) is int and type(first) is int and 0 <= first <= index < len(events),
+                "Invalid block event identity",
+            )
+            event, original = (
+                record(events[index], "block event"),
+                record(events[first], "origin event"),
+            )
+            require(
+                event.get("id") == original.get("id") == task_id
+                and event.get("action") == original.get("action") == "block"
+                and event.get("new_state") == "blocked"
+                and string(block.get("origin"), "block origin") in {"active", "review"}
+                and original.get("previous_state") == block["origin"]
+                and block.get("event_digest") == digest(event),
+                "Block observation differs from original events",
+            )
+        resolutions = [
+            record(value, "resolution")
+            for value in sequence(attempt.get("resolutions", []), "resolutions")
+        ]
+        require(
+            len(resolutions)
+            == len({string(value.get("id"), "resolution ID") for value in resolutions}),
+            "Duplicate resolution history ID",
+        )
+        for resolution in resolutions:
+            binding = record(resolution.get("binding"), "resolution binding")
+            require(
+                canonical(binding.get("attempt")) == canonical(attempt["number"])
+                and binding.get("task_id") == task_id
+                and binding.get("owner") == attempt["owner"]
+                and binding.get("program_id") == state["program_id"]
+                and string(resolution.get("destination"), "resolution destination")
+                in {"active", "review"},
+                "Historical resolution identity changed",
+            )
+            block = record(binding.get("block"), "resolution block")
+            index = block.get("event_index")
+            require(
+                type(index) is int
+                and 0 <= index < len(events)
+                and block.get("event_digest") == digest(events[index]),
+                "Historical resolution block changed",
+            )
+            require(
+                record(resolution.get("receipt"), "resolution receipt")
+                in sequence(attempt["evidence"], "evidence"),
+                "Resolution receipt lacks frozen attempt evidence",
+            )
+            string(resolution.get("reason"), "resolution reason")
+            string(resolution.get("actor"), "resolution actor")
+            index = resolution.get("event_index")
+            require(
+                type(index) is int and 0 <= index < len(events), "Invalid resolution event identity"
+            )
+            event = record(events[index], "resolution event")
+            require(
+                resolution.get("event_digest") == digest(event)
+                and event.get("action") == "resume"
+                and event.get("id") == task_id
+                and canonical(event.get("attempt")) == canonical(attempt["number"])
+                and event.get("new_state") == resolution["destination"]
+                and canonical(event.get("receipt")) == canonical(resolution["receipt"]),
+                "Historical resolution event changed",
+            )
+            if budget is not None:
+                ref = record(resolution["receipt"], "resolution receipt")
+                receipt = read_json(
+                    self.path(string(ref["path"], "resolution path")), budget=budget
+                )
+                for key, value in {
+                    **binding,
+                    "id": resolution["id"],
+                    "actor_id": resolution["actor"],
+                    "reason": resolution["reason"],
+                    "next_action": resolution["next_action"],
+                }.items():
+                    require(
+                        canonical(receipt.get(key)) == canonical(value),
+                        "Historical resolution receipt binding changed",
+                    )
+
+    def resume_binding(self, state: Record, task_id: str) -> Record:
+        """Read-only present facts for an authored resolution, never a readiness approval."""
+        self.require_current_location()
+        task = self.task(state, task_id)
+        require(task["status"] == "blocked", "Resume requires current blocked ownership")
+        attempt = self.current_attempt(task)
+        origin = self.block_binding(state, task)
+        scope = strings(attempt["scope"], "scope")
+        return {
+            "program_id": state["program_id"],
+            "task_id": task_id,
+            "owner": task["owner"],
+            "attempt": attempt["number"],
+            "expected_revision": phases.revision(state),
+            "definition_digest": digest(
+                {
+                    key: value
+                    for key, value in task.items()
+                    if key not in phases.TASK_PROGRESS_FIELDS
+                }
+            ),
+            "block": origin["block"],
+            "origin": origin["origin"],
+            "scope": scope,
+            "head": self.current_head(),
+            "source_digest": self.source_digest(scope),
+        }
+
+    def resume(self, state: Record, args: argparse.Namespace) -> None:
+        """Commit one immutable same-attempt resolution after two fresh prerequisite checks."""
+        self.require_current_location()
+        self.validate(state)
+        task = self.task(state, args.id)
+        attempt = self.current_attempt(task)
+        number = attempt["number"]
+        require(type(number) is int and number > 0, "Invalid current attempt")
+        receipt, refs = self.frozen_json(args.id, number, args.receipt)
+        require(
+            type(receipt.get("schema_version")) is int
+            and receipt["schema_version"] == 1
+            and receipt.get("operation") == "resume",
+            "Invalid resume receipt schema/operation",
+        )
+        identifier = string(receipt.get("id"), "resolution ID")
+        require(portable_task_id(identifier), "Invalid resolution ID")
+        require(
+            not any(
+                record(value, "resolution").get("id") == identifier
+                for value in sequence(attempt.get("resolutions", []), "resolutions")
+            ),
+            "Resolution already recorded; inspect immutable history",
+        )
+        reason = string(receipt.get("reason"), "resolution reason")
+        next_action = string(receipt.get("next_action"), "resolution next action")
+        require(receipt.get("actor_id") == args.owner, "Resolution acting identity mismatch")
+        refs += self.evidence(
+            args.id, number, strings(receipt.get("evidence"), "resolution evidence")
+        )
+        expected = self.resume_binding(state, args.id)
+
+        def prerequisites(current: Record) -> None:
+            self.require_current_location()
+            current_task = self.task(current, args.id)
+            current_attempt = self.current_attempt(current_task)
+            require(current_task["owner"] == current_attempt["owner"], "Stale current owner")
+            coordination.require_task_authority(
+                current, args.owner, string(current_task["owner"], "owner")
+            )
+            coordination.require_task_authority(
+                current,
+                string(current_task["owner"], "owner"),
+                string(current_task["owner"], "owner"),
+            )
+            coordination.require_resume_transfer(
+                current, args.id, number, strings(current_attempt["scope"], "scope")
+            )
+            for key, value in self.resume_binding(current, args.id).items():
+                require(
+                    canonical(receipt.get(key)) == canonical(value), f"Stale resume binding: {key}"
+                )
+            phases.guard_execution(
+                self, current, args.id, strings(current_attempt["scope"], "scope")
+            )
+            for dependency in strings(current_task["depends_on"], "dependencies"):
+                require(
+                    self.task(current, dependency)["status"] == "done",
+                    f"Unmet dependency: {dependency}",
+                )
+            for value in sequence(current["tasks"], "tasks"):
+                other = record(value, "task")
+                if other["id"] != args.id and other["status"] in OWNED_STATES:
+                    require(
+                        other["owner"] != current_task["owner"]
+                        and not self.collisions(current_task, other),
+                        f"Resume ownership/scope collision with {other['id']}",
+                    )
+            self.verify_refs(sequence(current_attempt["evidence"], "evidence") + refs)
+
+        prerequisites(state)
+        destination = "active"
+        if expected["origin"] == "review":
+            submission = record(attempt.get("submission"), "blocked review submission")
+            require(
+                digest(record(submission.get("source_snapshot"), "submitted snapshot"))
+                == submission.get("source_digest"),
+                "Blocked submission snapshot binding changed",
+            )
+            require(
+                bool(sequence(attempt["rounds"], "rounds"))
+                and canonical(sequence(attempt["rounds"], "rounds")[-1]) == canonical(submission),
+                "Blocked submission differs from immutable current round",
+            )
+            self.verify_refs(sequence(submission.get("evidence"), "submission evidence"))
+            destination = (
+                "review" if expected["source_digest"] == submission["source_digest"] else "active"
+            )
+        if "destination" in receipt:
+            require(
+                receipt["destination"] == destination,
+                "Destination is derived from authoritative origin/source",
+            )
+        proposed = deepcopy(state)
+        resumed_task = self.task(proposed, args.id)
+        resumed_attempt = self.current_attempt(resumed_task)
+        if expected["origin"] == "review" and destination == "active":
+            resumed_attempt["submission"] = None
+        resumed_attempt.update({"status": destination, "next_action": next_action})
+        resumed_task.update({"status": destination, "next_action": next_action})
+        resumed_attempt["evidence"] = sequence(resumed_attempt["evidence"], "evidence") + refs
+        sequence(resumed_attempt.setdefault("resolutions", []), "resolutions").append(
+            {
+                "id": identifier,
+                "actor": args.owner,
+                "reason": reason,
+                "next_action": next_action,
+                "binding": expected,
+                "destination": destination,
+                "receipt": refs[0],
+                "evidence": refs,
+                "recorded_at": utc(),
+            }
+        )
+        sequence(resumed_task["notes"], "notes").append(
+            {
+                "actor": args.owner,
+                "reason": reason,
+                "next_action": next_action,
+                "timestamp": utc(),
+                "evidence": refs,
+            }
+        )
+        self.event(
+            proposed,
+            "resume",
+            {
+                "id": args.id,
+                "actor": args.owner,
+                "attempt": number,
+                "previous_state": "blocked",
+                "new_state": destination,
+                "reason": reason,
+                "next_action": next_action,
+                "receipt": refs[0],
+                "block": expected["block"],
+            },
+        )
+        resolution_event = len(sequence(proposed["events"], "events")) - 1
+        record(sequence(resumed_attempt["resolutions"], "resolutions")[-1], "resolution").update(
+            {
+                "event_index": resolution_event,
+                "event_digest": digest(sequence(proposed["events"], "events")[resolution_event]),
+            }
+        )
+
+        def precommit() -> None:
+            current = self.load()
+            require(
+                phases.revision(current) == expected["expected_revision"],
+                "Stale resume registry revision at publication",
+            )
+            prerequisites(current)
+
+        self.save(proposed, before_publish=precommit)
+        state.clear()
+        state.update(proposed)
 
     def submit(self, state: Record, args: argparse.Namespace) -> None:
         self.require_current_location()
@@ -1163,6 +1558,8 @@ class Program:
         )
 
     def review(self, state: Record, args: argparse.Namespace) -> None:
+        self.require_current_location()
+        self.verify_refs(coordination.evidence_references(state))
         task = self.task(state, args.id)
         require(task["status"] == "review", "Complete requires submitted review state")
         attempt = self.current_attempt(task)
@@ -1199,6 +1596,7 @@ class Program:
         if role == "leader" or reviewer == attempt["owner"]:
             string(review.get("reason"), "leader/self-review reason")
             require(role == "leader", "Self-review must be honestly labeled leader review")
+            coordination.require_task_authority(state, reviewer)
         refs += self.evidence(args.id, number, strings(review.get("evidence"), "review evidence"))
         attempt["evidence"] = sequence(attempt["evidence"], "evidence") + refs
         submission["review"] = refs[0]
@@ -1583,6 +1981,17 @@ class Program:
         number = len(attempts) + 1 if args.kind == "revalidation" else len(attempts)
         base: Record = {"task_id": args.id, "attempt": number}
         match args.kind:
+            case "resume":
+                return {
+                    **self.resume_binding(state, args.id),
+                    "schema_version": 1,
+                    "operation": "resume",
+                    "id": "replace-with-unique-resolution-id",
+                    "actor_id": task["owner"],
+                    "reason": "Describe actual blocker resolution",
+                    "next_action": "Describe the next verified action",
+                    "evidence": [],
+                }
             case "revalidation":
                 require(bool(args.scope), "Revalidation template requires explicit --scope")
                 scope = sorted(set(safe_relative(path) for path in args.scope))
@@ -2374,7 +2783,9 @@ def parser() -> argparse.ArgumentParser:
     template = commands.add_parser("template")
     template.add_argument("id")
     template.add_argument(
-        "--kind", choices=("revalidation", "execution", "review", "delivery"), required=True
+        "--kind",
+        choices=("revalidation", "execution", "review", "delivery", "resume"),
+        required=True,
     )
     template.add_argument("--scope", action="append")
     claim = commands.add_parser("claim")
@@ -2386,7 +2797,11 @@ def parser() -> argparse.ArgumentParser:
     for name in ("note", "block", "release", "reopen"):
         command = commands.add_parser(name)
         command.add_argument("id")
-        command.add_argument("--owner", required=True, help="Current owner or leader")
+        command.add_argument(
+            "--owner",
+            required=True,
+            help="Current owner or accepted director (legacy leader without appointment)",
+        )
         command.add_argument("--reason", required=True)
         command.add_argument("--next-action", required=True)
         command.add_argument("--evidence", action="append", default=[])
@@ -2394,6 +2809,14 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("id")
     submit.add_argument("--owner", required=True)
     submit.add_argument("--receipt", required=True)
+    resume = commands.add_parser(
+        "resume", help="Resolve a blocker on the same guarded owner/attempt"
+    )
+    resume.add_argument("id")
+    resume.add_argument("--owner", required=True)
+    resume.add_argument(
+        "--receipt", required=True, help="Immutable attempt-relative resolution JSON"
+    )
     for name in ("complete", "rework"):
         review = commands.add_parser(name)
         review.add_argument("id")
@@ -2542,6 +2965,8 @@ def main(argv: list[str] | None = None) -> int:
                 case "submit":
                     program.submit(state, args)
                     program.save(state)
+                case "resume":
+                    program.resume(state, args)
                 case "complete" | "rework":
                     program.review(state, args)
                     program.save(state)

@@ -920,6 +920,48 @@ def current_director_id(state: Record) -> str | None:
     )
 
 
+def require_task_authority(state: Record, actor: str, owner: str | None = None) -> None:
+    """Resolve a present owner or accepted director; never rewrite historical authority."""
+    actors = _indexed(state.get("actors", []), "actor")
+    if actor in actors:
+        _require(
+            actors[actor].get("staffing_status", "active") != "retired",
+            "Retired actor cannot update work",
+        )
+    if owner is not None and actor == owner:
+        return
+    director = current_director_id(state)
+    if director is None:
+        _require(actor == "leader", "Only the current director (or legacy leader) may override")
+        return
+    validate_governance(state)
+    _require(actor == director, "Only the current accepted director may override")
+
+
+def require_resume_transfer(state: Record, task_id: str, attempt: int, scope: list[str]) -> None:
+    """A same-attempt resolution cannot accept or bypass a personnel transfer."""
+    selected = [path.casefold() for path in scope]
+    for handoff in _indexed(state.get("handoffs", []), "handoff").values():
+        same_attempt = handoff.get("task_id") == task_id and handoff.get("attempt") == attempt
+        _require(
+            not same_attempt,
+            "Transferred attempt requires supported release and fresh successor claim",
+        )
+        if handoff.get("acceptance") is not None:
+            continue
+        outgoing = _record(handoff.get("outgoing"), "outgoing transfer")
+        transferred = [path.casefold() for path in _texts(outgoing.get("scope"), "transfer scope")]
+        overlaps = any(
+            left == right or left.startswith(right + "/") or right.startswith(left + "/")
+            for left in transferred
+            for right in selected
+        )
+        _require(
+            handoff.get("role") != "director" and not overlaps,
+            "Resume has an unresolved relevant transfer",
+        )
+
+
 def objective_contract(state: Record) -> Record | None:
     """Return declared objective identity and criteria, excluding runtime progress."""
     value = state.get("objective")

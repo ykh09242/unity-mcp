@@ -253,6 +253,63 @@ def test_legacy_snapshot_preserves_state_and_unknown_assignment(state: governanc
     assert state == before
 
 
+@pytest.mark.parametrize("actor_id", ["leader", "director-next", "worker-next"])
+def test_present_director_authority_rejects_labels_and_unaccepted_successors(
+    program: SyntheticProgram, state: governance.Record, actor_id: str
+) -> None:
+    # Given real frozen initial director acknowledgement in the isolated adapter.
+    appoint(program, state)
+    before = deepcopy(state)
+    # When another identity claims override authority without an accepted succession.
+    with pytest.raises(governance.GovernanceError, match="current accepted director"):
+        governance.require_task_authority(state, actor_id)
+    # Then the current director, actors and historical evidence remain unchanged.
+    assert state == before
+    governance.require_task_authority(state, "director-old")
+
+
+@pytest.mark.parametrize("retired", ["worker-old", "director-old"])
+def test_retired_current_actor_never_authorizes_new_mutation(
+    program: SyntheticProgram, state: governance.Record, retired: str
+) -> None:
+    # Given an honest malformed legacy fixture with a retired saved owner/director.
+    appoint(program, state)
+    governance._indexed(state["actors"], "actors")[retired]["staffing_status"] = "retired"
+    before = deepcopy(state)
+    # When that retired identity, or legacy leader under an invalid appointment, acts.
+    with pytest.raises(governance.GovernanceError, match="Retired|retired"):
+        governance.require_task_authority(
+            state, retired, "worker-old" if retired == "worker-old" else None
+        )
+    if retired == "director-old":
+        with pytest.raises(governance.GovernanceError):
+            governance.require_task_authority(state, "leader")
+    # Then no fallback or historical staffing rewrite occurs.
+    assert state == before
+
+
+@pytest.mark.parametrize("accepted", [False, True])
+def test_same_attempt_transfer_requires_fresh_claim_not_resume(
+    state: governance.Record, accepted: bool
+) -> None:
+    # Given only the bounded transfer facts needed by this execution guard.
+    state["handoffs"] = [
+        {
+            "id": "transfer",
+            "task_id": "TASK-A",
+            "attempt": 1,
+            "role": "worker",
+            "acceptance": {} if accepted else None,
+        }
+    ]
+    before = deepcopy(state)
+    # When a resolution tries to take the same transferred attempt rather than fresh claim.
+    with pytest.raises(governance.GovernanceError, match="fresh successor claim"):
+        governance.require_resume_transfer(state, "TASK-A", 1, ["src/tool.py"])
+    # Then transfer acceptance/history remain untouched regardless of receipt status.
+    assert state == before
+
+
 @pytest.mark.parametrize(
     "categories",
     [
