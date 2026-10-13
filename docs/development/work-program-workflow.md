@@ -49,6 +49,63 @@ Mark inherited or unknown settings honestly. Keep staffing status separate from 
 runtime observations. The director manages real agents through the available native tools;
 the registry and read-only web view only display recorded facts.
 
+## Allocating ready work
+
+Inspect the complete remaining task set against the objective, validated outputs, current
+ownership and actual runtime capacity. Numeric phases and display order do not establish
+implementation readiness. Classify each reason for waiting before allocating the ready set:
+
+| Constraint | Allocation decision |
+| --- | --- |
+| Hard prerequisite | Name the required validated output that is unavailable. Hold implementation that needs it; assign useful preparation separately with its own result and evidence. |
+| Exact write conflict | Identify overlapping source, tests, contracts or generated paths. Give each shared path one writer and an explicit handoff boundary. |
+| Integration-only condition | Independent implementations may proceed under an acknowledged interface; require their combined actual behavior to pass before acceptance. |
+
+A task is ready only when its recorded prerequisites and claim checks are satisfied and its
+owned scope is available. Correct an overconservative dependency through the supported
+[reviewed planning amendment](feature-program-tool.md#planned-metadata-and-execution-priority)
+before claiming it; retain the required integration and review gates. Record the specific
+blocker and next start trigger for work that cannot proceed.
+
+Allocate all useful independent slices using the [roles](#roles) and staffing rules above.
+Justify reuse, new workers, sub-directors and model/effort choices against current capacity,
+context and supervision load, without a fixed worker count. Verify native contacts and
+runtime observations; retain inherited or unknown settings honestly. Distinguish actual
+implementation from preparation, research and review in progress reports.
+
+Use a compact allocation record for each assignment in task notes or linked private evidence:
+
+| Field | Required record |
+| --- | --- |
+| Result and purpose | Expected output and the objective criterion it serves |
+| Ownership | Responsible director, worker, exact writable paths, checkout and branch |
+| Contacts and capacity | Verified native contacts, current availability, model/effort provenance and staffing rationale |
+| Interfaces and gates | Prerequisites, peer contract/acknowledgement, shared writer and integration obligations |
+| Acceptance and evidence | Acceptance criteria, required checks, review and reproducible evidence locations |
+| Next trigger | Concrete start condition or next action, blocker if any, and handoff recipient/boundary |
+
+Isolate checkouts when concurrent source snapshots, build outputs or branches interfere.
+Isolation does not grant duplicate ownership: shared contracts and generated paths still
+have one writer. Follow [peer communication](#related-work-and-peer-communication) before
+code depends on a consequential interface agreement. Obtain counterpart acknowledgement
+before that dependent code starts, and record combined actual verification before accepting
+the affected work. If a peer is unreachable, use the responsible director's relay and hold
+only the work needing the pending agreement; silence is not acknowledgement.
+
+At assignment, interface change, blocking, freeze, review, handoff and recovery, audit the
+complete ready set for ready-but-idle work, needless waits, overloaded owners and objective
+drift. Record the correction, responsible actor and next trigger using the existing
+[direction and review procedure](#direction-and-repeated-review). Material goal uncertainty
+returns to the human through the final director; independent authorized work continues.
+
+Reallocate through supported `release`, fresh `claim` and an acknowledged
+[handoff](#handoffs-and-recovery), preserving attempts, failures and reviews. A proposed
+replacement does not own the predecessor's paths. Carry allocation decisions, accepted
+interfaces, unresolved proposals and next triggers through checkpoints and compaction;
+on recovery reconcile them with actual source, ownership and runtime state before resuming.
+The director starts and coordinates real agents through native tools; registry records do
+not launch or schedule them.
+
 ## Related work and peer communication
 
 Before implementation and when an assumption changes, inspect task dependencies, advisory
