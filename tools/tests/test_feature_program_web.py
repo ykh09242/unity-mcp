@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import closing, contextmanager
+from copy import deepcopy
 from hashlib import sha256
 from http.client import HTTPConnection
 import json
@@ -107,6 +108,289 @@ def fingerprints(repo):
         for path in repo.rglob("*")
         if path.is_file()
     }
+
+
+def delivery_fixture(repo, monkeypatch):
+    """Record real synthetic task completion and two distinct delivery observations."""
+    monkeypatch.setattr(program_helpers.fp, "git", lambda *_args: program_helpers.HEAD)
+    fixture = program_helpers.Fixture(
+        fp.Program(repo, repo / "program"), (repo / "source.md").read_bytes()
+    )
+    assert fixture.claim("A1") == 0
+    fixture.submit("A1")
+    assert fixture.run("complete", "A1", "--review", fixture.review("A1")) == 0
+    task = fixture.program.task(fixture.program.load(), "A1")
+    source_digest = task["attempts"][-1]["submission"]["source_digest"]
+    for label, conclusion in (("pending", "pending"), ("cleaned", "success")):
+        metadata = {
+            "task_id": "A1",
+            "attempt": 1,
+            "branch": "synthetic-branch",
+            "base": "beta",
+            "commits": [program_helpers.HEAD],
+            "pr_url": "https://github.com/example/fixture/pull/1",
+            "tested_commit": program_helpers.HEAD,
+            "reviewed_source_digest": source_digest,
+            "required_ci": ["unit"],
+            "ci": [
+                {
+                    "name": "unit",
+                    "url": "https://github.com/example/fixture/actions/runs/1",
+                    "commit": program_helpers.HEAD,
+                    "conclusion": conclusion,
+                }
+            ],
+            "merge_status": "open" if label == "pending" else "merged",
+            "evidence": ["evidence/A1/attempt-1/inspection.txt"],
+            "extension": {"authored": ["preserve", "한국어"]},
+        }
+        if label == "cleaned":
+            metadata["merge_commit"] = "b" * 40
+            metadata["cleanup"] = {
+                "status": "cleaned",
+                "reason": "Synthetic recorded cleanup",
+                "merge_identity": "b" * 40,
+                "actor_id": "leader",
+                "recorded_at": "2026-10-13T09:00:00+00:00",
+                "evidence": metadata["evidence"],
+            }
+        receipt = fixture.write(f"evidence/A1/attempt-1/delivery-{label}.json", metadata)
+        assert fixture.run("delivery", "A1", "--receipt", receipt) == 0
+    return fixture
+
+
+def test_delivery_history_preserves_all_records_and_current_selection(program, monkeypatch):
+    # Given two actual recorded observations, including a later cleanup fact.
+    fixture = delivery_fixture(program, monkeypatch)
+    state = fixture.program.load()
+    expected = state["tasks"][0]["deliveries"]
+    before = fingerprints(program)
+    monkeypatch.setattr(fp, "git", lambda *_args: pytest.fail("Snapshot must not execute Git"))
+    monkeypatch.setattr(fp.Program, "lock", lambda *_args: pytest.fail("No snapshot lock"))
+    monkeypatch.setattr(fp, "atomic_write", lambda *_args: pytest.fail("No snapshot write"))
+    # When the real HTTP adapter projects the program.
+    with running(web.create_server(program, Path("program"), port=0)) as server:
+        status, _headers, body = request(server)
+    # Then every canonical observation and exact locator remains available.
+    snapshot = json.loads(body)
+    task = snapshot["tasks"][0]
+    history = task["delivery_history"]
+    assert status == 200 and history["status"] == "recorded"
+    assert [item["record"] for item in history["items"]] == expected
+    assert task["delivery"] == expected[-1]
+    for index, item in enumerate(history["items"]):
+        event_index, event = next(
+            (i, event)
+            for i, event in enumerate(state["events"])
+            if event.get("action") == "delivery"
+            and event.get("receipt") == expected[index]["receipt"]
+        )
+        assert item["reference"] == {
+            "path": "backlog.json",
+            "pointer": f"/tasks/0/deliveries/{index}",
+            "revision": snapshot["revision"],
+        }
+        assert item["recorded_at"] == event["timestamp"]
+        assert item["time_status"] == "recorded"
+        assert item["event_reference"] == {
+            "path": "backlog.json",
+            "pointer": f"/events/{event_index}",
+            "revision": snapshot["revision"],
+        }
+        assert item["record"]["remote_verified_by_tool"] is False
+    assert snapshot["tasks"][1]["delivery_history"] == {"status": "unrecorded", "items": []}
+    assert fingerprints(program) == before
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ["none", "missing", "wrong_task", "wrong_hash", "extra_ref", "duplicate", "bad_time", "naive"],
+)
+def test_delivery_history_time_requires_one_exact_valid_event(fault):
+    # Given one frozen reference and a potentially ambiguous or unrelated event.
+    receipt = {"path": "evidence/A1/attempt-1/delivery.json", "sha256": "a" * 64}
+    event = {
+        "action": "delivery",
+        "id": "A1",
+        "receipt": deepcopy(receipt),
+        "timestamp": "2026-10-13T10:00:00Z",
+    }
+    events = [event]
+    match fault:
+        case "missing":
+            events = []
+        case "wrong_task":
+            event["id"] = "B2"
+        case "wrong_hash":
+            event["receipt"]["sha256"] = "b" * 64
+        case "extra_ref":
+            event["receipt"]["extra"] = "different full reference"
+        case "duplicate":
+            events.append(deepcopy(event))
+        case "bad_time":
+            event["timestamp"] = "yesterday"
+        case "naive":
+            event["timestamp"] = "2026-10-13T10:00:00"
+        case "none":
+            pass
+    delivery = {"receipt": receipt, "metadata": {"attempt": 1}, "recorded_at": "authored"}
+    state = {"events": events, "tasks": [{"id": "A1", "deliveries": [delivery, delivery]}]}
+    before = fp.canonical(state)
+    # When detached history is projected, repeated records are not deduplicated.
+    items = fp._delivery_history_projection(state, "c" * 64)[0]["items"]
+    # Then only an exact unique event yields time, and originals remain detached.
+    assert len(items) == 2
+    assert [item["record"] for item in items] == [delivery, delivery]
+    for item in items:
+        assert item["time_status"] == ("recorded" if fault == "none" else "unknown")
+        assert item["recorded_at"] == (event["timestamp"] if fault == "none" else None)
+        assert (item["event_reference"] is not None) == (fault == "none")
+    items[0]["record"]["metadata"]["attempt"] = 99
+    assert items[1]["record"]["metadata"]["attempt"] == 1
+    assert fp.canonical(state) == before
+
+
+@pytest.mark.parametrize("value", [None, {}, "", "not-a-date", 17])
+def test_delivery_history_tolerates_malformed_optional_time(value):
+    # Given a valid identity with legacy timestamp metadata of an unsupported shape.
+    receipt = {"path": "evidence/A1/attempt-1/delivery.json", "sha256": "a" * 64}
+    state = {
+        "tasks": [{"id": "A1", "deliveries": [{"receipt": receipt, "metadata": {}}]}],
+        "events": [{"action": "delivery", "id": "A1", "receipt": receipt, "timestamp": value}],
+    }
+    # When the recorded history is observed.
+    item = fp._delivery_history_projection(state, "b" * 64)[0]["items"][0]
+    # Then timestamp absence does not become a current time or an event claim.
+    assert item["time_status"] == "unknown"
+    assert item["recorded_at"] is None and item["event_reference"] is None
+
+
+def test_delivery_history_retains_prior_attempt_when_current_is_active(program, monkeypatch):
+    # Given a completed attempt with deliveries followed by a fresh active claim.
+    fixture = delivery_fixture(program, monkeypatch)
+    deliveries = deepcopy(fixture.program.load()["tasks"][0]["deliveries"])
+    assert (
+        fixture.run(
+            "reopen", "A1", "--owner", "leader", "--reason", "Follow-up", "--next-action", "Inspect"
+        )
+        == 0
+    )
+    assert fixture.claim("A1", number=2) == 0
+    # When the current snapshot is read.
+    task = fp.read_snapshot(program, Path("program"))["tasks"][0]
+    # Then old delivery observations remain history, not the new attempt's delivery.
+    assert task["status"] == "active" and len(task["attempts"]) == 2
+    assert task["delivery"] == {"status": "unrecorded", "remote_verified_by_tool": False}
+    assert [item["record"] for item in task["delivery_history"]["items"]] == deliveries
+
+
+@pytest.mark.parametrize("cleanup", [None, "unknown", "deferred"])
+@pytest.mark.parametrize("conclusion", ["failure", "pending", "skipped", "neutral", None])
+def test_delivery_history_preserves_legacy_optional_facts(program, cleanup, conclusion):
+    # Given tolerated legacy metadata, without inventing a valid modern delivery receipt.
+    path = program / "program/backlog.json"
+    state = fp.read_json(path)
+    metadata = {"ci": [{"conclusion": conclusion}], "cleanup": None}
+    if cleanup is not None:
+        # Cleanup validation is authoritative; exercise these complete forms in pure projection.
+        metadata["cleanup"] = {"status": cleanup}
+    delivery = {"metadata": metadata, "status": "unknown", "remote_verified_by_tool": False}
+    state["tasks"][0]["deliveries"] = [delivery]
+    # When the pure projection retains supplied optional facts.
+    item = fp._delivery_history_projection(state, "c" * 64)[0]["items"][0]
+    # Then missing/neutral/skipped/failed facts and explicit cleanup remain unmodified.
+    assert item["record"] == delivery
+    assert item["recorded_at"] is None and item["time_status"] == "unknown"
+
+
+@pytest.mark.parametrize("deliveries", [None, {}, [None], [{"metadata": None}]])
+def test_delivery_history_keeps_existing_structural_rejection(program, deliveries):
+    # Given a registry shape already rejected by the authoritative validator.
+    path = program / "program/backlog.json"
+    state = fp.read_json(path)
+    state["tasks"][0]["deliveries"] = deliveries
+    path.write_bytes(fp.canonical(state))
+    # When snapshot validation runs, no partial successful history is returned.
+    with pytest.raises(fp.ProgramError):
+        fp.read_snapshot(program, Path("program"))
+
+
+@pytest.mark.parametrize("drift", ["changed", "missing"])
+def test_delivery_history_preserves_context_with_frozen_evidence_drift(program, monkeypatch, drift):
+    # Given real delivery records whose earlier frozen receipt has drifted.
+    fixture = delivery_fixture(program, monkeypatch)
+    state = fixture.program.load()
+    expected = state["tasks"][0]["deliveries"]
+    path = fixture.program.path(expected[0]["receipt"]["path"])
+    if drift == "missing":
+        path.unlink()
+    else:
+        path.write_bytes(b"changed frozen evidence")
+    before = fingerprints(program)
+    # When the snapshot observes integrity without hydrating another receipt.
+    snapshot = fp.read_snapshot(program, Path("program"))
+    # Then history remains supplied context and integrity remains visibly stale.
+    assert snapshot["integrity"]["status"] == "stale"
+    assert [x["record"] for x in snapshot["tasks"][0]["delivery_history"]["items"]] == expected
+    assert any(expected[0]["receipt"]["path"] in w for w in snapshot["integrity"]["warnings"])
+    assert fingerprints(program) == before
+
+
+def test_delivery_history_rejects_registry_change_during_projection(program, monkeypatch):
+    # Given an actual snapshot whose captured registry changes during history projection.
+    project = fp._delivery_history_projection
+    path = program / "program/backlog.json"
+
+    def changed(state, revision):
+        result = project(state, revision)
+        updated = fp.read_json(path)
+        updated["tasks"][0]["next_action"] = "Changed concurrently"
+        path.write_bytes(fp.canonical(updated))
+        return result
+
+    monkeypatch.setattr(fp, "_delivery_history_projection", changed)
+    # When the final existing registry guards run, the read rejects rather than mixing revisions.
+    with pytest.raises(fp.ProgramError, match="Registry changed"):
+        fp.read_snapshot(program, Path("program"))
+
+
+def test_delivery_history_rejects_complete_output_over_existing_bound(program, monkeypatch):
+    # Given a registry below its bound whose current/history duplication exceeds output budget.
+    fixture = delivery_fixture(program, monkeypatch)
+    path = fixture.program.path("backlog.json")
+    state = fp.read_json(path)
+    state["tasks"][0]["deliveries"][-1]["metadata"]["large_extension"] = "x" * (4 * 1024 * 1024)
+    path.write_bytes(fp.canonical(state))
+    assert path.stat().st_size < 8 * 1024 * 1024
+    # When the full snapshot is built, history is not silently dropped or truncated.
+    with pytest.raises(fp.ProgramError, match="Snapshot output exceeds 8 MiB"):
+        fp.read_snapshot(program, Path("program"))
+
+
+def test_delivery_history_http_refresh_retains_old_facts_and_changes_validator(
+    program, monkeypatch
+):
+    # Given a current snapshot and its unchanged validator.
+    fixture = delivery_fixture(program, monkeypatch)
+    path = fixture.program.path("backlog.json")
+    with running(web.create_server(program, Path("program"), port=0)) as server:
+        first = request(server)
+        original = json.loads(first[2])["tasks"][0]["delivery_history"]["items"]
+        assert request(server, headers={"If-None-Match": first[1]["ETag"]})[0] == 304
+        state = fp.read_json(path)
+        state["tasks"][0]["deliveries"][0]["metadata"]["historical_note"] = "Recorded detail"
+        path.write_bytes(fp.canonical(state))
+        # When only an older recorded observation changes, refresh returns the new full history.
+        status, headers, body = request(server, headers={"If-None-Match": first[1]["ETag"]})
+    # Then current delivery remains unchanged while historical data changes the response identity.
+    changed = json.loads(body)
+    assert status == 200 and headers["ETag"] != first[1]["ETag"]
+    assert changed["tasks"][0]["delivery"] == json.loads(first[2])["tasks"][0]["delivery"]
+    assert (
+        changed["tasks"][0]["delivery_history"]["items"][0]["record"]["metadata"]["historical_note"]
+        == "Recorded detail"
+    )
+    assert original[0]["record"]["metadata"].get("historical_note") is None
 
 
 def test_snapshot_reads_real_program_without_any_mutation(program, monkeypatch):

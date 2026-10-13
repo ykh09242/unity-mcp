@@ -5,6 +5,7 @@ import { emptyFilters, goalTaskIds, navigationHash, scopedTasks } from './naviga
 import type { WorkContext } from './navigation';
 import { taskNeighborhood, workload, workloadHref } from './relate';
 import { snapshotIndex } from './selectors';
+import { StaffingHistory } from './history-ui';
 
 export function Workload({
   snapshot,
@@ -92,6 +93,17 @@ export function Workload({
                     )}
                     {row.owner && !index.actors.has(row.owner) && (
                       <span className="muted allocation-note">{i18n.t('No personnel record')}</span>
+                    )}
+                    {index.actors.get(row.owner) && (
+                      <div className="allocation-settings">
+                        <span className="muted" aria-label={i18n.t('Saved settings')}>
+                          {i18n.human(index.actors.get(row.owner)?.role)} ·{' '}
+                          {i18n.display(index.actors.get(row.owner)?.model_id)} ·{' '}
+                          {i18n.human(index.actors.get(row.owner)?.reasoning_effort)} ·{' '}
+                          {i18n.human(index.actors.get(row.owner)?.provenance)}
+                        </span>
+                        <StaffingHistory actor={index.actors.get(row.owner) || {}} />
+                      </div>
                     )}
                   </th>
                   {(['planned', 'active', 'blocked', 'review'] as const).map((status) => (

@@ -2292,6 +2292,66 @@ class Program:
                 raise ProgramError(f"Unknown template: {other}")
 
 
+def _delivery_history_projection(state: Record, revision: str) -> list[Record]:
+    """Detach complete recorded deliveries; only exact unique events supply local time."""
+    events: dict[tuple[str, bytes], list[tuple[int, Record]]] = {}
+    for index, value in enumerate(sequence(state["events"], "events")):
+        if not isinstance(value, dict) or value.get("action") != "delivery":
+            continue
+        reference = value.get("receipt")
+        identifier = value.get("id")
+        if (
+            isinstance(identifier, str)
+            and isinstance(reference, dict)
+            and isinstance(reference.get("path"), str)
+            and isinstance(reference.get("sha256"), str)
+            and re.fullmatch(r"[a-f0-9]{64}", reference["sha256"])
+        ):
+            events.setdefault((identifier, canonical(reference)), []).append((index, value))
+    histories: list[Record] = []
+    for task_index, value in enumerate(sequence(state["tasks"], "tasks")):
+        task = record(value, "task")
+        items: list[Json] = []
+        for index, value in enumerate(sequence(task.get("deliveries", []), "deliveries")):
+            delivery = record(value, "delivery")
+            reference = delivery.get("receipt")
+            matches = (
+                events.get((str(task["id"]), canonical(reference)), [])
+                if isinstance(reference, dict)
+                else []
+            )
+            timestamp: Json = None
+            event_reference: Json = None
+            if len(matches) == 1:
+                event_index, event = matches[0]
+                try:
+                    coordination._timestamp(event.get("timestamp"), "delivery event timestamp")
+                except coordination.GovernanceError:
+                    pass
+                else:
+                    timestamp = event["timestamp"]
+                    event_reference = {
+                        "path": "backlog.json",
+                        "pointer": f"/events/{event_index}",
+                        "revision": revision,
+                    }
+            items.append(
+                {
+                    "record": deepcopy(delivery),
+                    "reference": {
+                        "path": "backlog.json",
+                        "pointer": f"/tasks/{task_index}/deliveries/{index}",
+                        "revision": revision,
+                    },
+                    "recorded_at": timestamp,
+                    "event_reference": event_reference,
+                    "time_status": "recorded" if timestamp is not None else "unknown",
+                }
+            )
+        histories.append({"status": "recorded" if items else "unrecorded", "items": items})
+    return histories
+
+
 def read_snapshot(repo: Path, program_dir: Path) -> Record:
     return _read_projection(repo, program_dir)
 
@@ -2468,7 +2528,8 @@ def _capture_projection(
     except OSError:
         warnings.append("Derived views unavailable; recorded registry remains readable.")
     result_tasks: list[Json] = []
-    for task in tasks:
+    delivery_histories = _delivery_history_projection(state, sha(initial))
+    for task_index, task in enumerate(tasks):
         section = record(task["source"], "source section")
         source = planning.source_for_task(state, task)
         item: Record = {
@@ -2502,6 +2563,7 @@ def _capture_projection(
                 "delivery": program.current_delivery(task)
                 if task["status"] == "done"
                 else {"status": "unrecorded", "remote_verified_by_tool": False},
+                "delivery_history": delivery_histories[task_index],
                 "attempts": [],
             }
         )
