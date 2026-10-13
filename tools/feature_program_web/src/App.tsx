@@ -3,55 +3,32 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { categoryTasks, items, ownerOf, record, records, safeUrl, string } from './model';
 import type { Json, JsonRecord, Snapshot } from './model';
-import { selectTasks, snapshotIndex } from './selectors';
+import { snapshotIndex } from './selectors';
 import { useSnapshot } from './useSnapshot';
 import type { SnapshotLoader } from './useSnapshot';
 import { QuestionForm, useSession } from './questions';
 import type { AnswerSaver, SessionLoader } from './questions';
-import { firstWorkPage, pageSize, pageSizes, taskPage, taskPageIndex } from './paging';
+import { pageSize, pageSizes, taskPage, taskPageIndex } from './paging';
 import type { WorkFocusRequest, WorkPage } from './paging';
+import {
+  categoryBreadcrumbs,
+  defaultContext,
+  defaultPreferences,
+  emptyFilters,
+  goalTaskIds,
+  navigationHash,
+  parseNavigation,
+  readPreferences,
+  scopedTasks,
+  selectWorkTasks,
+  writePreferences,
+} from './navigation';
+import type { Navigation, Route, ViewPreferences, WorkContext } from './navigation';
+import type { TaskFilters } from './selectors';
+import { Breadcrumbs, NavigationSearch, RecordedAttention, ViewControls } from './navigation-ui';
 
-type Route = {
-  readonly view: 'overview' | 'work' | 'team' | 'task' | 'question';
-  readonly taskId?: string;
-  readonly questionId?: string;
-};
-type Filters = {
-  readonly search: string;
-  readonly status: string;
-  readonly category: string;
-  readonly owner: string;
-  readonly workstream: string;
-  readonly sort: string;
-};
-const emptyFilters: Filters = {
-  search: '',
-  status: '',
-  category: '',
-  owner: '',
-  workstream: '',
-  sort: 'id',
-};
+type Filters = TaskFilters;
 const statuses = ['planned', 'active', 'blocked', 'review', 'done'] as const;
-function routeFromHash(): Route {
-  const hash = window.location.hash.slice(1);
-  if (hash === 'work' || hash === 'team') return { view: hash };
-  if (hash.startsWith('task/')) {
-    try {
-      return { view: 'task', taskId: decodeURIComponent(hash.slice(5)) };
-    } catch {
-      return { view: 'overview' };
-    }
-  }
-  if (hash.startsWith('question/')) {
-    try {
-      return { view: 'question', questionId: decodeURIComponent(hash.slice(9)) };
-    } catch {
-      return { view: 'overview' };
-    }
-  }
-  return { view: 'overview' };
-}
 export function App(props: {
   readonly loader?: SnapshotLoader;
   readonly sessionLoader?: SessionLoader;
@@ -131,19 +108,35 @@ function CategoryTreeView({
   snapshot,
   selected,
   onSelect,
+  context = defaultContext,
 }: {
   readonly snapshot: Snapshot;
   readonly selected: string;
   readonly onSelect: (id: string) => void;
+  readonly context?: WorkContext;
 }) {
   const i18n = useI18n();
   const index = snapshotIndex(snapshot);
+  const scopeIds = new Set(scopedTasks(snapshot, context.scope).map((task) => task.id));
+  const selectedPath = new Set(categoryBreadcrumbs(snapshot, selected).map((item) => item.id));
+  const matching = new Set(
+    selectWorkTasks(snapshot, { ...context, filters: { ...context.filters, category: '' } }).map(
+      (task) => task.id,
+    ),
+  );
+  const filtered = Object.entries(context.filters).some(
+    ([key, value]) => key !== 'category' && key !== 'sort' && Boolean(value),
+  );
   const walk = (parent: Json | undefined, visited: ReadonlySet<string>): ReactNode =>
     (index.categoryChildren.get(string(parent)) || []).map((category) => {
       const id = string(category.id);
       if (visited.has(id)) return null;
       const path = new Set([...visited, id]);
-      const taskIds = categoryTasks(snapshot, id);
+      const taskIds = new Set(
+        [...categoryTasks(snapshot, id)].filter((taskId) => scopeIds.has(taskId)),
+      );
+      const matches = [...taskIds].filter((taskId) => matching.has(taskId)).length;
+      if (filtered && !matches && !selectedPath.has(id)) return null;
       const complete = [...taskIds].filter(
         (taskId) => index.tasks.get(taskId)?.status === 'done',
       ).length;
@@ -163,6 +156,7 @@ function CategoryTreeView({
             <span>{i18n.display(category.title)}</span>
             <span className="category-count">
               {complete}/{taskIds.size}
+              {filtered && <small>{i18n.t('{count} matching', { count: matches })}</small>}
             </span>
           </button>
           <div className="category-children">{walk(id, path)}</div>
@@ -180,10 +174,15 @@ function CategoryTreeView({
       >
         <span>{i18n.t('All work')}</span>
         <span className="category-count">
-          {snapshot.tasks.filter((task) => task.status === 'done').length}/{snapshot.tasks.length}
+          {scopedTasks(snapshot, context.scope).filter((task) => task.status === 'done').length}/
+          {scopeIds.size}
         </span>
       </button>
       {walk(null, new Set())}
+      {!index.categories.size && <p className="muted">{i18n.t('No categories recorded.')}</p>}
+      {filtered && !matching.size && (
+        <p className="muted">{i18n.t('No category members match these filters.')}</p>
+      )}
     </nav>
   );
 }
@@ -378,6 +377,7 @@ function Overview({ snapshot }: { readonly snapshot: Snapshot }) {
 }
 function TaskList({
   snapshot,
+  tasks: sorted,
   filters,
   onChange,
   selected,
@@ -387,8 +387,12 @@ function TaskList({
   focusRequest,
   onFocusHandled,
   onRevealTask,
+  preferences = defaultPreferences,
+  taskHref,
+  detail,
 }: {
   readonly snapshot: Snapshot;
+  readonly tasks: Snapshot['tasks'];
   readonly filters: Filters;
   readonly onChange: (filters: Filters) => void;
   readonly selected: string | null;
@@ -398,10 +402,12 @@ function TaskList({
   readonly focusRequest: WorkFocusRequest | null;
   readonly onFocusHandled: (token: number) => void;
   readonly onRevealTask: (id: string) => void;
+  readonly preferences?: ViewPreferences;
+  readonly taskHref?: (id: string) => string;
+  readonly detail?: ReactNode;
 }) {
   const i18n = useI18n();
   const index = snapshotIndex(snapshot);
-  const sorted = useMemo(() => selectTasks(snapshot, filters), [snapshot, filters]);
   const page = useMemo(() => taskPage(sorted, paging), [sorted, paging]);
   const selectedRef = useRef<HTMLAnchorElement>(null);
   const sizeRef = useRef<HTMLSelectElement>(null);
@@ -411,6 +417,7 @@ function TaskList({
     if (focusRequest) {
       const target = focusRequest.taskId ? selectedRef.current : null;
       (target || sizeRef.current)?.focus({ preventScroll: true });
+      target?.scrollIntoView?.({ block: 'nearest' });
       onFocusHandled(focusRequest.token);
     } else if (
       focusedRow.current &&
@@ -459,7 +466,7 @@ function TaskList({
   const workstreams = records(snapshot.workstreams);
   return (
     <div
-      className="work-ledger"
+      className={`work-ledger density-${preferences.density} ${preferences.columns.includes('owner') ? 'with-owner' : 'without-owner'}`}
       onFocusCapture={(event) => {
         const target = event.target;
         focusedRow.current =
@@ -478,152 +485,205 @@ function TaskList({
             onChange={(event) => onChange({ ...filters, search: event.target.value })}
           />
         </label>
-        {select(
-          'status',
-          'Status',
-          statuses.map((status) => [status, i18n.statusLabel(status)]),
-        )}
-        {select('owner', 'Owner', [
-          ...owners.map((owner) => [owner, owner] as const),
-          ['__unassigned', 'Unassigned'],
-        ])}
-        {select(
-          'workstream',
-          'Workstream',
-          workstreams.length
-            ? workstreams.map((stream) => [
-                string(stream.id),
-                i18n.display(stream.name || stream.title),
-              ])
-            : [...new Set(snapshot.tasks.map((task) => string(task.workstream)))].map((stream) => [
-                stream,
-                stream,
-              ]),
-        )}
-        <label>
-          {i18n.t('Sort')}
-          <select
-            value={filters.sort}
-            onChange={(event) => onChange({ ...filters, sort: event.target.value })}
-          >
-            {['id', 'title', 'status', 'owner', 'phase'].map((value) => (
-              <option key={value} value={value}>
-                {value === 'id' ? i18n.t('Task ID') : i18n.human(value)}
-              </option>
-            ))}
-          </select>
-        </label>
+        <details className="filter-options">
+          <summary>{i18n.t('Filters')}</summary>
+          <div className="filter-fields">
+            {select(
+              'status',
+              'Status',
+              statuses.map((status) => [status, i18n.statusLabel(status)]),
+            )}
+            {select('owner', 'Owner', [
+              ...owners.map((owner) => [owner, owner] as const),
+              ['__unassigned', 'Unassigned'],
+            ])}
+            {select(
+              'workstream',
+              'Workstream',
+              workstreams.length
+                ? workstreams.map((stream) => [
+                    string(stream.id),
+                    i18n.display(stream.name || stream.title),
+                  ])
+                : [...new Set(snapshot.tasks.map((task) => string(task.workstream)))].map(
+                    (stream) => [stream, stream],
+                  ),
+            )}
+            <label>
+              {i18n.t('Sort')}
+              <select
+                value={filters.sort}
+                onChange={(event) => onChange({ ...filters, sort: event.target.value })}
+              >
+                {['id', 'title', 'status', 'owner', 'phase'].map((value) => (
+                  <option key={value} value={value}>
+                    {value === 'id' ? i18n.t('Task ID') : i18n.human(value)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </details>
       </form>
-      <div className="list-heading">
-        <span>
-          {i18n.t('{shown} of {total} tasks', {
-            shown: sorted.length,
-            total: snapshot.tasks.length,
-          })}
-        </span>
-        <button type="button" onClick={() => onChange(emptyFilters)}>
-          {i18n.t('Clear filters')}
-        </button>
-      </div>
-      <nav className="paging" aria-label={i18n.t('Work pages')}>
-        <label>
-          {i18n.t('Tasks per page')}
-          <select
-            ref={sizeRef}
-            value={paging.size}
-            onChange={(event) => onPage({ index: 0, size: pageSize(event.target.value) })}
-          >
-            {pageSizes.map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="paging-actions">
-          {controls.map(([label, target]) => (
-            <button
-              key={label}
-              type="button"
-              aria-disabled={
-                !page.count || target < 0 || target >= page.count || target === page.index
-              }
-              onClick={() => {
-                if (page.count && target >= 0 && target < page.count && target !== page.index)
-                  onPage({ ...paging, index: target });
-              }}
-            >
-              {i18n.t(String(label))}
+      <div className="active-filters" aria-label={i18n.t('Active filters')}>
+        {Object.entries(filters)
+          .filter(([key, value]) => key !== 'sort' && Boolean(value))
+          .map(([key, value]) => (
+            <button type="button" key={key} onClick={() => onChange({ ...filters, [key]: '' })}>
+              {i18n.t(
+                key === 'search'
+                  ? 'Search'
+                  : key === 'owner'
+                    ? 'Owner'
+                    : key === 'category'
+                      ? 'Category'
+                      : key === 'status'
+                        ? 'Status'
+                        : 'Workstream',
+              )}
+              : {key === 'status' ? i18n.statusLabel(value) : value} ×
             </button>
           ))}
-        </div>
-        <p className="paging-range" role="status" aria-live="polite" aria-atomic="true">
-          {i18n.t('Showing {start}–{end} of {matching} matching tasks · Page {page} of {pages}', {
-            start: page.start,
-            end: page.end,
-            matching: page.matching,
-            page: page.count ? page.index + 1 : 0,
-            pages: page.count,
-          })}
-        </p>
-      </nav>
-      {selected && selectedPage !== page.index && (
-        <p className="selection-context">
-          {i18n.t(
-            !index.tasks.has(selected)
-              ? 'Selected task {id} is no longer available.'
-              : selectedPage === null
-                ? 'Selected task {id} does not match these filters.'
-                : 'Selected task {id} is on another page.',
-            { id: selected },
-          )}
-          {selectedPage !== null && (
-            <button type="button" onClick={() => onRevealTask(selected)}>
-              {i18n.t('Show selected task')}
-            </button>
-          )}
-        </p>
-      )}
-      <div className="row-labels" aria-hidden="true">
-        <span>{i18n.t('Task / category')}</span>
-        <span>{i18n.t('Status')}</span>
-        <span>{i18n.t('Owner')}</span>
       </div>
-      <div className="task-list" aria-label={i18n.t('Work')}>
-        {page.tasks.map((task) => (
-          <a
-            key={task.id}
-            href={`#task/${encodeURIComponent(task.id)}`}
-            className={`task-button ${selected === task.id ? 'selected' : ''}`}
-            ref={task.id === selected ? selectedRef : undefined}
-            data-task-id={task.id}
-            onClick={(event) => {
-              if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey)
-                onOpenTask(task.id);
-            }}
-          >
-            <span>
-              <span className="task-title">{task.title}</span>
-              <span className="task-meta">
-                <span className="mono">{task.id}</span> ·{' '}
-                {i18n.display(
-                  index.categories.get(string(task.category_id))?.title || task.workstream,
-                  'Uncategorized',
-                )}{' '}
-                {' · '}
-                {i18n.t('Phase')} {i18n.display(task.phase)}
-              </span>
-            </span>
-            <Status value={task.status} />
-            <span className="task-owner">{ownerOf(task) || i18n.t('Unassigned')}</span>
-          </a>
-        ))}
-        {!sorted.length && (
-          <p className="empty">
-            {snapshot.tasks.length
-              ? i18n.t('No tasks match these filters. Clear filters to see all work.')
-              : i18n.t('This program has no tasks.')}
+      <div className="ledger-summary">
+        <div className="list-heading">
+          <button type="button" onClick={() => onChange(emptyFilters)}>
+            {i18n.t('Clear filters')}
+          </button>
+        </div>
+        <nav className="paging" aria-label={i18n.t('Work pages')}>
+          <label>
+            {i18n.t('Tasks per page')}
+            <select
+              ref={sizeRef}
+              value={paging.size}
+              onChange={(event) => onPage({ index: 0, size: pageSize(event.target.value) })}
+            >
+              {pageSizes.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="paging-actions">
+            {controls.map(([label, target]) => (
+              <button
+                key={label}
+                type="button"
+                aria-disabled={
+                  !page.count || target < 0 || target >= page.count || target === page.index
+                }
+                onClick={() => {
+                  if (page.count && target >= 0 && target < page.count && target !== page.index)
+                    onPage({ ...paging, index: target });
+                }}
+              >
+                {i18n.t(String(label))}
+              </button>
+            ))}
+          </div>
+          <p className="paging-range" role="status" aria-live="polite" aria-atomic="true">
+            {i18n.t('Showing {start}–{end} of {matching} matching tasks · Page {page} of {pages}', {
+              start: page.start,
+              end: page.end,
+              matching: page.matching,
+              page: page.count ? page.index + 1 : 0,
+              pages: page.count,
+            })}
           </p>
+        </nav>
+        {selected && selectedPage !== page.index && (
+          <p className="selection-context">
+            {i18n.t(
+              !index.tasks.has(selected)
+                ? 'Selected task {id} is no longer available.'
+                : selectedPage === null
+                  ? 'Selected task {id} does not match these filters.'
+                  : selectedPage !== page.index
+                    ? 'Selected task {id} is on another page.'
+                    : 'Selected task: {id}',
+              { id: selected },
+            )}
+            {selectedPage !== null && (
+              <button type="button" onClick={() => onRevealTask(selected)}>
+                {i18n.t('Show selected task')}
+              </button>
+            )}
+          </p>
+        )}
+      </div>
+      <div className={`work-stage ${detail ? 'has-preview' : ''}`}>
+        <section className="ledger-pane" aria-label={i18n.t('Task ledger')}>
+          <div className="row-labels" aria-hidden="true">
+            <span>
+              {i18n.t(preferences.columns.includes('category') ? 'Task / category' : 'Task')}
+            </span>
+            <span>{i18n.t('Status')}</span>
+            {preferences.columns.includes('owner') && (
+              <span className="owner-label">{i18n.t('Owner')}</span>
+            )}
+          </div>
+          <div className="task-list" role="region" aria-label={i18n.t('Work')} tabIndex={0}>
+            {page.tasks.map((task) => (
+              <a
+                key={task.id}
+                href={taskHref?.(task.id) || `#task/${encodeURIComponent(task.id)}`}
+                className={`task-button ${selected === task.id ? 'selected' : ''}`}
+                ref={task.id === selected ? selectedRef : undefined}
+                data-task-id={task.id}
+                aria-current={selected === task.id ? 'true' : undefined}
+                onClick={(event) => {
+                  if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+                    if (taskHref) event.preventDefault();
+                    onOpenTask(task.id);
+                  }
+                }}
+              >
+                <span>
+                  <span className="task-identity">
+                    <span className="mono task-id">{task.id}</span>{' '}
+                    <span className="task-title">{task.title}</span>
+                  </span>
+                  <span className="task-meta">
+                    {preferences.columns.includes('category') && (
+                      <>
+                        {' '}
+                        ·{' '}
+                        {i18n.display(
+                          index.categories.get(string(task.category_id))?.title || task.workstream,
+                          'Uncategorized',
+                        )}
+                      </>
+                    )}
+                    {preferences.columns.includes('workstream') && (
+                      <> · {i18n.display(task.workstream)}</>
+                    )}
+                  </span>
+                  <span className="task-next-action">
+                    <span className="sr-only">{i18n.t('Next action')} · </span>
+                    {i18n.display(task.next_action, 'No next action recorded')}
+                  </span>
+                </span>
+                <Status value={task.status} />
+                {preferences.columns.includes('owner') && (
+                  <span className="task-owner">{ownerOf(task) || i18n.t('Unassigned')}</span>
+                )}
+              </a>
+            ))}
+            {!sorted.length && (
+              <p className="empty">
+                {snapshot.tasks.length
+                  ? i18n.t('No tasks match these filters. Clear filters to see all work.')
+                  : i18n.t('This program has no tasks.')}
+              </p>
+            )}
+          </div>
+        </section>
+        {detail && (
+          <section className="detail-pane" aria-label={i18n.t('Task inspection')}>
+            {detail}
+          </section>
         )}
       </div>
     </div>
@@ -801,17 +861,33 @@ function TaskNotes({ value }: { readonly value: Json | undefined }) {
 function TaskDetail({
   snapshot,
   taskId,
+  returnHref = '#work',
+  fullHref,
+  onReturn,
 }: {
   readonly snapshot: Snapshot;
   readonly taskId?: string;
+  readonly returnHref?: string;
+  readonly fullHref?: string;
+  readonly onReturn?: () => void;
 }) {
   const i18n = useI18n();
+  const returnClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (onReturn && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+      event.preventDefault();
+      onReturn();
+    }
+  };
   const task = snapshotIndex(snapshot).tasks.get(taskId || '');
   if (!task)
     return (
       <>
-        <a href="#work">{i18n.t('Back to work')}</a>
-        <h2 className="not-found">{i18n.t('Task not available')}</h2>
+        <a href={returnHref} onClick={returnClick}>
+          {i18n.t('Back to work')}
+        </a>
+        <h2 className="not-found" tabIndex={-1}>
+          {i18n.t('Task not available')}
+        </h2>
         <p className="muted">
           {i18n.t(
             'The task may have been removed from the latest snapshot. Your list filters are preserved.',
@@ -824,114 +900,165 @@ function TaskDetail({
   const attempt = attempts.at(-1) || {};
   const assignment = record(attempt.assignment);
   const source = record(task.source);
+  const expectedResult =
+    /^- Goal and expected result: (.+)$/m.exec(string(source.text))?.[1] || task.planning_note;
   const handoffs = records(snapshot.handoffs).filter(
     (item) => !item.task_id || item.task_id === task.id,
   );
   return (
     <>
-      <a className="back-link" href="#work">
-        {i18n.t('Back to work')}
-      </a>
+      <nav className="detail-actions" aria-label={i18n.t('Task navigation')}>
+        <a className="back-link" href={returnHref} onClick={returnClick}>
+          {i18n.t('Back to work')}
+        </a>
+        {fullHref && (
+          <a className="full-detail-link" href={fullHref} aria-label={i18n.t('Open full detail')}>
+            {i18n.t('Full screen')}
+          </a>
+        )}
+        {fullHref && (
+          <a
+            className="close-detail"
+            href={returnHref}
+            aria-label={i18n.t('Close detail')}
+            onClick={returnClick}
+          >
+            <span aria-hidden="true">×</span>
+          </a>
+        )}
+      </nav>
       <div className="page-heading detail-heading">
         <div>
-          <p className="eyebrow mono">
-            {task.id} · {i18n.display(task.workstream)} · {i18n.t('Phase')}{' '}
-            {i18n.display(task.phase)}
-          </p>
-          <h2>{task.title}</h2>
+          <p className="eyebrow mono">{task.id}</p>
+          <h2 tabIndex={-1}>{task.title}</h2>
         </div>
         <Status value={task.status} />
       </div>
       <div className="task-detail-grid">
         <div>
-          <Section title={i18n.t('Purpose and method')}>
-            <Prose
-              value={task.planning_note}
-              fallback="Read the full source context below for task purpose and method."
-            />
+          <Section title={i18n.t('Next action')}>
             <Fields
               values={[
+                ['Owner', ownerOf(task) || i18n.t('Unassigned')],
                 ['Next action', task.next_action],
-                [
-                  'Blocker',
-                  task.blocker ||
-                    attempt.blocker ||
-                    (task.status === 'blocked' ? task.next_action : i18n.t('None recorded')),
-                ],
               ]}
             />
+            <div className="expected-result-summary">
+              <h3>{i18n.t('Expected result')}</h3>
+              <Prose
+                value={expectedResult}
+                fallback="Read the full source context below for task purpose and method."
+              />
+            </div>
+            <details className="expected-result">
+              <summary>{i18n.t('Planning and metadata')}</summary>
+              <Prose
+                value={task.planning_note}
+                fallback="Read the full source context below for task purpose and method."
+              />
+              <Fields
+                values={[
+                  [
+                    'Blocker',
+                    task.blocker ||
+                      attempt.blocker ||
+                      (task.status === 'blocked' ? task.next_action : i18n.t('None recorded')),
+                  ],
+                  ['Workstream', task.workstream],
+                  ['Phase', task.phase],
+                  [
+                    'Category',
+                    snapshotIndex(snapshot).categories.get(string(task.category_id))?.title,
+                  ],
+                ]}
+              />
+            </details>
           </Section>
           <Section title={i18n.t('Requirements and source context')}>
-            <Prose value={task.requirements || task.acceptance || source.text} />
-            <p className="muted">
-              {i18n.t(
-                'Original prose is displayed as text. Source formatting and links are not executed.',
-              )}
-            </p>
+            <details>
+              <summary>{i18n.t('Full original source and evidence')}</summary>
+              <Prose value={task.requirements || task.acceptance || source.text} />
+              <pre className="source">{i18n.display(source)}</pre>
+            </details>
           </Section>
           <Section title={i18n.t('Dependencies and verification')}>
-            <TaskRelations
-              snapshot={snapshot}
-              references={task.depends_on}
-              title="Hard dependencies"
-              explanation="Required before this task can proceed."
-            />
-            <TaskRelations
-              snapshot={snapshot}
-              references={task.related_to}
-              title="Related tasks · advisory"
-              explanation="Coordinate with these owners; this relation does not block the task."
-            />
-            <Prose value={task.required_checks} fallback="No required checks recorded" />
+            <details>
+              <summary>{i18n.t('Dependencies and verification')}</summary>
+              <TaskRelations
+                snapshot={snapshot}
+                references={task.depends_on}
+                title="Hard dependencies"
+                explanation="Required before this task can proceed."
+              />
+              <TaskRelations
+                snapshot={snapshot}
+                references={task.related_to}
+                title="Related tasks · advisory"
+                explanation="Coordinate with these owners; this relation does not block the task."
+              />
+              <Prose value={task.required_checks} fallback="No required checks recorded" />
+            </details>
           </Section>
           <Section title={i18n.t('Attempt and review history')}>
-            {attempts.length ? (
-              attempts.map((item, index) => (
-                <details key={i18n.display(item.number, String(index))}>
-                  <summary>
-                    {i18n.t('Attempt')} {i18n.display(item.number)} · {i18n.display(item.owner)} ·{' '}
-                    {i18n.human(item.status || item.outcome)}
-                  </summary>
-                  <pre className="source">{i18n.display(item)}</pre>
-                </details>
-              ))
-            ) : (
-              <p className="muted">{i18n.t('No attempts recorded.')}</p>
-            )}
-            <TaskNotes value={task.notes} />
+            <details>
+              <summary>{i18n.t('Attempt and review history')}</summary>
+              {attempts.length ? (
+                attempts.map((item, index) => (
+                  <details key={i18n.display(item.number, String(index))}>
+                    <summary>
+                      {i18n.t('Attempt')} {i18n.display(item.number)} · {i18n.display(item.owner)} ·{' '}
+                      {i18n.human(item.status || item.outcome)}
+                    </summary>
+                    <pre className="source">{i18n.display(item)}</pre>
+                  </details>
+                ))
+              ) : (
+                <p className="muted">{i18n.t('No attempts recorded.')}</p>
+              )}
+              <TaskNotes value={task.notes} />
+            </details>
           </Section>
         </div>
         <div className="task-context">
           <Section title={i18n.t('Recorded assignment')}>
-            <Fields
-              values={[
-                ['Owner', ownerOf(task) || i18n.t('Unassigned')],
-                ['Role', i18n.human(assignment.role)],
-                ['Model', assignment.model_id],
-                ['Reasoning', i18n.human(assignment.reasoning_effort)],
-                ['Provenance', i18n.human(assignment.provenance)],
-                ['Staffing', i18n.human(actor.staffing_status)],
-                [
-                  'Last observed',
-                  `${i18n.human(actor.observed_status)} · ${i18n.date(actor.observed_at)}`,
-                ],
-              ]}
-            />
-            <p className="muted">
-              {i18n.t(
-                'Saved model settings are not authenticated runtime settings. Owner names do not prove agent liveness.',
-              )}
-            </p>
+            <details>
+              <summary>{i18n.t('Recorded assignment')}</summary>
+              <Fields
+                values={[
+                  ['Owner', ownerOf(task) || i18n.t('Unassigned')],
+                  ['Role', i18n.human(assignment.role)],
+                  ['Model', assignment.model_id],
+                  ['Reasoning', i18n.human(assignment.reasoning_effort)],
+                  ['Provenance', i18n.human(assignment.provenance)],
+                  ['Staffing', i18n.human(actor.staffing_status)],
+                  [
+                    'Last observed',
+                    `${i18n.human(actor.observed_status)} · ${i18n.date(actor.observed_at)}`,
+                  ],
+                ]}
+              />
+              <p className="muted">
+                {i18n.t(
+                  'Saved model settings are not authenticated runtime settings. Owner names do not prove agent liveness.',
+                )}
+              </p>
+            </details>
           </Section>
           <Section title={i18n.t('Recorded PR / CI')}>
-            <Delivery value={task.delivery} />
+            <details>
+              <summary>{i18n.t('Recorded PR / CI')}</summary>
+              <Delivery value={task.delivery} />
+            </details>
           </Section>
           <Section title={i18n.t('Personnel handoffs')}>
-            {handoffs.length ? (
-              handoffs.map((handoff) => <Handoff key={string(handoff.id)} handoff={handoff} />)
-            ) : (
-              <p className="muted">{i18n.t('No handoff recorded for this task.')}</p>
-            )}
+            <details>
+              <summary>{i18n.t('Personnel handoffs')}</summary>
+              {handoffs.length ? (
+                handoffs.map((handoff) => <Handoff key={string(handoff.id)} handoff={handoff} />)
+              ) : (
+                <p className="muted">{i18n.t('No handoff recorded for this task.')}</p>
+              )}
+            </details>
           </Section>
         </div>
       </div>
@@ -1135,85 +1262,268 @@ function Dashboard({
     i18n.setProgramLanguage(language(programLanguage));
   }, [programLanguage, i18n.setProgramLanguage]);
   const session = useSession(sessionLoader);
-  const [route, setRoute] = useState<Route>(routeFromHash);
-  const [filters, setFilters] = useState<Filters>(emptyFilters);
-  const [selected, setSelected] = useState<string | null>(route.taskId || null);
-  const [paging, setPaging] = useState<WorkPage>(firstWorkPage);
+  const [navigation, setNavigation] = useState<Navigation>(() =>
+    parseNavigation(window.location.hash),
+  );
+  const { route, filters, selected, paging, scope } = navigation;
+  const currentNavigation = useRef(navigation);
+  currentNavigation.current = navigation;
+  const [preferences, setPreferences] = useState<ViewPreferences>(defaultPreferences);
+  const [storageUnavailable, setStorageUnavailable] = useState(false);
+  const [wide, setWide] = useState(() => window.innerWidth >= 1100);
   const [focusRequest, setFocusRequest] = useState<WorkFocusRequest | null>(null);
   const focusToken = useRef(0);
-  const listOrigin = useRef<{ readonly taskId: string; readonly page: WorkPage } | null>(null);
-  const currentRoute = useRef(route);
+  const listOrigin = useRef<{
+    readonly taskId: string;
+    readonly context: WorkContext;
+    readonly ledgerScroll: number;
+    readonly mainScroll: number;
+    readonly documentScroll: number;
+  } | null>(null);
+  const returnScroll = useRef<{
+    readonly token: number;
+    readonly origin: NonNullable<typeof listOrigin.current>;
+    frame: number | null;
+  } | null>(null);
   const previousProgram = useRef<string | null>(null);
   const main = useRef<HTMLElement>(null);
   const initialized = useRef(false);
+  const commit = useCallback((next: Navigation, replace = false) => {
+    currentNavigation.current = next;
+    setNavigation(next);
+    const hash = navigationHash(next.route, next);
+    if (window.location.hash !== hash)
+      window.history[replace ? 'replaceState' : 'pushState'](null, '', hash);
+  }, []);
+  const navigate = useCallback(
+    (nextRoute: Route, context?: WorkContext) => {
+      const current = currentNavigation.current;
+      const next = {
+        ...current,
+        ...context,
+        route: nextRoute,
+        selected: nextRoute.taskId || context?.selected || current.selected,
+        issues: [],
+      };
+      commit(next);
+    },
+    [commit],
+  );
+  useEffect(() => {
+    const resize = () => setWide(window.innerWidth >= 1100);
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
   useEffect(() => {
     const changed = () => {
-      const next = routeFromHash();
-      const previous = currentRoute.current;
-      currentRoute.current = next;
-      setRoute(next);
-      if (next.taskId) {
-        setSelected(next.taskId);
-        if (listOrigin.current?.taskId !== next.taskId) listOrigin.current = null;
-      } else if (next.view === 'work' && previous.view === 'task') {
-        const taskId = previous.taskId || selected;
+      const previous = currentNavigation.current;
+      let next = parseNavigation(window.location.hash, snapshot, previous);
+      if (next.route.view === 'work' && previous.route.view === 'task') {
         const origin = listOrigin.current;
-        if (snapshot && taskId && origin?.taskId === taskId) {
-          const results = selectTasks(snapshot, filters);
-          const index = taskPageIndex(results, taskId, origin.page.size);
-          setPaging({ ...origin.page, index: index ?? origin.page.index });
+        const sameList =
+          origin &&
+          (!next.selected || next.selected === origin.taskId) &&
+          navigationHash({ view: 'work' }, { ...next, selected: null }) ===
+            navigationHash({ view: 'work' }, { ...origin.context, selected: null });
+        const taskId = sameList ? origin.taskId : next.selected;
+        if (snapshot && taskId && sameList) {
+          const rank = taskPageIndex(selectWorkTasks(snapshot, next), taskId, next.paging.size);
+          next = {
+            ...next,
+            selected: taskId,
+            paging: { ...next.paging, index: rank ?? next.paging.index },
+          };
         }
-        setFocusRequest({ token: ++focusToken.current, taskId: taskId || null });
-        listOrigin.current = null;
+        const token = ++focusToken.current;
+        returnScroll.current = sameList ? { token, origin, frame: null } : null;
+        if (!sameList) listOrigin.current = null;
+        setFocusRequest(taskId ? { token, taskId } : null);
+        commit(next, true);
+        return;
       }
+      currentNavigation.current = next;
+      setNavigation(next);
     };
     window.addEventListener('hashchange', changed);
-    return () => window.removeEventListener('hashchange', changed);
-  }, [snapshot, filters, selected]);
+    window.addEventListener('popstate', changed);
+    return () => {
+      window.removeEventListener('hashchange', changed);
+      window.removeEventListener('popstate', changed);
+    };
+  }, [snapshot, commit]);
   useEffect(() => {
     if (!snapshot) return;
+    if (previousProgram.current === snapshot.program_id) {
+      const parsed = parseNavigation(
+        navigationHash(currentNavigation.current.route, currentNavigation.current),
+        snapshot,
+      );
+      if (
+        parsed.issues.length &&
+        JSON.stringify(parsed.filters) !== JSON.stringify(currentNavigation.current.filters)
+      )
+        commit(parsed, true);
+      return;
+    }
+    const saved = readPreferences(snapshot.program_id);
+    setPreferences(saved.preferences);
+    setStorageUnavailable(saved.unavailable);
     if (previousProgram.current && previousProgram.current !== snapshot.program_id) {
-      setFilters(emptyFilters);
-      setPaging(firstWorkPage);
-      setSelected(null);
+      commit({ ...defaultContext, route: { view: 'overview' }, issues: [], explicit: false }, true);
       setFocusRequest(null);
       listOrigin.current = null;
+    } else {
+      const explicit = parseNavigation(window.location.hash, snapshot);
+      const preset = saved.preferences.presets.find(
+        (value) => value.name === saved.preferences.selectedPreset,
+      );
+      const context =
+        !explicit.explicit && preset
+          ? {
+              ...parseNavigation(preset.hash, snapshot),
+              route: explicit.route,
+              selected: explicit.route.taskId || explicit.selected,
+            }
+          : explicit;
+      setNavigation(
+        !context.explicit && !preset && goalTaskIds(snapshot)
+          ? { ...context, scope: 'current' }
+          : context,
+      );
     }
     previousProgram.current = snapshot.program_id;
-  }, [snapshot?.program_id]);
+  }, [snapshot, commit]);
   useEffect(() => {
-    if (initialized.current && !(route.view === 'work' && selected))
-      main.current?.focus({ preventScroll: false });
+    if (initialized.current && !(route.view === 'work' && selected)) {
+      const target =
+        route.view === 'task'
+          ? main.current?.querySelector<HTMLElement>('.detail-heading h2,.not-found') ||
+            main.current
+          : main.current;
+      target?.focus({ preventScroll: true });
+      if (route.view === 'task') {
+        const pane = main.current?.querySelector('.detail-pane');
+        if (pane) pane.scrollTop = 0;
+        else main.current?.scrollIntoView?.({ block: 'start' });
+      }
+    }
     initialized.current = true;
-  }, [route.view, route.taskId, route.questionId, selected]);
+  }, [route.view, route.taskId, route.questionId, selected, Boolean(snapshot)]);
   const integrity = record(snapshot?.integrity);
   const stale = integrity.status === 'stale';
-  const selectCategory = useCallback((category: string) => {
-    setFilters((previous) => ({ ...previous, category }));
-    setPaging((previous) => ({ ...previous, index: 0 }));
-  }, []);
-  const changeFilters = useCallback((next: Filters) => {
-    setFilters(next);
-    setPaging((previous) => ({ ...previous, index: 0 }));
-  }, []);
+  const changeContext = useCallback(
+    (context: WorkContext, replace = false) =>
+      commit({ ...currentNavigation.current, ...context, issues: [] }, replace),
+    [commit],
+  );
+  const selectCategory = useCallback(
+    (category: string) => {
+      const current = currentNavigation.current;
+      changeContext({
+        ...current,
+        filters: { ...current.filters, category },
+        paging: { ...current.paging, index: 0 },
+      });
+    },
+    [changeContext],
+  );
+  const changeFilters = useCallback(
+    (next: Filters) => {
+      const current = currentNavigation.current;
+      changeContext(
+        { ...current, filters: next, paging: { ...current.paging, index: 0 } },
+        next.search !== current.filters.search,
+      );
+    },
+    [changeContext],
+  );
+  const setPaging = useCallback(
+    (page: WorkPage) => changeContext({ ...currentNavigation.current, paging: page }),
+    [changeContext],
+  );
   const openTask = useCallback(
     (taskId: string) => {
-      listOrigin.current = { taskId, page: paging };
+      const current = currentNavigation.current;
+      listOrigin.current = {
+        taskId,
+        context: current,
+        ledgerScroll: main.current?.querySelector('.task-list')?.scrollTop || 0,
+        mainScroll: main.current?.scrollTop || 0,
+        documentScroll: window.scrollY,
+      };
+      navigate({ view: 'task', taskId }, { ...current, selected: taskId });
     },
-    [paging],
+    [navigate],
   );
   const focusHandled = useCallback((token: number) => {
+    const pending = returnScroll.current;
+    if (pending?.token === token) {
+      if (pending.frame !== null) return;
+      pending.frame = requestAnimationFrame(() => {
+        if (
+          returnScroll.current !== pending ||
+          !main.current ||
+          currentNavigation.current.route.view !== 'work'
+        )
+          return;
+        const { origin } = pending;
+        const ledger = main.current.querySelector('.task-list');
+        if (ledger) ledger.scrollTop = origin.ledgerScroll;
+        main.current.scrollTop = origin.mainScroll;
+        if (window.scrollY !== origin.documentScroll)
+          window.scrollTo({ top: origin.documentScroll });
+        returnScroll.current = null;
+        listOrigin.current = null;
+        setFocusRequest((previous) => (previous?.token === token ? null : previous));
+      });
+      return;
+    }
     setFocusRequest((previous) => (previous?.token === token ? null : previous));
   }, []);
+  const returnToWork = useCallback(() => {
+    const origin = listOrigin.current;
+    const context = origin?.context || currentNavigation.current;
+    const taskId = origin?.taskId || currentNavigation.current.selected;
+    const rank =
+      origin && snapshot && taskId
+        ? taskPageIndex(selectWorkTasks(snapshot, context), taskId, context.paging.size)
+        : null;
+    const token = ++focusToken.current;
+    returnScroll.current = origin ? { token, origin, frame: null } : null;
+    setFocusRequest({ token, taskId });
+    commit({
+      ...currentNavigation.current,
+      ...context,
+      route: { view: 'work' },
+      selected: taskId,
+      paging: { ...context.paging, index: rank ?? context.paging.index },
+    });
+  }, [snapshot, commit]);
   const revealTask = useCallback(
     (taskId: string) => {
       if (!snapshot) return;
-      const index = taskPageIndex(selectTasks(snapshot, filters), taskId, paging.size);
+      const index = taskPageIndex(selectWorkTasks(snapshot, navigation), taskId, paging.size);
       if (index === null) return;
       setPaging({ ...paging, index });
       setFocusRequest({ token: ++focusToken.current, taskId });
     },
-    [snapshot, filters, paging],
+    [snapshot, navigation, paging, setPaging],
+  );
+  const applyPreset = useCallback(
+    (hash: string) => {
+      listOrigin.current = null;
+      returnScroll.current = null;
+      setFocusRequest(null);
+      commit(parseNavigation(hash, snapshot));
+    },
+    [snapshot, commit],
+  );
+  const changePreferences = useCallback(
+    (next: ViewPreferences) => {
+      setPreferences(next);
+      if (snapshot && !writePreferences(snapshot.program_id, next)) setStorageUnavailable(true);
+    },
+    [snapshot?.program_id],
   );
   const freshness = error
     ? i18n.t('Unavailable')
@@ -1222,8 +1532,15 @@ function Dashboard({
       : observed
         ? i18n.t('Fetched {time}', { time: observed.toLocaleTimeString(i18n.localeName) })
         : i18n.t('Loading program…');
+  const showsLedger = route.view === 'work' || (route.view === 'task' && wide && !route.full);
+  const matchingTasks = useMemo(
+    () => (snapshot && showsLedger ? selectWorkTasks(snapshot, { scope, filters }) : []),
+    [snapshot, scope, filters, showsLedger],
+  );
   const content = useMemo(() => {
     let content: ReactNode;
+    const matchingTaskCount = matchingTasks.length;
+    const scopedTaskCount = snapshot ? scopedTasks(snapshot, scope).length : 0;
     if (!snapshot)
       content = (
         <>
@@ -1239,33 +1556,52 @@ function Dashboard({
       content = (
         <>
           <Questions snapshot={snapshot} />
+          <RecordedAttention snapshot={snapshot} />
           <Overview snapshot={snapshot} />
         </>
       );
-    else if (route.view === 'work')
+    else if (route.view === 'work' || (route.view === 'task' && wide && !route.full))
       content = (
         <>
-          <div className="page-heading">
+          <div className="page-heading work-heading">
             <div>
-              <p className="eyebrow">{i18n.t('Task ledger')}</p>
-              <h2>
-                {i18n.display(
-                  snapshotIndex(snapshot).categories.get(filters.category)?.title,
-                  'All work',
-                )}
-              </h2>
+              <h2>{i18n.t(scope === 'current' ? 'Current goal' : 'All work')}</h2>
             </div>
             <span className="muted">
-              {snapshot.tasks.length} {i18n.t('leaf tasks')}
+              <span className="sr-only">
+                {i18n.t('{shown} of {total} tasks', {
+                  shown: matchingTaskCount,
+                  total: scopedTaskCount,
+                })}
+              </span>
+              <span aria-hidden="true">
+                {matchingTaskCount === scopedTaskCount
+                  ? i18n.t('{count} tasks', { count: matchingTaskCount })
+                  : i18n.t('{shown} / {total} tasks', {
+                      shown: matchingTaskCount,
+                      total: scopedTaskCount,
+                    })}
+              </span>
             </span>
           </div>
-          <p className="intro">
-            {i18n.t(
-              'Choose a category, filter the ledger, then open a task for requirements and evidence.',
-            )}
-          </p>
+          {scope === 'current' && !goalTaskIds(snapshot) && (
+            <p className="empty">
+              {i18n.t(
+                'Current goal membership is not recorded. Choose All work to inspect the preserved backlog.',
+              )}
+            </p>
+          )}
+          <ViewControls
+            context={navigation}
+            preferences={preferences}
+            onContext={changeContext}
+            onPreferences={changePreferences}
+            onPreset={applyPreset}
+          />
+          <Breadcrumbs snapshot={snapshot} category={filters.category} onSelect={selectCategory} />
           <TaskList
             snapshot={snapshot}
+            tasks={matchingTasks}
             filters={filters}
             onChange={changeFilters}
             selected={selected}
@@ -1275,13 +1611,73 @@ function Dashboard({
             focusRequest={focusRequest}
             onFocusHandled={focusHandled}
             onRevealTask={revealTask}
+            preferences={preferences}
+            taskHref={(id) =>
+              navigationHash({ view: 'task', taskId: id }, { ...navigation, selected: id })
+            }
+            detail={
+              route.view === 'task' && (
+                <TaskDetail
+                  snapshot={snapshot}
+                  taskId={route.taskId}
+                  onReturn={returnToWork}
+                  returnHref={navigationHash(
+                    { view: 'work' },
+                    {
+                      ...(listOrigin.current?.context || navigation),
+                      selected: listOrigin.current?.taskId || selected,
+                    },
+                  )}
+                  fullHref={navigationHash({ ...route, full: true }, navigation)}
+                />
+              )
+            }
           />
         </>
       );
     else if (route.view === 'team') content = <Team snapshot={snapshot} />;
     else if (route.view === 'task')
-      content = <TaskDetail snapshot={snapshot} taskId={route.taskId} />;
-    else {
+      content = (
+        <TaskDetail
+          snapshot={snapshot}
+          taskId={route.taskId}
+          onReturn={returnToWork}
+          returnHref={navigationHash(
+            { view: 'work' },
+            {
+              ...(listOrigin.current?.context || navigation),
+              selected: listOrigin.current?.taskId || selected,
+            },
+          )}
+        />
+      );
+    else if (route.view === 'questions') content = <Questions snapshot={snapshot} />;
+    else if (route.view === 'evidence') {
+      const references = snapshotIndex(snapshot).evidenceByPath.get(route.evidencePath || '');
+      content = (
+        <>
+          <a href={navigationHash({ view: 'work' }, navigation)}>{i18n.t('Back to work')}</a>
+          <h2>{i18n.t('Evidence record')}</h2>
+          <p className="mono">{route.evidencePath}</p>
+          {references?.length ? (
+            <>
+              <p>
+                {i18n.t(
+                  'Supplied evidence references. Files are not opened or verified by this view.',
+                )}
+              </p>
+              {references.map((reference, index) => (
+                <pre className="source" key={index}>
+                  {i18n.display(reference)}
+                </pre>
+              ))}
+            </>
+          ) : (
+            <p className="empty">{i18n.t('Record unavailable in this snapshot')}</p>
+          )}
+        </>
+      );
+    } else {
       const question = snapshotIndex(snapshot).questions.get(route.questionId || '');
       content = (
         <>
@@ -1310,6 +1706,7 @@ function Dashboard({
     return content;
   }, [
     snapshot,
+    matchingTasks,
     error,
     route,
     filters,
@@ -1317,6 +1714,8 @@ function Dashboard({
     paging,
     focusRequest,
     changeFilters,
+    applyPreset,
+    returnToWork,
     openTask,
     focusHandled,
     revealTask,
@@ -1324,6 +1723,13 @@ function Dashboard({
     answerSaver,
     refresh,
     i18n,
+    navigation,
+    scope,
+    preferences,
+    wide,
+    changeContext,
+    changePreferences,
+    selectCategory,
   ]);
   return (
     <>
@@ -1339,7 +1745,7 @@ function Dashboard({
       </a>
       <header className="topbar">
         <div className="brand">
-          {i18n.t('WORK PROGRAM')}{' '}
+          <span className="brand-title">{i18n.t('WORK PROGRAM')}</span>{' '}
           <span className="pill">
             {i18n.t('Local workspace ·')}{' '}
             {session?.responsesEnabled ? i18n.t('Responses enabled') : i18n.t('Read only')}
@@ -1392,48 +1798,97 @@ function Dashboard({
       )}
       <div className="shell">
         <aside className="rail" aria-label={i18n.t('Program navigation')}>
-          <div className="rail-head">
-            <p className="eyebrow">{i18n.t('Program')}</p>
-            <h1>{snapshot?.program_id || i18n.t('Work program')}</h1>
-          </div>
-          <nav className="primary-nav" aria-label={i18n.t('Views')}>
-            {(['overview', 'work', 'team'] as const).map((view) => (
-              <a
-                href={`#${view}`}
-                key={view}
-                aria-current={
-                  route.view === view ||
-                  (view === 'work' && route.view === 'task') ||
-                  (view === 'overview' && route.view === 'question')
-                    ? 'page'
-                    : undefined
-                }
-              >
-                {view === 'overview'
-                  ? i18n.t('Overview')
-                  : view === 'work'
-                    ? i18n.t('Work')
-                    : i18n.t('Team')}
-              </a>
-            ))}
-          </nav>
-          {snapshot && route.view === 'work' && (
-            <CategoryTree
-              snapshot={snapshot}
-              selected={filters.category}
-              onSelect={selectCategory}
-            />
+          <details className="rail-sections" open={wide}>
+            <summary>{i18n.t('Program navigation')}</summary>
+            <div className="rail-head">
+              <p className="eyebrow">{i18n.t('Program')}</p>
+              <h1>{snapshot?.program_id || i18n.t('Work program')}</h1>
+            </div>
+            <nav className="primary-nav" aria-label={i18n.t('Views')}>
+              {(['overview', 'work', 'team', 'questions'] as const).map((view) => (
+                <a
+                  href={navigationHash({ view }, navigation)}
+                  key={view}
+                  aria-current={
+                    route.view === view ||
+                    (view === 'work' && route.view === 'task') ||
+                    (view === 'questions' && route.view === 'question')
+                      ? 'page'
+                      : undefined
+                  }
+                >
+                  {view === 'overview'
+                    ? i18n.t('Overview')
+                    : view === 'work'
+                      ? i18n.t('Work')
+                      : view === 'team'
+                        ? i18n.t('Team')
+                        : i18n.t('Questions') +
+                          ' ' +
+                          records(snapshot?.questions).filter(
+                            (question) => question.status === 'open',
+                          ).length}
+                </a>
+              ))}
+            </nav>
+            {snapshot &&
+              (route.view === 'work' || (route.view === 'task' && wide && !route.full)) && (
+                <details className="category-disclosure" open={wide}>
+                  <summary>{i18n.t('Categories in this scope')}</summary>
+                  <CategoryTree
+                    snapshot={snapshot}
+                    selected={filters.category}
+                    onSelect={selectCategory}
+                    context={navigation}
+                  />
+                </details>
+              )}
+            <details className="local-help">
+              <summary>{i18n.t('About this local view')}</summary>
+              <div className="rail-foot">
+                <p>{i18n.t('Task views are read only')}</p>
+                <p>{i18n.t('Refresh every 5 seconds')}</p>
+                <p>
+                  {i18n.t('Snapshot:')} {i18n.date(snapshot?.generated_at)}
+                </p>
+                <p>{i18n.t('Fetch time and personnel observation time are separate.')}</p>
+              </div>
+              <p>
+                {i18n.t(
+                  'Recorded local work. Task changes are managed through the program tool. Question answers can be saved here when enabled.',
+                )}
+              </p>
+              <p>
+                {i18n.t(
+                  'Start with the goal, choose a work scope, then inspect tasks and original evidence. Recorded ownership is not live agent presence.',
+                )}
+              </p>
+            </details>
+          </details>
+          {snapshot && (
+            <NavigationSearch snapshot={snapshot} context={navigation} navigate={navigate} />
           )}
-          <div className="rail-foot">
-            <p>{i18n.t('Task views are read only')}</p>
-            <p>{i18n.t('Refresh every 5 seconds')}</p>
-            <p>
-              {i18n.t('Snapshot:')} {i18n.date(snapshot?.generated_at)}
-            </p>
-            <p>{i18n.t('Fetch time and personnel observation time are separate.')}</p>
-          </div>
         </aside>
-        <main ref={main} className="workspace" tabIndex={-1} aria-label={i18n.t('Program content')}>
+        <main
+          ref={main}
+          className={`workspace ${route.view === 'work' || (route.view === 'task' && wide && !route.full) ? 'work-workspace' : ''}`}
+          tabIndex={-1}
+          aria-label={i18n.t('Program content')}
+        >
+          {navigation.issues.length > 0 && (
+            <p className="notice" role="status">
+              {i18n.t(
+                'Some view settings were ignored because they are invalid or no longer recorded.',
+              )}
+            </p>
+          )}
+          {storageUnavailable && (
+            <p className="notice" role="status">
+              {i18n.t(
+                'Browser storage is unavailable. View preferences are kept in memory for this visit.',
+              )}
+            </p>
+          )}
           {content}
         </main>
       </div>
