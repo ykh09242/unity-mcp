@@ -1157,6 +1157,7 @@ function Dashboard({
     parseNavigation(window.location.hash),
   );
   const { route, filters, selected, paging, scope } = navigation;
+  const initialNavigation = useRef(navigation);
   const currentNavigation = useRef(navigation);
   currentNavigation.current = navigation;
   const [preferences, setPreferences] = useState<ViewPreferences>(defaultPreferences);
@@ -1264,7 +1265,14 @@ function Dashboard({
       setFocusRequest(null);
       listOrigin.current = null;
     } else {
-      const explicit = parseNavigation(window.location.hash, snapshot);
+      // Navigation can occur after the first DOM commit but before this effect.
+      // Validate that established context instead of replacing it with URL defaults.
+      const explicit = parseNavigation(
+        currentNavigation.current !== initialNavigation.current
+          ? navigationHash(currentNavigation.current.route, currentNavigation.current)
+          : window.location.hash,
+        snapshot,
+      );
       const preset = saved.preferences.presets.find(
         (value) => value.name === saved.preferences.selectedPreset,
       );
