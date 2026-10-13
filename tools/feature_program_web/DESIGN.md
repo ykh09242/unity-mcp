@@ -1,26 +1,24 @@
 # Work Program dashboard design contract
 
-## 0. Research Log
+## 0. Design references
 
-- Embedded references: shortlisted Linear, GitHub and Notion. Selected the operational
-  taste reference plus Linear for compact rows, tonal depth and consistent task anatomy.
-  These are inspiration, not an implementation of an official component library.
-- Lazyweb: two public queries, `project management list detail dashboard` and
-  `project management hierarchy people assignments`; two screens actually viewed
-  (Rocketlane and Toggl Track). Adopted aligned status/ownership columns and a separate
-  personnel context. No screenshot, brand asset or proprietary copy is shipped.
-- StyleGallery: adopted its [list-detail pattern](https://github.com/changeroa/StyleGallery/blob/main/patterns/split-sidebar/list-detail.md).
-  The category rail is outside the list/detail composition. Source order follows reading order.
-- Image concepts: two synthetic concepts, a three-column list/detail view and a detail-below
-  view. Selected the first for desktop; the second informs the narrow-screen reflow.
-  Research images remain private and ignored. The generated selection outlines are replaced
-  by neutral selected washes; only keyboard focus uses an accent outline.
-- No remote assets or research integrations execute in the shipped dashboard.
-- Framework documentation: Context7 CLI was unavailable because of its monthly quota.
-  Used official [React effects](https://react.dev/learn/synchronizing-with-effects),
-  [Vite production builds](https://vite.dev/guide/build.html) and
-  [Vitest](https://vitest.dev/guide/) documentation. Research was reused when the user
-  explicitly requested React, separate pages and the question-response flow.
+- Use a compact operational ledger with aligned status and ownership columns, a separate
+  personnel context and progressive disclosure for original records. These patterns support
+  repeated inspection without a decorative dashboard-card hierarchy.
+- The [list-detail pattern](https://github.com/changeroa/StyleGallery/blob/main/patterns/split-sidebar/list-detail.md)
+  places the category rail outside the list/detail composition. Source order follows reading
+  order; narrow screens use a single readable detail view with a contextual return path.
+- [Carbon data-table guidance](https://www.carbondesignsystem.com/building-blocks/core/components/data-table/guidelines)
+  informs the fluid working area, scan-friendly rows and grouped search/filter/paging controls.
+  Readable prose keeps its own line-length limit inside the fluid workspace.
+- [Fluent layout guidance](https://fluent2.microsoft.design/layout) informs consistent spacing
+  and grouping. Neutral selected washes distinguish persistent selection; visible keyboard
+  focus retains a separate outline.
+- [WCAG reflow guidance](https://www.w3.org/WAI/WCAG22/Understanding/reflow.html) applies to
+  navigation, controls and prose. Dense historical metadata stays secondary and must remain
+  keyboard accessible at narrow widths and browser zoom.
+- No remote assets or research integrations execute in the shipped dashboard. SVG sources
+  are locally vendored with their license and exact upstream revision.
 
 ## 1. Atmosphere & Identity
 
@@ -34,21 +32,21 @@ focused response pages. The user supplies major goals; completion awaits their n
 
 ## 2. Color
 
-| Token | Value | Job |
-| --- | --- | --- |
-| canvas | #08090a | Deep workspace background |
-| rail | #0f1011 | Navigation and detail background |
-| raised | #191a1b | Inputs and history records |
-| hover | #28282c | Interactive hover surface |
-| ink | #f7f8f8 | Headings and task titles |
-| body | #d0d6e0 | Reading text |
-| muted | #9da3ad | Metadata; raised from the reference for contrast |
-| accent | #a5adff | Links and keyboard focus |
-| success | #82d8b1 | Reviewed completion |
-| warning | #f0c786 | Stale/blocker information |
-| error | #f5a7ab | Reserved error text |
-| line | white at 12% | Neutral separators |
-| selected | white at 10% | Selected row wash |
+| Token    | Value        | Job                                              |
+| -------- | ------------ | ------------------------------------------------ |
+| canvas   | #08090a      | Deep workspace background                        |
+| rail     | #0f1011      | Navigation and detail background                 |
+| raised   | #191a1b      | Inputs and history records                       |
+| hover    | #28282c      | Interactive hover surface                        |
+| ink      | #f7f8f8      | Headings and task titles                         |
+| body     | #d0d6e0      | Reading text                                     |
+| muted    | #9da3ad      | Metadata; raised from the reference for contrast |
+| accent   | #a5adff      | Links and keyboard focus                         |
+| success  | #82d8b1      | Reviewed completion                              |
+| warning  | #f0c786      | Stale/blocker information                        |
+| error    | #f5a7ab      | Reserved error text                              |
+| line     | white at 12% | Neutral separators                               |
+| selected | white at 10% | Selected row wash                                |
 
 Status meaning always has a text label. No decorative chromatic edges or glowing surfaces.
 
@@ -62,8 +60,9 @@ context preserves line breaks and wraps unbroken strings.
 ## 4. Spacing & Layout
 
 Four-pixel base with 4, 8, 12, 16, 24 and 32px steps. Desktop rail 224px, main fluid with
-1180px readable maximum. Task pages have source and assignment columns; below 1100px those
-stack. Below 700px navigation and content also stack. Above 1100px the rail and workspace
+a readable maximum for prose-oriented pages. Work uses the full available main pane,
+with a flexible ledger and contextual detail; prose inside detail retains a readable measure.
+Task pages have source and assignment columns; below 1100px those stack. Below 700px navigation and content also stack. Above 1100px the rail and workspace
 each own vertical scrolling inside a bounded viewport shell, with `min-block-size: 0`.
 Below that width the document owns scrolling. Reading and keyboard order follow the DOM.
 
@@ -73,7 +72,8 @@ Below that width the document owns scrolling. Reading and keyboard order follow 
   selected neutral wash, text-only label, native keyboard activation.
 - Task row: a link to its own detail page, with title/context, status and owner. Selection
   has a neutral wash. Back navigation restores filters and focuses the selected row.
-  At narrow widths the owner occupies a full row. Titles wrap instead of clipping.
+  At narrow widths titles use two readable lines, with compact status and ownership metadata.
+  The exact one-line next-action glimpse and clipped title have a keyboard/touch path to full detail.
 - Filters: visibly labeled native search/select controls. Empty results explain recovery.
   Snapshot polling preserves search values, task selection, expanded details and row focus.
 - Detail: source prose, requirements, dependencies, checks, recorded ownership/settings,
@@ -83,7 +83,9 @@ Below that width the document owns scrolling. Reading and keyboard order follow 
   establish an active agent or provide a message transport.
 - Personnel: management nesting, recorded assignment, settings provenance, last observed
   status and staffing history. Saved fields never imply authenticated runtime settings.
-- Refresh status: initial loading, observed timestamp, stale integrity and unavailable
+- Familiar utility and paging actions use pinned local Lucide SVGs, 18px glyphs and 40px
+  square targets, localized accessible names and focus/hover tooltips. Domain actions retain text.
+- Refresh status uses reserved language/status/action slots: initial loading, observed timestamp, stale integrity and unavailable
   snapshots. Failed refresh retains previous records with explicit observation time.
 - Progress: native labeled progress element counts reviewed leaf tasks. Recorded PR/CI
   occupies a separate block and explicitly describes its unauthenticated provenance.
@@ -126,3 +128,24 @@ Automated checks do not establish screen-reader conformance. Fresh rendered veri
 and independent review are required before reporting completion. No accepted visual or
 interaction defects are recorded at design time; any found defects must be fixed or listed
 with the actual affected surface and follow-up owner.
+
+## Recorded history
+
+Current task and review facts precede optional history. Attempts and review rounds retain
+recorded checks, findings and exact submitted identities; comparison labels describe only
+same, different or unknown supplied values. Explicit coverage links connect criteria to
+task paths and frozen evidence without computing acceptance or review readiness.
+
+Delivery observations remain in canonical append order, independently of current delivery.
+PR, CI conclusions, revision mismatches, merge and cleanup are separate facts. Missing
+projection differs from an explicitly empty history. Local event times never imply provider
+observation times; absent or ambiguous times stay unknown. Original records and exact
+references remain available in secondary disclosures, with longer reference lists expanded
+on demand. No source-file endpoint or provider query is introduced.
+
+Team rows show compact saved role/model/effort/provenance for current assignees. Staffing
+history compares frozen claim settings with current saved metadata; it does not infer a
+running agent changed settings. Transfer stages retain every supplied acknowledgement and
+compare only supplied context. Objective membership and source amendments expose explicit
+added/removed task links, binding changes and receipts. Authored prose stays unchanged;
+system copy is concise and localized. Polling keeps disclosure and navigation context.

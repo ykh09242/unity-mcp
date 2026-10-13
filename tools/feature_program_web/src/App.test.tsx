@@ -332,11 +332,141 @@ describe('work program user outcomes', () => {
     await navigate('#task/A1');
     const panel = screen.getByRole('heading', { name: 'Recorded assignment' }).parentElement;
     if (!panel) throw new Error('Assignment panel missing');
-    expect(within(panel).getByText('model-v1')).toBeDefined();
-    expect(within(panel).getByText('high')).toBeDefined();
-    expect(within(panel).queryByText('model-v2')).toBeNull();
+    expect(within(panel).getAllByText('model-v1').length).toBeGreaterThan(0);
+    expect(within(panel).getAllByText('high').length).toBeGreaterThan(0);
+    const modelComparison = panel.querySelector<HTMLElement>('.history-comparison section');
+    if (!modelComparison) throw new Error('Settings comparison missing');
+    expect(within(modelComparison).getByText('At claim').parentElement?.textContent).toContain(
+      'model-v1',
+    );
+    expect(
+      within(modelComparison).getByText('Current settings').parentElement?.textContent,
+    ).toContain('model-v2');
     await navigate('#team');
-    expect(screen.getByText('model-v2')).toBeDefined();
+    expect(screen.getAllByText('model-v2').length).toBeGreaterThan(0);
+  });
+  it.each([
+    ['done', 'done', 'recorded-worker'],
+    ['planned', 'released', 'recorded-worker'],
+    ['done', 'done', null],
+  ] as const)(
+    'retains historical staffing for owner-null %s/%s with assignment identity %s',
+    async (status, attemptStatus, assignedId) => {
+      const original = fixture();
+      const snapshot = parseSnapshot({
+        ...original,
+        actors: [
+          {
+            id: 'recorded-worker',
+            role: 'worker',
+            model_id: 'current-saved-model',
+            reasoning_effort: 'high',
+            provenance: 'verified_launch',
+            history: [
+              {
+                decision: 'reuse',
+                reason: 'Recorded staffing rationale',
+                metadata: { model_id: 'claim-model' },
+              },
+            ],
+          },
+        ],
+        tasks: original.tasks.map((task) =>
+          task.id === 'A1'
+            ? {
+                ...task,
+                owner: null,
+                status,
+                attempts: [
+                  {
+                    number: 1,
+                    owner: 'recorded-worker',
+                    status: attemptStatus,
+                    assignment: {
+                      actor_id: assignedId,
+                      model_id: 'claim-model',
+                      reasoning_effort: 'medium',
+                      provenance: 'inherited',
+                      role: 'worker',
+                    },
+                  },
+                ],
+              }
+            : task,
+        ),
+      });
+      render(<App loader={async () => snapshot} />);
+      await screen.findByRole('heading', { name: 'Overview' });
+      await navigate('#task/A1');
+      const panel = screen.getByRole('heading', { name: 'Recorded assignment' }).parentElement;
+      if (!panel) throw new Error('Assignment panel missing');
+      const comparison = panel.querySelector<HTMLElement>('.history-comparison section');
+      if (!comparison) throw new Error('Settings comparison missing');
+      expect(within(comparison).getByText('Current settings').parentElement?.textContent).toContain(
+        'current-saved-model',
+      );
+      expect(within(comparison).getByText('At claim').parentElement?.textContent).toContain(
+        'claim-model',
+      );
+      expect(within(panel).getByText('Recorded staffing rationale')).toBeDefined();
+      expect(within(panel).getByText('Assigned actor').nextElementSibling?.textContent).toBe(
+        'recorded-worker',
+      );
+      expect(within(panel).getByText('Current owner').nextElementSibling?.textContent).toBe(
+        'Unassigned',
+      );
+    },
+  );
+  it('keeps a missing historical actor unknown instead of borrowing the current owner metadata', async () => {
+    const original = fixture();
+    const snapshot = parseSnapshot({
+      ...original,
+      actors: [
+        {
+          id: 'Ada',
+          role: 'worker',
+          model_id: 'unrelated-current-model',
+          history: [{ decision: 'new', reason: 'Unrelated history' }],
+        },
+      ],
+      tasks: original.tasks.map((task) =>
+        task.id === 'A1'
+          ? {
+              ...task,
+              owner: 'Ada',
+              attempts: [
+                {
+                  number: 1,
+                  owner: 'missing-historical-worker',
+                  status: 'released',
+                  assignment: {
+                    actor_id: 'missing-historical-worker',
+                    model_id: 'frozen-missing-model',
+                    role: 'worker',
+                  },
+                },
+              ],
+            }
+          : task,
+      ),
+    });
+    render(<App loader={async () => snapshot} />);
+    await screen.findByRole('heading', { name: 'Overview' });
+    await navigate('#task/A1');
+    const panel = screen.getByRole('heading', { name: 'Recorded assignment' }).parentElement;
+    if (!panel) throw new Error('Assignment panel missing');
+    const comparison = panel.querySelector<HTMLElement>('.history-comparison section');
+    if (!comparison) throw new Error('Settings comparison missing');
+    expect(within(comparison).getByText('Current settings').parentElement?.textContent).toContain(
+      'Unknown',
+    );
+    expect(within(panel).queryByText('unrelated-current-model')).toBeNull();
+    expect(within(panel).queryByText('Unrelated history')).toBeNull();
+    expect(within(panel).getByText('No personnel record')).toBeDefined();
+    expect(within(panel).getByText('Assigned actor').nextElementSibling?.textContent).toBe(
+      'missing-historical-worker',
+    );
+    expect(within(panel).getByText('Current owner').nextElementSibling?.textContent).toBe('Ada');
   });
   it('links dependency and advisory peers with current ownership and honest unknowns', async () => {
     const original = fixture();

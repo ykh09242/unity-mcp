@@ -55,6 +55,22 @@ async function hash(value: string) {
   });
 }
 describe('validated navigation context', () => {
+  it('returns from readable evidence to the selected task with its explicit work context', async () => {
+    await hash('#task/T111?scope=current&category=child&status=active&page=1&size=25&task=T111');
+    render(<App loader={async () => fixture()} />);
+    await screen.findByRole('heading', { name: 'Task 111' });
+    await hash('#evidence/evidence%2Fone.md');
+    await screen.findByRole('heading', { name: 'Evidence record' });
+    const back = screen.getByRole('link', { name: 'Back to task' });
+    const destination = parseNavigation(back.getAttribute('href') || '', fixture());
+    expect(destination.route).toEqual({ view: 'task', taskId: 'T111', full: false });
+    expect(destination.scope).toBe('current');
+    expect(destination.filters.category).toBe('child');
+    expect(destination.filters.status).toBe('active');
+    expect(destination.paging.size).toBe(25);
+    expect(destination.selected).toBe('T111');
+    expect(document.querySelectorAll('pre.source')).toHaveLength(0);
+  });
   it('shows identical evidence references once and preserves differing supplied metadata', async () => {
     const reference = { path: 'evidence/one.md', sha256: 'abc', label: 'Verification source' };
     const snapshot = {
@@ -70,6 +86,19 @@ describe('validated navigation context', () => {
     await hash('#evidence/evidence%2Fone.md');
     render(<App loader={async () => snapshot} />);
     await screen.findByRole('heading', { name: 'Evidence record' });
+    expect(document.querySelectorAll('pre.source')).toHaveLength(0);
+    expect(screen.getAllByText('evidence/one.md')).toHaveLength(1);
+    expect(screen.getByText('independent reviewer')).toBeDefined();
+    expect(screen.getByText('new-digest')).toBeDefined();
+    const originals = screen.getAllByText('Original evidence reference');
+    expect(originals).toHaveLength(3);
+    for (const summary of originals) {
+      const details = summary.closest('details');
+      if (!details) throw new Error('Missing original disclosure');
+      details.open = true;
+      fireEvent(details, new Event('toggle'));
+    }
+    await waitFor(() => expect(document.querySelectorAll('pre.source')).toHaveLength(3));
     const records = [...document.querySelectorAll('pre.source')].map((node) =>
       JSON.parse(node.textContent || 'null'),
     );

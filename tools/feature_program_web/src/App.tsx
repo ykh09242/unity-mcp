@@ -7,7 +7,6 @@ import {
   ownerOf,
   record,
   records,
-  safeUrl,
   semanticValueEqual,
   string,
 } from './model';
@@ -17,6 +16,15 @@ import { IconButton, IconLink } from './icons';
 import { DependencyNeighborhood, Workload } from './relate-ui';
 import { hasActionGlance, workloadHref } from './relate';
 import { CoordinationNotes, GoalCoordination, ReadinessContext } from './readiness-ui';
+import {
+  DeliveryHistory,
+  EvidenceReferences,
+  MembershipHistory,
+  ReviewSummary,
+  StaffingHistory,
+  TaskHistory,
+  TransferHistory,
+} from './history-ui';
 import { useSnapshot } from './useSnapshot';
 import type { SnapshotLoader } from './useSnapshot';
 import { QuestionForm, useSession } from './questions';
@@ -103,19 +111,6 @@ function Status({ value }: { readonly value: Json | undefined }) {
       {i18n.statusLabel(value)}
     </span>
   );
-}
-function Link({ url, children }: { readonly url?: Json; readonly children: ReactNode }) {
-  const i18n = useI18n();
-  const href = safeUrl(url);
-  return href ? (
-    <a href={href} target="_blank" rel="noopener noreferrer">
-      {children}
-    </a>
-  ) : url ? (
-    <span className="muted">
-      {children}: {i18n.display(url)} ({i18n.t('link unavailable')})
-    </span>
-  ) : null;
 }
 function CategoryTreeView({
   snapshot,
@@ -308,6 +303,7 @@ function Overview({ snapshot }: { readonly snapshot: Snapshot }) {
         </a>
       </div>
       <Objective snapshot={snapshot} />
+      <MembershipHistory snapshot={snapshot} />
       <Progress snapshot={snapshot} />
       <div className="status-strip">
         {statuses.map((status) => (
@@ -723,36 +719,6 @@ function TaskList({
     </div>
   );
 }
-function Delivery({ value }: { readonly value?: Json }) {
-  const i18n = useI18n();
-  const delivery = record(value);
-  if (!delivery.status || delivery.status === 'unrecorded')
-    return <p className="muted">{i18n.t('No delivery recorded.')}</p>;
-  const metadata = record(delivery.metadata);
-  return (
-    <>
-      <p className="muted">
-        {i18n.t('Locally recorded results; this dashboard does not authenticate remote CI.')}
-      </p>
-      <Fields
-        values={[
-          ['Status', i18n.human(delivery.status)],
-          ['Tested commit', metadata.tested_commit],
-          ['Merge', i18n.human(metadata.merge_status)],
-        ]}
-      />
-      <Link url={metadata.pr_url}>{i18n.t('Open recorded pull request')}</Link>
-      {records(metadata.ci).map((check, index) => (
-        <div className="history" key={index}>
-          <p>
-            {i18n.display(check.name)} · {i18n.human(check.conclusion)}
-          </p>
-          <Link url={check.url}>{i18n.t('Open recorded CI check')}</Link>
-        </div>
-      ))}
-    </>
-  );
-}
 function Handoff({ handoff }: { readonly handoff: JsonRecord }) {
   const i18n = useI18n();
   const outgoing = record(handoff.outgoing);
@@ -788,9 +754,7 @@ function Handoff({ handoff }: { readonly handoff: JsonRecord }) {
         <Prose value={outgoing.unresolved_findings} fallback="No unresolved findings recorded" />
         <pre className="source">{i18n.display(handoff)}</pre>
       </details>
-      <p className="muted">
-        {i18n.t('A pending handoff does not assign or activate the successor.')}
-      </p>
+      <TransferHistory handoff={handoff} />
     </article>
   );
 }
@@ -831,10 +795,11 @@ function TaskDetail({
         </p>
       </>
     );
-  const actor = snapshotIndex(snapshot).actors.get(ownerOf(task)) || {};
   const attempts = records(task.attempts);
   const attempt = attempts.at(-1) || {};
   const assignment = record(attempt.assignment);
+  const assignedActorId = string(assignment.actor_id) || string(attempt.owner);
+  const actor = snapshotIndex(snapshot).actors.get(assignedActorId) || {};
   const source = record(task.source);
   const expectedResult =
     /^- Goal and expected result: (.+)$/m.exec(string(source.text))?.[1] || task.planning_note;
@@ -929,6 +894,7 @@ function TaskDetail({
               />
             </details>
           </Section>
+          <ReviewSummary snapshot={snapshot} task={task} />
           <Section title={i18n.t('Requirements and source context')}>
             <details>
               <summary>{i18n.t('Full original source and evidence')}</summary>
@@ -945,24 +911,7 @@ function TaskDetail({
               <Prose value={task.required_checks} fallback="No required checks recorded" />
             </details>
           </Section>
-          <Section title={i18n.t('Attempt and review history')}>
-            <details>
-              <summary>{i18n.t('Attempt and review history')}</summary>
-              {attempts.length ? (
-                attempts.map((item, index) => (
-                  <details key={i18n.display(item.number, String(index))}>
-                    <summary>
-                      {i18n.t('Attempt')} {i18n.display(item.number)} · {i18n.display(item.owner)} ·{' '}
-                      {i18n.human(item.status || item.outcome)}
-                    </summary>
-                    <pre className="source">{i18n.display(item)}</pre>
-                  </details>
-                ))
-              ) : (
-                <p className="muted">{i18n.t('No attempts recorded.')}</p>
-              )}
-            </details>
-          </Section>
+          <TaskHistory snapshot={snapshot} task={task} />
         </div>
         <div className="task-context">
           <Section title={i18n.t('Recorded assignment')}>
@@ -970,7 +919,8 @@ function TaskDetail({
               <summary>{i18n.t('Recorded assignment')}</summary>
               <Fields
                 values={[
-                  ['Owner', ownerOf(task) || i18n.t('Unassigned')],
+                  ['Current owner', ownerOf(task) || i18n.t('Unassigned')],
+                  ['Assigned actor', assignedActorId],
                   ['Role', i18n.human(assignment.role)],
                   ['Model', assignment.model_id],
                   ['Reasoning', i18n.human(assignment.reasoning_effort)],
@@ -982,19 +932,13 @@ function TaskDetail({
                   ],
                 ]}
               />
-              <p className="muted">
-                {i18n.t(
-                  'Saved model settings are not authenticated runtime settings. Owner names do not prove agent liveness.',
-                )}
-              </p>
+              {assignedActorId && !snapshotIndex(snapshot).actors.has(assignedActorId) && (
+                <p className="muted">{i18n.t('No personnel record')}</p>
+              )}
+              <StaffingHistory actor={actor} assignment={assignment} />
             </details>
           </Section>
-          <Section title={i18n.t('Recorded PR / CI')}>
-            <details>
-              <summary>{i18n.t('Recorded PR / CI')}</summary>
-              <Delivery value={task.delivery} />
-            </details>
-          </Section>
+          <DeliveryHistory task={task} />
           <Section title={i18n.t('Personnel handoffs')}>
             <details>
               <summary>{i18n.t('Personnel handoffs')}</summary>
@@ -1058,15 +1002,7 @@ function Team({
               {i18n.t('Current recorded assignments:')}{' '}
               {assignments.map((task) => task.id).join(', ') || i18n.t('None')}
             </p>
-            <details>
-              <summary>{i18n.t('Staffing and assignment history')}</summary>
-              <pre className="source">
-                {i18n.display({
-                  history: actor.history || [],
-                  assignments: actor.assignments || [],
-                })}
-              </pre>
-            </details>
+            <StaffingHistory actor={actor} />
           </article>
           <div className="actor-child">{walk(id, new Set([...visited, id]))}</div>
         </div>
@@ -1081,7 +1017,7 @@ function Team({
           <h2>{i18n.t('Team')}</h2>
         </div>
         <span className="muted">
-          {actors.length} {i18n.t('saved personnel records')}
+          {i18n.t('{count} personnel records', { count: actors.length })}
         </span>
       </div>
       <Workload snapshot={snapshot} context={context} />
@@ -1615,22 +1551,25 @@ function Dashboard({
       );
       content = (
         <>
-          <a href={navigationHash({ view: 'work' }, navigation)}>{i18n.t('Back to work')}</a>
+          <a
+            className="back-link"
+            href={navigationHash(
+              selected && snapshotIndex(snapshot).tasks.has(selected)
+                ? { view: 'task', taskId: selected }
+                : { view: 'work' },
+              navigation,
+            )}
+          >
+            {i18n.t(
+              selected && snapshotIndex(snapshot).tasks.has(selected)
+                ? 'Back to task'
+                : 'Back to work',
+            )}
+          </a>
           <h2>{i18n.t('Evidence record')}</h2>
           <p className="mono">{route.evidencePath}</p>
           {references?.length ? (
-            <>
-              <p>
-                {i18n.t(
-                  'Supplied evidence references. Files are not opened or verified by this view.',
-                )}
-              </p>
-              {references.map((reference, index) => (
-                <pre className="source" key={index}>
-                  {i18n.display(reference)}
-                </pre>
-              ))}
-            </>
+            <EvidenceReferences references={references} path={route.evidencePath || ''} />
           ) : (
             <p className="empty">{i18n.t('Record unavailable in this snapshot')}</p>
           )}
