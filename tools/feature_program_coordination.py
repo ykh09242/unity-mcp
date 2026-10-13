@@ -7,11 +7,13 @@ or verified live processes. Transfers never release or reclaim task ownership.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 import re
-from typing import Final, Protocol, TypedDict
+from typing import Final, Iterator, Protocol, TypedDict
 
 Json = None | bool | int | float | str | list["Json"] | dict[str, "Json"]
 Record = dict[str, Json]
@@ -134,8 +136,29 @@ def _choice(value: Json, allowed: frozenset[str] | set[str], name: str) -> str:
     return text
 
 
+_PREPARATION_TIME: ContextVar[str | None] = ContextVar(
+    "feature_program_preparation_time", default=None
+)
+
+
+@contextmanager
+def preparation_clock(observed_at: str) -> Iterator[None]:
+    """Supply one explicit observation instant without changing clocks in other contexts."""
+    _timestamp(observed_at, "preparation observation time")
+    token = _PREPARATION_TIME.set(observed_at)
+    try:
+        yield
+    finally:
+        _PREPARATION_TIME.reset(token)
+
+
+def observed_timestamp(actual: str) -> str:
+    """Preserve the caller's normal timestamp format unless preparation supplies a clock."""
+    return _PREPARATION_TIME.get() or actual
+
+
 def _utc() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return observed_timestamp(datetime.now(timezone.utc).isoformat())
 
 
 def _timestamp(value: Json, name: str) -> None:
@@ -650,7 +673,13 @@ def _actor_record(state: Record, receipt: Record) -> None:
 
 
 def _appoint(
-    program: ProgramAccess, state: Record, receipt: Record, name: str, parsed_hash: str
+    program: ProgramAccess,
+    state: Record,
+    receipt: Record,
+    name: str,
+    parsed_hash: str,
+    *,
+    observed_head: str,
 ) -> None:
     _require(state.get("director") is None, "Director already appointed; use acknowledged transfer")
     actors = _indexed(state.get("actors", []), "actor")
@@ -659,7 +688,7 @@ def _appoint(
         actor_id in actors and actors[actor_id].get("role") == "director", "Unknown director actor"
     )
     _require(receipt.get("acknowledged") is True, "Director must explicitly acknowledge authority")
-    _fresh(program, receipt)
+    _fresh(program, receipt, observed_head=observed_head)
     authority = _authority(receipt.get("authority"))
     refs = _freeze(program, receipt, name, parsed_hash=parsed_hash)
     state["director"] = {
@@ -674,12 +703,18 @@ def _appoint(
 
 
 def _transfer(
-    program: ProgramAccess, state: Record, receipt: Record, name: str, parsed_hash: str
+    program: ProgramAccess,
+    state: Record,
+    receipt: Record,
+    name: str,
+    parsed_hash: str,
+    *,
+    observed_head: str,
 ) -> None:
     handoffs = _indexed(state.get("handoffs", []), "handoff")
     identifier = _text(receipt.get("id"), "transfer ID")
     _require(identifier not in handoffs, "Transfer already recorded; history is immutable")
-    scope = _fresh(program, receipt)
+    scope = _fresh(program, receipt, observed_head=observed_head)
     role = receipt.get("role")
     source = _text(receipt.get("from_actor"), "predecessor")
     target = _text(receipt.get("to_actor"), "successor")
@@ -738,7 +773,13 @@ def _transfer(
 
 
 def _ack(
-    program: ProgramAccess, state: Record, receipt: Record, name: str, parsed_hash: str
+    program: ProgramAccess,
+    state: Record,
+    receipt: Record,
+    name: str,
+    parsed_hash: str,
+    *,
+    observed_head: str,
 ) -> None:
     handoffs = _indexed(state.get("handoffs", []), "handoff")
     identifier = _text(receipt.get("transfer_id"), "transfer ID")
@@ -758,7 +799,8 @@ def _ack(
     _require(receipt.get("actor_id") == handoff["to_actor"], "Only successor can acknowledge")
     program.verify_refs(_items(handoff["evidence"], "transfer evidence"))
     _require(
-        _fresh(program, receipt) == _binding_fields(_record(handoff["outgoing"], "outgoing")),
+        _fresh(program, receipt, observed_head=observed_head)
+        == _binding_fields(_record(handoff["outgoing"], "outgoing")),
         "Acknowledgement scope mismatch",
     )
     _text(receipt.get("summary"), "fresh validation summary")
@@ -813,7 +855,13 @@ def _ack(
 
 
 def _accept_transfer(
-    program: ProgramAccess, state: Record, receipt: Record, name: str, parsed_hash: str
+    program: ProgramAccess,
+    state: Record,
+    receipt: Record,
+    name: str,
+    parsed_hash: str,
+    *,
+    observed_head: str,
 ) -> None:
     handoffs = _indexed(state.get("handoffs", []), "handoff")
     identifier = _text(receipt.get("transfer_id"), "transfer ID")
@@ -821,7 +869,7 @@ def _accept_transfer(
     handoff = handoffs[identifier]
     _require(handoff.get("acceptance") is None, "Succession already accepted")
     acknowledged = _record(handoff.get("acknowledgement"), "successor acknowledgement")
-    scope = _fresh(program, receipt)
+    scope = _fresh(program, receipt, observed_head=observed_head)
     _require(
         scope == _binding_fields(acknowledged)
         and receipt["source_head"] == acknowledged["source_head"]
@@ -1133,7 +1181,7 @@ def amend_membership(state: Record, receipt: Record, admitted: list[str]) -> Non
             "amendment_id": receipt["id"],
             "actor_id": receipt["actor_id"],
             "reason": receipt["reason"],
-            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "recorded_at": _utc(),
         }
     )
     goal.update({"task_ids": after, "membership_revision": revision})
@@ -1411,6 +1459,23 @@ def apply_command(program: ProgramAccess, state: Record, args: argparse.Namespac
     """Stage metadata atomically in memory; core validates/saves under its own lock."""
     if args.command not in COMMANDS:
         return False
+    head = (
+        program.current_head()
+        if args.command
+        in {"director-appoint", "transfer", "transfer-ack", "transfer-accept", "objective-complete"}
+        else None
+    )
+    proposal = prepare_command(program, state, args, observed_head=head)
+    state.clear()
+    state.update(proposal)
+    return True
+
+
+def prepare_command(
+    program: ProgramAccess, state: Record, args: argparse.Namespace, *, observed_head: str | None
+) -> Record:
+    """Prepare the actual governance transition with explicitly observed Git metadata."""
+    _require(args.command in COMMANDS, "Unsupported coordination command")
     receipt, parsed_hash = _load(program, args.input)
     proposal = deepcopy(state)
     match args.command:
@@ -1420,13 +1485,41 @@ def apply_command(program: ProgramAccess, state: Record, args: argparse.Namespac
         case "actor-record":
             _actor_record(proposal, receipt)
         case "director-appoint":
-            _appoint(program, proposal, receipt, args.input, parsed_hash)
+            _appoint(
+                program,
+                proposal,
+                receipt,
+                args.input,
+                parsed_hash,
+                observed_head=_text(observed_head, "observed current HEAD"),
+            )
         case "transfer":
-            _transfer(program, proposal, receipt, args.input, parsed_hash)
+            _transfer(
+                program,
+                proposal,
+                receipt,
+                args.input,
+                parsed_hash,
+                observed_head=_text(observed_head, "observed current HEAD"),
+            )
         case "transfer-ack":
-            _ack(program, proposal, receipt, args.input, parsed_hash)
+            _ack(
+                program,
+                proposal,
+                receipt,
+                args.input,
+                parsed_hash,
+                observed_head=_text(observed_head, "observed current HEAD"),
+            )
         case "transfer-accept":
-            _accept_transfer(program, proposal, receipt, args.input, parsed_hash)
+            _accept_transfer(
+                program,
+                proposal,
+                receipt,
+                args.input,
+                parsed_hash,
+                observed_head=_text(observed_head, "observed current HEAD"),
+            )
         case "objective-record":
             _objective_record(proposal, receipt)
         case "objective-complete":
@@ -1436,7 +1529,7 @@ def apply_command(program: ProgramAccess, state: Record, args: argparse.Namespac
                 receipt,
                 args.input,
                 parsed_hash,
-                observed_head=program.current_head(),
+                observed_head=_text(observed_head, "observed current HEAD"),
             )
         case _:
             raise GovernanceError("Unsupported coordination command")
@@ -1457,6 +1550,4 @@ def apply_command(program: ProgramAccess, state: Record, args: argparse.Namespac
             "receipt": deepcopy(receipt),
         },
     )
-    state.clear()
-    state.update(proposal)
-    return True
+    return proposal

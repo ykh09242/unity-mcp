@@ -375,7 +375,7 @@ def _apply(program: Program, state: Record, transition: PhaseInput) -> None:
         _verify_planning(program, state, planning_path)
         state["phases"] = {
             "schema_version": 1,
-            "adopted_at": datetime.now(timezone.utc).isoformat(),
+            "adopted_at": coordination.observed_timestamp(datetime.now(timezone.utc).isoformat()),
             "adopted_by": actor,
             "planning_path": planning_path,
             "inventory": None,
@@ -395,7 +395,7 @@ def _apply(program: Program, state: Record, transition: PhaseInput) -> None:
         "actor_id": actor,
         "receipt": deepcopy(receipt),
         "evidence": transition.refs,
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "recorded_at": coordination.observed_timestamp(datetime.now(timezone.utc).isoformat()),
     }
     match transition.command:
         case "inventory-freeze":
@@ -640,8 +640,10 @@ def _publish(predecessor: Program, successor: Program, publication: Publication)
     _planning().publication_complete(predecessor, operation_id)
 
 
-def succeed(predecessor: Program, state: Record, args: argparse.Namespace) -> None:
-    """Publish sidecars only; never copy/reset tasks or label discovery complete."""
+def prepare_succession(
+    predecessor: Program, state: Record, args: argparse.Namespace
+) -> tuple[Program, Record]:
+    """Read the complete successor contract without publishing or locking."""
     require(
         args.owner == (coordination.current_director_id(state) or "leader"),
         "Succession requires current director or legacy leader",
@@ -655,43 +657,48 @@ def succeed(predecessor: Program, state: Record, args: argparse.Namespace) -> No
     )
     require(args.expected_revision == revision(state), "Stale predecessor registry revision")
     successor = _pair(predecessor, args.successor)
+    target = successor.load()
+    if target.get("planning_path") is not None:
+        _verify_planning(
+            successor, target, coordination._text(target["planning_path"], "planning path")
+        )
+    require(
+        target["program_id"] == args.successor_id and target["program_id"] != state["program_id"],
+        "Successor identity must match initialized distinct program",
+    )
+    require(args.successor_revision == revision(target), "Stale successor registry revision")
+    require(not successor.path("PREDECESSOR.json").exists(), "Successor already has a predecessor")
+    marker: Record = {
+        "schema_version": 1,
+        "predecessor": predecessor.directory.relative_to(predecessor.repo).as_posix(),
+        "predecessor_id": state["program_id"],
+        "successor": args.successor,
+        "successor_id": target["program_id"],
+        "predecessor_revision": args.expected_revision,
+        "successor_revision": args.successor_revision,
+        "successor_contract": _succession_contract(target),
+        "actor": args.owner,
+        "reason": args.reason,
+        "recorded_at": coordination.observed_timestamp(datetime.now(timezone.utc).isoformat()),
+    }
+    return successor, marker
+
+
+def succeed(predecessor: Program, state: Record, args: argparse.Namespace) -> None:
+    successor, _ = prepare_succession(predecessor, state, args)
     with successor.lock():
-        target = successor.load()
-        if target.get("planning_path") is not None:
-            _verify_planning(
-                successor, target, coordination._text(target["planning_path"], "planning path")
-            )
-        require(
-            target["program_id"] == args.successor_id
-            and target["program_id"] != state["program_id"],
-            "Successor identity must match initialized distinct program",
-        )
-        require(args.successor_revision == revision(target), "Stale successor registry revision")
-        require(
-            not successor.path("PREDECESSOR.json").exists(), "Successor already has a predecessor"
-        )
-        marker: Record = {
-            "schema_version": 1,
-            "predecessor": predecessor.directory.relative_to(predecessor.repo).as_posix(),
-            "predecessor_id": state["program_id"],
-            "successor": args.successor,
-            "successor_id": target["program_id"],
-            "predecessor_revision": args.expected_revision,
-            "successor_revision": args.successor_revision,
-            "successor_contract": _succession_contract(target),
-            "actor": args.owner,
-            "reason": args.reason,
-            "recorded_at": datetime.now(timezone.utc).isoformat(),
-        }
+        successor, marker = prepare_succession(predecessor, state, args)
         _publish(predecessor, successor, Publication(marker))
 
 
-def recover_succession(predecessor: Program, args: argparse.Namespace) -> None:
-    """Recheck both frozen registries and finish a guarded transaction under both locks."""
+def prepare_succession_recovery(
+    predecessor: Program, args: argparse.Namespace
+) -> tuple[Program, Record, Record, object]:
+    """Validate recorded recovery inputs; no lock or sidecar publication."""
     if __package__:
-        from tools.feature_program import read_json, atomic_write, canonical
+        from tools.feature_program import read_json
     else:
-        from feature_program import read_json, atomic_write, canonical
+        from feature_program import read_json
     located = _planning().publication_find(
         predecessor, "succession", getattr(args, "publication_id", None)
     )
@@ -718,43 +725,53 @@ def recover_succession(predecessor: Program, args: argparse.Namespace) -> None:
         not successor.path("SUCCEEDED.json").exists(),
         "Successor has itself succeeded; investigate incomplete publication",
     )
-    with successor.lock(publication_recovery=True):
-        state = read_json(predecessor.path("backlog.json"))
-        target = read_json(successor.path("backlog.json"))
-        predecessor.validate(state)
-        successor.validate(target)
-        if target.get("planning_path") is not None:
-            _verify_planning(
-                successor, target, coordination._text(target["planning_path"], "planning path")
+    state = read_json(predecessor.path("backlog.json"))
+    target = read_json(successor.path("backlog.json"))
+    predecessor.validate(state)
+    successor.validate(target)
+    if target.get("planning_path") is not None:
+        _verify_planning(
+            successor, target, coordination._text(target["planning_path"], "planning path")
+        )
+    require(
+        state["program_id"] == marker["predecessor_id"]
+        and target["program_id"] == marker["successor_id"],
+        "Succession identity changed",
+    )
+    require(
+        args.owner == (coordination.current_director_id(state) or "leader"),
+        "Succession recovery requires predecessor director",
+    )
+    require(marker.get("actor") == args.owner, "Recovery actor must match publication actor")
+    for program, name in (
+        (predecessor, "SUCCEEDED.json"),
+        (successor, "SUCCESSION_INCOMPLETE.json"),
+        (successor, "PREDECESSOR.json"),
+    ):
+        if program.path(name).exists():
+            require(
+                read_json(program.path(name)) == marker,
+                "Conflicting succession marker; preserve and investigate",
             )
-        require(
-            state["program_id"] == marker["predecessor_id"]
-            and target["program_id"] == marker["successor_id"],
-            "Succession identity changed",
-        )
-        require(
-            args.owner == (coordination.current_director_id(state) or "leader"),
-            "Succession recovery requires predecessor director",
-        )
-        require(marker.get("actor") == args.owner, "Recovery actor must match publication actor")
-        for program, name in (
-            (predecessor, "SUCCEEDED.json"),
-            (successor, "SUCCESSION_INCOMPLETE.json"),
-            (successor, "PREDECESSOR.json"),
-        ):
-            if program.path(name).exists():
-                require(
-                    read_json(program.path(name)) == marker,
-                    "Conflicting succession marker; preserve and investigate",
-                )
-        require(
-            _succession_contract(target) == marker.get("successor_contract"),
-            "Frozen successor provenance changed; preserve guards and investigate",
-        )
-        require(
-            revision(state) == marker.get("predecessor_revision"),
-            "Predecessor registry changed; preserve guards and investigate",
-        )
+    require(
+        _succession_contract(target) == marker.get("successor_contract"),
+        "Frozen successor provenance changed; preserve guards and investigate",
+    )
+    require(
+        revision(state) == marker.get("predecessor_revision"),
+        "Predecessor registry changed; preserve guards and investigate",
+    )
+    return successor, marker, target, located
+
+
+def recover_succession(predecessor: Program, args: argparse.Namespace) -> None:
+    if __package__:
+        from tools.feature_program import atomic_write, canonical
+    else:
+        from feature_program import atomic_write, canonical
+    successor, _, _, _ = prepare_succession_recovery(predecessor, args)
+    with successor.lock(publication_recovery=True):
+        successor, marker, target, located = prepare_succession_recovery(predecessor, args)
         atomic_write(
             predecessor.path("SUCCESSION_RECOVERY.json"),
             canonical(
@@ -763,7 +780,9 @@ def recover_succession(predecessor: Program, args: argparse.Namespace) -> None:
                     "reason": args.reason,
                     "observed_successor_revision": revision(target),
                     "publication": deepcopy(marker),
-                    "recorded_at": datetime.now(timezone.utc).isoformat(),
+                    "recorded_at": coordination.observed_timestamp(
+                        datetime.now(timezone.utc).isoformat()
+                    ),
                 }
             ),
         )

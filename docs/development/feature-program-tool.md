@@ -887,10 +887,106 @@ Files preserve recorded facts; they do not preserve unsaved thoughts or guarante
 processes survive. A fresh clone also needs an independently authorized copy of private
 program state before it can resume that program.
 
+## Read-only authoring
+
+`authoring-support` prints the exact supported command names, CLI arguments, receipt
+fields and assessment limits. `scaffold` prints editable JSON to stdout. It does not create
+evidence files or passing receipts. Missing facts remain null, pending, not_run or false;
+the output lists fields and command arguments that still need input. Actor observations
+do not establish liveness, independent review or authorization.
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example authoring-support
+python tools/feature_program.py --program-dir .work/programs/example scaffold --operation claim --task TASK-1 --scope tools/example.py
+python tools/feature_program.py --program-dir .work/programs/example scaffold --operation question-issue --scope tools/example.py
+python tools/feature_program.py --program-dir .work/programs/example scaffold --operation template --kind execution --task TASK-1
+python tools/feature_program.py --program-dir .work/programs/example preview --request preview-request.json
+python tools/feature_program.py --program-dir .work/programs/example recovery-readiness
+```
+
+The preview request is bounded program-relative JSON containing exactly `argv`, with the
+same arguments used by the real command. Global repository/program options, recursive
+preview commands and help requests are not transition inputs. For example:
+
+```json
+{"argv": ["submit", "TASK-1", "--owner", "worker", "--receipt", "evidence/TASK-1/attempt-1/execution.json"]}
+```
+
+The 41 mutation families are explicit:
+
+| Family | Commands | Input |
+| --- | --- | --- |
+| Execution | claim, submit, complete, rework, resume, delivery | Exact task/owner and revalidation, execution, review, resolution or delivery receipt as required by the real command |
+| Progress | note, block, release, reopen, language, checkpoint | Existing CLI arguments; no invented receipt wrapper |
+| Governance | category-set, actor-record, director-appoint, transfer, transfer-ack, transfer-accept, objective-record, objective-complete | `--input` governance receipt; applicable source, authority and independent review bindings |
+| Questions | question-issue, question-acknowledge, question-resolve, question-withdraw | `--input` bounded question receipt; exact question/answer version and current source |
+| Phases | phase-adopt, inventory-freeze, candidate-review, execution-accept | `--input` phase receipt with actual revision and planning binding |
+| Planning | task-admit, objective-membership, task-plan, task-prioritize, task-split, task-retire | `--input` complete amendment, frozen evidence and any required prospective phase renewal |
+| Coverage | coverage-record | `--input` exact criterion/task/source/evidence annotation |
+| Publication | publication-adopt, publication-reconcile, program-succeed, program-succeed-recover, relocate, relocate-recover | Existing receipt or explicit endpoint/revision/owner arguments; assessment remains partial |
+
+The five existing template kinds are revalidation, execution, review, delivery and resume.
+`scaffold --operation template --kind ...` uses their shared preparation. The delivery
+scaffold leaves the tested commit unknown; current HEAD is not proof of a provider run.
+Question answers continue through the existing answer surface, not a new mutation command.
+
+Ordinary previews validate the original state before projecting facts, run the same
+detached transition preparation used by execution, and perform the real final save
+preflight and read-only freshness guards. They include the observed registry revision,
+predicted state, changed fields and the first canonical prerequisite failure. Planning
+previews include the full staged amendment and renewal, not just a prospective binding.
+Category previews retain full-replacement semantics and show parent/task placement,
+moved tasks, workstream-root fallback, and direct/descendant counts.
+
+All six publication previews return `status: not_assessed` and
+`assessment: partial_publication` after successful read-only preparation. Their output
+identifies inspected inputs and the remaining locked publication steps. Relocation does
+not copy into a virtual destination or claim copied artifacts are verified. Adoption does
+not bootstrap a ledger. Recovery checks named records without deleting or repairing them.
+An inspected preflight is never successful publication.
+
+Preview and scaffolding never acquire a program/store lock, create directories, freeze
+receipts or publish a registry, history, ledger or view. Existing read-only Git metadata
+may be observed for exact source binding; no Git, provider or agent mutation is performed.
+Input/reference and registry changes detected during observation require refresh.
+Predicted timestamps describe the observation and are not promised execution timestamps.
+Both preparations use that same context-local observation clock, then compare the complete
+canonical proposed state, including derived hashes. Changed source or semantic facts reject
+the preview; normal mutation clocks remain unchanged. Checkpoint previews observe the same
+NUL-separated Git status format as actual checkpoints.
+Every result is advisory: actual execution rechecks under its normal locks.
+
+`recovery-readiness` reports the first authoritative failure, stale review submissions, pending questions/transfers,
+observed ownership/collisions, marker contents and saved lock PID/time. Malformed original
+state is not used to invent derived facts. A PID, timestamp or contact cannot establish
+that a worker is alive, a lock is abandoned, or takeover is authorized.
+
+### Frozen provider delivery inputs
+
+`delivery-inputs --input REQUEST.json` accepts an explicitly supplied local provider
+observation reference (`provider: {path, sha256}`) and a nonempty `tasks` list. Each task
+entry supplies `task_id`, `attempt`, `submission_sha256`, `reviewed_source_digest`,
+`required_ci` and attempt-relative `evidence`. These bindings remain individual when
+provider observations are shared by multiple tasks. The provider JSON supplies branch,
+base, commits, PR URL, tested_commit, CI job records, merge_status and any merge_commit.
+No current-HEAD substitution or authentication inference occurs.
+
+The output contains separate proposed receipts. Each receipt references the exact frozen
+provider file; actual delivery retains that reference in immutable evidence. Missing or
+inconsistent task/source/check facts fail shared metadata validation. Recording failed or
+pending CI can be a valid transition, while its CI status remains `ci_failed` or
+`ci_pending`. The authoring result never claims remote verification or delivery acceptance.
+It publishes no receipt; save the reviewed inputs explicitly before running delivery.
+
+Optional `cleanup` observations contain `status` (`cleaned`, `deferred` or `unknown`),
+reason, exact `merge_identity` matching the receipt's `merge_commit`, actor_id,
+recorded_at and attempt-relative evidence. Legacy absence means unknown. Cleanup facts
+do not affect CI status, confer cleanup eligibility or perform any cleanup operation.
+
 ## Tool verification
 
 ```sh
-python -m pytest tools/tests/test_feature_program.py tools/tests/test_feature_program_coordination.py tools/tests/test_feature_program_questions.py tools/tests/test_feature_program_web.py -q
+python -m pytest tools/tests/test_feature_program.py tools/tests/test_feature_program_coordination.py tools/tests/test_feature_program_questions.py tools/tests/test_feature_program_authoring.py tools/tests/test_feature_program_web.py -q
 python tools/format_scripts.py --check
 python tools/lint_python.py
 npm run format:check --prefix tools/feature_program_web

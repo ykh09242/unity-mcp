@@ -28,7 +28,7 @@ else:
     import feature_program_phases as phases
 
 if TYPE_CHECKING:
-    from tools.feature_program import Program, ReadBudget
+    from tools.feature_program import PreparedChange, Program, ReadBudget
 
 Json = coordination.Json
 Record = coordination.Record
@@ -1854,8 +1854,9 @@ def _endpoint_locks(program: Program, names: list[str]) -> Iterator[None]:
         yield
 
 
-def publication_adopt(program: Program, state: Record, name: str) -> None:
-    core = _core()
+def prepare_publication_adoption(
+    program: Program, state: Record, name: str
+) -> tuple[Record, list[Json], Record]:
     require(not _present(program.path(TRACKING)), "Publication tracking already adopted")
     receipt, refs = program.frozen_json("_publications", 1, name)
     _publication_authority(program, state, receipt)
@@ -1886,6 +1887,35 @@ def publication_adopt(program: Program, state: Record, name: str) -> None:
             }
         ),
     )
+    # Inspect existing publication metadata without bootstrapping a missing store.
+    store = PublicationStore(program.repo)
+    adopted_name = "evidence/_publications/attempt-1/adopted.json"
+    pending = (
+        _core().read_json(program.path(adopted_name))
+        if _present(program.path(adopted_name))
+        else None
+    )
+    if _present(store.path("ledger.json")) or pending is not None:
+        ledger = store.load()
+        require(
+            (
+                pending is not None
+                and pending.get("decision") == receipt
+                and pending.get("evidence") == refs
+                and pending.get("ledger_id") == ledger["ledger_id"]
+                and pending.get("published_ledger_revision") == phases.revision(ledger)
+            )
+            or (pending is None and receipt.get("ledger_revision") == phases.revision(ledger)),
+            "Publication ledger revision stale",
+        )
+    else:
+        require(receipt.get("ledger_revision") is None, "Publication ledger revision stale")
+    return receipt, refs, inventory
+
+
+def publication_adopt(program: Program, state: Record, name: str) -> None:
+    core = _core()
+    receipt, refs, inventory = prepare_publication_adoption(program, state, name)
     store = PublicationStore(program.repo)
     adopted_name = "evidence/_publications/attempt-1/adopted.json"
     with _endpoint_locks(program, list(inventory)), store.lock():
@@ -2043,7 +2073,10 @@ def publication_adopt(program: Program, state: Record, name: str) -> None:
         )
 
 
-def publication_reconcile(program: Program, state: Record, name: str) -> None:
+def prepare_publication_reconciliation(
+    program: Program, state: Record, name: str
+) -> tuple[Record, Record, str, Record]:
+    """Prepare the actual reconciliation ledger/result using existing bounded readers."""
     core = _core()
     receipt, refs = program.frozen_json("_publications", 1, name)
     _publication_authority(program, state, receipt)
@@ -2068,73 +2101,79 @@ def publication_reconcile(program: Program, state: Record, name: str) -> None:
         bool(_path_keys(item["endpoints"]) & _path_keys(_aliases(program, state))),
         "Reconciliation operation unrelated to selected program",
     )
-    # Nonblocking endpoint locks are always acquired before the ledger lock.
-    with _endpoint_locks(program, coordination._texts(item["endpoints"], "endpoints")):
-        with store.lock():
-            ledger = store.load()
-            require(
-                receipt.get("ledger_revision") == phases.revision(ledger),
-                "Reconciliation ledger revision stale",
-            )
-            item = store.active(ledger, item["id"])
-            budget = core.ReadBudget(64 * 1024 * 1024)
-            payload = store.payload(item, budget)
-            if action == "cancel-registration":
-                require(
-                    item["stage"] == "registered"
-                    and marker_inventory(program.repo, item["endpoints"], budget)
-                    == payload["before_markers"],
-                    "Only unchanged registered-stage publication can be cancelled",
-                )
-                item["stage"] = "cancelled"
-            else:
-                _failed_copy(store, item, budget)
-                replacements = [
-                    coordination._record(value, "replacement")
-                    for value in coordination._items(ledger["history"], "history")
-                    if coordination._record(value, "history")["id"] == receipt.get("replacement_id")
-                ]
-                require(
-                    len(replacements) == 1
-                    and replacements[0]["stage"] == "completed"
-                    and replacements[0]["kind"] == "relocation"
-                    and replacements[0]["endpoints"][0] == item["endpoints"][0]
-                    and replacements[0]["endpoints"][1] != item["endpoints"][1],
-                    "Supersession needs distinct completed replacement",
-                )
-                _completed_proof(
-                    store, replacements[0], store.payload(replacements[0], budget), budget
-                )
-                _failed_copy(store, item, budget)
-                item.update(
-                    {
-                        "stage": "superseded",
-                        "replacement_id": replacements[0]["id"],
-                        "failed_marker_sha256": _failed_copy_digest(store, item, budget),
-                    }
-                )
-            program.verify_refs(refs)
-            require(
-                phases.revision(core.read_json(program.path("backlog.json")))
-                == receipt["expected_revision"],
-                "Registry changed before reconciliation",
-            )
-            result_name = f"transactions/{item['id']}/reconciled-{phases.revision(receipt)}.json"
-            result = {
-                "receipt": receipt,
-                "evidence": refs,
-                "recorded_at": core.utc(),
-                "observed_registry_revision": phases.revision(state),
+    ledger = store.load()
+    require(
+        receipt.get("ledger_revision") == phases.revision(ledger),
+        "Reconciliation ledger revision stale",
+    )
+    item = store.active(ledger, item["id"])
+    budget = core.ReadBudget(64 * 1024 * 1024)
+    payload = store.payload(item, budget)
+    if action == "cancel-registration":
+        require(
+            item["stage"] == "registered"
+            and marker_inventory(program.repo, item["endpoints"], budget)
+            == payload["before_markers"],
+            "Only unchanged registered-stage publication can be cancelled",
+        )
+        item["stage"] = "cancelled"
+    else:
+        _failed_copy(store, item, budget)
+        replacements = [
+            coordination._record(value, "replacement")
+            for value in coordination._items(ledger["history"], "history")
+            if coordination._record(value, "history")["id"] == receipt.get("replacement_id")
+        ]
+        require(
+            len(replacements) == 1
+            and replacements[0]["stage"] == "completed"
+            and replacements[0]["kind"] == "relocation"
+            and replacements[0]["endpoints"][0] == item["endpoints"][0]
+            and replacements[0]["endpoints"][1] != item["endpoints"][1],
+            "Supersession needs distinct completed replacement",
+        )
+        _completed_proof(store, replacements[0], store.payload(replacements[0], budget), budget)
+        _failed_copy(store, item, budget)
+        item.update(
+            {
+                "stage": "superseded",
+                "replacement_id": replacements[0]["id"],
+                "failed_marker_sha256": _failed_copy_digest(store, item, budget),
             }
-            if _present(store.path(result_name)):
-                previous = core.read_json(store.path(result_name), budget=budget)
-                require(
-                    previous.get("receipt") == receipt
-                    and previous.get("evidence") == refs
-                    and previous.get("observed_registry_revision") == phases.revision(state),
-                    "Prior reconciliation observation conflicts; preserve and inspect",
-                )
-                result = previous
+        )
+    program.verify_refs(refs)
+    require(
+        phases.revision(core.read_json(program.path("backlog.json")))
+        == receipt["expected_revision"],
+        "Registry changed before reconciliation",
+    )
+    result_name = f"transactions/{item['id']}/reconciled-{phases.revision(receipt)}.json"
+    result = {
+        "receipt": receipt,
+        "evidence": refs,
+        "recorded_at": core.utc(),
+        "observed_registry_revision": phases.revision(state),
+    }
+    if _present(store.path(result_name)):
+        previous = core.read_json(store.path(result_name), budget=budget)
+        require(
+            previous.get("receipt") == receipt
+            and previous.get("evidence") == refs
+            and previous.get("observed_registry_revision") == phases.revision(state),
+            "Prior reconciliation observation conflicts; preserve and inspect",
+        )
+        result = previous
+    return ledger, item, result_name, result
+
+
+def publication_reconcile(program: Program, state: Record, name: str) -> None:
+    _, observed, _, _ = prepare_publication_reconciliation(program, state, name)
+    store = PublicationStore(program.repo)
+    with _endpoint_locks(program, coordination._texts(observed["endpoints"], "endpoints")):
+        with store.lock():
+            ledger, item, result_name, result = prepare_publication_reconciliation(
+                program, state, name
+            )
             item["result"] = store.freeze(result_name, result)
             ledger["active"] = [
                 value
@@ -2383,6 +2422,16 @@ def execute(program: Program, state: Record, args: argparse.Namespace) -> bool:
     """Commit exactly one reviewed prospective transaction under the caller's lock."""
     if args.command not in COMMANDS:
         return False
+    prepared = prepare_transition(program, state, args)
+    program.save(prepared.state, before_publish=prepared.before_publish)
+    state.clear()
+    state.update(prepared.state)
+    return True
+
+
+def prepare_transition(program: Program, state: Record, args: argparse.Namespace) -> PreparedChange:
+    """Stage the full authoritative transaction, including review and phase renewal."""
+    require(args.command in COMMANDS, "Unsupported planning command")
     core = _core()
     require_completed_publication(program, state)
     receipt, refs = program.frozen_json("_planning", 1, args.input)
@@ -2457,10 +2506,7 @@ def execute(program: Program, state: Record, args: argparse.Namespace) -> bool:
             program, future.state, coordination._text(contract["planning_path"], "planning path")
         )
 
-    program.save(future.state, before_publish=precommit)
-    state.clear()
-    state.update(future.state)
-    return True
+    return core.PreparedChange(future.state, precommit)
 
 
 def remap_sources(state: Record, old_root: str, new_root: str) -> None:

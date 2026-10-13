@@ -19,7 +19,7 @@ else:
     import feature_program_planning as planning
 
 if TYPE_CHECKING:
-    from tools.feature_program import Program, ReadBudget
+    from tools.feature_program import PreparedChange, Program, ReadBudget
 
 Json = coordination.Json
 Record = coordination.Record
@@ -543,6 +543,14 @@ def publication_guard(program: Program, future: Record) -> Callable[[], None] | 
 
 def record(program: Program, state: Record, name: str) -> None:
     """Freeze one annotation atomically, rechecking its actual pre-state and evidence."""
+    prepared = prepare_record(program, state, name)
+    program.save(prepared.state, before_publish=prepared.before_publish)
+    state.clear()
+    state.update(prepared.state)
+
+
+def prepare_record(program: Program, state: Record, name: str) -> PreparedChange:
+    """Prepare the real immutable annotation without publishing it."""
     core = _core()
     program.require_current_location()
     program.validate(state)
@@ -617,9 +625,7 @@ def record(program: Program, state: Record, name: str) -> None:
         preconditions(current)
         program.verify_refs(refs)
 
-    program.save(proposal, before_publish=precommit)
-    state.clear()
-    state.update(proposal)
+    return core.PreparedChange(proposal, precommit)
 
 
 def projection(program: Program, state: Record, budget: ReadBudget | None = None) -> Record:
