@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
+from hashlib import sha256
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import re
 import socket
 import secrets
 from typing import TYPE_CHECKING
@@ -36,6 +38,45 @@ STATIC_ROUTES = {
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
 MAX_RESPONSE_BYTES = 20 * 1024 * 1024
+MAX_VALIDATOR_BYTES = 8 * 1024
+ENTITY_TAG = re.compile(r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"')
+
+
+def snapshot_etag(snapshot: Json) -> str:
+    """Identify all semantic snapshot data, retaining unknown future fields."""
+    semantic = (
+        {key: value for key, value in snapshot.items() if key != "generated_at"}
+        if isinstance(snapshot, dict)
+        else snapshot
+    )
+    encoded = json.dumps(
+        semantic, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    ).encode()
+    # Observation time changes representation bytes, so this validator is weak.
+    return f'W/"{sha256(encoded).hexdigest()}"'
+
+
+def matches_validator(value: str, etag: str) -> bool:
+    """Parse the entire bounded If-None-Match list before weak comparison."""
+    value = value.strip(" \t")
+    if value == "*":
+        return True
+    tags = []
+    offset = 0
+    while offset < len(value):
+        if value[offset] in " \t,":
+            offset += 1
+            continue
+        match = ENTITY_TAG.match(value, offset)
+        if match is None:
+            raise ValueError("Invalid snapshot validator")
+        tags.append(match.group().removeprefix("W/"))
+        offset = match.end()
+        while offset < len(value) and value[offset] in " \t":
+            offset += 1
+        if offset < len(value) and value[offset] != ",":
+            raise ValueError("Invalid snapshot validator")
+    return etag.removeprefix("W/") in tags
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -82,10 +123,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # Request paths and headers can contain private or attacker-controlled text.
         return
 
-    def _response(self, code: int, body: bytes, content_type: str, head: bool = False) -> None:
+    def _response(
+        self, code: int, body: bytes, content_type: str, head: bool = False, etag: str | None = None
+    ) -> None:
         self.send_response(code)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
+        if code != 304:
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+        if etag is not None:
+            self.send_header("ETag", etag)
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -98,7 +144,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         )
         self.end_headers()
-        if not head:
+        if not head and code != 304:
             self.wfile.write(body)
 
     def _error(self, code: int, message: str, head: bool = False) -> None:
@@ -142,13 +188,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/snapshot":
             try:
-                body = json.dumps(self.server.snapshot(), ensure_ascii=True).encode("utf-8")
+                # Never reuse a prior snapshot: sources/evidence can drift independently
+                # of registry revision, including while a conditional request is made.
+                snapshot = self.server.snapshot()
+                body = json.dumps(snapshot, ensure_ascii=True).encode("utf-8")
                 if len(body) > MAX_RESPONSE_BYTES:
                     raise ValueError("Snapshot response exceeds limit")
-            except (OSError, ValueError, UnicodeError, feature_program.ProgramError):
+                etag = snapshot_etag(snapshot)
+            except (OSError, TypeError, ValueError, UnicodeError, feature_program.ProgramError):
                 self._error(503, "Program snapshot unavailable; check the configured program", head)
                 return
-            self._response(200, body, "application/json; charset=utf-8", head)
+            validators = self.headers.get_all("If-None-Match", [])
+            if validators:
+                value = ",".join(validators)
+                if len(value) > MAX_VALIDATOR_BYTES:
+                    self._error(431, "Snapshot validator exceeds limit", head)
+                    return
+                try:
+                    unchanged = matches_validator(value, etag)
+                except ValueError:
+                    self._error(400, "Invalid snapshot validator", head)
+                    return
+                if unchanged:
+                    self._response(304, b"", "application/json; charset=utf-8", head, etag)
+                    return
+            self._response(200, body, "application/json; charset=utf-8", head, etag)
             return
         asset = STATIC_ROUTES.get(self.path)
         if asset is None:
