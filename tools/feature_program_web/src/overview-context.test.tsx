@@ -24,6 +24,111 @@ function fixture() {
 }
 
 describe('supplied Overview context', () => {
+  it.each(['ko', 'en'])('localizes only known producer actions by kind with %s UI', (locale) => {
+    localStorage.setItem(PREFERENCE_KEY, locale);
+    const { snapshot, brief, ref, collection } = fixture();
+    const actions = [
+      [
+        'objective',
+        'Inspect the objective-completion prerequisites',
+        '목표 완료 조건을 확인하세요.',
+      ],
+      ['integrity', 'Inspect original records and artifacts', '원문과 근거를 확인하세요'],
+      [
+        'acceptance',
+        'Inspect the exact submission/review binding',
+        '제출 및 검토의 정확한 연결을 확인하세요',
+      ],
+      [
+        'recovery',
+        'Inspect recovery-readiness; lock existence does not establish liveness or takeover authority',
+        '복구 상태를 확인하세요. 잠금 파일만으로 실행 여부나 인수 권한을 판단할 수 없습니다.',
+      ],
+      [
+        'delivery',
+        'Inspect frozen delivery inputs and provider facts',
+        '고정된 전달 기록과 제공자의 실제 결과를 확인하세요',
+      ],
+      [
+        'question',
+        'Inspect the saved answer, acknowledgement and application separately',
+        '저장된 답변, 확인, 적용 결과를 각각 확인하세요',
+      ],
+      ['transfer', 'Follow the recorded succession workflow', '기록된 인계 절차를 따르세요'],
+      [
+        'coverage',
+        'Inspect exact criterion and current membership/attempt bindings',
+        '기준과 현재 작업 구성 및 시도 연결을 확인하세요',
+      ],
+    ];
+    for (const [kind, action, translated] of actions) {
+      const raw = parseSnapshot({
+        ...snapshot,
+        objective: { id: 'goal' },
+        brief: {
+          ...brief,
+          attention: collection([
+            {
+              kind,
+              entity_id: 'goal',
+              next_action: action,
+              reference: { ...ref, pointer: '/objective' },
+              observed_revision: snapshot.revision,
+            },
+          ]),
+        },
+      });
+      const view = render(
+        <LanguageProvider>
+          <ProgramAttention snapshot={raw} />
+        </LanguageProvider>,
+      );
+      expect(screen.getByText(locale === 'ko' ? translated! : action!)).toBeTruthy();
+      expect(record(record(raw.brief).attention).items).toEqual([
+        expect.objectContaining({ next_action: action }),
+      ]);
+      view.unmount();
+    }
+  });
+  it.each(['objective', 'blocked', 'unknown'])(
+    'preserves authored or unknown %s actions even when they equal system copy',
+    (kind) => {
+      localStorage.setItem(PREFERENCE_KEY, 'ko');
+      const { snapshot, brief, ref, collection } = fixture();
+      const action = 'Inspect the objective-completion prerequisites';
+      render(
+        <LanguageProvider>
+          <ProgramAttention
+            snapshot={parseSnapshot({
+              ...snapshot,
+              objective: { id: 'goal', next_action: action },
+              brief: {
+                ...brief,
+                attention: collection([
+                  {
+                    kind,
+                    entity_id: 'goal',
+                    next_action: action,
+                    reference: ref,
+                    observed_revision: snapshot.revision,
+                  },
+                  {
+                    kind: 'question',
+                    entity_id: 'Q',
+                    next_action: 'An unknown authored instruction',
+                    reference: ref,
+                    observed_revision: snapshot.revision,
+                  },
+                ]),
+              },
+            })}
+          />
+        </LanguageProvider>,
+      );
+      expect(screen.getByText(action)).toBeTruthy();
+      expect(screen.getByText('An unknown authored instruction')).toBeTruthy();
+    },
+  );
   it.each(['en', 'ko'])(
     'keeps reviewed task actions in the session language with %s interface copy',
     (locale) => {

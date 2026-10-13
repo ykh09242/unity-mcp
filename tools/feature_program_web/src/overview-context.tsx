@@ -7,6 +7,18 @@ import { OriginalRecord } from './readiness-ui';
 import { usePresentation } from './presentation-ui';
 import { CoverageObservations, HistoryReferences } from './history-ui';
 
+const systemActions: Readonly<Record<string, string>> = {
+  objective: 'Inspect the objective-completion prerequisites',
+  integrity: 'Inspect original records and artifacts',
+  recovery:
+    'Inspect recovery-readiness; lock existence does not establish liveness or takeover authority',
+  acceptance: 'Inspect the exact submission/review binding',
+  delivery: 'Inspect frozen delivery inputs and provider facts',
+  question: 'Inspect the saved answer, acknowledgement and application separately',
+  transfer: 'Follow the recorded succession workflow',
+  coverage: 'Inspect exact criterion and current membership/attempt bindings',
+};
+
 export function currentBrief(snapshot: Snapshot) {
   const brief = record(snapshot.brief);
   return brief.brief_version === 1 &&
@@ -104,6 +116,12 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
                 (currentReference(snapshot, row.reference) || recoveryReference) &&
                 row.observed_revision === snapshot.revision;
               const impact = currentCollection(snapshot, row.criterion_impact);
+              const generatedAction =
+                Boolean(systemActions[string(row.kind)]) &&
+                systemActions[string(row.kind)] === row.next_action &&
+                (row.kind !== 'objective' ||
+                  (row.entity_id === record(snapshot.objective).id &&
+                    !Object.hasOwn(record(snapshot.objective), 'next_action')));
               return (
                 <li key={`${string(row.kind)}:${string(row.entity_id)}:${index}`}>
                   <div className="attention-heading">
@@ -118,16 +136,9 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
                     <>
                       <p className="prose">{i18n.warning(row.reason || 'Unknown')}</p>
                       <p className="prose">
-                        {[
-                          'objective',
-                          'blocked',
-                          'collision',
-                          'review',
-                          'dependency',
-                          'revalidation',
-                        ].includes(string(row.kind))
-                          ? i18n.display(row.next_action, 'No next action recorded')
-                          : i18n.t(string(row.next_action)) || i18n.t('No next action recorded')}
+                        {generatedAction
+                          ? i18n.t(string(row.next_action))
+                          : i18n.display(row.next_action, 'No next action recorded')}
                       </p>
                       <p className="muted">
                         {i18n.t('Responsible actor')}:{' '}
