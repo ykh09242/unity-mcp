@@ -235,7 +235,10 @@ describe('paging interaction context', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await screen.findByText('Selected task T051 is no longer available.');
     expect(screen.queryByRole('button', { name: 'Show selected task' })).toBeNull();
-    expect(document.activeElement).toBe(screen.getByLabelText('Tasks per page'));
+    // The removal notice can commit before the effect restores focus.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByLabelText('Tasks per page')),
+    );
   });
   it('keeps the current page when refresh moves selection off page and reveals it only on request', async () => {
     const user = userEvent.setup();
