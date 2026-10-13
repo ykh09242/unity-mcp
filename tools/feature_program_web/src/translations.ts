@@ -1,5 +1,19 @@
 // Interface translations only. Recorded task and question prose remains unchanged.
 export const korean = {
+  'Work pages': '작업 목록 페이지',
+  'Tasks per page': '페이지당 작업 수',
+  'First page': '첫 페이지',
+  'Previous page': '이전 페이지',
+  'Next page': '다음 페이지',
+  'Last page': '마지막 페이지',
+  'Showing {start}–{end} of {matching} matching tasks · Page {page} of {pages}':
+    '일치한 작업 {matching}개 중 {start}–{end} · {pages}페이지 중 {page}페이지',
+  'Selected task {id} is no longer available.':
+    '선택한 작업 {id}을(를) 더 이상 사용할 수 없습니다.',
+  'Selected task {id} does not match these filters.':
+    '선택한 작업 {id}이(가) 현재 필터와 일치하지 않습니다.',
+  'Selected task {id} is on another page.': '선택한 작업 {id}이(가) 다른 페이지에 있습니다.',
+  'Show selected task': '선택한 작업 표시',
   'Task notes': '작업 메모',
   'Recorded actor: {actor}': '기록한 담당자: {actor}',
   'No readable reason recorded': '읽을 수 있는 사유가 기록되지 않았습니다.',
