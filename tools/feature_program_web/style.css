@@ -1885,3 +1885,246 @@ select {
     outline-offset: -1px;
   }
 }
+
+.utility-icon {
+  inline-size: 19px;
+  block-size: 19px;
+  flex: none;
+}
+.icon-control,
+.detail-actions a.icon-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 36px;
+  min-inline-size: 36px;
+  block-size: 36px;
+  padding: 7px;
+  text-decoration: none;
+}
+.icon-control::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  inset-block-start: calc(100% + 6px);
+  inset-inline-end: 0;
+  z-index: 20;
+  inline-size: max-content;
+  max-inline-size: 220px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--raised);
+  color: var(--body);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  pointer-events: none;
+  opacity: 0;
+}
+.icon-control:hover::after,
+.icon-control:focus-visible::after {
+  opacity: 1;
+}
+.detail-actions .back-link::after {
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+}
+.allocation-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.allocation-heading h3 {
+  margin: 0;
+}
+.scope-switch {
+  display: flex;
+  gap: 4px;
+}
+.scope-switch a {
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  text-decoration: none;
+}
+.scope-switch a[aria-current] {
+  background: var(--hover);
+  color: var(--body);
+}
+.allocation-table {
+  overflow-x: auto;
+  margin-block: 12px 24px;
+}
+.allocation-table table {
+  inline-size: 100%;
+  border-collapse: collapse;
+}
+.allocation-table th,
+.allocation-table td {
+  padding: 8px;
+  border-block-end: 1px solid var(--line);
+  text-align: center;
+}
+.allocation-table th:first-child {
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.allocation-table thead th {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.allocation-table tbody th {
+  font-size: 14px;
+  font-weight: 500;
+}
+.allocation-table a {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 32px;
+  min-inline-size: 28px;
+}
+.allocation-note {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+}
+.unassigned-personnel {
+  margin-block: 12px 24px;
+}
+.unassigned-personnel ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 12px 0;
+  list-style: none;
+}
+.unassigned-personnel a {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 32px;
+  overflow-wrap: anywhere;
+}
+.completed-assignments,
+.goal-coordination,
+.coordination-notes,
+.readiness-context {
+  margin-block: 12px 24px;
+}
+.coordination-notes > ol,
+.readiness-context > ul,
+.goal-coordination > ul,
+.completed-assignments > ul {
+  list-style: none;
+  padding: 0;
+}
+.coordination-notes li,
+.readiness-context li,
+.goal-coordination li,
+.completed-assignments li {
+  margin-block: 12px;
+  overflow-wrap: anywhere;
+}
+.coordination-notes > ol > li,
+.goal-coordination > ul > li {
+  padding-block: 12px;
+  border-block-end: 1px solid var(--line);
+}
+.coordination-notes p,
+.readiness-context p,
+.goal-coordination p {
+  margin-block: 8px;
+}
+.note-byline {
+  color: var(--muted);
+  font-size: 12px;
+}
+.note-evidence {
+  padding-inline-start: 12px;
+}
+.note-evidence .mono {
+  display: block;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.original-record {
+  margin-block: 8px;
+}
+.original-record summary {
+  color: var(--muted);
+  font-size: 12px;
+}
+.readiness-context > summary .badge {
+  margin-inline-start: 8px;
+}
+.readiness-context .badge {
+  margin-inline-start: 8px;
+}
+.coordination-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.team-context > summary {
+  margin-block: 16px;
+}
+.dependency-neighborhood {
+  margin-block: 24px;
+}
+.dependency-neighborhood h3 {
+  font-size: 15px;
+}
+.dependency-neighborhood > details {
+  border-block-end: 1px solid var(--line);
+  padding-block: 8px;
+}
+.dependency-neighborhood summary {
+  font-size: 14px;
+}
+.dependency-neighborhood summary .muted {
+  margin-inline-start: 6px;
+}
+.dependency-neighborhood ul {
+  padding: 0;
+  margin-block: 8px;
+  list-style: none;
+}
+.dependency-neighborhood li {
+  padding-block: 8px;
+}
+.neighbor-task {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.neighbor-task .mono {
+  color: var(--muted);
+  font-size: 12px;
+}
+.neighbor-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-block-start: 5px;
+  font-size: 12px;
+}
+.neighbor-meta a {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 28px;
+}
+@media (max-width: 600px) {
+  .allocation-table th,
+  .allocation-table td {
+    padding: 6px 3px;
+  }
+  .allocation-table th:first-child {
+    inline-size: 40%;
+  }
+  .allocation-heading {
+    gap: 8px;
+  }
+}

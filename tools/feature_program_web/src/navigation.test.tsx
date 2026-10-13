@@ -55,6 +55,30 @@ async function hash(value: string) {
   });
 }
 describe('validated navigation context', () => {
+  it('shows identical evidence references once and preserves differing supplied metadata', async () => {
+    const reference = { path: 'evidence/one.md', sha256: 'abc', label: 'Verification source' };
+    const snapshot = {
+      ...fixture(),
+      references: [
+        reference,
+        { label: reference.label, sha256: 'abc', path: reference.path },
+        { ...reference, origin: 'independent reviewer' },
+        { ...reference, sha256: 'new-digest' },
+      ],
+    };
+    const original = JSON.stringify(snapshot);
+    await hash('#evidence/evidence%2Fone.md');
+    render(<App loader={async () => snapshot} />);
+    await screen.findByRole('heading', { name: 'Evidence record' });
+    const records = [...document.querySelectorAll('pre.source')].map((node) =>
+      JSON.parse(node.textContent || 'null'),
+    );
+    expect(records).toHaveLength(3);
+    expect(records).toContainEqual(reference);
+    expect(records).toContainEqual({ ...reference, origin: 'independent reviewer' });
+    expect(records).toContainEqual({ ...reference, sha256: 'new-digest' });
+    expect(JSON.stringify(snapshot)).toBe(original);
+  });
   it('round-trips scope/filters/order/page/size/selection and encoded record identity', () => {
     const context = {
       ...defaultContext,
