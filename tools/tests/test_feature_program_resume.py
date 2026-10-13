@@ -8,8 +8,11 @@ import sys
 
 import pytest
 
-from tools.tests.test_feature_program import Fixture, HEAD, fp
-from tools.tests.test_feature_program_phases import create_program, gate as gate
+# Collection must work from Server with CI's tools-only PYTHONPATH, independently of other tests.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from tools.tests.test_feature_program import Fixture, HEAD, fp  # noqa: E402
+from tools.tests.test_feature_program_phases import create_program, gate as gate  # noqa: E402
 
 
 @pytest.fixture
@@ -74,9 +77,33 @@ def standalone(fixture: Fixture, *args: str) -> subprocess.CompletedProcess[str]
         fixture.program.directory.relative_to(fixture.program.repo).as_posix(),
         *args,
     ]
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        command,
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     print("CLI", args, "exit", result.returncode, result.stdout, result.stderr)
     return result
+
+
+@pytest.mark.parametrize("use_server", [True, False])
+def test_standalone_cli_uses_checkout_from_different_parent_directory(
+    fixture: Fixture, monkeypatch: pytest.MonkeyPatch, use_server: bool
+) -> None:
+    # Given actual blocked ownership and the CI import path without the repository parent.
+    assert fixture.claim() == 0
+    block(fixture)
+    receipt = resolution(fixture)
+    monkeypatch.setenv("PYTHONPATH", str(fp.ROOT / "tools"))
+    monkeypatch.chdir(fp.ROOT / "Server" if use_server else fixture.program.repo)
+    # When a fresh CLI interpreter starts independently of the parent's current directory.
+    result = standalone(fixture, "resume", "S01", "--owner", "worker", "--receipt", receipt)
+    # Then it performs the actual guarded resolution rather than failing its package import.
+    assert result.returncode == 0, result.stderr
+    task = fixture.program.task(fixture.program.load(), "S01")
+    assert task["status"] == "active" and fixture.program.current_attempt(task)["number"] == 1
 
 
 def test_active_origin_resume_keeps_attempt_and_frozen_history(fixture: Fixture) -> None:

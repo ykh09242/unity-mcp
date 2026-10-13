@@ -14,7 +14,10 @@ from typing import Literal, assert_never
 
 import pytest
 
-from tools.tests.test_feature_program import Fixture, HEAD, fp
+# Collection must work from Server with CI's tools-only PYTHONPATH, independently of other tests.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from tools.tests.test_feature_program import Fixture, HEAD, fp  # noqa: E402
 
 phases = fp.phases
 
@@ -403,7 +406,7 @@ def test_succession_preserves_all_original_bytes_and_allows_successor_progress(
             "release",
             "S01",
             "--owner",
-            "leader",
+            "director",
             "--reason",
             "Return discovery to planned state",
             "--next-action",
