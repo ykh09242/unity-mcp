@@ -174,9 +174,12 @@ async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
 
     async def ready() -> None:
         await state.registered.wait()
-        (Path(args.directory) / "ready.json").write_text(
+        ready_path = Path(args.directory) / "ready.json"
+        pending_path = ready_path.with_name("ready.json.pending")
+        pending_path.write_text(
             json.dumps({"endpoint": endpoint, "pid": os.getpid()}), encoding="utf-8"
         )
+        pending_path.replace(ready_path)
 
     @asynccontextmanager
     async def lifespan(_server: FastMCP) -> AsyncIterator[None]:

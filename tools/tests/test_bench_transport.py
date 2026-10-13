@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import socket
+import textwrap
+import time
+from contextlib import asynccontextmanager
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -236,3 +240,274 @@ def test_actual_transports_when_owned_peers_complete_cancel_and_reconnect(tmp_pa
         assert state["commands"]["read_console"] == 9
         assert state["commands"]["get_editor_state"] == state["commands"]["get_test_job"] == 3
         assert result["warmed"]["large"]["output_bytes"] > 4194304
+
+
+@asynccontextmanager
+async def readiness_fixture(tmp_path: Path, monkeypatch, fault: str = ""):
+    """Launch the actual server, controlling only readiness publication boundaries."""
+    from tools import bench_transport as bench
+
+    directory = tmp_path / "http"
+    held = fault in {"", "deadline", "cancel"}
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    listener.settimeout(10)
+    control = None
+    process = None
+    observed = {"held": None, "released": False, "cleanup_called": False}
+    entered = anyio.Event()
+    original_process = anyio.open_process
+    original_sleep = anyio.sleep
+    original_cleanup = bench.cleanup_process
+    bootstrap = textwrap.dedent(
+        f"""
+        import json, os, socket, sys
+        from pathlib import Path
+        sys.dont_write_bytecode = True
+        directory = Path({str(directory)!r})
+        fault = {fault!r}
+        held = {held!r}
+        original_open = Path.open
+        original_write = Path.write_text
+        original_replace = Path.replace
+
+        def readiness_path(path):
+            return path.parent == directory and path.name in ('ready.json', 'ready.json.pending')
+
+        def controlled_open(path, *args, **kwargs):
+            stream = original_open(path, *args, **kwargs)
+            mode = args[0] if args else kwargs.get('mode', 'r')
+            if held and readiness_path(path) and mode == 'w':
+                with socket.create_connection(('127.0.0.1', {listener.getsockname()[1]}), timeout=20) as control:
+                    control.sendall((json.dumps({{'path': str(path), 'pid': os.getpid(),
+                        'final_exists': (directory / 'ready.json').exists()}}) + '\\n').encode())
+                    if control.recv(1) != b'x':
+                        raise RuntimeError('Readiness test control closed before release')
+            return stream
+
+        def controlled_write(path, data, *args, **kwargs):
+            if readiness_path(path):
+                if fault == 'exit':
+                    os._exit(17)
+                if fault == 'write':
+                    raise OSError('Owned readiness write failure')
+                if fault == 'malformed':
+                    data = '{{not-json'
+                if fault == 'pid':
+                    value = json.loads(data)
+                    data = json.dumps({{**value, 'pid': value['pid'] + 1}})
+            return original_write(path, data, *args, **kwargs)
+
+        def controlled_replace(path, target):
+            if readiness_path(path) and fault == 'replace':
+                raise OSError('Owned readiness replacement failure')
+            return original_replace(path, target)
+
+        Path.open = controlled_open
+        Path.write_text = controlled_write
+        Path.replace = controlled_replace
+        """
+    )
+
+    async def launch(command, **kwargs):
+        nonlocal process, control
+        command = list(command)
+        code_index = command.index("-c") + 1
+        command[code_index] = "exec(" + repr(bootstrap) + ");" + command[code_index]
+        kwargs["stdout"] = subprocess.PIPE
+        process = await original_process(command, **kwargs)
+        observed["process"] = process
+        if held:
+            control, _address = await anyio.to_thread.run_sync(listener.accept)
+            control.settimeout(20)
+
+            def receive():
+                data = bytearray()
+                while not data.endswith(b"\n"):
+                    chunk = control.recv(4096)
+                    if not chunk:
+                        raise RuntimeError("Readiness writer control disconnected")
+                    data.extend(chunk)
+                return json.loads(data)
+
+            observed["held"] = await anyio.to_thread.run_sync(receive)
+            entered.set()
+        return process
+
+    async def release_on_reader_poll(seconds):
+        if held and fault == "" and not observed["released"]:
+            control.sendall(b"x")
+            observed["released"] = True
+        await original_sleep(seconds)
+
+    async def observe_cleanup(child):
+        observed["cleanup_called"] = True
+        await original_cleanup(child)
+
+    options = bench.Options(
+        output=tmp_path / "measurement.json",
+        samples=1,
+        warmup=0,
+        large_bytes=262144,
+        work_ms=0,
+        concurrency=1,
+        order="http-first",
+    )
+    try:
+        with monkeypatch.context() as patches:
+            patches.setattr(anyio, "open_process", launch)
+            patches.setattr(anyio, "sleep", release_on_reader_poll)
+            patches.setattr(bench, "cleanup_process", observe_cleanup)
+            yield bench, options, directory, observed, entered
+        assert observed["cleanup_called"] is True
+        assert process.returncode is not None
+        with pytest.raises(anyio.ClosedResourceError):
+            await process.stdout.receive()
+        observed["pipe_closed"] = True
+    finally:
+        if control is not None:
+            control.close()
+        listener.close()
+        if process is not None:
+            await original_cleanup(process)
+
+
+@pytest.mark.asyncio
+async def test_readiness_is_complete_before_production_reader_observes_it(tmp_path, monkeypatch):
+    # The actual writer is held after opening its file, not after publication.
+    async with readiness_fixture(tmp_path, monkeypatch) as (bench, options, directory, observed, _):
+        result = await bench.measure_mode("http", options, directory)
+        assert observed["held"]["final_exists"] is False
+        assert Path(observed["held"]["path"]).name == "ready.json.pending"
+        assert observed["released"] is True
+        ready = json.loads((directory / "ready.json").read_text(encoding="utf-8"))
+        assert ready["pid"] == observed["process"].pid == result["fixture_metadata"]["pid"]
+        assert ready["endpoint"].startswith("http://127.0.0.1:")
+        assert not (directory / "ready.json.pending").exists()
+        assert result["mode"] == "http"
+        assert result["text_structured_parity"] is True
+        assert set(result["warmed"]) == {"small", "state", "large", "job"}
+        assert len(result["observations"]) == 10
+        state = result["lifecycle"]["after_reconnect"]
+        assert (state["pending"], state["retained"]) == (0, 0)
+        assert state["registrations"] == 2
+        assert result["lifecycle"]["partial_cancel"]["receiver_final_chunk_processed"] is True
+        print(
+            json.dumps({"readiness_held": observed["held"], "actual_transport": result}), flush=True
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["malformed", "pid", "exit", "write", "replace"])
+async def test_readiness_failure_stays_visible_and_owned_child_is_closed(
+    tmp_path, monkeypatch, fault
+):
+    async with readiness_fixture(tmp_path, monkeypatch, fault) as (
+        bench,
+        options,
+        directory,
+        observed,
+        _,
+    ):
+        # A failed background publication can leave the server alive; the unchanged
+        # reader then reports its bounded deadline rather than an exited child.
+        error = (
+            json.JSONDecodeError
+            if fault == "malformed"
+            else (RuntimeError, TimeoutError)
+            if fault in {"write", "replace"}
+            else RuntimeError
+        )
+        match = (
+            "Expecting"
+            if fault == "malformed"
+            else "forked"
+            if fault == "pid"
+            else None
+            if fault in {"write", "replace"}
+            else "exited"
+        )
+        with pytest.raises(error, match=match) as failure:
+            await bench.measure_mode("http", options, directory)
+        if fault in {"write", "replace"} and isinstance(failure.value, RuntimeError):
+            assert "exited" in str(failure.value)
+        if fault in {"exit", "write", "replace"}:
+            assert not (directory / "ready.json").exists()
+        if fault == "exit":
+            assert observed["process"].returncode == 17
+        if fault in {"write", "replace"}:
+            log = (directory / "server.stderr.log").read_text(encoding="utf-8")
+            assert (
+                f"Owned readiness {'write' if fault == 'write' else 'replacement'} failure" in log
+            )
+        if fault == "replace":
+            assert (
+                json.loads((directory / "ready.json.pending").read_text())["pid"]
+                == observed["process"].pid
+            )
+        print(
+            json.dumps(
+                {
+                    "fault": fault,
+                    "error": str(failure.value),
+                    "child_exit": observed["process"].returncode,
+                }
+            ),
+            flush=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_readiness_deadline_reaps_held_real_writer_without_publishing(tmp_path, monkeypatch):
+    # Exercise the production 15-second deadline, without shortening or replacing it.
+    async with readiness_fixture(tmp_path, monkeypatch, "deadline") as (
+        bench,
+        options,
+        directory,
+        observed,
+        _,
+    ):
+        started = time.monotonic()
+        with pytest.raises(TimeoutError):
+            await bench.measure_mode("http", options, directory)
+        elapsed = time.monotonic() - started
+        assert elapsed >= 15
+        assert observed["held"]["final_exists"] is False
+        assert not (directory / "ready.json").exists()
+        assert observed["released"] is False
+        print(
+            json.dumps(
+                {"deadline_elapsed_seconds": elapsed, "child_exit": observed["process"].returncode}
+            ),
+            flush=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_readiness_cancellation_reaps_held_real_writer(tmp_path, monkeypatch):
+    async with readiness_fixture(tmp_path, monkeypatch, "cancel") as (
+        bench,
+        options,
+        directory,
+        observed,
+        entered,
+    ):
+        scope = anyio.CancelScope()
+
+        async def measure():
+            with scope:
+                await bench.measure_mode("http", options, directory)
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(measure)
+            with anyio.fail_after(10):
+                await entered.wait()
+            scope.cancel()
+        assert scope.cancel_called is True
+        assert observed["held"]["final_exists"] is False
+        assert not (directory / "ready.json").exists()
+        print(
+            json.dumps({"readiness_cancelled": True, "child_exit": observed["process"].returncode}),
+            flush=True,
+        )
