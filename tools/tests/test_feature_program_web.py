@@ -18,6 +18,7 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 import feature_program_web as web  # noqa: E402
+from tools.tests import test_feature_program as program_helpers  # noqa: E402
 
 fp = web.feature_program
 
@@ -255,6 +256,198 @@ def test_http_refresh_observes_latest_files_and_recovers_from_errors(tmp_path):
     assert first["revision"] == "one"
     assert failed == 503
     assert second["revision"] == "two"
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_conditional_snapshot_is_bodyless_and_revalidates_every_request(method):
+    calls = []
+
+    def snapshot():
+        calls.append(len(calls))
+        return {"revision": "same", "generated_at": str(len(calls)), "tasks": []}
+
+    with running(web.DashboardServer("127.0.0.1", 0, snapshot)) as server:
+        first, first_headers, first_body = request(server)
+        status, headers, body = request(
+            server, method=method, headers={"If-None-Match": first_headers["ETag"]}
+        )
+    assert first == 200 and first_body
+    assert status == 304 and body == b""
+    assert len(calls) == 2
+    assert headers["ETag"] == first_headers["ETag"]
+    assert headers["Cache-Control"] == "no-store"
+    assert headers["Cross-Origin-Resource-Policy"] == "same-origin"
+    assert "Content-Length" not in headers and "Content-Type" not in headers
+
+
+def test_semantic_validator_covers_future_fields_and_nested_generation_times():
+    first = {"generated_at": "one", "future": {"generated_at": "semantic", "value": 1}}
+    same = {"future": {"value": 1, "generated_at": "semantic"}, "generated_at": "two"}
+    assert web.snapshot_etag(first) == web.snapshot_etag(same)
+    assert first["generated_at"] == "one"
+    for changed in [
+        {"future": {"generated_at": "changed", "value": 1}},
+        {"future": {"generated_at": "semantic", "value": 2}},
+        {**first, "new_field": []},
+        {**first, "integrity": {"status": "stale", "warnings": ["Source drift"]}},
+    ]:
+        assert web.snapshot_etag(first) != web.snapshot_etag(changed)
+    assert web.snapshot_etag({"items": [1, 2]}) != web.snapshot_etag({"items": [2, 1]})
+
+
+@pytest.mark.parametrize(
+    "validator,expected",
+    [
+        (lambda tag: tag, 304),
+        (lambda tag: tag.removeprefix("W/"), 304),
+        (lambda tag: f'"other,tag", {tag}', 304),
+        (lambda tag: f" , {tag}, , ", 304),
+        (lambda _tag: "*", 304),
+        (lambda _tag: 'W/"different"', 200),
+        (lambda _tag: "unquoted", 400),
+        (lambda _tag: "", 200),
+        (lambda _tag: " \t ", 200),
+        (lambda _tag: ", ,", 200),
+        (lambda tag: f"{tag}, invalid", 400),
+        (lambda tag: f"{tag} {tag}", 400),
+        (lambda tag: f"*, {tag}", 400),
+        (lambda tag: tag.replace("W/", "w/"), 400),
+        (lambda _tag: '"unterminated', 400),
+        (lambda _tag: '"contains space"', 400),
+        (lambda tag: f'{tag}, "' + "x" * web.MAX_VALIDATOR_BYTES + '"', 431),
+    ],
+)
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_conditional_validator_inputs_have_predictable_responses(validator, expected, method):
+    calls = []
+
+    def snapshot():
+        calls.append(True)
+        return {"tasks": []}
+
+    with running(web.DashboardServer("127.0.0.1", 0, snapshot)) as server:
+        tag = request(server)[1]["ETag"]
+        status, headers, body = request(
+            server, method=method, headers={"If-None-Match": validator(tag)}
+        )
+    assert status == expected
+    assert len(calls) == 2
+    if expected >= 400:
+        assert "ETag" not in headers
+    if method == "HEAD" or expected == 304:
+        assert body == b""
+
+
+def test_repeated_validator_headers_combine_as_one_list():
+    with running(web.DashboardServer("127.0.0.1", 0, lambda: {"tasks": []})) as server:
+        tag = request(server)[1]["ETag"]
+        with closing(HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)) as conn:
+            conn.putrequest("GET", "/api/snapshot")
+            conn.putheader("If-None-Match", '"different"')
+            conn.putheader("If-None-Match", tag)
+            conn.endheaders()
+            response = conn.getresponse()
+            assert response.status == 304 and response.read() == b""
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("validator", ["*", "malformed", "x" * 9000])
+def test_snapshot_failure_takes_priority_and_never_reuses_success(method, validator):
+    current = {"tasks": []}
+
+    def snapshot():
+        if current is None:
+            raise fp.ProgramError("private/path/failed.json")
+        return current
+
+    with running(web.DashboardServer("127.0.0.1", 0, snapshot)) as server:
+        first_tag = request(server)[1]["ETag"]
+        current = None
+        for value in [first_tag, validator]:
+            status, headers, body = request(server, method=method, headers={"If-None-Match": value})
+            assert status == 503 and "ETag" not in headers
+            assert b"private" not in body
+        current = {"tasks": []}
+        assert request(server, headers={"If-None-Match": first_tag})[0] == 304
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_conditional_snapshot_enforces_payload_bound_even_for_excluded_time(monkeypatch, method):
+    monkeypatch.setattr(web, "MAX_RESPONSE_BYTES", 100)
+    current = {"tasks": []}
+    with running(web.DashboardServer("127.0.0.1", 0, lambda: current)) as server:
+        tag = request(server)[1]["ETag"]
+        current["generated_at"] = "x" * 101
+        status, headers, body = request(server, method=method, headers={"If-None-Match": tag})
+    assert status == 503 and "ETag" not in headers
+    if method == "HEAD":
+        assert body == b""
+
+
+def test_conditional_real_snapshot_observes_source_projection_and_registry_drift(program):
+    before = fingerprints(program)
+    with running(web.create_server(program, Path("program"), port=0)) as server:
+        initial = request(server)
+        tag = initial[1]["ETag"]
+        revision = json.loads(initial[2])["revision"]
+        for path in [program / "source.md", program / "program" / "CHECKPOINT.md"]:
+            original = path.read_bytes()
+            try:
+                path.write_bytes(original + b"\nSynthetic independent drift\n")
+                status, headers, body = request(server, headers={"If-None-Match": tag})
+                data = json.loads(body)
+                assert status == 200 and headers["ETag"] != tag
+                assert data["revision"] == revision
+                assert data["integrity"]["status"] == "stale"
+            finally:
+                path.write_bytes(original)
+            assert request(server, headers={"If-None-Match": tag})[0] == 304
+        backlog = program / "program" / "backlog.json"
+        original = backlog.read_bytes()
+        try:
+            state = json.loads(original)
+            state["tasks"][0]["next_action"] = "Synthetic changed registry"
+            backlog.write_bytes(fp.canonical(state))
+            status, headers, body = request(server, headers={"If-None-Match": tag})
+            assert status == 200 and headers["ETag"] != tag
+            assert json.loads(body)["revision"] != revision
+        finally:
+            backlog.write_bytes(original)
+    assert fingerprints(program) == before
+
+
+def test_snapshot_head_preserves_current_representation_length():
+    with running(web.DashboardServer("127.0.0.1", 0, lambda: {"tasks": [], "value": 1})) as server:
+        get_status, get_headers, get_body = request(server)
+        status, headers, body = request(server, method="HEAD")
+    assert status == get_status == 200 and body == b""
+    assert headers["ETag"] == get_headers["ETag"]
+    assert int(headers["Content-Length"]) == len(get_body)
+
+
+def test_conditional_real_snapshot_rehashes_evidence_and_restores_validator(program, monkeypatch):
+    monkeypatch.setattr(program_helpers.fp, "git", lambda *_args: program_helpers.HEAD)
+    fixture = program_helpers.Fixture(
+        fp.Program(program, program / "program"), (program / "source.md").read_bytes()
+    )
+    assert fixture.claim("A1") == 0
+    path = fixture.program.path("evidence/A1/attempt-1/inspection.txt")
+    original = path.read_bytes()
+    with running(web.create_server(program, Path("program"), port=0)) as server:
+        initial = request(server)
+        tag = initial[1]["ETag"]
+        revision = json.loads(initial[2])["revision"]
+        try:
+            path.write_bytes(original + b"Synthetic changed evidence\n")
+            status, headers, body = request(server, headers={"If-None-Match": tag})
+            data = json.loads(body)
+            assert status == 200 and headers["ETag"] != tag
+            assert data["revision"] == revision
+            assert data["integrity"]["status"] == "stale"
+            assert any("Frozen evidence changed" in text for text in data["integrity"]["warnings"])
+        finally:
+            path.write_bytes(original)
+        assert request(server, headers={"If-None-Match": tag})[0] == 304
 
 
 def test_real_process_launch_is_loopback_read_only(program):
