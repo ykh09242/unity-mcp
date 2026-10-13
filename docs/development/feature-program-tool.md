@@ -557,6 +557,48 @@ Use a reasoned `reopen` for follow-up work after completion; a new claim needs r
 An independent reviewer should challenge acceptance and execution evidence. If a director
 performs self-review, identify that honestly and record the reason.
 
+### Resolving a blocked attempt
+
+Use `resume` after recording an actual blocker resolution. It keeps the current owner,
+attempt, claim baseline and settings; it does not transfer ownership or record approval.
+Inspect the bound template and write an immutable attempt-specific resolution receipt:
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example template TASK-1 --kind resume
+python tools/feature_program.py --program-dir .work/programs/example resume TASK-1 --owner worker-example --receipt evidence/TASK-1/attempt-1/resolution-1.json
+```
+
+The template is read-only and its empty evidence is not a passing resolution. Keep its
+`program_id`, `task_id`, saved `owner`, `attempt`, `expected_revision`, `definition_digest`,
+`block`, `origin`, exact `scope`, current `head` and `source_digest`. Supply `schema_version: 1`,
+`operation: "resume"`, a unique portable `id`, actual acting `actor_id`, nonblank resolution
+`reason` and `next_action`, and nonempty attempt-relative `evidence`. `block` binds the latest
+block through its zero-based `event_index` and canonical `event_digest`; a timestamp alone
+does not identify it. Refresh the receipt after any registry, definition, HEAD or source change.
+
+The tool derives the destination. An active-origin block resumes active even when implementation
+bytes changed. A review-origin block restores review only for the same exact submitted scoped
+bytes and valid frozen evidence. Changed submitted bytes return to active and clear the current
+submission pointer; the old immutable round remains and fresh submission/review is required.
+Resume grants neither approval nor completion. Repeated blocks retain their first episode origin.
+For older data the tool proves origin from the exact current-attempt event chain and proves scope
+from the original frozen claim/revalidation; ambiguous history requires release and a fresh claim.
+
+Current accepted definitions and readiness control resume. Unmet dependencies, scope/conflict
+collisions, disposition/exclusion, incomplete applicable succession, stale bindings, retired actors
+or relevant pending transfers reject. Accepted metadata evolution alone is not rejection. Claimed
+scope must remain unchanged; release and claim again for a different scope or owner. Fresh guards,
+source, evidence, revision and authority are rechecked before atomic publication. Precommit failure
+does not record a resolution. A rendering error after commit reports the committed revision: run
+`render` and inspect the resolution instead of retrying its ID.
+
+Owned notes, blocks, releases and resume permit the nonretired current owner or the currently
+accepted director. Reopen requires that director. With no director appointment, the supported
+legacy override is the literal `leader`; an invalid or retired appointment never falls back to it.
+New `reviewer_role: "leader"` reviews also require this current director/legacy authority and a
+reason. A self-review must use that honest role; the label alone grants no authority. Historical
+review receipts and staffing snapshots are preserved without replaying today's authority over them.
+
 ## People, categories and objectives
 
 Governance is optional for an existing registry. Each command below reads one UTF-8 JSON

@@ -213,6 +213,21 @@ Workers submit evidence bound to the source revision and scope. An independent r
 checks behavior, requirements and regressions. Fix findings, rerun affected checks and
 obtain a fresh review when the reviewed bytes change. Keep unsuccessful rounds in history.
 
+Resolve a task blocker with the guarded CLI `resume` when the current owner and claimed
+scope remain valid. Record the actual resolution, current accepted task definition/revision,
+fresh source and evidence, and exact block identity. The tool rechecks current prerequisites,
+collisions, phase/location and authority before restoring the same attempt. Accepted metadata
+evolution is assessed against current readiness rather than invented legacy definitions.
+
+Preserve whether blocking began during implementation or submitted review. Unchanged submitted
+bytes may return to review; changed bytes return to implementation with the old round retained
+and fresh submission/review required. Ambiguous legacy origin, changed scope or personnel transfer
+requires the supported release/fresh-claim path. A saved owner is not native-agent liveness proof.
+Owner actions and director overrides use current nonretired authority; a historical director or
+a role label cannot authorize a new override. Reopen remains a director action. Preserve old
+actors, settings, blockers, resolutions and evidence, and recover committed view errors with
+`render` instead of repeating a resolution.
+
 ## Handoffs and recovery
 
 A replacement begins with a durable outgoing record, or an explicitly marked reconstruction
