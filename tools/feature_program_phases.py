@@ -198,23 +198,8 @@ def _verify_planning(program: Program, state: Record, name: str) -> None:
     _planning().verify_planning(program, state)
 
 
-def guard_execution(
-    program: Program,
-    state: Record,
-    task_id: str,
-    scope: list[str],
-    *,
-    membership_check: bool = True,
-) -> None:
-    """Enforce gates inside claim/submit themselves, including direct API callers."""
-    if state.get("phases") is None:
-        return
-    goal = coordination._record(state.get("objective"), "objective")
-    if membership_check and goal.get("membership_revision") is not None:
-        require(
-            task_id in coordination._texts(goal.get("task_ids"), "members"),
-            "Task is excluded from amended current objective",
-        )
+def guard_baseline(program: Program, state: Record) -> Record:
+    """Prove current director acceptance independently of any task's eligibility."""
     program.require_current_location()
     phases = _current(program, state)
     inventory = coordination._record(phases.get("inventory"), "inventory")
@@ -233,6 +218,33 @@ def guard_execution(
         accepted.get("actor_id") == coordination.current_director_id(state),
         "Execution acceptance requires the current director",
     )
+    return accepted
+
+
+def guard_execution(
+    program: Program,
+    state: Record,
+    task_id: str,
+    scope: list[str],
+    *,
+    membership_check: bool = True,
+) -> None:
+    """Enforce gates inside claim/submit themselves, including direct API callers."""
+    tasks = _tasks(state)
+    require(task_id in tasks, "Unknown task")
+    require(
+        tasks[task_id].get("disposition") not in {"split", "retired"},
+        "Disposed work cannot execute",
+    )
+    if state.get("phases") is None:
+        return
+    goal = coordination._record(state.get("objective"), "objective")
+    if membership_check and goal.get("membership_revision") is not None:
+        require(
+            task_id in coordination._texts(goal.get("task_ids"), "members"),
+            "Task is excluded from amended current objective",
+        )
+    accepted = guard_baseline(program, state)
     units = coordination._indexed(accepted.get("units"), "accepted unit")
     require(task_id in units, "Task is outside accepted execution scope")
     allowed = coordination._texts(units[task_id]["scope"], "accepted scope")
@@ -316,14 +328,7 @@ def renew(
         coordination._record(state["phases"], "phases")["history"][-1]["transaction"] = (
             "prospective-renewal"
         )
-    first = next(iter(_tasks(state)))
-    guard_execution(
-        program,
-        state,
-        first,
-        coordination._texts(_tasks(state)[first]["candidate_paths"], "paths"),
-        membership_check=False,
-    )
+    guard_baseline(program, state)
 
 
 def apply_command(program: Program, state: Record, args: argparse.Namespace) -> bool:

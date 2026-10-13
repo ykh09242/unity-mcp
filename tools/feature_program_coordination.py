@@ -1056,6 +1056,10 @@ def amend_membership(state: Record, receipt: Record, admitted: list[str]) -> Non
             "Release owned work before removing membership",
         )
     for task_id in after:
+        _require(
+            tasks[task_id].get("disposition") not in {"split", "retired"},
+            "Disposed work cannot rejoin current membership",
+        )
         for dependency in _texts(tasks[task_id]["depends_on"], "dependencies"):
             _require(
                 dependency in after or tasks.get(dependency, {}).get("status") == "done",
