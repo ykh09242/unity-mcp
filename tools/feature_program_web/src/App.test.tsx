@@ -82,6 +82,60 @@ async function navigate(hash: string) {
 }
 
 describe('work program user outcomes', () => {
+  it.each([
+    ['en', 'Refresh', 'Loading program…', 'Refreshing…', 'Unavailable'],
+    ['ko', '새로고침', '프로그램 불러오는 중…', '갱신 중…', '사용 불가'],
+  ])(
+    'keeps header controls and localized status available across %s read states',
+    async (locale, refreshLabel, loading, refreshing, unavailable) => {
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      let release: ((response: SnapshotResponse) => void) | undefined;
+      const loader = vi.fn(
+        () =>
+          new Promise<SnapshotResponse>((resolve) => {
+            release = resolve;
+          }),
+      );
+      render(<App loader={loader} />);
+      const header = within(screen.getByRole('banner'));
+      const language = header.getByRole('combobox') as HTMLSelectElement;
+      const refresh = header.getByRole('button', { name: refreshLabel }) as HTMLButtonElement;
+      const status = header.getByRole('status');
+      expect(status.textContent).toBe(loading);
+      expect(refresh.disabled).toBe(true);
+      expect(language.value).toBe(locale);
+      await act(async () => {
+        release?.(new SnapshotResponse(200, 'one', fixture()));
+      });
+      const overview = screen.getByRole('heading', { name: locale === 'ko' ? '개요' : 'Overview' });
+      expect(overview.closest('.page-heading')?.querySelectorAll('h2').length).toBe(1);
+      expect(overview.closest('.page-heading')?.querySelector('.eyebrow')).toBeNull();
+      expect(overview.closest('main')?.querySelector('.intro')).toBeNull();
+      expect(overview.closest('.page-heading')?.querySelector('a')?.getAttribute('href')).toBe(
+        '#work',
+      );
+      expect(refresh.disabled).toBe(false);
+      const fetched = status.textContent;
+      fireEvent.click(refresh);
+      await waitFor(() => expect(status.textContent).toBe(refreshing));
+      expect(refresh.disabled).toBe(true);
+      expect(header.getByRole('combobox')).toBe(language);
+      expect(language.value).toBe(locale);
+      await act(async () => {
+        release?.(new SnapshotResponse(304, 'one'));
+      });
+      expect(refresh.disabled).toBe(false);
+      expect(status.textContent).not.toBe(refreshing);
+      expect(status.textContent?.split(' ')[0]).toBe(fetched?.split(' ')[0]);
+      loader.mockRejectedValueOnce(new Error('Read unavailable'));
+      fireEvent.click(refresh);
+      await waitFor(() => expect(status.textContent).toBe(unavailable));
+      expect(header.getByRole('button', { name: refreshLabel })).toBe(refresh);
+      expect(header.getByRole('combobox')).toBe(language);
+      expect(refresh.disabled).toBe(false);
+      expect(language.value).toBe(locale);
+    },
+  );
   it('preserves the question draft, focus and disclosure through refreshing304 and failed reads', async () => {
     // Given
     const user = userEvent.setup();
@@ -105,7 +159,7 @@ describe('work program user outcomes', () => {
         sessionLoader={async () => ({ responsesEnabled: true, nonce: 'synthetic' })}
       />,
     );
-    await screen.findByText('Where the work stands');
+    await screen.findByRole('heading', { name: 'Overview' });
     await navigate('#question/Q');
     const input = screen.getByLabelText('Your answer');
     await user.type(input, 'Keep the draft');
@@ -138,7 +192,7 @@ describe('work program user outcomes', () => {
   it('locates tasks by category and status, preserves filters and selection when returning from a task page', async () => {
     const user = userEvent.setup();
     render(<App loader={async () => fixture()} />);
-    await screen.findByText('Where the work stands');
+    await screen.findByRole('heading', { name: 'Overview' });
     await navigate('#work');
     await user.click(screen.getByRole('button', { name: 'Parser, 0 of 2 reviewed' }));
     await user.selectOptions(screen.getByLabelText('Status'), 'active');
@@ -158,7 +212,7 @@ describe('work program user outcomes', () => {
     const user = userEvent.setup();
     const loader = vi.fn().mockResolvedValue(fixture());
     render(<App loader={loader} />);
-    await screen.findByText('Where the work stands');
+    await screen.findByRole('heading', { name: 'Overview' });
     await navigate('#work');
     await user.type(screen.getByLabelText('Search tasks'), 'parser');
     const search = screen.getByLabelText('Search tasks');
@@ -181,7 +235,7 @@ describe('work program user outcomes', () => {
   });
   it('shows pending handoff without activating its successor and unknown model metadata', async () => {
     render(<App loader={async () => fixture()} />);
-    await screen.findByText('Where the work stands');
+    await screen.findByRole('heading', { name: 'Overview' });
     await navigate('#task/A1');
     expect(screen.getByText('Pending acknowledgement')).toBeDefined();
     expect(
@@ -219,7 +273,7 @@ describe('work program user outcomes', () => {
     await screen.findByText('Program unavailable');
     loader.mockResolvedValue(fixture());
     await user.click(screen.getByRole('button', { name: 'Refresh' }));
-    await screen.findByText('Where the work stands');
+    await screen.findByRole('heading', { name: 'Overview' });
     await navigate('#work');
     await user.type(screen.getByLabelText('Search tasks'), 'missing-task');
     await screen.findByText('No tasks match these filters. Clear filters to see all work.');
@@ -274,7 +328,7 @@ describe('work program user outcomes', () => {
       ),
     };
     render(<App loader={async () => changed} />);
-    await screen.findByText('Where the work stands');
+    await screen.findByRole('heading', { name: 'Overview' });
     await navigate('#task/A1');
     const panel = screen.getByRole('heading', { name: 'Recorded assignment' }).parentElement;
     if (!panel) throw new Error('Assignment panel missing');
@@ -298,7 +352,7 @@ describe('work program user outcomes', () => {
         })}
       />,
     );
-    await screen.findByText('Where the work stands');
+    await screen.findByRole('heading', { name: 'Overview' });
     await navigate('#task/A1');
     expect(screen.getByText('Depends on')).toBeDefined();
     expect(screen.getByText('Related tasks · advisory')).toBeDefined();
@@ -327,7 +381,7 @@ describe('work program user outcomes', () => {
         })}
       />,
     );
-    await screen.findByText('Where the work stands');
+    await screen.findByRole('heading', { name: 'Overview' });
     await navigate('#work');
     const ledger = document.querySelector('.task-list')! as HTMLElement;
     expect(within(ledger).queryByText(standard)).toBeNull();
@@ -368,7 +422,7 @@ describe('work program user outcomes', () => {
         />,
       );
       await screen.findByRole('heading', {
-        name: locale === 'ko' ? '현재 작업 상태' : 'Where the work stands',
+        name: locale === 'ko' ? '개요' : 'Overview',
       });
       await navigate('#task/A1');
       await userEvent.click(

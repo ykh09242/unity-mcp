@@ -418,7 +418,7 @@ describe('researched navigation outcomes', () => {
   it('supports keyboard local search entry/exit and records-only evidence routes', async () => {
     const user = userEvent.setup();
     render(<App loader={async () => fixture()} />);
-    await screen.findByText('Where the work stands');
+    await screen.findByRole('heading', { name: 'Overview' });
     await user.keyboard('{Control>}k{/Control}');
     const input = screen.getByLabelText(/Find task, person/);
     await waitFor(() => expect(document.activeElement).toBe(input));
@@ -445,7 +445,7 @@ describe('compact navigation accessibility', () => {
       ],
     });
     render(<App loader={async () => snapshot} />);
-    await screen.findByText('Where the work stands');
+    await screen.findByRole('heading', { name: 'Overview' });
     await user.keyboard('{Control>}k{/Control}');
     const input = screen.getByLabelText(/Find task, person/);
     await waitFor(() => expect(document.activeElement).toBe(input));
@@ -465,7 +465,7 @@ describe('compact navigation accessibility', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 360 });
     const user = userEvent.setup();
     render(<App loader={async () => fixture()} />);
-    await screen.findByRole('heading', { name: 'Where the work stands' });
+    await screen.findByRole('heading', { name: 'Overview' });
     const disclosure = document.querySelector('.navigation-search-disclosure');
     expect(disclosure?.hasAttribute('open')).toBe(false);
     await user.keyboard('{Control>}k{/Control}');

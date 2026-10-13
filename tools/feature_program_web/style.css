@@ -135,12 +135,23 @@ a {
   color: var(--body);
 }
 .refresh {
-  display: flex;
+  display: grid;
+  grid-template-columns: 11rem auto 40px;
   align-items: center;
-  flex-wrap: wrap;
   gap: var(--s3);
   color: var(--muted);
   font-size: 12px;
+}
+.refresh-status {
+  min-inline-size: 0;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.overview-heading {
+  align-items: center;
+}
+.overview-heading h2 {
+  margin: 0;
 }
 .language-control {
   flex: 0 0 auto;
@@ -986,6 +997,7 @@ summary {
 }
 .work-workspace > * {
   inline-size: 100%;
+  max-inline-size: none;
   margin-inline: 0;
 }
 .work-heading h2 {
@@ -1160,6 +1172,11 @@ summary {
   padding-inline-start: 0;
   border-inline-start: 0;
 }
+.detail-pane .prose,
+.detail-pane .prose-list,
+.detail-pane .next-action {
+  max-inline-size: 70ch;
+}
 .detail-heading h2 {
   font-size: 24px;
 }
@@ -1196,7 +1213,7 @@ summary {
     flex: 1;
   }
   .work-stage.has-preview {
-    grid-template-columns: minmax(0, 1.2fr) minmax(340px, 1fr);
+    grid-template-columns: minmax(0, 1fr) clamp(340px, 42%, 680px);
   }
   .ledger-pane,
   .detail-pane {
@@ -1346,11 +1363,17 @@ summary {
 /* Work scan: primary facts stay in the ledger; authored prose remains in detail. */
 .sr-only {
   position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
   inline-size: 1px;
   block-size: 1px;
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+.recorded-attention:lang(ko) p {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 .work-heading h2 {
   font-size: 22px;
@@ -1651,9 +1674,16 @@ summary {
     gap: 8px;
     flex-wrap: nowrap;
   }
-  .brand-title,
-  .refresh > [role='status'] {
+  .brand-title {
     display: none;
+  }
+  .refresh-status {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .brand {
     display: block;
@@ -1663,7 +1693,7 @@ summary {
   }
   .refresh {
     gap: 6px;
-    flex-wrap: nowrap;
+    grid-template-columns: auto 40px;
   }
   .language-control {
     font-size: 0;
@@ -1887,8 +1917,8 @@ select {
 }
 
 .utility-icon {
-  inline-size: 19px;
-  block-size: 19px;
+  inline-size: 18px;
+  block-size: 18px;
   flex: none;
 }
 .icon-control,
@@ -1897,10 +1927,11 @@ select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  inline-size: 36px;
-  min-inline-size: 36px;
-  block-size: 36px;
-  padding: 7px;
+  inline-size: 40px;
+  min-inline-size: 40px;
+  block-size: 40px;
+  min-block-size: 40px;
+  padding: 0;
   text-decoration: none;
 }
 .icon-control::after {
