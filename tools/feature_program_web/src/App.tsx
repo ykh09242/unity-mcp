@@ -27,7 +27,10 @@ import {
 } from './history-ui';
 import { useSnapshot } from './useSnapshot';
 import type { SnapshotLoader } from './useSnapshot';
-import { QuestionForm, useSession } from './questions';
+import { QuestionForm, MissingQuestionDraft, useSession } from './questions';
+import { QuestionDraftProvider, questionDraftKey, useQuestionDrafts } from './question-drafts';
+import { QuestionList, QuestionLinks } from './question-list';
+import { questionListIdentity } from './question-state';
 import type { AnswerSaver, SessionLoader } from './questions';
 import { pageSize, pageSizes, taskPage, taskPageIndex } from './paging';
 import type { WorkFocusRequest, WorkPage } from './paging';
@@ -57,7 +60,9 @@ export function App(props: {
 }) {
   return (
     <LanguageProvider>
-      <Dashboard {...props} />
+      <QuestionDraftProvider>
+        <Dashboard {...props} />
+      </QuestionDraftProvider>
     </LanguageProvider>
   );
 }
@@ -759,12 +764,14 @@ function Handoff({ handoff }: { readonly handoff: JsonRecord }) {
   );
 }
 function TaskDetail({
+  context = defaultContext,
   snapshot,
   taskId,
   returnHref = '#work',
   fullHref,
   onReturn,
 }: {
+  readonly context?: WorkContext;
   readonly snapshot: Snapshot;
   readonly taskId?: string;
   readonly returnHref?: string;
@@ -902,6 +909,7 @@ function TaskDetail({
               <pre className="source">{i18n.display(source)}</pre>
             </details>
           </Section>
+          <QuestionLinks snapshot={snapshot} taskId={taskId} context={context} />
           <DependencyNeighborhood snapshot={snapshot} task={task} />
           <ReadinessContext snapshot={snapshot} task={task} />
           <CoordinationNotes task={task} />
@@ -1081,62 +1089,6 @@ function Team({
   );
 }
 
-function Questions({ snapshot }: { readonly snapshot: Snapshot }) {
-  const i18n = useI18n();
-  const questions = [...snapshotIndex(snapshot).questions.values()];
-  if (!questions.length) return null;
-  const pending = questions.filter((question) => question.status === 'open');
-  const current = questions.filter((question) => question.status !== 'resolved');
-  const past = questions.filter((question) => question.status === 'resolved');
-  const row = (question: JsonRecord) => (
-    <a
-      className="question-row"
-      key={string(question.id)}
-      href={`#question/${encodeURIComponent(string(question.id))}`}
-    >
-      <strong>{i18n.display(question.prompt)}</strong>
-      <span className="muted">
-        {question.status === 'open'
-          ? i18n.t('Needs your answer')
-          : question.status === 'answered'
-            ? i18n.t('Saved · awaiting acknowledgement')
-            : question.status === 'acknowledged'
-              ? i18n.t('Acknowledged · awaiting application')
-              : record(question.outcome).kind === 'withdrawn'
-                ? i18n.t('Withdrawn')
-                : i18n.t('Applied')}
-      </span>
-    </a>
-  );
-  return (
-    <section className="question-inbox">
-      <div className="question-inbox-heading">
-        <h3>{i18n.t('Director questions')}</h3>
-        <span className="badge">
-          {pending.length} {i18n.t('awaiting your answer')}
-        </span>
-      </div>
-      {current.slice(0, 3).map(row)}
-      {current.length > 3 && (
-        <details>
-          <summary>
-            {i18n.t('More current questions')} ({i18n.number(current.length - 3)})
-          </summary>
-          {current.slice(3).map(row)}
-        </details>
-      )}
-      {past.length > 0 && (
-        <details>
-          <summary>
-            {i18n.t('Question history')} ({i18n.number(past.length)})
-          </summary>
-          {past.map(row)}
-        </details>
-      )}
-    </section>
-  );
-}
-
 function Dashboard({
   loader,
   sessionLoader,
@@ -1153,6 +1105,14 @@ function Dashboard({
     i18n.setProgramLanguage(language(programLanguage));
   }, [programLanguage, i18n.setProgramLanguage]);
   const session = useSession(sessionLoader);
+  const drafts = useQuestionDrafts();
+  const [questionFiltersOpen, setQuestionFiltersOpen] = useState(false);
+  const questionOrigin = useRef<{
+    id: string;
+    list: string;
+    mainScroll: number;
+    documentScroll: number;
+  } | null>(null);
   const [navigation, setNavigation] = useState<Navigation>(() =>
     parseNavigation(window.location.hash),
   );
@@ -1210,6 +1170,13 @@ function Dashboard({
     const changed = () => {
       const previous = currentNavigation.current;
       let next = parseNavigation(window.location.hash, snapshot, previous);
+      if (previous.route.view === 'questions' && next.route.view === 'question')
+        questionOrigin.current = {
+          id: next.route.questionId || '',
+          list: questionListIdentity(previous.questions),
+          mainScroll: main.current?.scrollTop || 0,
+          documentScroll: window.scrollY,
+        };
       if (next.route.view === 'work' && previous.route.view === 'task') {
         const origin = listOrigin.current;
         const sameList =
@@ -1261,6 +1228,7 @@ function Dashboard({
     setPreferences(saved.preferences);
     setStorageUnavailable(saved.unavailable);
     if (previousProgram.current && previousProgram.current !== snapshot.program_id) {
+      setQuestionFiltersOpen(false);
       commit({ ...defaultContext, route: { view: 'overview' }, issues: [], explicit: false }, true);
       setFocusRequest(null);
       listOrigin.current = null;
@@ -1282,6 +1250,7 @@ function Dashboard({
               ...parseNavigation(preset.hash, snapshot),
               route: explicit.route,
               selected: explicit.route.taskId || explicit.selected,
+              questions: explicit.questions,
             }
           : explicit;
       setNavigation(
@@ -1298,7 +1267,10 @@ function Dashboard({
         route.view === 'task'
           ? main.current?.querySelector<HTMLElement>('.detail-heading h2,.not-found') ||
             main.current
-          : main.current;
+          : route.view === 'question'
+            ? main.current?.querySelector<HTMLElement>('.question-heading h2,.not-found') ||
+              main.current
+            : main.current;
       target?.focus({ preventScroll: true });
       if (route.view === 'task') {
         const pane = main.current?.querySelector('.detail-pane');
@@ -1307,6 +1279,32 @@ function Dashboard({
       }
     }
     initialized.current = true;
+    if (route.view === 'question' && snapshot) {
+      const entry = drafts.peek(questionDraftKey(snapshot.program_id, route.questionId || ''));
+      const input = main.current?.querySelector<HTMLTextAreaElement>('[data-question-answer]');
+      if (input && entry?.selection) {
+        input.focus();
+        input.setSelectionRange(entry.selection.start, entry.selection.end);
+      } else {
+        main.current
+          ?.querySelector('.question-heading,.not-found')
+          ?.scrollIntoView?.({ block: 'start' });
+      }
+    }
+    if (route.view === 'questions' && questionOrigin.current) {
+      const origin = questionOrigin.current;
+      questionOrigin.current = null;
+      if (origin.list !== questionListIdentity(navigation.questions)) return;
+      const row = [
+        ...(main.current?.querySelectorAll<HTMLElement>('[data-question-id]') || []),
+      ].find((item) => item.dataset.questionId === origin.id);
+      row?.focus({ preventScroll: true });
+      const frame = requestAnimationFrame(() => {
+        if (main.current) main.current.scrollTop = origin.mainScroll;
+        if (window.scrollY !== origin.documentScroll) window.scrollTo(0, origin.documentScroll);
+      });
+      return () => cancelAnimationFrame(frame);
+    }
   }, [route.view, route.taskId, route.questionId, selected, Boolean(snapshot)]);
   const integrity = record(snapshot?.integrity);
   const stale = integrity.status === 'stale';
@@ -1454,7 +1452,11 @@ function Dashboard({
     else if (route.view === 'overview')
       content = (
         <>
-          <Questions snapshot={snapshot} />
+          <QuestionLinks
+            snapshot={snapshot}
+            objectiveId={string(record(snapshot.objective).id)}
+            context={navigation}
+          />
           <RecordedAttention snapshot={snapshot} />
           <Overview snapshot={snapshot} />
         </>
@@ -1518,6 +1520,7 @@ function Dashboard({
               route.view === 'task' && (
                 <TaskDetail
                   snapshot={snapshot}
+                  context={navigation}
                   taskId={route.taskId}
                   onReturn={returnToWork}
                   returnHref={navigationHash(
@@ -1539,6 +1542,7 @@ function Dashboard({
       content = (
         <TaskDetail
           snapshot={snapshot}
+          context={navigation}
           taskId={route.taskId}
           onReturn={returnToWork}
           returnHref={navigationHash(
@@ -1550,7 +1554,16 @@ function Dashboard({
           )}
         />
       );
-    else if (route.view === 'questions') content = <Questions snapshot={snapshot} />;
+    else if (route.view === 'questions')
+      content = (
+        <QuestionList
+          snapshot={snapshot}
+          context={navigation}
+          onContext={changeContext}
+          filtersOpen={questionFiltersOpen}
+          onFiltersOpen={setQuestionFiltersOpen}
+        />
+      );
     else if (route.view === 'evidence') {
       const supplied = snapshotIndex(snapshot).evidenceByPath.get(route.evidencePath || '');
       const references = supplied?.filter(
@@ -1587,13 +1600,17 @@ function Dashboard({
       const question = snapshotIndex(snapshot).questions.get(route.questionId || '');
       content = (
         <>
-          <a className="back-link" href="#overview">
-            {i18n.t('Back to overview')}
-          </a>
+          <IconLink
+            icon="back"
+            label={i18n.t('Back to questions')}
+            href={navigationHash({ view: 'questions' }, navigation)}
+          />
           {question ? (
             <QuestionForm
               key={string(question.id)}
               question={question}
+              programId={snapshot.program_id}
+              context={navigation}
               session={session}
               saver={answerSaver}
               refresh={refresh}
@@ -1602,8 +1619,12 @@ function Dashboard({
             <>
               <h2>{i18n.t('Question not available')}</h2>
               <p className="empty">
-                {i18n.t('Return to Overview to inspect current director questions.')}
+                {i18n.t('Return to Questions to inspect the current records.')}
               </p>
+              <MissingQuestionDraft
+                programId={snapshot.program_id}
+                questionId={route.questionId || ''}
+              />
             </>
           )}
         </>

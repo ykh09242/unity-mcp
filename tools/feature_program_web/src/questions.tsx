@@ -1,5 +1,10 @@
 import { useI18n } from './i18n';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useQuestionDraft, questionDraftKey, useQuestionDrafts } from './question-drafts';
+import { questionStage, questionStageLabel } from './question-state';
+import { navigationHash, defaultContext } from './navigation';
+import type { WorkContext } from './navigation';
+import { OriginalRecord } from './readiness-ui';
 import { items, record, string } from './model';
 import type { JsonRecord } from './model';
 
@@ -69,81 +74,99 @@ export function QuestionForm({
   session,
   saver = saveAnswer,
   refresh,
+  programId = 'standalone-question',
+  context = defaultContext,
 }: {
+  readonly programId?: string;
+  readonly context?: WorkContext;
   readonly question: JsonRecord;
   readonly session: Session | null;
   readonly saver?: AnswerSaver;
   readonly refresh: () => Promise<void>;
 }) {
   const i18n = useI18n();
-  const [answer, setAnswer] = useState('');
-  const [version, setVersion] = useState(Number(question.version));
-  const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [failure, setFailure] = useState<'conflict' | 'unavailable' | null>(null);
-  const submission = useRef<{
-    readonly id: string;
-    readonly answer: string;
-    readonly version: number;
-  } | null>(null);
-  const pending = useRef(false);
+  const formRoot = useRef<HTMLElement>(null);
+  const savedHeading = useRef<HTMLHeadingElement>(null);
+  const failureMessage = useRef<HTMLParagraphElement>(null);
+  const submitFocus = useRef<HTMLElement | null>(null);
+  const answerTarget = useRef<HTMLLabelElement>(null);
+  const options = items(question.options);
+  const longChoices = options.length > 4 || options.map(string).join('').length > 600;
+  const key = questionDraftKey(programId, string(question.id));
+  const { draft, store } = useQuestionDraft(key, Number(question.version));
+  const { answer, version } = draft;
+  const busy = draft.phase === 'saving';
+  const setAnswer = (value: string) => store.update(key, { answer: value, phase: 'editing' });
   const status = string(question.status);
   const recordedAnswer = record(question.answer);
+  const confirmed = Boolean(
+    draft.submission &&
+    recordedAnswer.submission_id === draft.submission.submission_id &&
+    recordedAnswer.question_id === draft.submission.question_id &&
+    recordedAnswer.version === draft.submission.version &&
+    recordedAnswer.answer === draft.submission.answer,
+  );
+  const saved = draft.phase === 'saved' || confirmed;
+  const failure =
+    !confirmed && (draft.phase === 'conflict' || draft.phase === 'unavailable')
+      ? draft.phase
+      : null;
   const acknowledgement = record(question.acknowledgement);
   const outcome = record(question.outcome);
   const withdrawn = outcome.kind === 'withdrawn';
   const waiting = status === 'answered' || (saved && status === 'open');
-  const changed = version !== Number(question.version);
-  const canAnswer = session?.responsesEnabled && session.nonce && status === 'open' && !saved;
+  const validVersion =
+    Number.isSafeInteger(Number(question.version)) && Number(question.version) > 0;
+  const changed = validVersion && version !== Number(question.version);
+  const canAnswer =
+    session?.responsesEnabled && session.nonce && status === 'open' && !saved && validVersion;
+  useEffect(() => {
+    // A result belongs to this explicit interaction, never to a later focus or route.
+    const moved = (event: Event) => {
+      if (!submitFocus.current || event.target === submitFocus.current) return;
+      if (
+        event.type === 'focusin' &&
+        (event.target === document.body || event.target === document.documentElement)
+      )
+        return;
+      submitFocus.current = null;
+    };
+    document.addEventListener('focusin', moved);
+    document.addEventListener('pointerdown', moved, true);
+    return () => {
+      submitFocus.current = null;
+      document.removeEventListener('focusin', moved);
+      document.removeEventListener('pointerdown', moved, true);
+    };
+  }, [key]);
+  useEffect(() => {
+    const origin = submitFocus.current;
+    if (!origin || (!saved && !failure)) return;
+    submitFocus.current = null;
+    if (document.activeElement !== document.body && document.activeElement !== origin) return;
+    if (saved) savedHeading.current?.focus();
+    else if (origin.isConnected && !origin.matches(':disabled'))
+      origin.focus({ preventScroll: true });
+    else failureMessage.current?.focus();
+  }, [saved, failure, draft]);
+  const save = async () => {
+    if (!session?.responsesEnabled || !session.nonce || busy) return;
+    const active = document.activeElement;
+    submitFocus.current =
+      active instanceof HTMLElement && formRoot.current?.contains(active) ? active : null;
+    if (await store.submit(key, { questionId: string(question.id), nonce: session.nonce, saver }))
+      await refresh();
+  };
   const submit = async () => {
-    if (
-      !canAnswer ||
-      !session?.nonce ||
-      pending.current ||
-      !answer.trim() ||
-      answer.length > 4000 ||
-      changed
-    )
-      return;
-    pending.current = true;
-    setBusy(true);
-    setFailure(null);
-    if (
-      !submission.current ||
-      submission.current.answer !== answer ||
-      submission.current.version !== version
-    )
-      submission.current = { id: crypto.randomUUID(), answer, version };
-    try {
-      const result = await saver(
-        { question_id: string(question.id), version, answer, submission_id: submission.current.id },
-        session.nonce,
-      );
-      if (result.ok) {
-        setSaved(true);
-        await refresh();
-      } else setFailure(result.conflict ? 'conflict' : 'unavailable');
-    } catch {
-      setFailure('unavailable');
-    } finally {
-      pending.current = false;
-      setBusy(false);
-    }
+    if (!canAnswer || changed) return;
+    await save();
   };
   return (
-    <section className="question-form" aria-label={i18n.t('Director question')}>
+    <section ref={formRoot} className="question-form" aria-label={i18n.t('Director question')}>
       <div className="question-heading">
-        <h2>{i18n.display(question.prompt)}</h2>
+        <h2 tabIndex={-1}>{i18n.display(question.prompt)}</h2>
         <span className="badge">
-          {withdrawn
-            ? i18n.t('Withdrawn')
-            : waiting
-              ? i18n.t('Answer saved')
-              : status === 'open'
-                ? i18n.t('Needs your answer')
-                : status === 'acknowledged'
-                  ? i18n.t('Director acknowledged')
-                  : i18n.t('Applied')}
+          {i18n.t(waiting ? 'Answer saved' : questionStageLabel[questionStage(question)])}
         </span>
       </div>
       <p className="question-why">{i18n.display(question.why, 'No explanation recorded')}</p>
@@ -163,9 +186,45 @@ export function QuestionForm({
         <div>
           <dt>{i18n.t('Affected tasks')}</dt>
           <dd>
-            {items(question.affected_task_ids)
-              .map((item) => i18n.display(item))
-              .join(', ') || i18n.t('None recorded')}
+            {items(question.affected_task_ids).map((item) => (
+              <a
+                key={string(item)}
+                href={navigationHash(
+                  { view: 'task', taskId: string(item) },
+                  { ...context, selected: string(item) },
+                )}
+              >
+                {string(item)}{' '}
+              </a>
+            ))}
+            {!items(question.affected_task_ids).length && i18n.t('None recorded')}
+          </dd>
+        </div>
+        <div>
+          <dt>{i18n.t('Goal')}</dt>
+          <dd>
+            {string(question.objective_id) ? (
+              <a
+                href={navigationHash(
+                  { view: 'questions' },
+                  {
+                    ...context,
+                    questions: {
+                      view: 'all',
+                      search: '',
+                      state: '',
+                      task: '',
+                      selected: string(question.id),
+                      goal: string(question.objective_id),
+                    },
+                  },
+                )}
+              >
+                {string(question.objective_id)}
+              </a>
+            ) : (
+              i18n.t('Not recorded')
+            )}
           </dd>
         </div>
       </dl>
@@ -176,6 +235,30 @@ export function QuestionForm({
             void submit();
           }}
         >
+          {!session?.responsesEnabled && (
+            <p className="muted">
+              {i18n.t(
+                session === null
+                  ? 'Checking answer availability…'
+                  : 'Responses are disabled for this server. Task records remain readable.',
+              )}
+            </p>
+          )}
+          {longChoices && (
+            <button
+              type="button"
+              className="answer-jump"
+              onClick={() => {
+                const target = answerTarget.current;
+                target?.scrollIntoView?.({ block: 'start' });
+                const input = target?.querySelector('textarea');
+                if (input && !input.disabled) input.focus({ preventScroll: true });
+                else target?.focus({ preventScroll: true });
+              }}
+            >
+              {i18n.t('Write answer')}
+            </button>
+          )}
           {items(question.options).length > 0 && (
             <fieldset className="question-options">
               <legend>{i18n.t('Suggested choices')}</legend>
@@ -193,10 +276,19 @@ export function QuestionForm({
               </div>
             </fieldset>
           )}
-          <label>
+          <label ref={answerTarget} tabIndex={-1}>
             {i18n.t('Your answer')}
             <textarea
+              data-question-answer={string(question.id)}
               value={answer}
+              onSelect={(event) =>
+                store.update(key, {
+                  selection: {
+                    start: event.currentTarget.selectionStart,
+                    end: event.currentTarget.selectionEnd,
+                  },
+                })
+              }
               maxLength={4000}
               rows={5}
               onChange={(event) => setAnswer(event.target.value)}
@@ -204,10 +296,12 @@ export function QuestionForm({
               disabled={busy || !session?.responsesEnabled}
             />
           </label>
-          <p className="muted">
-            {answer.length}
-            {i18n.t('/4000 characters. Responses are stored in the local program.')}
-          </p>
+          <p className="muted">{i18n.t('{count} / 4000 characters', { count: answer.length })}</p>
+          {!validVersion && (
+            <p role="alert">
+              {i18n.t('The question version is unavailable. Your draft cannot be saved yet.')}
+            </p>
+          )}
           {changed && (
             <div className="question-error">
               <p>
@@ -217,20 +311,18 @@ export function QuestionForm({
               </p>
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => {
-                  setVersion(Number(question.version));
-                  submission.current = null;
-                  setFailure(null);
+                  store.update(key, {
+                    version: Number(question.version),
+                    submission: null,
+                    phase: 'editing',
+                  });
                 }}
               >
                 {i18n.t('Use current question version')}
               </button>
             </div>
-          )}
-          {!session?.responsesEnabled && (
-            <p className="muted">
-              {i18n.t('Responses are disabled for this server. Task records remain readable.')}
-            </p>
           )}
           <button type="submit" disabled={!canAnswer || busy || !answer.trim() || changed}>
             {busy ? i18n.t('Saving answer…') : i18n.t('Save answer')}
@@ -238,9 +330,14 @@ export function QuestionForm({
         </form>
       ) : (
         <div className="response-record">
-          {!withdrawn && (
+          {(Object.keys(recordedAnswer).length > 0 ||
+            saved ||
+            status === 'answered' ||
+            status === 'acknowledged') && (
             <>
-              <h3>{i18n.t('Your saved answer')}</h3>
+              <h3 ref={savedHeading} tabIndex={-1}>
+                {i18n.t('Your saved answer')}
+              </h3>
               <p className="prose">
                 {i18n.display(recordedAnswer.answer, saved ? answer : i18n.t('Not recorded'))}
               </p>
@@ -261,14 +358,48 @@ export function QuestionForm({
           )}
           {status === 'resolved' && (
             <>
-              <h3>{withdrawn ? i18n.t('Question withdrawn') : i18n.t('Applied outcome')}</h3>
+              <h3>
+                {i18n.t(
+                  withdrawn
+                    ? 'Question withdrawn'
+                    : outcome.kind === 'applied'
+                      ? 'Applied outcome'
+                      : 'Recorded outcome',
+                )}
+              </h3>
               <p className="prose">{i18n.display(outcome.summary)}</p>
             </>
           )}
         </div>
       )}
+      {status !== 'open' && items(question.options).length > 0 && (
+        <details className="recorded-options">
+          <summary>
+            {i18n.t('Suggested choices')} ({items(question.options).length})
+          </summary>
+          <ol>
+            {items(question.options).map((option, index) => (
+              <li key={index}>{string(option)}</li>
+            ))}
+          </ol>
+        </details>
+      )}
+      {status !== 'open' &&
+        !saved &&
+        failure === 'unavailable' &&
+        draft.submission &&
+        draft.answer === draft.submission.answer &&
+        draft.version === draft.submission.version && (
+          <button
+            type="button"
+            disabled={busy || !session?.responsesEnabled || !session.nonce}
+            onClick={() => void save()}
+          >
+            {i18n.t('Check save confirmation')}
+          </button>
+        )}
       {failure && (
-        <p className="question-error" role="alert">
+        <p ref={failureMessage} tabIndex={-1} className="question-error" role="alert">
           {failure === 'conflict'
             ? i18n.t(
                 'The question changed or closed before this answer was saved. Refresh, then review its current state. Your draft is preserved.',
@@ -278,15 +409,92 @@ export function QuestionForm({
               )}
         </p>
       )}
-      <p className="response-help">
+      {status !== 'open' && answer && !saved && (
+        <details open className="unsent-answer">
+          <summary>{i18n.t('Unsent draft')}</summary>
+          <label>
+            {i18n.t('Your draft')}
+            <textarea readOnly value={answer} rows={4} />
+          </label>
+        </details>
+      )}
+      {(Object.keys(acknowledgement).length > 0 || Object.keys(outcome).length > 0) && (
+        <details className="decision-context">
+          <summary>{i18n.t('Decision scope and actors')}</summary>
+          {[
+            ['Director acknowledgement', acknowledgement],
+            ['Recorded outcome', outcome],
+          ].map(([label, value]) => {
+            const entry = record(value);
+            if (!Object.keys(entry).length) return null;
+            return (
+              <div key={string(label)}>
+                <h3>{i18n.t(string(label))}</h3>
+                <dl className="history-facts">
+                  <div>
+                    <dt>{i18n.t('Recorded by')}</dt>
+                    <dd>{i18n.display(entry.actor_id)}</dd>
+                  </div>
+                  <div>
+                    <dt>{i18n.t('Recorded')}</dt>
+                    <dd>{i18n.date(entry.recorded_at)}</dd>
+                  </div>
+                  <div>
+                    <dt>{i18n.t('Scope')}</dt>
+                    <dd>{items(entry.scope).map(string).join(', ') || i18n.t('Not recorded')}</dd>
+                  </div>
+                  <div>
+                    <dt>{i18n.t('Source revision')}</dt>
+                    <dd className="mono">{i18n.display(entry.source_head)}</dd>
+                  </div>
+                </dl>
+              </div>
+            );
+          })}
+        </details>
+      )}
+      <details className="response-help">
+        <summary>{i18n.t('About answers and drafts')}</summary>
+        <p>
+          {i18n.t(
+            'Drafts stay in this tab while you navigate or refresh data. Reloading or closing the page clears unsaved drafts.',
+          )}
+        </p>
+        <p>
+          {i18n.t(
+            'Saving an answer does not acknowledge or apply a decision. The director checks responses at work points; a stopped agent is not automatically woken.',
+          )}
+        </p>
+      </details>
+      <OriginalRecord label="Question scope and response history" value={question} />
+    </section>
+  );
+}
+
+export function MissingQuestionDraft({
+  programId,
+  questionId,
+}: {
+  readonly programId: string;
+  readonly questionId: string;
+}) {
+  const i18n = useI18n(),
+    store = useQuestionDrafts();
+  const key = questionDraftKey(programId, questionId);
+  const draft = useSyncExternalStore(store.subscribe, () => store.peek(key));
+  if (!draft?.answer) return null;
+  return (
+    <section className="question-form unsent-answer" aria-label={i18n.t('Unsent draft')}>
+      <h3>{i18n.t('Unsent draft')}</h3>
+      <p>
         {i18n.t(
-          'Saving an answer does not acknowledge or apply a decision. The director checks responses at work points; a stopped agent is not automatically woken.',
+          'This question is not in the current snapshot. Your draft is still available in this tab.',
         )}
       </p>
-      <details>
-        <summary>{i18n.t('Question scope and response history')}</summary>
-        <pre className="source">{i18n.display(question)}</pre>
-      </details>
+      <label>
+        {i18n.t('Your draft')}
+        <textarea readOnly value={draft.answer} rows={5} />
+      </label>
     </section>
   );
 }

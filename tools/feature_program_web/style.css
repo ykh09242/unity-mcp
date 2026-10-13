@@ -646,6 +646,120 @@ progress::-moz-progress-bar {
 .response-record > p {
   margin-block: var(--s3);
 }
+.question-toolbar,
+.question-views {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--s2);
+}
+.question-toolbar {
+  margin-block-end: var(--s4);
+}
+.question-views button[aria-pressed='true'] {
+  background: var(--selected);
+  color: var(--ink);
+}
+.question-search {
+  min-width: 160px;
+  flex: 1 1 220px;
+}
+.question-filters {
+  flex: 1 1 100%;
+}
+.question-filters[open] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  align-items: end;
+}
+.question-filters summary {
+  flex-basis: 100%;
+}
+.question-filter-summary {
+  overflow-wrap: anywhere;
+  margin-block: var(--s2) var(--s3);
+}
+.questions-page .question-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--s1) var(--s4);
+  padding: var(--s3);
+}
+.question-row[aria-current='true'] {
+  background: var(--selected);
+}
+.question-row-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2);
+  min-width: 0;
+}
+.question-row-title strong {
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+.question-row-context {
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
+.question-form {
+  max-inline-size: 76ch;
+  margin-block-start: var(--s4);
+}
+.question-heading h2,
+.question-form p,
+.question-form .prose,
+.question-form dd,
+.question-why,
+.question-options button {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.question-options > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.question-options button {
+  text-align: start;
+  height: auto;
+  white-space: normal;
+}
+.question-options button:disabled {
+  opacity: 1;
+  color: var(--body);
+  background: transparent;
+  cursor: default;
+}
+.answer-jump {
+  margin-block-end: var(--s4);
+}
+.decision-context,
+.unsent-answer {
+  margin-block: var(--s4);
+}
+.decision-context > div {
+  margin-block-start: var(--s4);
+}
+@media (max-width: 600px) {
+  .question-views {
+    width: 100%;
+  }
+  .question-views button {
+    flex: 1;
+  }
+  .questions-page .question-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .question-row .badge {
+    justify-self: start;
+  }
+  .question-options > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .heading {
   display: flex;
   align-items: end;

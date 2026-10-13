@@ -1,5 +1,46 @@
 // Interface translations only. Recorded task and question prose remains unchanged.
 export const korean = {
+  'Write answer': '답변 작성',
+  'Checking answer availability…': '답변을 저장할 수 있는지 확인 중이에요…',
+  'All states': '전체 상태',
+  'All tasks': '전체 작업',
+  Goal: '목표',
+  'Recorded by': '기록한 사람',
+  'Source revision': '소스 리비전',
+  '{count} / 4000 characters': '{count} / 4000자',
+  'The question version is unavailable. Your draft cannot be saved yet.':
+    '질문 버전을 확인할 수 없어 아직 답변을 저장할 수 없어요.',
+  'Check save confirmation': '저장 여부 확인',
+  'This question is not in the current snapshot. Your draft is still available in this tab.':
+    '현재 목록에 없는 질문이에요. 작성 중인 답변은 이 탭에 남아 있어요.',
+
+  'Unknown question state': '상태를 확인할 수 없음',
+  'No task link recorded': '연결된 작업 없음',
+  'Related decisions': '관련 질문과 결정',
+  'All questions': '전체 질문',
+  'More questions and outcomes': '다른 질문과 결과',
+  '{shown} / {total} questions': '질문 {shown} / {total}개',
+  'Question view': '질문 보기',
+  'Current questions': '진행 중',
+  'Search questions': '질문 검색',
+  'Question state': '질문 상태',
+  'All goals': '전체 목표',
+  'Affected task': '관련 작업',
+  'Clear question filters': '질문 필터 초기화',
+  'No questions have been recorded.': '등록된 질문이 없어요.',
+  'No questions match this view. Change the view or clear filters.':
+    '조건에 맞는 질문이 없어요. 보기를 바꾸거나 필터를 초기화해 주세요.',
+  'Back to questions': '질문 목록으로',
+  'Return to Questions to inspect the current records.': '질문 목록에서 현재 기록을 확인해 주세요.',
+  'Unsent draft': '저장하지 않은 답변',
+  'Your draft': '작성 중인 답변',
+  'Your drafts': '작성 중인 답변',
+  'Decision scope and actors': '결정 범위와 담당자',
+  'Recorded outcome': '결정 결과',
+  'About answers and drafts': '답변과 임시 저장 안내',
+  'Drafts stay in this tab while you navigate or refresh data. Reloading or closing the page clears unsaved drafts.':
+    '작성 중인 답변은 이 탭에서 화면을 이동하거나 정보를 새로 불러와도 유지돼요. 페이지를 새로고침하거나 닫으면 저장하지 않은 답변은 사라져요.',
+  'Filters applied': '필터 적용 중',
   'Current owner': '현재 담당자',
   'Assigned actor': '배정 당시 담당자',
   Successor: '후임 담당자',
@@ -289,20 +330,20 @@ export const korean = {
   high: '높음',
   saved: '저장된 설정',
   to: '후임',
-  'Director question': '감독 질문',
+  'Director question': '디렉터 질문',
   'Answer saved': '답변 저장됨',
-  'Director acknowledged': '감독 확인 완료',
+  'Director acknowledged': '디렉터 확인 완료',
   'No explanation recorded': '기록된 설명 없음',
   'Decision requested': '요청한 결정',
-  'Asked by': '질문한 감독',
+  'Asked by': '질문한 디렉터',
   'Affected tasks': '관련 작업',
   'Suggested choices': '선택 예시',
   'Your answer': '내 답변',
-  "Respond to the director's question…": '감독의 질문에 답변하세요…',
+  "Respond to the director's question…": '디렉터의 질문에 답변하세요…',
   '/4000 characters. Responses are stored in the local program.':
     '/4,000자. 답변은 로컬 프로그램에 저장됩니다.',
   'The director revised this question. Your draft is preserved. Review the current prompt before continuing.':
-    '감독이 질문을 수정했습니다. 작성 중인 답변은 유지됩니다. 계속하기 전에 현재 질문을 확인하세요.',
+    '디렉터가 질문을 수정했어요. 작성 중인 답변은 유지돼요. 현재 질문을 확인한 뒤 계속해 주세요.',
   'Use current question version': '현재 질문 버전 사용',
   'Responses are disabled for this server. Task records remain readable.':
     '이 서버에서는 답변이 비활성화되어 있습니다. 작업 기록은 계속 읽을 수 있습니다.',
@@ -312,8 +353,8 @@ export const korean = {
   Saved: '저장 시각',
   '· local response, not authenticated identity': '· 로컬 답변이며 인증된 신원이 아닙니다',
   'Answer saved. Waiting for director acknowledgement.':
-    '답변이 저장되었습니다. 감독의 확인을 기다리고 있습니다.',
-  'Director acknowledgement': '감독 확인',
+    '답변을 저장했어요. 디렉터의 확인을 기다리고 있어요.',
+  'Director acknowledgement': '디렉터 확인',
   'Question withdrawn': '질문 철회됨',
   'Applied outcome': '적용 결과',
   'The question changed or closed before this answer was saved. Refresh, then review its current state. Your draft is preserved.':
@@ -321,7 +362,7 @@ export const korean = {
   'The answer could not be confirmed as saved. Your draft is preserved. Retry uses the same submission ID.':
     '답변 저장을 확인할 수 없습니다. 작성한 답변은 유지됩니다. 재시도에는 같은 제출 ID를 사용합니다.',
   'Saving an answer does not acknowledge or apply a decision. The director checks responses at work points; a stopped agent is not automatically woken.':
-    '답변 저장은 결정의 확인이나 적용을 뜻하지 않습니다. 감독은 작업 확인 시점에 답변을 확인하며, 멈춘 에이전트가 자동으로 실행되지는 않습니다.',
+    '답변을 저장해도 결정이 바로 적용되지는 않아요. 디렉터가 작업 확인 시점에 답변을 확인해요. 멈춘 에이전트가 자동으로 실행되지는 않아요.',
   'Question scope and response history': '질문 범위 및 답변 이력',
   'link unavailable': '링크 사용 불가',
   Language: '언어',

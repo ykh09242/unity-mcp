@@ -1,6 +1,9 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render as rtlRender, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { QuestionDraftProvider } from './question-drafts';
+import type { ReactElement } from 'react';
+const render = (ui: ReactElement) => rtlRender(ui, { wrapper: QuestionDraftProvider });
 import { QuestionForm } from './questions';
 import type { AnswerResult, AnswerSaver } from './questions';
 import type { JsonRecord } from './model';
@@ -20,6 +23,211 @@ const question: JsonRecord = {
 const session = { responsesEnabled: true, nonce: 'synthetic-nonce' };
 
 describe('director question responses', () => {
+  it.each(['{Enter}', ' '])(
+    'continues keyboard focus to the saved answer after %s submission',
+    async (key) => {
+      const user = userEvent.setup();
+      let settle: ((result: AnswerResult) => void) | undefined;
+      const saver = vi.fn<AnswerSaver>(
+        () =>
+          new Promise((resolve) => {
+            settle = resolve;
+          }),
+      );
+      render(
+        <QuestionForm
+          question={question}
+          session={session}
+          saver={saver}
+          refresh={async () => {}}
+        />,
+      );
+      await user.type(screen.getByLabelText('Your answer'), 'Keyboard answer');
+      await user.tab();
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Save answer' }));
+      await user.keyboard(key);
+      expect(saver).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        settle?.({ ok: true, conflict: false });
+      });
+      expect(document.activeElement).toBe(
+        screen.getByRole('heading', { name: 'Your saved answer' }),
+      );
+      expect(screen.getByRole('status').textContent).toContain('Answer saved.');
+    },
+  );
+  it.each(['focus', 'pointer'])(
+    'does not reclaim focus after deliberate %s movement during a save',
+    async (movement) => {
+      const user = userEvent.setup();
+      let settle: ((result: AnswerResult) => void) | undefined;
+      const saver = vi.fn<AnswerSaver>(
+        () =>
+          new Promise((resolve) => {
+            settle = resolve;
+          }),
+      );
+      render(
+        <>
+          <button>Other control</button>
+          <QuestionForm
+            question={question}
+            session={session}
+            saver={saver}
+            refresh={async () => {}}
+          />
+        </>,
+      );
+      await user.type(screen.getByLabelText('Your answer'), 'Do not steal focus');
+      await user.click(screen.getByRole('button', { name: 'Save answer' }));
+      if (movement === 'focus') {
+        const other = screen.getByRole('button', { name: 'Other control' });
+        other.focus();
+        other.blur();
+      } else {
+        fireEvent.pointerDown(document.body);
+        (document.activeElement as HTMLElement).blur();
+      }
+      if (movement === 'focus') expect(document.activeElement).toBe(document.body);
+      await act(async () => {
+        settle?.({ ok: true, conflict: false });
+      });
+      expect(document.activeElement).toBe(document.body);
+    },
+  );
+  it('does not focus a saved record supplied by polling without a local save', async () => {
+    const view = render(
+      <>
+        <button>Keep focus</button>
+        <QuestionForm question={question} session={session} refresh={async () => {}} />
+      </>,
+    );
+    const control = screen.getByRole('button', { name: 'Keep focus' });
+    control.focus();
+    view.rerender(
+      <>
+        <button>Keep focus</button>
+        <QuestionForm
+          question={{ ...question, status: 'answered', answer: { answer: 'Saved elsewhere' } }}
+          session={session}
+          refresh={async () => {}}
+        />
+      </>,
+    );
+    expect(screen.getByRole('heading', { name: 'Your saved answer' })).toBeDefined();
+    expect(document.activeElement).toBe(control);
+  });
+  it('retains keyboard retry focus and the exact draft after a failed save', async () => {
+    const user = userEvent.setup();
+    const saver = vi.fn<AnswerSaver>(async () => ({ ok: false, conflict: false }));
+    render(
+      <QuestionForm question={question} session={session} saver={saver} refresh={async () => {}} />,
+    );
+    await user.type(screen.getByLabelText('Your answer'), 'Retry this exact draft');
+    await user.tab();
+    await user.keyboard('{Enter}');
+    await screen.findByRole('alert');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Save answer' }));
+    expect(screen.getByDisplayValue('Retry this exact draft')).toBeDefined();
+    await user.keyboard('{Enter}');
+    expect(saver.mock.calls[1]?.[0]).toEqual(saver.mock.calls[0]?.[0]);
+  });
+  it('focuses the actionable error when the initiating retry control becomes disabled', async () => {
+    const user = userEvent.setup();
+    let settle: ((result: AnswerResult) => void) | undefined;
+    const saver = vi.fn<AnswerSaver>(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const view = render(
+      <QuestionForm question={question} session={session} saver={saver} refresh={async () => {}} />,
+    );
+    await user.type(screen.getByLabelText('Your answer'), 'Retain after session changes');
+    await user.tab();
+    await user.keyboard('{Enter}');
+    view.rerender(
+      <QuestionForm
+        question={question}
+        session={{ responsesEnabled: false, nonce: null }}
+        saver={saver}
+        refresh={async () => {}}
+      />,
+    );
+    await act(async () => {
+      settle?.({ ok: false, conflict: false });
+    });
+    expect(document.activeElement).toBe(screen.getByRole('alert'));
+    expect(screen.getByDisplayValue('Retain after session changes')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Save answer' }).hasAttribute('disabled')).toBe(true);
+  });
+  it('retains an authored no-action explanation and canonical outcome responsibility without inventing another lifecycle', async () => {
+    const user = userEvent.setup();
+    render(
+      <QuestionForm
+        question={{
+          ...question,
+          status: 'resolved',
+          answer: { answer: 'Keep current scope' },
+          acknowledgement: { actor_id: 'reader', summary: 'Read by director' },
+          outcome: {
+            kind: 'applied',
+            actor_id: 'decision-director',
+            summary: 'No task action was taken; the current scope already meets the request.',
+            scope: ['src/exact.ts'],
+            source_head: 'exact-revision',
+          },
+        }}
+        session={session}
+        refresh={async () => {}}
+      />,
+    );
+    expect(screen.getByText('Applied outcome')).toBeDefined();
+    expect(
+      screen.getByText('No task action was taken; the current scope already meets the request.'),
+    ).toBeDefined();
+    expect(screen.getByText('Keep current scope')).toBeDefined();
+    await user.click(screen.getByText('Decision scope and actors'));
+    expect(screen.getByText('decision-director')).toBeDefined();
+    expect(screen.getByText('src/exact.ts')).toBeDefined();
+    expect(screen.getByText('exact-revision')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Save answer' })).toBeNull();
+    expect(document.querySelector('pre')).toBeNull();
+  });
+  it('cannot adopt a revised version while an earlier save is pending', async () => {
+    const user = userEvent.setup();
+    let settle: ((result: AnswerResult) => void) | undefined;
+    const saver = vi.fn<AnswerSaver>(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const view = render(
+      <QuestionForm question={question} session={session} saver={saver} refresh={async () => {}} />,
+    );
+    await user.type(screen.getByLabelText('Your answer'), 'Frozen version one');
+    await user.click(screen.getByRole('button', { name: 'Save answer' }));
+    view.rerender(
+      <QuestionForm
+        question={{ ...question, version: 2 }}
+        session={session}
+        saver={saver}
+        refresh={async () => {}}
+      />,
+    );
+    expect(
+      screen.getByRole('button', { name: 'Use current question version' }).hasAttribute('disabled'),
+    ).toBe(true);
+    expect(saver).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      settle?.({ ok: false, conflict: true });
+    });
+    expect(
+      screen.getByRole('button', { name: 'Use current question version' }).hasAttribute('disabled'),
+    ).toBe(false);
+  });
   it('preserves a typed answer and focus through polling, saves once on double click, then separates acknowledgement and applied outcome', async () => {
     const user = userEvent.setup();
     let settle: ((result: AnswerResult) => void) | undefined;
