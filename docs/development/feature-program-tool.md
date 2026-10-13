@@ -266,6 +266,78 @@ snapshot and relocation resolve each task's actual original or supplemental sour
 snapshots report missing/drifted documents explicitly; strict checks and mutations reject
 invalid frozen bytes. Relocation preserves receipt bytes and changes current locators only.
 
+## Planned metadata and execution priority
+
+The current accepted director can amend one or a bounded batch of planned, unowned,
+current-objective tasks. A released task with prior attempts remains eligible; its
+attempts and evidence are retained. Active, review, blocked, done, disposed, excluded
+and unknown targets are rejected. These commands require prior phase adoption and
+current acceptance, the exact active objective/current revision and an explicit reason.
+They never change membership, its revision/history, original source/planning files,
+task acceptance prose, categories, ownership or lifecycle.
+
+```shell
+python tools/feature_program.py --program-dir .work/programs/example admission-binding --input evidence/_planning/attempt-1/plan-proposal.json
+python tools/feature_program.py --program-dir .work/programs/example task-plan --input evidence/_planning/attempt-1/plan-1.json
+python tools/feature_program.py --program-dir .work/programs/example task-prioritize --input evidence/_planning/attempt-1/priority-1.json
+```
+
+Use the same version/program/director/objective/revision/reason/unique-ID fields as
+admission. For `task-plan`, supply `changes` with exact matching before/after field
+sets, for example:
+
+```json
+{
+  "changes": [
+    {
+      "id": "UNIT-1",
+      "before": {"depends_on": [], "next_action": "Inspect existing scope"},
+      "after": {"depends_on": ["UNIT-0"], "next_action": "Inspect prerequisite integration"}
+    }
+  ]
+}
+```
+
+Only `candidate_paths`, `depends_on`, `related_to`, `conflict_groups`, `required_checks`,
+`next_action`, `planning_note`, `phase` and existing `workstream` are allowed. Existing
+path/reference/cycle/check-policy and category/workstream validators apply. Category
+membership is preserved; incompatible placement is rejected. A changed planned scope
+cannot overlap currently owned scope or conflict groups. Planning eligibility does not
+prove readiness: dependencies, collisions and fresh claim revalidation still apply.
+
+For `task-prioritize`, use the same `changes` array with scalar values:
+
+```json
+{"changes": [{"id": "UNIT-1", "before": null, "after": -10}]}
+```
+
+Priority accepts signed 32-bit integers only; booleans, floats and overflow are rejected.
+Lower sorts first. `null` means unspecified and removes a prior explicit value; explicit
+zero remains distinct. Missing values use neutral zero for sorting. The first explicit
+priority transaction activates priority, then phase, then portable task-ID ordering;
+activation persists even if all values are later removed. Untouched legacy queues keep
+their existing phase/array ordering. Priority remains valid after the task is claimed
+or completed and never grants claim eligibility.
+
+The read-only binding response adds computed `renewal_required`, exact before/after
+bindings and full units, omitting membership for these operations. Copy those bindings
+to the final receipt and provide nonempty frozen rationale `evidence`. If the actual
+stable bindings differ, supply the complete prospective inventory/review/acceptance
+`renewal` described above. Pure priority and next-action changes preserve existing phase
+acceptance only when actual bindings are equal; omit `renewal` in that case. A client
+flag cannot waive renewal. Effective scope changes and their acceptance publish together.
+
+Each top-level `amendments` record retains the receipt, immutable field patches, reason,
+director/time, before/after bindings, prior/effective priority maps, full retained ordering
+and distinct `ready_before`/`ready_after` queue snapshots observed at the mutation.
+`execution_priorities` is separate from task definitions. Strict validation checks patch
+chains and effective metadata/priority against history. Runtime next-action updates may
+advance independently. Packets expose current metadata, priority and relevant amendments;
+snapshots expose the priority map/history, and status/next report null for unspecified
+priority. Precommit drift and incomplete publication reject before the canonical write.
+Postcommit render failure reports the committed revision; run `render`, and inspect the
+recorded amendment instead of resubmitting its ID.
+
 Definition changes require completed relocation/succession publication at both endpoints,
 even when ordinary successor progress is already enabled. The controlled repository store
 `.work/programs/.publications` contains one atomic `ledger.json`, its immutable identity,

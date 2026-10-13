@@ -32,8 +32,22 @@ if TYPE_CHECKING:
 
 Json = coordination.Json
 Record = coordination.Record
-Operation = Literal["task-admit", "objective-membership"]
-COMMANDS: Final = frozenset({"task-admit", "objective-membership"})
+Operation = Literal["task-admit", "objective-membership", "task-plan", "task-prioritize"]
+COMMANDS: Final = frozenset({"task-admit", "objective-membership", "task-plan", "task-prioritize"})
+PLANNED_COMMANDS: Final = frozenset({"task-plan", "task-prioritize"})
+PLANNED_FIELDS: Final = frozenset(
+    {
+        "candidate_paths",
+        "depends_on",
+        "related_to",
+        "conflict_groups",
+        "required_checks",
+        "next_action",
+        "planning_note",
+        "phase",
+        "workstream",
+    }
+)
 TASK_FIELDS: Final = frozenset(
     {
         "id",
@@ -167,6 +181,181 @@ def verify_planning(program: Program, state: Record, budget: ReadBudget | None =
         )
 
 
+def _priority(value: Json) -> None:
+    require(
+        value is None or (type(value) is int and -(2**31) <= value < 2**31),
+        "Priority must be null or a signed 32-bit integer",
+    )
+
+
+def _same_json(left: Json, right: Json) -> bool:
+    """Compare canonical JSON values without Python's bool/int/float coercion."""
+    return _core().canonical(left) == _core().canonical(right)
+
+
+def task_order(state: Record) -> list[Record]:
+    """Keep legacy ties until explicit activation, then use deterministic priority ties."""
+    tasks = list(coordination._indexed(state["tasks"], "task").values())
+    if "execution_priorities" not in state:
+        return sorted(tasks, key=lambda task: task["phase"])
+    priorities = coordination._record(state["execution_priorities"], "execution priorities")
+    return sorted(
+        tasks, key=lambda task: (priorities.get(task["id"], 0), task["phase"], task["id"])
+    )
+
+
+def validate_mutations(state: Record) -> None:
+    """Replay explicit patches; runtime action/history are independent of scope binding."""
+    tasks = coordination._indexed(state["tasks"], "tasks")
+    latest: dict[tuple[str, str], Json] = {}
+    priorities: Record = {}
+    activated = False
+    for value in coordination._items(state.get("amendments", []), "amendments"):
+        event = coordination._record(value, "amendment")
+        if event.get("operation") not in PLANNED_COMMANDS:
+            continue
+        receipt = coordination._record(event.get("receipt"), "planning receipt")
+        require(
+            _same_json(event.get("changes"), receipt.get("changes")),
+            "Planning history/receipt mismatch",
+        )
+        require(
+            _same_json(event.get("priority_before"), priorities if activated else None),
+            "Priority history before-state mismatch",
+        )
+        changes = coordination._indexed(event.get("changes"), "planning change")
+        require(bool(changes), "Planning mutation requires changes")
+        for identifier, change in changes.items():
+            require(identifier in tasks, "Unknown historical planning target")
+            if event["operation"] == "task-prioritize":
+                _priority(change.get("before"))
+                _priority(change.get("after"))
+                require(
+                    _same_json(priorities.get(identifier), change["before"]),
+                    "Priority history mismatch",
+                )
+                if change["after"] is None:
+                    priorities.pop(identifier, None)
+                else:
+                    priorities[identifier] = change["after"]
+                activated = True
+            else:
+                before = coordination._record(change.get("before"), "before fields")
+                after = coordination._record(change.get("after"), "after fields")
+                require(
+                    bool(before) and set(before) == set(after) and set(after) <= PLANNED_FIELDS,
+                    "Invalid historical planned fields",
+                )
+                for name, current in after.items():
+                    key = (identifier, name)
+                    if key in latest and name != "next_action":
+                        require(
+                            _same_json(latest[key], before[name]), "Planning history chain mismatch"
+                        )
+                    latest[key] = current
+        require(
+            _same_json(event.get("priority_after"), priorities if activated else None),
+            "Priority history after-state mismatch",
+        )
+    require(
+        _same_json(state.get("execution_priorities"), priorities if activated else None),
+        "Effective priority differs from immutable planning history",
+    )
+    for (identifier, name), value in latest.items():
+        if name != "next_action":
+            require(
+                _same_json(tasks[identifier].get(name), value),
+                "Effective metadata differs from planning history",
+            )
+
+
+def _amend_planned(program: Program, proposal: Record, receipt: Record) -> None:
+    core = _core()
+    require(
+        not {"membership", "source", "planning", "category_placements"}.intersection(receipt),
+        "Planned mutations cannot amend membership, source or categories",
+    )
+    changes = coordination._indexed(receipt.get("changes"), "planning change")
+    require(bool(changes), "Planning mutation requires changes")
+    tasks = coordination._indexed(proposal["tasks"], "tasks")
+    goal = coordination._record(proposal["objective"], "objective")
+    priorities = deepcopy(
+        coordination._record(proposal.get("execution_priorities", {}), "priorities")
+    )
+    original_tasks = deepcopy(tasks)
+    for identifier, change in changes.items():
+        require(set(change) == {"id", "before", "after"}, "Unsupported planning change fields")
+        require(identifier in tasks, "Unknown planned target")
+        task = tasks[identifier]
+        require(
+            task["status"] == "planned"
+            and task.get("owner") is None
+            and task.get("disposition") in {None, "planned"}
+            and identifier in coordination._texts(goal.get("task_ids"), "objective members"),
+            "Planning target must be eligible, planned, unowned and a current member",
+        )
+        if receipt["operation"] == "task-prioritize":
+            _priority(change["before"])
+            _priority(change["after"])
+            require(
+                _same_json(priorities.get(identifier), change["before"]), "Stale before priority"
+            )
+            if change["after"] is None:
+                priorities.pop(identifier, None)
+            else:
+                priorities[identifier] = change["after"]
+        else:
+            before = coordination._record(change["before"], "before fields")
+            after = coordination._record(change["after"], "after fields")
+            require(
+                bool(after) and set(before) == set(after) and set(after) <= PLANNED_FIELDS,
+                "Only explicit whitelisted planned fields may change",
+            )
+            require(
+                all(_same_json(task.get(name), value) for name, value in before.items()),
+                "Stale before metadata",
+            )
+            require(not _same_json(before, after), "Planning metadata must actually change")
+            for name in (
+                "candidate_paths",
+                "depends_on",
+                "related_to",
+                "conflict_groups",
+                "required_checks",
+            ):
+                if name in after:
+                    values = coordination._texts(after[name], name)
+                    require(len(values) == len(set(values)), "Duplicate planned metadata values")
+            if "candidate_paths" in after:
+                require(bool(after["candidate_paths"]), "Complete candidate paths required")
+                for name in coordination._texts(after["candidate_paths"], "candidate paths"):
+                    path = core.safe_path(program.repo, name)
+                    require(
+                        not any(part.casefold() == ".work" for part in Path(name).parts)
+                        and not program.directory.is_relative_to(path),
+                        "Private or program-wide ownership is invalid",
+                    )
+            if "planning_note" in after:
+                coordination._text(after["planning_note"], "planning note")
+            task.update(deepcopy(after))
+    if receipt["operation"] == "task-prioritize":
+        require(
+            "execution_priorities" not in proposal
+            or not _same_json(priorities, proposal["execution_priorities"]),
+            "Priority must actually change",
+        )
+        proposal["execution_priorities"] = priorities
+    coordination._categories(proposal)
+    for identifier in changes:
+        for other in tasks.values():
+            if other["id"] != identifier and other["status"] in core.OWNED_STATES:
+                require(
+                    set(program.collisions(tasks[identifier], other))
+                    <= set(program.collisions(original_tasks[identifier], other)),
+                    "Planned amendment conflicts with owned work",
+                )
+
+
 def source_sections(
     program: Program,
     state: Record,
@@ -244,6 +433,7 @@ def source_sections(
             prospective or bool(coordination._items(item.get("evidence"), "amendment evidence")),
             "Committed amendment lacks frozen review/input evidence",
         )
+    validate_mutations(state)
     objective = state.get("objective")
     if objective is not None:
         for value in coordination._items(
@@ -1561,7 +1751,9 @@ def construct(program: Program, state: Record, receipt: Record) -> Prospective:
     proposal = deepcopy(state)
     before_binding = phases.planning_binding(state)
     additions: list[str] = []
-    if operation == "task-admit":
+    if operation in PLANNED_COMMANDS:
+        _amend_planned(program, proposal, receipt)
+    elif operation == "task-admit":
         source = deepcopy(coordination._record(receipt.get("source"), "supplemental source"))
         plan = deepcopy(coordination._record(receipt.get("planning"), "supplemental planning"))
         path = core.safe_path(program.repo, coordination._relative(source.get("path")))
@@ -1648,7 +1840,8 @@ def construct(program: Program, state: Record, receipt: Record) -> Prospective:
             "source" not in receipt and "planning" not in receipt,
             "Membership-only amendments cannot invent source intake",
         )
-    coordination.amend_membership(proposal, receipt, additions)
+    if operation not in PLANNED_COMMANDS:
+        coordination.amend_membership(proposal, receipt, additions)
     after_binding = phases.planning_binding(proposal)
     event: Record = {
         "id": identifier,
@@ -1662,6 +1855,21 @@ def construct(program: Program, state: Record, receipt: Record) -> Prospective:
         "receipt": deepcopy(receipt),
         "evidence": [],
     }
+    if operation in PLANNED_COMMANDS:
+        event.update(
+            {
+                "changes": deepcopy(receipt["changes"]),
+                "priority_before": deepcopy(state.get("execution_priorities")),
+                "priority_after": deepcopy(proposal.get("execution_priorities")),
+                "order_before": [task["id"] for task in task_order(state)],
+                "order_after": [task["id"] for task in task_order(proposal)],
+                "ready_before": [task["id"] for task in program.status(state, True)["candidates"]],
+                "ready_after": [
+                    task["id"] for task in program.status(proposal, True)["candidates"]
+                ],
+                "renewal_required": before_binding != after_binding,
+            }
+        )
     coordination._items(proposal.setdefault("amendments", []), "amendments").append(event)
     # Current gates are historical while the future source union is validated.
     core.Program.validate(program, proposal, prospective=True)
@@ -1704,8 +1912,10 @@ def preview(program: Program, state: Record, receipt: Record) -> Record:
         "before_binding": future.before_binding,
         "after_binding": future.after_binding,
         "units": units,
-        "membership": receipt["membership"],
+        "renewal_required": future.before_binding != future.after_binding,
     }
+    if receipt["operation"] not in PLANNED_COMMANDS:
+        result["membership"] = receipt["membership"]
     if receipt.get("inventory") is not None:
         spec = coordination._record(receipt["inventory"], "prospective inventory")
         result["inventory_digest"] = phases.revision(
@@ -1734,29 +1944,35 @@ def execute(program: Program, state: Record, args: argparse.Namespace) -> bool:
         and receipt.get("after_binding") == future.after_binding,
         "Stale before/after scope binding",
     )
-    renewal = coordination._record(receipt.get("renewal"), "prospective phase renewal")
     additional = program.evidence(
         "_planning", 1, coordination._texts(receipt.get("evidence"), "amendment review evidence")
     )
     refs += additional
-    phases.renew(
-        program,
-        future.state,
-        renewal,
-        phases.revision(state),
-        coordination._texts(receipt.get("intake_authors", []), "intake authors"),
+    renewal_required = (
+        args.command not in PLANNED_COMMANDS or future.before_binding != future.after_binding
     )
+    if renewal_required:
+        phases.renew(
+            program,
+            future.state,
+            coordination._record(receipt.get("renewal"), "prospective phase renewal"),
+            phases.revision(state),
+            coordination._texts(receipt.get("intake_authors", []), "intake authors"),
+        )
+    else:
+        require("renewal" not in receipt, "Unchanged scope must preserve existing phase acceptance")
     amendments = coordination._items(future.state["amendments"], "amendments")
     coordination._record(amendments[-1], "amendment")["evidence"] = refs
-    goal = coordination._record(future.state["objective"], "objective")
-    history = coordination._items(goal["membership_history"], "membership history")
-    coordination._record(history[-1], "membership revision").update(
-        {
-            "evidence": refs,
-            "before_binding": future.before_binding,
-            "after_binding": future.after_binding,
-        }
-    )
+    if args.command not in PLANNED_COMMANDS:
+        goal = coordination._record(future.state["objective"], "objective")
+        history = coordination._items(goal["membership_history"], "membership history")
+        coordination._record(history[-1], "membership revision").update(
+            {
+                "evidence": refs,
+                "before_binding": future.before_binding,
+                "after_binding": future.after_binding,
+            }
+        )
     program.event(
         future.state,
         args.command,
@@ -1775,7 +1991,7 @@ def execute(program: Program, state: Record, args: argparse.Namespace) -> bool:
         require(
             phases.revision(core.read_json(program.path("backlog.json")))
             == receipt["expected_revision"],
-            "Registry changed before admission publication",
+            "Registry changed before amendment publication",
         )
         program.verify_refs([*refs, *phases.evidence_references(future.state)])
         source_sections(program, future.state, True, core.ReadBudget(64 * 1024 * 1024))
@@ -1806,6 +2022,8 @@ def add_commands(commands: argparse._SubParsersAction[argparse.ArgumentParser]) 
         "admission-binding",
         "task-admit",
         "objective-membership",
+        "task-plan",
+        "task-prioritize",
         "publication-adopt",
         "publication-reconcile",
     ):

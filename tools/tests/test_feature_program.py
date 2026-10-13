@@ -685,6 +685,23 @@ def test_next_excludes_active_conflicts_and_requires_revalidation(
     assert all(item["requires_revalidation"] for item in candidates)
 
 
+def test_queue_preserves_legacy_array_ties_until_explicit_priority_activation(
+    fixture: Fixture,
+) -> None:
+    # Given equal phases and intentionally reversed task insertion order.
+    state = fixture.program.load()
+    state["tasks"] = list(reversed(fp.sequence(state["tasks"], "tasks")))
+    legacy_ids = [fp.record(task, "task")["id"] for task in state["tasks"]]
+    # When legacy and explicitly activated neutral-priority queues are read.
+    legacy = fixture.program.status(state, True)["candidates"]
+    state["execution_priorities"] = {}
+    activated = fixture.program.status(state, True)["candidates"]
+    # Then legacy array order is retained and explicit ties use portable IDs.
+    assert [task["id"] for task in legacy] == legacy_ids
+    assert [task["id"] for task in activated] == sorted(legacy_ids)
+    assert all(task["execution_priority"] is None for task in activated)
+
+
 def test_leader_reopen_preserves_completed_attempt_and_requires_fresh_claim(
     fixture: Fixture,
 ) -> None:

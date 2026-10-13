@@ -61,7 +61,11 @@ def _tasks(state: Record) -> dict[str, Record]:
 
 
 def _definitions(state: Record) -> list[Json]:
-    """Include authored planning extensions, excluding only known runtime fields."""
+    """Bind effective authored fields, not top-level priority or mutation history.
+
+    Next-action observations remain runtime progress even when amended by a director.
+    All other permitted planned metadata participates in prospective renewal.
+    """
     return [
         {key: deepcopy(value) for key, value in task.items() if key not in TASK_PROGRESS_FIELDS}
         for _, task in sorted(_tasks(state).items())
