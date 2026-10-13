@@ -268,15 +268,52 @@ Inspect actual execution, not only the green summary: missing or unexpectedly sk
 required tests block acceptance. After fixes, re-review and verify the new revision.
 An offline CI receipt does not authenticate GitHub; the director must inspect remote facts.
 
-When authorized to merge, recheck the current PR head/base, review and checks immediately
-before merging, use the expected-head guard and retain the resulting merge SHA. Never
-substitute a direct feature push to the integration branch.
+Use squash for every future authorized PR merge. Recheck the current PR head/base, review
+and checks immediately before merging, apply the expected-head guard against the reviewed
+head, and retain both that head and the resulting squash SHA. Preserve historical merge
+records. Never substitute a direct feature push to the integration branch.
 
-After a confirmed merge, verify the branch has no later unmerged commits, is included in
-the target, and is not used by a worktree, active checkout or dependent PR. Remove eligible
+After confirmed delivery, verify that the branch has no later undelivered commits and its
+reviewed content is included in the target. For a squash merge, retain the exact reviewed
+head, squash result, target revision and required delivery checks as proof of that mapping.
+Check that no worktree, active checkout or dependent PR uses the branch. Remove eligible
 remote and local task branches using normal deletion; otherwise record deferred cleanup.
 Do not delete the default, integration or protected branches, or automatically discard a
 closed but unmerged PR branch. Keep the PR, commits, CI, reviews and handoff evidence.
+
+### Unused worktrees
+
+Retire local worktrees once their work and retained context no longer need that checkout.
+Check actual agent/session use, servers and commands, review and dependent work, open PRs
+and the recorded lock purpose before cleanup. A completed task or merged PR alone does not
+prove disuse. Keep still-used worker or stable CLI checkouts and record the next cleanup trigger.
+
+Bind delivered work to the reviewed head, merge or squash result, receiving revision and
+successful required delivery checks. For temporary review or preparation copies, record why
+they are unused and which source or recovery facts must survive. Recheck staged, unstaged
+and untracked changes, unpushed or later commits, and needed ignored artifacts. Preserve
+unexpected work and verify the retained copy or recoverable reference before removal.
+
+Follow the [handoff and recovery procedure](#handoffs-and-recovery) for needed program state,
+evidence and continuity. Keep these outside the checkout being removed, using supported
+program relocation when required; a public push does not preserve private recovery records.
+Move the active session and command working directory to a verified surviving checkout first.
+If that move or an ongoing use cannot be resolved safely, defer removal with the reason.
+
+For an app-managed worktree, use its supported recoverable archive and retain the returned
+recovery reference. Preserve needed ignored files separately because its saved snapshot does
+not include them. For an ordinary linked Git worktree, use normal `git worktree remove` from
+a surviving checkout after the clean-worktree and usage checks pass. Resolve a lock only when
+its purpose has ended. Preserve an unclean or unsupported checkout and record the blocker;
+do not force removal, run blanket cleanup or substitute recursive filesystem deletion.
+
+Verify physical absence and the expected Git registration or app archive state, with retained
+artifacts and recovery references still usable. If an exact active checkout registration remains
+after verified removal or archive, separately prove that the entry is stale and unused, then
+reconcile only that entry through supported controls and verify the result. Defer unresolved
+entries; do not run blanket pruning or removal. Record actual success, failure or deferred
+cleanup through the supported program records before applying the branch checks above.
+Archive or removal does not by itself delete a branch, authenticate delivery or grant authority.
 
 ## Objective completion
 
