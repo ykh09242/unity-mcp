@@ -3293,7 +3293,8 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.buffer.write(canonical(presentation.read_command(program, args)))
             return 0
         if args.command in authoring.READ_COMMANDS:
-            print(canonical(authoring.read_command(program, args)).decode(), end="")
+            # Emit exactly the canonical bytes checked by the authoring output bound.
+            sys.stdout.buffer.write(canonical(authoring.read_command(program, args)))
             return 0
         if args.command == "snapshot":
             print(canonical(read_snapshot(repo, program.directory)).decode(), end="")

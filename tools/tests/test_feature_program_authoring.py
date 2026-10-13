@@ -97,6 +97,52 @@ def test_support_lists_every_mutation_and_exact_parser_arguments():
     assert {"recovery-readiness", "delivery-inputs"} <= result["read_operations"].keys()
 
 
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+def test_authoring_raw_output_matches_bounded_bytes_with_crlf_stdout(gate, offset):
+    """Exercise the real read/output boundary with a controlled scaffold payload."""
+    before = tree(gate.program.repo)
+    script = """
+import sys
+from tools import feature_program as core
+target_size = core.authoring.LIMIT + int(sys.argv[1])
+payload = {"text": "가\\n"}
+payload["text"] += "x" * (target_size - len(core.canonical(payload)))
+core.authoring.scaffold = lambda *args: payload
+# Emulate Windows text translation on every CI host; binary writes bypass it.
+sys.stdout.reconfigure(newline="\\r\\n")
+sys.exit(core.main(sys.argv[2:]))
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            script,
+            str(offset),
+            "--repo",
+            str(gate.program.repo),
+            "--program-dir",
+            str(gate.program.directory),
+            "scaffold",
+            "--operation",
+            "language",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        check=False,
+    )
+    assert tree(gate.program.repo) == before
+    if offset > 0:
+        assert result.returncode == 1
+        assert not result.stdout
+        assert b"Authoring output exceeds 8 MiB" in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr.decode()
+        assert not result.stderr
+        assert len(result.stdout) == author.LIMIT + offset
+        assert result.stdout == fp.canonical(json.loads(result.stdout))
+
+
 def test_preview_request_preserves_repeatable_flags_and_repeated_values(gate, capsys, monkeypatch):
     gate.ready()
     scopes = ["src/S01.py"]
