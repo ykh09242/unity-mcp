@@ -856,6 +856,7 @@ def diagnostics(
             coordination.GovernanceError,
             phases.PhaseError,
             planning.PlanningError,
+            core.questions.QuestionError,
             OSError,
         ) as exc:
             structural.update(
@@ -863,12 +864,13 @@ def diagnostics(
             )
         result["structural_validation"] = structural
         return result
-    if args.operation in {"submit", "complete", "objective-complete"} and observed_head is None:
-        result["reasons"] = [
-            "A verified current HEAD observation is required; this pure diagnostic does not read Git."
-        ]
-        return result
     try:
+        program.validate(state)
+        if args.operation in {"submit", "complete", "objective-complete"} and observed_head is None:
+            result["reasons"] = [
+                "A verified current HEAD observation is required; this pure diagnostic does not read Git."
+            ]
+            return result
         match args.operation:
             case "submit":
                 require(
@@ -909,6 +911,7 @@ def diagnostics(
         coordination.GovernanceError,
         phases.PhaseError,
         planning.PlanningError,
+        core.questions.QuestionError,
         OSError,
     ) as exc:
         result.update(

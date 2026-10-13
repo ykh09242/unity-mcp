@@ -1113,3 +1113,199 @@ def test_large_registry_uses_existing_bound_through_reliance_publication(gate: G
     current = gate.program.load()
     assert current["runtime_observation"] == state["runtime_observation"]
     assert gate.program.task(current, "S01")["status"] == "review"
+
+
+@pytest.mark.parametrize("operation", ["submit", "complete", "rework", "objective-complete"])
+@pytest.mark.parametrize("fault", ["next-action", "owner", "frozen-source", "questions"])
+def test_supplied_diagnostics_match_cli_load_of_original_invalid_state(
+    gate: GateFixture, capsys: pytest.CaptureFixture[str], operation: str, fault: str
+) -> None:
+    # Given valid actual inputs followed by a required-state fault in their original registry.
+    gate.ready()
+    if operation == "objective-complete":
+        name = integrated_input(gate)
+    else:
+        assert gate.fixture.claim() == 0
+        if operation == "submit":
+            name = gate.fixture.receipt()
+        else:
+            gate.fixture.submit()
+            name = gate.fixture.review(accepted=operation == "complete")
+    state = gate.program.load()
+    task = gate.program.task(state, "S01")
+    match fault:
+        case "next-action":
+            task["next_action"] = ""
+        case "owner":
+            task["owner"] = ""
+        case "frozen-source":
+            report = fp.safe_path(gate.program.repo, state["source"]["path"])
+            report.write_bytes(report.read_bytes() + b"\nChanged frozen report\n")
+        case "questions":
+            state["questions"] = {"schema_version": 1, "items": "Invalid inbox array"}
+        case _:
+            pytest.fail("Unknown original-state fault")
+    gate.program.path("backlog.json").write_bytes(fp.canonical(state))
+    before = {
+        path: fp.sha(path.read_bytes())
+        for path in gate.program.directory.rglob("*")
+        if path.is_file()
+    }
+    with pytest.raises((fp.ProgramError, fp.questions.QuestionError)) as expected:
+        gate.program.load()
+    args = argparse.Namespace(operation=operation, input=name, task="S01", owner="worker")
+    capsys.readouterr()
+    # When pure diagnostics and the real mutation CLI observe the same captured original state.
+    diagnostic = fp.coverage.diagnostics(
+        gate.program, state, args, observed_head=gate.program.current_head()
+    )
+    if operation == "submit":
+        result = gate.fixture.run("submit", "S01", "--owner", "worker", "--receipt", name)
+    elif operation == "objective-complete":
+        result = gate.fixture.run("objective-complete", "--input", name)
+    else:
+        result = gate.fixture.run(operation, "S01", "--review", name)
+    output = capsys.readouterr()
+    # Then the original authoritative error wins before any preparation can repair or mask it.
+    assert result == 1 and output.err.strip() == f"feature-program: {expected.value}"
+    assert diagnostic["status"] == "failed" and diagnostic["reasons"] == [str(expected.value)]
+    assert diagnostic["failure_type"] == type(expected.value).__name__
+    after = {
+        path: fp.sha(path.read_bytes())
+        for path in gate.program.directory.rglob("*")
+        if path.is_file()
+    }
+    assert before == after
+
+
+@pytest.mark.parametrize("operation", ["submit", "complete", "objective-complete"])
+def test_invalid_original_state_precedes_unavailable_head_in_cli_diagnostics(
+    gate: GateFixture,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    # Given a required original-state failure and unavailable external metadata.
+    gate.ready()
+    if operation == "objective-complete":
+        name = integrated_input(gate)
+    else:
+        assert gate.fixture.claim() == 0
+        if operation == "submit":
+            name = gate.fixture.receipt()
+        else:
+            gate.fixture.submit()
+            name = gate.fixture.review()
+    state = gate.program.load()
+    gate.program.task(state, "S01")["next_action"] = ""
+    gate.program.path("backlog.json").write_bytes(fp.canonical(state))
+    before = gate.program.path("backlog.json").read_bytes()
+    with pytest.raises(fp.ProgramError) as expected:
+        gate.program.load()
+
+    def unavailable(_program: fp.Program) -> str:
+        raise fp.ProgramError("Actual fixture HEAD unavailable")
+
+    monkeypatch.setattr(fp.Program, "current_head", unavailable)
+    capsys.readouterr()
+    # When the actual read-only CLI cannot acquire HEAD before shared semantic assessment.
+    assert (
+        gate.fixture.run(
+            "coverage",
+            "--operation",
+            operation,
+            "--input",
+            name,
+            "--task",
+            "S01",
+            "--owner",
+            "worker",
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)["diagnostics"]
+    # Then unavailable metadata does not hide the original state error or publish a repair.
+    assert result["status"] == "failed" and result["reasons"] == [str(expected.value)]
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("surface", ["api", "cli"])
+def test_snapshot_rejects_registry_update_during_coverage_source_read(
+    gate: GateFixture,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+) -> None:
+    # Given actual source-bound coverage whose projection performs scoped-source I/O.
+    gate.ready()
+    record_annotation(gate)
+    original = fp.Program.source_snapshot
+    before = gate.program.path("backlog.json").read_bytes()
+    concurrent = fp.read_json(gate.program.path("backlog.json"))
+    concurrent["runtime_observation"] = "Actual concurrent snapshot-boundary update"
+    concurrent_bytes = fp.canonical(concurrent)
+    calls = []
+
+    def changed(program: fp.Program, scopes: list[str], budget=None) -> fp.Record:
+        observed = original(program, scopes, budget)
+        calls.append(scopes)
+        # Deterministic external update after the projection's real source read, no timing sleeps.
+        fp.atomic_write(program.path("backlog.json"), concurrent_bytes)
+        return observed
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Snapshot must not acquire Git metadata or a program lock")
+
+    monkeypatch.setattr(fp.Program, "source_snapshot", changed)
+    monkeypatch.setattr(fp.Program, "lock", forbidden)
+    monkeypatch.setattr(fp, "git", forbidden)
+    capsys.readouterr()
+    # When the actual API/CLI constructs coverage after its earlier registry observation.
+    if surface == "api":
+        with pytest.raises(fp.ProgramError, match="Registry changed during snapshot; refresh"):
+            fp.read_snapshot(gate.program.repo, gate.program.directory)
+    else:
+        assert gate.fixture.run("snapshot") == 1
+        assert (
+            capsys.readouterr().err.strip()
+            == "feature-program: Registry changed during snapshot; refresh"
+        )
+    # Then no stale snapshot is returned and no concurrent registry update is overwritten.
+    assert len(calls) == 1 and before != concurrent_bytes
+    assert gate.program.path("backlog.json").read_bytes() == concurrent_bytes
+
+
+def test_valid_original_state_with_unavailable_head_remains_unassessed(
+    gate: GateFixture, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given valid owned state and an actual input, but no verified current HEAD observation.
+    gate.ready()
+    assert gate.fixture.claim() == 0
+    name = gate.fixture.receipt()
+    before = gate.program.path("backlog.json").read_bytes()
+
+    def unavailable(_program: fp.Program) -> str:
+        raise fp.ProgramError("Actual fixture HEAD unavailable")
+
+    monkeypatch.setattr(fp.Program, "current_head", unavailable)
+    capsys.readouterr()
+    # When the real read-only diagnostic cannot acquire metadata outside its pure validator.
+    assert (
+        gate.fixture.run(
+            "coverage",
+            "--operation",
+            "submit",
+            "--input",
+            name,
+            "--task",
+            "S01",
+            "--owner",
+            "worker",
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)["diagnostics"]
+    # Then valid structure cannot supply a fictional HEAD or acceptance result.
+    assert result["status"] == "not_assessed" and result["failure_type"] == "ProgramError"
+    assert result["reasons"] == ["Actual fixture HEAD unavailable"]
+    assert gate.program.path("backlog.json").read_bytes() == before

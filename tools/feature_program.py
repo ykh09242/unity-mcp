@@ -2305,10 +2305,6 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
             ),
             task["workstream"],
         )
-    require(
-        sha(bounded_bytes(backlog, 8 * 1024 * 1024)) == sha(initial),
-        "Registry changed during snapshot; refresh",
-    )
     result: Record = {
         "snapshot_version": 1,
         "revision": sha(initial),
@@ -2343,6 +2339,10 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
         "coverage": coverage.projection(program, state, evidence_budget),
     }
     require(len(canonical(result)) <= 8 * 1024 * 1024, "Snapshot output exceeds 8 MiB")
+    require(
+        sha(bounded_bytes(backlog, 8 * 1024 * 1024)) == sha(initial),
+        "Registry changed during snapshot; refresh",
+    )
     return result
 
 
@@ -2926,8 +2926,11 @@ def main(argv: list[str] | None = None) -> int:
                                 "Current Git metadata could not be observed; no baseline substitution."
                             ],
                         }
-                result["diagnostics"] = metadata_error or coverage.diagnostics(
-                    program, state, args, observed_head=observed_head
+                diagnostic = coverage.diagnostics(program, state, args, observed_head=observed_head)
+                result["diagnostics"] = (
+                    metadata_error
+                    if metadata_error is not None and diagnostic["status"] == "not_assessed"
+                    else diagnostic
                 )
             require(
                 bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024) == initial,
