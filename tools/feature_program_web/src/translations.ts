@@ -171,6 +171,7 @@ export const korean = {
   'Local workspace ·': '로컬 작업 공간 ·',
   'Responses enabled': '답변 가능',
   'Read only': '읽기 전용',
+  'Refreshing…': '갱신 중…',
   Refresh: '새로고침',
   Unavailable: '사용 불가',
   'Loading program…': '프로그램 불러오는 중…',
