@@ -96,9 +96,15 @@ Below that width the document owns scrolling. Reading and keyboard order follow 
   withdrawn are separate text states. Only answering an existing question is writable.
 - Language: English and Korean interface choices persist locally. The initial choice follows
   a saved interface preference, then the program communication language, then browser locale.
-  Dates, numbers, guidance and known status/role values follow the interface choice. Recorded
-  task titles, question prompts, options, answers and acknowledgement prose stay unchanged.
-  Switching language and polling preserve the current answer draft.
+  Dates, numbers, guidance and known status/role values follow the interface choice. Reviewed
+  human content follows the program's recorded session language through a separate source-bound
+  presentation view. A current entry must match its typed identity, origin and original value;
+  stale, withdrawn, unavailable or missing entries retain the original. Actor aliases never
+  replace IDs used by routes, filters, list keys or assignments. Original text and exact locators
+  are disclosed beside the relevant entity, not in a global prose list in the navigation rail.
+  Saved answers, drafts, technical evidence, IDs and model settings remain original. Clicking
+  a translated option explicitly copies its visible wording into the editable answer. Locale
+  and presentation updates preserve existing drafts, caret, navigation and frozen retry payloads.
 
 Primitives share native hover/active/focus treatment. Controls have 40px minimum height;
 keyboard focus uses a 2px ring and 3px offset. Loading disables manual refresh only.

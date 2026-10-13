@@ -3,6 +3,7 @@ import type { Snapshot, Task } from './model';
 import { defaultContext, emptyFilters, navigationHash, scopedTasks } from './navigation';
 import type { WorkContext } from './navigation';
 import { snapshotIndex } from './selectors';
+import { originalValue } from './presentation';
 
 export function workload(snapshot: Snapshot, scope: WorkContext['scope']) {
   const tasks = scopedTasks(snapshot, scope);
@@ -29,7 +30,8 @@ export function workload(snapshot: Snapshot, scope: WorkContext['scope']) {
 export function hasActionGlance(task: Task): boolean {
   return !(
     task.status === 'done' &&
-    string(task.next_action).trim() === 'Reviewed complete; delivery/CI is tracked separately.'
+    string(originalValue(task).next_action).trim() ===
+      'Reviewed complete; delivery/CI is tracked separately.'
   );
 }
 

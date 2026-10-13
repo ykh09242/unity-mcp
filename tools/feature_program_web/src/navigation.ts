@@ -1,4 +1,5 @@
 import { defaultQuestions, questionStages } from './question-state';
+import { actorLabel, originalValue, presentedActorIds } from './presentation';
 import type { QuestionContext } from './question-state';
 import { items, record, records, string } from './model';
 import type { Snapshot, Task } from './model';
@@ -281,6 +282,7 @@ export type SearchResult = {
   readonly label: string;
   readonly route: Route;
   readonly owner?: string;
+  readonly originalLabel?: string;
 };
 const navigationSearchCache = new WeakMap<Snapshot, readonly SearchResult[]>();
 export function navigationSearch(
@@ -296,19 +298,28 @@ export function navigationSearch(
         kind: 'task' as const,
         id: task.id,
         label: task.title,
+        originalLabel: originalValue(task).title,
         route: { view: 'task' as const, taskId: task.id },
       })),
-      ...[...index.actors].map(([id, actor]) => ({
-        kind: 'actor' as const,
-        id,
-        label: string(actor.name || actor.role) || id,
-        route: { view: 'team' as const },
-        owner: id,
-      })),
+      ...[...new Set([...index.actors.keys(), ...presentedActorIds(snapshot)])].map((id) => {
+        const actor = index.actors.get(id) || {};
+        return {
+          kind: 'actor' as const,
+          id,
+          label:
+            actorLabel(snapshot, id) !== id
+              ? actorLabel(snapshot, id)
+              : string(actor.name || actor.role) || id,
+          originalLabel: string(actor.name || actor.role),
+          route: { view: 'team' as const },
+          owner: id,
+        };
+      }),
       ...[...index.questions].map(([id, question]) => ({
         kind: 'question' as const,
         id,
         label: string(question.prompt || question.title) || id,
+        originalLabel: string(originalValue(question).prompt || originalValue(question).title),
         route: { view: 'question' as const, questionId: id },
       })),
       ...[...index.evidenceLabels].map(([id, label]) => ({
@@ -322,7 +333,9 @@ export function navigationSearch(
   }
   const text = query.trim().toLocaleLowerCase();
   const matches = text
-    ? all.filter((item) => `${item.id} ${item.label}`.toLocaleLowerCase().includes(text))
+    ? all.filter((item) =>
+        `${item.id} ${item.label} ${item.originalLabel || ''}`.toLocaleLowerCase().includes(text),
+      )
     : [];
   return { results: matches.slice(0, limit), total: matches.length };
 }

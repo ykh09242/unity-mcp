@@ -18,6 +18,15 @@ explicit user preference may change it without rewriting historical questions or
 The dashboard's selectable interface language is independent. Keep repository source and
 public documentation in the language required by its authoring rules.
 
+For existing human content in another language, use the reviewed, source-bound presentation
+catalog rather than changing canonical source or past answers. The dashboard uses only current
+entries for the recorded session language and keeps exact originals discoverable beside the
+relevant entity. Inspect both current and historical coverage; a working fallback or a passing
+schema check does not establish complete translation or readable rendered output. Keep the
+program-specific catalog and language-review evidence under the ignored program directory.
+Verify original/displayed search, canonical identity, long prose, keyboard navigation and
+draft/caret/retry preservation with both interface languages before acceptance.
+
 Keep the authority record explicit: who directs the program, which branch receives PRs,
 whether the user authorized merges, and which actions remain outside scope. A portable
 template is not authorization. A new session inherits recorded user decisions after checking

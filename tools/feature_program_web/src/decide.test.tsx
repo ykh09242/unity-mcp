@@ -115,13 +115,13 @@ describe('complete question navigation', () => {
     render(<App loader={async () => snapshot()} sessionLoader={sessionLoader} />);
     await user.click(await screen.findByRole('link', { name: /Choose the first scope/ }));
     await user.type(screen.getByLabelText('Your answer'), 'Keep across work context');
-    await user.click(screen.getByRole('link', { name: 'A' }));
+    await user.click(screen.getByRole('link', { name: 'Affected work · A' }));
     await screen.findByRole('heading', { name: 'Affected work' });
     expect(parseNavigation(window.location.hash).filters.status).toBe('active');
     expect(screen.queryByRole('link', { name: /Choose the second scope/ })).toBeNull();
     await user.click(screen.getByRole('link', { name: /Choose the first scope/ }));
     expect(screen.getByDisplayValue('Keep across work context')).toBeDefined();
-    await user.click(screen.getByRole('link', { name: 'goal-one' }));
+    await user.click(screen.getByRole('link', { name: 'First goal · goal-one' }));
     expect(screen.getByLabelText<HTMLSelectElement>('Goal').value).toBe('goal-one');
     expect(screen.queryByRole('link', { name: /Choose the second scope/ })).toBeNull();
     expect(screen.getByRole('link', { name: /Previous decision/ })).toBeDefined();

@@ -488,6 +488,42 @@ progress::-moz-progress-bar {
   padding-inline-start: var(--s6);
   border-inline-start: 1px solid var(--line);
 }
+.content-coverage {
+  margin-block: 12px;
+}
+.content-coverage > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-block: 4px;
+}
+.content-coverage dt {
+  min-inline-size: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.content-coverage dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.content-language,
+.content-originals,
+.content-originals > details {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.content-language p,
+.content-originals .prose {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.content-originals > details {
+  margin-block: 0.5rem;
+}
+.content-originals summary .mono {
+  display: block;
+  font-size: 0.85em;
+}
 .prose {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

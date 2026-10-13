@@ -1,3 +1,4 @@
+import { usePresentation } from './presentation-ui';
 import { useI18n } from './i18n';
 import { ownerOf } from './model';
 import type { Snapshot, Task } from './model';
@@ -15,6 +16,7 @@ export function Workload({
   readonly context: WorkContext;
 }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   const rows = workload(snapshot, context.scope);
   const actionableCount = (row: (typeof rows)[number]) =>
     row.planned + row.active + row.blocked + row.review;
@@ -83,10 +85,10 @@ export function Workload({
                         href={workloadHref(context.scope, row.owner)}
                         aria-label={i18n.t('All {count} records for {owner}', {
                           count: row.total,
-                          owner: row.owner || i18n.t('Unassigned'),
+                          owner: presentation.actor(row.owner) || i18n.t('Unassigned'),
                         })}
                       >
-                        {row.owner}
+                        {presentation.actor(row.owner)}
                       </a>
                     ) : (
                       i18n.t('Unassigned')
@@ -111,7 +113,7 @@ export function Workload({
                       <a
                         href={workloadHref(context.scope, row.owner, status)}
                         aria-label={i18n.t('{owner} · {status}: {count}', {
-                          owner: row.owner || i18n.t('Unassigned'),
+                          owner: presentation.actor(row.owner) || i18n.t('Unassigned'),
                           status: i18n.statusLabel(status),
                           count: row[status],
                         })}
@@ -138,7 +140,7 @@ export function Workload({
               <li key={row.owner}>
                 <a href={workloadHref(context.scope, row.owner, 'done')}>
                   {i18n.t('{owner} · {count} complete', {
-                    owner: row.owner || i18n.t('No current owner'),
+                    owner: presentation.actor(row.owner) || i18n.t('No current owner'),
                     count: row.done,
                   })}
                 </a>
@@ -158,7 +160,9 @@ export function Workload({
             <ul>
               {withoutAssignments.map((row) => (
                 <li key={row.owner}>
-                  <a href={workloadHref(context.scope, row.owner)}>{row.owner}</a>
+                  <a href={workloadHref(context.scope, row.owner)}>
+                    {presentation.actor(row.owner)}
+                  </a>
                 </li>
               ))}
             </ul>
@@ -176,6 +180,7 @@ export function DependencyNeighborhood({
   readonly task: Task;
 }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   const neighborhood = taskNeighborhood(snapshot, task);
   const groups = [
     ['upstream', 'Depends on'],
@@ -206,10 +211,10 @@ export function DependencyNeighborhood({
                         <a
                           href={workloadHref('all', ownerOf(peer))}
                           aria-label={i18n.t('Assignments for {owner}', {
-                            owner: ownerOf(peer) || i18n.t('Unassigned'),
+                            owner: presentation.actor(ownerOf(peer)) || i18n.t('Unassigned'),
                           })}
                         >
-                          {ownerOf(peer) || i18n.t('Unassigned')}
+                          {presentation.actor(ownerOf(peer)) || i18n.t('Unassigned')}
                         </a>
                       </div>
                     </>

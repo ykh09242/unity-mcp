@@ -438,7 +438,7 @@ describe('readable history surfaces', () => {
     );
     expect(screen.getByText('승인됨')).toBeDefined();
     expect(screen.getByText(/담당 해제/)).toBeDefined();
-    expect(screen.getByText('감독')).toBeDefined();
+    expect(screen.getByText('디렉터')).toBeDefined();
     expect(screen.getByText('작업 범위')).toBeDefined();
     expect(screen.getByText('Original 한글 action')).toBeDefined();
   });

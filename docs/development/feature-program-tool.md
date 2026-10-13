@@ -1081,6 +1081,24 @@ completed, released or rejected submissions do not gain a new freshness prerequi
 
 ## Reviewed session-language presentation
 
+The dashboard applies verified current presentation independently of the interface selector.
+Goals, criteria, tasks, questions and recorded people use consistent displayed labels in lists,
+details, search and accessible names; routes and filter values retain canonical IDs. Search
+accepts original and displayed labels, but never indexes answers or drafts. The content-language
+disclosure reports catalog coverage, while entity-scoped disclosures retain original wording
+and exact source locators. Unavailable or non-current presentation falls back to the original.
+
+For a translated question option, an explicit click copies the exact visible label into a new
+editable freeform answer. The answer endpoint still receives only `question_id`, `version`,
+`answer` and `submission_id`. Presentation refresh cannot rewrite an existing draft, saved answer
+or frozen retry tuple. Drafts remain in the current document across in-app navigation and data
+refresh; reloading or closing the document clears unsaved drafts.
+
+Catalog coverage includes eligible historical sources that the snapshot may not expose as a
+rendered record. The browser does not fetch arbitrary files or reconstruct missing event, phase
+or publication narratives. Exact supplied origins determine repeated-copy resolution; matching
+prose alone is insufficient. Raw source, JSON and technical evidence remain original-only.
+
 Presentation text is optional, reviewed display data. It does not change source sections,
 objectives, criteria, actors, issued questions, saved answers, task acceptance or delivery facts.
 The optional top-level `presentation` ledger keeps immutable input and independent-review

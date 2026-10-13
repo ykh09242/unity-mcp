@@ -1,5 +1,6 @@
 import { display, items, ownerOf, record, records, string } from './model';
 import type { Json, JsonRecord, Snapshot, Task } from './model';
+import { actorLabel, originalValue } from './presentation';
 
 export type SnapshotIndex = {
   readonly tasks: ReadonlyMap<string, Task>;
@@ -71,7 +72,19 @@ export function snapshotIndex(snapshot: Snapshot): SnapshotIndex {
       append(reverseDependencies, id, task);
     searchText.set(
       task.id,
-      [task.id, task.title, task.source, task.notes, task.planning_note]
+      [
+        task.id,
+        task.title,
+        task.source,
+        task.notes,
+        task.planning_note,
+        originalValue(task).title,
+        originalValue(task).source,
+        originalValue(task).notes,
+        originalValue(task).planning_note,
+        ownerOf(task),
+        actorLabel(snapshot, ownerOf(task)),
+      ]
         .map((value) => display(value, ''))
         .join(' ')
         .toLowerCase(),
@@ -158,9 +171,13 @@ export function selectTasks(snapshot: Snapshot, filters: TaskFilters): readonly 
   );
   return filtered.sort(
     (left, right) =>
-      display(filters.sort === 'owner' ? ownerOf(left) : left[filters.sort]).localeCompare(
-        display(filters.sort === 'owner' ? ownerOf(right) : right[filters.sort]),
-        'en',
+      display(
+        filters.sort === 'owner' ? actorLabel(snapshot, ownerOf(left)) : left[filters.sort],
+      ).localeCompare(
+        display(
+          filters.sort === 'owner' ? actorLabel(snapshot, ownerOf(right)) : right[filters.sort],
+        ),
+        string(snapshot.communication_language) === 'ko' ? 'ko' : 'en',
         { numeric: true },
       ) || left.id.localeCompare(right.id),
   );

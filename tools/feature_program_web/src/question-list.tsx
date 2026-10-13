@@ -1,4 +1,5 @@
 import { useI18n } from './i18n';
+import { usePresentation } from './presentation-ui';
 import { items, record, records, string } from './model';
 import type { JsonRecord, Snapshot } from './model';
 import { defaultContext, navigationHash } from './navigation';
@@ -121,6 +122,7 @@ export function QuestionList({
 }) {
   const i18n = useI18n(),
     q = context.questions || defaultQuestions;
+  const presentation = usePresentation();
   const questions = records(snapshot.questions);
   const drafts = useQuestionDrafts();
   useSyncExternalStore(drafts.subscribe, drafts.revision);
@@ -247,7 +249,7 @@ export function QuestionList({
               {q.goal && !goals.includes(q.goal) && <option value={q.goal}>{q.goal}</option>}
               {goals.map((id) => (
                 <option key={id} value={id}>
-                  {id}
+                  {presentation.goalReference(id)}
                   {id === currentGoal ? ` · ${i18n.t('Current goal')}` : ''}
                 </option>
               ))}
@@ -259,7 +261,9 @@ export function QuestionList({
               <option value="">{i18n.t('All tasks')}</option>
               {q.task && !tasks.includes(q.task) && <option value={q.task}>{q.task}</option>}
               {tasks.map((id) => (
-                <option key={id}>{id}</option>
+                <option key={id} value={id}>
+                  {presentation.taskReference(id)}
+                </option>
               ))}
             </select>
           </label>
@@ -282,8 +286,8 @@ export function QuestionList({
                   ],
                 )
               : '',
-            q.goal,
-            q.task,
+            presentation.goal(q.goal),
+            presentation.task(q.task),
           ]
             .filter(Boolean)
             .join(' · ')}{' '}

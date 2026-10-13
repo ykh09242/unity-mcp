@@ -1,3 +1,4 @@
+import { ContentOriginals, usePresentation } from './presentation-ui';
 import { useI18n } from './i18n';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuestionDraft, questionDraftKey, useQuestionDrafts } from './question-drafts';
@@ -85,6 +86,7 @@ export function QuestionForm({
   readonly refresh: () => Promise<void>;
 }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   const formRoot = useRef<HTMLElement>(null);
   const savedHeading = useRef<HTMLHeadingElement>(null);
   const failureMessage = useRef<HTMLParagraphElement>(null);
@@ -177,7 +179,7 @@ export function QuestionForm({
         </div>
         <div>
           <dt>{i18n.t('Asked by')}</dt>
-          <dd>{i18n.display(question.actor_id)}</dd>
+          <dd>{i18n.display(presentation.actor(question.actor_id))}</dd>
         </div>
         <div>
           <dt>{i18n.t('Recorded')}</dt>
@@ -194,7 +196,7 @@ export function QuestionForm({
                   { ...context, selected: string(item) },
                 )}
               >
-                {string(item)}{' '}
+                {presentation.taskReference(item)}{' '}
               </a>
             ))}
             {!items(question.affected_task_ids).length && i18n.t('None recorded')}
@@ -220,7 +222,7 @@ export function QuestionForm({
                   },
                 )}
               >
-                {string(question.objective_id)}
+                {presentation.goalReference(question.objective_id)}
               </a>
             ) : (
               i18n.t('Not recorded')
@@ -433,7 +435,7 @@ export function QuestionForm({
                 <dl className="history-facts">
                   <div>
                     <dt>{i18n.t('Recorded by')}</dt>
-                    <dd>{i18n.display(entry.actor_id)}</dd>
+                    <dd>{i18n.display(presentation.actor(entry.actor_id))}</dd>
                   </div>
                   <div>
                     <dt>{i18n.t('Recorded')}</dt>
@@ -466,6 +468,7 @@ export function QuestionForm({
           )}
         </p>
       </details>
+      <ContentOriginals entity="question" id={string(question.id)} />
       <OriginalRecord label="Question scope and response history" value={question} />
     </section>
   );
