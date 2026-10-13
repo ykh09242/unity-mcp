@@ -301,20 +301,12 @@ function Overview({ snapshot }: { readonly snapshot: Snapshot }) {
   const checkpoint = record(snapshot.checkpoint);
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">{i18n.t('Program overview')}</p>
-          <h2>{i18n.t('Where the work stands')}</h2>
-        </div>
+      <div className="page-heading overview-heading">
+        <h2>{i18n.t('Overview')}</h2>
         <a className="button-link" href="#work">
           {i18n.t('Browse work')}
         </a>
       </div>
-      <p className="intro">
-        {i18n.t(
-          'Start here for the goal and progress. Open Work for tasks, or Team for responsibility and handoffs.',
-        )}
-      </p>
       <Objective snapshot={snapshot} />
       <Progress snapshot={snapshot} />
       <div className="status-strip">
@@ -1719,6 +1711,9 @@ function Dashboard({
           </span>
         </div>
         <div className="refresh">
+          <span className="refresh-status" role="status">
+            {freshness}
+          </span>
           <label className="language-control">
             {i18n.t('Language')}
             <select
@@ -1732,7 +1727,6 @@ function Dashboard({
               <option value="ko">한국어</option>
             </select>
           </label>
-          <span role="status">{freshness}</span>
           <IconButton
             icon="refresh"
             label={i18n.t('Refresh')}

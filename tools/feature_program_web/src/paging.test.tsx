@@ -39,7 +39,7 @@ async function work(loader = async () => fixture()) {
   render(
     <App loader={loader} sessionLoader={async () => ({ responsesEnabled: false, nonce: null })} />,
   );
-  await screen.findByText('Where the work stands');
+  await screen.findByRole('heading', { name: 'Overview' });
   await navigate('#work');
 }
 

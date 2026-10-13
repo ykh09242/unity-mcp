@@ -84,9 +84,9 @@ describe('interface language and immutable recorded prose', () => {
     const user = userEvent.setup();
     const loader = async () => localizedFixture();
     const view = render(<App loader={loader} sessionLoader={sessionLoader} />);
-    await screen.findByRole('heading', { name: 'Where the work stands' });
+    await screen.findByRole('heading', { name: 'Overview' });
     await user.selectOptions(screen.getByLabelText('Language'), 'ko');
-    expect(screen.getByRole('heading', { name: '현재 작업 상태' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: '개요' })).toBeDefined();
     expect(screen.getByText('Keep authored content unchanged')).toBeDefined();
     expect(localStorage.getItem(PREFERENCE_KEY)).toBe('ko');
     expect(document.documentElement.lang).toBe('ko');
@@ -105,7 +105,7 @@ describe('interface language and immutable recorded prose', () => {
   it('keeps a Korean answer draft and question text unchanged when switching languages', async () => {
     const user = userEvent.setup();
     render(<App loader={async () => localizedFixture()} sessionLoader={sessionLoader} />);
-    await screen.findByRole('heading', { name: 'Where the work stands' });
+    await screen.findByRole('heading', { name: 'Overview' });
     await act(async () => {
       window.location.hash = '#question/Q1';
       window.dispatchEvent(new HashChangeEvent('hashchange'));
@@ -129,7 +129,7 @@ describe('interface language and immutable recorded prose', () => {
         sessionLoader={sessionLoader}
       />,
     );
-    await screen.findByRole('heading', { name: '현재 작업 상태' });
+    await screen.findByRole('heading', { name: '개요' });
     expect(screen.getByText('Keep authored content unchanged')).toBeDefined();
     expect(localStorage.getItem(PREFERENCE_KEY)).toBeNull();
   });
