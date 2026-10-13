@@ -13,7 +13,7 @@ import {
   questionStages,
 } from './question-state';
 import { IconButton } from './icons';
-import { useSyncExternalStore } from 'react';
+import { useRef, useSyncExternalStore } from 'react';
 import { useQuestionDrafts } from './question-drafts';
 
 function QuestionRow({
@@ -52,10 +52,12 @@ export function QuestionLinks({
   taskId,
   objectiveId,
   context = defaultContext,
+  heading = true,
 }: {
   readonly snapshot: Snapshot;
   readonly taskId?: string;
   readonly objectiveId?: string;
+  readonly heading?: boolean;
   readonly context?: WorkContext;
 }) {
   const i18n = useI18n();
@@ -72,7 +74,7 @@ export function QuestionLinks({
   return (
     <section className="question-inbox" aria-label={i18n.t('Related decisions')}>
       <div className="question-inbox-heading">
-        <h3>{i18n.t('Related decisions')}</h3>
+        {heading && <h3>{i18n.t('Related decisions')}</h3>}
         <a
           href={navigationHash(
             { view: 'questions' },
@@ -155,6 +157,11 @@ export function QuestionList({
     ),
   ];
   const filtered = Boolean(q.state || q.search || q.goal || q.task);
+  const search = useRef<HTMLInputElement>(null);
+  const clear = () => {
+    search.current?.focus({ preventScroll: true });
+    set({ state: '', search: '', goal: '', task: '' });
+  };
   return (
     <section className="questions-page">
       <div className="page-heading">
@@ -215,6 +222,7 @@ export function QuestionList({
         <label className="question-search">
           {i18n.t('Search questions')}
           <input
+            ref={search}
             type="search"
             value={q.search}
             maxLength={300}
@@ -230,49 +238,51 @@ export function QuestionList({
             {i18n.t('Filters')}
             {filtered ? ` · ${i18n.t('Filters applied')}` : ''}
           </summary>
-          <label>
-            {i18n.t('Question state')}
-            <select value={q.state} onChange={(event) => set({ state: event.target.value })}>
-              <option value="">{i18n.t('All states')}</option>
-              {questionStages.map((stage) => (
-                <option key={stage} value={stage}>
-                  {i18n.t(questionStageLabel[stage])} (
-                  {questions.filter((item) => questionStage(item) === stage).length})
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            {i18n.t('Goal')}
-            <select value={q.goal} onChange={(event) => set({ goal: event.target.value })}>
-              <option value="">{i18n.t('All goals')}</option>
-              {q.goal && !goals.includes(q.goal) && <option value={q.goal}>{q.goal}</option>}
-              {goals.map((id) => (
-                <option key={id} value={id}>
-                  {presentation.goalReference(id)}
-                  {id === currentGoal ? ` · ${i18n.t('Current goal')}` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            {i18n.t('Affected task')}
-            <select value={q.task} onChange={(event) => set({ task: event.target.value })}>
-              <option value="">{i18n.t('All tasks')}</option>
-              {q.task && !tasks.includes(q.task) && <option value={q.task}>{q.task}</option>}
-              {tasks.map((id) => (
-                <option key={id} value={id}>
-                  {presentation.taskReference(id)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <IconButton
-            icon="clear"
-            label={i18n.t('Clear question filters')}
-            disabled={!filtered}
-            onClick={() => set({ state: '', search: '', goal: '', task: '' })}
-          />
+          <div className="question-filter-fields">
+            <label>
+              {i18n.t('Question state')}
+              <select value={q.state} onChange={(event) => set({ state: event.target.value })}>
+                <option value="">{i18n.t('All states')}</option>
+                {questionStages.map((stage) => (
+                  <option key={stage} value={stage}>
+                    {i18n.t(questionStageLabel[stage])} (
+                    {questions.filter((item) => questionStage(item) === stage).length})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {i18n.t('Goal')}
+              <select value={q.goal} onChange={(event) => set({ goal: event.target.value })}>
+                <option value="">{i18n.t('All goals')}</option>
+                {q.goal && !goals.includes(q.goal) && <option value={q.goal}>{q.goal}</option>}
+                {goals.map((id) => (
+                  <option key={id} value={id}>
+                    {presentation.goalReference(id)}
+                    {id === currentGoal ? ` · ${i18n.t('Current goal')}` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {i18n.t('Affected task')}
+              <select value={q.task} onChange={(event) => set({ task: event.target.value })}>
+                <option value="">{i18n.t('All tasks')}</option>
+                {q.task && !tasks.includes(q.task) && <option value={q.task}>{q.task}</option>}
+                {tasks.map((id) => (
+                  <option key={id} value={id}>
+                    {presentation.taskReference(id)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <IconButton
+              icon="clear"
+              label={i18n.t('Clear question filters')}
+              disabled={!filtered}
+              onClick={clear}
+            />
+          </div>
         </details>
       </div>
       {filtered && (
@@ -291,9 +301,7 @@ export function QuestionList({
           ]
             .filter(Boolean)
             .join(' · ')}{' '}
-          <button onClick={() => set({ state: '', search: '', goal: '', task: '' })}>
-            {i18n.t('Clear filters')}
-          </button>
+          <button onClick={clear}>{i18n.t('Clear filters')}</button>
         </p>
       )}
       {!questions.length ? (

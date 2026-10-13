@@ -113,7 +113,7 @@ keyboard focus uses a 2px ring and 3px offset. Loading disables manual refresh o
 
 No decorative animation. Hash navigation opens Overview, Work, Team, task or question pages.
 Explicit navigation focuses the content landmark; returning to the ledger focuses its
-selected task. Automatic polling preserves native focus and disclosure state. React owns
+selected task. Automatic polling preserves connected native focus and disclosure state. If a refreshed question removes the focused editor, focus continues at that question's current state heading; deliberately moved focus is preserved. React owns
 the DOM; stable task, actor, question and history keys prevent replacement during refresh.
 Polling skips hidden pages, prevents overlapping reads and times out after 12 seconds.
 Reduced-motion users receive the same static UI. Server restarts refresh the session nonce.
@@ -126,9 +126,10 @@ Ledger rows are square and separated by single lines. History records use raised
 ## 8. Accessibility Constraints & Accepted Debt
 
 Target WCAG 2.2 AA contrast and keyboard access. Native labels, landmarks, skip link,
-visible focus, text status labels, non-color progress explanation and polite refresh status.
-Primary content must reflow at 375px and survive long/unbroken prose. No virtualized task
-list, so browser find and assistive reading can reach every filtered task.
+visible focus, text status labels, non-color progress explanation and polite explicit refresh status. Routine background polls update the visible freshness text without live announcements.
+Primary content targets reflow at 320 CSS pixels and must survive long/unbroken prose. Task
+pages are not virtualized: browser find and assistive reading can reach each rendered page.
+Filtering and sorting apply to the full list before explicit pagination.
 
 Automated checks do not establish screen-reader conformance. Fresh rendered verification
 and independent review are required before reporting completion. No accepted visual or
@@ -155,3 +156,26 @@ running agent changed settings. Transfer stages retain every supplied acknowledg
 compare only supplied context. Objective membership and source amendments expose explicit
 added/removed task links, binding changes and receipts. Authored prose stays unchanged;
 system copy is concise and localized. Polling keeps disclosure and navigation context.
+
+## Program summary and focus continuity
+
+Overview leads with its page heading, current objective and scoped progress. Related decision
+narratives remain in a secondary collapsed section; the attention summary and question routes
+retain their actionable links without an expanded duplicate list before the objective.
+Overview consumes only the supplied, revision-bound program brief and coverage records.
+Attention includes every supplied kind, uses a short initial list with an explicit expansion,
+and distinguishes visible, supplied and omitted counts. Missing or mismatched projections
+remain unavailable. Exact source references and complete supplied originals are secondary.
+Criterion contributors, uncovered reasons, frozen checks, annotation freshness, recorded
+objective acceptance and integrated review remain separate observations. None establishes
+claim authority or criterion completion by inference.
+
+Human-authored copied fields retain their source-bound session-language presentation;
+interface language changes only system labels. Recovery artifact references are observed
+local paths, not invented backlog identities or file-fetch capabilities.
+
+Mounted Refresh remains keyboard reachable while requests are pending; the guarded action
+prevents duplicate reads. Initial loading retains a disabled control. Explicit filter removal
+continues at its stable search field. Question filters share a wide row and stack at narrow
+widths; narrow navigation preserves complete English words. Korean prose retains ordinary
+word boundaries with emergency wrapping for long technical identifiers.

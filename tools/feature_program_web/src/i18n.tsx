@@ -54,6 +54,7 @@ export function translationTools(locale: Language) {
   };
   const warning = (value: Json) => {
     const input = originalDisplay(value);
+    if (locale === 'en') return input;
     for (const prefix of [
       'Pending submitted source changed:',
       'Pending submitted source could not be verified:',
@@ -64,6 +65,20 @@ export function translationTools(locale: Language) {
       if (input.startsWith(prefix))
         return t(`${prefix} {value}`, { value: input.slice(prefix.length).trim() });
     }
+    for (const prefix of [
+      'Recorded decision state: ',
+      'Recorded task acceptance and delivery/CI are separate: ',
+    ]) {
+      if (input.startsWith(prefix))
+        return t(`${prefix}{value}`, { value: t(originalHuman(input.slice(prefix.length))) });
+    }
+    if (input.startsWith('scope: ')) return `${t('Scope')}: ${input.slice(7)}`;
+    const succession =
+      /^Succession is ([a-z_]+); it does not replace release and fresh claim$/u.exec(input);
+    if (succession)
+      return t('Succession is {value}; it does not replace release and fresh claim', {
+        value: t(originalHuman(succession[1])),
+      });
     if (input.startsWith('Derived view drift: ') && input.endsWith('; director may run render.'))
       return t('Derived view drift: {value}; director may run render.', {
         value: input.slice('Derived view drift: '.length, -'; director may run render.'.length),

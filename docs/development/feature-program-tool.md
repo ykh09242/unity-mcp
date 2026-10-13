@@ -791,9 +791,16 @@ dependencies and advisory relations, their recorded owners, attempts,
 reviews and delivery. Team shows role responsibilities, recorded model settings, observations
 and handoffs. A reviewed task and a recorded PR/CI result are different measurements.
 
-The dashboard polls every five seconds and preserves filters, selection and answer drafts.
-It identifies stale or unavailable snapshots rather than inventing progress. Snapshot reads
-create no locks or program files and perform no Git or network operations. Bounds include
+The dashboard polls every five seconds while visible; hidden polling is suppressed and returning
+to the foreground triggers refresh. Initial loading or failure is distinct from an empty
+program. In-app refresh retains the last-good snapshot through pending and failed reads; a
+successful read updates changed facts without resetting the current view. Unchanged semantic
+data retains the current model. Filters and selection remain subject to valid current data.
+Answer drafts and their version/retry state survive in-app navigation, polls and outages within
+the current document, keyed by program and question. Reloading or closing the document clears
+unsaved drafts; answer text is not stored in URLs or browser local storage.
+The dashboard identifies stale or unavailable snapshots rather than inventing progress. Snapshot
+reads create no locks or program files and perform no Git or network operations. Bounds include
 2,000 tasks, 8 MiB documents and 64 MiB of evidence per snapshot; an exceeded bound produces
 an explicit error instead of a truncated successful view.
 
@@ -801,6 +808,10 @@ Korean and English interface text can be selected independently of authored task
 content. The saved browser preference takes precedence, followed by a supported program
 communication language, browser language and English. Interface switching does not translate
 or rewrite source text, saved answers or task IDs. Dates and numbers follow the interface locale.
+
+For dashboard changes, use the [web interface review procedure](web-ui-review.md) to choose
+proportionate interaction and visual checks. The [annotated design resources](web-ui-resources.md)
+explain the relevant principles, application checks and limits.
 
 ## Director questions and answers
 
