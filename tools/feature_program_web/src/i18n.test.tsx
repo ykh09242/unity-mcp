@@ -46,6 +46,16 @@ const localizedFixture = () =>
 const sessionLoader = async () => ({ responsesEnabled: true, nonce: 'synthetic' });
 
 describe('interface language and immutable recorded prose', () => {
+  it('localizes known supplied question-state diagnostics without translating unknown source text', () => {
+    const ko = translationTools('ko');
+    expect(ko.warning('Recorded decision state: answered')).toBe('질문 상태: 답변 저장됨');
+    expect(ko.warning('Recorded decision state: acknowledged')).toBe('질문 상태: 디렉터 확인 완료');
+    expect(ko.warning('Recorded decision state: future_state')).toContain('future state');
+    expect(ko.display('acknowledged')).toBe('acknowledged');
+    expect(translationTools('en').warning('Recorded decision state: acknowledged')).toBe(
+      'Recorded decision state: acknowledged',
+    );
+  });
   it('uses saved preference before program language, then browser locale, with English fallback', () => {
     expect(preferredLanguage('en', 'ko', 'ko-KR')).toBe('en');
     expect(preferredLanguage('ko', 'en', 'en-GB')).toBe('ko');

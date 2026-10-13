@@ -1,3 +1,4 @@
+import { CriterionCoverage, ProgramAttention } from './overview-context';
 import { LanguageProvider, language, useI18n } from './i18n';
 import { originalValue, presentSnapshot, taskBody } from './presentation';
 import {
@@ -6,7 +7,7 @@ import {
   PresentationProvider,
   usePresentation,
 } from './presentation-ui';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   categoryTasks,
@@ -56,7 +57,7 @@ import {
 } from './navigation';
 import type { Navigation, Route, ViewPreferences, WorkContext } from './navigation';
 import type { TaskFilters } from './selectors';
-import { Breadcrumbs, NavigationSearch, RecordedAttention, ViewControls } from './navigation-ui';
+import { Breadcrumbs, NavigationSearch, ViewControls } from './navigation-ui';
 
 type Filters = TaskFilters;
 const statuses = ['planned', 'active', 'blocked', 'review', 'done'] as const;
@@ -212,38 +213,48 @@ const CategoryTree = memo(CategoryTreeView);
 
 function Progress({ snapshot }: { readonly snapshot: Snapshot }) {
   const i18n = useI18n();
-  const done = snapshot.tasks.filter((task) => task.status === 'done').length;
-  const delivery = snapshot.tasks.filter(
+  const currentGoal = goalTaskIds(snapshot);
+  const tasks = scopedTasks(snapshot, currentGoal ? 'current' : 'all');
+  const done = tasks.filter((task) => task.status === 'done').length;
+  const delivery = tasks.filter(
     (task) =>
       string(record(task.delivery).status) !== 'unrecorded' && string(record(task.delivery).status),
   ).length;
   return (
-    <div className="metrics">
-      <div className="metric">
-        <p className="muted">{i18n.t('Reviewed implementation')}</p>
-        <span className="metric-number">
-          {done} <span className="metric-denominator">/ {snapshot.tasks.length}</span>
-        </span>
-        <progress
-          max={Math.max(snapshot.tasks.length, 1)}
-          value={done}
-          aria-label={i18n.t('{done} of {total} leaf tasks reviewed complete', {
-            done,
-            total: snapshot.tasks.length,
-          })}
-        />
-        <p className="muted">{i18n.t('Leaf tasks accepted after recorded review.')}</p>
+    <>
+      <p className="progress-scope muted">
+        {i18n.t(currentGoal ? 'Current goal' : 'All recorded tasks')} ·{' '}
+        <a href="#work?scope=all">
+          {i18n.t('All work')} ({i18n.number(snapshot.tasks.length)})
+        </a>
+      </p>
+      <div className="metrics">
+        <div className="metric">
+          <p className="muted">{i18n.t('Reviewed implementation')}</p>
+          <span className="metric-number">
+            {done} <span className="metric-denominator">/ {tasks.length}</span>
+          </span>
+          <progress
+            max={Math.max(tasks.length, 1)}
+            value={done}
+            aria-label={i18n.t('{done} of {total} tasks reviewed complete', {
+              done,
+              total: tasks.length,
+            })}
+          />
+          <p className="muted">{i18n.t('Tasks accepted after recorded review.')}</p>
+        </div>
+        <div className="metric">
+          <p className="muted">{i18n.t('Recorded PR / CI')}</p>
+          <span className="metric-number">
+            {delivery} <span className="metric-denominator">{i18n.t('tasks')}</span>
+          </span>
+          <p className="muted">
+            {i18n.t('Saved delivery records. Open the provider to verify current results.')}
+          </p>
+        </div>
       </div>
-      <div className="metric">
-        <p className="muted">{i18n.t('Recorded PR / CI')}</p>
-        <span className="metric-number">
-          {delivery} <span className="metric-denominator">{i18n.t('tasks')}</span>
-        </span>
-        <p className="muted">
-          {i18n.t('Saved delivery records. Open the provider to verify current results.')}
-        </p>
-      </div>
-    </div>
+    </>
   );
 }
 function Objective({ snapshot }: { readonly snapshot: Snapshot }) {
@@ -283,7 +294,7 @@ function Objective({ snapshot }: { readonly snapshot: Snapshot }) {
       />
       <details>
         <summary>{i18n.t('Success criteria')}</summary>
-        <Prose value={objective.criteria} fallback="No success criteria recorded" />
+        <CriterionCoverage snapshot={snapshot} />
       </details>
       <p className="next-action">
         <span className="muted">{i18n.t('Next action')}</span>
@@ -298,16 +309,19 @@ function Objective({ snapshot }: { readonly snapshot: Snapshot }) {
     </section>
   );
 }
-function Overview({ snapshot }: { readonly snapshot: Snapshot }) {
+function Overview({
+  snapshot,
+  context,
+}: {
+  readonly snapshot: Snapshot;
+  readonly context: WorkContext;
+}) {
   const i18n = useI18n();
+  const [decisionsOpen, setDecisionsOpen] = useState(false);
   const presentation = usePresentation();
   const index = snapshotIndex(snapshot);
+  const tasksInScope = scopedTasks(snapshot, goalTaskIds(snapshot) ? 'current' : 'all');
   const categories = index.categoryChildren.get('') || [];
-  const blockers = index.tasksByStatus.get('blocked') || [];
-  const active = [
-    ...(index.tasksByStatus.get('active') || []),
-    ...(index.tasksByStatus.get('review') || []),
-  ];
   const checkpoint = record(snapshot.checkpoint);
   return (
     <>
@@ -318,23 +332,23 @@ function Overview({ snapshot }: { readonly snapshot: Snapshot }) {
         </a>
       </div>
       <Objective snapshot={snapshot} />
-      <ContentOriginals entity="goal" id={string(record(snapshot.objective).id)} />
-      <MembershipHistory snapshot={snapshot} />
       <Progress snapshot={snapshot} />
       <div className="status-strip">
         {statuses.map((status) => (
           <div key={status}>
-            <strong>{snapshot.tasks.filter((task) => task.status === status).length}</strong>
+            <strong>{tasksInScope.filter((task) => task.status === status).length}</strong>
             <span>{i18n.statusLabel(status)}</span>
           </div>
         ))}
       </div>
+      <ContentOriginals entity="goal" id={string(record(snapshot.objective).id)} />
+      <MembershipHistory snapshot={snapshot} />
       <div className="overview-grid">
         <Section title={i18n.t('Areas and responsibility')}>
           {categories.length ? (
             categories.map((category) => {
               const ids = categoryTasks(snapshot, string(category.id));
-              const tasks = snapshot.tasks.filter((task) => ids.has(task.id));
+              const tasks = tasksInScope.filter((task) => ids.has(task.id));
               const done = tasks.filter((task) => task.status === 'done').length;
               const owners = [...new Set(tasks.map(ownerOf).filter(Boolean))];
               return (
@@ -356,30 +370,28 @@ function Overview({ snapshot }: { readonly snapshot: Snapshot }) {
             <p className="muted">{i18n.t('No category hierarchy recorded.')}</p>
           )}
         </Section>
-        <Section title={i18n.t('Needs attention')}>
-          {blockers.length ? (
-            blockers.map((task) => (
-              <a
-                className="attention-row"
-                key={task.id}
-                href={`#task/${encodeURIComponent(task.id)}`}
-              >
-                <Status value="blocked" />
-                <strong>{task.title}</strong>
-                <span>{i18n.display(task.next_action, 'No next action recorded')}</span>
-              </a>
-            ))
-          ) : (
-            <p className="muted">{i18n.t('No blocked tasks recorded.')}</p>
-          )}
-          <p className="summary-line">
-            {active.length}{' '}
-            {i18n.t(
-              'tasks in progress or review. Saved statuses do not establish live agent activity.',
-            )}
-          </p>
-        </Section>
+        <ProgramAttention snapshot={snapshot} />
       </div>
+      {records(snapshot.questions).some(
+        (question) =>
+          !string(record(snapshot.objective).id) ||
+          question.objective_id === record(snapshot.objective).id,
+      ) && (
+        <details
+          className="overview-decisions"
+          onToggle={(event) => setDecisionsOpen(event.currentTarget.open)}
+        >
+          <summary>{i18n.t('Related decisions')}</summary>
+          {decisionsOpen && (
+            <QuestionLinks
+              snapshot={snapshot}
+              objectiveId={string(record(snapshot.objective).id)}
+              context={context}
+              heading={false}
+            />
+          )}
+        </details>
+      )}
       <Section title={i18n.t('Director checkpoint')}>
         <Fields
           values={[
@@ -429,6 +441,7 @@ function TaskList({
   const presentation = usePresentation();
   const selectedRef = useRef<HTMLAnchorElement>(null);
   const sizeRef = useRef<HTMLSelectElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const focusedRow = useRef<string | null>(null);
   useEffect(() => {
     if (page.index !== paging.index) onPage({ ...paging, index: page.index });
@@ -497,6 +510,7 @@ function TaskList({
         <label className="search">
           {i18n.t('Search tasks')}
           <input
+            ref={searchRef}
             type="search"
             value={filters.search}
             placeholder={i18n.t('Title, ID, requirements…')}
@@ -548,13 +562,23 @@ function TaskList({
           <IconButton
             icon="clear"
             label={i18n.t('Clear filters')}
-            onClick={() => onChange(emptyFilters)}
+            onClick={() => {
+              searchRef.current?.focus({ preventScroll: true });
+              onChange(emptyFilters);
+            }}
           />
         )}
         {Object.entries(filters)
           .filter(([key, value]) => key !== 'sort' && Boolean(value))
           .map(([key, value]) => (
-            <button type="button" key={key} onClick={() => onChange({ ...filters, [key]: '' })}>
+            <button
+              type="button"
+              key={key}
+              onClick={() => {
+                searchRef.current?.focus({ preventScroll: true });
+                onChange({ ...filters, [key]: '' });
+              }}
+            >
               {i18n.t(
                 key === 'search'
                   ? 'Search'
@@ -1137,7 +1161,7 @@ function Dashboard({
   readonly answerSaver?: AnswerSaver;
 }) {
   const i18n = useI18n();
-  const { snapshot: rawSnapshot, observed, error, busy, refresh } = useSnapshot(loader);
+  const { snapshot: rawSnapshot, observed, error, busy, announce, refresh } = useSnapshot(loader);
   const snapshot = useMemo(
     () => (rawSnapshot ? presentSnapshot(rawSnapshot) : null),
     [rawSnapshot],
@@ -1181,6 +1205,40 @@ function Dashboard({
   } | null>(null);
   const previousProgram = useRef<string | null>(null);
   const main = useRef<HTMLElement>(null);
+  const removedQuestionFocus = useRef<{ element: HTMLElement; questionId: string } | null>(null);
+  useEffect(() => {
+    const remember = (event: FocusEvent) => {
+      const element = event.target;
+      removedQuestionFocus.current =
+        element instanceof HTMLElement && element.closest('.question-form')
+          ? { element, questionId: currentNavigation.current.route.questionId || '' }
+          : null;
+    };
+    const abandon = () => {
+      removedQuestionFocus.current = null;
+    };
+    const pointer = (event: PointerEvent) => {
+      if (event.target !== removedQuestionFocus.current?.element) abandon();
+    };
+    document.addEventListener('focusin', remember);
+    document.addEventListener('pointerdown', pointer, true);
+    window.addEventListener('blur', abandon);
+    return () => {
+      document.removeEventListener('focusin', remember);
+      document.removeEventListener('pointerdown', pointer, true);
+      window.removeEventListener('blur', abandon);
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const previous = removedQuestionFocus.current;
+    if (!previous || route.view !== 'question' || previous.questionId !== route.questionId) return;
+    if (previous.element.isConnected && !previous.element.matches(':disabled')) return;
+    removedQuestionFocus.current = null;
+    if (document.activeElement !== document.body) return;
+    main.current
+      ?.querySelector<HTMLElement>('.question-heading h2,.not-found')
+      ?.focus({ preventScroll: true });
+  }, [snapshot]);
   const initialized = useRef(false);
   const commit = useCallback((next: Navigation, replace = false) => {
     currentNavigation.current = next;
@@ -1347,7 +1405,7 @@ function Dashboard({
       });
       return () => cancelAnimationFrame(frame);
     }
-  }, [route.view, route.taskId, route.questionId, selected, Boolean(snapshot)]);
+  }, [route.view, route.taskId, route.full, route.questionId, selected, Boolean(snapshot)]);
   const integrity = record(snapshot?.integrity);
   const stale = integrity.status === 'stale';
   const changeContext = useCallback(
@@ -1492,17 +1550,7 @@ function Dashboard({
         </>
       );
     else if (route.view === 'overview')
-      content = (
-        <>
-          <QuestionLinks
-            snapshot={snapshot}
-            objectiveId={string(record(snapshot.objective).id)}
-            context={navigation}
-          />
-          <RecordedAttention snapshot={snapshot} />
-          <Overview snapshot={snapshot} />
-        </>
-      );
+      content = <Overview snapshot={snapshot} context={navigation} />;
     else if (route.view === 'work' || (route.view === 'task' && wide && !route.full))
       content = (
         <>
@@ -1659,7 +1707,9 @@ function Dashboard({
             />
           ) : (
             <>
-              <h2>{i18n.t('Question not available')}</h2>
+              <h2 className="not-found" tabIndex={-1}>
+                {i18n.t('Question not available')}
+              </h2>
               <p className="empty">
                 {i18n.t('Return to Questions to inspect the current records.')}
               </p>
@@ -1721,7 +1771,7 @@ function Dashboard({
           </span>
         </div>
         <div className="refresh">
-          <span className="refresh-status" role="status">
+          <span className="refresh-status" role="status" aria-live={announce ? 'polite' : 'off'}>
             {freshness}
           </span>
           <label className="language-control">
@@ -1740,8 +1790,11 @@ function Dashboard({
           <IconButton
             icon="refresh"
             label={i18n.t('Refresh')}
-            disabled={busy}
-            onClick={() => void refresh()}
+            disabled={busy && !snapshot}
+            aria-disabled={busy}
+            onClick={() => {
+              if (!busy) void refresh(true);
+            }}
           />
         </div>
       </header>

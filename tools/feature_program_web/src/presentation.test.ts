@@ -334,6 +334,40 @@ describe('source-bound presentation', () => {
     expect(JSON.stringify(wrong.tasks)).not.toContain('검증 설명');
   });
 
+  it('binds collision attention next action by its supplied task reference, not the compound entity ID', () => {
+    const raw = fixture({
+      action: entry('task_action', 'T1', 'next_action', '/tasks/0/next_action', '근거를 확인해요', {
+        binding: {
+          program_id: 'example',
+          source_value_sha256: presentationDigest('Check the source'),
+        },
+      }),
+    });
+    const row = {
+      kind: 'collision',
+      entity_id: 'T1:T2',
+      task_ids: ['T1', 'T2'],
+      next_action: 'Check the source',
+      reference: { path: 'backlog.json', pointer: '/tasks/0', revision, task_id: 'T1' },
+    };
+    const brief = {
+      revision,
+      program_id: raw.program_id,
+      attention: { items: [row, { ...row, reference: { ...row.reference, task_id: 'missing' } }] },
+    };
+    const view = presentSnapshot({ ...raw, brief });
+    expect(view.tasks[0]?.next_action).toBe('근거를 확인해요');
+    expect(
+      records(
+        (view.brief as JsonRecord).attention &&
+          ((view.brief as JsonRecord).attention as JsonRecord).items,
+      )[0]?.next_action,
+    ).toBe('근거를 확인해요');
+    expect(
+      records(((view.brief as JsonRecord).attention as JsonRecord).items)[1]?.next_action,
+    ).toBe('Check the source');
+    expect(raw.tasks[0]?.next_action).toBe('Check the source');
+  });
   it('projects only the exact current uncovered record and preserves criterion and brief bounds', () => {
     const uncovered = {
       criterion: { ordinal: 0, text_sha256: 'criterion-sha' },

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from './i18n';
-import { records } from './model';
 import type { Snapshot } from './model';
 import { categoryBreadcrumbs, columns, navigationHash, navigationSearch } from './navigation';
 import type { Route, ViewPreferences, WorkContext } from './navigation';
@@ -367,23 +366,4 @@ export function Breadcrumbs({
       ))}
     </nav>
   ) : null;
-}
-export function RecordedAttention({ snapshot }: { readonly snapshot: Snapshot }) {
-  const i18n = useI18n();
-  return (
-    <section className="recorded-attention">
-      <h3>{i18n.t('Attention context')}</h3>
-      <p className="muted">
-        {i18n.t(
-          'Canonical attention and readiness are not available in this snapshot. Recorded status views remain inspectable.',
-        )}
-      </p>
-      <p>
-        {i18n.t('Pending questions: {count}', {
-          count: records(snapshot.questions).filter((question) => question.status === 'open')
-            .length,
-        })}
-      </p>
-    </section>
-  );
 }

@@ -421,7 +421,12 @@ function updateDerivedCopies(snapshot: Snapshot): void {
       /^\/tasks\/\d+$/u.test(text(ref.pointer))
     ) {
       const task = snapshot.tasks.find(
-        (task) => task.id === row.entity_id && task.id === ref.task_id,
+        (task) =>
+          task.id === ref.task_id &&
+          (task.id === row.entity_id ||
+            (row.kind === 'collision' &&
+              Array.isArray(row.task_ids) &&
+              row.task_ids.includes(task.id))),
       );
       if (task) copy(row, task, ['next_action'], true);
     }

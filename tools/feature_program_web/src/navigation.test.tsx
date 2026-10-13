@@ -413,6 +413,35 @@ describe('researched navigation outcomes', () => {
     expect(document.querySelector('.task-button')).toBe(first);
     expect(screen.getByLabelText('Tasks per page')).toHaveProperty('value', '25');
   });
+  it('hands the same task heading focus to full detail once and returns to its selected work context', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
+    const user = userEvent.setup();
+    window.history.replaceState(null, '', '#work?scope=all&page=2&size=25');
+    const loader = vi.fn().mockResolvedValue(fixture());
+    render(<App loader={loader} />);
+    await screen.findByLabelText('Tasks per page');
+    await user.click(screen.getByRole('link', { name: /T025 Task 25/ }));
+    await screen.findByRole('heading', { name: 'Task 25' });
+    await user.click(screen.getByRole('link', { name: 'Open full detail' }));
+    await waitFor(() => expect(window.location.hash).toContain('full=1'));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Task 25' })),
+    );
+    const language = screen.getByLabelText('Language');
+    language.focus();
+    loader.mockResolvedValue(parseSnapshot({ ...fixture(), revision: 'updated' }));
+    fireEvent(document, new Event('visibilitychange'));
+    await waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Refresh' }).getAttribute('aria-disabled')).toBe(
+        'false',
+      ),
+    );
+    await waitFor(() => expect(document.activeElement).toBe(language));
+    await user.click(screen.getByRole('link', { name: 'Back to work' }));
+    await waitFor(() => expect(document.activeElement?.getAttribute('data-task-id')).toBe('T025'));
+    expect(window.location.hash).toContain('scope=all&page=2&size=25&task=T025');
+  });
   it('preserves active inputs/page/density through304/equal200/error and avoids a competing answer store', async () => {
     const user = userEvent.setup(),
       original = fixture(),

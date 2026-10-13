@@ -47,9 +47,15 @@ function Omitted({ collection }: { readonly collection: ReturnType<typeof bounde
   ) : null;
 }
 
-function NoteText({ value }: { readonly value: Json | undefined }) {
+function NoteText({
+  value,
+  system = false,
+}: {
+  readonly value: Json | undefined;
+  readonly system?: boolean;
+}) {
   const i18n = useI18n();
-  const text = authoredText(value);
+  const text = authoredText(system && value ? i18n.warning(value) : value);
   return (
     <p className="prose">
       {text.text || i18n.t('Not recorded')}
@@ -210,8 +216,8 @@ export function ReadinessContext({
               {i18n.t('Submitted source has changed. Revalidation is required.')}
             </p>
           )}
-          {string(submission.reason) && <NoteText value={submission.reason} />}
-          {string(submission.next_action) && <NoteText value={submission.next_action} />}
+          {string(submission.reason) && <NoteText value={submission.reason} system />}
+          {string(submission.next_action) && <NoteText value={submission.next_action} system />}
           <h4>{i18n.t('Unmet dependencies')}</h4>
           {dependencies ? (
             dependencies.total ? (
@@ -260,7 +266,7 @@ export function ReadinessContext({
                       {reasons ? (
                         reasons.items.map((reason, ordinal) => (
                           <div key={ordinal}>
-                            <NoteText value={record(reason).reason} />
+                            <NoteText value={record(reason).reason} system />
                             <ShortenedSummary value={reason} />
                           </div>
                         ))
@@ -337,12 +343,12 @@ export function GoalCoordination({ snapshot }: { readonly snapshot: Snapshot }) 
                   )}{' '}
                   · {string(row.entity_id)}
                 </p>
-                <NoteText value={row.reason} />
+                <NoteText value={row.reason} system />
                 <p>
                   {i18n.t('Responsible actor')}:{' '}
                   {presentation.actor(row.responsible_actor_id) || i18n.t('Unknown')}
                 </p>
-                <NoteText value={row.next_action} />
+                <NoteText value={row.next_action} system={row.kind !== 'collision'} />
                 <ShortenedSummary value={row} />
                 <div className="coordination-links">
                   {items(row.task_ids)

@@ -44,6 +44,17 @@ async function work(loader = async () => fixture()) {
 }
 
 describe('global Work pages', () => {
+  it('continues keyboard filtering after removing the focused filter control', async () => {
+    await work();
+    await navigate('#work?scope=all&status=active');
+    const user = userEvent.setup();
+    const clear = screen.getByRole('button', { name: 'Clear filters' });
+    clear.focus();
+    await user.keyboard('{Enter}');
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('searchbox', { name: 'Search tasks' }));
+    expect(rows()).toHaveLength(50);
+  });
   it('filters and orders full results before slicing and retains original task identity', () => {
     const snapshot = fixture();
     const original = [...snapshot.tasks];

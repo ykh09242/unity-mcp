@@ -286,6 +286,43 @@ function CheckRows({ value }: { readonly value: Json | undefined }) {
   );
 }
 
+export function CoverageObservations({ value }: { readonly value: Json | undefined }) {
+  const i18n = useI18n();
+  return (
+    <div>
+      {records(value).map((entry, index) => {
+        const facts = record(entry.facts);
+        const values: readonly (readonly [string, Json | undefined])[] = [
+          ['Task', entry.task_id],
+          ['Record kind', entry.kind],
+          ['Verdict', facts.verdict],
+          ['Status', facts.status],
+          ['Findings', facts.findings],
+          ['Unresolved findings', facts.unresolved_findings],
+          ['Acceptance criteria', facts.criteria_results || facts.acceptance_evidence],
+          ['Unresolved acceptance', facts.unresolved_acceptance],
+          ['Unresolved blockers', facts.unresolved_blockers],
+          ['Acceptance complete', facts.acceptance_complete],
+          ['Limitations', facts.limitations],
+        ];
+        return (
+          <article key={index}>
+            <Facts values={values.filter(([, field]) => field !== undefined)} />
+            {facts.checks !== undefined && (
+              <>
+                <h5>{i18n.t('Checks')}</h5>
+                <CheckRows value={facts.checks} />
+              </>
+            )}
+            <HistoryReferences value={entry.receipt} />
+            <OriginalRecord value={entry} />
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 function ReviewRound({
   round,
   attempt,

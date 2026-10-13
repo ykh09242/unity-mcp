@@ -35,61 +35,66 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
   const [observed, setObserved] = useState<Date | null>(null);
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [announce, setAnnounce] = useState(true);
   const pending = useRef<AbortController | null>(null);
   const alive = useRef(true);
   const current = useRef<{
     readonly snapshot: Snapshot;
     readonly etag: string | null;
   } | null>(null);
-  const refresh = useCallback(async () => {
-    if (pending.current) return;
-    const controller = new AbortController();
-    pending.current = controller;
-    let aborted: (() => void) | undefined;
-    const cancellation = new Promise<never>((_, reject) => {
-      aborted = () => reject(new SnapshotReadError('aborted'));
-      controller.signal.addEventListener('abort', aborted, { once: true });
-    });
-    const timeout = setTimeout(() => controller.abort(), 12000);
-    setBusy(true);
-    try {
-      const response = await Promise.race([
-        loader(controller.signal, current.current?.etag || undefined),
-        cancellation,
-      ]);
-      if (!alive.current || controller.signal.aborted || pending.current !== controller) return;
-      if (response instanceof SnapshotResponse && response.status === 304) {
-        if (!current.current) throw new SnapshotReadError('missing-model');
-        current.current = { ...current.current, etag: response.etag || current.current.etag };
-      } else {
-        const result = parseSnapshot(
-          response instanceof SnapshotResponse ? response.data : response,
-        );
-        const model =
-          current.current && semanticSnapshotEqual(current.current.snapshot, result)
-            ? current.current.snapshot
-            : result;
-        current.current = {
-          snapshot: model,
-          etag: response instanceof SnapshotResponse ? response.etag : null,
-        };
-        setSnapshot(model);
+  const refresh = useCallback(
+    async (manual = false) => {
+      if (pending.current) return;
+      const controller = new AbortController();
+      pending.current = controller;
+      let aborted: (() => void) | undefined;
+      const cancellation = new Promise<never>((_, reject) => {
+        aborted = () => reject(new SnapshotReadError('aborted'));
+        controller.signal.addEventListener('abort', aborted, { once: true });
+      });
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      setAnnounce(manual || !current.current);
+      setBusy(true);
+      try {
+        const response = await Promise.race([
+          loader(controller.signal, current.current?.etag || undefined),
+          cancellation,
+        ]);
+        if (!alive.current || controller.signal.aborted || pending.current !== controller) return;
+        if (response instanceof SnapshotResponse && response.status === 304) {
+          if (!current.current) throw new SnapshotReadError('missing-model');
+          current.current = { ...current.current, etag: response.etag || current.current.etag };
+        } else {
+          const result = parseSnapshot(
+            response instanceof SnapshotResponse ? response.data : response,
+          );
+          const model =
+            current.current && semanticSnapshotEqual(current.current.snapshot, result)
+              ? current.current.snapshot
+              : result;
+          current.current = {
+            snapshot: model,
+            etag: response instanceof SnapshotResponse ? response.etag : null,
+          };
+          setSnapshot(model);
+        }
+        setObserved(new Date());
+        setError(false);
+      } catch {
+        // no-excuse-ok: catch -- this hook is the snapshot read boundary.
+        // This is the API boundary: failed reads retain the last observed data.
+        if (alive.current && pending.current === controller) setError(true);
+      } finally {
+        clearTimeout(timeout);
+        if (aborted) controller.signal.removeEventListener('abort', aborted);
+        if (pending.current === controller) {
+          pending.current = null;
+          if (alive.current) setBusy(false);
+        }
       }
-      setObserved(new Date());
-      setError(false);
-    } catch {
-      // no-excuse-ok: catch -- this hook is the snapshot read boundary.
-      // This is the API boundary: failed reads retain the last observed data.
-      if (alive.current && pending.current === controller) setError(true);
-    } finally {
-      clearTimeout(timeout);
-      if (aborted) controller.signal.removeEventListener('abort', aborted);
-      if (pending.current === controller) {
-        pending.current = null;
-        if (alive.current) setBusy(false);
-      }
-    }
-  }, [loader]);
+    },
+    [loader],
+  );
   useEffect(() => {
     alive.current = true;
     void refresh();
@@ -108,5 +113,5 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
       document.removeEventListener('visibilitychange', visible);
     };
   }, [refresh]);
-  return { snapshot, observed, error, busy, refresh };
+  return { snapshot, observed, error, busy, announce, refresh };
 }

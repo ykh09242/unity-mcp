@@ -63,6 +63,19 @@ const initial = () =>
   );
 
 describe('complete question navigation', () => {
+  it('returns focus to question search when clearing a disappearing filter action', async () => {
+    initial();
+    const user = userEvent.setup();
+    render(<App loader={async () => snapshot()} sessionLoader={sessionLoader} />);
+    const input = await screen.findByRole('searchbox', { name: 'Search questions' });
+    await user.type(input, 'first');
+    const clear = screen.getByRole('button', { name: 'Clear filters' });
+    clear.focus();
+    await user.keyboard('{Enter}');
+    expect(document.activeElement).toBe(input);
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).toBeNull();
+    expect(screen.getByRole('link', { name: /Choose the second scope/ })).toBeTruthy();
+  });
   it('preserves the open question Filters disclosure across a detail round trip', async () => {
     initial();
     const user = userEvent.setup();
@@ -184,6 +197,9 @@ describe('complete question navigation', () => {
     });
     await user.click(screen.getByRole('link', { name: 'Unsent draft · Q1' }));
     expect(screen.getByRole('heading', { name: 'Question not available' })).toBeDefined();
+    expect(document.activeElement).toBe(
+      screen.getByRole('heading', { name: 'Question not available' }),
+    );
     expect(screen.getByLabelText<HTMLTextAreaElement>('Your draft').value).toBe(
       'Keep my removed draft',
     );
@@ -276,10 +292,66 @@ describe('complete question navigation', () => {
       document.dispatchEvent(new Event('visibilitychange'));
     });
     expect(screen.getByRole('heading', { name: 'Question not available' })).toBeDefined();
+    expect(document.activeElement).toBe(
+      screen.getByRole('heading', { name: 'Question not available' }),
+    );
     expect(screen.getByLabelText<HTMLTextAreaElement>('Your draft').value).toBe(
       'Private draft during outage',
     );
     expect(screen.queryByRole('button', { name: 'Save answer' })).toBeNull();
+  });
+  it.each(['removed', 'answered'] as const)(
+    'keeps deliberate outside focus when a question becomes %s',
+    async (change) => {
+      initial();
+      const user = userEvent.setup();
+      let model = snapshot();
+      render(<App loader={async () => model} sessionLoader={sessionLoader} />);
+      await user.click(await screen.findByRole('link', { name: /Choose the first scope/ }));
+      await user.type(screen.getByLabelText('Your answer'), 'Keep this private draft');
+      const language = screen.getByLabelText('Language');
+      language.focus();
+      model = parseSnapshot({
+        ...model,
+        questions:
+          change === 'removed'
+            ? []
+            : records(model.questions).map((q) =>
+                q.id === 'Q1'
+                  ? { ...q, status: 'answered', answer: { answer: 'Other recorded answer' } }
+                  : q,
+              ),
+      });
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      expect(document.activeElement).toBe(language);
+      expect(screen.getByDisplayValue('Keep this private draft')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Save answer' })).toBeNull();
+    },
+  );
+  it('continues at the question heading when a background answer removes the focused editor', async () => {
+    initial();
+    const user = userEvent.setup();
+    let model = snapshot();
+    render(<App loader={async () => model} sessionLoader={sessionLoader} />);
+    await user.click(await screen.findByRole('link', { name: /Choose the first scope/ }));
+    await user.type(screen.getByLabelText('Your answer'), 'Unsent local answer');
+    model = parseSnapshot({
+      ...model,
+      questions: records(model.questions).map((q) =>
+        q.id === 'Q1'
+          ? { ...q, status: 'answered', answer: { answer: 'Other recorded answer' } }
+          : q,
+      ),
+    });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(document.activeElement).toBe(
+      screen.getByRole('heading', { name: 'Choose the first scope' }),
+    );
+    expect(screen.getByDisplayValue('Unsent local answer')).toBeTruthy();
   });
   it('does not downgrade a resolved snapshot when confirming an uncertain historical answer receipt', async () => {
     initial();

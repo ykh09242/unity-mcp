@@ -1,5 +1,39 @@
 // Interface translations only. Reviewed authored content uses its separate source-bound resolver.
 export const korean = {
+  'Source integrity': '원본 무결성',
+  Recovery: '복구',
+  'Attention summary is unavailable. Recorded work remains inspectable.':
+    '주의 항목을 확인할 수 없어요. 작업 기록은 볼 수 있어요.',
+  'No current attention items recorded.': '현재 기록된 주의 항목이 없어요.',
+  'Current source binding is unavailable.': '현재 원본과의 연결을 확인할 수 없어요.',
+  'All related tasks': '관련 작업 전체',
+  'Context and source': '맥락과 원본',
+  'Criterion impact includes explicit links only.': '명시적으로 연결된 기준만 표시해요.',
+  'Explicit criterion links': '명시된 기준 연결',
+  'Show fewer attention items': '간략히 보기',
+  'Show all supplied attention items': '제공된 주의 항목 모두 보기',
+  'Summary scope and source': '요약 범위와 원본',
+  'Advisory context does not authorize execution or establish acceptance.':
+    '참고 정보이며, 실행 권한이나 완료 승인을 뜻하지 않아요.',
+  'Original program summary': '프로그램 요약 원본',
+  'Criterion coverage is unavailable.': '기준별 연결 정보를 확인할 수 없어요.',
+  'Declared links do not establish criterion acceptance.':
+    '작업이나 근거가 연결되어 있어도 기준을 충족한 것으로 판정하지 않아요.',
+  'Contributor context is unavailable.': '기여 작업을 확인할 수 없어요.',
+  'Uncovered context is unavailable.': '미연결 사유를 확인할 수 없어요.',
+  'Evidence and source': '근거와 원본',
+  'Original criterion context': '기준 연결 원본',
+  'All original criteria': '완료 기준 전체',
+  'No coverage annotation recorded.': '기준 연결 기록이 없어요.',
+  'Recorded objective acceptance': '목표 승인 기록',
+  'Source freshness': '원본 최신 상태',
+  'Head freshness': '커밋 최신 상태',
+  'Objective completion and independent integrated review require actual current inputs':
+    '목표 완료와 독립 통합 검토에 최신 자료가 필요해요.',
+  'Inspect the objective-completion prerequisites': '목표 완료 조건을 확인하세요.',
+  'Required predecessors are not done': '선행 작업이 아직 완료되지 않았어요.',
+  'A fresh actual revalidation receipt is required; claim eligibility is not assessed':
+    '최신 재검증 기록이 필요해요. 작업을 맡을 수 있는지는 판정하지 않았어요.',
   Title: '제목',
   Name: '이름',
   'Display name': '표시 이름',
@@ -90,6 +124,7 @@ export const korean = {
   'Coverage source history': '범위 검토 소스 이력',
   'Original coverage': '범위 검토 원본',
   Freshness: '현재 소스와의 관계',
+  Reason: '이유',
   Reasons: '이유',
   'Review baseline': '검토 기준 리비전',
   'not assessed': '평가 안 됨',
@@ -709,4 +744,45 @@ export const korean = {
   source_head: '소스 리비전',
   questions: '질문',
   dependencies: '선행 작업',
+  'Latest criterion annotation': '최근 기준 연결 기록',
+  'Earlier links are not substituted for the current observation.':
+    '이전 연결을 현재 기록으로 대신 표시하지 않습니다.',
+  linked: '연결됨',
+  unlinked: '연결 없음',
+  'contributors declared': '기여 작업 기록됨',
+  'Record kind': '기록 종류',
+  'Acceptance complete': '완료 기준 충족 기록',
+  'Inspect original records and artifacts': '원문과 근거를 확인하세요',
+  'Inspect recovery-readiness; lock existence does not establish liveness or takeover authority':
+    '복구 상태를 확인하세요. 잠금 파일만으로 실행 여부나 인수 권한을 판단할 수 없습니다.',
+  'Inspect the exact submission/review binding': '제출 및 검토의 정확한 연결을 확인하세요',
+  'Inspect frozen delivery inputs and provider facts':
+    '고정된 전달 기록과 제공자의 실제 결과를 확인하세요',
+  'Follow the recorded succession workflow': '기록된 인계 절차를 따르세요',
+  'Inspect exact criterion and current membership/attempt bindings':
+    '기준과 현재 작업 구성 및 시도 연결을 확인하세요',
+  'Inspect the saved answer, acknowledgement and application separately':
+    '저장된 답변, 확인, 적용 결과를 각각 확인하세요',
+  'Current attempt is blocked; the recorded blocker and resolution guards still apply':
+    '현재 시도가 막혀 있습니다. 기록된 원인과 재개 조건을 확인하세요.',
+  'Submission awaits independent review; source freshness is a separate observation':
+    '제출 내용이 독립 검토를 기다리고 있습니다. 소스 최신 여부는 별도 기록입니다.',
+  'Recorded decision state: {value}': '질문 상태: {value}',
+  'Recorded task acceptance and delivery/CI are separate: {value}':
+    '작업 완료 승인과 전달 및 CI는 별도입니다: {value}',
+  'Succession is {value}; it does not replace release and fresh claim':
+    '인계 상태: {value}. 담당 해제와 새 작업 배정은 별도입니다.',
+  'All recorded tasks': '전체 작업 기록',
+  'Tasks accepted after recorded review.': '기록된 검토를 거쳐 완료 승인된 작업입니다.',
+  '{done} of {total} tasks reviewed complete': '작업 {total}개 중 {done}개 검토 완료',
+  'Pending submitted source changed': '검토 중인 제출 소스가 변경됐어요',
+  'Resolve the recorded block through resume; changed source requires rework and a new submission.':
+    '재개 절차로 기록된 장애를 해결하세요. 소스가 변경됐다면 다시 작업한 뒤 제출해야 해요.',
+  'Showing {visible} of {supplied} supplied items': '제공된 항목 {supplied}개 중 {visible}개 표시',
+  'All criteria': '완료 기준 전체',
+  'Criterion context is unavailable.': '이 기준의 현재 정보를 확인할 수 없어요.',
+  answered: '답변 저장됨',
+  acknowledged: '디렉터 확인 완료',
+  resolved: '처리 완료',
+  proposed: '제안됨',
 } as const;

@@ -5,6 +5,7 @@ import peerWire from './fixtures/relate-peer.json?raw';
 import readinessWire from './fixtures/relate-readiness.json?raw';
 import blockedReviewWire from './fixtures/relate-blocked-review.json?raw';
 import { parseSnapshot, record } from './model';
+import { LanguageProvider, PREFERENCE_KEY } from './i18n';
 import { authoredText, boundedCollection, currentCollection, recordedReadiness } from './readiness';
 import { CoordinationNotes, GoalCoordination, ReadinessContext } from './readiness-ui';
 
@@ -15,6 +16,33 @@ const readinessFixture = JSON.parse(readinessWire);
 const blockedReviewFixture = JSON.parse(blockedReviewWire);
 
 describe('canonical readiness and authored coordination context', () => {
+  it('localizes generated blocked-review diagnostics while preserving authored coordination prose', async () => {
+    localStorage.setItem(PREFERENCE_KEY, 'ko');
+    const snapshot = parseSnapshot(blockedReviewFixture.review_changed);
+    const task = snapshot.tasks.find((entry) => entry.id === 'S01')!;
+    render(
+      <LanguageProvider>
+        <ReadinessContext snapshot={snapshot} task={task} />
+        <CoordinationNotes
+          task={{
+            ...task,
+            notes: [
+              {
+                actor: 'recorded-worker',
+                reason: 'Pending submitted source changed',
+                next_action: 'Authored exact next action',
+              },
+            ],
+          }}
+        />
+      </LanguageProvider>,
+    );
+    await userEvent.click(screen.getByText('작업 인수 전 확인'));
+    expect(screen.getByText('검토 중인 제출 소스가 변경됐어요')).toBeTruthy();
+    await userEvent.click(screen.getByText(/협업 메모/));
+    expect(screen.getByText('Pending submitted source changed')).toBeTruthy();
+    expect(screen.getByText('Authored exact next action')).toBeTruthy();
+  });
   it('uses actual blocked-review source observation without warning on unchanged review or active origin', async () => {
     const changed = parseSnapshot(blockedReviewFixture.review_changed);
     const task = changed.tasks.find((entry) => entry.id === 'S01')!;

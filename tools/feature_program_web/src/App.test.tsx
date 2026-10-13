@@ -82,6 +82,127 @@ async function navigate(hash: string) {
 }
 
 describe('work program user outcomes', () => {
+  it('keeps a pending manual refresh in keyboard traversal without allowing another request or stealing moved focus', async () => {
+    localStorage.setItem(PREFERENCE_KEY, 'en');
+    let release: ((response: SnapshotResponse) => void) | undefined;
+    const loader = vi
+      .fn()
+      .mockResolvedValueOnce(new SnapshotResponse(200, 'one', fixture()))
+      .mockImplementation(
+        () =>
+          new Promise<SnapshotResponse>((resolve) => {
+            release = resolve;
+          }),
+      );
+    const user = userEvent.setup();
+    render(<App loader={loader} />);
+    await screen.findByRole('heading', { name: 'Overview' });
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    const language = within(screen.getByRole('banner')).getByRole('combobox');
+    await waitFor(() =>
+      expect(within(screen.getByRole('banner')).getByRole('status').textContent).toMatch(
+        /^Fetched /,
+      ),
+    );
+    refresh.focus();
+    expect(document.activeElement).toBe(refresh);
+    await user.keyboard('{Enter}');
+    expect(loader).toHaveBeenCalledTimes(2);
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(language);
+    await user.tab();
+    expect(document.activeElement).toBe(refresh);
+    await user.keyboard('{Enter}');
+    expect(loader).toHaveBeenCalledTimes(2);
+    language.focus();
+    await act(async () => {
+      release?.(new SnapshotResponse(304, 'one'));
+    });
+    expect(document.activeElement).toBe(language);
+  });
+  it('leads Overview with its goal and progress while related decision narratives are secondary', async () => {
+    const base = fixture();
+    render(
+      <App
+        loader={async () => ({
+          ...base,
+          objective: { ...(base.objective as object), id: 'goal', task_ids: ['A1', 'A2'] },
+          questions: [
+            {
+              id: 'Q1',
+              version: 1,
+              status: 'open',
+              objective_id: 'goal',
+              prompt: 'Long current question narrative',
+            },
+            {
+              id: 'Q2',
+              version: 1,
+              status: 'resolved',
+              objective_id: 'goal',
+              prompt: 'Past decision narrative',
+            },
+          ],
+        })}
+      />,
+    );
+    const heading = await screen.findByRole('heading', { name: 'Overview' });
+    const main = screen.getByRole('main');
+    expect(within(main).getAllByRole('heading')[0]).toBe(heading);
+    expect(screen.queryByRole('link', { name: /Long current question narrative/ })).toBeNull();
+    const disclosure = screen.getByText('Related decisions').closest('details');
+    expect(disclosure?.open).toBe(false);
+    await userEvent.click(screen.getByText('Related decisions'));
+    expect(
+      screen.getByRole('link', { name: /Long current question narrative/ }).getAttribute('href'),
+    ).toContain('#question/Q1');
+    expect(main.querySelector('progress')!.compareDocumentPosition(disclosure!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+  it('keeps current objective progress separate from retained historical task records', async () => {
+    const base = fixture();
+    render(
+      <App
+        loader={async () => ({
+          ...base,
+          objective: { id: 'current', title: 'Current objective', task_ids: ['A1'] },
+          tasks: base.tasks.map((task) =>
+            task.id === 'A1'
+              ? { ...task, status: 'done' }
+              : { ...task, status: 'planned', membership: { disposition: 'retired' } },
+          ),
+        })}
+      />,
+    );
+    const progress = await screen.findByRole('progressbar', {
+      name: '1 of 1 tasks reviewed complete',
+    });
+    expect(progress.getAttribute('max')).toBe('1');
+    expect(screen.getByRole('link', { name: 'All work (2)' }).getAttribute('href')).toBe(
+      '#work?scope=all',
+    );
+  });
+  it('announces an explicit refresh but keeps unchanged background polls quiet', async () => {
+    localStorage.setItem(PREFERENCE_KEY, 'en');
+    const user = userEvent.setup();
+    const loader = vi.fn(async () => fixture());
+    render(<App loader={loader} />);
+    const status = within(screen.getByRole('banner')).getByRole('status');
+    await waitFor(() => expect(status.textContent).toMatch(/^Fetched /));
+    expect(status.getAttribute('aria-live')).toBe('polite');
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(status.getAttribute('aria-live')).toBe('off');
+    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(status.textContent).toMatch(/^Fetched /));
+    expect(status.getAttribute('aria-live')).toBe('polite');
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(status.getAttribute('aria-live')).toBe('off');
+  });
   it.each([
     ['en', 'Refresh', 'Loading program…', 'Refreshing…', 'Unavailable'],
     ['ko', '새로고침', '프로그램 불러오는 중…', '갱신 중…', '사용 불가'],
@@ -118,7 +239,8 @@ describe('work program user outcomes', () => {
       const fetched = status.textContent;
       fireEvent.click(refresh);
       await waitFor(() => expect(status.textContent).toBe(refreshing));
-      expect(refresh.disabled).toBe(true);
+      expect(refresh.disabled).toBe(false);
+      expect(refresh.getAttribute('aria-disabled')).toBe('true');
       expect(header.getByRole('combobox')).toBe(language);
       expect(language.value).toBe(locale);
       await act(async () => {
