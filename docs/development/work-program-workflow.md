@@ -343,3 +343,43 @@ tests. Bind the web service to loopback. Its only write surface accepts bounded 
 existing director questions; task, agent and Git controls remain outside the web. Use exact
 origin and CSRF checks, idempotent submission and stale-question rejection. Do not upload
 state or add external assets or analytics to display progress.
+## Recover with bounded current context
+
+After selecting the canonical program and checking its location, use `brief` or
+`brief --task TASK-ID` for bounded current context. Follow its original-record links
+to full `status`, `packet`, snapshot or evidence when a collection is omitted or prose
+is shortened. The brief is advisory: it does not replace fresh revalidation, authorize
+a claim, acknowledge a question, accept a succession, perform a check or establish
+delivery. Its checkpoint link is historical; current registry records take precedence.
+
+Read integrity/recovery attention before acting. Then inspect current-goal decisions,
+blockers and actual ownership collisions, review/transfer/delivery, and dependency or
+revalidation context. A planned overlap with another planned task is not an owned-scope
+collision. Excluded membership or disposed work must follow the recorded planning
+workflow; a fresh receipt alone does not restore eligibility. Missing actor, receipt or
+current execution metadata remains `not_assessed`.
+
+Use current-attempt source, scope, required checks, findings and next action before
+historical attempts. Keep task review separate from provider delivery and CI, and keep
+both separate from independent integrated review of the exact current objective.
+For a blocked attempt retained from review, inspect its canonical block event and
+submission freshness. Resolve the block through the normal resume guards; changed
+source requires rework and a new submission. Unknown legacy origins remain unassessed,
+and historical terminal receipts remain historical.
+Recorded failed/pending CI is a valid observation, not successful delivery. Frozen
+provider facts never authenticate a remote service or imply cleanup.
+
+Persist consequential peer coordination in each task's own notes and immutable
+task/attempt evidence. Include the original shared contract locator/hash and the
+counterpart's actual authored acknowledgement where available. Do not share one
+attempt-scoped receipt path across tasks, infer acknowledgement from sending a message,
+or reinterpret succession acceptance as generic interface agreement. The brief retains
+authored wording while machine-assessed peer agreement remains unknown. Recorded actor
+identity, contact and runtime liveness are distinct facts.
+
+Each bounded collection reports total/shown/omitted; omitted severe or unknown rows
+still count. The program/task byte limits cover actual escaped JSON output, not a
+character estimate. Full integrity reads still occur before presentation is shortened.
+If refresh is required or an essential envelope exceeds its limit, inspect the explicit
+error and full original records. Do not repair locks, rerender views or change canonical
+state merely because a read reports drift.
