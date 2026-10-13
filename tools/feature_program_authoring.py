@@ -17,12 +17,14 @@ if __package__:
     from tools import feature_program_coverage as coverage
     from tools import feature_program_phases as phases
     from tools import feature_program_planning as planning
+    from tools import feature_program_presentation as presentation
     from tools import feature_program_questions as questions
 else:
     import feature_program_coordination as coordination
     import feature_program_coverage as coverage
     import feature_program_phases as phases
     import feature_program_planning as planning
+    import feature_program_presentation as presentation
     import feature_program_questions as questions
 
 if TYPE_CHECKING:
@@ -63,6 +65,7 @@ COMMANDS: Final = (
         "language",
         "checkpoint",
         "coverage-record",
+        "presentation-record",
     }
 )
 TEMPLATES: Final = ("revalidation", "execution", "review", "delivery", "resume")
@@ -226,6 +229,8 @@ def prepare(
         return planning.prepare_transition(program, state, args)
     elif command == "coverage-record":
         return coverage.prepare_record(program, state, args.input)
+    elif command == "presentation-record":
+        return presentation.prepare_record(program, state, args.input)
     elif command == "claim":
         proposal = program.prepare_claim(state, args, observed_head=observed_head)
     elif command == "submit":
@@ -490,6 +495,19 @@ def preview(program: Program, state: Record, args: argparse.Namespace) -> Record
 def _shape(command: str) -> Record:
     """Editable inputs, not a second validation schema. Canonical preparation validates them."""
     shapes: dict[str, Record] = {
+        "presentation-record": {
+            "schema_version": 1,
+            "operation": "presentation-record",
+            "id": None,
+            "program_id": None,
+            "actor_id": None,
+            "locale": None,
+            "reason": None,
+            "authors": [],
+            "expected_revision": None,
+            "operations": [],
+            "review": None,
+        },
         "category-set": {"categories": [], "reason": None},
         "actor-record": {
             "id": None,
@@ -782,6 +800,8 @@ def scaffold(program: Program, state: Record, args: argparse.Namespace) -> Recor
         if args.operation == "coverage-record":
             receipt["objective_binding"] = coverage.objective_binding(state)
             receipt["uncovered"] = []
+        if args.operation == "presentation-record":
+            receipt["locale"] = state.get("communication_language")
         if args.operation in {"publication-adopt", "publication-reconcile"}:
             receipt["binding"] = phases.planning_binding(state)
         if args.operation in phases.COMMANDS:
@@ -791,6 +811,19 @@ def scaffold(program: Program, state: Record, args: argparse.Namespace) -> Recor
     fields = [item for item in support()["commands"] if item["command"] == args.operation]
     arguments = fields[0]["arguments"] if fields else []
     related: Record = {}
+    if args.operation == "presentation-record":
+        related["independent_review"] = {
+            "schema_version": 1,
+            "operation": "presentation-review",
+            "program_id": state["program_id"],
+            "locale": state.get("communication_language"),
+            "payload_sha256": None,
+            "reviewer_id": None,
+            "reviewer_role": "independent",
+            "verdict": "pending",
+            "unresolved_findings": ["Language review not performed"],
+            "summary": None,
+        }
     if args.operation == "objective-complete":
         related["integrated_review"] = {
             "objective_id": receipt.get("objective_id"),

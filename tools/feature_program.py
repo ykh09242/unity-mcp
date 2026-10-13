@@ -37,6 +37,7 @@ if __package__:
     import tools.feature_program_coordination as coordination
     import tools.feature_program_phases as phases
     import tools.feature_program_planning as planning
+    import tools.feature_program_presentation as presentation
     import tools.feature_program_questions as questions
 else:
     import feature_program_authoring as authoring
@@ -45,6 +46,7 @@ else:
     import feature_program_coordination as coordination
     import feature_program_phases as phases
     import feature_program_planning as planning
+    import feature_program_presentation as presentation
     import feature_program_questions as questions
 
 
@@ -729,6 +731,7 @@ class Program:
         coordination.validate_governance(state)
         phases.validate(state)
         coverage.validate(state)
+        presentation.validate(state)
         authoring.validate_delivery_history(
             self, state, verify_artifacts=verify_artifacts, budget=budget
         )
@@ -738,6 +741,7 @@ class Program:
             self.verify_refs(phases.evidence_references(state), budget)
             self.verify_refs(planning.evidence_references(state), budget)
             coverage.verify_history(self, state, budget)
+            presentation.verify_history(self, state, budget)
 
     def verify_terminal(
         self, task: Record, attempt: Record, budget: ReadBudget | None = None
@@ -2453,6 +2457,7 @@ def _capture_projection(
         + planning.evidence_references(state)
         + coverage.evidence_references(state)
         + authoring.delivery_evidence_references(state)
+        + presentation.evidence_references(state)
     )
     for task in tasks:
         for value in sequence(task["attempts"], "attempts"):
@@ -2649,6 +2654,9 @@ def _capture_projection(
         "amendments": state.get("amendments", []),
         "execution_priorities": state.get("execution_priorities"),
         "coverage": coverage.projection(program, state, evidence_budget),
+        "presentation": presentation.projection(
+            program, state, evidence_budget, revision=sha(initial)
+        ),
     }
     lock = program.path(".feature-program.lock")
     lock_before: bytes | None = None
@@ -3261,6 +3269,7 @@ def parser() -> argparse.ArgumentParser:
     phases.add_commands(commands)
     planning.add_commands(commands)
     coverage.add_commands(commands)
+    presentation.add_commands(commands)
     authoring.add_commands(commands)
     brief_command = commands.add_parser("brief", help="Bounded advisory program or task context")
     brief_command.add_argument("--task")
@@ -3280,6 +3289,9 @@ def main(argv: list[str] | None = None) -> int:
         relative_program = directory.relative_to(repo).as_posix()
         planning.validate_publication_endpoint(repo, directory)
         program = Program(repo, safe_path(repo, relative_program))
+        if args.command in presentation.READ_COMMANDS:
+            sys.stdout.buffer.write(canonical(presentation.read_command(program, args)))
+            return 0
         if args.command in authoring.READ_COMMANDS:
             print(canonical(authoring.read_command(program, args)).decode(), end="")
             return 0
@@ -3386,6 +3398,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         with program.lock():
             state = program.initialize(args) if args.command == "init" else program.load()
+            if args.command == "presentation-record":
+                prepared = presentation.prepare_record(program, state, args.input)
+                program.save(prepared.state, before_publish=prepared.before_publish)
+                print("presentation-record: OK")
+                return 0
             if args.command == "coverage-record":
                 coverage.record(program, state, args.input)
                 print(f"coverage-record: OK; committed revision {phases.revision(state)}")

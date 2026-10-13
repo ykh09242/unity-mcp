@@ -110,6 +110,47 @@ def fingerprints(repo):
     }
 
 
+def test_presentation_snapshot_http_preserves_originals_and_no_write(tmp_path, monkeypatch):
+    from tools.tests.test_feature_program_phases import gate as gate_fixture
+    from tools.tests.test_feature_program_presentation import language, record
+
+    fixture = gate_fixture.__wrapped__(tmp_path, monkeypatch)
+    language(fixture)
+    record(fixture)
+    before = fingerprints(fixture.program.repo)
+    monkeypatch.setattr(fp, "git", lambda *_args: pytest.fail("Presentation read executed Git"))
+    monkeypatch.setattr(fp.Program, "lock", lambda *_args: pytest.fail("Presentation read locked"))
+    with running(web.create_server(fixture.program.repo, Path("discovery"), port=0)) as server:
+        status, _headers, body = request(server)
+    snapshot = json.loads(body)
+    assert status == 200
+    assert snapshot["objective"]["title"] == "Synthetic objective"
+    entry = next(iter(snapshot["presentation"]["entries"].values()))
+    assert entry["text"] == "검증 목표" and entry["status"] == "current"
+    assert entry["origin"]["revision"] == snapshot["revision"]
+    assert fingerprints(fixture.program.repo) == before
+
+
+def test_presentation_evidence_interleave_rejects_snapshot(tmp_path, monkeypatch):
+    from tools.tests.test_feature_program_phases import gate as gate_fixture
+    from tools.tests.test_feature_program_presentation import language, record
+
+    fixture = gate_fixture.__wrapped__(tmp_path, monkeypatch)
+    language(fixture)
+    value = record(fixture)
+    project = fp.presentation.projection
+
+    def changed_after_projection(*args, **kwargs):
+        result = project(*args, **kwargs)
+        path = fixture.program.path(value["review"]["path"])
+        path.write_bytes(path.read_bytes() + b" ")
+        return result
+
+    monkeypatch.setattr(fp.presentation, "projection", changed_after_projection)
+    with pytest.raises(fp.ProgramError, match="Observed source/evidence changed"):
+        fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+
+
 def delivery_fixture(repo, monkeypatch):
     """Record real synthetic task completion and two distinct delivery observations."""
     monkeypatch.setattr(program_helpers.fp, "git", lambda *_args: program_helpers.HEAD)
