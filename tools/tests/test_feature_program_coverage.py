@@ -1003,3 +1003,113 @@ def test_explicit_uncovered_inventory_verifies_actual_frozen_report(
     assert view["history"][0]["freshness"] == ("stale" if drift == "changed" else "unavailable")
     assert view["criteria"][0]["knowledge"] == "unknown"
     assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def sized_receipt(gate: GateFixture, name: str, size: int, empty_reliance: bool) -> str:
+    value = fp.read_json(gate.program.path(name))
+    if empty_reliance:
+        value["coverage_refs"] = []
+    value["limitations"] = [""]
+    value["limitations"] = ["x" * (size - len(fp.canonical(value)))]
+    gate.fixture.write(name, value)
+    assert gate.program.path(name).stat().st_size == size
+    return name
+
+
+@pytest.mark.parametrize("operation", ["submit", "complete"])
+@pytest.mark.parametrize("empty_reliance", [False, True], ids=["absent", "empty"])
+@pytest.mark.parametrize("size", [1024 * 1024 + 4096, 8 * 1024 * 1024], ids=["above-1MiB", "8MiB"])
+def test_legacy_receipt_sizes_agree_between_diagnostics_and_real_transition(
+    gate: GateFixture, operation: str, empty_reliance: bool, size: int
+) -> None:
+    # Given a valid actual receipt within the existing evidence bound and no coverage reliance.
+    gate.ready()
+    assert gate.fixture.claim() == 0
+    if operation == "complete":
+        gate.fixture.submit()
+        name = gate.fixture.review()
+    else:
+        name = gate.fixture.receipt()
+    sized_receipt(gate, name, size, empty_reliance)
+    state = gate.program.load()
+    before = gate.program.path("backlog.json").read_bytes()
+    args = argparse.Namespace(operation=operation, input=name, task="S01", owner="worker")
+    # When shared diagnostic preflight and the actual CLI validate/publish the same input.
+    diagnostic = fp.coverage.diagnostics(
+        gate.program, state, args, observed_head=gate.program.current_head()
+    )
+    assert gate.program.path("backlog.json").read_bytes() == before
+    result = (
+        gate.fixture.run("submit", "S01", "--owner", "worker", "--receipt", name)
+        if operation == "submit"
+        else gate.fixture.run("complete", "S01", "--review", name)
+    )
+    # Then permitted legacy bytes reach the authoritative transition without inventing reliance.
+    assert (diagnostic["status"], result) == ("validated", 0)
+    current = gate.program.load()
+    assert gate.program.task(current, "S01")["status"] == (
+        "review" if operation == "submit" else "done"
+    )
+    assert "coverage_annotations" not in current
+
+
+@pytest.mark.parametrize("operation", ["submit", "complete"])
+@pytest.mark.parametrize("empty_reliance", [False, True], ids=["absent", "empty"])
+def test_oversized_receipt_rejection_preserves_real_state_and_diagnostic_reason(
+    gate: GateFixture, operation: str, empty_reliance: bool
+) -> None:
+    # Given the same real acceptance surface with evidence one byte beyond its inherited bound.
+    gate.ready()
+    assert gate.fixture.claim() == 0
+    if operation == "complete":
+        gate.fixture.submit()
+        name = gate.fixture.review()
+    else:
+        name = gate.fixture.receipt()
+    sized_receipt(gate, name, 8 * 1024 * 1024 + 1, empty_reliance)
+    state = gate.program.load()
+    before = gate.program.path("backlog.json").read_bytes()
+    args = argparse.Namespace(operation=operation, input=name, task="S01", owner="worker")
+    # When both diagnostic and actual transition encounter the authoritative bounded reader.
+    diagnostic = fp.coverage.diagnostics(
+        gate.program, state, args, observed_head=gate.program.current_head()
+    )
+    with pytest.raises(fp.ProgramError) as caught:
+        if operation == "submit":
+            gate.program.submit(state, argparse.Namespace(id="S01", owner="worker", receipt=name))
+        else:
+            gate.program.review(
+                state, argparse.Namespace(id="S01", command="complete", review=name)
+            )
+    # Then the actual first failure matches and no canonical/caller state is changed.
+    assert diagnostic["status"] == "failed" and diagnostic["reasons"] == [str(caught.value)]
+    assert state == gate.program.load()
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_large_registry_uses_existing_bound_through_reliance_publication(gate: GateFixture) -> None:
+    # Given a valid >1MiB registry and a new receipt that explicitly relies on current coverage.
+    gate.ready()
+    assert gate.fixture.claim() == 0
+    ref = record_annotation(gate)
+    state = gate.program.load()
+    state["runtime_observation"] = "x" * (1024 * 1024 + 4096)
+    gate.program.save(state)
+    before = gate.program.path("backlog.json").read_bytes()
+    assert 1024 * 1024 < len(before) < 8 * 1024 * 1024
+    name = gate.fixture.receipt()
+    value = fp.read_json(gate.program.path(name))
+    value["coverage_refs"] = reliance(gate, ref)
+    gate.fixture.write(name, value)
+    args = argparse.Namespace(operation="submit", input=name, task="S01", owner="worker")
+    # When the guard reads both initial registry and final revision at actual publication.
+    diagnostic = fp.coverage.diagnostics(
+        gate.program, state, args, observed_head=gate.program.current_head()
+    )
+    assert gate.program.path("backlog.json").read_bytes() == before
+    assert gate.fixture.run("submit", "S01", "--owner", "worker", "--receipt", name) == 0
+    # Then the existing registry capacity remains available without skipping reliance validation.
+    assert diagnostic["status"] == "validated"
+    current = gate.program.load()
+    assert current["runtime_observation"] == state["runtime_observation"]
+    assert gate.program.task(current, "S01")["status"] == "review"

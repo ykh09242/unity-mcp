@@ -509,14 +509,16 @@ def publication_guard(program: Program, future: Record) -> Callable[[], None] | 
     path = program.path("backlog.json")
     if not path.is_file():
         return None
-    before = core.read_json(path)
+    before = core.read_json(path, limit=8 * 1024 * 1024)
     existing = {core.canonical(ref) for ref, _ in _acceptance_refs(before)}
     supplied: list[tuple[Record, Record, str | None]] = []
     reader = core.ReadBudget(64 * 1024 * 1024)
     for ref, task_id in _acceptance_refs(future):
         if core.canonical(ref) in existing:
             continue
-        metadata, parsed_hash = core.read_json_frozen(program.path(str(ref["path"])), budget=reader)
+        metadata, parsed_hash = core.read_json_frozen(
+            program.path(str(ref["path"])), limit=8 * 1024 * 1024, budget=reader
+        )
         require(parsed_hash == ref["sha256"], "New acceptance receipt changed before publication")
         if declared_refs(metadata):
             validate_receipt_refs(program, before, metadata, task_id)
@@ -527,7 +529,7 @@ def publication_guard(program: Program, future: Record) -> Callable[[], None] | 
 
     def recheck() -> None:
         program.require_current_location()
-        current = core.read_json(path)
+        current = core.read_json(path, limit=8 * 1024 * 1024)
         require(
             phases.revision(current) == revision,
             "Registry changed before coverage reliance publication",
