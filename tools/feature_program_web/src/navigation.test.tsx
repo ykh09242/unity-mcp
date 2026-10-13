@@ -173,6 +173,88 @@ describe('validated navigation context', () => {
   });
 });
 describe('researched navigation outcomes', () => {
+  it('honors an explicit saved preset while contextual task detail is open', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
+    writePreferences('nav-test', {
+      ...defaultPreferences,
+      presets: [{ name: 'All tasks', hash: '#work?scope=all&page=1&size=50' }],
+    });
+    window.history.replaceState(null, '', '#work?scope=all&status=active');
+    const user = userEvent.setup();
+    render(<App loader={async () => fixture()} />);
+    await user.click(await screen.findByRole('link', { name: /T001 Task 1/ }));
+    await screen.findByRole('heading', { name: 'Task 1' });
+    await user.selectOptions(screen.getByLabelText('Local preset'), 'All tasks');
+    await waitFor(() => expect(screen.getByLabelText('Status')).toHaveProperty('value', ''));
+    expect(window.location.hash).not.toContain('status=active');
+    expect(document.querySelector('.task-button')?.getAttribute('data-task-id')).toBe('T000');
+    expect(screen.getByLabelText('Local preset')).toHaveProperty('value', 'All tasks');
+  });
+  it('restores nonzero narrow document scroll after consuming return focus exactly once', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 360 });
+    const originalScroll = Object.getOwnPropertyDescriptor(window, 'scrollY');
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    const frames = new Map<number, FrameRequestCallback>();
+    let frameId = 0;
+    const requestFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frames.set(++frameId, callback);
+        return frameId;
+      });
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+      frames.delete(id);
+    });
+    try {
+      window.history.replaceState(null, '', '#work?scope=all');
+      const user = userEvent.setup();
+      render(<App loader={async () => fixture()} />);
+      const row = await screen.findByRole('link', { name: /T010 Task 10/ });
+      Object.defineProperty(window, 'scrollY', { configurable: true, value: 640 });
+      await user.click(row);
+      await screen.findByRole('heading', { name: 'Task 10' });
+      Object.defineProperty(window, 'scrollY', { configurable: true, value: 237 });
+      await user.click(screen.getByRole('link', { name: 'Back to work' }));
+      await waitFor(() =>
+        expect(document.activeElement?.getAttribute('data-task-id')).toBe('T010'),
+      );
+      await act(async () => {
+        for (const callback of frames.values()) callback(16);
+        frames.clear();
+      });
+      await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 640 }));
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      const search = screen.getByLabelText('Search tasks');
+      await user.click(search);
+      expect(document.activeElement).toBe(search);
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+    } finally {
+      scrollTo.mockRestore();
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+      if (originalScroll) Object.defineProperty(window, 'scrollY', originalScroll);
+    }
+  });
+  it('keeps an explicit different history destination when leaving task detail', async () => {
+    window.history.replaceState(null, '', '#work?scope=all&status=active&size=25');
+    const user = userEvent.setup();
+    render(<App loader={async () => fixture()} />);
+    await user.click(await screen.findByRole('link', { name: /T001 Task 1/ }));
+    await screen.findByRole('heading', { name: 'Task 1' });
+    await act(async () => {
+      window.history.replaceState(null, '', '#work?scope=all&status=planned&page=2&size=25');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    expect(screen.getByLabelText('Status')).toHaveProperty('value', 'planned');
+    expect(document.querySelector('.task-button')?.getAttribute('data-task-id')).toBe('T050');
+    expect(window.location.hash).toContain('status=planned&page=2&size=25');
+    expect(window.location.hash).not.toContain('task=T001');
+    await user.click(screen.getByRole('link', { name: /T050 Task 50/ }));
+    await screen.findByRole('heading', { name: 'Task 50' });
+    await hash('#work?scope=all&status=planned&page=2&size=25&task=T052');
+    expect(window.location.hash).toContain('task=T052');
+    await waitFor(() => expect(document.activeElement?.getAttribute('data-task-id')).toBe('T052'));
+  });
   it('keeps keyboard focus on the search input after an actor result filters the current Work view', async () => {
     const user = userEvent.setup();
     window.history.replaceState(null, '', '#work?scope=all');

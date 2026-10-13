@@ -150,18 +150,17 @@ export function ViewControls({
   preferences,
   onContext,
   onPreferences,
+  onPreset,
 }: {
   readonly context: WorkContext;
   readonly preferences: ViewPreferences;
   readonly onContext: (context: WorkContext) => void;
   readonly onPreferences: (preferences: ViewPreferences) => void;
+  readonly onPreset: (hash: string) => void;
 }) {
   const i18n = useI18n(),
     [name, setName] = useState(''),
     [message, setMessage] = useState('');
-  const preset = (hash: string) => {
-    window.location.hash = hash;
-  };
   return (
     <div className="view-controls">
       <fieldset className="scope-switch">
@@ -272,7 +271,7 @@ export function ViewControls({
             onChange={(event) => {
               const selected = preferences.presets.find((item) => item.name === event.target.value);
               onPreferences({ ...preferences, selectedPreset: selected?.name || '' });
-              if (selected) preset(selected.hash);
+              if (selected) onPreset(selected.hash);
             }}
           >
             <option value="">{i18n.t('Choose a preset')}</option>

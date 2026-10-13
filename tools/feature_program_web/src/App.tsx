@@ -593,7 +593,7 @@ function TaskList({
             })}
           </p>
         </nav>
-        {selected && (
+        {selected && selectedPage !== page.index && (
           <p className="selection-context">
             {i18n.t(
               !index.tasks.has(selected)
@@ -863,18 +863,28 @@ function TaskDetail({
   taskId,
   returnHref = '#work',
   fullHref,
+  onReturn,
 }: {
   readonly snapshot: Snapshot;
   readonly taskId?: string;
   readonly returnHref?: string;
   readonly fullHref?: string;
+  readonly onReturn?: () => void;
 }) {
   const i18n = useI18n();
+  const returnClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (onReturn && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+      event.preventDefault();
+      onReturn();
+    }
+  };
   const task = snapshotIndex(snapshot).tasks.get(taskId || '');
   if (!task)
     return (
       <>
-        <a href={returnHref}>{i18n.t('Back to work')}</a>
+        <a href={returnHref} onClick={returnClick}>
+          {i18n.t('Back to work')}
+        </a>
         <h2 className="not-found" tabIndex={-1}>
           {i18n.t('Task not available')}
         </h2>
@@ -898,7 +908,7 @@ function TaskDetail({
   return (
     <>
       <nav className="detail-actions" aria-label={i18n.t('Task navigation')}>
-        <a className="back-link" href={returnHref}>
+        <a className="back-link" href={returnHref} onClick={returnClick}>
           {i18n.t('Back to work')}
         </a>
         {fullHref && (
@@ -907,7 +917,12 @@ function TaskDetail({
           </a>
         )}
         {fullHref && (
-          <a className="close-detail" href={returnHref} aria-label={i18n.t('Close detail')}>
+          <a
+            className="close-detail"
+            href={returnHref}
+            aria-label={i18n.t('Close detail')}
+            onClick={returnClick}
+          >
             <span aria-hidden="true">×</span>
           </a>
         )}
@@ -1265,6 +1280,11 @@ function Dashboard({
     readonly mainScroll: number;
     readonly documentScroll: number;
   } | null>(null);
+  const returnScroll = useRef<{
+    readonly token: number;
+    readonly origin: NonNullable<typeof listOrigin.current>;
+    frame: number | null;
+  } | null>(null);
   const previousProgram = useRef<string | null>(null);
   const main = useRef<HTMLElement>(null);
   const initialized = useRef(false);
@@ -1300,22 +1320,24 @@ function Dashboard({
       let next = parseNavigation(window.location.hash, snapshot, previous);
       if (next.route.view === 'work' && previous.route.view === 'task') {
         const origin = listOrigin.current;
-        const taskId = origin?.taskId || next.selected || previous.route.taskId || null;
-        if (snapshot && taskId && origin) {
-          const rank = taskPageIndex(
-            selectWorkTasks(snapshot, origin.context),
-            taskId,
-            origin.context.paging.size,
-          );
+        const sameList =
+          origin &&
+          (!next.selected || next.selected === origin.taskId) &&
+          navigationHash({ view: 'work' }, { ...next, selected: null }) ===
+            navigationHash({ view: 'work' }, { ...origin.context, selected: null });
+        const taskId = sameList ? origin.taskId : next.selected;
+        if (snapshot && taskId && sameList) {
+          const rank = taskPageIndex(selectWorkTasks(snapshot, next), taskId, next.paging.size);
           next = {
             ...next,
-            ...origin.context,
-            route: next.route,
             selected: taskId,
-            paging: { ...origin.context.paging, index: rank ?? origin.context.paging.index },
+            paging: { ...next.paging, index: rank ?? next.paging.index },
           };
         }
-        setFocusRequest({ token: ++focusToken.current, taskId });
+        const token = ++focusToken.current;
+        returnScroll.current = sameList ? { token, origin, frame: null } : null;
+        if (!sameList) listOrigin.current = null;
+        setFocusRequest(taskId ? { token, taskId } : null);
         commit(next, true);
         return;
       }
@@ -1434,8 +1456,49 @@ function Dashboard({
     [navigate],
   );
   const focusHandled = useCallback((token: number) => {
+    const pending = returnScroll.current;
+    if (pending?.token === token) {
+      if (pending.frame !== null) return;
+      pending.frame = requestAnimationFrame(() => {
+        if (
+          returnScroll.current !== pending ||
+          !main.current ||
+          currentNavigation.current.route.view !== 'work'
+        )
+          return;
+        const { origin } = pending;
+        const ledger = main.current.querySelector('.task-list');
+        if (ledger) ledger.scrollTop = origin.ledgerScroll;
+        main.current.scrollTop = origin.mainScroll;
+        if (window.scrollY !== origin.documentScroll)
+          window.scrollTo({ top: origin.documentScroll });
+        returnScroll.current = null;
+        listOrigin.current = null;
+        setFocusRequest((previous) => (previous?.token === token ? null : previous));
+      });
+      return;
+    }
     setFocusRequest((previous) => (previous?.token === token ? null : previous));
   }, []);
+  const returnToWork = useCallback(() => {
+    const origin = listOrigin.current;
+    const context = origin?.context || currentNavigation.current;
+    const taskId = origin?.taskId || currentNavigation.current.selected;
+    const rank =
+      origin && snapshot && taskId
+        ? taskPageIndex(selectWorkTasks(snapshot, context), taskId, context.paging.size)
+        : null;
+    const token = ++focusToken.current;
+    returnScroll.current = origin ? { token, origin, frame: null } : null;
+    setFocusRequest({ token, taskId });
+    commit({
+      ...currentNavigation.current,
+      ...context,
+      route: { view: 'work' },
+      selected: taskId,
+      paging: { ...context.paging, index: rank ?? context.paging.index },
+    });
+  }, [snapshot, commit]);
   const revealTask = useCallback(
     (taskId: string) => {
       if (!snapshot) return;
@@ -1446,19 +1509,15 @@ function Dashboard({
     },
     [snapshot, navigation, paging, setPaging],
   );
-  useEffect(() => {
-    if (!focusRequest || route.view !== 'work') return;
-    const origin = listOrigin.current;
-    if (!origin) return;
-    const frame = requestAnimationFrame(() => {
-      const ledger = main.current?.querySelector('.task-list');
-      if (ledger) ledger.scrollTop = origin.ledgerScroll;
-      if (main.current) main.current.scrollTop = origin.mainScroll;
-      if (window.scrollY !== origin.documentScroll) window.scrollTo({ top: origin.documentScroll });
+  const applyPreset = useCallback(
+    (hash: string) => {
       listOrigin.current = null;
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [route.view, focusRequest]);
+      returnScroll.current = null;
+      setFocusRequest(null);
+      commit(parseNavigation(hash, snapshot));
+    },
+    [snapshot, commit],
+  );
   const changePreferences = useCallback(
     (next: ViewPreferences) => {
       setPreferences(next);
@@ -1537,6 +1596,7 @@ function Dashboard({
             preferences={preferences}
             onContext={changeContext}
             onPreferences={changePreferences}
+            onPreset={applyPreset}
           />
           <Breadcrumbs snapshot={snapshot} category={filters.category} onSelect={selectCategory} />
           <TaskList
@@ -1560,9 +1620,13 @@ function Dashboard({
                 <TaskDetail
                   snapshot={snapshot}
                   taskId={route.taskId}
+                  onReturn={returnToWork}
                   returnHref={navigationHash(
                     { view: 'work' },
-                    { ...navigation, selected: listOrigin.current?.taskId || selected },
+                    {
+                      ...(listOrigin.current?.context || navigation),
+                      selected: listOrigin.current?.taskId || selected,
+                    },
                   )}
                   fullHref={navigationHash({ ...route, full: true }, navigation)}
                 />
@@ -1577,9 +1641,13 @@ function Dashboard({
         <TaskDetail
           snapshot={snapshot}
           taskId={route.taskId}
+          onReturn={returnToWork}
           returnHref={navigationHash(
             { view: 'work' },
-            { ...navigation, selected: listOrigin.current?.taskId || selected },
+            {
+              ...(listOrigin.current?.context || navigation),
+              selected: listOrigin.current?.taskId || selected,
+            },
           )}
         />
       );
@@ -1646,6 +1714,8 @@ function Dashboard({
     paging,
     focusRequest,
     changeFilters,
+    applyPreset,
+    returnToWork,
     openTask,
     focusHandled,
     revealTask,
