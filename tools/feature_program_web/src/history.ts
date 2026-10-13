@@ -1,4 +1,5 @@
 import { items, record, records, semanticValueEqual, string } from './model';
+import { originalValue } from './presentation';
 import type { Json, JsonRecord, Snapshot, Task } from './model';
 
 export function latestReview(task: Task) {
@@ -19,17 +20,19 @@ export function historyComparison(
   after: JsonRecord,
   fields: readonly string[],
 ) {
+  const originalBefore = originalValue(before);
+  const originalAfter = originalValue(after);
   return fields.map((field) => ({
     field,
     before: before[field],
     after: after[field],
     status:
-      before[field] === undefined ||
-      after[field] === undefined ||
-      before[field] === null ||
-      after[field] === null
+      originalBefore[field] === undefined ||
+      originalAfter[field] === undefined ||
+      originalBefore[field] === null ||
+      originalAfter[field] === null
         ? 'unknown'
-        : semanticValueEqual(before[field], after[field])
+        : semanticValueEqual(originalBefore[field], originalAfter[field])
           ? 'same'
           : 'different',
   }));

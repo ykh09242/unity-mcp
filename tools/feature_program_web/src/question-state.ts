@@ -1,5 +1,6 @@
 import { items, record, records, string } from './model';
 import type { JsonRecord, Snapshot } from './model';
+import { originalValue } from './presentation';
 
 export const questionStages = [
   'open',
@@ -54,14 +55,15 @@ export function questionMatches(question: JsonRecord, context: QuestionContext):
   if (context.goal && string(question.objective_id) !== context.goal) return false;
   if (context.task && !items(question.affected_task_ids).some((id) => id === context.task))
     return false;
-  const label = [
-    question.id,
-    question.prompt,
-    question.requested_decision,
-    question.why,
-    ...items(question.options),
-    record(question.outcome).summary,
-  ]
+  const label = [question, originalValue(question)]
+    .flatMap((value) => [
+      value.id,
+      value.prompt,
+      value.requested_decision,
+      value.why,
+      ...items(value.options),
+      record(value.outcome).summary,
+    ])
     .map(string)
     .join(' ')
     .toLocaleLowerCase();

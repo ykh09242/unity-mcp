@@ -1,4 +1,6 @@
+import { usePresentation } from './presentation-ui';
 import { useState } from 'react';
+import { originalValue } from './presentation';
 import { useI18n } from './i18n';
 import { items, record, records, string } from './model';
 import type { Json, Snapshot, Task } from './model';
@@ -25,7 +27,9 @@ export function OriginalRecord({
   return (
     <details className="original-record" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>{i18n.t(label)}</summary>
-      {open && <pre className="source">{JSON.stringify(value ?? null, null, 2)}</pre>}
+      {open && (
+        <pre className="source">{JSON.stringify(originalValue(value) ?? null, null, 2)}</pre>
+      )}
     </details>
   );
 }
@@ -67,6 +71,7 @@ function ShortenedSummary({ value }: { readonly value: Json | undefined }) {
 
 export function CoordinationNotes({ task }: { readonly task: Task }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   const notes = Array.isArray(task.notes) ? task.notes : task.notes == null ? [] : [task.notes];
   const shown = notes.slice(-5).reverse();
   return (
@@ -91,7 +96,8 @@ export function CoordinationNotes({ task }: { readonly task: Task }) {
               ) : readable ? (
                 <>
                   <p className="note-byline">
-                    {string(entry.actor) || i18n.t('Unknown')} · {i18n.date(entry.timestamp)}
+                    {presentation.actor(entry.actor) || i18n.t('Unknown')} ·{' '}
+                    {i18n.date(entry.timestamp)}
                   </p>
                   <NoteText value={entry.reason} />
                   <p className="muted">{i18n.t('Next action')}</p>
@@ -150,6 +156,7 @@ export function ReadinessContext({
   readonly task: Task;
 }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   const readiness = recordedReadiness(snapshot, task);
   const collisions = currentCollection(snapshot, readiness?.collisions, task.id);
   const dependencies = currentCollection(snapshot, readiness?.unmet_dependencies, task.id);
@@ -213,7 +220,9 @@ export function ReadinessContext({
                   const id = string(value);
                   return (
                     <li key={index}>
-                      <a href={`#task/${encodeURIComponent(id)}`}>{id}</a>
+                      <a href={`#task/${encodeURIComponent(id)}`}>
+                        {presentation.taskReference(id)}
+                      </a>
                       {peers.get(id) && (
                         <span className="badge">{i18n.statusLabel(peers.get(id)!.status)}</span>
                       )}
@@ -238,9 +247,12 @@ export function ReadinessContext({
                     reasons = currentCollection(snapshot, row.reasons, id);
                   return (
                     <li key={index}>
-                      <a href={`#task/${encodeURIComponent(id)}`}>{id}</a> ·{' '}
+                      <a href={`#task/${encodeURIComponent(id)}`}>
+                        {presentation.taskReference(id)}
+                      </a>{' '}
+                      ·{' '}
                       <a href={workloadHref('all', string(row.owner))}>
-                        {string(row.owner) || i18n.t('Unassigned')}
+                        {presentation.actor(row.owner) || i18n.t('Unassigned')}
                       </a>
                       {peers.get(id) && (
                         <span className="badge">{i18n.statusLabel(peers.get(id)!.status)}</span>
@@ -284,6 +296,7 @@ export function ReadinessContext({
 
 export function GoalCoordination({ snapshot }: { readonly snapshot: Snapshot }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   const brief = record(snapshot.brief);
   const goal = goalTaskIds(snapshot);
   const attention =
@@ -327,7 +340,7 @@ export function GoalCoordination({ snapshot }: { readonly snapshot: Snapshot }) 
                 <NoteText value={row.reason} />
                 <p>
                   {i18n.t('Responsible actor')}:{' '}
-                  {string(row.responsible_actor_id) || i18n.t('Unknown')}
+                  {presentation.actor(row.responsible_actor_id) || i18n.t('Unknown')}
                 </p>
                 <NoteText value={row.next_action} />
                 <ShortenedSummary value={row} />
@@ -337,7 +350,7 @@ export function GoalCoordination({ snapshot }: { readonly snapshot: Snapshot }) 
                     .filter(Boolean)
                     .map((id) => (
                       <a key={id} href={`#task/${encodeURIComponent(id)}`}>
-                        {id}
+                        {presentation.taskReference(id)}
                       </a>
                     ))}
                 </div>

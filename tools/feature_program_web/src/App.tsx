@@ -1,4 +1,11 @@
 import { LanguageProvider, language, useI18n } from './i18n';
+import { originalValue, presentSnapshot, taskBody } from './presentation';
+import {
+  ContentLanguage,
+  ContentOriginals,
+  PresentationProvider,
+  usePresentation,
+} from './presentation-ui';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
@@ -77,12 +84,13 @@ function Section({ title, children }: { readonly title: string; readonly childre
 }
 function Fields({ values }: { readonly values: readonly (readonly [string, Json | undefined])[] }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   return (
     <dl className="fields">
       {values.map(([key, value]) => (
         <div key={key}>
           <dt>{i18n.t(key)}</dt>
-          <dd>{i18n.display(value)}</dd>
+          <dd>{i18n.display(presentation.field(key, value))}</dd>
         </div>
       ))}
     </dl>
@@ -192,6 +200,7 @@ function CategoryTreeView({
         </span>
       </button>
       {walk(null, new Set())}
+      {selected && <ContentOriginals entity="category" id={selected} />}
       {!index.categories.size && <p className="muted">{i18n.t('No categories recorded.')}</p>}
       {filtered && !matching.size && (
         <p className="muted">{i18n.t('No category members match these filters.')}</p>
@@ -291,6 +300,7 @@ function Objective({ snapshot }: { readonly snapshot: Snapshot }) {
 }
 function Overview({ snapshot }: { readonly snapshot: Snapshot }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   const index = snapshotIndex(snapshot);
   const categories = index.categoryChildren.get('') || [];
   const blockers = index.tasksByStatus.get('blocked') || [];
@@ -308,6 +318,7 @@ function Overview({ snapshot }: { readonly snapshot: Snapshot }) {
         </a>
       </div>
       <Objective snapshot={snapshot} />
+      <ContentOriginals entity="goal" id={string(record(snapshot.objective).id)} />
       <MembershipHistory snapshot={snapshot} />
       <Progress snapshot={snapshot} />
       <div className="status-strip">
@@ -332,7 +343,7 @@ function Overview({ snapshot }: { readonly snapshot: Snapshot }) {
                     <strong>{i18n.display(category.title)}</strong>
                     <p className="muted">
                       {i18n.t('Recorded owners:')}{' '}
-                      {owners.join(', ') || i18n.t('No assignment yet')}
+                      {owners.map(presentation.actor).join(', ') || i18n.t('No assignment yet')}
                     </p>
                   </div>
                   <span className="mono">
@@ -415,6 +426,7 @@ function TaskList({
   const i18n = useI18n();
   const index = snapshotIndex(snapshot);
   const page = useMemo(() => taskPage(sorted, paging), [sorted, paging]);
+  const presentation = usePresentation();
   const selectedRef = useRef<HTMLAnchorElement>(null);
   const sizeRef = useRef<HTMLSelectElement>(null);
   const focusedRow = useRef<string | null>(null);
@@ -500,7 +512,7 @@ function TaskList({
               statuses.map((status) => [status, i18n.statusLabel(status)]),
             )}
             {select('owner', 'Owner', [
-              ...owners.map((owner) => [owner, owner] as const),
+              ...owners.map((owner) => [owner, presentation.actor(owner)] as const),
               ['__unassigned', 'Unassigned'],
             ])}
             {select(
@@ -559,7 +571,13 @@ function TaskList({
                 ? i18n.statusLabel(value)
                 : key === 'owner' && value === '__unassigned'
                   ? i18n.t('Unassigned')
-                  : value}{' '}
+                  : key === 'owner'
+                    ? presentation.actor(value)
+                    : key === 'category'
+                      ? string(index.categories.get(value)?.title) || value
+                      : key === 'workstream'
+                        ? presentation.workstream(value)
+                        : value}{' '}
               ×
             </button>
           ))}
@@ -684,7 +702,7 @@ function TaskList({
                       </>
                     )}
                     {preferences.columns.includes('workstream') && (
-                      <> · {i18n.display(task.workstream)}</>
+                      <> · {i18n.display(presentation.workstream(task.workstream))}</>
                     )}
                   </span>
                   {hasActionGlance(task) && (
@@ -700,7 +718,7 @@ function TaskList({
                     {task.status === 'done' && !ownerOf(task) ? (
                       <span aria-label={i18n.t('No current owner')}>—</span>
                     ) : (
-                      ownerOf(task) || i18n.t('Unassigned')
+                      presentation.actor(ownerOf(task)) || i18n.t('Unassigned')
                     )}
                   </span>
                 )}
@@ -726,14 +744,16 @@ function TaskList({
 }
 function Handoff({ handoff }: { readonly handoff: JsonRecord }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   const outgoing = record(handoff.outgoing);
   const acknowledgement = record(handoff.acknowledgement);
   return (
     <article className="handoff">
       <div className="handoff-heading">
         <strong>
-          {i18n.display(handoff.from_actor)} <span className="muted">{i18n.t('to')}</span>{' '}
-          {i18n.display(handoff.to_actor)}
+          {i18n.display(presentation.actor(handoff.from_actor))}{' '}
+          <span className="muted">{i18n.t('to')}</span>{' '}
+          {i18n.display(presentation.actor(handoff.to_actor))}
         </strong>
         <span className="badge">
           {handoff.acceptance
@@ -757,8 +777,9 @@ function Handoff({ handoff }: { readonly handoff: JsonRecord }) {
         <summary>{i18n.t('Constraints, findings and evidence')}</summary>
         <Prose value={outgoing.constraints} />
         <Prose value={outgoing.unresolved_findings} fallback="No unresolved findings recorded" />
-        <pre className="source">{i18n.display(handoff)}</pre>
+        <pre className="source">{i18n.display(originalValue(handoff))}</pre>
       </details>
+      <ContentOriginals entity="handoff" id={string(handoff.id)} />
       <TransferHistory handoff={handoff} />
     </article>
   );
@@ -779,6 +800,7 @@ function TaskDetail({
   readonly onReturn?: () => void;
 }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   const returnClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
     if (onReturn && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
       event.preventDefault();
@@ -808,8 +830,14 @@ function TaskDetail({
   const assignedActorId = string(assignment.actor_id) || string(attempt.owner);
   const actor = snapshotIndex(snapshot).actors.get(assignedActorId) || {};
   const source = record(task.source);
+  const translatedBody = source.text !== originalValue(source).text;
   const expectedResult =
-    /^- Goal and expected result: (.+)$/m.exec(string(source.text))?.[1] || task.planning_note;
+    task.expected_result ||
+    (translatedBody
+      ? taskBody(task)
+          .trim()
+          .split(/\n\s*\n/u)[0]
+      : /^- Goal and expected result: (.+)$/m.exec(string(source.text))?.[1] || task.planning_note);
   const handoffs = records(snapshot.handoffs).filter(
     (item) => !item.task_id || item.task_id === task.id,
   );
@@ -858,10 +886,10 @@ function TaskDetail({
                   <a
                     href={workloadHref('all', ownerOf(task))}
                     aria-label={i18n.t('Assignments for {owner}', {
-                      owner: ownerOf(task) || i18n.t('Unassigned'),
+                      owner: presentation.actor(ownerOf(task)) || i18n.t('Unassigned'),
                     })}
                   >
-                    {ownerOf(task) || i18n.t('Unassigned')}
+                    {presentation.actor(ownerOf(task)) || i18n.t('Unassigned')}
                   </a>
                 </dd>
               </div>
@@ -871,7 +899,11 @@ function TaskDetail({
               </div>
             </dl>
             <div className="expected-result-summary">
-              <h3>{i18n.t('Expected result')}</h3>
+              <h3>
+                {i18n.t(
+                  translatedBody && !task.expected_result ? 'Task description' : 'Expected result',
+                )}
+              </h3>
               <Prose
                 value={expectedResult}
                 fallback="Read the full source context below for task purpose and method."
@@ -901,12 +933,16 @@ function TaskDetail({
               />
             </details>
           </Section>
+          <ContentOriginals entity="task" id={task.id} />
           <ReviewSummary snapshot={snapshot} task={task} />
           <Section title={i18n.t('Requirements and source context')}>
             <details>
-              <summary>{i18n.t('Full original source and evidence')}</summary>
-              <Prose value={task.requirements || task.acceptance || source.text} />
-              <pre className="source">{i18n.display(source)}</pre>
+              <summary>{i18n.t('Full task context and evidence')}</summary>
+              <Prose value={task.expected_result || task.acceptance_criteria || taskBody(task)} />
+              <details>
+                <summary>{i18n.t('Original record')}</summary>
+                <pre className="source">{i18n.display(originalValue(source))}</pre>
+              </details>
             </details>
           </Section>
           <QuestionLinks snapshot={snapshot} taskId={taskId} context={context} />
@@ -927,7 +963,7 @@ function TaskDetail({
               <summary>{i18n.t('Recorded assignment')}</summary>
               <Fields
                 values={[
-                  ['Current owner', ownerOf(task) || i18n.t('Unassigned')],
+                  ['Current owner', presentation.actor(ownerOf(task)) || i18n.t('Unassigned')],
                   ['Assigned actor', assignedActorId],
                   ['Role', i18n.human(assignment.role)],
                   ['Model', assignment.model_id],
@@ -970,6 +1006,7 @@ function Team({
   readonly context: WorkContext;
 }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   const index = snapshotIndex(snapshot);
   const actors = [...index.actors.values()];
   const responsibilities = record(snapshot.responsibilities);
@@ -982,7 +1019,8 @@ function Team({
         <div className="actor-branch" key={id}>
           <article className="actor-record">
             <div className="actor-heading">
-              <h3>{id}</h3>
+              <h3>{presentation.actor(id)}</h3>
+              <ContentOriginals entity="actor" id={id} />
               <span className="badge">
                 {i18n.human(actor.role)} · {i18n.human(actor.staffing_status)}
               </span>
@@ -1046,7 +1084,7 @@ function Team({
               : i18n.t('Not recorded')}
           {' · '}
           {i18n.t(
-            'Program communication language applies to director-authored questions; original content is not translated.',
+            'Reviewed content follows the recorded session language. Original records remain available.',
           )}
         </p>
         <Section title={i18n.t('Final director')}>
@@ -1063,7 +1101,7 @@ function Team({
           <details>
             <summary>{i18n.t('Authority and responsibility')}</summary>
             <Prose value={items(responsibilities.director).map((item) => i18n.t(string(item)))} />
-            <pre className="source">{i18n.display(director)}</pre>
+            <pre className="source">{i18n.display(originalValue(director))}</pre>
           </details>
         </Section>
         <Section title={i18n.t('Management hierarchy')}>
@@ -1099,7 +1137,11 @@ function Dashboard({
   readonly answerSaver?: AnswerSaver;
 }) {
   const i18n = useI18n();
-  const { snapshot, observed, error, busy, refresh } = useSnapshot(loader);
+  const { snapshot: rawSnapshot, observed, error, busy, refresh } = useSnapshot(loader);
+  const snapshot = useMemo(
+    () => (rawSnapshot ? presentSnapshot(rawSnapshot) : null),
+    [rawSnapshot],
+  );
   const programLanguage = string(snapshot?.communication_language);
   useEffect(() => {
     i18n.setProgramLanguage(language(programLanguage));
@@ -1659,7 +1701,7 @@ function Dashboard({
     selectCategory,
   ]);
   return (
-    <>
+    <PresentationProvider snapshot={snapshot}>
       <a
         className="skip"
         href="#"
@@ -1775,6 +1817,7 @@ function Dashboard({
                   />
                 </details>
               )}
+            {snapshot && <ContentLanguage snapshot={snapshot} />}
             <details className="local-help">
               <summary>{i18n.t('About this local view')}</summary>
               <div className="rail-foot">
@@ -1824,6 +1867,6 @@ function Dashboard({
           {content}
         </main>
       </div>
-    </>
+    </PresentationProvider>
   );
 }

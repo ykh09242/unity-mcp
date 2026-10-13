@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useI18n } from './i18n';
+import { usePresentation } from './presentation-ui';
 import { items, record, records, safeUrl, string } from './model';
 import type { Json, JsonRecord, Snapshot, Task } from './model';
 import { OriginalRecord } from './readiness-ui';
@@ -91,12 +92,19 @@ function Text({ value }: { readonly value: Json | undefined }) {
 
 function Facts({ values }: { readonly values: readonly (readonly [string, Json | undefined])[] }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   return (
     <dl className="history-facts">
       {values.map(([label, value]) => (
         <div key={label}>
           <dt>{i18n.t(label)}</dt>
-          <dd>{enumFields.has(label) ? i18n.human(value) : <Text value={value} />}</dd>
+          <dd>
+            {enumFields.has(label) ? (
+              i18n.human(value)
+            ) : (
+              <Text value={presentation.field(label, value)} />
+            )}
+          </dd>
         </div>
       ))}
     </dl>
@@ -365,6 +373,7 @@ export function ReviewSummary({
   readonly task: Task;
 }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   const { attempt, round, review, receipt } = latestReview(task);
   const integrated = record(record(snapshot.coverage).integrated_review);
   const submission = record(record(task.readiness).submission);
@@ -377,7 +386,8 @@ export function ReviewSummary({
       </div>
       <p className="history-meta">
         {i18n.t('Attempt')} {i18n.display(attempt.number)} · {i18n.t('Round')}{' '}
-        {i18n.display(round.round)} · {i18n.display(review.reviewer, 'Reviewer not recorded')}
+        {i18n.display(round.round)} ·{' '}
+        {i18n.display(presentation.actor(review.reviewer), 'Reviewer not recorded')}
       </p>
       {(review.next_action || receipt.next_action) && (
         <p className="history-text">{i18n.display(review.next_action || receipt.next_action)}</p>
@@ -419,6 +429,7 @@ export function TaskHistory({
   readonly task: Task;
 }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   const attempts = records(task.attempts);
   const [previous, setPrevious] = useState('');
   const current = attempts.at(-1) || {};
@@ -470,7 +481,8 @@ export function TaskHistory({
                 <details open={index === attempts.length - 1 ? true : undefined}>
                   <summary>
                     {i18n.t('Attempt')} {i18n.display(attempt.number)} ·{' '}
-                    {i18n.display(attempt.owner)} · {i18n.human(attempt.status || attempt.outcome)}
+                    {i18n.display(presentation.actor(attempt.owner))} ·{' '}
+                    {i18n.human(attempt.status || attempt.outcome)}
                   </summary>
                   {records(attempt.rounds).map((round, roundIndex) => (
                     <ReviewRound
@@ -742,6 +754,7 @@ export function StaffingHistory({
   readonly assignment?: JsonRecord;
 }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   return (
     <details className="history-section">
       <summary>{i18n.t('Staffing and assignment history')}</summary>
@@ -784,8 +797,8 @@ export function StaffingHistory({
         records(actor.assignments).map((entry, index) => (
           <details key={index}>
             <summary>
-              {i18n.display(entry.task_id)} · {i18n.t('Attempt')} {i18n.display(entry.attempt)} ·{' '}
-              {i18n.statusLabel(entry.status)}
+              {i18n.display(presentation.taskReference(entry.task_id))} · {i18n.t('Attempt')}{' '}
+              {i18n.display(entry.attempt)} · {i18n.statusLabel(entry.status)}
             </summary>
             <Compare
               before={record(entry.metadata)}
@@ -873,11 +886,12 @@ export function TransferHistory({ handoff }: { readonly handoff: JsonRecord }) {
 }
 
 function TaskLinks({ value }: { readonly value: Json | undefined }) {
+  const presentation = usePresentation();
   return (
     <ul className="history-task-links">
       {items(value).map((id, index) => (
         <li key={index}>
-          <a href={'#task/' + encodeURIComponent(string(id))}>{string(id)}</a>
+          <a href={'#task/' + encodeURIComponent(string(id))}>{presentation.taskReference(id)}</a>
         </li>
       ))}
     </ul>
@@ -902,6 +916,7 @@ function BindingChanges({ entry }: { readonly entry: JsonRecord }) {
 
 export function MembershipHistory({ snapshot }: { readonly snapshot: Snapshot }) {
   const i18n = useI18n();
+  const presentation = usePresentation();
   const objective = record(snapshot.objective);
   return (
     <details className="history-section membership-history">
@@ -937,7 +952,7 @@ export function MembershipHistory({ snapshot }: { readonly snapshot: Snapshot })
                 <details key={changeIndex}>
                   <summary>
                     <a href={'#task/' + encodeURIComponent(string(change.id))}>
-                      {i18n.display(change.id)}
+                      {i18n.display(presentation.taskReference(change.id))}
                     </a>{' '}
                     · {i18n.t('Changes')}
                   </summary>
@@ -994,7 +1009,7 @@ export function MembershipHistory({ snapshot }: { readonly snapshot: Snapshot })
                 <details key={changeIndex}>
                   <summary>
                     <a href={'#task/' + encodeURIComponent(string(change.id))}>
-                      {i18n.display(change.id)}
+                      {i18n.display(presentation.taskReference(change.id))}
                     </a>{' '}
                     · {i18n.t('Changes')}
                   </summary>
