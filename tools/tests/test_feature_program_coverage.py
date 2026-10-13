@@ -1116,7 +1116,20 @@ def test_large_registry_uses_existing_bound_through_reliance_publication(gate: G
 
 
 @pytest.mark.parametrize("operation", ["submit", "complete", "rework", "objective-complete"])
-@pytest.mark.parametrize("fault", ["next-action", "owner", "frozen-source", "questions"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "next-action",
+        "owner",
+        "frozen-source",
+        "questions",
+        "criteria",
+        "objective-id",
+        "task-id",
+        "task-source",
+        "required-checks",
+    ],
+)
 def test_supplied_diagnostics_match_cli_load_of_original_invalid_state(
     gate: GateFixture, capsys: pytest.CaptureFixture[str], operation: str, fault: str
 ) -> None:
@@ -1143,6 +1156,16 @@ def test_supplied_diagnostics_match_cli_load_of_original_invalid_state(
             report.write_bytes(report.read_bytes() + b"\nChanged frozen report\n")
         case "questions":
             state["questions"] = {"schema_version": 1, "items": "Invalid inbox array"}
+        case "criteria":
+            del state["objective"]["criteria"]
+        case "objective-id":
+            del state["objective"]["id"]
+        case "task-id":
+            del task["id"]
+        case "task-source":
+            del task["source"]
+        case "required-checks":
+            del task["required_checks"]
         case _:
             pytest.fail("Unknown original-state fault")
     gate.program.path("backlog.json").write_bytes(fp.canonical(state))
@@ -1151,7 +1174,9 @@ def test_supplied_diagnostics_match_cli_load_of_original_invalid_state(
         for path in gate.program.directory.rglob("*")
         if path.is_file()
     }
-    with pytest.raises((fp.ProgramError, fp.questions.QuestionError)) as expected:
+    with pytest.raises(
+        (fp.ProgramError, fp.questions.QuestionError, fp.coordination.GovernanceError)
+    ) as expected:
         gate.program.load()
     args = argparse.Namespace(operation=operation, input=name, task="S01", owner="worker")
     capsys.readouterr()
@@ -1159,6 +1184,27 @@ def test_supplied_diagnostics_match_cli_load_of_original_invalid_state(
     diagnostic = fp.coverage.diagnostics(
         gate.program, state, args, observed_head=gate.program.current_head()
     )
+    assert (
+        gate.fixture.run(
+            "coverage",
+            "--operation",
+            operation,
+            "--input",
+            name,
+            "--task",
+            "S01",
+            "--owner",
+            "worker",
+        )
+        == 0
+    )
+    observed = capsys.readouterr()
+    assert not observed.err
+    report = json.loads(observed.out)
+    assert report["diagnostics"] == diagnostic
+    assert report["projection"]["status"] == "unavailable"
+    assert report["projection"]["reasons"] == [str(expected.value)]
+    assert "criteria" not in report and "tasks" not in report
     if operation == "submit":
         result = gate.fixture.run("submit", "S01", "--owner", "worker", "--receipt", name)
     elif operation == "objective-complete":
@@ -1179,11 +1225,13 @@ def test_supplied_diagnostics_match_cli_load_of_original_invalid_state(
 
 
 @pytest.mark.parametrize("operation", ["submit", "complete", "objective-complete"])
+@pytest.mark.parametrize("fault", ["next-action", "criteria"])
 def test_invalid_original_state_precedes_unavailable_head_in_cli_diagnostics(
     gate: GateFixture,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
+    fault: str,
 ) -> None:
     # Given a required original-state failure and unavailable external metadata.
     gate.ready()
@@ -1197,10 +1245,13 @@ def test_invalid_original_state_precedes_unavailable_head_in_cli_diagnostics(
             gate.fixture.submit()
             name = gate.fixture.review()
     state = gate.program.load()
-    gate.program.task(state, "S01")["next_action"] = ""
+    if fault == "criteria":
+        del state["objective"]["criteria"]
+    else:
+        gate.program.task(state, "S01")["next_action"] = ""
     gate.program.path("backlog.json").write_bytes(fp.canonical(state))
     before = gate.program.path("backlog.json").read_bytes()
-    with pytest.raises(fp.ProgramError) as expected:
+    with pytest.raises((fp.ProgramError, fp.coordination.GovernanceError)) as expected:
         gate.program.load()
 
     def unavailable(_program: fp.Program) -> str:
@@ -1309,3 +1360,135 @@ def test_valid_original_state_with_unavailable_head_remains_unassessed(
     assert result["status"] == "not_assessed" and result["failure_type"] == "ProgramError"
     assert result["reasons"] == ["Actual fixture HEAD unavailable"]
     assert gate.program.path("backlog.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("fault", ["criteria", "task-source", "next-action"])
+def test_no_input_cli_reports_invalid_original_state_without_projection(
+    gate: GateFixture,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    fault: str,
+) -> None:
+    state = gate.program.load()
+    if fault == "criteria":
+        del state["objective"]["criteria"]
+    else:
+        del gate.program.task(state, "S01")["source" if fault == "task-source" else "next_action"]
+    gate.program.path("backlog.json").write_bytes(fp.canonical(state))
+    before = {path: path.read_bytes() for path in gate.program.repo.rglob("*") if path.is_file()}
+    with pytest.raises((fp.ProgramError, fp.coordination.GovernanceError)) as expected:
+        gate.program.load()
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("No-input coverage must not read Git, project invalid state, lock or write")
+
+    monkeypatch.setattr(fp, "git", forbidden)
+    monkeypatch.setattr(fp.Program, "lock", forbidden)
+    monkeypatch.setattr(fp.Program, "save", forbidden)
+    monkeypatch.setattr(fp.coverage, "projection", forbidden)
+    capsys.readouterr()
+    assert gate.fixture.run("coverage") == 0
+    output = capsys.readouterr()
+    report = json.loads(output.out)
+    assert not output.err
+    assert report["diagnostics"]["status"] == "not_assessed"
+    assert report["diagnostics"]["structural_validation"] == {
+        "status": "failed",
+        "reasons": [str(expected.value)],
+        "failure_type": type(expected.value).__name__,
+    }
+    assert report["projection"]["status"] == "unavailable"
+    assert report["projection"]["reasons"] == [str(expected.value)]
+    assert "criteria" not in report and "tasks" not in report
+    assert before == {
+        path: path.read_bytes() for path in gate.program.repo.rglob("*") if path.is_file()
+    }
+
+
+@pytest.mark.parametrize("drift", ["scoped-source", "frozen-source", "frozen-evidence"])
+def test_cli_preserves_binding_drift_or_authoritative_integrity_failure(
+    gate: GateFixture,
+    capsys: pytest.CaptureFixture[str],
+    drift: str,
+) -> None:
+    gate.ready()
+    record_annotation(gate)
+    state = gate.program.load()
+    if drift == "scoped-source":
+        path = gate.program.repo / "src/S01.py"
+    elif drift == "frozen-source":
+        path = fp.safe_path(gate.program.repo, state["source"]["path"])
+    else:
+        path = gate.program.path("evidence/_coverage/attempt-1/observation.txt")
+    path.write_bytes(path.read_bytes() + b"\nControlled drift\n")
+    before = {path: path.read_bytes() for path in gate.program.repo.rglob("*") if path.is_file()}
+    capsys.readouterr()
+    assert gate.fixture.run("coverage") == 0
+    output = capsys.readouterr()
+    assert not output.err
+    report = json.loads(output.out)
+    structural = report["diagnostics"]["structural_validation"]
+    if drift == "scoped-source":
+        assert structural["status"] == "validated"
+        assert report["history"][0]["freshness"] == "stale"
+        assert report["criteria"][0]["linkage"] == "unknown"
+        assert "projection" not in report
+    else:
+        with pytest.raises(fp.ProgramError) as expected:
+            gate.program.load()
+        assert structural["status"] == "failed"
+        assert structural["reasons"] == [str(expected.value)]
+        assert report["projection"]["reasons"] == [str(expected.value)]
+        assert "history" not in report
+    assert before == {
+        path: path.read_bytes() for path in gate.program.repo.rglob("*") if path.is_file()
+    }
+
+
+def test_transition_rejection_retains_valid_legacy_projection(
+    gate: GateFixture,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate.ready()
+    assert gate.fixture.claim() == 0
+    name = gate.fixture.receipt()
+    receipt = fp.read_json(gate.program.path(name))
+    receipt["acceptance_complete"] = False
+    gate.fixture.write(name, receipt)
+    before = {path: path.read_bytes() for path in gate.program.repo.rglob("*") if path.is_file()}
+    capsys.readouterr()
+    assert gate.fixture.run("submit", "S01", "--owner", "worker", "--receipt", name) == 1
+    actual = capsys.readouterr().err.strip().removeprefix("feature-program: ")
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Coverage observation must not lock or publish")
+
+    monkeypatch.setattr(fp.Program, "lock", forbidden)
+    monkeypatch.setattr(fp.Program, "save", forbidden)
+    assert (
+        gate.fixture.run(
+            "coverage",
+            "--operation",
+            "submit",
+            "--input",
+            name,
+            "--task",
+            "S01",
+            "--owner",
+            "worker",
+        )
+        == 0
+    )
+    output = capsys.readouterr()
+    assert not output.err
+    report = json.loads(output.out)
+    assert report["diagnostics"]["status"] == "failed"
+    assert report["diagnostics"]["reasons"] == [actual]
+    assert report["diagnostics"]["structural_validation"]["status"] == "validated"
+    assert report["legacy_absence"] is True
+    assert report["criteria"][0]["linkage"] == "unknown"
+    assert "projection" not in report
+    assert before == {
+        path: path.read_bytes() for path in gate.program.repo.rglob("*") if path.is_file()
+    }

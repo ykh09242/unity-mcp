@@ -2907,7 +2907,6 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "coverage-binding":
                 result = coverage.bind_input(program, state, read_json(program.path(args.input)))
             else:
-                result = coverage.projection(program, state)
                 observed_head = None
                 metadata_error: Record | None = None
                 if (
@@ -2927,11 +2926,22 @@ def main(argv: list[str] | None = None) -> int:
                             ],
                         }
                 diagnostic = coverage.diagnostics(program, state, args, observed_head=observed_head)
-                result["diagnostics"] = (
-                    metadata_error
-                    if metadata_error is not None and diagnostic["status"] == "not_assessed"
-                    else diagnostic
-                )
+                structural = record(diagnostic["structural_validation"], "original validation")
+                if structural["status"] == "failed":
+                    result = {
+                        "projection": {
+                            **structural,
+                            "status": "unavailable",
+                            "limitations": [
+                                "Original state failed authoritative validation; coverage facts were not projected."
+                            ],
+                        }
+                    }
+                else:
+                    result = coverage.projection(program, state)
+                if metadata_error is not None and diagnostic["status"] == "not_assessed":
+                    diagnostic = {**diagnostic, **metadata_error}
+                result["diagnostics"] = diagnostic
             require(
                 bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024) == initial,
                 "Registry changed during coverage observation; refresh",

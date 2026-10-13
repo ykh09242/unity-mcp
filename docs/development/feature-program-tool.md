@@ -695,7 +695,11 @@ failure reason/type, what was checked and limitations. Missing required next act
 the existing validator; intentionally unassigned planned tasks do not receive speculative owner
 errors. Without an actual operation/input, execution is not_assessed and structural validation
 is reported separately. CLI read success means an observation was printed, not that its supplied
-operation passed or became authorized.
+operation passed or became authorized. `structural_validation` reports the original authoritative
+validation result for supplied operations too. If that original state fails validation, CLI
+coverage returns `projection.status="unavailable"` with the exact reason/type and diagnostics,
+without synthetic criteria, task or history facts. A valid original state still receives normal
+coverage output when transition preparation fails; healthy binding drift remains explicit.
 
 Integrated acceptance still requires exact criterion evidence, current membership, terminal member
 reviews, separate delivery/CI, no unresolved relevant questions/transfers, and an integrated reviewer

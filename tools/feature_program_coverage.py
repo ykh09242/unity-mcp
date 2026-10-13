@@ -846,26 +846,28 @@ def diagnostics(
             "First authoritative failure only; success is advisory, never future authorization."
         ],
     }
-    if args.operation is None or args.input is None:
-        result["reasons"] = ["An operation and its actual receipt are required."]
-        structural: Record = {"status": "validated", "reasons": []}
-        try:
-            program.validate(state)
-        except (
-            core.ProgramError,
-            coordination.GovernanceError,
-            phases.PhaseError,
-            planning.PlanningError,
-            core.questions.QuestionError,
-            OSError,
-        ) as exc:
-            structural.update(
-                {"status": "failed", "reasons": [str(exc)], "failure_type": type(exc).__name__}
-            )
-        result["structural_validation"] = structural
-        return result
+    structural: Record = {"status": "validated", "reasons": []}
     try:
         program.validate(state)
+    except (
+        core.ProgramError,
+        coordination.GovernanceError,
+        phases.PhaseError,
+        planning.PlanningError,
+        core.questions.QuestionError,
+        OSError,
+    ) as exc:
+        structural.update(
+            {"status": "failed", "reasons": [str(exc)], "failure_type": type(exc).__name__}
+        )
+    result["structural_validation"] = structural
+    if args.operation is None or args.input is None:
+        result["reasons"] = ["An operation and its actual receipt are required."]
+        return result
+    if structural["status"] == "failed":
+        result.update(structural)
+        return result
+    try:
         if args.operation in {"submit", "complete", "objective-complete"} and observed_head is None:
             result["reasons"] = [
                 "A verified current HEAD observation is required; this pure diagnostic does not read Git."
