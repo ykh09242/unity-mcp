@@ -103,6 +103,21 @@ def test_stable_binding_excludes_priority_history_but_includes_planned_metadata(
     assert phases.planning_binding(state) != original
 
 
+@pytest.mark.parametrize("disposition", ["split", "retired"])
+def test_disposed_execution_guard_is_independent_of_phase_adoption(
+    gate: GateFixture, disposition: str
+) -> None:
+    # Given a direct caller's retained disposed record without opted-in phase metadata.
+    state = gate.program.load()
+    gate.program.task(state, "S01")["disposition"] = disposition
+    before = deepcopy(state)
+    # When the execution guard is invoked directly rather than through the CLI parser.
+    with pytest.raises(phases.PhaseError, match="Disposed work"):
+        phases.guard_execution(gate.program, state, "S01", ["src/S01.py"])
+    # Then execution is denied without changing the caller's state or adopting phases.
+    assert state == before and "phases" not in state
+
+
 def create_program(repo: Path, name: str) -> Fixture:
     program = fp.Program(repo, repo / name)
     program.directory.mkdir(parents=True)

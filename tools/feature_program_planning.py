@@ -32,9 +32,26 @@ if TYPE_CHECKING:
 
 Json = coordination.Json
 Record = coordination.Record
-Operation = Literal["task-admit", "objective-membership", "task-plan", "task-prioritize"]
-COMMANDS: Final = frozenset({"task-admit", "objective-membership", "task-plan", "task-prioritize"})
+Operation = Literal[
+    "task-admit",
+    "objective-membership",
+    "task-plan",
+    "task-prioritize",
+    "task-split",
+    "task-retire",
+]
+COMMANDS: Final = frozenset(
+    {
+        "task-admit",
+        "objective-membership",
+        "task-plan",
+        "task-prioritize",
+        "task-split",
+        "task-retire",
+    }
+)
 PLANNED_COMMANDS: Final = frozenset({"task-plan", "task-prioritize"})
+DECOMPOSITION_COMMANDS: Final = frozenset({"task-split", "task-retire"})
 PLANNED_FIELDS: Final = frozenset(
     {
         "candidate_paths",
@@ -204,7 +221,233 @@ def task_order(state: Record) -> list[Record]:
     )
 
 
-def validate_mutations(state: Record) -> None:
+def _eligible(state: Record, identifier: str) -> Record:
+    tasks = coordination._indexed(state["tasks"], "tasks")
+    require(identifier in tasks, "Unknown planned target")
+    task = tasks[identifier]
+    goal = coordination._record(state["objective"], "objective")
+    require(
+        task["status"] == "planned"
+        and task.get("owner") is None
+        and task.get("disposition") in {None, "planned"}
+        and identifier in coordination._texts(goal.get("task_ids"), "objective members"),
+        "Planning target must be eligible, planned, unowned and a current member",
+    )
+    return task
+
+
+def predecessor_binding(program: Program, state: Record, identifier: str) -> Record:
+    """Bind the stable selected definition and its actual resolved frozen section."""
+    core = _core()
+    task = program.task(state, identifier)
+    source = source_for_task(state, task)
+    raw = core.bounded_bytes(core.safe_path(program.repo, str(source["path"])), DOCUMENT_LIMIT)
+    require(core.sha(raw) == source["sha256"], "Predecessor frozen source drifted")
+    sections = core.extract_sections(raw)
+    require(
+        identifier in sections and _same_json(sections[identifier], task["source"]),
+        "Predecessor source-section mismatch",
+    )
+    definition = {
+        key: deepcopy(value)
+        for key, value in task.items()
+        if key not in phases.TASK_PROGRESS_FIELDS
+    }
+    return {
+        "definition_digest": core.digest(definition),
+        "source": deepcopy(source),
+        "section": deepcopy(sections[identifier]),
+    }
+
+
+def _decompose(
+    program: Program, before: Record, proposal: Record, receipt: Record, additions: list[str]
+) -> Record:
+    """Compose explicit disposition, reciprocal lineage and eligible dependency patches."""
+    predecessor = coordination._text(receipt.get("predecessor"), "predecessor")
+    original = _eligible(before, predecessor)
+    binding = predecessor_binding(program, before, predecessor)
+    if "predecessor_before" in receipt:
+        require(
+            _same_json(receipt["predecessor_before"], binding),
+            "Stale predecessor definition/source-section binding",
+        )
+    lineage = coordination._record(receipt.get("lineage"), "lineage")
+    require(
+        set(lineage) == {"predecessor", "successors"}
+        and lineage["predecessor"] == predecessor
+        and _same_json(lineage["successors"], additions),
+        "Exact split lineage required",
+    )
+    require("changes" not in receipt, "Decomposition requires explicit dependency_changes")
+    if receipt["operation"] == "task-split":
+        require(len(additions) >= 2, "Split requires at least two genuinely new reviewed children")
+    else:
+        require(
+            not additions
+            and not {"source", "planning", "intake_authors", "category_placements"}.intersection(
+                receipt
+            ),
+            "Retirement cannot admit source, children or category placements",
+        )
+    membership = coordination._record(receipt.get("membership"), "membership")
+    members = coordination._texts(
+        coordination._record(before["objective"], "objective")["task_ids"], "members"
+    )
+    require(
+        _same_json(membership.get("before"), members)
+        and _same_json(membership.get("added"), additions)
+        and _same_json(membership.get("removed"), [predecessor])
+        and set(coordination._texts(membership.get("after"), "after members"))
+        == (set(members) - {predecessor}) | set(additions),
+        "Decomposition requires exact predecessor/children membership delta",
+    )
+    tasks = coordination._indexed(proposal["tasks"], "tasks")
+    changes = coordination._indexed(receipt.get("dependency_changes"), "dependency changes")
+    for identifier, change in changes.items():
+        require(
+            set(change) == {"id", "before", "after", "reason"}, "Invalid dependency patch fields"
+        )
+        require(identifier != predecessor, "Retained predecessor dependencies cannot be rewritten")
+        target = _eligible(before, identifier)
+        coordination._text(change["reason"], "dependency rewrite reason")
+        old = coordination._texts(change["before"], "before dependencies")
+        new = coordination._texts(change["after"], "after dependencies")
+        require(
+            _same_json(old, target["depends_on"]) and not _same_json(old, new),
+            "Stale or unchanged dependency patch",
+        )
+        require(len(new) == len(set(new)), "Duplicate rewritten dependencies")
+        tasks[identifier]["depends_on"] = deepcopy(new)
+    prior_lineage = original.get("lineage")
+    ancestor = (
+        None
+        if prior_lineage is None
+        else coordination._record(prior_lineage, "prior lineage")["predecessor"]
+    )
+    after_fields: list[Json] = [
+        {
+            "id": predecessor,
+            "disposition": "split" if additions else "retired",
+            "lineage": {"predecessor": ancestor, "successors": deepcopy(additions)},
+        }
+    ]
+    for identifier in additions:
+        after_fields.append(
+            {
+                "id": identifier,
+                "disposition": None,
+                "lineage": {"predecessor": predecessor, "successors": []},
+            }
+        )
+    for value in after_fields:
+        fields = coordination._record(value, "disposition fields")
+        task = tasks[str(fields["id"])]
+        task["lineage"] = deepcopy(fields["lineage"])
+        if fields["disposition"] is not None:
+            task["disposition"] = fields["disposition"]
+    return {
+        "predecessor": predecessor,
+        "predecessor_before": binding,
+        "lineage": deepcopy(lineage),
+        "dependency_changes": deepcopy(receipt["dependency_changes"]),
+        "before": [
+            {
+                "id": predecessor,
+                "disposition": original.get("disposition"),
+                "lineage": deepcopy(prior_lineage),
+            }
+        ],
+        "after": after_fields,
+    }
+
+
+def _validate_dispositions(state: Record, latest: dict[tuple[str, str], Json]) -> None:
+    """Keep disposed records historical and validate reciprocal, acyclic lineage."""
+    tasks = coordination._indexed(state["tasks"], "tasks")
+    for identifier, task in tasks.items():
+        disposition = task.get("disposition")
+        require(
+            disposition is None
+            or (isinstance(disposition, str) and disposition in {"planned", "split", "retired"}),
+            "Unknown task disposition",
+        )
+        if disposition in {"split", "retired"}:
+            require(
+                task["status"] == "planned" and task.get("owner") is None,
+                "Disposed task must remain planned and unowned",
+            )
+            require((identifier, "disposition") in latest, "Disposition lacks immutable history")
+            goal = coordination._record(state.get("objective"), "objective")
+            require(
+                identifier not in coordination._texts(goal["task_ids"], "members"),
+                "Disposed task cannot be a current objective member",
+            )
+        if task.get("lineage") is not None:
+            require((identifier, "lineage") in latest, "Lineage lacks immutable history")
+            lineage = coordination._record(task["lineage"], "task lineage")
+            require(set(lineage) == {"predecessor", "successors"}, "Invalid task lineage fields")
+            children = coordination._texts(lineage["successors"], "successors")
+            require(
+                len(children) == len(set(children)) and identifier not in children,
+                "Duplicate/self successor",
+            )
+            require(
+                (disposition == "split" and len(children) >= 2)
+                or (disposition != "split" and not children),
+                "Disposition/lineage mismatch",
+            )
+            parent = lineage["predecessor"]
+            require(
+                parent is None
+                or (isinstance(parent, str) and parent in tasks and parent != identifier),
+                "Unknown/self lineage predecessor",
+            )
+            if parent is not None:
+                require(
+                    identifier
+                    in coordination._texts(
+                        coordination._record(tasks[parent].get("lineage"), "parent lineage")[
+                            "successors"
+                        ],
+                        "parent successors",
+                    ),
+                    "Nonreciprocal predecessor lineage",
+                )
+            for child in children:
+                require(
+                    child in tasks
+                    and coordination._record(tasks[child].get("lineage"), "child lineage").get(
+                        "predecessor"
+                    )
+                    == identifier,
+                    "Nonreciprocal successor lineage",
+                )
+            seen = {identifier}
+            while parent is not None:
+                require(isinstance(parent, str) and parent in tasks, "Unknown lineage ancestor")
+                require(parent not in seen, "Lineage cycle")
+                seen.add(parent)
+                ancestor_lineage = coordination._record(
+                    tasks[parent].get("lineage"), "ancestor lineage"
+                )
+                require(
+                    set(ancestor_lineage) == {"predecessor", "successors"},
+                    "Invalid ancestor lineage",
+                )
+                parent = ancestor_lineage["predecessor"]
+        if task["status"] != "done" and disposition not in {"split", "retired"}:
+            require(
+                all(
+                    tasks[dependency].get("disposition") not in {"split", "retired"}
+                    for dependency in coordination._texts(task["depends_on"], "dependencies")
+                    if dependency in tasks
+                ),
+                "Executable task depends on disposed prerequisite",
+            )
+
+
+def validate_mutations(state: Record, *, prospective: bool = False) -> None:
     """Replay explicit patches; runtime action/history are independent of scope binding."""
     tasks = coordination._indexed(state["tasks"], "tasks")
     latest: dict[tuple[str, str], Json] = {}
@@ -212,6 +455,143 @@ def validate_mutations(state: Record) -> None:
     activated = False
     for value in coordination._items(state.get("amendments", []), "amendments"):
         event = coordination._record(value, "amendment")
+        if event.get("operation") in DECOMPOSITION_COMMANDS:
+            receipt = coordination._record(event.get("receipt"), "decomposition receipt")
+            detail = coordination._record(event.get("decomposition"), "decomposition history")
+            for name in ("predecessor", "lineage", "dependency_changes"):
+                require(
+                    _same_json(detail.get(name), receipt.get(name)),
+                    "Decomposition history/receipt mismatch",
+                )
+            binding = coordination._record(detail.get("predecessor_before"), "predecessor before")
+            require(
+                prospective or _same_json(binding, receipt.get("predecessor_before")),
+                "Predecessor binding history/receipt mismatch",
+            )
+            _hash(binding.get("definition_digest"), "predecessor definition digest")
+            predecessor = coordination._text(detail.get("predecessor"), "historical predecessor")
+            require(predecessor in tasks, "Unknown historical predecessor")
+            require(
+                _same_json(binding.get("section"), tasks[predecessor]["source"]),
+                "Historical predecessor source-section binding changed",
+            )
+            recorded_source = coordination._record(
+                binding.get("source"), "historical predecessor source"
+            )
+            resolved_source = source_for_task(state, tasks[predecessor])
+            require(
+                _same_json(
+                    {
+                        key: value
+                        for key, value in recorded_source.items()
+                        if key not in {"path", "reference_base"}
+                    },
+                    {
+                        key: value
+                        for key, value in resolved_source.items()
+                        if key not in {"path", "reference_base"}
+                    },
+                ),
+                "Historical predecessor frozen source identity changed",
+            )
+            lineage = coordination._record(detail.get("lineage"), "historical lineage")
+            children = coordination._texts(lineage.get("successors"), "historical successors")
+            require(
+                lineage.get("predecessor") == predecessor and len(children) == len(set(children)),
+                "Invalid historical decomposition lineage",
+            )
+            if event["operation"] == "task-split":
+                require(
+                    len(children) >= 2
+                    and event["id"] in intakes(state)
+                    and _same_json(
+                        coordination._record(
+                            intakes(state)[str(event["id"])]["source"], "intake source"
+                        )["task_ids"],
+                        children,
+                    ),
+                    "Historical split requires exact actual child intake",
+                )
+            else:
+                require(
+                    not children and event["id"] not in intakes(state),
+                    "Retirement cannot have child intake",
+                )
+            before_fields = coordination._indexed(detail.get("before"), "before disposition")
+            require(set(before_fields) == {predecessor}, "Invalid predecessor before fields")
+            old = before_fields[predecessor]
+            require(
+                set(old) == {"id", "disposition", "lineage"}
+                and old["disposition"] in {None, "planned"},
+                "Invalid previous disposition",
+            )
+            if old["lineage"] is not None:
+                prior = coordination._record(old["lineage"], "previous lineage")
+                require(
+                    set(prior) == {"predecessor", "successors"}
+                    and _same_json(prior["successors"], []),
+                    "Previous executable lineage cannot have successors",
+                )
+            ancestor = (
+                None
+                if old["lineage"] is None
+                else coordination._record(old["lineage"], "previous lineage")["predecessor"]
+            )
+            expected: list[Json] = [
+                {
+                    "id": predecessor,
+                    "disposition": "split" if children else "retired",
+                    "lineage": {"predecessor": ancestor, "successors": children},
+                }
+            ]
+            expected += [
+                {
+                    "id": child,
+                    "disposition": None,
+                    "lineage": {"predecessor": predecessor, "successors": []},
+                }
+                for child in children
+            ]
+            require(_same_json(detail.get("after"), expected), "Disposition history mismatch")
+            for name in ("disposition", "lineage"):
+                key = (predecessor, name)
+                if key in latest:
+                    require(
+                        _same_json(latest[key], old[name]), "Disposition history chain mismatch"
+                    )
+            for fields in expected:
+                parsed = coordination._record(fields, "after disposition")
+                identifier = str(parsed["id"])
+                require(identifier in tasks, "Unknown historical child")
+                for name in ("disposition", "lineage"):
+                    latest[(identifier, name)] = parsed[name]
+            for identifier, change in coordination._indexed(
+                detail["dependency_changes"], "dependency change"
+            ).items():
+                require(
+                    identifier in tasks
+                    and identifier != predecessor
+                    and identifier not in children,
+                    "Invalid historical dependency target",
+                )
+                require(
+                    set(change) == {"id", "before", "after", "reason"},
+                    "Invalid historical dependency patch",
+                )
+                coordination._text(change["reason"], "dependency reason")
+                old_dependencies = coordination._texts(change["before"], "old dependencies")
+                new_dependencies = coordination._texts(change["after"], "new dependencies")
+                require(
+                    not _same_json(old_dependencies, new_dependencies),
+                    "Unchanged historical dependency patch",
+                )
+                key = (identifier, "depends_on")
+                if key in latest:
+                    require(
+                        _same_json(latest[key], old_dependencies), "Planning history chain mismatch"
+                    )
+                latest[key] = new_dependencies
+            continue
         if event.get("operation") not in PLANNED_COMMANDS:
             continue
         receipt = coordination._record(event.get("receipt"), "planning receipt")
@@ -267,6 +647,7 @@ def validate_mutations(state: Record) -> None:
                 _same_json(tasks[identifier].get(name), value),
                 "Effective metadata differs from planning history",
             )
+    _validate_dispositions(state, latest)
 
 
 def _amend_planned(program: Program, proposal: Record, receipt: Record) -> None:
@@ -376,7 +757,8 @@ def source_sections(
     for identifier, item in sources.items():
         require(core.portable_task_id(identifier), "Nonportable intake ID")
         require(
-            identifier in amendments and amendments[identifier].get("operation") == "task-admit",
+            identifier in amendments
+            and amendments[identifier].get("operation") in {"task-admit", "task-split"},
             "Source intake lacks admission history",
         )
         coordination._timestamp(item.get("recorded_at"), "intake timestamp")
@@ -433,7 +815,7 @@ def source_sections(
             prospective or bool(coordination._items(item.get("evidence"), "amendment evidence")),
             "Committed amendment lacks frozen review/input evidence",
         )
-    validate_mutations(state)
+    validate_mutations(state, prospective=prospective)
     objective = state.get("objective")
     if objective is not None:
         for value in coordination._items(
@@ -1740,20 +2122,13 @@ def construct(program: Program, state: Record, receipt: Record) -> Prospective:
         state.get("phases") is not None,
         "Explicit prior phase adoption and accepted baseline required",
     )
-    first = next(iter(coordination._indexed(state["tasks"], "tasks")))
-    phases.guard_execution(
-        program,
-        state,
-        first,
-        coordination._texts(program.task(state, first)["candidate_paths"], "scope"),
-        membership_check=False,
-    )
+    phases.guard_baseline(program, state)
     proposal = deepcopy(state)
     before_binding = phases.planning_binding(state)
     additions: list[str] = []
     if operation in PLANNED_COMMANDS:
         _amend_planned(program, proposal, receipt)
-    elif operation == "task-admit":
+    elif operation in {"task-admit", "task-split"}:
         source = deepcopy(coordination._record(receipt.get("source"), "supplemental source"))
         plan = deepcopy(coordination._record(receipt.get("planning"), "supplemental planning"))
         path = core.safe_path(program.repo, coordination._relative(source.get("path")))
@@ -1840,6 +2215,9 @@ def construct(program: Program, state: Record, receipt: Record) -> Prospective:
             "source" not in receipt and "planning" not in receipt,
             "Membership-only amendments cannot invent source intake",
         )
+    decomposition: Record | None = None
+    if operation in DECOMPOSITION_COMMANDS:
+        decomposition = _decompose(program, state, proposal, receipt, additions)
     if operation not in PLANNED_COMMANDS:
         coordination.amend_membership(proposal, receipt, additions)
     after_binding = phases.planning_binding(proposal)
@@ -1855,6 +2233,8 @@ def construct(program: Program, state: Record, receipt: Record) -> Prospective:
         "receipt": deepcopy(receipt),
         "evidence": [],
     }
+    if decomposition is not None:
+        event["decomposition"] = decomposition
     if operation in PLANNED_COMMANDS:
         event.update(
             {
@@ -1916,6 +2296,10 @@ def preview(program: Program, state: Record, receipt: Record) -> Record:
     }
     if receipt["operation"] not in PLANNED_COMMANDS:
         result["membership"] = receipt["membership"]
+    if receipt["operation"] in DECOMPOSITION_COMMANDS:
+        result["predecessor_before"] = predecessor_binding(
+            program, state, str(receipt["predecessor"])
+        )
     if receipt.get("inventory") is not None:
         spec = coordination._record(receipt["inventory"], "prospective inventory")
         result["inventory_digest"] = phases.revision(
@@ -1939,6 +2323,14 @@ def execute(program: Program, state: Record, args: argparse.Namespace) -> bool:
     receipt, refs = program.frozen_json("_planning", 1, args.input)
     require(receipt.get("operation") == args.command, "Amendment operation mismatch")
     future = construct(program, state, receipt)
+    if args.command in DECOMPOSITION_COMMANDS:
+        require(
+            _same_json(
+                receipt.get("predecessor_before"),
+                predecessor_binding(program, state, str(receipt["predecessor"])),
+            ),
+            "Stale predecessor definition/source-section binding",
+        )
     require(
         receipt.get("before_binding") == future.before_binding
         and receipt.get("after_binding") == future.after_binding,
@@ -2024,6 +2416,8 @@ def add_commands(commands: argparse._SubParsersAction[argparse.ArgumentParser]) 
         "objective-membership",
         "task-plan",
         "task-prioritize",
+        "task-split",
+        "task-retire",
         "publication-adopt",
         "publication-reconcile",
     ):

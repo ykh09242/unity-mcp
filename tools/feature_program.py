@@ -1506,7 +1506,7 @@ class Program:
         active = [task for task in tasks if task["status"] in OWNED_STATES]
         candidates: list[Json] = []
         for task in planning.task_order(state):
-            if task["status"] != "planned":
+            if task["status"] != "planned" or task.get("disposition") in {"split", "retired"}:
                 continue
             goal = state.get("objective")
             if (

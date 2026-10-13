@@ -338,6 +338,66 @@ priority. Precommit drift and incomplete publication reject before the canonical
 Postcommit render failure reports the committed revision; run `render`, and inspect the
 recorded amendment instead of resubmitting its ID.
 
+## Reviewed splitting and retirement
+
+`task-split` and `task-retire` use the same current director, active objective,
+revision, immutable transaction ID, reason/evidence and before/after binding envelope.
+Both require prior phase adoption/current acceptance and complete prospective
+inventory, independent candidate review and director acceptance renewal.
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example admission-binding --input evidence/_planning/attempt-1/split-proposal.json
+python tools/feature_program.py --program-dir .work/programs/example task-split --input evidence/_planning/attempt-1/split-1.json
+python tools/feature_program.py --program-dir .work/programs/example task-retire --input evidence/_planning/attempt-1/retire-1.json
+```
+
+Supply `predecessor` and `lineage` with that exact predecessor ID and an ordered
+`successors` array. Split requires at least two genuinely new children, with the
+existing admission `source`, `planning`, `intake_authors` and authored-category
+placements. Source and plan must identify exactly those children in the same order.
+Retirement requires empty successors and rejects source/planning/intake-author/category
+fields. A single replacement is outside these commands.
+
+The read-only binding response includes `predecessor_before`: the stable selected
+`definition_digest`, its actual resolved frozen `source` descriptor and lossless
+`section` (including original text, line and digest). Copy this object, both scope
+bindings and the complete units into the reviewed final receipt/renewal. Execution
+rejects a missing or stale predecessor binding. Runtime source revalidation for a
+later child claim remains an independent requirement.
+
+Declare every dependent rewrite explicitly through `dependency_changes`, including
+an empty array when none are needed:
+
+```json
+[{"id": "D", "before": ["P"], "after": ["C1"], "reason": "D requires C1 output"}]
+```
+
+The predecessor and rewrite targets must be eligible planned, unowned current members.
+Release owned work first; these commands cannot rewrite active/review/blocked/done or
+excluded tasks. No edge is inferred from lineage. Rewrites apply before the exact one
+membership delta: remove only the predecessor and add all split children, or remove
+only the retired task. Unknown/duplicate IDs, missing replacements, executable edges
+to disposed prerequisites, cycles, stale authority/revision and empty membership reject
+without a canonical write. Completed historical references and retained disposed
+records do not turn retirement into dependency completion.
+
+The predecessor retains planned status, its source, category, attempts, evidence and
+historical priority. Its separate `disposition` is `split` or `retired`; reciprocal
+task `lineage` keeps earlier parent relationships when a child is subsequently split.
+Children start planned/unowned with empty attempts and no inherited priority or passing
+checks/review/delivery evidence. Disposed work is absent from ready candidates and
+rejects claim/submission, planned edits, priority changes and membership restoration.
+
+One amendment publishes actual split source intake, explicit dependency patches,
+disposition/lineage, membership revision and renewed phases. Retirement creates no
+intake. Immutable history records the predecessor binding, before/after disposition
+and lineage, patches and rationale. Canonical JSON comparison preserves exact types
+through PLAN/split replay and effective-state validation. All retained provenance units
+remain reviewed, while aggregate completion uses only the current membership revision.
+Existing atomic publication/precommit checks and committed-render recovery apply.
+
+## Publication tracking for definition changes
+
 Definition changes require completed relocation/succession publication at both endpoints,
 even when ordinary successor progress is already enabled. The controlled repository store
 `.work/programs/.publications` contains one atomic `ledger.json`, its immutable identity,

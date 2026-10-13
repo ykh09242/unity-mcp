@@ -720,6 +720,44 @@ def test_amended_membership_requires_current_independent_aggregate_review(
         assert state == before
 
 
+@pytest.mark.parametrize("disposition", ["split", "retired"])
+def test_disposed_member_restoration_rejects_before_history_change(
+    state: governance.Record, disposition: str
+) -> None:
+    # Given retained disposed work outside the explicit current goal membership.
+    goal(state)
+    state["tasks"][0]["depends_on"] = []
+    state["tasks"].append(
+        {
+            "id": "TASK-X",
+            "status": "planned",
+            "owner": None,
+            "depends_on": [],
+            "disposition": disposition,
+        }
+    )
+    before = deepcopy(state)
+    # When membership restoration attempts to treat the disposed record as executable work.
+    with pytest.raises(governance.GovernanceError, match="Disposed"):
+        governance.amend_membership(
+            state,
+            {
+                "id": "restore",
+                "actor_id": "director-old",
+                "reason": "Invalid restoration",
+                "membership": {
+                    "before": ["TASK-A"],
+                    "after": ["TASK-A", "TASK-X"],
+                    "added": ["TASK-X"],
+                    "removed": [],
+                },
+            },
+            [],
+        )
+    # Then no membership revision, rationale or existing task bytes are rewritten.
+    assert state == before
+
+
 def test_completed_objective_awaits_user_and_preserves_previous_cycle(
     program: SyntheticProgram, state: governance.Record
 ) -> None:

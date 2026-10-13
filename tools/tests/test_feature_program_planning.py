@@ -255,6 +255,8 @@ def reviewed_input(gate: GateFixture, data: fp.Record | None = None) -> tuple[st
     data.update(
         {"before_binding": result["before_binding"], "after_binding": result["after_binding"]}
     )
+    if "predecessor_before" in result:
+        data["predecessor_before"] = result["predecessor_before"]
     bound = {
         **fp.record(result["after_binding"], "binding"),
         "expected_revision": result["expected_revision"],
@@ -304,6 +306,553 @@ def runtime_input(gate: GateFixture, data: fp.Record) -> str:
     )
     data["evidence"] = [evidence]
     return gate.fixture.write(f"evidence/_planning/attempt-1/{data['id']}.json", data)
+
+
+def decomposition_input(
+    gate: GateFixture,
+    operation: str = "task-split",
+    predecessor: str = "S01",
+    children: tuple[str, ...] = ("S03", "S04"),
+) -> fp.Record:
+    """Declare an exact reviewed decomposition without inheriting execution evidence."""
+    data = planned_input(gate, operation)
+    data.pop("changes")
+    data["id"] = f"{operation}-{predecessor}"
+    current = gate.program.load()
+    members = list(fp.record(current["objective"], "objective")["task_ids"])
+    data.update(
+        {
+            "operation": operation,
+            "predecessor": predecessor,
+            "lineage": {"predecessor": predecessor, "successors": []},
+            "dependency_changes": [],
+            "membership": {
+                "before": members,
+                "after": [key for key in members if key != predecessor],
+                "added": [],
+                "removed": [predecessor],
+            },
+        }
+    )
+    if operation == "task-retire":
+        return data
+    report_path = gate.program.path(f"source/decompositions/{data['id']}/report.md")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        "\n".join(
+            f"### {key}. New child\n\nExpected result: {key}.\nAcceptance: {key}.\n"
+            for key in children
+        ),
+        encoding="utf-8",
+    )
+    definitions: list[fp.Json] = [
+        {
+            "id": key,
+            "phase": 2,
+            "workstream": "delivery",
+            "candidate_paths": [f"src/{key}.py"],
+            "depends_on": [],
+            "related_to": [],
+            "conflict_groups": [],
+            "required_checks": ["acceptance", "scoped_tests", "format_lint"],
+            "next_action": "Revalidate independent child",
+            "expected_result": f"New output {key}",
+            "acceptance_criteria": [f"Verify {key}"],
+        }
+        for key in children
+    ]
+    plan_path = report_path.with_name("plan.json")
+    plan_path.write_bytes(fp.canonical({"schema_version": 1, "tasks": definitions}))
+    data.update(
+        {
+            "intake_authors": ["author"],
+            "source": {
+                "path": report_path.relative_to(gate.program.repo).as_posix(),
+                "sha256": fp.sha(report_path.read_bytes()),
+                "task_ids": list(children),
+                "review_baseline": current["baseline_head"],
+                "reference_base": gate.program.directory.relative_to(gate.program.repo).as_posix(),
+            },
+            "planning": {
+                "path": plan_path.relative_to(gate.program.repo).as_posix(),
+                "sha256": fp.sha(plan_path.read_bytes()),
+            },
+        }
+    )
+    data["lineage"] = {"predecessor": predecessor, "successors": list(children)}
+    fp.record(data["membership"], "membership").update(
+        {
+            "after": [key for key in members if key != predecessor] + list(children),
+            "added": list(children),
+        }
+    )
+    return data
+
+
+def test_split_proposal_retains_predecessor_and_starts_independent_children(
+    gate: GateFixture,
+) -> None:
+    # Given an accepted baseline and a genuinely new two-child reviewed intake.
+    gate.ready()
+    before = gate.program.load()
+    data = decomposition_input(gate)
+    # When the exact prospective transaction is constructed without publication.
+    future = fp.planning.construct(gate.program, before, data)
+    # Then retained history remains, children are fresh, and only current membership changes.
+    parent = gate.program.task(future.state, "S01")
+    assert parent["disposition"] == "split" and parent["status"] == "planned"
+    assert parent["lineage"] == {"predecessor": None, "successors": ["S03", "S04"]}
+    assert parent["attempts"] == gate.program.task(before, "S01")["attempts"]
+    for key in ("S03", "S04"):
+        child = gate.program.task(future.state, key)
+        assert (child["status"], child["owner"], child["attempts"]) == ("planned", None, [])
+        assert child["lineage"] == {"predecessor": "S01", "successors": []}
+    assert future.state["objective"]["task_ids"] == ["S02", "S03", "S04"]
+    assert future.state["objective"]["membership_revision"] == 1
+    assert future.before_binding != future.after_binding
+
+
+@pytest.mark.parametrize("operation", ["task-split", "task-retire"])
+def test_standalone_decomposition_preserves_history_and_guards_disposed_work(
+    gate: GateFixture, operation: str
+) -> None:
+    # Given a prioritized, claimed then released predecessor and actual frozen evidence.
+    gate.ready()
+    priority = planned_input(gate, "task-prioritize")
+    priority["changes"] = [{"id": "S01", "before": None, "after": -7}]
+    assert gate.fixture.run("task-prioritize", "--input", runtime_input(gate, priority)) == 0
+    assert gate.fixture.claim() == 0
+    assert (
+        gate.fixture.run(
+            "release",
+            "S01",
+            "--owner",
+            "worker",
+            "--reason",
+            "Decompose",
+            "--next-action",
+            "Review children",
+        )
+        == 0
+    )
+    before = gate.program.load()
+    saved = {
+        path: path.read_bytes()
+        for path in gate.program.directory.rglob("*")
+        if path.is_file() and ("evidence" in path.parts or path.name in {"source.md", "plan.json"})
+    }
+    data = decomposition_input(gate, operation)
+    name, _ = reviewed_input(gate, data)
+    command = [
+        sys.executable,
+        "-B",
+        fp.__file__,
+        "--repo",
+        str(gate.program.repo),
+        "--program-dir",
+        "discovery",
+        operation,
+        "--input",
+        name,
+    ]
+    # When the standalone CLI publishes the independently reviewed decomposition.
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    print(
+        json.dumps(
+            {
+                "command": command,
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            },
+            sort_keys=True,
+        )
+    )
+    # Then history/priority/source remain unchanged and disposed work cannot execute.
+    assert result.returncode == 0, result.stderr
+    current = gate.program.load()
+    parent = gate.program.task(current, "S01")
+    assert {
+        key: value for key, value in parent.items() if key not in {"disposition", "lineage"}
+    } == gate.program.task(before, "S01")
+    assert current["execution_priorities"] == {"S01": -7}
+    assert all(path.read_bytes() == raw for path, raw in saved.items())
+    assert current["events"][:-1] == before["events"]
+    assert current["objective"]["criteria"] == before["objective"]["criteria"]
+    assert not any(item["id"] == "S01" for item in gate.program.status(current, True)["candidates"])
+    canonical = gate.program.path("backlog.json").read_bytes()
+    assert gate.fixture.claim("S01", number=2) == 1
+    with pytest.raises(fp.phases.PhaseError, match="Disposed"):
+        gate.program.claim(current, argparse.Namespace(id="S01", scope=["src/S01.py"]))
+    assert gate.program.path("backlog.json").read_bytes() == canonical
+    assert gate.fixture.run(operation, "--input", name) == 1
+    assert gate.fixture.run("check") == 0
+    if operation == "task-split":
+        for key in ("S03", "S04"):
+            task = gate.program.task(current, key)
+            assert task["attempts"] == [] and task["owner"] is None
+            assert key not in current["execution_priorities"]
+        assert gate.fixture.claim("S03") == 0
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "active",
+        "owned-peer",
+        "missing-patch",
+        "cycle",
+        "stale",
+        "actor",
+        "binding",
+        "one-child",
+        "duplicate",
+        "delta",
+        "irrelevant-retirement",
+        "empty",
+        "source-drift",
+        "unsafe-child",
+        "unknown-predecessor",
+        "unknown-dependency",
+    ],
+)
+def test_decomposition_rejects_invalid_transaction_without_publication(
+    gate: GateFixture, fault: str
+) -> None:
+    # Given an accepted baseline and explicit dependent work when appropriate.
+    if fault in {"missing-patch", "cycle"}:
+        state = gate.program.load()
+        gate.program.task(state, "S02")["depends_on"] = ["S01"]
+        gate.program.save(state)
+    elif fault == "empty":
+        state = gate.program.load()
+        state["objective"]["task_ids"] = ["S01"]
+        gate.program.save(state)
+    gate.ready()
+    if fault == "active":
+        assert gate.fixture.claim() == 0
+    if fault == "owned-peer":
+        assert gate.fixture.claim("S02") == 0
+    data = decomposition_input(
+        gate, "task-retire" if fault in {"irrelevant-retirement", "empty"} else "task-split"
+    )
+    if fault == "owned-peer":
+        state = gate.program.load()
+        data["dependency_changes"] = [
+            {"id": "S02", "before": [], "after": ["S03"], "reason": "First output"}
+        ]
+    else:
+        state = gate.program.load()
+    if fault == "cycle":
+        data["dependency_changes"] = [
+            {"id": "S02", "before": ["S01"], "after": ["S03"], "reason": "First output"}
+        ]
+        plan = fp.record(data["planning"], "planning")
+        path = fp.safe_path(gate.program.repo, str(plan["path"]))
+        metadata = fp.read_json(path)
+        metadata["tasks"][0]["depends_on"] = ["S02"]
+        path.write_bytes(fp.canonical(metadata))
+        plan["sha256"] = fp.sha(path.read_bytes())
+    elif fault == "stale":
+        data["expected_revision"] = "0" * 64
+    elif fault == "actor":
+        data["actor_id"] = "reviewer"
+    elif fault == "binding":
+        data["predecessor_before"] = {"definition_digest": "0" * 64}
+    elif fault == "one-child":
+        data = decomposition_input(gate, children=("S03",))
+    elif fault == "duplicate":
+        data["source"]["task_ids"] = ["S03", "S03"]
+    elif fault == "delta":
+        data["membership"]["removed"] = ["S01", "S02"]
+    elif fault == "irrelevant-retirement":
+        data["category_placements"] = []
+    elif fault == "empty":
+        data["membership"]["after"] = []
+    elif fault == "source-drift":
+        fp.safe_path(gate.program.repo, str(data["source"]["path"])).write_text(
+            "Changed source", encoding="utf-8"
+        )
+    elif fault == "unknown-predecessor":
+        data["predecessor"] = "UNKNOWN"
+    elif fault in {"unsafe-child", "unknown-dependency"}:
+        path = fp.safe_path(gate.program.repo, str(data["planning"]["path"]))
+        metadata = fp.read_json(path)
+        metadata["tasks"][0]["candidate_paths" if fault == "unsafe-child" else "depends_on"] = [
+            "../outside.py" if fault == "unsafe-child" else "UNKNOWN"
+        ]
+        path.write_bytes(fp.canonical(metadata))
+        data["planning"]["sha256"] = fp.sha(path.read_bytes())
+    before = gate.program.path("backlog.json").read_bytes()
+    # When an invalid prospective transaction is parsed, it fails before publication.
+    with pytest.raises(
+        (
+            fp.ProgramError,
+            fp.planning.PlanningError,
+            fp.coordination.GovernanceError,
+            fp.phases.PhaseError,
+        )
+    ):
+        fp.planning.construct(gate.program, state, data)
+    # Then actual canonical bytes are unchanged.
+    assert gate.program.path("backlog.json").read_bytes() == before
+    name = gate.fixture.write("evidence/_planning/attempt-1/rejected-decomposition.json", data)
+    command = [
+        sys.executable,
+        "-B",
+        fp.__file__,
+        "--repo",
+        str(gate.program.repo),
+        "--program-dir",
+        "discovery",
+        str(data["operation"]),
+        "--input",
+        name,
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    print(
+        json.dumps(
+            {
+                "fault": fault,
+                "command": command,
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "canonical_before_sha256": fp.sha(before),
+                "canonical_after_sha256": fp.sha(gate.program.path("backlog.json").read_bytes()),
+            },
+            sort_keys=True,
+        )
+    )
+    assert result.returncode == 1 and "Traceback" not in result.stderr
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_split_dependency_replay_then_plan(gate: GateFixture) -> None:
+    # Given an earlier PLAN dependency patch bound to a real independent renewal.
+    gate.ready()
+    data = planned_input(gate)
+    data["changes"] = [
+        {"id": "S02", "before": {"depends_on": []}, "after": {"depends_on": ["S01"]}}
+    ]
+    assert gate.fixture.run("task-plan", "--input", reviewed_input(gate, data)[0]) == 0
+    data = decomposition_input(gate)
+    data["dependency_changes"] = [
+        {"id": "S02", "before": ["S01"], "after": ["S03"], "reason": "Only first output needed"}
+    ]
+    # When split explicitly rewrites that edge and later PLAN changes it again.
+    assert gate.fixture.run("task-split", "--input", reviewed_input(gate, data)[0]) == 0
+    data = planned_input(gate)
+    data["id"] = "later-plan"
+    data["changes"] = [
+        {"id": "S02", "before": {"depends_on": ["S03"]}, "after": {"depends_on": ["S04"]}}
+    ]
+    assert gate.fixture.run("task-plan", "--input", reviewed_input(gate, data)[0]) == 0
+    # Then replay accepts the ordered chain and immutable patch tampering is rejected.
+    assert gate.fixture.run("check") == 0
+    state = gate.program.load()
+    state["amendments"][1]["decomposition"]["dependency_changes"][0]["before"] = []
+    with pytest.raises(fp.planning.PlanningError, match="history/receipt"):
+        fp.planning.validate_mutations(state)
+
+
+def test_nested_split_retains_reciprocal_ancestors_and_allows_later_admission(
+    gate: GateFixture,
+) -> None:
+    # Given an actual committed split and its independently reviewed child lineage.
+    gate.ready()
+    assert (
+        gate.fixture.run(
+            "task-split", "--input", reviewed_input(gate, decomposition_input(gate))[0]
+        )
+        == 0
+    )
+    prior = gate.program.load()
+    original_intake = deepcopy(prior["source_intakes"])
+    data = decomposition_input(gate, predecessor="S03", children=("S05", "S06"))
+    # When a child is split and further unrelated reviewed work is admitted.
+    assert gate.fixture.run("task-split", "--input", reviewed_input(gate, data)[0]) == 0
+    current = gate.program.load()
+    assert current["source_intakes"][:1] == original_intake
+    assert gate.program.task(current, "S03")["lineage"] == {
+        "predecessor": "S01",
+        "successors": ["S05", "S06"],
+    }
+    assert gate.program.task(current, "S01")["lineage"]["successors"] == ["S03", "S04"]
+    additional = proposal(gate)
+    plan = fp.record(additional["planning"], "plan")
+    path = fp.safe_path(gate.program.repo, str(plan["path"]))
+    metadata = fp.read_json(path)
+    metadata["tasks"][0].update({"id": "S07", "candidate_paths": ["src/S07.py"]})
+    path.write_bytes(fp.canonical(metadata))
+    plan["sha256"] = fp.sha(path.read_bytes())
+    source = fp.record(additional["source"], "source")
+    path = fp.safe_path(gate.program.repo, str(source["path"]))
+    path.write_text("### S07. Later unit\n\nAcceptance: later unit.\n", encoding="utf-8")
+    source.update({"task_ids": ["S07"], "sha256": fp.sha(path.read_bytes())})
+    members = list(current["objective"]["task_ids"])
+    additional["membership"] = {
+        "before": members,
+        "after": members + ["S07"],
+        "added": ["S07"],
+        "removed": [],
+    }
+    assert gate.fixture.run("task-admit", "--input", reviewed_input(gate, additional)[0]) == 0
+    # Then the disposed first retained unit does not poison baseline acceptance or fresh claims.
+    assert gate.fixture.claim("S05") == 0
+    assert gate.fixture.run("check") == 0
+
+
+def test_split_preserves_authored_category_and_places_children_explicitly(
+    gate: GateFixture,
+) -> None:
+    # Given an authored existing leaf containing the predecessor and peer.
+    state = gate.program.load()
+    state["categories"] = [
+        {
+            "id": "leaf",
+            "parent_id": "delivery",
+            "title": "Existing leaf",
+            "task_ids": ["S01", "S02"],
+        }
+    ]
+    gate.program.save(state)
+    gate.ready()
+    data = decomposition_input(gate)
+    data["category_placements"] = [{"id": key, "category_id": "leaf"} for key in ("S03", "S04")]
+    # When the reviewed split declares exact placements using the existing validator.
+    assert gate.fixture.run("task-split", "--input", reviewed_input(gate, data)[0]) == 0
+    # Then category identity and historical predecessor membership are retained.
+    current = gate.program.load()
+    assert current["categories"] == [
+        {
+            "id": "leaf",
+            "parent_id": "delivery",
+            "title": "Existing leaf",
+            "task_ids": ["S01", "S02", "S03", "S04"],
+        }
+    ]
+    assert gate.fixture.run("check") == 0
+
+
+@pytest.mark.parametrize("operation", ["task-plan", "task-prioritize", "objective-membership"])
+def test_disposed_work_rejects_later_planning_and_membership_restore(
+    gate: GateFixture, operation: str
+) -> None:
+    gate.ready()
+    assert (
+        gate.fixture.run(
+            "task-retire",
+            "--input",
+            reviewed_input(gate, decomposition_input(gate, "task-retire"))[0],
+        )
+        == 0
+    )
+    state = gate.program.load()
+    data = planned_input(gate, operation)
+    if operation == "task-prioritize":
+        data["changes"] = [{"id": "S01", "before": None, "after": -1}]
+    elif operation == "objective-membership":
+        data.pop("changes")
+        data["membership"] = {
+            "before": ["S02"],
+            "after": ["S02", "S01"],
+            "added": ["S01"],
+            "removed": [],
+        }
+    before = gate.program.path("backlog.json").read_bytes()
+    with pytest.raises((fp.planning.PlanningError, fp.coordination.GovernanceError)):
+        fp.planning.construct(gate.program, state, data)
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "fault", ["section-bool", "section-float", "patch", "lineage", "effective"]
+)
+def test_split_history_rejects_typed_binding_and_lineage_drift(
+    gate: GateFixture, fault: str
+) -> None:
+    gate.ready()
+    data = decomposition_input(gate)
+    if fault.startswith("section"):
+        binding = fp.planning.predecessor_binding(gate.program, gate.program.load(), "S01")
+        binding["section"]["line"] = True if fault == "section-bool" else 1.0
+        data["predecessor_before"] = binding
+        with pytest.raises(fp.planning.PlanningError, match="Stale predecessor"):
+            fp.planning.construct(gate.program, gate.program.load(), data)
+        return
+    future = fp.planning.construct(gate.program, gate.program.load(), data).state
+    detail = future["amendments"][-1]["decomposition"]
+    if fault == "patch":
+        detail["dependency_changes"] = [
+            {"id": "S02", "before": [], "after": ["S03"], "reason": "Tampered"}
+        ]
+    elif fault == "lineage":
+        detail["after"][0]["lineage"]["successors"] = ["S03"]
+    else:
+        gate.program.task(future, "S03")["lineage"]["predecessor"] = "S02"
+    with pytest.raises(fp.planning.PlanningError):
+        fp.planning.validate_mutations(future, prospective=True)
+
+
+@pytest.mark.parametrize("stage", ["atomic", "render", "precommit", "publication", "corrupt"])
+def test_decomposition_publication_boundaries(
+    gate: GateFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    stage: str,
+) -> None:
+    # Given a completely independently reviewed split receipt.
+    gate.ready()
+    name, _ = reviewed_input(gate, decomposition_input(gate))
+    before = gate.program.path("backlog.json").read_bytes()
+    original_write, original_views = fp.atomic_write, fp.Program.views
+
+    def failing_write(path: Path, content: bytes) -> None:
+        if path == gate.program.path("backlog.json"):
+            raise OSError("Injected split atomic failure")
+        original_write(path, content)
+
+    def failing_render(program: fp.Program, state: fp.Record) -> None:
+        raise OSError("Injected split render failure")
+
+    def changing_views(program: fp.Program, state: fp.Record) -> dict[str, str]:
+        views = original_views(program, state)
+        path = (
+            program.path(name)
+            if stage == "precommit"
+            else fp.planning.PublicationStore(program.repo).path("ledger.json")
+        )
+        path.write_text("{}", encoding="utf-8")
+        return views
+
+    if stage == "publication":
+        with gate.program.lock(publication_recovery=True):
+            fp.planning.publication_register(
+                gate.program,
+                "relocation",
+                {"program_id": "discovery", "destination": "pending", "reason": "Pending"},
+                fp.Program(gate.program.repo, gate.program.repo / "pending"),
+            )
+    capsys.readouterr()
+    # When publication fails at a known boundary.
+    with monkeypatch.context() as scoped:
+        if stage == "atomic":
+            scoped.setattr(fp, "atomic_write", failing_write)
+        elif stage == "render":
+            scoped.setattr(fp.Program, "render", failing_render)
+        elif stage in {"precommit", "corrupt"}:
+            scoped.setattr(fp.Program, "views", changing_views)
+        assert gate.fixture.run("task-split", "--input", name) == 1
+    # Then precommit is unchanged; committed render failure has an actionable revision.
+    if stage == "render":
+        assert "Registry committed at revision" in capsys.readouterr().err
+        assert gate.program.path("backlog.json").read_bytes() != before
+        assert gate.fixture.run("task-split", "--input", name) == 1
+        assert gate.fixture.run("render") == 0
+        assert gate.fixture.run("check") == 0
+    else:
+        assert gate.program.path("backlog.json").read_bytes() == before
 
 
 def test_standalone_planned_cli_preserves_source_history_and_acceptance(gate: GateFixture) -> None:
