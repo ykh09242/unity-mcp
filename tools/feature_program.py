@@ -2633,6 +2633,10 @@ def _capture_projection(
         ),
         "Unavailable source/evidence appeared during snapshot; refresh",
     )
+    require(
+        sha(bounded_bytes(backlog, 8 * 1024 * 1024)) == sha(initial),
+        "Registry changed during snapshot; refresh",
+    )
     source_observations.verify()
     if lock_before is not None:
         require(
