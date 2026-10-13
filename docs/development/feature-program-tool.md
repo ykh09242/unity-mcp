@@ -1001,3 +1001,80 @@ does not establish CI success. The Work Program Web workflow checks frontend for
 types, behavior and regenerated assets. See [formatting setup](../FORMATTING.md) for the
 supported Node environment and a clean `npm ci` install. Generated bundles are committed with
 their authored source; CI rejects changed or newly untracked generated output after building.
+## Bounded recovery briefs
+
+Use `brief` for current program context or `brief --task TASK-ID` for one task. These
+read commands run before the mutation lock and use the same captured observation as
+`snapshot`. Existing `status` and `packet` output remains available in full. Briefs do
+not claim work, acknowledge answers, render views, inspect Git or contact a provider.
+
+The program brief contains the recorded objective and exact criterion identities,
+director authority, communication language, phase and publication observations,
+membership, integrity, attention, questions and typed succession records. A selected
+task brief adds its current attempt, original expected result and source reference,
+scope, required checks, observed submission freshness, current recorded findings,
+coordination notes, acceptance and separate delivery status. Earlier attempts are
+linked with totals. Checkpoints remain historical context.
+
+`snapshot.brief` contains the program projection. Each original `snapshot.tasks[]`
+record additionally contains a compact `readiness` projection; full task briefs are
+not duplicated for every task. Readiness includes canonical candidate applicability,
+unmet dependencies and collisions from the existing status/collision implementation.
+Claim assessment remains `not_assessed`: recorded factors do not supply an acting
+identity, fresh receipt, current Git metadata or execution permission. Excluded planned
+tasks receive `not_applicable` revalidation rather than a proposed fresh-claim step.
+
+Attention priority is integrity/recovery, current human/director decisions, actual
+blockers/conflicts/failed acceptance, pending review/transfer/delivery, then dependency
+and revalidation context. Ties use stable kind/entity identity. Current-goal question
+attention reuses the canonical relevance filter; historical question records stay
+accessible. Criterion impact comes only from explicit current coverage links. A
+coverage link, accepted historical review or recorded CI result is not new execution
+or current integrated acceptance. Failed/pending CI facts remain distinct from success;
+local provider records never imply remote authentication.
+
+Authored notes retain actor, reason, next action, timestamp and their own frozen task
+evidence references. Words such as "acknowledged" or "accepted" remain authored text;
+they are never parsed into a generic peer-approval status. `peer_agreement.status` is
+`unknown`. Typed succession proposal, acknowledgement and acceptance are a separate
+existing workflow. Shared contract references do not waive task/attempt evidence path
+guards. An actor ID is neither a contact endpoint nor proof of liveness.
+
+Bounds are 32,768 emitted bytes for a program brief, 16,384 for a task brief, 50
+attention rows and 512 Unicode code points per displayed prose field. Combining marks
+count separately. `truncated_fields` identifies shortened prose; original text and
+identity remain in the linked full record. IDs, hashes and link targets are never
+shortened. Collections expose `total`, `shown`, `omitted`, `items` and `reference`;
+attention also has per-kind counts. Zero shown does not mean zero conditions. Required
+integrity inspection happens before display reduction, and integrity totals and
+unknown/not-assessed summaries survive omitted rows. If the essential envelope cannot
+fit, the command fails explicitly.
+
+The bound uses the actual canonical JSON bytes, including escaped Unicode, indentation
+and the final LF. The brief CLI writes these bytes directly so Windows newline
+translation cannot exceed the limit. Snapshot embedding retains its existing 8 MiB
+output limit. Snapshot reads still enforce 2,000 tasks, 2,000 evidence files and the
+64 MiB evidence budget. Source/planning and publication identity captures each have a
+64 MiB aggregate budget. Submission and coverage source readers retain their existing
+128 MiB budgets; one additional 128 MiB budget checks all observed scopes before return.
+Complete source maps, including directory membership and missing paths, must remain
+consistent across repeated observations and the final check. Every artifact retains its existing per-file bound. Presentation
+savings do not remove these full integrity reads.
+
+Original-record references use the selected program's `backlog.json`, a JSON pointer
+and the exact registry revision, with a task/question identity when applicable.
+Source references retain repository-relative path, original hash, reference base and
+section location. Artifact references retain their program-relative path and hash.
+Use the full snapshot, `packet TASK-ID`, or the original local record to follow them;
+this does not introduce arbitrary file serving. A changed registry, captured source,
+artifact, publication marker or observed scoped source during preparation requires refresh.
+Structural and location-guard failures remain errors; ordinary source/evidence drift
+remains visible as recorded context with warnings. Lock observations never authorize
+takeover or repair. Recovery mutations remain explicit director work.
+
+A blocked current attempt exposes its canonical `block_binding` and exact event
+reference. When that origin is review, its retained submission receives the same
+source observation as a current review. Changed source calls for resolving the block
+through the guarded resume operation, rework and a new submission; the brief does not
+execute those steps. Ambiguous legacy origins stay explicitly unassessed. Historical
+completed, released or rejected submissions do not gain a new freshness prerequisite.
