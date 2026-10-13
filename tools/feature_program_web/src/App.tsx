@@ -1405,7 +1405,7 @@ function Dashboard({
       });
       return () => cancelAnimationFrame(frame);
     }
-  }, [route.view, route.taskId, route.questionId, selected, Boolean(snapshot)]);
+  }, [route.view, route.taskId, route.full, route.questionId, selected, Boolean(snapshot)]);
   const integrity = record(snapshot?.integrity);
   const stale = integrity.status === 'stale';
   const changeContext = useCallback(

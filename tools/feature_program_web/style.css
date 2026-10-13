@@ -2242,6 +2242,12 @@ select {
   background: var(--hover);
   color: var(--body);
 }
+@media (forced-colors: active) {
+  .scope-switch a[aria-current] {
+    text-decoration: underline 2px LinkText;
+    text-underline-offset: 4px;
+  }
+}
 .allocation-table {
   overflow-x: auto;
   margin-block: 12px 24px;
