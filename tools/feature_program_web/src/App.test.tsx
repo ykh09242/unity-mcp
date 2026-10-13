@@ -5,6 +5,7 @@ import { App } from './App';
 import { parseSnapshot, safeUrl } from './model';
 import type { Snapshot } from './model';
 import { PREFERENCE_KEY } from './i18n';
+import { SnapshotResponse } from './useSnapshot';
 
 const fixture = (): Snapshot =>
   parseSnapshot({
@@ -81,6 +82,59 @@ async function navigate(hash: string) {
 }
 
 describe('work program user outcomes', () => {
+  it('preserves the question draft, focus and disclosure through refreshing304 and failed reads', async () => {
+    // Given
+    const user = userEvent.setup();
+    const snapshot = {
+      ...fixture(),
+      questions: [
+        {
+          id: 'Q',
+          prompt: 'Choose scope',
+          why: 'Keep context',
+          requested_decision: 'Choose',
+          version: 1,
+          status: 'open',
+        },
+      ],
+    };
+    const loader = vi.fn().mockResolvedValue(new SnapshotResponse(200, 'W/"one"', snapshot));
+    render(
+      <App
+        loader={loader}
+        sessionLoader={async () => ({ responsesEnabled: true, nonce: 'synthetic' })}
+      />,
+    );
+    await screen.findByText('Where the work stands');
+    await navigate('#question/Q');
+    const input = screen.getByLabelText('Your answer');
+    await user.type(input, 'Keep the draft');
+    const disclosure = screen.getByText('Question scope and response history').closest('details');
+    if (disclosure) disclosure.open = true;
+    let resolve: ((value: unknown) => void) | undefined;
+    loader.mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    // When
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await screen.findByText('Refreshing…');
+    await act(async () => {
+      resolve?.(new SnapshotResponse(304, 'W/"one"'));
+    });
+    // Then
+    expect(screen.getByDisplayValue('Keep the draft')).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(disclosure?.open).toBe(true);
+    loader.mockRejectedValue(new Error('outage'));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await screen.findByText(/Showing last observed records/);
+    expect(screen.getByDisplayValue('Keep the draft')).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(disclosure?.open).toBe(true);
+  });
   it('locates tasks by category and status, preserves filters and selection when returning from a task page', async () => {
     const user = userEvent.setup();
     render(<App loader={async () => fixture()} />);

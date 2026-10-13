@@ -1,8 +1,9 @@
 import { LanguageProvider, language, useI18n } from './i18n';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { categoryTasks, items, ownerOf, record, records, safeUrl, string } from './model';
 import type { Json, JsonRecord, Snapshot } from './model';
+import { selectTasks, snapshotIndex } from './selectors';
 import { useSnapshot } from './useSnapshot';
 import type { SnapshotLoader } from './useSnapshot';
 import { QuestionForm, useSession } from './questions';
@@ -124,7 +125,7 @@ function Link({ url, children }: { readonly url?: Json; readonly children: React
     </span>
   ) : null;
 }
-function CategoryTree({
+function CategoryTreeView({
   snapshot,
   selected,
   onSelect,
@@ -134,40 +135,38 @@ function CategoryTree({
   readonly onSelect: (id: string) => void;
 }) {
   const i18n = useI18n();
-  const categories = records(snapshot.categories);
+  const index = snapshotIndex(snapshot);
   const walk = (parent: Json | undefined, visited: ReadonlySet<string>): ReactNode =>
-    categories
-      .filter((item) => item.parent_id === parent || (!item.parent_id && !parent))
-      .map((category) => {
-        const id = string(category.id);
-        if (visited.has(id)) return null;
-        const path = new Set([...visited, id]);
-        const taskIds = categoryTasks(snapshot, id);
-        const complete = snapshot.tasks.filter(
-          (task) => taskIds.has(task.id) && task.status === 'done',
-        ).length;
-        return (
-          <div key={id} className="category-node">
-            <button
-              type="button"
-              className="category-button"
-              aria-label={i18n.t('{title}, {done} of {total} reviewed', {
-                title: i18n.display(category.title),
-                done: complete,
-                total: taskIds.size,
-              })}
-              aria-pressed={selected === id}
-              onClick={() => onSelect(id)}
-            >
-              <span>{i18n.display(category.title)}</span>
-              <span className="category-count">
-                {complete}/{taskIds.size}
-              </span>
-            </button>
-            <div className="category-children">{walk(id, path)}</div>
-          </div>
-        );
-      });
+    (index.categoryChildren.get(string(parent)) || []).map((category) => {
+      const id = string(category.id);
+      if (visited.has(id)) return null;
+      const path = new Set([...visited, id]);
+      const taskIds = categoryTasks(snapshot, id);
+      const complete = [...taskIds].filter(
+        (taskId) => index.tasks.get(taskId)?.status === 'done',
+      ).length;
+      return (
+        <div key={id} className="category-node">
+          <button
+            type="button"
+            className="category-button"
+            aria-label={i18n.t('{title}, {done} of {total} reviewed', {
+              title: i18n.display(category.title),
+              done: complete,
+              total: taskIds.size,
+            })}
+            aria-pressed={selected === id}
+            onClick={() => onSelect(id)}
+          >
+            <span>{i18n.display(category.title)}</span>
+            <span className="category-count">
+              {complete}/{taskIds.size}
+            </span>
+          </button>
+          <div className="category-children">{walk(id, path)}</div>
+        </div>
+      );
+    });
   return (
     <nav className="category-tree" aria-label={i18n.t('Categories')}>
       <p className="eyebrow">{i18n.t('Categories · reviewed / total')}</p>
@@ -186,6 +185,8 @@ function CategoryTree({
     </nav>
   );
 }
+const CategoryTree = memo(CategoryTreeView);
+
 function Progress({ snapshot }: { readonly snapshot: Snapshot }) {
   const i18n = useI18n();
   const done = snapshot.tasks.filter((task) => task.status === 'done').length;
@@ -276,9 +277,13 @@ function Objective({ snapshot }: { readonly snapshot: Snapshot }) {
 }
 function Overview({ snapshot }: { readonly snapshot: Snapshot }) {
   const i18n = useI18n();
-  const categories = records(snapshot.categories).filter((item) => !item.parent_id);
-  const blockers = snapshot.tasks.filter((task) => task.status === 'blocked');
-  const active = snapshot.tasks.filter((task) => ['active', 'review'].includes(task.status));
+  const index = snapshotIndex(snapshot);
+  const categories = index.categoryChildren.get('') || [];
+  const blockers = index.tasksByStatus.get('blocked') || [];
+  const active = [
+    ...(index.tasksByStatus.get('active') || []),
+    ...(index.tasksByStatus.get('review') || []),
+  ];
   const checkpoint = record(snapshot.checkpoint);
   return (
     <>
@@ -381,31 +386,8 @@ function TaskList({
   readonly selected: string | null;
 }) {
   const i18n = useI18n();
-  const categoryIds = filters.category ? categoryTasks(snapshot, filters.category) : null;
-  const filtered = snapshot.tasks.filter(
-    (task) =>
-      (!filters.status || task.status === filters.status) &&
-      (!categoryIds || categoryIds.has(task.id)) &&
-      (!filters.workstream || task.workstream === filters.workstream) &&
-      (!filters.owner ||
-        (filters.owner === '__unassigned' ? !ownerOf(task) : ownerOf(task) === filters.owner)) &&
-      (!filters.search ||
-        [task.id, task.title, task.source, task.notes, task.planning_note]
-          .map((item) => i18n.display(item, ''))
-          .join(' ')
-          .toLowerCase()
-          .includes(filters.search.toLowerCase())),
-  );
-  const sorted = [...filtered].sort(
-    (a, b) =>
-      i18n
-        .display(filters.sort === 'owner' ? ownerOf(a) : a[filters.sort])
-        .localeCompare(
-          i18n.display(filters.sort === 'owner' ? ownerOf(b) : b[filters.sort]),
-          'en',
-          { numeric: true },
-        ) || a.id.localeCompare(b.id),
-  );
+  const index = snapshotIndex(snapshot);
+  const sorted = useMemo(() => selectTasks(snapshot, filters), [snapshot, filters]);
   const selectedRef = useRef<HTMLAnchorElement>(null);
   useEffect(() => {
     if (selected) selectedRef.current?.focus({ preventScroll: true });
@@ -438,7 +420,7 @@ function TaskList({
       </select>
     </label>
   );
-  const owners = [...new Set(snapshot.tasks.map(ownerOf).filter(Boolean))].sort();
+  const owners = [...index.tasksByOwner.keys()].filter(Boolean).sort();
   const workstreams = records(snapshot.workstreams);
   return (
     <>
@@ -517,8 +499,7 @@ function TaskList({
               <span className="task-meta">
                 <span className="mono">{task.id}</span> ·{' '}
                 {i18n.display(
-                  records(snapshot.categories).find((category) => category.id === task.category_id)
-                    ?.title || task.workstream,
+                  index.categories.get(string(task.category_id))?.title || task.workstream,
                   'Uncategorized',
                 )}{' '}
                 {' · '}
@@ -631,7 +612,7 @@ function TaskRelations({
       {ids.length ? (
         <ul>
           {ids.map((id) => {
-            const peer = snapshot.tasks.find((task) => task.id === id);
+            const peer = snapshotIndex(snapshot).tasks.get(id);
             const owner = peer && ownerOf(peer);
             return (
               <li key={id}>
@@ -717,7 +698,7 @@ function TaskDetail({
   readonly taskId?: string;
 }) {
   const i18n = useI18n();
-  const task = snapshot.tasks.find((item) => item.id === taskId);
+  const task = snapshotIndex(snapshot).tasks.get(taskId || '');
   if (!task)
     return (
       <>
@@ -730,7 +711,7 @@ function TaskDetail({
         </p>
       </>
     );
-  const actor = records(snapshot.actors).find((item) => item.id === ownerOf(task)) || {};
+  const actor = snapshotIndex(snapshot).actors.get(ownerOf(task)) || {};
   const attempts = records(task.attempts);
   const attempt = attempts.at(-1) || {};
   const assignment = record(attempt.assignment);
@@ -851,61 +832,60 @@ function TaskDetail({
 }
 function Team({ snapshot }: { readonly snapshot: Snapshot }) {
   const i18n = useI18n();
-  const actors = records(snapshot.actors);
+  const index = snapshotIndex(snapshot);
+  const actors = [...index.actors.values()];
   const responsibilities = record(snapshot.responsibilities);
   const walk = (parent: Json | undefined, visited: ReadonlySet<string>): ReactNode =>
-    actors
-      .filter((actor) => actor.parent_id === parent || (!actor.parent_id && !parent))
-      .map((actor) => {
-        const id = string(actor.id);
-        if (visited.has(id)) return null;
-        const assignments = snapshot.tasks.filter((task) => ownerOf(task) === id);
-        return (
-          <div className="actor-branch" key={id}>
-            <article className="actor-record">
-              <div className="actor-heading">
-                <h3>{id}</h3>
-                <span className="badge">
-                  {i18n.human(actor.role)} · {i18n.human(actor.staffing_status)}
-                </span>
-              </div>
-              <p className="role-purpose">
-                {i18n.t(
-                  i18n.display(
-                    items(responsibilities[string(actor.role)])[0],
-                    'No role responsibility recorded',
-                  ),
-                )}
-              </p>
-              <Fields
-                values={[
-                  ['Model', actor.model_id],
-                  ['Reasoning', i18n.human(actor.reasoning_effort)],
-                  ['Provenance', `${i18n.human(actor.provenance)} · ${i18n.t('saved')}`],
-                  [
-                    'Last observed',
-                    `${i18n.human(actor.observed_status)} · ${i18n.date(actor.observed_at)}`,
-                  ],
-                ]}
-              />
-              <p className="muted">
-                {i18n.t('Current recorded assignments:')}{' '}
-                {assignments.map((task) => task.id).join(', ') || i18n.t('None')}
-              </p>
-              <details>
-                <summary>{i18n.t('Staffing and assignment history')}</summary>
-                <pre className="source">
-                  {i18n.display({
-                    history: actor.history || [],
-                    assignments: actor.assignments || [],
-                  })}
-                </pre>
-              </details>
-            </article>
-            <div className="actor-child">{walk(id, new Set([...visited, id]))}</div>
-          </div>
-        );
-      });
+    (index.actorChildren.get(string(parent)) || []).map((actor) => {
+      const id = string(actor.id);
+      if (visited.has(id)) return null;
+      const assignments = snapshotIndex(snapshot).tasksByOwner.get(id) || [];
+      return (
+        <div className="actor-branch" key={id}>
+          <article className="actor-record">
+            <div className="actor-heading">
+              <h3>{id}</h3>
+              <span className="badge">
+                {i18n.human(actor.role)} · {i18n.human(actor.staffing_status)}
+              </span>
+            </div>
+            <p className="role-purpose">
+              {i18n.t(
+                i18n.display(
+                  items(responsibilities[string(actor.role)])[0],
+                  'No role responsibility recorded',
+                ),
+              )}
+            </p>
+            <Fields
+              values={[
+                ['Model', actor.model_id],
+                ['Reasoning', i18n.human(actor.reasoning_effort)],
+                ['Provenance', `${i18n.human(actor.provenance)} · ${i18n.t('saved')}`],
+                [
+                  'Last observed',
+                  `${i18n.human(actor.observed_status)} · ${i18n.date(actor.observed_at)}`,
+                ],
+              ]}
+            />
+            <p className="muted">
+              {i18n.t('Current recorded assignments:')}{' '}
+              {assignments.map((task) => task.id).join(', ') || i18n.t('None')}
+            </p>
+            <details>
+              <summary>{i18n.t('Staffing and assignment history')}</summary>
+              <pre className="source">
+                {i18n.display({
+                  history: actor.history || [],
+                  assignments: actor.assignments || [],
+                })}
+              </pre>
+            </details>
+          </article>
+          <div className="actor-child">{walk(id, new Set([...visited, id]))}</div>
+        </div>
+      );
+    });
   const director = record(snapshot.director);
   const handoffs = records(snapshot.handoffs);
   return (
@@ -977,7 +957,7 @@ function Team({ snapshot }: { readonly snapshot: Snapshot }) {
 
 function Questions({ snapshot }: { readonly snapshot: Snapshot }) {
   const i18n = useI18n();
-  const questions = records(snapshot.questions);
+  const questions = [...snapshotIndex(snapshot).questions.values()];
   if (!questions.length) return null;
   const pending = questions.filter((question) => question.status === 'open');
   const current = questions.filter((question) => question.status !== 'resolved');
@@ -1068,85 +1048,98 @@ function Dashboard({
   }, [route.view, route.taskId, route.questionId, selected]);
   const integrity = record(snapshot?.integrity);
   const stale = integrity.status === 'stale';
+  const selectCategory = useCallback(
+    (category: string) => setFilters((previous) => ({ ...previous, category })),
+    [],
+  );
   const freshness = error
     ? i18n.t('Unavailable')
-    : observed
-      ? i18n.t('Fetched {time}', { time: observed.toLocaleTimeString(i18n.localeName) })
-      : i18n.t('Loading program…');
-  let content: ReactNode;
-  if (!snapshot)
-    content = (
-      <>
-        <h2>{error ? i18n.t('Program unavailable') : i18n.t('Loading program')}</h2>
-        <p className="empty">
-          {error
-            ? i18n.t('The program could not be read. Check the server configuration.')
-            : i18n.t('Reading the local snapshot…')}
-        </p>
-      </>
-    );
-  else if (route.view === 'overview')
-    content = (
-      <>
-        <Questions snapshot={snapshot} />
-        <Overview snapshot={snapshot} />
-      </>
-    );
-  else if (route.view === 'work')
-    content = (
-      <>
-        <div className="page-heading">
-          <div>
-            <p className="eyebrow">{i18n.t('Task ledger')}</p>
-            <h2>
-              {i18n.display(
-                records(snapshot.categories).find((category) => category.id === filters.category)
-                  ?.title,
-                'All work',
-              )}
-            </h2>
+    : busy && snapshot
+      ? i18n.t('Refreshing…')
+      : observed
+        ? i18n.t('Fetched {time}', { time: observed.toLocaleTimeString(i18n.localeName) })
+        : i18n.t('Loading program…');
+  const content = useMemo(() => {
+    let content: ReactNode;
+    if (!snapshot)
+      content = (
+        <>
+          <h2>{error ? i18n.t('Program unavailable') : i18n.t('Loading program')}</h2>
+          <p className="empty">
+            {error
+              ? i18n.t('The program could not be read. Check the server configuration.')
+              : i18n.t('Reading the local snapshot…')}
+          </p>
+        </>
+      );
+    else if (route.view === 'overview')
+      content = (
+        <>
+          <Questions snapshot={snapshot} />
+          <Overview snapshot={snapshot} />
+        </>
+      );
+    else if (route.view === 'work')
+      content = (
+        <>
+          <div className="page-heading">
+            <div>
+              <p className="eyebrow">{i18n.t('Task ledger')}</p>
+              <h2>
+                {i18n.display(
+                  snapshotIndex(snapshot).categories.get(filters.category)?.title,
+                  'All work',
+                )}
+              </h2>
+            </div>
+            <span className="muted">
+              {snapshot.tasks.length} {i18n.t('leaf tasks')}
+            </span>
           </div>
-          <span className="muted">
-            {snapshot.tasks.length} {i18n.t('leaf tasks')}
-          </span>
-        </div>
-        <p className="intro">
-          {i18n.t(
-            'Choose a category, filter the ledger, then open a task for requirements and evidence.',
-          )}
-        </p>
-        <TaskList snapshot={snapshot} filters={filters} onChange={setFilters} selected={selected} />
-      </>
-    );
-  else if (route.view === 'team') content = <Team snapshot={snapshot} />;
-  else if (route.view === 'task')
-    content = <TaskDetail snapshot={snapshot} taskId={route.taskId} />;
-  else {
-    const question = records(snapshot.questions).find((item) => item.id === route.questionId);
-    content = (
-      <>
-        <a className="back-link" href="#overview">
-          {i18n.t('Back to overview')}
-        </a>
-        {question ? (
-          <QuestionForm
-            key={string(question.id)}
-            question={question}
-            session={session}
-            saver={answerSaver}
-            refresh={refresh}
+          <p className="intro">
+            {i18n.t(
+              'Choose a category, filter the ledger, then open a task for requirements and evidence.',
+            )}
+          </p>
+          <TaskList
+            snapshot={snapshot}
+            filters={filters}
+            onChange={setFilters}
+            selected={selected}
           />
-        ) : (
-          <>
-            <h2>{i18n.t('Question not available')}</h2>
-            <p className="empty">
-              {i18n.t('Return to Overview to inspect current director questions.')}
-            </p>
-          </>
-        )}
-      </>
-    );
-  }
+        </>
+      );
+    else if (route.view === 'team') content = <Team snapshot={snapshot} />;
+    else if (route.view === 'task')
+      content = <TaskDetail snapshot={snapshot} taskId={route.taskId} />;
+    else {
+      const question = snapshotIndex(snapshot).questions.get(route.questionId || '');
+      content = (
+        <>
+          <a className="back-link" href="#overview">
+            {i18n.t('Back to overview')}
+          </a>
+          {question ? (
+            <QuestionForm
+              key={string(question.id)}
+              question={question}
+              session={session}
+              saver={answerSaver}
+              refresh={refresh}
+            />
+          ) : (
+            <>
+              <h2>{i18n.t('Question not available')}</h2>
+              <p className="empty">
+                {i18n.t('Return to Overview to inspect current director questions.')}
+              </p>
+            </>
+          )}
+        </>
+      );
+    }
+    return content;
+  }, [snapshot, error, route, filters, selected, session, answerSaver, refresh, i18n]);
   return (
     <>
       <a
@@ -1243,7 +1236,7 @@ function Dashboard({
             <CategoryTree
               snapshot={snapshot}
               selected={filters.category}
-              onSelect={(category) => setFilters((previous) => ({ ...previous, category }))}
+              onSelect={selectCategory}
             />
           )}
           <div className="rail-foot">

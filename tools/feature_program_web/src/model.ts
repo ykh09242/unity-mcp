@@ -1,3 +1,5 @@
+import { snapshotIndex } from './selectors';
+
 export type Json = null | boolean | number | string | readonly Json[] | JsonRecord;
 export type JsonRecord = { readonly [key: string]: Json };
 export type Task = JsonRecord & {
@@ -93,22 +95,33 @@ export function parseSnapshot(value: unknown): Snapshot {
     tasks,
   };
 }
+function semanticValueEqual(left: Json | undefined, right: Json | undefined): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left))
+    return (
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => semanticValueEqual(value, right[index]))
+    );
+  if (isRecord(left) && isRecord(right)) {
+    const keys = Object.keys(left);
+    return (
+      keys.length === Object.keys(right).length &&
+      keys.every((key) => Object.hasOwn(right, key) && semanticValueEqual(left[key], right[key]))
+    );
+  }
+  return false;
+}
+export function semanticSnapshotEqual(left: Snapshot, right: Snapshot): boolean {
+  const leftKeys = Object.keys(left).filter((key) => key !== 'generated_at');
+  const rightKeys = Object.keys(right).filter((key) => key !== 'generated_at');
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) => Object.hasOwn(right, key) && semanticValueEqual(left[key], right[key]))
+  );
+}
 export function categoryTasks(snapshot: Snapshot, categoryId: string): ReadonlySet<string> {
-  const categories = records(snapshot.categories);
-  const visited = new Set<string>();
-  const result = new Set<string>();
-  const visit = (id: string): void => {
-    if (visited.has(id)) return;
-    visited.add(id);
-    const category = categories.find((item) => item.id === id);
-    items(category?.task_ids).forEach((taskId) => {
-      if (typeof taskId === 'string') result.add(taskId);
-    });
-    snapshot.tasks.filter((task) => task.category_id === id).forEach((task) => result.add(task.id));
-    categories.filter((item) => item.parent_id === id).forEach((item) => visit(string(item.id)));
-  };
-  visit(categoryId);
-  return result;
+  return snapshotIndex(snapshot).categoryTasks(categoryId);
 }
 export function safeUrl(value: Json | undefined): string | null {
   if (typeof value !== 'string') return null;
