@@ -30,12 +30,14 @@ if __name__ == "__main__":
     sys.modules.setdefault(core_module, sys.modules[__name__])
 
 if __package__:
+    import tools.feature_program_authoring as authoring
     import tools.feature_program_coverage as coverage
     import tools.feature_program_coordination as coordination
     import tools.feature_program_phases as phases
     import tools.feature_program_planning as planning
     import tools.feature_program_questions as questions
 else:
+    import feature_program_authoring as authoring
     import feature_program_coverage as coverage
     import feature_program_coordination as coordination
     import feature_program_phases as phases
@@ -89,6 +91,14 @@ class ProgramError(RuntimeError):
     """A rejected input or transition; existing durable state must be preserved."""
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedChange:
+    """Detached proposal with the same read-only freshness guard used at publication."""
+
+    state: Record
+    before_publish: Callable[[], None] | None = None
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ProgramError(message)
@@ -133,7 +143,7 @@ def digest(value: Json) -> str:
 
 
 def utc() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return coordination.observed_timestamp(datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
 
 def communication_language(value: Json) -> str | None:
@@ -682,6 +692,9 @@ class Program:
         coordination.validate_governance(state)
         phases.validate(state)
         coverage.validate(state)
+        authoring.validate_delivery_history(
+            self, state, verify_artifacts=verify_artifacts, budget=budget
+        )
         if verify_artifacts:
             self.verify_refs(coordination.evidence_references(state), budget)
             self.verify_refs(questions.evidence_references(state), budget)
@@ -902,6 +915,15 @@ class Program:
             )
 
     def claim(self, state: Record, args: argparse.Namespace) -> None:
+        proposal = self.prepare_claim(state, args, observed_head=self.current_head())
+        state.clear()
+        state.update(proposal)
+
+    def prepare_claim(
+        self, state: Record, args: argparse.Namespace, *, observed_head: str
+    ) -> Record:
+        """Prepare a claim from a real metadata observation without publication or Git."""
+        state = deepcopy(state)
         self.require_current_location()
         phases.guard_execution(self, state, args.id, args.scope)
         task = self.task(state, args.id)
@@ -918,7 +940,8 @@ class Program:
         scope = sorted(set(safe_relative(path) for path in args.scope))
         require(len(scope) == len(args.scope), "Duplicate scope")
         baseline = self.source_snapshot(scope)
-        head = git(self.repo, ["rev-parse", "HEAD"])
+        head = observed_head
+        require(bool(re.fullmatch(r"[a-f0-9]{40}", head)), "Invalid observed current HEAD")
         validation, evidence = self.frozen_json(args.id, attempt_number, args.revalidation)
         require(
             validation.get("task_id") == args.id and validation.get("attempt") == attempt_number,
@@ -984,6 +1007,8 @@ class Program:
                 "evidence": evidence,
             },
         )
+
+        return state
 
     def transition(self, state: Record, args: argparse.Namespace) -> None:
         self.require_current_location()
@@ -1254,6 +1279,11 @@ class Program:
 
     def resume_binding(self, state: Record, task_id: str) -> Record:
         """Read-only present facts for an authored resolution, never a readiness approval."""
+        return self.prepare_resume_binding(state, task_id, observed_head=self.current_head())
+
+    def prepare_resume_binding(self, state: Record, task_id: str, *, observed_head: str) -> Record:
+        """Bind resolution facts to explicit metadata without observing Git."""
+        require(bool(re.fullmatch(r"[a-f0-9]{40}", observed_head)), "Invalid observed current HEAD")
         self.require_current_location()
         task = self.task(state, task_id)
         require(task["status"] == "blocked", "Resume requires current blocked ownership")
@@ -1276,12 +1306,33 @@ class Program:
             "block": origin["block"],
             "origin": origin["origin"],
             "scope": scope,
-            "head": self.current_head(),
+            "head": observed_head,
             "source_digest": self.source_digest(scope),
         }
 
     def resume(self, state: Record, args: argparse.Namespace) -> None:
         """Commit one immutable same-attempt resolution after two fresh prerequisite checks."""
+        prepared = self._prepare_resume(state, args, self.resume_binding)
+        self.save(prepared.state, before_publish=prepared.before_publish)
+        state.clear()
+        state.update(prepared.state)
+
+    def prepare_resume(
+        self, state: Record, args: argparse.Namespace, *, observed_head: str
+    ) -> PreparedChange:
+        """Prepare with explicit Git metadata, including a Git-free final prerequisite check."""
+        return self._prepare_resume(
+            state,
+            args,
+            lambda current, task_id: self.prepare_resume_binding(
+                current, task_id, observed_head=observed_head
+            ),
+        )
+
+    def _prepare_resume(
+        self, state: Record, args: argparse.Namespace, binding: Callable[[Record, str], Record]
+    ) -> PreparedChange:
+        """Reuse actual resolution validation and the publication recheck without writing."""
         self.require_current_location()
         self.validate(state)
         task = self.task(state, args.id)
@@ -1310,7 +1361,7 @@ class Program:
         refs += self.evidence(
             args.id, number, strings(receipt.get("evidence"), "resolution evidence")
         )
-        expected = self.resume_binding(state, args.id)
+        expected = binding(state, args.id)
 
         def prerequisites(current: Record) -> None:
             self.require_current_location()
@@ -1328,7 +1379,7 @@ class Program:
             coordination.require_resume_transfer(
                 current, args.id, number, strings(current_attempt["scope"], "scope")
             )
-            for key, value in self.resume_binding(current, args.id).items():
+            for key, value in binding(current, args.id).items():
                 require(
                     canonical(receipt.get(key)) == canonical(value), f"Stale resume binding: {key}"
                 )
@@ -1434,9 +1485,7 @@ class Program:
             )
             prerequisites(current)
 
-        self.save(proposed, before_publish=precommit)
-        state.clear()
-        state.update(proposed)
+        return PreparedChange(proposed, precommit)
 
     def submit(self, state: Record, args: argparse.Namespace) -> None:
         proposal = self.prepare_submit(state, args, observed_head=self.current_head())
@@ -1667,16 +1716,11 @@ class Program:
         )
         return state
 
-    def delivery(self, state: Record, args: argparse.Namespace) -> None:
-        task = self.task(state, args.id)
-        require(task["status"] == "done", "Delivery metadata requires reviewed completion")
-        attempt = self.current_attempt(task)
-        number = attempt["number"]
-        require(type(number) is int, "Invalid attempt number")
-        self.verify_refs(sequence(attempt["evidence"], "evidence"))
-        receipt, refs = self.frozen_json(args.id, number, args.receipt)
+    def validate_delivery_metadata(
+        self, task: Record, attempt: Record, receipt: Record, *, budget: ReadBudget | None = None
+    ) -> str:
         require(
-            receipt.get("task_id") == args.id and receipt.get("attempt") == number,
+            receipt.get("task_id") == task["id"] and receipt.get("attempt") == attempt["number"],
             "Delivery identity mismatch",
         )
         for key in ("branch", "base", "pr_url", "tested_commit", "merge_status"):
@@ -1720,6 +1764,27 @@ class Program:
             if any(value in {"pending", "in_progress", "queued"} for value in conclusions)
             else "ci_failed"
         )
+        authoring.validate_cleanup(self, task, attempt, receipt)
+        if receipt.get("provider_observation") is not None:
+            provider = authoring.provider_observation(self, receipt["provider_observation"], budget)
+            require(
+                all(
+                    canonical(receipt.get(key)) == canonical(provider.get(key))
+                    for key in authoring.PROVIDER_FIELDS
+                ),
+                "Delivery facts differ from frozen provider observation",
+            )
+        return status
+
+    def delivery(self, state: Record, args: argparse.Namespace) -> None:
+        task = self.task(state, args.id)
+        require(task["status"] == "done", "Delivery metadata requires reviewed completion")
+        attempt = self.current_attempt(task)
+        number = attempt["number"]
+        require(type(number) is int, "Invalid attempt number")
+        self.verify_refs(sequence(attempt["evidence"], "evidence"))
+        receipt, refs = self.frozen_json(args.id, number, args.receipt)
+        status = self.validate_delivery_metadata(task, attempt, receipt)
         metadata = {
             "status": status,
             "remote_verified_by_tool": False,
@@ -1729,6 +1794,12 @@ class Program:
         refs += self.evidence(
             args.id, number, strings(receipt.get("evidence"), "delivery evidence")
         )
+        if receipt.get("cleanup") is not None:
+            refs += self.evidence(
+                args.id,
+                number,
+                strings(record(receipt["cleanup"], "cleanup")["evidence"], "cleanup evidence"),
+            )
         deliveries = sequence(task.setdefault("deliveries", []), "deliveries")
         deliveries.append(metadata)
         attempt["evidence"] = sequence(attempt["evidence"], "evidence") + refs
@@ -1745,8 +1816,42 @@ class Program:
             },
         )
 
+    def prepare_language(self, state: Record, args: argparse.Namespace) -> Record:
+        state = deepcopy(state)
+        value = communication_language(args.value)
+        director = coordination.current_director_id(state)
+        require(
+            args.owner == (director or "leader"),
+            "Language changes require the current director (or legacy leader)",
+        )
+        previous = state.get("communication_language")
+        state["communication_language"] = value
+        self.event(
+            state,
+            "language",
+            {
+                "actor": args.owner,
+                "previous_language": previous,
+                "communication_language": value,
+                "reason": args.reason,
+            },
+        )
+        return state
+
     def checkpoint(self, state: Record, args: argparse.Namespace) -> None:
         dirty = git(self.repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        proposal = self.prepare_checkpoint(
+            state, args, observed_head=self.current_head(), observed_dirty=dirty
+        )
+        state.clear()
+        state.update(proposal)
+
+    def prepare_checkpoint(
+        self, state: Record, args: argparse.Namespace, *, observed_head: str, observed_dirty: str
+    ) -> Record:
+        """Describe a checkpoint from explicitly observed metadata without creating it."""
+        state = deepcopy(state)
+        dirty = observed_dirty
         paths = []
         for entry in dirty.split("\0"):
             name = entry[3:] if len(entry) > 3 and entry[2] == " " else entry
@@ -1757,7 +1862,7 @@ class Program:
                     continue
         state["checkpoint"] = {
             "timestamp": utc(),
-            "head": git(self.repo, ["rev-parse", "HEAD"]),
+            "head": observed_head,
             "dirty_paths": sorted(set(paths)),
             "note": args.note,
             "next_action": args.next_action,
@@ -1774,6 +1879,8 @@ class Program:
                 "next_action": args.next_action,
             },
         )
+
+        return state
 
     def packet(self, state: Record, task: Record) -> str:
         source = planning.source_for_task(state, task)
@@ -1920,6 +2027,19 @@ class Program:
             all(len(text.encode("utf-8")) <= 8 * 1024 * 1024 for text in derived.values()),
             "Derived document exceeds 8 MiB; existing state preserved",
         )
+        for name in ("backlog.json", *derived):
+            destination = self.path(name)
+            require(
+                not destination.exists() or destination.is_file(),
+                f"Publication output is not a regular file: {name}",
+            )
+            for parent in destination.parents:
+                require(
+                    not parent.exists() or parent.is_dir(),
+                    f"Publication output parent is not a directory: {name}",
+                )
+                if parent == self.directory:
+                    break
         return encoded
 
     def save(self, state: Record, *, before_publish: Callable[[], None] | None = None) -> None:
@@ -2019,6 +2139,13 @@ class Program:
         return {"status": "unrecorded", "remote_verified_by_tool": False}
 
     def template(self, state: Record, args: argparse.Namespace) -> Record:
+        head = self.current_head() if args.kind in {"revalidation", "delivery", "resume"} else None
+        return self.prepare_template(state, args, observed_head=head)
+
+    def prepare_template(
+        self, state: Record, args: argparse.Namespace, *, observed_head: str | None = None
+    ) -> Record:
+        """Build the existing nonpassing template using explicit observations only."""
         task = self.task(state, args.id)
         attempts = sequence(task["attempts"], "attempts")
         number = len(attempts) + 1 if args.kind == "revalidation" else len(attempts)
@@ -2026,7 +2153,7 @@ class Program:
         match args.kind:
             case "resume":
                 return {
-                    **self.resume_binding(state, args.id),
+                    **self.prepare_resume_binding(state, args.id, observed_head=observed_head),
                     "schema_version": 1,
                     "operation": "resume",
                     "id": "replace-with-unique-resolution-id",
@@ -2041,7 +2168,7 @@ class Program:
                 snapshot = self.source_snapshot(scope)
                 return {
                     **base,
-                    "head": git(self.repo, ["rev-parse", "HEAD"]),
+                    "head": observed_head,
                     "scope": scope,
                     "source_digest": digest(snapshot),
                     "acceptance_reviewed": False,
@@ -2101,7 +2228,7 @@ class Program:
                 }
             case "delivery":
                 require(task["status"] == "done", "Delivery template requires reviewed completion")
-                head = git(self.repo, ["rev-parse", "HEAD"])
+                head = observed_head
                 return {
                     **base,
                     "branch": "Record actual work branch",
@@ -2176,6 +2303,7 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
         + phases.evidence_references(state)
         + planning.evidence_references(state)
         + coverage.evidence_references(state)
+        + authoring.delivery_evidence_references(state)
     )
     for task in tasks:
         for value in sequence(task["attempts"], "attempts"):
@@ -2346,7 +2474,9 @@ def read_snapshot(repo: Path, program_dir: Path) -> Record:
     return result
 
 
-def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
+def prepare_relocation(
+    program: Program, state: Record, args: argparse.Namespace
+) -> tuple[Program, bytes, list[str]]:
     """Publish a verified recovery copy; archive the old location without deleting it."""
     director = coordination.current_director_id(state)
     require(
@@ -2367,10 +2497,6 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
     )
     require(not destination.exists(), "Relocation destination already exists; no overwrite")
     original = bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024)
-    backup_path = f"recovery/relocations/{sha(original)}/original-backlog.json"
-    manifest_path = f"recovery/relocations/{sha(original)}/manifest.json"
-    files: dict[str, str] = {}
-    budget = ReadBudget(256 * 1024 * 1024)
     # Preflight before creating a destination or reading any excluded path.
     names: list[str] = []
     for folder, dirs, filenames in os.walk(program.directory):
@@ -2394,6 +2520,16 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
     target = Program(program.repo, destination)
     planning.validate_publication_endpoint(program.repo, destination)
     planning.require_unreserved(target)
+    return target, original, names
+
+
+def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
+    target, original, names = prepare_relocation(program, state, args)
+    destination = target.directory
+    backup_path = f"recovery/relocations/{sha(original)}/original-backlog.json"
+    manifest_path = f"recovery/relocations/{sha(original)}/manifest.json"
+    files: dict[str, str] = {}
+    budget = ReadBudget(256 * 1024 * 1024)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.mkdir()  # Exclusive reservation: a concurrent/existing target is never replaced.
     with target.lock():
@@ -2523,7 +2659,9 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
         planning.publication_complete(program, operation_id, manifest)
 
 
-def recover_relocation(program: Program, args: argparse.Namespace) -> None:
+def prepare_relocation_recovery(
+    program: Program, args: argparse.Namespace
+) -> tuple[Program, Record | None, object]:
     """Finalize only an already verified publication; never promote an incomplete copy."""
     located = planning.publication_find(
         program, "relocation", getattr(args, "publication_id", None)
@@ -2546,9 +2684,7 @@ def recover_relocation(program: Program, args: argparse.Namespace) -> None:
                 program.repo, string(sequence(located[0]["endpoints"], "endpoints")[0], "source")
             ),
         )
-        with source_program.lock(publication_recovery=True):
-            planning.publication_complete(program, string(located[0]["id"], "publication ID"))
-        return
+        return source_program, None, located
     marker = read_json(program.path("RELOCATION_INCOMPLETE.json"))
     require(
         marker.get("phase") == "ready",
@@ -2586,21 +2722,6 @@ def recover_relocation(program: Program, args: argparse.Namespace) -> None:
         args.owner == (coordination.current_director_id(state) or "leader"),
         "Recovery requires current director or legacy leader",
     )
-    if located is None:
-        with source.lock(publication_recovery=True):
-            operation_id = planning.publication_register(
-                source,
-                "relocation",
-                {**marker, "program_id": state["program_id"]},
-                program,
-                legacy_observed=True,
-            )
-            planning.publication_begin(program, operation_id)
-            located = planning.publication_find(program, "relocation", operation_id)
-    require(
-        args.owner == (coordination.current_director_id(state) or "leader"),
-        "Recovery requires current director or legacy leader",
-    )
     for name, content in program.views(state).items():
         require(
             bounded_bytes(program.path(name), 8 * 1024 * 1024) == content.encode("utf-8"),
@@ -2614,28 +2735,50 @@ def recover_relocation(program: Program, args: argparse.Namespace) -> None:
             "Source archive does not match publication",
         )
     else:
-        with source.lock(publication_recovery=True):
-            require(
-                sha(bounded_bytes(source.path("backlog.json"), 8 * 1024 * 1024))
-                == marker.get("original_registry_sha256"),
-                "Original source changed; recovery cannot archive it",
+        require(
+            sha(bounded_bytes(source.path("backlog.json"), 8 * 1024 * 1024))
+            == marker.get("original_registry_sha256"),
+            "Original source changed; recovery cannot archive it",
+        )
+        source.load()
+        source_files = record(marker.get("source_files"), "source manifest")
+        require(
+            sorted(
+                path.relative_to(source.directory).as_posix()
+                for path in source.directory.rglob("*")
+                if path.is_file() and path.name != ".feature-program.lock"
             )
-            source.load()
-            source_files = record(marker.get("source_files"), "source manifest")
+            == sorted(source_files),
+            "Original inventory changed; recovery cannot archive it",
+        )
+        for name, expected in source_files.items():
             require(
-                sorted(
-                    path.relative_to(source.directory).as_posix()
-                    for path in source.directory.rglob("*")
-                    if path.is_file() and path.name != ".feature-program.lock"
-                )
-                == sorted(source_files),
-                "Original inventory changed; recovery cannot archive it",
+                sha(bounded_bytes(source.path(name), 8 * 1024 * 1024)) == expected,
+                f"Original artifact changed: {name}",
             )
-            for name, expected in source_files.items():
-                require(
-                    sha(bounded_bytes(source.path(name), 8 * 1024 * 1024)) == expected,
-                    f"Original artifact changed: {name}",
-                )
+    return source, marker, located
+
+
+def recover_relocation(program: Program, args: argparse.Namespace) -> None:
+    source, _, _ = prepare_relocation_recovery(program, args)
+    with source.lock(publication_recovery=True):
+        source, marker, located = prepare_relocation_recovery(program, args)
+        if marker is None:
+            require(located is not None, "Missing completed publication")
+            planning.publication_complete(program, string(located[0]["id"], "publication ID"))
+            return
+        if located is None:
+            state = read_json(program.path("backlog.json"))
+            operation_id = planning.publication_register(
+                source,
+                "relocation",
+                {**marker, "program_id": state["program_id"]},
+                program,
+                legacy_observed=True,
+            )
+            planning.publication_begin(program, operation_id)
+            located = planning.publication_find(program, "relocation", operation_id)
+        if not source.path("RELOCATED.json").exists():
             atomic_write(
                 source.path("RELOCATED.json"),
                 canonical(
@@ -2647,9 +2790,8 @@ def recover_relocation(program: Program, args: argparse.Namespace) -> None:
                     }
                 ),
             )
-    program.path("RELOCATION_INCOMPLETE.json").unlink()
-    if located is not None:
-        with source.lock(publication_recovery=True):
+        program.path("RELOCATION_INCOMPLETE.json").unlink()
+        if located is not None:
             planning.publication_complete(
                 program, string(located[0]["id"], "publication ID"), marker
             )
@@ -2878,6 +3020,7 @@ def parser() -> argparse.ArgumentParser:
     phases.add_commands(commands)
     planning.add_commands(commands)
     coverage.add_commands(commands)
+    authoring.add_commands(commands)
     return result
 
 
@@ -2894,6 +3037,9 @@ def main(argv: list[str] | None = None) -> int:
         relative_program = directory.relative_to(repo).as_posix()
         planning.validate_publication_endpoint(repo, directory)
         program = Program(repo, safe_path(repo, relative_program))
+        if args.command in authoring.READ_COMMANDS:
+            print(canonical(authoring.read_command(program, args)).decode(), end="")
+            return 0
         if args.command == "snapshot":
             print(canonical(read_snapshot(repo, program.directory)).decode(), end="")
             return 0
@@ -3042,24 +3188,9 @@ def main(argv: list[str] | None = None) -> int:
                     program.claim(state, args)
                     program.save(state)
                 case "language":
-                    value = communication_language(args.value)
-                    director = coordination.current_director_id(state)
-                    require(
-                        args.owner == (director or "leader"),
-                        "Language changes require the current director (or legacy leader)",
-                    )
-                    previous = state.get("communication_language")
-                    state["communication_language"] = value
-                    program.event(
-                        state,
-                        "language",
-                        {
-                            "actor": args.owner,
-                            "previous_language": previous,
-                            "communication_language": value,
-                            "reason": args.reason,
-                        },
-                    )
+                    proposal = program.prepare_language(state, args)
+                    state.clear()
+                    state.update(proposal)
                     program.save(state)
                 case "note" | "block" | "release" | "reopen":
                     program.transition(state, args)

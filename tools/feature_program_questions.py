@@ -120,7 +120,7 @@ def _timestamp(value: Json) -> None:
 
 
 def _utc() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return coordination.observed_timestamp(datetime.now(timezone.utc).isoformat())
 
 
 def _digest(value: Record) -> str:
@@ -154,9 +154,14 @@ def _binding(value: Record) -> list[str]:
     return scope
 
 
-def _fresh(program: ProgramAccess, receipt: Record) -> None:
+def _fresh(program: ProgramAccess, receipt: Record, observed_head: str | None = None) -> None:
     scope = _binding(receipt)
-    _require(receipt["source_head"] == program.current_head(), "Stale source HEAD", "conflict")
+    _require(
+        receipt["source_head"]
+        == (observed_head if observed_head is not None else program.current_head()),
+        "Stale source HEAD",
+        "conflict",
+    )
     _require(
         receipt["source_digest"] == program.source_digest(scope), "Stale source digest", "conflict"
     )
@@ -400,10 +405,10 @@ def add_commands(subparsers) -> None:
         command.add_argument("--input", required=True, help="Program-relative bounded JSON receipt")
 
 
-def _issue(program: ProgramAccess, state: Record, receipt: Record) -> None:
+def _issue(program: ProgramAccess, state: Record, receipt: Record, *, observed_head: str) -> None:
     actor_id = _text(receipt.get("actor_id"), "director actor", 128)
     _director(state, actor_id)
-    _fresh(program, receipt)
+    _fresh(program, receipt, observed_head)
     identifier = _identifier(receipt.get("id"), "question ID")
     version = _version(receipt.get("version"))
     items = _questions(state)
@@ -463,7 +468,7 @@ def _issue(program: ProgramAccess, state: Record, receipt: Record) -> None:
 
 
 def _director_transition(
-    program: ProgramAccess, state: Record, receipt: Record, resolve: bool
+    program: ProgramAccess, state: Record, receipt: Record, resolve: bool, *, observed_head: str
 ) -> None:
     actor_id = _text(receipt.get("actor_id"), "director actor", 128)
     _director(state, actor_id)
@@ -478,7 +483,7 @@ def _director_transition(
     _require(
         receipt.get("submission_id") == answer["submission_id"], "Stale answer identity", "conflict"
     )
-    _fresh(program, receipt)
+    _fresh(program, receipt, observed_head)
     summary = _text(
         receipt.get("summary"),
         "decision/application summary" if resolve else "acknowledgement summary",
@@ -499,7 +504,9 @@ def _director_transition(
     _items(question["history"], "history").append({"action": status, "timestamp": timestamp})
 
 
-def _withdraw(program: ProgramAccess, state: Record, receipt: Record) -> None:
+def _withdraw(
+    program: ProgramAccess, state: Record, receipt: Record, *, observed_head: str
+) -> None:
     actor_id = _text(receipt.get("actor_id"), "director actor", 128)
     _director(state, actor_id)
     question = _target(
@@ -508,7 +515,7 @@ def _withdraw(program: ProgramAccess, state: Record, receipt: Record) -> None:
         _version(receipt.get("version")),
     )
     _require(question["status"] != "resolved", "Question is already closed", "conflict")
-    _fresh(program, receipt)
+    _fresh(program, receipt, observed_head)
     timestamp = _utc()
     answer = question.get("answer")
     question["outcome"] = {
@@ -527,6 +534,21 @@ def apply_command(program: ProgramAccess, state: Record, args: argparse.Namespac
     """Stage a validated transition without changing state on rejected input."""
     if args.command not in COMMANDS:
         return False
+    proposal = prepare_command(program, state, args, observed_head=program.current_head())
+    state.clear()
+    state.update(proposal)
+    return True
+
+
+def prepare_command(
+    program: ProgramAccess, state: Record, args: argparse.Namespace, *, observed_head: str
+) -> Record:
+    """Stage real question semantics with an explicit HEAD observation and no publication."""
+    _require(args.command in COMMANDS, "Unsupported question command")
+    _require(
+        isinstance(observed_head, str) and re.fullmatch(r"[a-f0-9]{40}", observed_head) is not None,
+        "Verified current HEAD observation required",
+    )
     if __package__:
         from tools import feature_program as core
     else:
@@ -543,13 +565,13 @@ def apply_command(program: ProgramAccess, state: Record, args: argparse.Namespac
     validate_questions(proposal)
     match args.command:  # noqa: MATCH_OK - CLI boundary explicitly rejects unknown commands.
         case "question-issue":
-            _issue(program, proposal, receipt)
+            _issue(program, proposal, receipt, observed_head=observed_head)
         case "question-acknowledge":
-            _director_transition(program, proposal, receipt, False)
+            _director_transition(program, proposal, receipt, False, observed_head=observed_head)
         case "question-resolve":
-            _director_transition(program, proposal, receipt, True)
+            _director_transition(program, proposal, receipt, True, observed_head=observed_head)
         case "question-withdraw":
-            _withdraw(program, proposal, receipt)
+            _withdraw(program, proposal, receipt, observed_head=observed_head)
         case _:
             raise QuestionError("Unsupported question command")
     validate_questions(proposal)
@@ -567,9 +589,7 @@ def apply_command(program: ProgramAccess, state: Record, args: argparse.Namespac
             "evidence": [],
         },
     )
-    state.clear()
-    state.update(proposal)
-    return True
+    return proposal
 
 
 def _stage_answer(state: Record, request: AnswerReceipt) -> tuple[AnswerReceipt, bool]:
