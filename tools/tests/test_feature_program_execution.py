@@ -417,6 +417,104 @@ def test_missing_after_capture_records_nonpassing_diagnostic(fixture, monkeypatc
     assert saved["input"]["result"] == "unknown"
 
 
+def test_project_capture_exposes_pending_result_without_publication_or_reexecution(fixture):
+    # Given one already sealed actual invocation awaiting publication.
+    prepared = prepare(fixture, "from pathlib import Path; Path('counter.txt').write_text('1')")
+    result = execution.execute_run(prepared)
+    registry = fixture.program.path("backlog.json").read_bytes()
+    # When one explicit immutable capture is projected.
+    projected = execution.project_capture(
+        fixture.program, fixture.program.load(), result["capture_ref"], budget=fp.ReadBudget()
+    )
+    # Then its pending facts are visible without another command or canonical transition.
+    assert projected["current"] is True
+    assert projected["lane"] == "tests"
+    assert projected["summary"]["publication"]["status"] == "pending"
+    assert projected["observation_draft"]["status"] == "prepared"
+    assert (fixture.program.repo / "counter.txt").read_text() == "1"
+    assert fixture.program.path("backlog.json").read_bytes() == registry
+
+
+def test_project_capture_rejects_invalid_selected_hash_and_nested_output(fixture):
+    # Given a sealed capture and an incorrect selector hash.
+    prepared = prepare(fixture, "print('actual')")
+    result = execution.execute_run(prepared)
+    bad_ref = {**result["capture_ref"], "sha256": "0" * 64}
+    # When its caller attempts to project altered evidence.
+    with pytest.raises(fp.ProgramError):
+        execution.project_capture(fixture.program, fixture.program.load(), bad_ref)
+    # Then even a correct top-level selector cannot conceal changed transitive output bytes.
+    fixture.program.path(result["capture"]["outputs"]["stdout"]["path"]).write_bytes(b"tampered")
+    with pytest.raises(fp.ProgramError):
+        execution.project_capture(fixture.program, fixture.program.load(), result["capture_ref"])
+
+
+def test_project_capture_rejects_forged_origin_binding(fixture):
+    # Given a copied document that claims another task's origin.
+    prepared = prepare(fixture)
+    result = execution.execute_run(prepared)
+    changed = deepcopy(result["capture"])
+    changed["task_id"] = "S02"
+    name = fixture.write("evidence/S01/attempt-1/forged-capture.json", changed)
+    # When the altered document is selected with its actual byte hash.
+    with pytest.raises(fp.ProgramError):
+        execution.project_capture(
+            fixture.program, fixture.program.load(), {"path": name, "sha256": fp.digest(changed)}
+        )
+    # Then matching bytes alone cannot authorize a forged task binding.
+
+
+def test_project_capture_keeps_superseded_origin_noncurrent(fixture):
+    # Given a valid execution whose origin request has since been superseded.
+    prepared = prepare(fixture)
+    result = execution.execute_run(prepared)
+    newer = deepcopy(prepared.request["input"])
+    newer.update(
+        id="request-2",
+        supersedes="request-1",
+        expected_revision=fp.phases.revision(fixture.program.load()),
+    )
+    record(fixture, newer)
+    # When the old sealed facts are explicitly inspected.
+    projected = execution.project_capture(
+        fixture.program, fixture.program.load(), result["capture_ref"]
+    )
+    # Then history stays available while no current result or publication is invented.
+    assert projected["current"] is False
+    assert projected["currentness"] == "stale"
+    assert projected["observation_draft"]["status"] == "unavailable"
+
+
+def test_project_capture_does_not_revive_same_capture_after_recorded_failure(fixture):
+    # Given a later recorded nonpassing fact for the exact same immutable execution.
+    prepared = prepare(fixture)
+    result = execution.execute_run(prepared)
+    event = execution.prepare_observation(
+        fixture.program, fixture.program.load(), result["capture_ref"], prepared.binding
+    )
+    event.update(id="later-failure", result="failed")
+    record(fixture, event)
+    # When the raw originally passing process capture is selected again.
+    projected = execution.project_capture(
+        fixture.program, fixture.program.load(), result["capture_ref"]
+    )
+    # Then the new adverse record prevents old-success preparation or current display.
+    assert projected["current"] is False
+    assert projected["observation_draft"]["status"] == "unavailable"
+
+
+def test_project_capture_honors_shared_evidence_budget(fixture):
+    # Given an explicit selector with insufficient remaining read budget.
+    prepared = prepare(fixture)
+    result = execution.execute_run(prepared)
+    # When capture projection tries to resolve its immutable bytes.
+    with pytest.raises(fp.ProgramError):
+        execution.project_capture(
+            fixture.program, fixture.program.load(), result["capture_ref"], budget=fp.ReadBudget(1)
+        )
+    # Then the existing aggregate bound fails rather than starting a second unlimited ledger.
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows suspended-launch supervision")
 def test_blocked_native_launch_returns_unknown_and_never_resumes_late_child(fixture, monkeypatch):
     # Given a native launch boundary that returns only after its deadline.
