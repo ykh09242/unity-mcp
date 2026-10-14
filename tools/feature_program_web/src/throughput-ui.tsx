@@ -16,6 +16,7 @@ import {
   observedWait,
   providerContext,
   providerStageKey,
+  providerStageIdentity,
   hasProviderRecord,
   readinessFactors,
   verificationAssignments,
@@ -271,7 +272,9 @@ function Lane({
           snapshot={snapshot}
           task={task}
           value={lane.provider_execution}
-          represented={represented}
+          represented={
+            lane.applicability === 'current' && lane.phase !== 'canceled' ? represented : undefined
+          }
         />
       )}
     </li>
@@ -299,7 +302,14 @@ export function VerificationLanes({
     Boolean(string(record(task.delivery).status)) &&
     record(task.delivery).status !== 'unrecorded';
   if (!hasVerification && !hasProvider && !hasDelivery) return null;
-  const represented = new Set(providerContext(snapshot, task)?.stages.map(providerStageKey) || []);
+  const provider = record(task.provider_execution);
+  const represented = new Set(
+    (provider.applicability === 'current' || (task.status === 'done' && !provider.applicability)
+      ? providerContext(snapshot, task)
+          ?.stages.map(providerStageIdentity)
+          .filter((identity): identity is string => identity !== null)
+      : []) || [],
+  );
   return (
     <section className="verification-context" aria-label={i18n.t('Verification lanes')}>
       {hasVerification && <h3>{i18n.t('Verification lanes')}</h3>}
@@ -388,13 +398,17 @@ function ProviderStages({
   if (!hasProviderRecord(value)) return null;
   const context = providerContext(snapshot, { ...task, provider_execution: value || null });
   const stages =
-    context?.stages.filter((stage) => !represented?.has(providerStageKey(stage))) || [];
+    context?.stages.filter((stage) => {
+      const identity = providerStageIdentity(stage);
+      return provider.applicability !== 'current' || !identity || !represented?.has(identity);
+    }) || [];
   if (
     context &&
     represented &&
     context.stages.length > 0 &&
     !stages.length &&
-    !Number(provider.omitted)
+    !Number(provider.omitted) &&
+    !Number(provider.omitted_lanes)
   )
     return null;
   return (
@@ -412,48 +426,23 @@ function ProviderStages({
               <li className="verification-lane" key={providerStageKey(stage)}>
                 <div className="lane-heading">
                   <strong>{i18n.t(laneLabels[string(stage.kind)] || string(stage.kind))}</strong>
-                  {stage.request_id && (
-                    <span className="muted">
-                      {presentation.actor(stage.verifier_id) ||
-                        i18n.t(laneLabels[string(stage.lane)] || string(stage.lane) || 'CI')}
-                    </span>
+                  <span className="muted">{i18n.display(stage.id)}</span>
+                  {string(stage.verifier_id) && (
+                    <span className="muted">{presentation.actor(stage.verifier_id)}</span>
                   )}
                   <span className="badge">{i18n.human(stage.status)}</span>
                   {stage.current === false && (
                     <span className="lane-warning">{i18n.t('Earlier context')}</span>
                   )}
-                  {stage.reported_outcome && stage.reported_outcome !== stage.status && (
-                    <span>
-                      {i18n.t('Reported outcome')}: {i18n.human(stage.reported_outcome)}
-                    </span>
-                  )}
+                  {stage.reported_outcome &&
+                    stage.reported_outcome !== stage.status &&
+                    !(stage.status === 'passed' && stage.reported_outcome === 'success') && (
+                      <span>
+                        {i18n.t('Reported outcome')}: {i18n.human(stage.reported_outcome)}
+                      </span>
+                    )}
                 </div>
-                {records(stage.checks).length > 0 && (
-                  <ul className="provider-checks">
-                    {records(stage.checks).map((check, checkIndex) => {
-                      const status = i18n.human(check.status);
-                      const mode = check.mode ? i18n.human(check.mode) : null;
-                      const applicability =
-                        check.applicability && check.applicability !== 'current'
-                          ? i18n.human(check.applicability)
-                          : null;
-                      return (
-                        <li key={string(check.id) || checkIndex}>
-                          <span>{i18n.display(check.id)}</span>{' '}
-                          <span className="badge">{status}</span>
-                          {mode &&
-                            mode !== status &&
-                            !(
-                              check.status === 'policy_skipped' && check.mode === 'policy_skip'
-                            ) && <span className="muted">{mode}</span>}
-                          {applicability && applicability !== status && applicability !== mode && (
-                            <span className="lane-warning">{applicability}</span>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
+                <ProviderChecks stage={stage} />
                 {Number(stage.checks_omitted) > 0 && (
                   <p className="muted">
                     {i18n.t('{count} checks omitted', { count: Number(stage.checks_omitted) })}
@@ -462,15 +451,21 @@ function ProviderStages({
                 <ProviderTime value={stage.timing} />
                 {records(stage.history).length > 0 && (
                   <details className="lane-details">
-                    <summary>{i18n.t('Previous execution observations')}</summary>
+                    <summary>
+                      {i18n.t('Execution history')} ·{' '}
+                      <OutcomeCounts observations={records(stage.history)} />
+                    </summary>
                     <ul>
                       {records(stage.history).map((run, runIndex) => (
                         <li key={`${String(run.run_id)}:${String(run.run_attempt)}:${runIndex}`}>
+                          {i18n.t('Run {id}', { id: i18n.display(run.run_id) })} ·{' '}
                           {i18n.t('Attempt')} {i18n.display(run.run_attempt)} ·{' '}
                           {i18n.human(run.status || 'unknown')} ·{' '}
                           <span className="badge">
                             {i18n.human(run.reported_outcome || 'unknown')}
                           </span>
+                          {' · '}
+                          {i18n.date(run.captured_at)}
                         </li>
                       ))}
                     </ul>
@@ -486,7 +481,7 @@ function ProviderStages({
               </li>
             ))}
           </ul>
-          {!stages.length && provider.adopted === true && (
+          {!context.stages.length && provider.adopted === true && (
             <p className="muted">{i18n.t('Awaiting a current provider observation')}</p>
           )}
           {Number(provider.omitted) > 0 && (
@@ -505,6 +500,80 @@ function ProviderStages({
       )}
     </section>
   );
+}
+function CheckLabels({ check }: { readonly check: JsonRecord }) {
+  const i18n = useI18n();
+  const status = i18n.human(check.status);
+  const mode = check.mode ? i18n.human(check.mode) : null;
+  const applicability =
+    check.applicability && check.applicability !== 'current'
+      ? i18n.human(check.applicability)
+      : null;
+  return (
+    <>
+      <span className="badge">{status}</span>{' '}
+      {mode &&
+        mode !== status &&
+        !(check.status === 'policy_skipped' && check.mode === 'policy_skip') && (
+          <span className="muted">{mode}</span>
+        )}{' '}
+      {applicability && applicability !== status && applicability !== mode && (
+        <span className="lane-warning">{applicability}</span>
+      )}{' '}
+      {check.reported_outcome === 'failure' && check.status !== 'failed' && (
+        <span className="lane-warning">{i18n.human(check.reported_outcome)}</span>
+      )}
+    </>
+  );
+}
+function ProviderChecks({ stage }: { readonly stage: JsonRecord }) {
+  const i18n = useI18n();
+  const checks = records(stage.checks);
+  if (!checks.length) return null;
+  const groups = new Map<string, { check: JsonRecord; count: number }>();
+  for (const check of checks) {
+    const key = JSON.stringify([
+      check.status,
+      check.mode,
+      check.applicability,
+      check.reported_outcome,
+    ]);
+    const group = groups.get(key);
+    if (group) group.count++;
+    else groups.set(key, { check, count: 1 });
+  }
+  return (
+    <>
+      <p className="lane-foot" aria-label={i18n.t('Check summary')}>
+        {[...groups.entries()].map(([key, { check, count }]) => (
+          <span key={key}>
+            {i18n.t('{count} checks', { count })} · <CheckLabels check={check} />
+          </span>
+        ))}
+      </p>
+      <details className="lane-details">
+        <summary>{i18n.t('Check details ({count})', { count: checks.length })}</summary>
+        <ul className="provider-checks">
+          {checks.map((check, index) => (
+            <li key={string(check.id) || index}>
+              <span>{i18n.display(check.id)}</span> <CheckLabels check={check} />
+            </li>
+          ))}
+        </ul>
+      </details>
+    </>
+  );
+}
+function OutcomeCounts({ observations }: { readonly observations: readonly JsonRecord[] }) {
+  const i18n = useI18n();
+  const counts = new Map<string, number>();
+  for (const run of observations) {
+    const outcome = string(run.reported_outcome) || 'unknown';
+    counts.set(outcome, (counts.get(outcome) || 0) + 1);
+  }
+  return [...counts]
+    .map(([outcome, count]) => `${i18n.number(count)} ${i18n.human(outcome)}`)
+    .join(' · ');
 }
 function ProviderTime({ value }: { readonly value: Json | undefined }) {
   const i18n = useI18n();

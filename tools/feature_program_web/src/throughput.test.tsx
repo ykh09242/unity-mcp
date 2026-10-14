@@ -5,7 +5,8 @@ import { parseSnapshot, record } from './model';
 import type { JsonRecord, Snapshot } from './model';
 import { defaultContext, navigationHash, parseNavigation, selectWorkTasks } from './navigation';
 import { observedWait, readinessFactors, verificationContext } from './throughput';
-import { providerContext } from './throughput';
+import { providerContext, providerStageIdentity } from './throughput';
+import { deliveredExecution, requestedExecution } from './provider-delivery.fixture';
 import { presentSnapshot } from './presentation';
 import { presentationDigest } from './presentation-digest';
 import { SnapshotResponse } from './useSnapshot';
@@ -266,7 +267,7 @@ describe('recorded throughput context', () => {
     await screen.findByRole('heading', { name: 'PR and beta execution' });
     expect(screen.getByText('PR CI')).toBeTruthy();
     expect(screen.getByText('Beta CI')).toBeTruthy();
-    expect(screen.getAllByText('policy skipped')).toHaveLength(2);
+    expect(screen.getAllByText('policy skipped')).toHaveLength(4);
     expect(screen.getAllByText('Recorded execution: 60 sec')).toHaveLength(2);
     expect(screen.getAllByText('failure')).toHaveLength(2);
     expect(screen.getAllByText('success')).toHaveLength(2);
@@ -389,6 +390,31 @@ describe('recorded throughput context', () => {
               ['not applicable'],
             ],
       );
+      const summary = screen.getByLabelText(locale === 'ko' ? '검사 요약' : 'Check summary');
+      const expectedVisible =
+        locale === 'ko'
+          ? [
+              '정책에 따른 생략',
+              '대기 중',
+              '필수',
+              '현재 적용 대상 변경',
+              '실패',
+              '참고 항목',
+              '사용 불가',
+              '해당 없음',
+            ]
+          : [
+              'policy skipped',
+              'pending',
+              'required',
+              'stale',
+              'failed',
+              'advisory',
+              'unavailable',
+              'not applicable',
+            ];
+      for (const label of expectedVisible) expect(summary.textContent).toContain(label);
+      expect(summary.closest('details')).toBeNull();
     },
   );
   it('uses natural localized view and readiness copy without translating authored fixture titles', async () => {
@@ -452,14 +478,26 @@ describe('recorded throughput context', () => {
       status: 'passed',
       current: true,
       reported_outcome: 'success',
-      source: { head_sha: 'head', base_sha: 'base', tested_sha: 'merge' },
-      checks: [],
-      checks_total: 0,
-      checks_shown: 0,
+      source: { head_sha: '1'.repeat(40), base_sha: '2'.repeat(40), tested_sha: '3'.repeat(40) },
+      checks: [{ id: 'Web', run_id: 1, run_attempt: 1, job_id: 1, status: 'passed' }],
+      checks_total: 1,
+      checks_shown: 1,
       checks_omitted: 0,
-      history: [],
-      history_total: 0,
-      history_shown: 0,
+      history: [
+        {
+          run_id: 1,
+          run_attempt: 1,
+          captured_at: '2026-01-01T09:00:00Z',
+          head_sha: '1'.repeat(40),
+          checkout_sha: '3'.repeat(40),
+          job_ids: [1],
+          jobs_total: 1,
+          jobs_shown: 1,
+          jobs_omitted: 0,
+        },
+      ],
+      history_total: 1,
+      history_shown: 1,
       history_omitted: 0,
       timing: { started_at: null, completed_at: null, duration_seconds: null },
     };
@@ -495,6 +533,208 @@ describe('recorded throughput context', () => {
     await screen.findByRole('heading', { name: 'PR and beta execution' });
     expect(screen.getAllByText('PR CI')).toHaveLength(2);
     expect(screen.getAllByRole('heading', { name: 'PR and beta execution' })).toHaveLength(1);
+  });
+  it.each(['en', 'ko'])(
+    'summarizes delivered matrix volume once with one-level details in %s',
+    async (locale) => {
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      window.history.replaceState(null, '', '#task/A');
+      const snapshot = fixture(),
+        task = snapshot.tasks[0]!;
+      const delivered = { ...deliveredExecution, reference: reference() };
+      const requested = { ...requestedExecution, reference: reference() };
+      const view = render(
+        <App
+          loader={async () => ({
+            ...snapshot,
+            tasks: [
+              {
+                ...task,
+                status: 'done',
+                provider_execution: delivered,
+                verification: {
+                  ...record(task.verification),
+                  lanes: collection([
+                    lane('pr-request', 'ci', {
+                      phase: 'finished',
+                      result: 'passed',
+                      next_trigger: 'Inspect the beta result',
+                      provider_execution: requested,
+                    }),
+                  ]),
+                },
+              },
+              snapshot.tasks[1]!,
+            ],
+          })}
+        />,
+      );
+      await screen.findByRole('heading', {
+        name: locale === 'ko' ? 'PR 및 베타 실행' : 'PR and beta execution',
+      });
+      expect(view.container.querySelectorAll('.provider-stages')).toHaveLength(1);
+      expect(view.container.querySelectorAll('.provider-stages .verification-lane')).toHaveLength(
+        4,
+      );
+      expect(view.container.querySelectorAll('.provider-stages details details')).toHaveLength(0);
+      expect(view.container.querySelectorAll('.provider-stages .lane-heading .muted')).toHaveLength(
+        4,
+      );
+      expect(view.container.querySelector('.lane-action')?.textContent).toContain(
+        'Inspect the beta result',
+      );
+      const summaries = Array.from(view.container.querySelectorAll('.provider-stages summary'));
+      const checks = summaries.filter((summary) =>
+        summary.textContent?.startsWith(locale === 'ko' ? '검사 상세' : 'Check details'),
+      );
+      expect(checks).toHaveLength(4);
+      expect(checks.every((summary) => !summary.closest('details')?.open)).toBe(true);
+      expect(
+        view.container.querySelectorAll(
+          '[aria-label="' + (locale === 'ko' ? '검사 요약' : 'Check summary') + '"]',
+        ),
+      ).toHaveLength(4);
+      fireEvent.click(checks[0]!);
+      expect(checks[0]!.closest('details')?.open).toBe(true);
+      expect(checks[0]!.closest('details')?.textContent).toContain('python-13');
+    },
+  );
+  it('requires exact source, execution, capture and facts before deduplicating a provider stage', () => {
+    const original = requestedExecution.stages[0]!;
+    const expected = providerStageIdentity(deliveredExecution.stages[0]!);
+    expect(providerStageIdentity(original)).toBe(expected);
+    expect(expected).not.toBeNull();
+    const changes: JsonRecord[] = [
+      { source: { ...original.source, tested_sha: 'other-source' } },
+      { current: false },
+      {
+        checks: original.checks.map((check, index) => (index ? check : { ...check, job_id: 999 })),
+      },
+      {
+        checks: original.checks.map((check, index) =>
+          index ? check : { ...check, run_attempt: 2 },
+        ),
+      },
+      {
+        checks: original.checks.map((check, index) => (index ? check : { ...check, run_id: null })),
+      },
+      { history: original.history.map((run) => ({ ...run, captured_at: '2026-01-01T09:00:00Z' })) },
+      { history: [] },
+      { checks_omitted: 1 },
+      { status: 'failed' },
+    ];
+    for (const change of changes)
+      expect(providerStageIdentity({ ...original, ...change })).not.toBe(expected);
+    for (const length of [41, 48, 63]) {
+      expect(
+        providerStageIdentity({
+          ...original,
+          source: { ...original.source, head_sha: 'a'.repeat(length) },
+        }),
+      ).toBeNull();
+      expect(
+        providerStageIdentity({
+          ...original,
+          history: original.history.map((run) => ({ ...run, checkout_sha: 'a'.repeat(length) })),
+        }),
+      ).toBeNull();
+    }
+  });
+  it('preserves omitted-lane diagnostics without treating represented observations as absent', async () => {
+    window.history.replaceState(null, '', '#task/A');
+    const snapshot = fixture(),
+      task = snapshot.tasks[0]!;
+    const view = render(
+      <App
+        loader={async () => ({
+          ...snapshot,
+          tasks: [
+            {
+              ...task,
+              status: 'done',
+              provider_execution: { ...deliveredExecution, reference: reference() },
+              verification: {
+                ...record(task.verification),
+                lanes: collection([
+                  lane('pr-request', 'ci', {
+                    phase: 'finished',
+                    result: 'passed',
+                    provider_execution: {
+                      ...requestedExecution,
+                      reference: reference(),
+                      omitted_lanes: 1,
+                    },
+                  }),
+                ]),
+              },
+            },
+            snapshot.tasks[1]!,
+          ],
+        })}
+      />,
+    );
+    await screen.findAllByRole('heading', { name: 'PR and beta execution' });
+    expect(view.container.querySelectorAll('.provider-stages .verification-lane')).toHaveLength(4);
+    expect(
+      screen.getByText('1 provider lanes omitted; execution assessment is incomplete.'),
+    ).toBeTruthy();
+    expect(screen.queryByText('Awaiting a current provider observation')).toBeNull();
+  });
+  it('retains stale lane captures and exposes older failures without opening history', async () => {
+    window.history.replaceState(null, '', '#task/A');
+    const snapshot = fixture(),
+      task = snapshot.tasks[0]!;
+    const stage = requestedExecution.stages[0]!;
+    const failedEarlier = { ...stage.history[0]!, run_attempt: 2, reported_outcome: 'failure' };
+    const provider = {
+      ...deliveredExecution,
+      reference: reference(),
+      stages: deliveredExecution.stages.map((item, index) =>
+        index
+          ? item
+          : {
+              ...item,
+              history: [failedEarlier, ...item.history],
+              history_total: 2,
+              history_shown: 2,
+            },
+      ),
+    };
+    const view = render(
+      <App
+        loader={async () => ({
+          ...snapshot,
+          tasks: [
+            {
+              ...task,
+              status: 'done',
+              provider_execution: provider,
+              verification: {
+                ...record(task.verification),
+                lanes: collection([
+                  lane('pr-request', 'ci', {
+                    applicability: 'stale',
+                    provider_execution: {
+                      ...requestedExecution,
+                      reference: reference(),
+                      applicability: 'stale',
+                    },
+                  }),
+                ]),
+              },
+            },
+            snapshot.tasks[1]!,
+          ],
+        })}
+      />,
+    );
+    await screen.findAllByRole('heading', { name: 'PR and beta execution' });
+    expect(view.container.querySelectorAll('.provider-stages .verification-lane')).toHaveLength(6);
+    const history = Array.from(view.container.querySelectorAll('.provider-stages summary')).find(
+      (summary) => summary.textContent?.includes('1 failure'),
+    );
+    expect(history).toBeTruthy();
+    expect(history!.closest('details')?.open).toBe(false);
   });
   it('requires current candidate factors and preserved zero totals, never authorization', () => {
     const snapshot = fixture();
