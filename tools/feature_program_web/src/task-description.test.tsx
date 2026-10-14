@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { TaskDescription } from './task-description';
+import { TaskDescription, taskDescriptionParts } from './task-description';
 
 describe('authored task description', () => {
   it('renders readable headings, paragraphs, lists and inline code in authored order', () => {
@@ -38,5 +38,45 @@ describe('authored task description', () => {
     expect(container.textContent).toContain('<img src=x onerror=alert(1)>');
     expect(container.querySelector('img, a, script')).toBeNull();
     expect(container.querySelector('code')?.textContent).toBe('javascript:alert(1)');
+  });
+});
+
+describe('explicit completion-criteria boundary', () => {
+  it.each(['Acceptance criteria:', '완료 기준:', '## Acceptance criteria'])(
+    'separates only the standalone %s section without rewriting authored lists',
+    (heading) => {
+      const description = '- Keep `src/retain.ts`\n- Preserve authored method\n\n';
+      const criteria = '\n3. First exact criterion\n7. Second exact criterion\n';
+      const parts = taskDescriptionParts(description + heading + '\n' + criteria);
+      expect(parts.description).toBe(description.slice(0, -1));
+      expect(parts.criteria).toBe(criteria);
+      expect(parts.criteriaItems).toEqual(['First exact criterion', 'Second exact criterion']);
+    },
+  );
+  it.each([
+    'Purpose mentions Acceptance criteria: in a sentence.\n\nUnique method.',
+    'Inline `Acceptance criteria:` remains authored content.',
+    '```text\nAcceptance criteria:\n1. Literal code criterion\n```\n\nUseful method.',
+    '~~~text\n완료 기준:\n1. Literal code criterion\n~~~',
+    '```text\nAcceptance criteria:\n1. Unclosed fenced literal',
+    'Keep unique prose.\n\nAcceptance criteria:',
+  ])(
+    'keeps missing, inline, fenced and empty-boundary text entirely in the description: %s',
+    (text) => {
+      expect(taskDescriptionParts(text)).toEqual({
+        description: text,
+        criteria: undefined,
+        criteriaItems: undefined,
+      });
+    },
+  );
+  it('ignores a fenced lookalike before the real outside boundary and retains free-prose criteria', () => {
+    const description = '```text\nAcceptance criteria:\n- Literal record\n```\n\nUseful method.\n';
+    const parts = taskDescriptionParts(
+      description + '완료 기준:\n\nKeep this authored paragraph.\n\n3. Keep this ordered item.',
+    );
+    expect(parts.description).toBe(description.slice(0, -1));
+    expect(parts.criteria).toBe('\nKeep this authored paragraph.\n\n3. Keep this ordered item.');
+    expect(parts.criteriaItems).toBeUndefined();
   });
 });

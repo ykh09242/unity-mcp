@@ -526,8 +526,7 @@ progress::-moz-progress-bar {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.expected-result-summary .prose,
-.task-source-context .prose {
+.expected-result-summary .prose {
   word-break: keep-all;
 }
 .prose-list {
@@ -2067,10 +2066,12 @@ select {
 .navigation-search-disclosure > summary {
   display: none;
 }
-.expected-result-summary {
+.expected-result-summary,
+.task-description-content {
   margin-block-start: 14px;
 }
-.expected-result-summary h3 {
+.expected-result-summary h3,
+.task-description-content h3 {
   color: var(--muted);
   font-size: 12px;
   font-weight: 400;

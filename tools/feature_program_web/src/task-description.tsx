@@ -1,5 +1,45 @@
 import type { ReactNode } from 'react';
 
+/** Separate only an explicit authored criteria heading outside fenced literals. */
+export function taskDescriptionParts(text: string) {
+  const lines = text.split(/\r?\n/u);
+  let fence: { marker: string; length: number } | undefined;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] ?? '';
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+    if (fence) {
+      if (
+        marker &&
+        marker[1]?.[0] === fence.marker &&
+        marker[1].length >= fence.length &&
+        !marker[2]?.trim()
+      )
+        fence = undefined;
+      continue;
+    }
+    if (marker?.[1]) {
+      fence = { marker: marker[1][0] ?? '', length: marker[1].length };
+      continue;
+    }
+    if (!/^\s*(?:#{1,6}\s+)?(?:Acceptance criteria|완료 기준)\s*:?\s*$/iu.test(line)) continue;
+    const criteria = lines.slice(index + 1).join('\n');
+    if (!criteria.trim()) continue;
+    const entries = criteria
+      .split(/\r?\n/u)
+      .filter((entry) => entry.trim())
+      .map((entry) => /^\s*(?:\d+\.|[-*+])\s+(.+)$/u.exec(entry));
+    return {
+      description: lines.slice(0, index).join('\n'),
+      criteria,
+      // Exact list equivalence only; free prose remains untouched and is never inferred as criteria.
+      criteriaItems: entries.every((entry) => entry !== null)
+        ? entries.map((entry) => entry?.[1] ?? '')
+        : undefined,
+    };
+  }
+  return { description: text, criteria: undefined, criteriaItems: undefined };
+}
+
 function Inline({ text }: { readonly text: string }) {
   const nodes: ReactNode[] = [];
   const pattern = /`([^`\n]+)`/gu;

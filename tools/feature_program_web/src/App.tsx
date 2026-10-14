@@ -1,7 +1,7 @@
-import { TaskDescription } from './task-description';
+import { TaskDescription, taskDescriptionParts } from './task-description';
 import { CriterionCoverage, ProgramAttention } from './overview-context';
 import { LanguageProvider, language, useI18n } from './i18n';
-import { originalValue, presentSnapshot, taskBody } from './presentation';
+import { presentSnapshot, taskBody } from './presentation';
 import { PresentationProvider, usePresentation } from './presentation-ui';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -827,7 +827,6 @@ function TaskDetail({
 }) {
   const i18n = useI18n();
   const presentation = usePresentation();
-  const [contextOpen, setContextOpen] = useState(false);
   const returnClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
     if (onReturn && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
       event.preventDefault();
@@ -856,37 +855,23 @@ function TaskDetail({
   const assignment = record(attempt.assignment);
   const assignedActorId = string(assignment.actor_id) || string(attempt.owner);
   const actor = snapshotIndex(snapshot).actors.get(assignedActorId) || {};
-  const source = record(task.source);
-  const translatedBody = source.text !== originalValue(source).text;
-  const expectedResult =
-    task.expected_result ||
-    (translatedBody
-      ? taskBody(task)
-          .trim()
-          .split(/\n\s*\n/u)[0]
-      : /^- Goal and expected result: (.+)$/m.exec(string(source.text))?.[1] || task.planning_note);
-  const contextBlocks = [
-    { label: 'Expected result', value: task.expected_result },
-    { label: 'Acceptance criteria', value: task.acceptance_criteria },
-    { label: 'Task description', value: taskBody(task) },
-  ].filter(
-    ({ value }, index, blocks) =>
-      value !== undefined &&
-      value !== null &&
-      value !== '' &&
-      (!Array.isArray(value) || value.length > 0) &&
-      !blocks.slice(0, index).some((previous) => semanticValueEqual(previous.value, value)),
-  );
-  const summaryRepeatedInContext = contextBlocks.some(
-    ({ value }) =>
-      semanticValueEqual(value, expectedResult) ||
-      (typeof value === 'string' &&
-        typeof expectedResult === 'string' &&
-        value
-          .trim()
-          .split(/\n\s*\n/u)
-          .includes(expectedResult.trim())),
-  );
+  const description = taskDescriptionParts(taskBody(task));
+  const expectedResult = task.expected_result;
+  const expectedRepeated =
+    typeof expectedResult === 'string' &&
+    description.description
+      .trim()
+      .split(/\n\s*\n/u)
+      .some((paragraph) => paragraph.trim() === expectedResult.trim());
+  const criteria = task.acceptance_criteria;
+  const distinctCriteria =
+    criteria !== undefined &&
+    criteria !== null &&
+    criteria !== '' &&
+    (!Array.isArray(criteria) || criteria.length > 0) &&
+    !semanticValueEqual(criteria, description.criteria?.trim()) &&
+    !semanticValueEqual(criteria, description.criteriaItems) &&
+    !semanticValueEqual(criteria, description.description.trim());
   const handoffs = records(snapshot.handoffs).filter(
     (item) => !item.task_id || item.task_id === task.id,
   );
@@ -1004,32 +989,26 @@ function TaskDetail({
                   <dd>{i18n.display(task.next_action)}</dd>
                 </div>
               </dl>
-              <div
-                className="expected-result-summary"
-                hidden={contextOpen && summaryRepeatedInContext}
-              >
-                <h3>
-                  {i18n.t(
-                    translatedBody && !task.expected_result
-                      ? 'Task description'
-                      : 'Expected result',
-                  )}
-                </h3>
-                {translatedBody && !task.expected_result && typeof expectedResult === 'string' ? (
-                  <TaskDescription text={expectedResult} />
+              <div className="task-description-content">
+                <h3>{i18n.t('Task description')}</h3>
+                {description.description.trim() ? (
+                  <TaskDescription text={description.description} />
                 ) : (
-                  <Prose
-                    value={expectedResult}
-                    fallback="Read the task description below for purpose and method."
-                  />
+                  <Prose />
                 )}
               </div>
+              {expectedResult !== undefined &&
+                expectedResult !== null &&
+                expectedResult !== '' &&
+                !expectedRepeated && (
+                  <div className="expected-result-summary">
+                    <h3>{i18n.t('Expected result')}</h3>
+                    <Prose value={expectedResult} />
+                  </div>
+                )}
               <details className="expected-result">
                 <summary>{i18n.t('Planning and metadata')}</summary>
-                <Prose
-                  value={task.planning_note}
-                  fallback="Read the task description below for purpose and method."
-                />
+                <Prose value={task.planning_note} />
                 <Fields
                   values={[
                     [
@@ -1049,27 +1028,15 @@ function TaskDetail({
               </details>
             </Section>
             <ReviewSummary snapshot={snapshot} task={task} />
-            <Section title={i18n.t('Requirements')}>
-              <details
-                className="task-source-context"
-                onToggle={(event) => {
-                  if (event.target === event.currentTarget)
-                    setContextOpen(event.currentTarget.open);
-                }}
-              >
-                <summary>{i18n.t('Full task description')}</summary>
-                {contextBlocks.map(({ label, value }) => (
-                  <div key={label}>
-                    <h4>{i18n.t(label)}</h4>
-                    {label === 'Task description' && typeof value === 'string' ? (
-                      <TaskDescription text={value} />
-                    ) : (
-                      <Prose value={value} />
-                    )}
-                  </div>
-                ))}
-              </details>
-            </Section>
+            {(description.criteria || distinctCriteria) && (
+              <div className="content-section">
+                <details className="task-acceptance-criteria">
+                  <summary>{i18n.t('Acceptance criteria')}</summary>
+                  {description.criteria && <TaskDescription text={description.criteria} />}
+                  {distinctCriteria && <Prose value={criteria} />}
+                </details>
+              </div>
+            )}
           </div>
           <div className="task-context">
             <ReadinessContext snapshot={snapshot} task={task} />
