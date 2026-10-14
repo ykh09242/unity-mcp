@@ -554,12 +554,20 @@ describe('compact navigation accessibility', () => {
     expect(window.location.hash).toContain('owner=__unassigned');
     expect(screen.getByLabelText('Owner')).toHaveProperty('value', '__unassigned');
   });
-  it('shows exact authored expected result before closed source and planning disclosures', async () => {
+  it('shows the complete authored expected result once before closed planning disclosures', async () => {
     window.history.replaceState(null, '', '#task/T111?scope=all');
     render(<App loader={async () => fixture()} />);
     await screen.findByRole('heading', { name: 'Task 111' });
-    const result = screen.getByText('Preserve exact authored context.', { exact: true });
+    const wording = 'Goal and expected result: Preserve exact authored context.';
+    const result = screen.getByText(wording, { exact: true });
+    expect(screen.getAllByText(wording, { exact: true })).toHaveLength(1);
+    expect(result.closest('.task-description-content')).not.toBeNull();
     expect(result.closest('details')).toBeNull();
+    expect(
+      screen
+        .getByText('Source reference: original.md', { exact: true })
+        .closest('.task-description-content'),
+    ).not.toBeNull();
     expect(screen.getByText('Inspect original evidence', { exact: true })).toBeDefined();
     expect(document.querySelector('.expected-result')?.hasAttribute('open')).toBe(false);
   });

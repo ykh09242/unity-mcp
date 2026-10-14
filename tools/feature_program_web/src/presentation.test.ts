@@ -614,3 +614,31 @@ describe('source-bound presentation', () => {
     expect(view.tasks[0]?.id).toBe('T1');
   });
 });
+
+describe('task body source-heading compatibility', () => {
+  it.each([
+    [
+      '### T1. Canonical title\n- Goal: Keep first obligation.\n- Method: Keep following obligation.',
+      '- Goal: Keep first obligation.\n- Method: Keep following obligation.',
+    ],
+    [
+      '- Goal and expected result: Preserve exact authored context.\n- Source reference: original.md',
+      '- Goal and expected result: Preserve exact authored context.\n- Source reference: original.md',
+    ],
+    [
+      'Plain first paragraph.\n\nUnique following method.',
+      'Plain first paragraph.\n\nUnique following method.',
+    ],
+    ['### T2. Different task\nKeep every word.', '### T2. Different task\nKeep every word.'],
+    ['### Method notes\nKeep every word.', '### Method notes\nKeep every word.'],
+    ['### T1. Canonical title', ''],
+  ])(
+    'removes only this task canonical heading and otherwise retains the exact source: %s',
+    (text, expected) => {
+      const task = { id: 'T1', title: 'Visible title', status: 'active', source: { text } };
+      const before = JSON.stringify(task);
+      expect(taskBody(task)).toBe(expected);
+      expect(JSON.stringify(task)).toBe(before);
+    },
+  );
+});

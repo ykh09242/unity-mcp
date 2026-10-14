@@ -525,5 +525,9 @@ export function taskLabel(snapshot: Snapshot, id: string): string {
 
 export function taskBody(task: Task): string {
   const source = text(object(task.source).text);
-  return source.slice(source.indexOf('\n') + 1);
+  const lineEnd = source.indexOf('\n');
+  const firstLine = lineEnd < 0 ? source : source.slice(0, lineEnd);
+  const heading = /^### ([^\s]+)\.\s+\S/u.exec(firstLine);
+  // Only the canonical heading for this task is metadata; legacy first lines are authored content.
+  return heading?.[1] === task.id ? (lineEnd < 0 ? '' : source.slice(lineEnd + 1)) : source;
 }
