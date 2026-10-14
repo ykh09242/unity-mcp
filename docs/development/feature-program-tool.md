@@ -814,6 +814,23 @@ binding and use `verification-observation --capture JSON --request JSON` against
 sealed capture; do not invoke the process again just to package its result. Capture JSON
 there is a `{path, sha256}` reference file, not an edited run result.
 
+### Inspect one pending capture
+
+`snapshot --execution-capture JSON` and the web server's `--execution-capture JSON`
+select one program-relative sealed capture file produced by `verification-run`, for example
+`evidence/EXAMPLE-1/attempt-1/run-1/capture.json`. Pass the actual capture JSON here;
+`verification-observation --capture JSON` instead takes a `{path, sha256}` reference file.
+The selection freezes that exact file reference through the bounded reader. It does not
+scan evidence, create a global store, publish a record or run a command.
+
+The view can show captured execution while canonical publication is pending. Current
+request/task/attempt, immutable origin and referenced inputs still undergo the producer
+and applicability checks. Invalid hashes or malformed origins reject the explicit
+selection; valid stale or unavailable captures stay safe and nonpassing. The selection
+does not change canonical lane phase/result or accept required checks. A capture already
+represented by a canonical record remains recorded rather than becoming a second pending
+execution. Use the ordinary record flow to publish actual evidence after inspecting it.
+
 ### Preflight and resume records
 
 `closure-prepare` input selects `kind: plan`, `attachments`, `delivery`, `completion`,

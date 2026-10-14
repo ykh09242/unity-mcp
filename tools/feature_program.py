@@ -2476,8 +2476,16 @@ def _delivery_history_projection(state: Record, revision: str) -> list[Record]:
     return histories
 
 
-def read_snapshot(repo: Path, program_dir: Path, *, closure_plan: str | None = None) -> Record:
-    return _read_projection(repo, program_dir, closure_plan=closure_plan)
+def read_snapshot(
+    repo: Path,
+    program_dir: Path,
+    *,
+    closure_plan: str | None = None,
+    execution_capture: str | None = None,
+) -> Record:
+    return _read_projection(
+        repo, program_dir, closure_plan=closure_plan, execution_capture=execution_capture
+    )
 
 
 def read_brief(repo: Path, program_dir: Path, task_id: str | None = None) -> Record:
@@ -2491,12 +2499,13 @@ def _read_projection(
     brief_only: bool = False,
     task_id: str | None = None,
     closure_plan: str | None = None,
+    execution_capture: str | None = None,
 ) -> Record:
     observations = _SourceObservations()
     token = _source_observations.set(observations)
     try:
         return _capture_projection(
-            repo, program_dir, observations, brief_only, task_id, closure_plan
+            repo, program_dir, observations, brief_only, task_id, closure_plan, execution_capture
         )
     finally:
         _source_observations.reset(token)
@@ -2509,6 +2518,7 @@ def _capture_projection(
     brief_only: bool,
     task_id: str | None,
     closure_plan: str | None = None,
+    execution_capture: str | None = None,
 ) -> Record:
     """Return bounded recorded state without locks or writes; selected plans inspect local Git.
 
@@ -2662,7 +2672,18 @@ def _capture_projection(
     except OSError:
         warnings.append("Derived views unavailable; recorded registry remains readable.")
     result_tasks: list[Json] = []
-    full_verification = verification.projection(program, state, evidence_budget, limit=None)
+    if execution_capture is None:
+        full_verification = verification.projection(program, state, evidence_budget, limit=None)
+    else:
+        capture_name = safe_relative(execution_capture)
+        raw_capture = evidence_budget.read(program.path(capture_name), 8 * 1024 * 1024)
+        full_verification = verification.projection(
+            program,
+            state,
+            evidence_budget,
+            limit=None,
+            selected_capture_ref={"path": capture_name, "sha256": sha(raw_capture)},
+        )
     verification_view = verification.bound_projection(full_verification)
     delivery_histories = _delivery_history_projection(state, sha(initial))
     for task_index, task in enumerate(tasks):
@@ -2871,7 +2892,15 @@ def _capture_projection(
             "checks": deepcopy(receipt.get("checks", [])),
         }
     full_verification["task_facts"] = task_facts
-    result["review_queue"] = flow_module("queue").project(state, full_verification)
+    # Queue assessment needs full inputs; ordinary detached row display omits only
+    # the new raw capture/manifest facts, as the bounded verification view does.
+    queue_view = deepcopy(flow_module("queue").project(state, full_verification))
+    for row_value in sequence(record(queue_view["rows"], "queue rows")["items"], "queue items"):
+        context = record(row_value, "queue row").get("context")
+        if isinstance(context, dict):
+            context.pop("input_capture", None)
+            context.pop("input_manifest", None)
+    result["review_queue"] = queue_view
     result["closure"] = flow_module("closure").readiness(
         program, state, prevalidated=True, verification_facts=full_verification
     )
@@ -3435,6 +3464,9 @@ def parser() -> argparse.ArgumentParser:
     snapshot.add_argument(
         "--closure-plan", help="Explicit program-relative immutable closure plan/result JSON"
     )
+    snapshot.add_argument(
+        "--execution-capture", help="Explicit program-relative sealed actual execution capture JSON"
+    )
     init = commands.add_parser("init")
     init.add_argument("--report")
     init.add_argument("--planning")
@@ -3569,7 +3601,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "snapshot":
             print(
                 canonical(
-                    read_snapshot(repo, program.directory, closure_plan=args.closure_plan)
+                    read_snapshot(
+                        repo,
+                        program.directory,
+                        closure_plan=args.closure_plan,
+                        execution_capture=args.execution_capture,
+                    )
                 ).decode(),
                 end="",
             )

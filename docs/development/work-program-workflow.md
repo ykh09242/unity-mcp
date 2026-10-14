@@ -210,14 +210,16 @@ Keep directory membership, missing paths and raw bytes exact. A lock file does n
 the installed environment, and a matching owned scope does not prove the whole checked input.
 
 Use the explicit `verification-run` invocation for one actual command, then prepare records
-from its
-immutable result. Supply live argv, working directory, meaningful runtime/environment and
+from its immutable result. Supply live argv, working directory, meaningful runtime/environment and
 limits. Stored method, plan and canonical command text remain inert. Capture before/after
 inputs, both streams, selected artifacts, actual exit, interruption and source drift.
 Timeout, unsupported supervision, unresolved descendant cleanup, stream overflow, missing
 artifacts and incomplete finalization remain visible; exit zero alone cannot establish a
 passing behavioral check. Do not hold a canonical mutation lock while the child executes.
 Manual acceptance and actual native/provider observations remain distinct evidence.
+To inspect captured execution before publication, explicitly select its sealed capture JSON
+with snapshot or server `--execution-capture`. This read changes no canonical phase/result;
+record actual evidence separately through the ordinary guarded flow.
 
 For explicitly compatible targets, attach the same original capture byte-for-byte inside
 each current task/attempt evidence directory. Retain its original executor, invocation,

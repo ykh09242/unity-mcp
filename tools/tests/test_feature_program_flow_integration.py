@@ -9,6 +9,7 @@ import pytest
 
 from tools.tests.test_feature_program import HEAD, fp, make_small_program
 from tools.tests.test_feature_program_phases import gate  # noqa: F401
+from tools.tests.test_feature_program_web import request as http_request, running
 
 
 @pytest.fixture
@@ -349,6 +350,50 @@ def test_actual_cli_runner_executes_once_unlocked_and_publishes_only_explicitly(
     assert fixture.program.path(
         "evidence/S01/attempt-1/actual-run/stdout.bin"
     ).read_bytes() == bytes([0, 255, 10])
+    pending = fp.read_snapshot(
+        fixture.program.repo,
+        fixture.program.directory,
+        execution_capture=result["capture_ref"]["path"],
+    )
+    pending_lane = pending["tasks"][0]["verification"]["lanes"]["items"][0]
+    assert pending_lane["phase"] == "requested"
+    assert pending_lane["result"] == "pending"
+    assert pending_lane["execution_summary"]["publication"]["status"] == "pending"
+    assert pending_lane["execution_summary"]["process_result"] == "exited"
+    assert pending_lane["execution_summary"]["reported_check_result"] == "passed"
+    assert fixture.program.path("backlog.json").read_bytes() == before
+    assert (fixture.program.repo / "counter.bin").read_bytes() == b"1"
+    for task_projection in pending["verification"]["tasks"].values():
+        for projected_lane in task_projection["lanes"]["items"]:
+            assert "input_capture" not in projected_lane["context"]
+            assert "input_manifest" not in projected_lane["context"]
+    for row in pending["review_queue"]["rows"]["items"]:
+        if row.get("context") is not None:
+            assert "input_capture" not in row["context"]
+            assert "input_manifest" not in row["context"]
+    assert "input_capture" not in pending_lane["context"]
+    assert "input_manifest" not in pending_lane["context"]
+    assert code not in fp.canonical(pending).decode()
+    packet = output(fixture, capsys, "verification-packet", "S01")
+    packet_context = packet["verification"]["lanes"]["items"][0]["context"]
+    assert "input_capture" in packet_context
+    assert "input_manifest" in packet_context
+    # Selected read-only server snapshots use the same actual projection and never replay argv.
+    server = fp.flow_module("web").create_server(
+        fixture.program.repo,
+        fixture.program.directory,
+        port=0,
+        responses=False,
+        execution_capture=result["capture_ref"]["path"],
+    )
+    with running(server):
+        status, _headers, body = http_request(server)
+        assert status == 200
+        served = json.loads(body)
+        served_lane = served["tasks"][0]["verification"]["lanes"]["items"][0]
+        assert served_lane["execution_summary"]["publication"]["status"] == "pending"
+        assert code not in body.decode()
+    assert (fixture.program.repo / "counter.bin").read_bytes() == b"1"
     observation_name = fixture.write(
         "evidence/_verification/attempt-1/actual-observation.json", result["observation"]
     )
@@ -357,6 +402,34 @@ def test_actual_cli_runner_executes_once_unlocked_and_publishes_only_explicitly(
     lane = snapshot["tasks"][0]["verification"]["lanes"]["items"][0]
     assert lane["execution_summary"]["publication"]["status"] == "recorded"
     assert lane["input_summary"]["status"] == "unchanged"
+    assert (fixture.program.repo / "counter.bin").read_bytes() == b"1"
+    recorded_selected = output(
+        fixture, capsys, "snapshot", "--execution-capture", result["capture_ref"]["path"]
+    )
+    assert (
+        recorded_selected["tasks"][0]["verification"]["lanes"]["items"][0]["execution_summary"][
+            "publication"
+        ]["status"]
+        == "recorded"
+    )
+    assert (fixture.program.repo / "counter.bin").read_bytes() == b"1"
+    (fixture.program.repo / "src/S01.py").write_bytes(b"changed_after_execution = True\n")
+    stale_capture = fp.read_snapshot(
+        fixture.program.repo,
+        fixture.program.directory,
+        execution_capture=result["capture_ref"]["path"],
+    )
+    assert stale_capture["verification"]["selected_execution"]["currentness"] == "stale"
+    assert stale_capture["verification"]["selected_execution"]["current"] is False
+    assert stale_capture["tasks"][0]["verification"]["lanes"]["items"][0]["result"] == "passed"
+    assert (fixture.program.repo / "counter.bin").read_bytes() == b"1"
+    malformed = deepcopy(result["capture"])
+    malformed["producer"] = "not_the_execution_producer"
+    malformed_path = fixture.write("evidence/S01/attempt-1/malformed/capture.json", malformed)
+    with pytest.raises(fp.ProgramError):
+        fp.read_snapshot(
+            fixture.program.repo, fixture.program.directory, execution_capture=malformed_path
+        )
     assert (fixture.program.repo / "counter.bin").read_bytes() == b"1"
 
 
