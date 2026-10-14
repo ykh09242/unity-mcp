@@ -129,7 +129,8 @@ describe('task sections without stacked context', () => {
   it('supports roving keyboard navigation and keeps inactive panels out of tab traversal', async () => {
     await hash('#task/T1?full=1');
     render(<App loader={async () => fixture()} />);
-    await screen.findByRole('heading', { name: 'Primary task' });
+    const heading = await screen.findByRole('heading', { name: 'Primary task' });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
     const user = userEvent.setup();
     const info = screen.getByRole('tab', { name: 'Task information' });
     const related = screen.getByRole('tab', { name: 'Related work' });
