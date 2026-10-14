@@ -2635,3 +2635,111 @@ select {
 .task-detail-panel > .content-section:has(> details) > h3 {
   display: none;
 }
+
+.coordination-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
+  margin-block: var(--s4);
+  font-size: 12px;
+}
+.coordination-summary a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 40px;
+}
+.task-coordination {
+  display: block;
+  color: var(--warning);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+.task-verification-action {
+  display: block;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.verification-context {
+  margin-block: var(--s6);
+}
+.verification-context h3,
+.verification-context h4,
+.verification-responsibilities h3 {
+  margin-block-end: var(--s2);
+}
+.verification-lanes,
+.verification-responsibilities > ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.verification-lane,
+.verification-responsibilities > ul > li {
+  padding-block: var(--s3);
+  border-block-end: 1px solid var(--line);
+}
+.lane-heading,
+.lane-action,
+.lane-foot,
+.provider-checks > li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s3);
+}
+.lane-action,
+.lane-foot,
+.lane-blocker,
+.lane-obligations {
+  margin-block-start: var(--s2);
+}
+.lane-heading strong {
+  flex: 1 1 9rem;
+}
+.lane-action,
+.lane-foot,
+.lane-details,
+.provider-checks {
+  font-size: 12px;
+}
+.lane-warning {
+  color: var(--warning);
+}
+.observed-wait {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  min-width: 8rem;
+  font-variant-numeric: tabular-nums;
+}
+.lane-details {
+  margin-block-start: var(--s2);
+}
+.current-findings,
+.provider-stages {
+  margin-block-start: var(--s4);
+}
+.current-delivery-glance {
+  margin-block-start: var(--s4);
+}
+.provider-checks {
+  padding: 0;
+  list-style: none;
+  margin-block: var(--s2);
+}
+.verification-responsibilities {
+  margin-block: var(--s4);
+}
+.verification-responsibilities > ul > li {
+  display: grid;
+  gap: var(--s1);
+}
+.verification-context,
+.verification-responsibilities {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}

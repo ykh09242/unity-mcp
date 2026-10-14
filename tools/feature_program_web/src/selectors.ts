@@ -1,6 +1,7 @@
 import { display, items, ownerOf, record, records, string } from './model';
 import type { Json, JsonRecord, Snapshot, Task } from './model';
 import { actorLabel, originalValue } from './presentation';
+import { executionPriority, matchesCoordination, verificationContext } from './throughput';
 
 export type SnapshotIndex = {
   readonly tasks: ReadonlyMap<string, Task>;
@@ -78,6 +79,7 @@ export function snapshotIndex(snapshot: Snapshot): SnapshotIndex {
         task.source,
         task.notes,
         task.planning_note,
+        task.next_action,
         originalValue(task).title,
         originalValue(task).source,
         originalValue(task).notes,
@@ -155,6 +157,7 @@ export type TaskFilters = {
   readonly owner: string;
   readonly workstream: string;
   readonly sort: string;
+  readonly coordination?: string;
 };
 export function selectTasks(snapshot: Snapshot, filters: TaskFilters): readonly Task[] {
   const index = snapshotIndex(snapshot);
@@ -166,9 +169,36 @@ export function selectTasks(snapshot: Snapshot, filters: TaskFilters): readonly 
       (!members || members.has(task.id)) &&
       (!filters.workstream || task.workstream === filters.workstream) &&
       (!filters.owner ||
-        (filters.owner === '__unassigned' ? !ownerOf(task) : ownerOf(task) === filters.owner)) &&
+        (filters.owner === '__unassigned'
+          ? !ownerOf(task)
+          : ownerOf(task) === filters.owner ||
+            (['verification', 'waiting'].includes(filters.coordination || '') &&
+              verificationContext(snapshot, task)?.lanes.items.some(
+                (lane) =>
+                  lane.verifier_id === filters.owner ||
+                  lane.resolver_id === filters.owner ||
+                  record(lane.blocker).resolver_id === filters.owner,
+              )))) &&
+      matchesCoordination(snapshot, task, filters.coordination) &&
       (!query || index.searchText.get(task.id)?.includes(query)),
   );
+  if (filters.sort === 'priority') {
+    const positions = new Map(snapshot.tasks.map((task, index) => [task.id, index]));
+    const recorded =
+      snapshot.execution_priorities !== undefined && snapshot.execution_priorities !== null;
+    return filtered.sort(
+      (left, right) =>
+        (recorded ? executionPriority(snapshot, left) - executionPriority(snapshot, right) : 0) ||
+        Number(left.phase || 0) - Number(right.phase || 0) ||
+        (recorded
+          ? left.id < right.id
+            ? -1
+            : left.id > right.id
+              ? 1
+              : 0
+          : positions.get(left.id)! - positions.get(right.id)!),
+    );
+  }
   return filtered.sort(
     (left, right) =>
       display(
