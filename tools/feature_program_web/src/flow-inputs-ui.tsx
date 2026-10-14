@@ -1,4 +1,5 @@
 import type { Json } from './model';
+import { flowReasonLabels } from './flow-copy';
 import { useI18n } from './i18n';
 import { inputSummary, inputGroupLabels } from './flow-inputs';
 import type { InputCounts } from './flow-inputs';
@@ -44,7 +45,11 @@ export function CheckInputs({ value }: { readonly value: Json | undefined }) {
       </div>
       <Counts counts={summary.counts} />
       {summary.nextAction && <p className="flow-next-action">{i18n.t(summary.nextAction)}</p>}
-      {summary.reasons[0] && <p className="lane-warning">{i18n.warning(summary.reasons[0])}</p>}
+      {summary.reasons[0] && (
+        <p className="lane-warning">
+          {i18n.warning(flowReasonLabels[summary.reasons[0]] || summary.reasons[0])}
+        </p>
+      )}
       <details className="lane-details">
         <summary>{i18n.t('Input details')}</summary>
         <ul className="flow-details-list">
@@ -59,7 +64,7 @@ export function CheckInputs({ value }: { readonly value: Json | undefined }) {
         {summary.reasons.length > 1 && (
           <ul>
             {summary.reasons.slice(1).map((reason, index) => (
-              <li key={index}>{i18n.warning(reason)}</li>
+              <li key={index}>{i18n.warning(flowReasonLabels[reason] || reason)}</li>
             ))}
           </ul>
         )}

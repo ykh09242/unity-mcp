@@ -1391,6 +1391,7 @@ summary {
   .work-stage {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     flex: 1;
   }
   .work-stage.has-preview {
@@ -1410,7 +1411,7 @@ summary {
     flex-direction: column;
     inline-size: 100%;
     flex: 1;
-    overflow: hidden;
+    overflow: clip;
   }
   .work-ledger > :not(.work-stage) {
     flex-shrink: 0;
@@ -1874,6 +1875,20 @@ summary {
 @media (min-width: 1100px) {
   .work-stage.has-preview {
     grid-template-columns: minmax(0, 1.6fr) minmax(340px, 1fr);
+  }
+  .review-queue {
+    display: flex;
+    flex-direction: column;
+    overflow: clip;
+  }
+  .review-queue > :not(.queue-rows) {
+    flex-shrink: 0;
+  }
+  .queue-rows {
+    min-block-size: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    flex: 1;
   }
   .ledger-summary .selection-context {
     flex-basis: auto;

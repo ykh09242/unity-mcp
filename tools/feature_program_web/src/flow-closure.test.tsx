@@ -5,6 +5,9 @@ import { flowFixture, flowReference, flowCollection } from './flow.fixture';
 import type { JsonRecord } from './model';
 import { selectedPlan } from './flow-plan';
 import { SnapshotResponse } from './useSnapshot';
+import { LanguageProvider, PREFERENCE_KEY, translationTools } from './i18n';
+import { ClosureSummary } from './flow-closure-ui';
+import { PlanSummary } from './flow-plan-ui';
 
 const closure = (extra: JsonRecord = {}): JsonRecord => ({
   schema_version: 1,
@@ -67,6 +70,199 @@ const plan = (extra: JsonRecord = {}): JsonRecord => ({
   ...extra,
 });
 describe('flow closure and overview', () => {
+  it.each(['en', 'ko'])(
+    'localizes fixed closure readiness and plan diagnostics while preserving authored limitations in %s',
+    (locale) => {
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      const snapshot = flowFixture({
+        closure: closure({
+          requirements: flowCollection([
+            {
+              kind: 'task_review',
+              task_id: 'A',
+              status: 'required',
+              reason: 'Current required task is not reviewed complete',
+              next_action: 'task_review',
+            },
+            {
+              kind: 'integrated_review',
+              status: 'required',
+              reason:
+                'Fresh independent aggregate review and explicit director decision remain required',
+              next_action: 'integrated_review',
+            },
+            {
+              kind: 'current_verification',
+              task_id: 'A',
+              status: 'required',
+              reason: 'Authored verification limitation',
+              next_action: 'current_verification',
+            },
+            {
+              kind: 'handoff',
+              status: 'required',
+              reason: 'Authored handoff limitation',
+              next_action: 'handoff',
+            },
+          ]),
+          plan: plan({
+            preparation: { status: 'stale' },
+            preflight: { status: 'not_assessed', current: false },
+            publication: { status: 'blocked', stages: flowCollection([]) },
+            reasons: [
+              'Closure source changed',
+              'Canonical closure stage conflicts with host assessment',
+              'Authored closure limitation',
+            ],
+          }),
+        }),
+      });
+      render(
+        <LanguageProvider>
+          <ClosureSummary snapshot={snapshot} taskId="A" />
+        </LanguageProvider>,
+      );
+      for (const label of locale === 'ko'
+        ? [
+            '필수 작업의 검토 완료가 아직 기록되지 않았어요',
+            '최신 독립 통합 검토와 디렉터의 완료 결정이 필요해요',
+            '마무리 계획의 소스가 변경됐어요',
+            '현재 마무리 기록이 도구의 확인 결과와 달라요',
+            '현재 검증',
+            '인계',
+          ]
+        : [
+            'Current required task is not reviewed complete',
+            'Fresh independent aggregate review and explicit director decision remain required',
+            'Closure source changed',
+            'Canonical closure stage conflicts with host assessment',
+            'Current verification',
+            'Handoff',
+          ])
+        expect(screen.getByText(label)).toBeTruthy();
+      for (const label of [
+        'Authored verification limitation',
+        'Authored handoff limitation',
+        'Authored closure limitation',
+      ])
+        expect(screen.getByText(label)).toBeTruthy();
+    },
+  );
+  it('has localized exact diagnostic labels for the bounded selected-plan inspection vocabulary', () => {
+    const messages = [
+      'Unsupported closure plan schema',
+      'Closure plan changed',
+      'Closure producer identity changed',
+      'Closure program identity differs',
+      'Closure source changed',
+      'Closure predecessor chain changed',
+      'Invalid stage event position',
+      'Stage event identity changed',
+      'Closure commit order differs',
+      'Canonical closure stage conflicts with host assessment',
+      'Plan preflight provenance incomplete',
+      'Invalid recorded preparation failure',
+      'Failure producer identity changed',
+      'Unsupported closure operation',
+    ];
+    const i18n = translationTools('ko');
+    for (const message of messages) {
+      expect(i18n.warning(message)).not.toBe(message);
+      expect(i18n.warning(message)).toMatch(/[가-힣]/u);
+    }
+    expect(i18n.warning('Unfamiliar authored diagnostic')).toBe('Unfamiliar authored diagnostic');
+  });
+  const operationLabels: readonly (readonly [string, string, string])[] = [
+    ['verification-record', 'Record verification result', '검증 결과 기록'],
+    ['submit', 'Submit task', '작업 제출'],
+    ['complete', 'Record task acceptance', '작업 완료 승인 기록'],
+    ['rework', 'Record rework', '재작업 기록'],
+    ['delivery', 'Record delivery observation', '전달 결과 기록'],
+    ['objective-complete', 'Record objective acceptance', '목표 완료 승인 기록'],
+    ['note', 'Record progress', '진행 기록'],
+    ['checkpoint', 'Record checkpoint', '진행 상황 기록'],
+    ['resume', 'Record resume', '작업 재개 기록'],
+  ];
+  const operationStages = (operations: readonly string[]) =>
+    flowCollection(
+      operations.map((operation, index) => ({
+        id: 'stage-' + index,
+        operation,
+        task_id: index === 3 ? 'B' : 'A',
+        status: index < 2 ? 'committed' : 'not_started',
+        next_actor_id: 'worker',
+        next_action: index < 2 ? 'inspect_postconditions' : 'publish_remaining_records',
+        view_recovery_required: false,
+      })),
+    );
+  it.each(['en', 'ko'])(
+    'localizes the actual submit/complete/delivery/note partial plan in %s',
+    (locale) => {
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      const view = render(
+        <LanguageProvider>
+          <PlanSummary
+            snapshot={flowFixture({
+              closure: closure({
+                plan: plan({
+                  publication: {
+                    status: 'partial',
+                    stages: operationStages(['submit', 'complete', 'delivery', 'note']),
+                  },
+                }),
+              }),
+            })}
+          />
+        </LanguageProvider>,
+      );
+      const labels = Array.from(
+        view.container.querySelectorAll('.flow-details-list li > strong'),
+      ).map((node) => node.textContent);
+      expect(labels).toEqual(
+        locale === 'ko'
+          ? ['작업 제출', '작업 완료 승인 기록', '전달 결과 기록', '진행 기록']
+          : [
+              'Submit task',
+              'Record task acceptance',
+              'Record delivery observation',
+              'Record progress',
+            ],
+      );
+      expect(view.container.querySelectorAll('.flow-details-list li')).toHaveLength(4);
+    },
+  );
+  it.each(['en', 'ko'])(
+    'labels the bounded host-approved operation set and preserves unfamiliar codes in %s',
+    (locale) => {
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      const view = render(
+        <LanguageProvider>
+          <PlanSummary
+            snapshot={flowFixture({
+              closure: closure({
+                plan: plan({
+                  publication: {
+                    status: 'partial',
+                    stages: operationStages([
+                      ...operationLabels.map(([operation]) => operation),
+                      'future-operation',
+                    ]),
+                  },
+                }),
+              }),
+            })}
+          />
+        </LanguageProvider>,
+      );
+      const labels = Array.from(
+        view.container.querySelectorAll('.flow-details-list li > strong'),
+      ).map((node) => node.textContent);
+      expect(labels).toEqual([
+        ...operationLabels.map(([, english, korean]) => (locale === 'ko' ? korean : english)),
+        'future-operation',
+      ]);
+    },
+  );
   it('keeps ordinary unfinished goal completion reminders out of prominent alerts while preserving failures', async () => {
     window.history.replaceState(null, '', '#overview');
     const snapshot = flowFixture();

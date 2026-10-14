@@ -11,6 +11,10 @@ import type { WorkContext } from './navigation';
 
 const requirementLabels: Readonly<Record<string, string>> = {
   task_review: 'Task review',
+  current_verification: 'Current verification',
+  question: 'Questions',
+  handoff: 'Handoff',
+  integrity: 'Data integrity',
   required_checks: 'Required checks',
   delivery: 'Delivery',
   cleanup: 'Cleanup',

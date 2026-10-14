@@ -21,7 +21,7 @@ export function runHistory(value: Json | undefined) {
     rows.push({
       id: string(record(data.publication).observation_id) || string(data.run_id) + ':' + index,
       execution,
-      nextAction: string(data.next_action),
+      nextAction: execution ? execution.nextAction : string(data.next_action),
       reasons: items(data.reasons).map(string).filter(Boolean),
     });
   }

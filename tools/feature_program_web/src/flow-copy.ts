@@ -14,6 +14,9 @@ export const closureActionLabels: Readonly<Record<string, string>> = {
   render: 'Recover derived views',
 };
 export const flowReasonLabels: Readonly<Record<string, string>> = {
+  changed_inputs: 'Verification inputs changed',
+  unknown_inputs: 'Verification input coverage unknown',
+  unavailable_inputs: 'Verification inputs unavailable',
   assignment_unrecorded: 'Verifier not recorded',
   input_incomplete: 'Verification inputs are incomplete',
   recorded_running: 'Execution is recorded as running',
@@ -30,6 +33,9 @@ export const flowReasonLabels: Readonly<Record<string, string>> = {
 };
 export const recordOperationLabels: Readonly<Record<string, string>> = {
   'verification-record': 'Record verification result',
+  submit: 'Submit task',
+  note: 'Record progress',
+  rework: 'Record rework',
   checkpoint: 'Record checkpoint',
   complete: 'Record task acceptance',
   delivery: 'Record delivery observation',

@@ -99,7 +99,11 @@ export function capturedExecution(value: Json | undefined): CapturedExecution | 
     status: string(data.status),
     observationDraft,
     reused: data.reused === true,
-    nextAction: string(data.next_action),
+    nextAction:
+      publication.status === 'recorded' &&
+      data.next_action === 'Inspect captured execution facts before recording verification'
+        ? ''
+        : string(data.next_action),
     reasons: items(data.reasons).map(string).filter(Boolean),
     startedAt: string(data.started_at),
     endedAt: string(data.ended_at),

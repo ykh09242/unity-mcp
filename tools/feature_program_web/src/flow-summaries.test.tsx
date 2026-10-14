@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { CheckInputs } from './flow-inputs-ui';
 import { LocalExecution } from './flow-execution-ui';
+import { RunHistory } from './flow-run-history-ui';
 import { flowFixture, flowInput, flowExecution, flowCollection } from './flow.fixture';
 import { inputSummary } from './flow-inputs';
 import { capturedExecution } from './flow-execution';
@@ -12,6 +13,174 @@ import { SnapshotResponse } from './useSnapshot';
 import { LanguageProvider, PREFERENCE_KEY } from './i18n';
 
 describe('flow verification summaries', () => {
+  it.each(['en', 'ko'])(
+    'uses actual publication facts for the recording instruction in both capture surfaces in %s',
+    (locale) => {
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      const nextAction = 'Inspect captured execution facts before recording verification';
+      const failure = {
+        ...flowExecution,
+        process_result: 'spawn_failed',
+        reported_check_result: 'failed',
+        capture_status: 'incomplete',
+        next_action: nextAction,
+      };
+      const renderCapture = (publication: string) => (
+        <LanguageProvider>
+          <LocalExecution
+            value={{
+              ...failure,
+              publication: { status: publication, observation_id: 'recorded-failure' },
+            }}
+          />
+          <RunHistory
+            value={flowCollection([
+              {
+                ...failure,
+                publication: { status: publication, observation_id: 'recorded-failure' },
+              },
+            ])}
+          />
+        </LanguageProvider>
+      );
+      const view = render(renderCapture('pending'));
+      const instruction =
+        locale === 'ko' ? '수집된 실행 근거를 확인한 뒤 검증 결과를 기록하세요' : nextAction;
+      expect(screen.getAllByText(instruction)).toHaveLength(2);
+      view.rerender(renderCapture('recorded'));
+      expect(screen.queryByText(instruction)).toBeNull();
+      expect(
+        screen.getAllByText(locale === 'ko' ? '근거 기록됨' : 'Evidence recorded'),
+      ).toHaveLength(2);
+      expect(
+        screen.getAllByText(locale === 'ko' ? '근거 수집 미완료' : 'Capture incomplete'),
+      ).toHaveLength(2);
+      expect(view.container.querySelectorAll('.badge')[0]?.textContent).toBe(
+        locale === 'ko' ? '실패' : 'failed',
+      );
+    },
+  );
+  it('retains a different recorded next action and unavailable-history action', () => {
+    render(
+      <>
+        <LocalExecution
+          value={{
+            ...flowExecution,
+            publication: { status: 'recorded' },
+            next_action: 'Resolve the remaining blocker',
+          }}
+        />
+        <RunHistory
+          value={flowCollection([
+            {
+              schema_version: 1,
+              status: 'unavailable',
+              next_action: 'Inspect unavailable capture',
+              reasons: [],
+            },
+          ])}
+        />
+      </>,
+    );
+    expect(screen.getByText('Resolve the remaining blocker')).toBeTruthy();
+    expect(screen.getByText('Inspect unavailable capture')).toBeTruthy();
+  });
+  it.each(['en', 'ko'])(
+    'maps deterministic input actions and reasons while retaining unfamiliar input text in %s',
+    (locale) => {
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      const actions: readonly (readonly [string, string])[] = [
+        ['Inspect unknown inputs', '확인하지 못한 입력을 살펴보세요'],
+        ['Recheck affected checks', '영향받은 검사를 다시 확인하세요'],
+        ['Inspect current task obligations', '현재 작업의 확인 항목을 살펴보세요'],
+        ['Inspect unavailable inputs', '확인할 수 없는 입력을 살펴보세요'],
+      ];
+      const view = render(
+        <LanguageProvider>
+          <CheckInputs
+            value={{
+              ...flowInput,
+              next_action: actions[0]?.[0] || '',
+              reasons: [
+                'changed_inputs',
+                'unknown_inputs',
+                'unavailable_inputs',
+                'Authored input limitation',
+              ],
+            }}
+          />
+        </LanguageProvider>,
+      );
+      for (const [action, translated] of actions) {
+        view.rerender(
+          <LanguageProvider>
+            <CheckInputs
+              value={{
+                ...flowInput,
+                next_action: action,
+                reasons: [
+                  'changed_inputs',
+                  'unknown_inputs',
+                  'unavailable_inputs',
+                  'Authored input limitation',
+                ],
+              }}
+            />
+          </LanguageProvider>,
+        );
+        expect(screen.getByText(locale === 'ko' ? translated : action)).toBeTruthy();
+      }
+      for (const label of locale === 'ko'
+        ? [
+            '검증 입력이 변경됐어요',
+            '전체 검증 입력을 확인할 수 없어요',
+            '검증 입력을 확인할 수 없어요',
+          ]
+        : [
+            'Verification inputs changed',
+            'Verification input coverage unknown',
+            'Verification inputs unavailable',
+          ])
+        expect(screen.getByText(label)).toBeTruthy();
+      expect(screen.getByText('Authored input limitation')).toBeTruthy();
+    },
+  );
+  it.each(['en', 'ko'])(
+    'localizes fixed stale execution diagnostics without rewriting unfamiliar text in %s',
+    (locale) => {
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      render(
+        <LanguageProvider>
+          <RunHistory
+            value={flowCollection([
+              {
+                ...flowExecution,
+                reasons: [
+                  'Captured verification inputs or task context are no longer current',
+                  'A newer recorded verification event supersedes this execution',
+                  'Current observation authority or request binding is unavailable',
+                  'Authored capture limitation',
+                ],
+              },
+            ])}
+          />
+        </LanguageProvider>,
+      );
+      for (const label of locale === 'ko'
+        ? [
+            '수집된 검증 입력이나 작업 정보가 현재 상태와 달라요',
+            '더 최근의 검증 기록이 이 실행을 대체했어요',
+            '현재 결과 기록 권한이나 요청 연결을 확인할 수 없어요',
+          ]
+        : [
+            'Captured verification inputs or task context are no longer current',
+            'A newer recorded verification event supersedes this execution',
+            'Current observation authority or request binding is unavailable',
+          ])
+        expect(screen.getByText(label)).toBeTruthy();
+      expect(screen.getByText('Authored capture limitation')).toBeTruthy();
+    },
+  );
   it.each([
     ['en', 'Recording preparation needs attention'],
     ['ko', '기록 준비에 확인이 필요해요'],
