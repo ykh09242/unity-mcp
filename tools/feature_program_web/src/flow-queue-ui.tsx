@@ -49,8 +49,30 @@ function ActorLink({ id, context }: { readonly id: string; readonly context: Wor
     <span className="muted">{i18n.t('Unassigned')}</span>
   );
 }
-function QueueFacts({ row, context }: { readonly row: QueueRow; readonly context: WorkContext }) {
+function unassignedCheckGap(row: QueueRow): boolean {
+  return (
+    row.kind === 'required_check_gap' &&
+    row.readiness === 'not_assessed' &&
+    !row.verifierId &&
+    row.reasons.length === 1 &&
+    row.reasons[0] === 'assignment_unrecorded'
+  );
+}
+function ReviewLabel({ row }: { readonly row: QueueRow }) {
   const i18n = useI18n();
+  return (
+    <>
+      {i18n.t(queueKindLabels[row.kind] || row.kind)}
+      {row.lane && <> · {i18n.t(laneLabels[row.lane] || row.lane)}</>}
+      {row.kind === 'required_check_gap' && row.checkIds.length > 0 && (
+        <> · {row.checkIds.map((id) => i18n.t(checkLabels[id] || id)).join(', ')}</>
+      )}
+    </>
+  );
+}
+function QueueFacts({ row, context }: { readonly row: QueueRow; readonly context: WorkContext }) {
+  const i18n = useI18n(),
+    unassignedGap = unassignedCheckGap(row);
   return (
     <>
       <div className="queue-action">
@@ -93,13 +115,21 @@ function QueueFacts({ row, context }: { readonly row: QueueRow; readonly context
           {row.result && (
             <div>
               <dt>{i18n.t('Reported outcome')}</dt>
-              <dd>{i18n.human(row.result)}</dd>
+              <dd>
+                {unassignedGap && row.result === 'unknown'
+                  ? i18n.t('No verification result recorded')
+                  : i18n.human(row.result)}
+              </dd>
             </div>
           )}
           {row.applicability && (
             <div>
               <dt>{i18n.t('Applicability')}</dt>
-              <dd>{i18n.human(row.applicability)}</dd>
+              <dd>
+                {unassignedGap && row.applicability === 'unknown'
+                  ? i18n.t('Verification inputs not assessed')
+                  : i18n.human(row.applicability)}
+              </dd>
             </div>
           )}
         </dl>
@@ -278,18 +308,20 @@ export function ReviewQueueList({
                 <span className="mono">{row.taskId}</span> {presentation.task(row.taskId)}
               </a>
               <p className="muted">
-                {i18n.t(queueKindLabels[row.kind] || row.kind)}
-                {row.lane && <> · {i18n.t(laneLabels[row.lane] || row.lane)}</>}
-                {row.kind === 'required_check_gap' && row.checkIds.length > 0 && (
-                  <> · {row.checkIds.map((id) => i18n.t(checkLabels[id] || id)).join(', ')}</>
-                )}
+                <ReviewLabel row={row} />
               </p>
             </div>
             <div className="queue-state">
-              <span className="badge">{i18n.human(row.readiness)}</span>
-              {row.applicability && row.applicability !== 'current' && (
-                <span className="lane-warning">{i18n.human(row.applicability)}</span>
-              )}
+              <span className="badge">
+                {unassignedCheckGap(row)
+                  ? i18n.t('Awaiting verifier assignment')
+                  : i18n.human(row.readiness)}
+              </span>
+              {row.applicability &&
+                row.applicability !== 'current' &&
+                !(unassignedCheckGap(row) && row.applicability === 'unknown') && (
+                  <span className="lane-warning">{i18n.human(row.applicability)}</span>
+                )}
             </div>
             <div className="queue-responsibility">
               <QueueFacts row={row} context={navigation.context} />
@@ -340,7 +372,9 @@ export function QueueResponsibilities({
               {presentation.taskReference(row.taskId)}
             </a>
             <div className="queue-action">
-              <span>{i18n.t(queueKindLabels[row.kind] || row.kind)}</span>
+              <span>
+                <ReviewLabel row={row} />
+              </span>
               <ActorLink id={row.nextActorId} context={context} />
               <span>
                 {i18n.t(row.nextAction || queueActionLabels[row.action] || 'Not recorded')}

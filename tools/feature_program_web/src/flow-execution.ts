@@ -9,6 +9,7 @@ export type CapturedExecution = {
   readonly captureStatus: string;
   readonly publication: string;
   readonly status: string;
+  readonly observationDraft: 'prepared' | 'unavailable' | null;
   readonly reused: boolean;
   readonly nextAction: string;
   readonly reasons: readonly string[];
@@ -56,9 +57,21 @@ export function capturedExecution(value: Json | undefined): CapturedExecution | 
     ) ||
     !count(artifacts.expected) ||
     !count(artifacts.captured) ||
-    !count(artifacts.missing)
+    !count(artifacts.missing) ||
+    artifacts.expected !== artifacts.captured + artifacts.missing
   )
     return null;
+  let observationDraft: CapturedExecution['observationDraft'] = null;
+  if (data.observation_draft !== undefined) {
+    const draft = record(data.observation_draft);
+    if (
+      (draft.status !== 'prepared' && draft.status !== 'unavailable') ||
+      !Array.isArray(draft.reasons) ||
+      !draft.reasons.every((reason) => typeof reason === 'string')
+    )
+      return null;
+    observationDraft = draft.status;
+  }
   const outputs: CapturedExecution['outputs'][number][] = [];
   for (const stream of ['stdout', 'stderr']) {
     const output = record(record(data.output_counts)[stream]);
@@ -84,6 +97,7 @@ export function capturedExecution(value: Json | undefined): CapturedExecution | 
     captureStatus: string(data.capture_status),
     publication: string(publication.status),
     status: string(data.status),
+    observationDraft,
     reused: data.reused === true,
     nextAction: string(data.next_action),
     reasons: items(data.reasons).map(string).filter(Boolean),

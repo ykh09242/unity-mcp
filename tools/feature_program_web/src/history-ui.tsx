@@ -285,17 +285,32 @@ export function ReviewSummary({
   const { attempt, round, review, receipt } = latestReview(task);
   const integrated = record(record(snapshot.coverage).integrated_review);
   const submission = record(record(task.readiness).submission);
+  const notYetReviewed =
+    task.status === 'active' &&
+    Array.isArray(attempt.rounds) &&
+    attempt.rounds.length === 0 &&
+    attempt.submission === null &&
+    attempt.review === null;
   if (!Object.keys(attempt).length && task.status !== 'review') return null;
   return (
     <section className="history-section current-review">
       <div className="history-event-heading">
         <h3>{i18n.t('Review')}</h3>
-        <span className="badge">{i18n.human(review.verdict || submission.status)}</span>
+        <span className="badge">
+          {notYetReviewed
+            ? i18n.t('Not yet reviewed')
+            : i18n.human(review.verdict || submission.status)}
+        </span>
       </div>
       <p className="history-meta">
-        {i18n.t('Attempt')} {i18n.display(attempt.number)} · {i18n.t('Round')}{' '}
-        {i18n.display(round.round)} ·{' '}
-        {i18n.display(presentation.actor(review.reviewer), 'Reviewer not recorded')}
+        {i18n.t('Attempt')} {i18n.display(attempt.number)}
+        {!notYetReviewed && (
+          <>
+            {' '}
+            · {i18n.t('Round')} {i18n.display(round.round)} ·{' '}
+            {i18n.display(presentation.actor(review.reviewer), 'Reviewer not recorded')}
+          </>
+        )}
       </p>
       {(review.next_action || receipt.next_action) && (
         <p className="history-text">{i18n.display(review.next_action || receipt.next_action)}</p>

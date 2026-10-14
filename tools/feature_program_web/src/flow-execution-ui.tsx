@@ -67,6 +67,9 @@ export function LocalExecution({ value }: { readonly value: Json | undefined }) 
       <p className={execution.publication === 'recorded' ? 'muted' : 'lane-warning'}>
         {i18n.t(publicationLabels[execution.publication] || execution.publication)}
       </p>
+      {execution.observationDraft === 'unavailable' && (
+        <p className="lane-warning">{i18n.t('Recording preparation needs attention')}</p>
+      )}
       {execution.nextAction && <p className="flow-next-action">{i18n.t(execution.nextAction)}</p>}
       {execution.reasons[0] && <p className="lane-warning">{i18n.warning(execution.reasons[0])}</p>}
       <p className={execution.artifacts.missing > 0 ? 'lane-warning' : 'muted'}>

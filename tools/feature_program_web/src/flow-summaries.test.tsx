@@ -9,8 +9,66 @@ import { capturedExecution } from './flow-execution';
 import { record } from './model';
 import type { JsonRecord, Snapshot } from './model';
 import { SnapshotResponse } from './useSnapshot';
+import { LanguageProvider, PREFERENCE_KEY } from './i18n';
 
 describe('flow verification summaries', () => {
+  it.each([
+    ['en', 'Recording preparation needs attention'],
+    ['ko', '기록 준비에 확인이 필요해요'],
+  ])('shows unavailable recording preparation safely in %s', (locale, warning) => {
+    localStorage.setItem(PREFERENCE_KEY, locale);
+    const view = render(
+      <LanguageProvider>
+        <LocalExecution
+          value={{
+            ...flowExecution,
+            observation_draft: { status: 'unavailable', reasons: ['hidden/private-draft-error'] },
+          }}
+        />
+      </LanguageProvider>,
+    );
+    expect(screen.getByText(warning)).toBeTruthy();
+    expect(view.container.textContent).not.toContain('hidden/private-draft-error');
+    expect(view.container.querySelector('.execution-summary')).toBeTruthy();
+  });
+  it.each([undefined, { status: 'prepared', reasons: [] }])(
+    'keeps ordinary pending publication for absent or prepared draft %j',
+    (draft) => {
+      const value =
+        draft === undefined ? flowExecution : { ...flowExecution, observation_draft: draft };
+      render(<LocalExecution value={value} />);
+      expect(screen.getByText('Evidence publication pending')).toBeTruthy();
+      expect(screen.queryByText('Recording preparation needs attention')).toBeNull();
+    },
+  );
+  it.each([
+    { status: 'ready', reasons: [] },
+    { status: 'prepared', reasons: 'hidden' },
+  ])('rejects malformed optional draft diagnostics %j', (draft) => {
+    expect(capturedExecution({ ...flowExecution, observation_draft: draft })).toBeNull();
+  });
+  it.each([
+    { expected: 0, captured: 1, missing: 0 },
+    { expected: 2, captured: 1, missing: 0 },
+    { expected: 1, captured: 1, missing: 1 },
+  ])('rejects inconsistent artifact counts %j without displaying captured success', (artifacts) => {
+    const value = { ...flowExecution, artifacts };
+    expect(capturedExecution(value)).toBeNull();
+    const view = render(<LocalExecution value={value} />);
+    expect(screen.getByText('Execution capture is unavailable.')).toBeTruthy();
+    expect(view.container.querySelector('.execution-summary')).toBeNull();
+  });
+  it('retains valid incomplete artifact capture and its reported outcome separately', () => {
+    const capture = capturedExecution({
+      ...flowExecution,
+      capture_status: 'incomplete',
+      reported_check_result: 'failed',
+      artifacts: { expected: 2, captured: 1, missing: 1 },
+    });
+    expect(capture?.captureStatus).toBe('incomplete');
+    expect(capture?.reportedResult).toBe('failed');
+    expect(capture?.artifacts).toEqual({ expected: 2, captured: 1, missing: 1 });
+  });
   it('shows incomplete precise inputs and changed groups without disclosing source payloads', () => {
     const view = render(
       <CheckInputs

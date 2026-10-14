@@ -6,7 +6,7 @@ import {
   latestReview,
   revisionMismatch,
 } from './history';
-import { parseSnapshot, record } from './model';
+import { parseSnapshot, record, string } from './model';
 import type { JsonRecord, Task } from './model';
 import { render, screen, within } from '@testing-library/react';
 import { LanguageProvider, PREFERENCE_KEY } from './i18n';
@@ -48,6 +48,48 @@ const delivery = (conclusion: string, extra: JsonRecord = {}) => ({
 });
 
 describe('readable history surfaces', () => {
+  it.each([
+    ['en', 'Not yet reviewed', 'Attempt 1'],
+    ['ko', '검토 전', '시도 1'],
+  ])(
+    'omits nonexistent review-round metadata before submission in %s',
+    (locale, pending, attemptLabel) => {
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      const task = taskFixture({
+        status: 'active',
+        attempts: [{ number: 1, owner: 'worker', rounds: [], submission: null, review: null }],
+        readiness: { submission: { status: 'not_assessed' } },
+      });
+      const view = render(
+        <LanguageProvider>
+          <ReviewSummary task={task} snapshot={snapshotFixture(task)} />
+        </LanguageProvider>,
+      );
+      expect(screen.getByText(pending)).toBeTruthy();
+      expect(view.container.querySelector('.history-meta')?.textContent?.trim()).toBe(attemptLabel);
+    },
+  );
+  const inconsistentReviewRecords: readonly JsonRecord[] = [
+    { status: 'review', rounds: [], submission: null, review: null },
+    { status: 'active', rounds: [{}], submission: null, review: null },
+    { status: 'active', submission: null, review: null },
+    { status: 'active', rounds: [], submission: { submitted_head: 'actual' }, review: null },
+  ];
+  it.each(inconsistentReviewRecords)(
+    'retains missing review metadata for inconsistent or submitted records %j',
+    ({ status, ...attempt }) => {
+      const task = taskFixture({
+        status: string(status),
+        attempts: [{ number: 1, owner: 'worker', ...attempt }],
+      });
+      const view = render(<ReviewSummary task={task} snapshot={snapshotFixture(task)} />);
+      expect(screen.queryByText('Not yet reviewed')).toBeNull();
+      expect(view.container.querySelector('.history-meta')?.textContent).toContain('Round Unknown');
+      expect(view.container.querySelector('.history-meta')?.textContent).toContain(
+        'Reviewer not recorded',
+      );
+    },
+  );
   it('distinguishes missing projection from explicitly empty delivery history', () => {
     const view = render(<DeliveryHistory task={taskFixture()} />);
     expect(screen.getByText('Delivery history unavailable')).toBeDefined();

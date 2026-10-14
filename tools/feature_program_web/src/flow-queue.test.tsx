@@ -10,6 +10,119 @@ import { PREFERENCE_KEY } from './i18n';
 import { SnapshotResponse } from './useSnapshot';
 
 describe('flow review queue', () => {
+  it.each([
+    [
+      'en',
+      'Awaiting verifier assignment',
+      'No verification result recorded',
+      'Verification inputs not assessed',
+    ],
+    ['ko', '검증 담당 배정 대기', '검증 결과 미기록', '검증 입력 확인 전'],
+  ])(
+    'describes the known unassigned gap precisely in %s',
+    async (language, pending, outcome, inputs) => {
+      localStorage.setItem(PREFERENCE_KEY, language);
+      window.history.replaceState(null, '', '#work?coordination=review_queue');
+      const view = render(
+        <App
+          loader={async () =>
+            flowFixture({
+              review_queue: flowQueue([
+                flowQueueRow('gap-A', 'A', {
+                  kind: 'required_check_gap',
+                  request_id: null,
+                  request_version: null,
+                  lane: null,
+                  verifier_id: null,
+                  phase: 'planned',
+                  result: 'unknown',
+                  applicability: 'unknown',
+                  action: 'assign',
+                  readiness: { status: 'not_assessed', reasons: ['assignment_unrecorded'] },
+                }),
+              ]),
+            })
+          }
+        />,
+      );
+      await screen.findByText(pending);
+      expect(view.container.querySelector('.queue-state .lane-warning')).toBeNull();
+      expect(screen.getByText(outcome)).toBeTruthy();
+      expect(screen.getByText(inputs)).toBeTruthy();
+      expect(view.container.querySelector('.queue-row')?.textContent).not.toContain(
+        language === 'ko' ? '알 수 없음' : 'unknown',
+      );
+    },
+  );
+  it.each(['verification_lane', 'required_check_gap'])(
+    'retains genuinely unassessed inputs for %s',
+    async (kind) => {
+      window.history.replaceState(null, '', '#work?coordination=review_queue');
+      const view = render(
+        <App
+          loader={async () =>
+            flowFixture({
+              review_queue: flowQueue([
+                flowQueueRow('unknown-A', 'A', {
+                  kind,
+                  verifier_id: null,
+                  applicability: 'unknown',
+                  readiness: {
+                    status: 'not_assessed',
+                    reasons: ['assignment_unrecorded', 'input_incomplete'],
+                  },
+                }),
+              ]),
+            })
+          }
+        />,
+      );
+      await screen.findByRole('region', { name: 'Recorded review obligations' });
+      expect(screen.queryByText('Awaiting verifier assignment')).toBeNull();
+      expect(view.container.querySelector('.queue-state .lane-warning')?.textContent).toBe(
+        'unknown',
+      );
+      expect(screen.getByText('Verification inputs are incomplete')).toBeTruthy();
+    },
+  );
+  it.each([
+    ['en', 'Acceptance criteria', 'Formatting and lint', 'Scoped tests'],
+    ['ko', '완료 기준', '서식 및 정적 검사', '범위별 테스트'],
+  ])(
+    'identifies each check gap in Team responsibility in %s',
+    async (language, acceptance, format, tests) => {
+      localStorage.setItem(PREFERENCE_KEY, language);
+      window.history.replaceState(null, '', '#team');
+      const view = render(
+        <App
+          loader={async () =>
+            flowFixture({
+              review_queue: flowQueue(
+                ['acceptance', 'format_lint', 'scoped_tests'].map((check) =>
+                  flowQueueRow('gap-' + check, 'A', {
+                    kind: 'required_check_gap',
+                    lane: null,
+                    request_id: null,
+                    request_version: null,
+                    check_ids: [check],
+                    verifier_id: null,
+                    readiness: { status: 'not_assessed', reasons: ['assignment_unrecorded'] },
+                  }),
+                ),
+              ),
+            })
+          }
+        />,
+      );
+      await screen.findByRole('heading', {
+        name: language === 'ko' ? '다음 검토 담당' : 'Next review responsibility',
+      });
+      const responsibilities = view.container.querySelector('.verification-responsibilities');
+      expect(responsibilities?.querySelectorAll('li')).toHaveLength(3);
+      for (const label of [acceptance, format, tests])
+        expect(responsibilities?.textContent).toContain(label);
+    },
+  );
   it('uses producer order and shows distinct task reviews and required-check gaps without invented requests', async () => {
     window.history.replaceState(null, '', '#work?coordination=review_queue');
     const rows = [
