@@ -1,3 +1,7 @@
+import { CheckInputs } from './flow-inputs-ui';
+import { RunHistory } from './flow-run-history-ui';
+import { LocalExecution } from './flow-execution-ui';
+import { QueueResponsibilities } from './flow-queue-ui';
 import { useI18n } from './i18n';
 import { items, record, records, safeUrl, string } from './model';
 import type { Json, JsonRecord, Snapshot, Task } from './model';
@@ -106,33 +110,35 @@ export function CoordinationSummary({
   });
   return (
     <nav className="coordination-summary" aria-label={i18n.t('Work coordination')}>
-      {coordinationViews.map((view) => {
-        const count = tasks.filter((task) => matchesCoordination(snapshot, task, view)).length;
-        const partial = incomplete && ['verification', 'waiting'].includes(view);
-        return (
-          <a
-            key={view}
-            href={navigationHash(
-              { view: 'work' },
-              {
-                ...context,
-                filters: { ...emptyFilters, coordination: view },
-                selected: null,
-                paging: { ...context.paging, index: 0 },
-              },
-            )}
-          >
-            <strong>
-              {partial
-                ? count
-                  ? i18n.t('At least {count}', { count })
-                  : i18n.t('Not recorded')
-                : i18n.number(count)}
-            </strong>{' '}
-            {i18n.t(coordinationLabels[view]!)}
-          </a>
-        );
-      })}
+      {coordinationViews
+        .filter((view) => view !== 'review_queue')
+        .map((view) => {
+          const count = tasks.filter((task) => matchesCoordination(snapshot, task, view)).length;
+          const partial = incomplete && ['verification', 'waiting'].includes(view);
+          return (
+            <a
+              key={view}
+              href={navigationHash(
+                { view: 'work' },
+                {
+                  ...context,
+                  filters: { ...emptyFilters, coordination: view },
+                  selected: null,
+                  paging: { ...context.paging, index: 0 },
+                },
+              )}
+            >
+              <strong>
+                {partial
+                  ? count
+                    ? i18n.t('At least {count}', { count })
+                    : i18n.t('Not recorded')
+                  : i18n.number(count)}
+              </strong>{' '}
+              {i18n.t(coordinationLabels[view]!)}
+            </a>
+          );
+        })}
     </nav>
   );
 }
@@ -267,6 +273,14 @@ function Lane({
           </ul>
         </details>
       )}
+      <CheckInputs value={lane.input_summary} />
+      {lane.execution_summary === undefined && lane.execution_history !== undefined && (
+        <p className="muted">
+          {i18n.t('No current execution capture recorded; earlier runs remain history.')}
+        </p>
+      )}
+      <LocalExecution value={lane.execution_summary} />
+      <RunHistory value={lane.execution_history} />
       {lane.provider_execution && (
         <ProviderStages
           snapshot={snapshot}
@@ -633,6 +647,8 @@ export function VerificationResponsibilities({
   const i18n = useI18n();
   const presentation = usePresentation();
   const assignments = verificationAssignments(snapshot, scopedTasks(snapshot, context.scope));
+  if (snapshot.review_queue !== undefined)
+    return <QueueResponsibilities snapshot={snapshot} context={context} />;
   const omitted = scopedTasks(snapshot, context.scope).reduce(
     (total, task) => total + (verificationContext(snapshot, task)?.lanes.omitted || 0),
     0,

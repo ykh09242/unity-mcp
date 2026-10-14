@@ -1,4 +1,5 @@
 import { items, record, records, string } from './model';
+import { reviewQueue } from './flow-queue';
 import type { Json, JsonRecord, Snapshot, Task } from './model';
 import { currentCollection, currentReference, recordedReadiness } from './readiness';
 
@@ -8,6 +9,7 @@ export const coordinationViews = [
   'verification',
   'waiting',
   'unknown',
+  'review_queue',
 ] as const;
 export const coordinationLabels: Readonly<Record<string, string>> = {
   available: 'No recorded blockers',
@@ -15,6 +17,7 @@ export const coordinationLabels: Readonly<Record<string, string>> = {
   verification: 'Verification needs',
   waiting: 'Observed waiting',
   unknown: 'Coordination unavailable',
+  review_queue: 'Review queue',
 };
 export const checkLabels: Readonly<Record<string, string>> = {
   acceptance: 'Acceptance criteria',
@@ -107,6 +110,8 @@ export function observedWait(value: Json | undefined) {
 }
 export function matchesCoordination(snapshot: Snapshot, task: Task, filter = '') {
   if (!filter) return true;
+  if (filter === 'review_queue')
+    return Boolean(reviewQueue(snapshot)?.rows.some((row) => row.taskId === task.id));
   const factors = readinessFactors(snapshot, task);
   const verification = verificationContext(snapshot, task);
   if (filter === 'available') return factors.available;

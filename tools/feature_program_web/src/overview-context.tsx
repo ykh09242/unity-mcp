@@ -71,8 +71,13 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
   const [expanded, setExpanded] = useState(false);
   const brief = currentBrief(snapshot);
   const attention = brief ? currentCollection(snapshot, brief.attention, undefined, 50) : null;
-  const shown = attention?.items.slice(0, expanded ? 50 : 5) || [];
-  if (attention?.total === 0)
+  const relevant =
+    attention?.items.filter((value) => {
+      const row = record(value);
+      return !(row.attention_kind === 'completion_reminder' && row.actionability === 'routine');
+    }) || [];
+  const shown = relevant.slice(0, expanded ? 50 : 5);
+  if (attention && relevant.length === 0 && attention.omitted === 0)
     return (
       <p className="attention-empty muted">{i18n.t('No current attention items recorded.')}</p>
     );
@@ -80,7 +85,9 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
     <section className="program-attention">
       <h3>
         {i18n.t('Needs attention')}
-        {attention && <span className="muted"> · {i18n.number(attention.total)}</span>}
+        {attention && (
+          <span className="muted"> · {i18n.number(relevant.length + attention.omitted)}</span>
+        )}
       </h3>
       {!attention ? (
         <p className="muted">
@@ -200,22 +207,22 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
               );
             })}
           </ul>
-          {attention.items.length > 5 && (
+          {relevant.length > 5 && (
             <button onClick={() => setExpanded((value) => !value)}>
               {i18n.t(
                 expanded ? 'Show fewer attention items' : 'Show all supplied attention items',
               )}
             </button>
           )}
-          {shown.length < attention.shown && (
+          {shown.length < relevant.length && (
             <p className="muted">
               {i18n.t('Showing {visible} of {supplied} supplied items', {
                 visible: shown.length,
-                supplied: attention.shown,
+                supplied: relevant.length,
               })}
             </p>
           )}
-          <Omission shown={attention.shown} total={attention.total} />
+          <Omission shown={relevant.length} total={relevant.length + attention.omitted} />
         </>
       )}
     </section>

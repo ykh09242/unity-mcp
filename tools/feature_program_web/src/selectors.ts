@@ -1,3 +1,4 @@
+import { reviewQueue } from './flow-queue';
 import { display, items, ownerOf, record, records, string } from './model';
 import type { Json, JsonRecord, Snapshot, Task } from './model';
 import { actorLabel, originalValue } from './presentation';
@@ -158,6 +159,7 @@ export type TaskFilters = {
   readonly workstream: string;
   readonly sort: string;
   readonly coordination?: string;
+  readonly queue_readiness?: string;
 };
 export function selectTasks(snapshot: Snapshot, filters: TaskFilters): readonly Task[] {
   const index = snapshotIndex(snapshot);
@@ -170,8 +172,26 @@ export function selectTasks(snapshot: Snapshot, filters: TaskFilters): readonly 
       (!filters.workstream || task.workstream === filters.workstream) &&
       (!filters.owner ||
         (filters.owner === '__unassigned'
-          ? !ownerOf(task)
+          ? filters.coordination === 'review_queue'
+            ? Boolean(
+                reviewQueue(snapshot)?.rows.some(
+                  (row) => row.taskId === task.id && !row.nextActorId,
+                ),
+              )
+            : !ownerOf(task)
           : ownerOf(task) === filters.owner ||
+            (filters.coordination === 'review_queue' &&
+              reviewQueue(snapshot)?.rows.some(
+                (row) =>
+                  row.taskId === task.id &&
+                  [
+                    row.nextActorId,
+                    row.verifierId,
+                    row.resolverId,
+                    row.ownerId,
+                    row.supervisorId,
+                  ].includes(filters.owner),
+              )) ||
             (['verification', 'waiting'].includes(filters.coordination || '') &&
               verificationContext(snapshot, task)?.lanes.items.some(
                 (lane) =>
