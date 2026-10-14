@@ -69,10 +69,46 @@ describe('readable history surfaces', () => {
       expect(view.container.querySelector('.history-meta')?.textContent?.trim()).toBe(attemptLabel);
     },
   );
+  it.each([
+    ['en', 'Not yet reviewed', 'Attempt 1'],
+    ['ko', '검토 전', '시도 1'],
+  ])(
+    'recognizes the actual sanitized active attempt without a submission property in %s',
+    (locale, pending, attemptLabel) => {
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      const attempt = { number: 1, status: 'active', owner: 'worker', review: null, rounds: [] };
+      expect(Object.hasOwn(attempt, 'submission')).toBe(false);
+      const task = taskFixture({
+        status: 'active',
+        attempts: [attempt],
+        readiness: { submission: { status: 'not_assessed' } },
+      });
+      const view = render(
+        <LanguageProvider>
+          <ReviewSummary task={task} snapshot={snapshotFixture(task)} />
+        </LanguageProvider>,
+      );
+      expect(screen.getByText(pending)).toBeTruthy();
+      expect(view.container.querySelector('.history-meta')?.textContent?.trim()).toBe(attemptLabel);
+    },
+  );
+  it.each(['review', 'released'])(
+    'does not treat contradictory attempt status %s as an unsubmitted active attempt',
+    (status) => {
+      const task = taskFixture({
+        status: 'active',
+        attempts: [{ number: 1, status, rounds: [], review: null }],
+      });
+      const view = render(<ReviewSummary task={task} snapshot={snapshotFixture(task)} />);
+      expect(screen.queryByText('Not yet reviewed')).toBeNull();
+      expect(view.container.querySelector('.history-meta')?.textContent).toContain('Round Unknown');
+    },
+  );
   const inconsistentReviewRecords: readonly JsonRecord[] = [
     { status: 'review', rounds: [], submission: null, review: null },
     { status: 'active', rounds: [{}], submission: null, review: null },
     { status: 'active', submission: null, review: null },
+    { status: 'active', rounds: [], review: null },
     { status: 'active', rounds: [], submission: { submitted_head: 'actual' }, review: null },
   ];
   it.each(inconsistentReviewRecords)(

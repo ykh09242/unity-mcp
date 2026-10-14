@@ -47,6 +47,10 @@ describe('flow review queue', () => {
       );
       await screen.findByText(pending);
       expect(view.container.querySelector('.queue-state .lane-warning')).toBeNull();
+      expect(view.container.querySelector('.queue-reason')).toBeNull();
+      expect(view.container.querySelector('.queue-details')?.textContent).toContain(
+        language === 'ko' ? '검증 담당 미기록' : 'Verifier not recorded',
+      );
       expect(screen.getByText(outcome)).toBeTruthy();
       expect(screen.getByText(inputs)).toBeTruthy();
       expect(view.container.querySelector('.queue-row')?.textContent).not.toContain(

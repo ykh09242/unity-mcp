@@ -289,7 +289,8 @@ export function ReviewSummary({
     task.status === 'active' &&
     Array.isArray(attempt.rounds) &&
     attempt.rounds.length === 0 &&
-    attempt.submission === null &&
+    (attempt.submission === null ||
+      (!Object.hasOwn(attempt, 'submission') && attempt.status === 'active')) &&
     attempt.review === null;
   if (!Object.keys(attempt).length && task.status !== 'review') return null;
   return (

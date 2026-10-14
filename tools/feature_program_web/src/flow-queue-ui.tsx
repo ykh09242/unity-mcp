@@ -84,7 +84,7 @@ function QueueFacts({ row, context }: { readonly row: QueueRow; readonly context
           {i18n.t('Next trigger')}: {i18n.t(row.nextTrigger)}
         </p>
       )}
-      {row.reasons[0] && (
+      {row.reasons[0] && !unassignedGap && (
         <p className="lane-warning queue-reason">
           {i18n.warning(flowReasonLabels[row.reasons[0]] || row.reasons[0])}
         </p>
@@ -133,9 +133,9 @@ function QueueFacts({ row, context }: { readonly row: QueueRow; readonly context
             </div>
           )}
         </dl>
-        {row.reasons.length > 1 && (
+        {row.reasons.length > (unassignedGap ? 0 : 1) && (
           <ul>
-            {row.reasons.slice(1).map((reason, index) => (
+            {row.reasons.slice(unassignedGap ? 0 : 1).map((reason, index) => (
               <li key={index}>{i18n.warning(flowReasonLabels[reason] || reason)}</li>
             ))}
           </ul>
